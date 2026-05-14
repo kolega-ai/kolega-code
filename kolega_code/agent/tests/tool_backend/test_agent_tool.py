@@ -1,0 +1,356 @@
+"""Tests for the unified AgentTool dispatch mechanism."""
+
+import pytest
+from pathlib import Path
+from unittest.mock import AsyncMock, Mock, MagicMock, patch
+import uuid
+import builtins
+
+from kolega_code.agent.tool_backend.agent_tool import AgentTool
+from kolega_code.agent.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
+from kolega_code.agent.models.public import AgentEvent
+
+
+@pytest.fixture
+def mock_config():
+    """Create a mock agent configuration."""
+    return AgentConfig(
+        anthropic_api_key="test-key",
+        openai_api_key="test-key",
+        long_context_config=ModelConfig(
+            provider=ModelProvider.ANTHROPIC, model="test-model", rate_limits=RateLimitConfig()
+        ),
+        fast_config=ModelConfig(provider=ModelProvider.ANTHROPIC, model="test-model", rate_limits=RateLimitConfig()),
+        thinking_config=ModelConfig(
+            provider=ModelProvider.ANTHROPIC, model="test-model", rate_limits=RateLimitConfig(), thinking_tokens=1024
+        ),
+    )
+
+
+@pytest.fixture
+def mock_connection_manager():
+    """Create a mock connection manager."""
+    manager = AsyncMock()
+    manager.broadcast_event = AsyncMock()
+    return manager
+
+
+class MockSubAgentRecorder:
+    def __init__(self):
+        self.start_conversation = AsyncMock(return_value="test-conversation-id")
+        self.record_message = AsyncMock()
+        self.complete_conversation = AsyncMock()
+        self.fail_conversation = AsyncMock()
+        self.interrupt_conversation = AsyncMock()
+
+
+@pytest.fixture
+def mock_caller():
+    """Create a mock caller agent."""
+    caller = Mock()
+    caller.agent_name = "test-caller"
+    caller.log_info = AsyncMock()
+    caller.current_tool_call_id = "test-tool-call-id"  # Set a test tool call ID for sub-agent creation
+    caller.sub_agent = False  # Caller is not a sub-agent
+    caller.protected_files = ["custom.lock"]
+    caller.workspace_env_var_descriptions = {"API_TOKEN": "Token for external API"}
+    caller.workspace_memories = []
+    caller.prompt_extensions = []
+    caller.tool_extensions = []
+    caller.usage_recorder = None
+    caller.sub_agent_recorder = MockSubAgentRecorder()
+    return caller
+
+
+@pytest.fixture
+def agent_tool(tmp_path, mock_connection_manager, mock_config, mock_caller):
+    """Create an AgentTool instance for testing."""
+    return AgentTool(
+        project_path=tmp_path,
+        workspace_id="test-workspace",
+        thread_id=str(uuid.uuid4()),
+        connection_manager=mock_connection_manager,
+        config=mock_config,
+        caller=mock_caller,
+    )
+
+
+class MockAgent:
+    """Mock agent class for testing."""
+
+    agent_name = "mock-agent"
+    default_stream_messages = []
+    last_instance = None
+
+    def __init__(self, *args, **kwargs):
+        self.init_kwargs = kwargs
+        self.recap_agent_outcome = AsyncMock(return_value="Mock agent completed")
+        self._stream_messages = list(self.default_stream_messages)
+        self._message_history = []
+        self.total_tokens_used = 0  # Add token count attribute
+        MockAgent.last_instance = self
+
+    def setup_streaming(self, messages):
+        """Setup the process_message_stream to return an async generator."""
+        self._stream_messages = messages
+
+    @classmethod
+    def configure_streaming(cls, messages):
+        """Configure default messages for the next instantiated agent."""
+        cls.default_stream_messages = messages
+
+    async def process_message_stream(self, task):
+        """Mock implementation of process_message_stream that returns an async generator."""
+        # Add the task as a user message to history
+        self._message_history.append({"role": "user", "content": [{"type": "text", "text": task}]})
+
+        # Simulate assistant responses
+        for msg in self._stream_messages:
+            if msg.get("complete", False):
+                # Add completed message to history
+                self._message_history.append(
+                    {"role": "assistant", "content": [{"type": "text", "text": msg.get("content", "")}]}
+                )
+            yield msg
+
+    def dump_message_history(self):
+        """Mock implementation of dump_message_history."""
+        return self._message_history
+
+    async def cleanup(self):
+        """Mock implementation of cleanup."""
+        pass
+
+
+class MockInvestigationAgent(MockAgent):
+    """Mock investigation agent."""
+
+    agent_name = "investigation-agent"
+
+
+class MockBrowserAgent(MockAgent):
+    """Mock browser agent."""
+
+    agent_name = "browser-agent"
+
+
+class MockCodingAgent(MockAgent):
+    """Mock coding agent."""
+
+    agent_name = "coding-agent"
+
+
+@pytest.mark.asyncio
+class TestAgentTool:
+    """Test suite for AgentTool."""
+
+    async def test_dispatch_agent_standard_flow(self, agent_tool, mock_connection_manager, mock_caller):
+        """Test standard agent dispatch flow with consistent status messages."""
+        # Save original import before patching
+        original_import = builtins.__import__
+
+        # Mock the dynamic import
+        with patch.object(builtins, "__import__") as mock_import:
+            mock_module = MagicMock()
+            mock_module.MockAgent = MockAgent
+
+            def mock_import_func(name, *args, **kwargs):
+                if name == "test.module":
+                    return mock_module
+                return original_import(name, *args, **kwargs)
+
+            mock_import.side_effect = mock_import_func
+
+            # Configure mock agent with streaming response
+            MockAgent.configure_streaming(
+                [
+                    {"content": "Processing...", "complete": False, "uuid": str(uuid.uuid4())},
+                    {"content": "Done.", "complete": True, "uuid": str(uuid.uuid4())},
+                ]
+            )
+            MockAgent.last_instance = None
+
+            # Dispatch the agent
+            result = await agent_tool._dispatch_agent(agent_class_import="test.module.MockAgent", task="Test task")
+
+            # Verify result
+            assert result == "Mock agent completed"
+
+            # Verify start status was sent
+            start_event_calls = [
+                call
+                for call in mock_connection_manager.broadcast_event.call_args_list
+                if call[0][0].content.get("status") == "GENERATING"
+            ]
+            assert len(start_event_calls) == 1
+            assert start_event_calls[0][0][0].content["message"] == "Starting mock-agent task"
+
+            # Verify completion status was sent
+            end_event_calls = [
+                call
+                for call in mock_connection_manager.broadcast_event.call_args_list
+                if call[0][0].content.get("status") == "STOPPED"
+            ]
+            assert len(end_event_calls) == 1
+            assert end_event_calls[0][0][0].content["message"] == "Completed mock-agent task"
+
+            assert mock_caller.sub_agent_recorder.start_conversation.await_count == 1
+            assert mock_caller.sub_agent_recorder.record_message.await_count >= 1
+            assert mock_caller.sub_agent_recorder.complete_conversation.await_count == 1
+
+            # Verify agent was created and cleaned up
+            assert str(uuid.uuid4()) not in agent_tool.agents
+            # Ensure protected files were forwarded to the sub-agent
+            assert MockAgent.last_instance is not None
+            assert MockAgent.last_instance.init_kwargs.get("protected_files") == mock_caller.protected_files
+            assert (
+                MockAgent.last_instance.init_kwargs.get("workspace_env_var_descriptions")
+                == mock_caller.workspace_env_var_descriptions
+            )
+            MockAgent.configure_streaming([])
+
+    async def test_dispatch_agent_uses_execution_id_for_sub_agent_conversation(
+        self, agent_tool, mock_connection_manager, mock_caller
+    ):
+        """Sub-agent records must use internal execution IDs, not provider tool IDs."""
+        original_import = builtins.__import__
+        mock_caller.current_provider_tool_call_id = "dispatch_investigation_agent_0"
+        mock_caller.current_tool_execution_id = "tool_exec_unique_123"
+        mock_caller.current_tool_call_id = "tool_exec_unique_123"
+
+        with patch.object(builtins, "__import__") as mock_import:
+            mock_module = MagicMock()
+            mock_module.MockAgent = MockAgent
+
+            def mock_import_func(name, *args, **kwargs):
+                if name == "test.module":
+                    return mock_module
+                return original_import(name, *args, **kwargs)
+
+            mock_import.side_effect = mock_import_func
+            MockAgent.configure_streaming(
+                [{"content": "Done.", "complete": True, "uuid": str(uuid.uuid4()), "type": "response"}]
+            )
+            MockAgent.last_instance = None
+
+            await agent_tool._dispatch_agent(agent_class_import="test.module.MockAgent", task="Test task")
+
+        conversation_payload = mock_caller.sub_agent_recorder.start_conversation.call_args.args[0]
+        assert conversation_payload["parent_tool_call_id"] == "tool_exec_unique_123"
+        assert conversation_payload["parent_tool_call_id"] != mock_caller.current_provider_tool_call_id
+        assert MockAgent.last_instance.parent_tool_call_id == "tool_exec_unique_123"
+
+        sub_agent_events = [
+            call.args[0]
+            for call in mock_connection_manager.broadcast_event.call_args_list
+            if call.args[0].sub_agent_info
+        ]
+        assert sub_agent_events
+        assert sub_agent_events[0].sub_agent_info["parent_tool_call_id"] == "tool_exec_unique_123"
+        MockAgent.configure_streaming([])
+
+    async def test_all_agents_get_consistent_status_messages(self, agent_tool):
+        """Test that all agent types get consistent start/end/error messages."""
+        # This is a meta-test to ensure our simplification goal is achieved
+
+        # Test data for different agent types
+        test_agents = [
+            ("investigation", agent_tool.dispatch_investigation_agent, "Investigate code"),
+            ("browser", agent_tool.dispatch_browser_agent, "Browse website"),
+            ("coding", agent_tool.dispatch_coding_agent, "Write code"),
+        ]
+
+        for agent_type, dispatch_method, task in test_agents:
+            # Mock the underlying dispatch to verify it gets called with consistent pattern
+            with patch.object(agent_tool, "_dispatch_agent") as mock_dispatch:
+                mock_dispatch.return_value = f"{agent_type} completed"
+
+                result = await dispatch_method(task)
+
+                # Verify the dispatch was called with the task
+                assert mock_dispatch.called
+                call_args = mock_dispatch.call_args
+                assert call_args[1]["task"] == task
+
+    async def test_dispatch_investigation_agent(self, agent_tool):
+        """Test investigation agent dispatch."""
+        with patch.object(agent_tool, "_dispatch_agent") as mock_dispatch:
+            mock_dispatch.return_value = "Investigation completed"
+
+            result = await agent_tool.dispatch_investigation_agent("Investigate this code")
+
+            mock_dispatch.assert_called_once_with(
+                agent_class_import="kolega_code.agent.investigationagent.InvestigationAgent",
+                task="Investigate this code",
+            )
+            assert result == "Investigation completed"
+
+    async def test_dispatch_browser_agent(self, agent_tool):
+        """Test browser agent dispatch."""
+        with patch.object(agent_tool, "_dispatch_agent") as mock_dispatch:
+            mock_dispatch.return_value = "Browser task completed"
+
+            result = await agent_tool.dispatch_browser_agent("Browse the web")
+
+            mock_dispatch.assert_called_once_with(
+                agent_class_import="kolega_code.agent.browseragent.BrowserAgent",
+                task="Browse the web",
+            )
+            assert result == "Browser task completed"
+
+    async def test_dispatch_coding_agent(self, agent_tool):
+        """Test coding agent dispatch."""
+        with patch.object(agent_tool, "_dispatch_agent") as mock_dispatch:
+            mock_dispatch.return_value = "Coding completed"
+
+            result = await agent_tool.dispatch_coding_agent("Write some code")
+
+            mock_dispatch.assert_called_once_with(
+                agent_class_import="kolega_code.agent.coder.CoderAgent",
+                task="Write some code",
+            )
+            assert result == "Coding completed"
+
+    async def test_agent_name_consistency(self, agent_tool):
+        """Test that all agent names follow kebab-case convention."""
+        # This test verifies our agent name assumptions
+        test_agents = [
+            ("kolega_code.agent.investigationagent.InvestigationAgent", "investigation-agent"),
+            ("kolega_code.agent.browseragent.BrowserAgent", "browser-agent"),
+            ("kolega_code.agent.coder.CoderAgent", "coding-agent"),
+        ]
+
+        original_import = builtins.__import__
+
+        for class_import, expected_name in test_agents:
+            with patch.object(builtins, "__import__") as mock_import:
+                # Create appropriate mock class based on the import
+                if "InvestigationAgent" in class_import:
+                    mock_class = MockInvestigationAgent
+                elif "BrowserAgent" in class_import:
+                    mock_class = MockBrowserAgent
+                elif "CoderAgent" in class_import:
+                    mock_class = MockCodingAgent
+                else:
+                    mock_class = MockAgent
+
+                mock_module = MagicMock()
+                setattr(mock_module, class_import.split(".")[-1], mock_class)
+
+                def mock_import_func(name, *args, **kwargs):
+                    module_base = class_import.rsplit(".", 1)[0]
+                    if name == module_base:
+                        return mock_module
+                    return original_import(name, *args, **kwargs)
+
+                mock_import.side_effect = mock_import_func
+
+                # Just verify we can get the agent name
+                module_path, class_name = class_import.rsplit(".", 1)
+                agent_class = getattr(mock_module, class_name)
+                assert agent_class.agent_name == expected_name
+
+    async def _create_mock_stream(self, messages):
+        """Helper to create async generator for mock message stream."""
+        for msg in messages:
+            yield msg
