@@ -8,6 +8,8 @@ from .base_tool import BaseTool
 
 
 class BrowserTool(BaseTool):
+    MAX_HTML_CHARS_FOR_CONTENT_OUTPUT = 100_000
+
     def __init__(
         self,
         project_path: Union[str, Path],
@@ -187,9 +189,20 @@ class BrowserTool(BaseTool):
                 markdown_output += f"| {log_type} | {timestamp} | {text} | {location_str} |\n"
 
         # Add HTML content in a code block
+        html = content["html"]
+        original_html_chars = len(html)
+        html_truncated = original_html_chars > self.MAX_HTML_CHARS_FOR_CONTENT_OUTPUT
+        if html_truncated:
+            html = html[: self.MAX_HTML_CHARS_FOR_CONTENT_OUTPUT]
+
         markdown_output += "\n## Page HTML\n\n"
+        if html_truncated:
+            markdown_output += (
+                f"**HTML truncated by size: Showing first {self.MAX_HTML_CHARS_FOR_CONTENT_OUTPUT:,} "
+                f"of {original_html_chars:,} characters.**\n\n"
+            )
         markdown_output += "```html\n"
-        markdown_output += content["html"]
+        markdown_output += html
         markdown_output += "\n```\n"
 
         return markdown_output

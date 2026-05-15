@@ -52,7 +52,7 @@ from kolega_code.agent.llm.models import (
     ToolCall,
     ToolResult,
 )
-from kolega_code.agent.llm.providers.anthropic import AnthropicStreamWrapper
+from kolega_code.agent.llm.providers.anthropic import AnthropicProvider, AnthropicStreamWrapper
 
 # Test data
 TEST_MESSAGES = MessageHistory([Message("user", [TextBlock("Hello, how are you?")])])
@@ -139,6 +139,30 @@ def test_tool_call_execution_id_is_internal_and_provider_id_is_preserved():
     restored = ToolCall.from_dict(first.to_dict())
     assert restored.id == first.id
     assert restored.execution_id == first.execution_id
+
+
+def test_local_anthropic_token_counting_includes_tool_result_content():
+    provider = AnthropicProvider(api_key="test_key", provider_name="moonshot")
+    large_tool_output = "unique_token " * 20_000
+    messages = MessageHistory(
+        [
+            Message(
+                role="user",
+                content=[
+                    ToolResult(
+                        tool_use_id="tool_1",
+                        content=large_tool_output,
+                        name="read_entire_file",
+                        is_error=False,
+                    )
+                ],
+            )
+        ]
+    )
+
+    token_count = provider._count_tokens_local(messages)
+
+    assert token_count.input_tokens > 20_000
 
 
 @pytest.mark.asyncio

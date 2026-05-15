@@ -156,6 +156,13 @@ def map_google_errors(error: GoogleAPIError) -> LLMError:
 
 
 def map_anthropic_errors(error: AnthropicError) -> LLMError:
+    context_window_phrases = (
+        "exceeded model token limit",
+        "context window",
+        "maximum context length",
+        "prompt is too long",
+    )
+
     if type(error) == AnthropicAPIStatusError:
         try:
             error_data = error.body
@@ -163,10 +170,16 @@ def map_anthropic_errors(error: AnthropicError) -> LLMError:
                 error_info = error_data["error"]
                 error_type = error_info.get("type")
                 error_message = (error_info.get("message") or "").strip()
+                error_message_lower = error_message.lower()
 
                 # Keep internal/server overload handling by type
                 if error_type in ["overloaded_error", "api_error"]:
                     return LLMInternalServerError(
+                        message=f"AnthropicError: {str(error)}", provider=ModelProvider.ANTHROPIC.value
+                    )
+
+                if any(phrase in error_message_lower for phrase in context_window_phrases):
+                    return LLMContextWindowExceededError(
                         message=f"AnthropicError: {str(error)}", provider=ModelProvider.ANTHROPIC.value
                     )
 
@@ -188,6 +201,11 @@ def map_anthropic_errors(error: AnthropicError) -> LLMError:
     print("continuing Anthropic error mapping...")
     if hasattr(error, "status_code"):
         if error.status_code == 400:
+            error_text = str(error).lower()
+            if any(phrase in error_text for phrase in context_window_phrases):
+                return LLMContextWindowExceededError(
+                    message=f"AnthropicError: {str(error)}", provider=ModelProvider.ANTHROPIC.value
+                )
             return LLMInvalidRequestError(
                 message=f"AnthropicError: {str(error)}", provider=ModelProvider.ANTHROPIC.value
             )

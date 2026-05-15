@@ -227,3 +227,23 @@ def test_map_anthropic_api_status_error_invalid_request():
     assert isinstance(mapped, LLMContentPolicyViolationError)
     assert mapped.provider == ModelProvider.ANTHROPIC.value
     assert "AnthropicError:" in str(mapped)
+
+
+def test_map_anthropic_api_status_error_token_limit():
+    import httpx
+    from anthropic import APIStatusError
+
+    response = httpx.Response(status_code=400, request=httpx.Request("POST", "https://api.anthropic.com/v1/messages"))
+    body = {
+        "type": "error",
+        "error": {
+            "type": "invalid_request_error",
+            "message": "Invalid request: Your request exceeded model token limit: 262144 (requested: 1348145)",
+        },
+    }
+
+    err = APIStatusError("invalid request", response=response, body=body)
+
+    mapped = map_anthropic_errors(err)
+    assert isinstance(mapped, LLMContextWindowExceededError)
+    assert mapped.provider == ModelProvider.ANTHROPIC.value

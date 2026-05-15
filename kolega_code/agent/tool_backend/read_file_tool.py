@@ -3,6 +3,45 @@ from .base_tool import BaseTool
 
 class ReadFileTool(BaseTool):
     MAX_LINES_FOR_ENTIRE_FILE = 2000
+    MAX_CHARS_FOR_FILE_OUTPUT = 100_000
+
+    def _format_file_content(
+        self,
+        relative_path: str,
+        content: str,
+        *,
+        line_range: str = "",
+        line_truncation_notice: str = "",
+    ) -> str:
+        original_char_count = len(content)
+        char_truncated = original_char_count > self.MAX_CHARS_FOR_FILE_OUTPUT
+        if char_truncated:
+            content = content[: self.MAX_CHARS_FOR_FILE_OUTPUT]
+
+        truncated = bool(line_truncation_notice) or char_truncated
+        suffix_parts = []
+        if line_range:
+            suffix_parts.append(line_range)
+        if truncated:
+            suffix_parts.append("(TRUNCATED)")
+        suffix = f" {' '.join(suffix_parts)}" if suffix_parts else ""
+
+        notices = []
+        if line_truncation_notice:
+            notices.append(line_truncation_notice)
+        if char_truncated:
+            notices.append(
+                f"**File truncated by size: Showing first {self.MAX_CHARS_FOR_FILE_OUTPUT:,} "
+                f"of {original_char_count:,} characters**"
+            )
+        if notices:
+            notices.append("To read specific sections, use `read_file_section` with start/end line numbers.")
+
+        notice_text = "\n\n".join(notices)
+        if notice_text:
+            notice_text += "\n\n"
+
+        return f"# {relative_path}{suffix}\n\n{notice_text}```\n{content}\n```"
 
     async def read_entire_file(self, relative_path: str) -> str:
         """
@@ -33,14 +72,15 @@ class ReadFileTool(BaseTool):
             truncated_lines = lines[: self.MAX_LINES_FOR_ENTIRE_FILE]
             truncated_content = "".join(truncated_lines)
 
-            return (
-                f"# {relative_path} (TRUNCATED)\n\n"
-                f"**⚠️ File truncated: Showing first {self.MAX_LINES_FOR_ENTIRE_FILE} of {total_lines} lines**\n\n"
-                f"To read specific sections, use `read_file_section` with start/end line numbers.\n\n"
-                f"```\n{truncated_content}\n```"
+            return self._format_file_content(
+                relative_path,
+                truncated_content,
+                line_truncation_notice=(
+                    f"**⚠️ File truncated: Showing first {self.MAX_LINES_FOR_ENTIRE_FILE} of {total_lines} lines**"
+                ),
             )
 
-        return f"# {relative_path}\n\n```\n{file_content}\n```"
+        return self._format_file_content(relative_path, file_content)
 
     async def read_file_section(self, relative_path: str, start_line: int, end_line: int) -> str:
         """
@@ -76,4 +116,4 @@ class ReadFileTool(BaseTool):
         # Adjust for 0-indexed list
         section_content = "".join(lines[start_line - 1 : end_line])
         line_range = f"(lines {start_line}-{min(end_line, len(lines))})"
-        return f"# {relative_path} {line_range}\n\n```\n{section_content}\n```"
+        return self._format_file_content(relative_path, section_content, line_range=line_range)

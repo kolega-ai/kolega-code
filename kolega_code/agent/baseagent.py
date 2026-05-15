@@ -9,7 +9,13 @@ from .config import AgentConfig, ModelProvider
 from .connection_manager import AgentConnectionManager
 from .llm.client import LLMClient
 from .llm.instrumented_client import InstrumentedLLMClient
-from .llm.exceptions import LLMError, LLMRateLimitError, LLMInternalServerError, map_to_llm_error
+from .llm.exceptions import (
+    LLMContextWindowExceededError,
+    LLMError,
+    LLMInternalServerError,
+    LLMRateLimitError,
+    map_to_llm_error,
+)
 from .llm.models import Message, MessageHistory, TextBlock, ToolCall, ToolResult
 from .llm.providers.models import TokenCount
 from .llm.specs import get_model_specs
@@ -40,6 +46,7 @@ class BaseAgent(LogMixin):
     agent_name = "base-agent"  # you should never see this
     history_compression_threshold = 0.8
     long_content_tool_calls = ["create_file", "replace_entire_file"]
+    max_tool_result_chars_in_history = 100_000
 
     def __init__(
         self,
@@ -226,6 +233,7 @@ class BaseAgent(LogMixin):
         raise NotImplementedError
 
     async def count_current_context(self) -> TokenCount:
+        self._sanitize_oversized_tool_results()
         # Fix history before counting to get accurate count for what LLM will see
         effective = self.get_effective_history_for_llm()
         fixed_history = MessageHistory(self._fix_incomplete_tool_calls(list(effective)))
@@ -281,6 +289,30 @@ class BaseAgent(LogMixin):
         parsed_messages = [Message.from_dict(item) for item in serialized_history]
         # Keep history authentic - no fixing here
         self.history = MessageHistory(parsed_messages)
+        self._sanitize_oversized_tool_results()
+
+    def _sanitize_oversized_tool_results(self) -> int:
+        sanitized_count = 0
+        for message in self.history:
+            if not isinstance(message.content, list):
+                continue
+
+            for block in message.content:
+                if not isinstance(block, ToolResult) or not isinstance(block.content, str):
+                    continue
+
+                content_length = len(block.content)
+                if content_length <= self.max_tool_result_chars_in_history:
+                    continue
+
+                block.content = (
+                    f"[Tool result omitted from history because it was {content_length:,} characters, "
+                    f"exceeding the {self.max_tool_result_chars_in_history:,} character safety cap. "
+                    f"Re-run `{block.name}` with narrower inputs if the content is still needed.]"
+                )
+                sanitized_count += 1
+
+        return sanitized_count
 
     def _is_history_valid_for_anthropic(self, messages: List[Message] = None) -> bool:
         """
@@ -899,6 +931,23 @@ class BaseAgent(LogMixin):
                 content={
                     "status": "error",
                     "message": "There is high traffic on our LLM provider right now. Please try again in a few seconds.",
+                },
+                timestamp=datetime.now().isoformat(),
+                is_streaming=False,
+            )
+            await self.connection_manager.broadcast_event(event, self.workspace_id, self.thread_id)
+            raise
+
+        elif isinstance(error, LLMContextWindowExceededError):
+            event = AgentEvent(
+                sender=self.agent_name,
+                event_type="llm_status_update",
+                content={
+                    "status": "error",
+                    "message": (
+                        "The conversation context became too large for the model. "
+                        "Oversized tool output is trimmed automatically; please retry the message."
+                    ),
                 },
                 timestamp=datetime.now().isoformat(),
                 is_streaming=False,

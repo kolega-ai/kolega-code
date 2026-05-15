@@ -198,55 +198,52 @@ class AnthropicProvider(BaseLLMProvider):
 
         # Count system message tokens (minimal overhead)
         if system:
-            num_tokens += 3  # Reduced formatting overhead
-            if hasattr(system, "role") and system.role:
-                num_tokens += len(encoding.encode(system.role))
+            num_tokens += 3
+            num_tokens += self._count_value_tokens(encoding, system.to_anthropic())
 
-            if hasattr(system, "content"):
-                if isinstance(system.content, str):
-                    num_tokens += len(encoding.encode(system.content))
-                elif isinstance(system.content, list):
-                    for item in system.content:
-                        if hasattr(item, "text") and item.text:
-                            num_tokens += len(encoding.encode(item.text))
-                        elif isinstance(item, dict) and "text" in item:
-                            num_tokens += len(encoding.encode(item["text"]))
-                        elif hasattr(item, "data") and hasattr(item, "media_type"):
-                            # ImageBlock - estimate tokens based on base64 data size
-                            num_tokens += self._estimate_image_tokens(len(item.data))
-
-        # Count message history tokens (minimal overhead)
+        # Count message history tokens (minimal overhead). Convert through the
+        # provider payload shape so tool_result content is counted too.
         for message in messages:
-            num_tokens += 3  # Reduced formatting overhead
-
-            if hasattr(message, "role") and message.role:
-                num_tokens += len(encoding.encode(message.role))
-
-            if hasattr(message, "content"):
-                if isinstance(message.content, str):
-                    num_tokens += len(encoding.encode(message.content))
-                elif isinstance(message.content, list):
-                    for item in message.content:
-                        if hasattr(item, "text") and item.text:
-                            num_tokens += len(encoding.encode(item.text))
-                        elif isinstance(item, dict) and "text" in item:
-                            num_tokens += len(encoding.encode(item["text"]))
-                        elif hasattr(item, "data") and hasattr(item, "media_type"):
-                            # ImageBlock - estimate tokens based on base64 data size
-                            num_tokens += self._estimate_image_tokens(len(item.data))
+            num_tokens += 3
+            num_tokens += self._count_value_tokens(encoding, message.to_anthropic())
 
         # Count tool definition tokens
         if tools:
             # Tools add significant overhead in Anthropic's API
-            # Use JSON serialization as base, then add overhead per tool
             for tool in tools:
-                tool_json = json.dumps(tool.to_anthropic())
-                # Count JSON tokens
-                num_tokens += len(encoding.encode(tool_json))
+                num_tokens += self._count_value_tokens(encoding, tool.to_anthropic())
                 # Add per-tool overhead (Anthropic adds structure markup)
                 num_tokens += 20
 
         return TokenCount(input_tokens=num_tokens, output_tokens=None)
+
+    def _count_value_tokens(self, encoding, value: Any) -> int:
+        if value is None:
+            return 0
+
+        if isinstance(value, str):
+            return len(encoding.encode(value))
+
+        if isinstance(value, (int, float, bool)):
+            return len(encoding.encode(str(value)))
+
+        if isinstance(value, list):
+            return 2 + sum(self._count_value_tokens(encoding, item) for item in value)
+
+        if isinstance(value, dict):
+            if value.get("type") == "image":
+                source = value.get("source") or {}
+                data = source.get("data")
+                if isinstance(data, str):
+                    return self._estimate_image_tokens(len(data))
+
+            total = 2
+            for key, item in value.items():
+                total += len(encoding.encode(str(key)))
+                total += self._count_value_tokens(encoding, item)
+            return total
+
+        return len(encoding.encode(json.dumps(value, ensure_ascii=False, default=str)))
 
     def _estimate_image_tokens(self, base64_data_length: int) -> int:
         """Estimate image token cost based on base64 data length.
