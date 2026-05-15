@@ -52,6 +52,7 @@ from kolega_code.agent.llm.models import (
     ToolCall,
     ToolResult,
 )
+from kolega_code.agent.llm.providers.anthropic import AnthropicStreamWrapper
 
 # Test data
 TEST_MESSAGES = MessageHistory([Message("user", [TextBlock("Hello, how are you?")])])
@@ -138,6 +139,60 @@ def test_tool_call_execution_id_is_internal_and_provider_id_is_preserved():
     restored = ToolCall.from_dict(first.to_dict())
     assert restored.id == first.id
     assert restored.execution_id == first.execution_id
+
+
+@pytest.mark.asyncio
+async def test_anthropic_stream_tool_use_start_execution_id_matches_final_tool_call():
+    class ContentBlock:
+        type = "tool_use"
+        id = "toolu_create_file"
+        name = "create_file"
+        input = {"relative_path": "hello.txt", "content": "hello"}
+
+    class StartChunk:
+        type = "content_block_start"
+        index = 0
+        content_block = ContentBlock()
+
+    class FinalMessage:
+        role = "assistant"
+        stop_reason = "tool_use"
+        content = [ContentBlock()]
+
+    class FakeGenerator:
+        def __init__(self):
+            self.chunks = iter([StartChunk()])
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            try:
+                return next(self.chunks)
+            except StopIteration:
+                raise StopAsyncIteration
+
+        async def get_final_message(self):
+            return FinalMessage()
+
+    class FakeAnthropicStream:
+        async def __aenter__(self):
+            return FakeGenerator()
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            return False
+
+    async with AnthropicStreamWrapper(FakeAnthropicStream()) as stream:
+        start_chunk = await stream.__anext__()
+        final_message = await stream.get_final_message()
+
+    execution_id = start_chunk.tool_call_delta["execution_id"]
+
+    assert start_chunk.tool_call_delta["id"] == "toolu_create_file"
+    assert execution_id.startswith("tool_exec_")
+    assert final_message.tool_calls[0].id == "toolu_create_file"
+    assert final_message.tool_calls[0].execution_id == execution_id
+    assert final_message.content[0].execution_id == execution_id
 
 
 @pytest.mark.asyncio
