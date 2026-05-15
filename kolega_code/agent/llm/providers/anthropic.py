@@ -1,12 +1,12 @@
 import json
 import os
-import uuid
 from typing import Any, AsyncContextManager, Dict, List, Optional, Union
 
 import tiktoken
 from anthropic import Anthropic, AsyncAnthropic
 
 from ..models import Message, MessageChunk, MessageHistory, ToolDefinition
+from ..tool_execution_ids import ToolExecutionIdRegistry
 from .base import BaseLLMProvider
 from .models import GenerationParams, ReasoningEffort, ThinkingConfig, TokenCount
 
@@ -19,6 +19,7 @@ class AnthropicStreamWrapper:
         self._closed = False
 
         # Track tool calls being streamed
+        self.tool_execution_ids = ToolExecutionIdRegistry()
         self.current_tool_calls = {}  # Maps tool_call_id to accumulated data
         self.tool_call_order = []  # Track order of tool calls
         self.current_block_index = None  # Track which content block we're processing
@@ -52,7 +53,7 @@ class AnthropicStreamWrapper:
                         "name": chunk.content_block.name,
                         "input_json": "",
                         "block_index": chunk.index if hasattr(chunk, "index") else len(self.tool_call_order),
-                        "execution_id": f"tool_exec_{uuid.uuid4().hex}",
+                        "execution_id": self.tool_execution_ids.get_or_create(tool_id),
                     }
                     self.tool_call_order.append(tool_id)
                     self.current_block_index = chunk.index if hasattr(chunk, "index") else None
@@ -80,12 +81,10 @@ class AnthropicStreamWrapper:
             raise
 
     async def get_final_message(self):
-        message = Message.from_anthropic(await self.generator.get_final_message())
-        if message.tool_calls:
-            for tool_call in message.tool_calls:
-                tool_data = self.current_tool_calls.get(tool_call.id)
-                if tool_data and tool_data.get("execution_id"):
-                    tool_call.execution_id = tool_data["execution_id"]
+        message = Message.from_anthropic(
+            await self.generator.get_final_message(),
+            tool_execution_ids=self.tool_execution_ids,
+        )
         if message.usage_metadata:
             message.usage_metadata["provider"] = self.provider_name
         return message

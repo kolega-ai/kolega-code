@@ -4,6 +4,7 @@ from google.genai import Client as genai_client
 from google.genai import types as genai_types
 
 from ..models import Message, MessageChunk, MessageHistory, ToolDefinition
+from ..tool_execution_ids import ToolExecutionIdRegistry
 from .base import BaseLLMProvider
 from .models import GenerationParams, TokenCount
 
@@ -14,6 +15,7 @@ class GoogleStreamWrapper:
         self.final_content = ""
         self.final_tool_calls = {}
         self.stop_reason = None
+        self.tool_execution_ids = ToolExecutionIdRegistry()
 
         self._closed = False
 
@@ -54,7 +56,11 @@ class GoogleStreamWrapper:
 
     async def get_final_message(self):
         return Message.from_google_stream(
-            role="assistant", content=self.final_content, tool_calls=self.final_tool_calls, stop_reason=self.stop_reason
+            role="assistant",
+            content=self.final_content,
+            tool_calls=self.final_tool_calls,
+            stop_reason=self.stop_reason,
+            tool_execution_ids=self.tool_execution_ids,
         )
 
 

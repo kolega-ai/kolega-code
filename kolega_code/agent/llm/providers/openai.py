@@ -7,6 +7,7 @@ import tiktoken
 from openai import AsyncOpenAI, OpenAI
 
 from ..models import ImageBlock, Message, MessageChunk, MessageHistory, ToolCall, ToolDefinition, ToolResult
+from ..tool_execution_ids import ToolExecutionIdRegistry
 from .base import BaseLLMProvider
 from .models import GenerationParams, TokenCount
 
@@ -18,6 +19,7 @@ class OpenAIStreamWrapper:
         self.final_tool_calls = {}
         self.stop_reason = None
         self.usage_data = None
+        self.tool_execution_ids = ToolExecutionIdRegistry()
 
         self._closed = False
         self._requested_include_usage = requested_include_usage
@@ -94,7 +96,11 @@ class OpenAIStreamWrapper:
 
     async def get_final_message(self):
         message = Message.from_openai_stream(
-            role="assistant", content=self.final_content, tool_calls=self.final_tool_calls, stop_reason=self.stop_reason
+            role="assistant",
+            content=self.final_content,
+            tool_calls=self.final_tool_calls,
+            stop_reason=self.stop_reason,
+            tool_execution_ids=self.tool_execution_ids,
         )
 
         # Add usage data if available
