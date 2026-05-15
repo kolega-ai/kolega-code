@@ -172,12 +172,6 @@ class TestPromptProvider:
         assert "never" in prompt.lower()
         assert "remove" in prompt.lower()
 
-    @pytest.mark.skip(reason="Deprecated - template parameter no longer supported, use template_slug")
-    def test_prompt_with_template_object(self, prompt_provider, prompt_context):
-        """Test prompt generation with a template object - DEPRECATED."""
-        # This test is kept for documentation but skipped
-        pass
-
     def test_prompt_with_template_slug(self, prompt_provider, prompt_context, template_slug):
         """Test prompt generation with a template slug."""
         prompt = prompt_provider.get_system_prompt(
