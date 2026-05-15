@@ -1,10 +1,11 @@
 import base64
 import json
 import logging
-import uuid
 from typing import Any, Dict, List, Optional, Union
 
 from google.genai import types as genai_types
+
+from .tool_execution_ids import ToolExecutionIdRegistry, new_tool_execution_id
 
 # Mapping from type string to class
 CONTENT_BLOCK_CLASSES = {}
@@ -455,7 +456,7 @@ class ToolCall(ContentBlock):
         self.id = id
         self.name = name
         self.input = input
-        self.execution_id = execution_id or f"tool_exec_{uuid.uuid4().hex}"
+        self.execution_id = execution_id or new_tool_execution_id()
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -848,7 +849,7 @@ class Message:
         )
 
     @classmethod
-    def from_anthropic(cls, message):
+    def from_anthropic(cls, message, tool_execution_ids: Optional[ToolExecutionIdRegistry] = None):
         """
         Converts an Anthropic message to a Message instance.
 
@@ -858,6 +859,7 @@ class Message:
         Returns:
             Message: A unified message representation
         """
+        tool_execution_ids = tool_execution_ids or ToolExecutionIdRegistry()
         tool_use_blocks = []
         content_blocks = []
 
@@ -872,7 +874,12 @@ class Message:
                         if block.type == "text":
                             content_blocks.append(TextBlock(text=block.text))
                         elif block.type == "tool_use":
-                            tool_call = ToolCall(id=block.id, name=block.name, input=block.input)
+                            tool_call = ToolCall(
+                                id=block.id,
+                                name=block.name,
+                                input=block.input,
+                                execution_id=tool_execution_ids.get_or_create(block.id),
+                            )
                             tool_use_blocks.append(tool_call)
                             content_blocks.append(tool_call)
                         elif block.type == "thinking":
@@ -905,7 +912,7 @@ class Message:
         )
 
     @classmethod
-    def from_openai(cls, message):
+    def from_openai(cls, message, tool_execution_ids: Optional[ToolExecutionIdRegistry] = None):
         """
         Converts an OpenAI message to a Message instance.
 
@@ -922,6 +929,7 @@ class Message:
             "stop": "end_turn",
         }
 
+        tool_execution_ids = tool_execution_ids or ToolExecutionIdRegistry()
         content_blocks = []
         tool_use_blocks = []
 
@@ -933,7 +941,12 @@ class Message:
         if hasattr(message, "tool_calls") and message.tool_calls:
             for tool_call in message.tool_calls:
                 parsed_args = safe_parse_tool_arguments(tool_call.function.arguments)
-                tool_call_obj = ToolCall(id=tool_call.id, name=tool_call.function.name, input=parsed_args)
+                tool_call_obj = ToolCall(
+                    id=tool_call.id,
+                    name=tool_call.function.name,
+                    input=parsed_args,
+                    execution_id=tool_execution_ids.get_or_create(tool_call.id),
+                )
                 tool_use_blocks.append(tool_call_obj)
                 content_blocks.append(tool_call_obj)
 
@@ -950,12 +963,17 @@ class Message:
         )
 
     @classmethod
-    def from_google(cls, message: genai_types.GenerateContentResponse):
+    def from_google(
+        cls,
+        message: genai_types.GenerateContentResponse,
+        tool_execution_ids: Optional[ToolExecutionIdRegistry] = None,
+    ):
         stop_reason_map = {
             "MAX_TOKENS": "max_tokens",
             "STOP": "end_turn",
         }
 
+        tool_execution_ids = tool_execution_ids or ToolExecutionIdRegistry()
         content_blocks = []
         tool_use_blocks = []
 
@@ -968,7 +986,14 @@ class Message:
 
         if message.function_calls:
             for function_call in message.function_calls:
-                tool_use_blocks.append(ToolCall(id=function_call.id, name=function_call.name, input=function_call.args))
+                tool_use_blocks.append(
+                    ToolCall(
+                        id=function_call.id,
+                        name=function_call.name,
+                        input=function_call.args,
+                        execution_id=tool_execution_ids.get_or_create(function_call.id),
+                    )
+                )
 
         mapped_stop_reason = stop_reason_map[message.finish_reason] if hasattr(message, "finish_reason") else None
         if tool_use_blocks:
@@ -995,7 +1020,12 @@ class Message:
 
     @classmethod
     def from_openai_stream(
-        cls, role: str, content: str, tool_calls: Optional[list] = None, stop_reason: Optional[str] = None
+        cls,
+        role: str,
+        content: str,
+        tool_calls: Optional[list] = None,
+        stop_reason: Optional[str] = None,
+        tool_execution_ids: Optional[ToolExecutionIdRegistry] = None,
     ):
         """
         Converts OpenAI message components to a Message instance.
@@ -1015,6 +1045,7 @@ class Message:
             "stop": "end_turn",
         }
 
+        tool_execution_ids = tool_execution_ids or ToolExecutionIdRegistry()
         content_blocks = []
         tool_use_blocks = []
 
@@ -1026,7 +1057,12 @@ class Message:
         if tool_calls:
             for tool_call in tool_calls.values():
                 parsed_args = safe_parse_tool_arguments(tool_call.function.arguments)
-                tool_call_obj = ToolCall(id=tool_call.id, name=tool_call.function.name, input=parsed_args)
+                tool_call_obj = ToolCall(
+                    id=tool_call.id,
+                    name=tool_call.function.name,
+                    input=parsed_args,
+                    execution_id=tool_execution_ids.get_or_create(tool_call.id),
+                )
                 tool_use_blocks.append(tool_call_obj)
                 content_blocks.append(tool_call_obj)
 
@@ -1040,13 +1076,19 @@ class Message:
 
     @classmethod
     def from_google_stream(
-        cls, role: str, content: str, tool_calls: Optional[list] = None, stop_reason: Optional[str] = None
+        cls,
+        role: str,
+        content: str,
+        tool_calls: Optional[list] = None,
+        stop_reason: Optional[str] = None,
+        tool_execution_ids: Optional[ToolExecutionIdRegistry] = None,
     ):
         stop_reason_map = {
             "MAX_TOKENS": "max_tokens",
             "STOP": "end_turn",
         }
 
+        tool_execution_ids = tool_execution_ids or ToolExecutionIdRegistry()
         content_blocks = []
         tool_use_blocks = []
 
@@ -1057,7 +1099,12 @@ class Message:
         # Handle tool calls
         if tool_calls:
             for tool_call in tool_calls.values():
-                tool_call_obj = ToolCall(id=tool_call.id, name=tool_call.name, input=tool_call.args)
+                tool_call_obj = ToolCall(
+                    id=tool_call.id,
+                    name=tool_call.name,
+                    input=tool_call.args,
+                    execution_id=tool_execution_ids.get_or_create(tool_call.id),
+                )
                 tool_use_blocks.append(tool_call_obj)
                 content_blocks.append(tool_call_obj)
 
