@@ -1,5 +1,6 @@
 import json
 import os
+import uuid
 from typing import Any, AsyncContextManager, Dict, List, Optional, Union
 
 import tiktoken
@@ -51,6 +52,7 @@ class AnthropicStreamWrapper:
                         "name": chunk.content_block.name,
                         "input_json": "",
                         "block_index": chunk.index if hasattr(chunk, "index") else len(self.tool_call_order),
+                        "execution_id": f"tool_exec_{uuid.uuid4().hex}",
                     }
                     self.tool_call_order.append(tool_id)
                     self.current_block_index = chunk.index if hasattr(chunk, "index") else None
@@ -65,13 +67,25 @@ class AnthropicStreamWrapper:
                             tool_data["input_json"] += chunk.delta.partial_json
                             break
 
-            return MessageChunk.from_anthropic(chunk)
+            message_chunk = MessageChunk.from_anthropic(chunk)
+            if message_chunk.type == "tool_use_start" and message_chunk.tool_call_delta:
+                tool_id = message_chunk.tool_call_delta.get("id")
+                tool_data = self.current_tool_calls.get(tool_id)
+                if tool_data and tool_data.get("execution_id"):
+                    message_chunk.tool_call_delta["execution_id"] = tool_data["execution_id"]
+
+            return message_chunk
 
         except StopAsyncIteration:
             raise
 
     async def get_final_message(self):
         message = Message.from_anthropic(await self.generator.get_final_message())
+        if message.tool_calls:
+            for tool_call in message.tool_calls:
+                tool_data = self.current_tool_calls.get(tool_call.id)
+                if tool_data and tool_data.get("execution_id"):
+                    tool_call.execution_id = tool_data["execution_id"]
         if message.usage_metadata:
             message.usage_metadata["provider"] = self.provider_name
         return message

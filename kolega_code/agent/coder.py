@@ -313,6 +313,7 @@ class CoderAgent(BaseAgent, LogMixin):
 
                             tool_id = event.tool_call_delta.get("id")
                             tool_name = event.tool_call_delta.get("name")
+                            tool_execution_id = event.tool_call_delta.get("execution_id") or tool_id
 
                             # We need to start the tool call here and skip it in BaseAgent.execute_single_tool
                             if tool_name in self.long_content_tool_calls:
@@ -321,7 +322,7 @@ class CoderAgent(BaseAgent, LogMixin):
                                     content=f"Calling {tool_name}",
                                     is_streaming=False,
                                     tool_description=tool_name,
-                                    tool_call_id=tool_id,
+                                    tool_call_id=tool_execution_id,
                                 )
 
                 message = await stream.get_final_message()
