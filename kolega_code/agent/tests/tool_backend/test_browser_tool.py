@@ -278,6 +278,33 @@ class TestBrowserTool:
         assert "## Page HTML" in result
 
     @pytest.mark.asyncio
+    async def test_get_browser_content_truncates_large_html(self, browser_tool):
+        mock_content_result = {
+            "current_url": "https://example.com",
+            "title": "Large Page",
+            "html": "a" * 100_050,
+            "console_logs": [],
+            "console_log_metadata": {
+                "total_logs_count": 0,
+                "returned_count": 0,
+                "filters_applied": {
+                    "max_logs": 50,
+                    "log_types": ["error", "warning", "assert"],
+                    "minutes_back": None,
+                    "max_chars": 8000,
+                },
+            },
+        }
+
+        browser_tool.browser_manager.get_browser_content = AsyncMock(return_value=mock_content_result)
+
+        result = await browser_tool.get_browser_content("test-browser-id")
+
+        assert "HTML truncated by size: Showing first 100,000 of 100,050 characters" in result
+        html_content = result.split("```html\n", 1)[1].rsplit("\n```", 1)[0]
+        assert len(html_content) == 100_000
+
+    @pytest.mark.asyncio
     async def test_get_browser_content_without_metadata(self, browser_tool):
         """Test get_browser_content when console_log_metadata is missing."""
         mock_content_result = {

@@ -396,6 +396,35 @@ class TestBaseAgent:
         assert msg3.content[0].is_error is False
         assert msg3.stop_reason is None
 
+    def test_restore_message_history_sanitizes_oversized_tool_results(self, base_agent):
+        oversized_content = "x" * 100_001
+        serialized_history = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "read_entire_file_24",
+                        "content": oversized_content,
+                        "name": "read_entire_file",
+                        "is_error": False,
+                        "cache_checkpoint": False,
+                    }
+                ],
+                "stop_reason": None,
+            }
+        ]
+
+        base_agent.restore_message_history(serialized_history)
+
+        result = base_agent.history[0].content[0]
+        assert isinstance(result, ToolResult)
+        assert result.tool_use_id == "read_entire_file_24"
+        assert result.name == "read_entire_file"
+        assert result.is_error is False
+        assert len(result.content) < 500
+        assert "Tool result omitted from history" in result.content
+
     def test_dump_restore_cycle(self, base_agent):
         """Test that dumping and then restoring results in the original history using custom methods."""
         original_history = MessageHistory(

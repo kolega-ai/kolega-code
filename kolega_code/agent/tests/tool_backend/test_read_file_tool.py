@@ -122,6 +122,28 @@ class TestReadFileTool:
         assert actual_lines[0] == "Line 1"
         assert actual_lines[-1] == "Line 2000"
 
+    async def test_read_entire_file_char_truncation(self, read_file_tool, project_path):
+        large_file_path = project_path / "large_one_line.html"
+        large_file_path.write_text("a" * 100_050)
+
+        content = await read_file_tool.read_entire_file("large_one_line.html")
+
+        assert "# large_one_line.html (TRUNCATED)" in content
+        assert "File truncated by size: Showing first 100,000 of 100,050 characters" in content
+        code_content = content.split("```\n", 1)[1].rsplit("\n```", 1)[0]
+        assert len(code_content) == 100_000
+
+    async def test_read_file_section_char_truncation(self, read_file_tool, project_path):
+        large_file_path = project_path / "large_section.txt"
+        large_file_path.write_text(("a" * 30_000 + "\n") * 5)
+
+        content = await read_file_tool.read_file_section("large_section.txt", 1, 5)
+
+        assert "# large_section.txt (lines 1-5) (TRUNCATED)" in content
+        assert "File truncated by size" in content
+        code_content = content.split("```\n", 1)[1].rsplit("\n```", 1)[0]
+        assert len(code_content) == 100_000
+
     async def test_read_entire_file_exactly_at_limit(self, read_file_tool, project_path):
         """Test that files with exactly 2000 lines are not truncated."""
         # Create a file with exactly 2000 lines
