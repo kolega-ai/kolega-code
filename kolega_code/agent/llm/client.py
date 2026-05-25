@@ -108,6 +108,7 @@ class LLMClient:
                 "xai": OpenAIProvider,
                 "dashscope": OpenAIProvider,
                 "moonshot": AnthropicProvider,
+                "deepseek": AnthropicProvider,
             }
 
             base_urls: Dict[str, str] = {
@@ -120,6 +121,7 @@ class LLMClient:
                 "xai": "https://api.x.ai/v1",
                 "dashscope": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
                 "moonshot": "https://api.moonshot.ai/anthropic",
+                "deepseek": "https://api.deepseek.com/anthropic",
             }
 
             provider_class = providers.get(provider.lower())
@@ -194,7 +196,7 @@ class LLMClient:
         if thinking is None:
             return None
 
-        if self.provider_name in ["anthropic", "moonshot"]:
+        if self.provider_name in ["anthropic", "moonshot", "deepseek"]:
             if isinstance(thinking, int):
                 return ThinkingConfig(budget_tokens=thinking)
             return ThinkingConfig()  # Use default budget_tokens

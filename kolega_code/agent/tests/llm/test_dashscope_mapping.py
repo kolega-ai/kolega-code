@@ -1,5 +1,3 @@
-import pytest
-
 from kolega_code.agent.llm.client import LLMClient
 from kolega_code.agent.llm.providers.anthropic import AnthropicProvider
 from kolega_code.agent.llm.providers.openai import OpenAIProvider
@@ -17,6 +15,17 @@ def test_llm_client_maps_moonshot_to_anthropic_provider():
     assert isinstance(client.provider, AnthropicProvider)
     assert client.provider.base_url == 'https://api.moonshot.ai/anthropic'
     assert client.provider.provider_name == 'moonshot'
+    assert client.provider.use_local_token_counting is True
+
+    thinking = client._prepare_thinking_param(8192)
+    assert thinking.budget_tokens == 8192
+
+
+def test_llm_client_maps_deepseek_to_anthropic_provider():
+    client = LLMClient(provider='deepseek', api_key='sk-test')
+    assert isinstance(client.provider, AnthropicProvider)
+    assert client.provider.base_url == 'https://api.deepseek.com/anthropic'
+    assert client.provider.provider_name == 'deepseek'
     assert client.provider.use_local_token_counting is True
 
     thinking = client._prepare_thinking_param(8192)

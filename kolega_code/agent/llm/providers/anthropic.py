@@ -105,11 +105,11 @@ class AnthropicProvider(BaseLLMProvider):
         self.async_client = AsyncAnthropic(api_key=api_key, base_url=base_url)
         self.sync_client = Anthropic(api_key=api_key, base_url=base_url)
         
-        # Moonshot's Anthropic-shaped API does not expose messages/count_tokens,
-        # so local counting is only a preflight context-size estimate for Kimi.
+        # OpenAI-compatible Anthropic-shaped APIs do not expose messages/count_tokens,
+        # so local counting is only a preflight context-size estimate for those models.
         # Billing/accounting must use provider response usage metadata instead.
         self.use_local_token_counting = (
-            provider_name == "moonshot"
+            provider_name in {"moonshot", "deepseek"}
             or os.getenv('ANTHROPIC_USE_LOCAL_TOKEN_COUNTING', 'false').lower() == 'true'
         )
 
@@ -125,7 +125,7 @@ class AnthropicProvider(BaseLLMProvider):
     def _prepare_generation_params(self, params: Optional[GenerationParams] = None) -> Dict[str, Any]:
         """Convert common parameters to provider-specific format"""
         generation_params = {
-            "model": "claude-opus-4-5-20251101",  # Default model
+            "model": "claude-opus-4-7",  # Default model
             "max_tokens": 1024,  # Default max tokens
         }
 

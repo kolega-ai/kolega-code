@@ -65,7 +65,7 @@ class CoderAgent(BaseAgent, LogMixin):
             user_email: Optional email of user who created this job
             project_template_slug: Optional slug of the project template being used
             protected_files: Optional list of file basenames protected from edits in vibe mode
-            agent_mode: Optional agent mode (VIBE or CODE)
+            agent_mode: Optional agent mode (CLI, VIBE, CODE, or FIX)
             workspace_env_var_descriptions: Optional mapping of workspace environment variable descriptions
             workspace_memories: Optional list of workspace memories to inject into prompts
             prompt_extensions: Host-provided prompt sections for app-specific context
