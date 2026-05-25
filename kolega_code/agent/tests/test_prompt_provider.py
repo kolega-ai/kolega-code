@@ -3,9 +3,6 @@ Unit tests for the PromptProvider class.
 """
 
 import pytest
-from pathlib import Path
-from unittest.mock import Mock
-from datetime import datetime, timezone
 
 from kolega_code.agent.prompt_provider import PromptProvider, AgentType, AgentMode, PromptContext, PromptExtension
 
@@ -71,6 +68,32 @@ class TestPromptProvider:
         assert "Kolega Code" in prompt
         assert len(prompt) > 0
 
+    def test_coder_agent_cli_mode(self, prompt_provider, prompt_context):
+        """Test coder agent with CLI mode."""
+        prompt = prompt_provider.get_system_prompt(
+            agent_type=AgentType.CODER, mode=AgentMode.CLI, context=prompt_context
+        )
+
+        assert prompt is not None
+        assert "local developer CLI" in prompt
+        assert "Kolega Code" in prompt
+        assert "/test/project" in prompt
+        assert "Test project documentation" in prompt
+        assert len(prompt) > 0
+
+    def test_cli_mode_prompt_omits_platform_memory_bank_instructions(self, prompt_provider, prompt_context):
+        """CLI mode should not include platform memory-bank or hosted-agent instructions."""
+        prompt = prompt_provider.get_system_prompt(
+            agent_type=AgentType.CODER, mode=AgentMode.CLI, context=prompt_context
+        )
+        prompt_lower = prompt.lower()
+
+        assert "memory bank" not in prompt_lower
+        assert "kolega-memory-bank" not in prompt
+        assert "dispatch_investigation_agent" not in prompt
+        assert "Test Task Detection" not in prompt
+        assert "Scope Boundary Management" not in prompt
+
     def test_investigation_agent_prompt_generation(self, prompt_provider, prompt_context):
         """Test that investigation agent prompts can be generated."""
         prompt = prompt_provider.get_system_prompt(agent_type=AgentType.INVESTIGATION, context=prompt_context)
@@ -112,6 +135,27 @@ class TestPromptProvider:
         assert "Example Extension" in prompt
         assert "Extra host context." in prompt
 
+    def test_cli_prompt_with_matching_prompt_extension(self, prompt_provider, prompt_context):
+        """CLI mode should render prompt extensions that target CLI mode."""
+        prompt = prompt_provider.get_system_prompt(
+            agent_type=AgentType.CODER,
+            mode=AgentMode.CLI,
+            prompt_extensions=[
+                PromptExtension(
+                    id="cli-example",
+                    title="CLI Extension",
+                    markdown="Extra CLI context.",
+                    agent_types=[AgentType.CODER],
+                    modes=[AgentMode.CLI],
+                )
+            ],
+            context=prompt_context,
+        )
+
+        assert prompt is not None
+        assert "CLI Extension" in prompt
+        assert "Extra CLI context." in prompt
+
     def test_prompt_filters_non_matching_prompt_extension(self, prompt_provider, prompt_context):
         """Prompt extensions should only render for matching agent types and modes."""
         prompt = prompt_provider.get_system_prompt(
@@ -147,6 +191,19 @@ class TestPromptProvider:
         assert "Stripe API key for billing" in prompt
         assert "DEBUG_MODE" in prompt
         assert "Toggle verbose logging" in prompt
+
+    def test_cli_mode_prompt_includes_workspace_environment_variables(self, prompt_provider, prompt_context):
+        """Coder CLI mode should list workspace environment variable descriptions when provided."""
+        prompt_context.workspace_environment_variables = {
+            "STRIPE_API_KEY": "Stripe API key for billing",
+        }
+
+        prompt = prompt_provider.get_system_prompt(
+            agent_type=AgentType.CODER, mode=AgentMode.CLI, context=prompt_context
+        )
+
+        assert "STRIPE_API_KEY" in prompt
+        assert "Stripe API key for billing" in prompt
 
     def test_vibe_mode_prompt_includes_workspace_environment_variables(self, prompt_provider, prompt_context):
         """Coder vibe mode should list workspace environment variables when provided."""

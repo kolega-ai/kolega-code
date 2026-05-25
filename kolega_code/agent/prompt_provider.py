@@ -1,4 +1,4 @@
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -22,6 +22,7 @@ class AgentType(Enum):
 
 
 class AgentMode(Enum):
+    CLI = "cli"
     VIBE = "vibe"
     CODE = "code"
     FIX = "fix"
@@ -79,7 +80,7 @@ class PromptProvider:
 
         Args:
             agent_type: Type of shared coding agent (coder, investigation, browser)
-            mode: Agent mode (vibe/code) - only applies to coder agents
+            mode: Agent mode (cli/vibe/code/fix) - only applies to coder agents
             template_slug: Project template slug identifier (e.g., 'mern-stack-template')
             prompt_extensions: Host-provided prompt sections to render for matching agents
             context: Environment and project context
@@ -147,13 +148,17 @@ class PromptProvider:
         """Get the Jinja2 template filename for the agent type and mode."""
         mode_value = mode.value if isinstance(mode, AgentMode) else mode
         if agent_type == AgentType.CODER:
-            if mode_value == AgentMode.VIBE.value:
+            if mode_value == AgentMode.CLI.value:
+                return f"agents/{agent_type.value}_cli_mode.j2"
+            elif mode_value == AgentMode.VIBE.value:
                 return f"agents/{agent_type.value}_vibe_mode.j2"
             elif mode_value == AgentMode.CODE.value:
                 return f"agents/{agent_type.value}_code_mode.j2"
             elif mode_value == AgentMode.FIX.value:
                 return f"agents/{agent_type.value}_fix_mode.j2"
             else:
-                raise ValueError(f"CODER agent requires a valid mode ('vibe', 'code', or 'fix'), got: {mode_value}")
+                raise ValueError(
+                    f"CODER agent requires a valid mode ('cli', 'vibe', 'code', or 'fix'), got: {mode_value}"
+                )
 
         return f"agents/{agent_type.value}.j2"

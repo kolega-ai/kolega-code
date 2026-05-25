@@ -4,21 +4,16 @@ Tests for the InstrumentedLLMClient class.
 
 import os
 import pytest
-from unittest.mock import Mock, AsyncMock, patch, MagicMock, PropertyMock
-from typing import Dict, Any
-from datetime import datetime
-import asyncio
+from unittest.mock import Mock, AsyncMock, patch, MagicMock
 
-# Check if running in CI environment
-SKIP_IN_CI = bool(os.getenv("CI")) or bool(os.getenv("GITLAB_CI"))
-
-from kolega_code.agent.llm.client import LLMClient
-from kolega_code.agent.llm.models import Message, MessageHistory, MessageChunk, TextBlock, ToolCall
+from kolega_code.agent.llm.models import Message, MessageHistory, TextBlock
 from kolega_code.agent.llm.instrumented_client import (
     InstrumentedLLMClient,
     MinimalLangfuseStreamWrapper,
 )
-from kolega_code.agent.llm.providers.models import GenerationParams
+
+# Check if running in CI environment
+SKIP_IN_CI = bool(os.getenv("CI")) or bool(os.getenv("GITLAB_CI"))
 
 
 class TestInstrumentedLLMClient:
@@ -170,6 +165,25 @@ class TestInstrumentedLLMClient:
         assert usage["candidates_token_count"] == 50
         assert usage["total_token_count"] == 150
 
+    def test_normalize_usage_data_deepseek(self, instrumented_client):
+        usage = instrumented_client._normalize_usage_data(
+            {
+                "provider": "deepseek",
+                "input_tokens": 100,
+                "output_tokens": 50,
+                "cache_read_input_tokens": 25,
+                "cache_write_input_tokens": 5,
+            },
+            model="deepseek-v4-pro",
+        )
+
+        assert usage["provider"] == "deepseek"
+        assert usage["model"] == "deepseek-v4-pro"
+        assert usage["input_tokens"] == 100
+        assert usage["output_tokens"] == 50
+        assert usage["cache_read_input_tokens"] == 25
+        assert usage["cache_write_input_tokens"] == 5
+
     def test_extract_usage_details_no_metadata(self, instrumented_client):
         """Test extraction returns empty dict when no metadata."""
         # Mock Message without usage_metadata
@@ -204,7 +218,7 @@ class TestInstrumentedLLMClient:
         with patch("kolega_code.agent.llm.client.LLMClient.generate", AsyncMock(return_value=mock_response)):
             messages = MessageHistory([Message(role="user", content=[TextBlock(text="Hello")])])
 
-            response = await instrumented_client.generate(
+            await instrumented_client.generate(
                 messages=messages, model="claude-3-opus", temperature=0.5, max_completion_tokens=100
             )
 
@@ -274,7 +288,7 @@ class TestInstrumentedLLMClient:
         with patch("kolega_code.agent.llm.client.LLMClient.generate", AsyncMock(return_value=mock_response)):
             messages = MessageHistory([Message(role="user", content=[TextBlock(text="Hello")])])
 
-            response = await client.generate(
+            await client.generate(
                 messages=messages, model="claude-3-opus", temperature=0.5, max_completion_tokens=100
             )
 
