@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Optional
 
 from rich.markup import escape
+from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
@@ -27,6 +28,14 @@ from .settings import CliSettings, SettingsStore
 TOOL_RESULT_PREVIEW_CHARS = 500
 CLI_AGENT_MODE = AgentMode.CLI.value
 COMPOSER_PLACEHOLDER = "Ask Kolega Code..."
+STARTUP_WORDMARK = (
+    " _  __     _                    ____          _",
+    "| |/ /___ | | ___  __ _  __ _ / ___|___   __| | ___",
+    "| ' // _ \\| |/ _ \\/ _` |/ _` | |   / _ \\ / _` |/ _ \\",
+    "| . \\ (_) | |  __/ (_| | (_| | |__| (_) | (_| |  __/",
+    "|_|\\_\\___/|_|\\___|\\__, |\\__,_|\\____\\___/ \\__,_|\\___|",
+    "                  |___/",
+)
 
 
 @dataclass
@@ -355,8 +364,10 @@ class KolegaCodeApp(App):
         try:
             config = build_agent_config(self.project_path, self.overrides, settings=self.settings)
         except CliConfigError as exc:
+            self.config = None
             self._set_chat_enabled(False)
             self._settings_status.update(f"Configuration incomplete: {exc}")
+            self._ensure_startup_entry()
             self.query_one("#events", TabbedContent).active = "settings_pane"
             return
 
@@ -366,6 +377,7 @@ class KolegaCodeApp(App):
         await self._build_agent(config, rebuild=rebuild)
         self._set_chat_enabled(True)
         self._update_settings_status()
+        self._ensure_startup_entry()
         self.query_one("#composer", Input).focus()
 
     async def _build_agent(self, config: AgentConfig, rebuild: bool = False) -> None:
@@ -436,14 +448,34 @@ class KolegaCodeApp(App):
 
     def _startup_content(self) -> str:
         session_id = str(self.session.session_id)[:8]
+        provider, model = self._startup_model()
+        api_key = key_status(provider, self.project_path, self.settings)
         return "\n".join(
             [
-                "Kolega Code",
+                *STARTUP_WORDMARK,
+                "",
                 f"Project: {self.project_path}",
-                f"Session: {session_id} - mode {self.mode}",
+                f"Session: {session_id}",
+                f"Mode: {self.mode}",
+                f"Model: {provider}/{model}",
+                f"API key: {api_key}",
                 "Type a request below. Press Ctrl+C to stop a turn.",
             ]
         )
+
+    def _startup_model(self) -> tuple[str, str]:
+        if self.config is not None:
+            return self.config.long_context_config.provider.value, self.config.long_context_config.model
+
+        provider = self.settings.active_provider or UI_DEFAULT_PROVIDER
+        model = self.settings.active_model
+        if model:
+            return provider, model
+
+        model_options = ui_model_options(provider)
+        if model_options:
+            return provider, model_options[0][1]
+        return provider, UI_DEFAULT_MODEL
 
     def _restore_conversation_history(self, history: list[dict]) -> None:
         self.conversation_entries = []
@@ -665,10 +697,12 @@ class KolegaCodeApp(App):
     def _render_conversation(self) -> None:
         conversation = self._conversation
         conversation.clear()
-        for entry in self.conversation_entries:
+        for index, entry in enumerate(self.conversation_entries):
+            if index:
+                conversation.write("")
             conversation.write(self._format_conversation_entry(entry))
 
-    def _format_conversation_entry(self, entry: ConversationEntry) -> str:
+    def _format_conversation_entry(self, entry: ConversationEntry) -> str | Text:
         escaped_content = escape(entry.content)
         if entry.kind == "startup":
             return self._format_startup_entry(entry)
@@ -694,11 +728,22 @@ class KolegaCodeApp(App):
             return f"[dim]{escaped_content}[/dim]"
         return escaped_content
 
-    def _format_startup_entry(self, entry: ConversationEntry) -> str:
+    def _format_startup_entry(self, entry: ConversationEntry) -> Text:
         lines = entry.content.splitlines()
-        title = escape(lines[0]) if lines else "Kolega Code"
-        body = "\n".join(escape(line) for line in lines[1:])
-        return f"[bold white on blue] {title} [/bold white on blue]\n[dim]{body}[/dim]"
+        try:
+            separator = lines.index("")
+        except ValueError:
+            separator = len(STARTUP_WORDMARK)
+        rendered = Text()
+        logo = "\n".join(lines[:separator])
+        body = "\n".join(lines[separator + 1 :])
+        if logo:
+            rendered.append(logo, style="bold")
+        if body:
+            if logo:
+                rendered.append("\n")
+            rendered.append(body, style="dim")
+        return rendered
 
     def _format_tool_entry(self, entry: ConversationEntry, *, label: str, state: str) -> str:
         tool_name = escape(entry.tool_name or "tool")

@@ -58,8 +58,13 @@ async def test_textual_app_mounts_with_fake_agent(tmp_path: Path, monkeypatch: p
         assert app.query_one("#conversation") is not None
         assert app.query_one("#composer") is not None
         assert app.conversation_entries[0].kind == "startup"
-        assert "Kolega Code" in app.conversation_entries[0].content
-        assert str(project) in app.conversation_entries[0].content
+        startup = app.conversation_entries[0].content
+        assert "____          _" in startup
+        assert f"Project: {project}" in startup
+        assert f"Session: {session.session_id[:8]}" in startup
+        assert "Mode: cli" in startup
+        expected_model = f"{config.long_context_config.provider.value}/{config.long_context_config.model}"
+        assert f"Model: {expected_model}" in startup
 
 
 @pytest.mark.asyncio
@@ -135,6 +140,9 @@ async def test_textual_app_mounts_settings_without_api_key(tmp_path: Path, monke
     async with app.run_test():
         assert app.agent is None
         assert app.query_one("#composer", Input).disabled is True
+        startup = app.conversation_entries[0].content
+        assert f"Model: {UI_DEFAULT_PROVIDER}/{UI_DEFAULT_MODEL}" in startup
+        assert "API key: missing" in startup
         status = str(app.query_one("#settings_status").render())
         assert "Configuration incomplete" in status
         assert "MOONSHOT_API_KEY" in status
@@ -290,6 +298,9 @@ async def test_textual_app_saves_settings_and_builds_agent(tmp_path: Path, monke
         assert settings_store.load().get_api_key(UI_DEFAULT_PROVIDER) == "moonshot-key"
         assert app.query_one("#composer", Input).disabled is False
         assert [entry.kind for entry in app.conversation_entries].count("startup") == 1
+        startup = app.conversation_entries[0].content
+        assert f"Model: {UI_DEFAULT_PROVIDER}/{UI_DEFAULT_MODEL}" in startup
+        assert "API key: present in local settings" in startup
 
 
 @pytest.mark.asyncio
@@ -493,6 +504,50 @@ async def test_textual_app_formats_thinking_as_italic_chat_entry(
         assert "\\[red]" in formatted
         assert "[/italic]" in formatted
         assert formatted.endswith("\n[dim]...[/dim]")
+
+
+def test_textual_app_separates_chat_entries_with_blank_lines(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.app import ConversationEntry, KolegaCodeApp
+
+    class FakeConversation:
+        def __init__(self) -> None:
+            self.cleared = False
+            self.writes: list[object] = []
+
+        def clear(self) -> None:
+            self.cleared = True
+
+        def write(self, renderable: object) -> None:
+            self.writes.append(renderable)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+    fake_conversation = FakeConversation()
+    monkeypatch.setattr(KolegaCodeApp, "_conversation", property(lambda self: fake_conversation))
+    app.conversation_entries = [
+        ConversationEntry(kind="user", content="first"),
+        ConversationEntry(kind="assistant", content="second"),
+        ConversationEntry(kind="user", content="third"),
+    ]
+
+    app._render_conversation()
+
+    assert fake_conversation.cleared is True
+    assert fake_conversation.writes == [
+        "[bold cyan]You[/bold cyan]\nfirst",
+        "",
+        "[bold magenta]Agent[/bold magenta]\nsecond",
+        "",
+        "[bold cyan]You[/bold cyan]\nthird",
+    ]
 
 
 @pytest.mark.asyncio
@@ -1102,7 +1157,10 @@ async def test_textual_app_renders_resumed_history_in_chat(
     async with app.run_test():
         assert app.agent.restored_history == session.history
         assert app.conversation_entries[0].kind == "startup"
-        assert app.conversation_entries[0].content.startswith("Kolega Code\nProject:")
+        startup = app.conversation_entries[0].content
+        expected_model = f"{config.long_context_config.provider.value}/{config.long_context_config.model}"
+        assert f"Project: {project}" in startup
+        assert f"Model: {expected_model}" in startup
         assert [(entry.kind, entry.content, entry.tool_name) for entry in app.conversation_entries[1:]] == [
             ("user", "Please read the README", None),
             ("assistant", "I'll inspect it.", None),
