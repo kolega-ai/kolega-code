@@ -6,9 +6,11 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from kolega_code.agent.browseragent import BrowserAgent
+from kolega_code.agent.coder import CoderAgent
 from kolega_code.agent.config import AgentConfig
 from kolega_code.agent.connection_manager import AgentConnectionManager
 from kolega_code.agent.investigationagent import InvestigationAgent
+from kolega_code.agent.prompt_provider import AgentMode
 
 
 @pytest.fixture
@@ -93,6 +95,40 @@ def test_investigation_agent_tools(project_path, mock_connection_manager, agent_
 
     assert len(tools) == len(expected_tools)
     assert set(tool_names) == set(expected_tools)
+
+
+def test_cli_coder_agent_does_not_expose_manifest_build_tools(project_path, mock_connection_manager, agent_config):
+    """CLI CoderAgent does not expose platform-only manifest build tools."""
+    agent = CoderAgent(
+        project_path=project_path,
+        workspace_id="test_workspace",
+        thread_id=str(uuid.uuid4()),
+        connection_manager=mock_connection_manager,
+        config=agent_config,
+        agent_mode=AgentMode.CLI,
+    )
+
+    tool_names = {tool.name for tool in agent.tool_collection.get_tool_list()}
+
+    assert "build_backend" not in tool_names
+    assert "build_frontend" not in tool_names
+
+
+def test_non_cli_coder_agent_keeps_manifest_build_tools(project_path, mock_connection_manager, agent_config):
+    """Non-CLI CoderAgent keeps manifest build tools for platform use."""
+    agent = CoderAgent(
+        project_path=project_path,
+        workspace_id="test_workspace",
+        thread_id=str(uuid.uuid4()),
+        connection_manager=mock_connection_manager,
+        config=agent_config,
+        agent_mode=AgentMode.CODE,
+    )
+
+    tool_names = {tool.name for tool in agent.tool_collection.get_tool_list()}
+
+    assert "build_backend" in tool_names
+    assert "build_frontend" in tool_names
 
 
 def test_shared_tool_names_are_well_formed(project_path, mock_connection_manager, agent_config):

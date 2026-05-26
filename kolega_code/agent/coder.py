@@ -99,42 +99,28 @@ class CoderAgent(BaseAgent, LogMixin):
         )
 
         # Configure tool collection with custom coder agent tools
-        if self.agent_mode == AgentMode.VIBE.value:
-            tool_config = ToolCollectionConfig(
-                custom_tool_groups=["coder_agent_tools"],
-                tool_exclusions=[
-                    "read_memory",
-                    "write_memory",
-                    "execute_terminal_command",
-                    "replace_lines",
-                    "apply_patch",
-                    "edit_file",
-                    "get_tool_list",
-                    "log_error",
-                    "log_info",
-                    "run_command",  # Disabled: unreliable completion detection, use run_command_tracked instead
-                    # Exclude task-specific dispatch tools since coder shouldn't call itself or other agents
-                    "dispatch_coding_agent",
-                ],
-            )
-        else:
-            tool_config = ToolCollectionConfig(
-                custom_tool_groups=["coder_agent_tools"],
-                tool_exclusions=[
-                    "read_memory",
-                    "write_memory",
-                    "execute_terminal_command",
-                    "replace_lines",
-                    "apply_patch",
-                    "edit_file",
-                    "get_tool_list",
-                    "log_error",
-                    "log_info",
-                    "run_command",  # Disabled: unreliable completion detection, use run_command_tracked instead
-                    # Exclude task-specific dispatch tools since coder shouldn't call itself or other agents
-                    "dispatch_coding_agent",
-                ],
-            )
+        tool_exclusions = [
+            "read_memory",
+            "write_memory",
+            "execute_terminal_command",
+            "replace_lines",
+            "apply_patch",
+            "edit_file",
+            "get_tool_list",
+            "log_error",
+            "log_info",
+            "run_command",  # Disabled: unreliable completion detection, use run_command_tracked instead
+            # Exclude task-specific dispatch tools since coder shouldn't call itself or other agents
+            "dispatch_coding_agent",
+        ]
+        mode_value = self.agent_mode.value if isinstance(self.agent_mode, AgentMode) else self.agent_mode
+        if mode_value == AgentMode.CLI.value:
+            tool_exclusions.extend(["build_backend", "build_frontend"])
+
+        tool_config = ToolCollectionConfig(
+            custom_tool_groups=["coder_agent_tools"],
+            tool_exclusions=tool_exclusions,
+        )
 
         self.tool_collection = ToolCollection(
             self.project_path,
