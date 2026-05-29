@@ -216,6 +216,30 @@ class TestTerminalToolCommandTracking:
         assert "Terminal with ID invalid not found" in result
 
     @pytest.mark.asyncio
+    async def test_send_terminal_input_success(self, terminal_tool, mock_connection_manager):
+        mock_terminal_manager = AsyncMock()
+        mock_terminal_manager.send_input = AsyncMock(return_value=True)
+        terminal_tool.terminal_manager = mock_terminal_manager
+
+        result = await terminal_tool.send_terminal_input("terminal_1", "Ada", submit=True, command_id="cmd_1")
+
+        assert result == "Sent input to terminal terminal_1 for command cmd_1 and submitted it."
+        assert "Ada" not in result
+        mock_terminal_manager.send_input.assert_awaited_once_with(
+            "terminal_1", "Ada", submit=True, command_id="cmd_1"
+        )
+
+    @pytest.mark.asyncio
+    async def test_send_terminal_input_returns_readable_value_error(self, terminal_tool, mock_connection_manager):
+        mock_terminal_manager = AsyncMock()
+        mock_terminal_manager.send_input = AsyncMock(side_effect=ValueError("No active command is running"))
+        terminal_tool.terminal_manager = mock_terminal_manager
+
+        result = await terminal_tool.send_terminal_input("terminal_1", "Ada")
+
+        assert result == "No active command is running"
+
+    @pytest.mark.asyncio
     async def test_check_command_status_running(self, terminal_tool, mock_connection_manager):
         # Mock the terminal manager
         mock_terminal_manager = Mock()
@@ -226,7 +250,7 @@ class TestTerminalToolCommandTracking:
 
         result = await terminal_tool.check_command_status("terminal_1", "cmd_1")
 
-        assert "🔄 Command still running after 5.2s (2 child processes)" in result
+        assert "🔄 Command still running in terminal terminal_1 after 5.2s (2 child processes)" in result
         assert "Command: sleep 10" in result
 
     @pytest.mark.asyncio
@@ -281,6 +305,27 @@ class TestTerminalToolCommandTracking:
         assert "❌ Command ID invalid_cmd not found" in result
 
     @pytest.mark.asyncio
+    async def test_check_command_status_monitor_timeout(self, terminal_tool, mock_connection_manager):
+        mock_terminal_manager = Mock()
+        mock_terminal_manager.get_command_status = Mock(
+            return_value={
+                "status": "monitor_timeout",
+                "command": "sleep 999",
+                "duration": 300.5,
+                "return_code": None,
+                "child_pids": [],
+            }
+        )
+        terminal_tool.terminal_manager = mock_terminal_manager
+
+        result = await terminal_tool.check_command_status("terminal_1", "cmd_1")
+
+        assert "Command monitoring stopped after 300.5s" in result
+        assert "command may still be running in terminal terminal_1" in result
+        assert "Command: sleep 999" in result
+        assert 'check_command_status("terminal_1", "cmd_1")' in result
+
+    @pytest.mark.asyncio
     async def test_check_terminal_status_with_active_commands(self, terminal_tool, mock_connection_manager):
         # Mock the terminal manager
         mock_terminal_manager = AsyncMock()
@@ -332,8 +377,18 @@ class TestTerminalToolCommandTracking:
 
         assert "✅ Command completed in 2.1s with exit code 0" in result
 
+    def test_normalize_wait_timeout(self, terminal_tool):
+        with patch.object(TerminalTool, "DEFAULT_COMMAND_WAIT_TIMEOUT_SECONDS", 120), patch.object(
+            TerminalTool, "MAX_COMMAND_WAIT_TIMEOUT_SECONDS", 300
+        ):
+            assert terminal_tool._normalize_command_wait_timeout(None) == 120
+            assert terminal_tool._normalize_command_wait_timeout(0) == 120
+            assert terminal_tool._normalize_command_wait_timeout(-10) == 120
+            assert terminal_tool._normalize_command_wait_timeout("not-a-number") == 120
+            assert terminal_tool._normalize_command_wait_timeout(30) == 30
+            assert terminal_tool._normalize_command_wait_timeout(999) == 300
+
     @pytest.mark.asyncio
-    @pytest.mark.skipif(SKIP_IN_CI, reason="Skipping slow test in CI environment")
     async def test_wait_for_command_completion_timeout(self, terminal_tool, mock_connection_manager):
         # Mock the terminal manager to always return running status
         mock_terminal_manager = Mock()
@@ -342,9 +397,43 @@ class TestTerminalToolCommandTracking:
         )
         terminal_tool.terminal_manager = mock_terminal_manager
 
-        result = await terminal_tool.wait_for_command_completion("terminal_1", "cmd_1", timeout=1)
+        with patch("kolega_code.agent.tool_backend.terminal_tool.time.time", side_effect=[0, 0, 0, 2]), patch(
+            "kolega_code.agent.tool_backend.terminal_tool.asyncio.sleep", new_callable=AsyncMock
+        ):
+            result = await terminal_tool.wait_for_command_completion("terminal_1", "cmd_1", timeout=1)
 
-        assert "⏰ Timeout: Command cmd_1 still running after 1 seconds" in result
+        assert "⏰ Timeout: Command cmd_1 is still running in terminal terminal_1 after 1 seconds" in result
+        assert 'check_command_status("terminal_1", "cmd_1")' in result
+
+    @pytest.mark.asyncio
+    async def test_wait_for_command_completion_none_timeout_uses_default(self, terminal_tool, mock_connection_manager):
+        mock_terminal_manager = Mock()
+        mock_terminal_manager.get_command_status = Mock(
+            return_value={"status": "running", "command": "sleep 100", "duration": 10.0}
+        )
+        terminal_tool.terminal_manager = mock_terminal_manager
+
+        with patch.object(TerminalTool, "DEFAULT_COMMAND_WAIT_TIMEOUT_SECONDS", 1), patch(
+            "kolega_code.agent.tool_backend.terminal_tool.time.time", side_effect=[0, 0, 0, 2]
+        ), patch("kolega_code.agent.tool_backend.terminal_tool.asyncio.sleep", new_callable=AsyncMock):
+            result = await terminal_tool.wait_for_command_completion("terminal_1", "cmd_1", timeout=None)
+
+        assert "after 1 seconds" in result
+
+    @pytest.mark.asyncio
+    async def test_wait_for_command_completion_timeout_is_clamped(self, terminal_tool, mock_connection_manager):
+        mock_terminal_manager = Mock()
+        mock_terminal_manager.get_command_status = Mock(
+            return_value={"status": "running", "command": "sleep 100", "duration": 10.0}
+        )
+        terminal_tool.terminal_manager = mock_terminal_manager
+
+        with patch.object(TerminalTool, "MAX_COMMAND_WAIT_TIMEOUT_SECONDS", 2), patch(
+            "kolega_code.agent.tool_backend.terminal_tool.time.time", side_effect=[0, 0, 0, 3]
+        ), patch("kolega_code.agent.tool_backend.terminal_tool.asyncio.sleep", new_callable=AsyncMock):
+            result = await terminal_tool.wait_for_command_completion("terminal_1", "cmd_1", timeout=999)
+
+        assert "after 2 seconds" in result
 
     @pytest.mark.asyncio
     async def test_wait_for_command_completion_terminal_not_found(self, terminal_tool, mock_connection_manager):

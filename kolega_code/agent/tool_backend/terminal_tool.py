@@ -57,6 +57,8 @@ The terminal output ({full_char_count:,} characters) exceeded the compression th
 class TerminalTool(BaseTool):
 
     output_compression_threshold = 4000
+    DEFAULT_COMMAND_WAIT_TIMEOUT_SECONDS = 120
+    MAX_COMMAND_WAIT_TIMEOUT_SECONDS = 300
 
     def __init__(
         self,
@@ -479,6 +481,35 @@ class TerminalTool(BaseTool):
         except KeyError as e:
             return str(e)
 
+    async def send_terminal_input(
+        self, terminal_id: str, text: str, submit: bool = True, command_id: Optional[str] = None
+    ) -> str:
+        """
+        Send input to an already-running command in a terminal.
+
+        Args:
+            terminal_id: The terminal where the command is running
+            text: Text to send to the process
+            submit: Whether to append a newline before sending
+            command_id: Optional command ID when more than one command is active
+
+        Returns:
+            Confirmation that input was sent, or a readable error
+        """
+        try:
+            success = await self.terminal_manager.send_input(
+                terminal_id, text, submit=submit, command_id=command_id
+            )
+        except (KeyError, ValueError) as e:
+            return str(e)
+
+        if not success:
+            return f"Failed to send input to terminal {terminal_id}. Terminal may not be running."
+
+        command_suffix = f" for command {command_id}" if command_id else ""
+        submit_suffix = " and submitted it" if submit else ""
+        return f"Sent input to terminal {terminal_id}{command_suffix}{submit_suffix}."
+
     async def check_command_status(self, terminal_id: str, command_id: str) -> str:
         """
         Check the status of a specific command using process monitoring.
@@ -501,8 +532,12 @@ class TerminalTool(BaseTool):
             duration_str = f"{status['duration']:.1f}s"
 
             if status["status"] == "running":
-                child_info = f" ({len(status['child_pids'])} child processes)" if status["child_pids"] else ""
-                return f"🔄 Command still running after {duration_str}{child_info}\nCommand: {status['command']}"
+                child_pids = status.get("child_pids") or []
+                child_info = f" ({len(child_pids)} child processes)" if child_pids else ""
+                return (
+                    f"🔄 Command still running in terminal {terminal_id} after {duration_str}{child_info}\n"
+                    f"Command: {status['command']}"
+                )
             elif status["status"] == "completed":
                 return_code = status.get("return_code", "unknown")
                 return (
@@ -513,6 +548,12 @@ class TerminalTool(BaseTool):
             elif status["status"] == "failed":
                 return_code = status.get("return_code", 1)
                 return f"❌ Command failed in {duration_str} with exit code {return_code}\nCommand: {status['command']}"
+            elif status["status"] == "monitor_timeout":
+                return (
+                    f"⚠️ Command monitoring stopped after {duration_str}; command may still be running in "
+                    f"terminal {terminal_id}.\nCommand: {status['command']}\n"
+                    f'Use `check_command_status("{terminal_id}", "{command_id}")` to check it again.'
+                )
             else:
                 return f"❓ Command status: {status['status']} after {duration_str}\nCommand: {status['command']}"
 
@@ -550,7 +591,26 @@ class TerminalTool(BaseTool):
         except KeyError as e:
             return str(e)
 
-    async def wait_for_command_completion(self, terminal_id: str, command_id: str, timeout: int = 120) -> str:
+    def _normalize_command_wait_timeout(self, timeout: Optional[int]) -> int:
+        try:
+            wait_timeout = int(timeout)
+        except (TypeError, ValueError):
+            return self.DEFAULT_COMMAND_WAIT_TIMEOUT_SECONDS
+
+        if wait_timeout <= 0:
+            return self.DEFAULT_COMMAND_WAIT_TIMEOUT_SECONDS
+        return min(wait_timeout, self.MAX_COMMAND_WAIT_TIMEOUT_SECONDS)
+
+    def _format_command_wait_timeout(self, terminal_id: str, command_id: str, timeout: int) -> str:
+        return (
+            f"⏰ Timeout: Command {command_id} is still running in terminal {terminal_id} after {timeout} seconds.\n"
+            f'Use `check_command_status("{terminal_id}", "{command_id}")` to check it again, '
+            f'or `close_terminal("{terminal_id}")` if you want to stop that terminal.'
+        )
+
+    async def wait_for_command_completion(
+        self, terminal_id: str, command_id: str, timeout: Optional[int] = DEFAULT_COMMAND_WAIT_TIMEOUT_SECONDS
+    ) -> str:
         """
         Wait for a specific command to complete with reliable process monitoring.
 
@@ -562,18 +622,22 @@ class TerminalTool(BaseTool):
         Returns:
             Completion status or timeout message
         """
+        wait_timeout = self._normalize_command_wait_timeout(timeout)
         start_time = time.time()
 
-        while time.time() - start_time < timeout:
+        while time.time() - start_time < wait_timeout:
             try:
                 status = self.terminal_manager.get_command_status(terminal_id, command_id)
 
-                if status["status"] in ["completed", "terminated", "not_found", "failed"]:
+                if status["status"] in ["completed", "terminated", "not_found", "failed", "monitor_timeout"]:
                     return await self.check_command_status(terminal_id, command_id)
 
             except KeyError as e:
                 return str(e)
 
-            await asyncio.sleep(1)  # Check every second
+            remaining = wait_timeout - (time.time() - start_time)
+            if remaining <= 0:
+                break
+            await asyncio.sleep(min(1, remaining))  # Check every second
 
-        return f"⏰ Timeout: Command {command_id} still running after {timeout} seconds"
+        return self._format_command_wait_timeout(terminal_id, command_id, wait_timeout)

@@ -58,7 +58,7 @@ def test_parse_sessions_list_subcommand() -> None:
     assert args.project == Path("/tmp/project")
 
 
-def test_doctor_uses_stored_kimi_settings(tmp_path: Path, capsys) -> None:
+def test_doctor_uses_stored_kimi_settings(tmp_path: Path, capsys, isolated_cli_env: None) -> None:
     project = tmp_path / "project"
     project.mkdir()
     state_dir = tmp_path / "state"

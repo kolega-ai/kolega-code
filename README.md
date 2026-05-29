@@ -35,3 +35,24 @@ kolega-code doctor --project .
 ```
 
 The Settings UI supports Moonshot `kimi-k2.6` and DeepSeek `deepseek-v4-pro`. A saved UI selection is used for all agent model roles and API keys are stored in the local CLI settings file with restrictive permissions. Existing environment and model/provider flag overrides continue to work. Local session state is stored under the platform state directory unless `KOLEGA_CODE_STATE_DIR` is set.
+
+## Tests
+
+Fast tests run by default:
+
+```bash
+./run_tests.sh
+```
+
+Some slow and integration tests require real provider credentials. To run them locally, create an ignored `.env` file from the example and fill only the keys you need:
+
+```bash
+cp .env.example .env
+./run_tests.sh --all
+```
+
+The test runner loads `.env` through pytest and keeps existing shell environment variables higher priority than values in the file. You can pass additional pytest arguments through the wrapper:
+
+```bash
+./run_tests.sh kolega_code/agent/tests/llm/test_client.py -ra
+```

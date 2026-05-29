@@ -12,10 +12,11 @@ from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Button, Footer, Header, Input, Label, RichLog, Select, Static, TabPane, TabbedContent
+from textual.message import Message as TextualMessage
+from textual.widgets import Button, Footer, Header, Input, Label, RichLog, Select, Static, TabPane, TabbedContent, TextArea
 
 from kolega_code.agent import AgentConfig, AgentEvent, CoderAgent
-from kolega_code.agent.llm.models import Message, TextBlock, ToolCall, ToolResult
+from kolega_code.agent.llm.models import Message, MessageHistory, TextBlock, ToolCall, ToolResult
 from kolega_code.agent.prompt_provider import AgentMode
 from kolega_code.agent.services.browser import PlaywrightBrowserManager
 
@@ -28,6 +29,8 @@ from .settings import CliSettings, SettingsStore
 TOOL_RESULT_PREVIEW_CHARS = 500
 CLI_AGENT_MODE = AgentMode.CLI.value
 COMPOSER_PLACEHOLDER = "Ask Kolega Code..."
+THREAD_RESET_COMMANDS = {"/clear", "/reset"}
+THREAD_RESET_MESSAGE = "Thread reset. Previous messages were cleared."
 STARTUP_WORDMARK = (
     " _  __     _                    ____          _",
     "| |/ /___ | | ___  __ _  __ _ / ___|___   __| | ___",
@@ -46,6 +49,31 @@ class ConversationEntry:
     uuid: Optional[str] = None
     tool_name: Optional[str] = None
     tool_call_id: Optional[str] = None
+
+
+class ChatComposer(TextArea):
+    """Multiline chat input that submits on Enter and inserts newlines on Ctrl+Enter."""
+
+    BINDINGS = [
+        *TextArea.BINDINGS,
+        Binding("enter", "submit", "Send", priority=True),
+        Binding("ctrl+enter,ctrl+j", "insert_newline", "New line", priority=True),
+    ]
+
+    @dataclass
+    class Submitted(TextualMessage):
+        composer: ChatComposer
+        value: str
+
+        @property
+        def control(self) -> ChatComposer:
+            return self.composer
+
+    def action_submit(self) -> None:
+        self.post_message(self.Submitted(self, self.text))
+
+    def action_insert_newline(self) -> None:
+        self.insert("\n", maintain_selection_offset=False)
 
 
 class KolegaCodeApp(App):
@@ -87,7 +115,7 @@ class KolegaCodeApp(App):
 
     #composer {
         dock: bottom;
-        height: 3;
+        height: 5;
     }
 
     .meta {
@@ -140,7 +168,7 @@ class KolegaCodeApp(App):
                     classes="meta",
                 )
                 yield RichLog(id="conversation", wrap=True, markup=True, highlight=True)
-                yield Input(placeholder=COMPOSER_PLACEHOLDER, id="composer")
+                yield ChatComposer(placeholder=COMPOSER_PLACEHOLDER, id="composer")
             with Vertical(id="side_panel"):
                 with TabbedContent(id="events"):
                     with TabPane("Logs"):
@@ -179,7 +207,7 @@ class KolegaCodeApp(App):
         if self.config is not None:
             await self._build_agent(self.config)
             self._set_chat_enabled(True)
-            self.query_one("#composer", Input).focus()
+            self.query_one("#composer", ChatComposer).focus()
         else:
             await self._ensure_agent_from_settings()
 
@@ -203,13 +231,23 @@ class KolegaCodeApp(App):
     def _settings_status(self) -> Static:
         return self.query_one("#settings_status", Static)
 
-    async def on_input_submitted(self, event: Input.Submitted) -> None:
-        text = event.value.strip()
-        if not text or self.agent is None:
-            if text:
+    async def on_chat_composer_submitted(self, event: ChatComposer.Submitted) -> None:
+        text = event.value
+        stripped_text = text.strip()
+        if stripped_text.lower() in THREAD_RESET_COMMANDS:
+            if self._turn_active or self.agent_worker is not None:
+                self._set_composer_status("Stop the current turn before resetting the thread.")
+                self._status.write("[yellow]Stop the current turn before resetting the thread.[/yellow]")
+                return
+            event.composer.load_text("")
+            self._reset_current_thread()
+            return
+
+        if not stripped_text or self.agent is None:
+            if stripped_text:
                 self._settings_status.update("Save a provider, model, and API key before chatting.")
             return
-        event.input.value = ""
+        event.composer.load_text("")
         self._add_conversation_entry(ConversationEntry(kind="user", content=text))
         self.agent_worker = self.run_worker(self._process_message(text), name="kolega-turn", group="turns", exclusive=True)
 
@@ -378,7 +416,7 @@ class KolegaCodeApp(App):
         self._set_chat_enabled(True)
         self._update_settings_status()
         self._ensure_startup_entry()
-        self.query_one("#composer", Input).focus()
+        self.query_one("#composer", ChatComposer).focus()
 
     async def _build_agent(self, config: AgentConfig, rebuild: bool = False) -> None:
         history = self.session.history
@@ -405,14 +443,30 @@ class KolegaCodeApp(App):
             self._restore_conversation_history(history)
 
     def _set_chat_enabled(self, enabled: bool) -> None:
-        composer = self.query_one("#composer", Input)
+        composer = self.query_one("#composer", ChatComposer)
         composer.disabled = not enabled
 
     def _set_composer_status(self, status: str) -> None:
-        self.query_one("#composer", Input).placeholder = status
+        self.query_one("#composer", ChatComposer).placeholder = status
 
     def _restore_composer_placeholder(self) -> None:
-        self.query_one("#composer", Input).placeholder = COMPOSER_PLACEHOLDER
+        self.query_one("#composer", ChatComposer).placeholder = COMPOSER_PLACEHOLDER
+
+    def _reset_current_thread(self) -> None:
+        if self.agent is not None:
+            self.agent.history = MessageHistory()
+        self.session.history = []
+        self.store.save(self.session)
+        self.conversation_entries = []
+        self._stream_entries = {}
+        self._tool_entries = {}
+        self._active_progress_entry = None
+        self._turn_active = False
+        self._restore_composer_placeholder()
+        self._set_chat_enabled(self.agent is not None)
+        self._ensure_startup_entry(render=False)
+        self._add_conversation_entry(ConversationEntry(kind="progress", content=THREAD_RESET_MESSAGE, complete=True))
+        self._status.write(f"[green]{THREAD_RESET_MESSAGE}[/green]")
 
     def _update_settings_status(self) -> None:
         provider = self.settings.active_provider or UI_DEFAULT_PROVIDER
