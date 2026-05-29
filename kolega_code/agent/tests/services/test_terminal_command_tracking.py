@@ -1,15 +1,15 @@
 import os
-import asyncio
 import time
-from unittest.mock import AsyncMock, Mock, patch, call
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 import psutil
 
+from kolega_code.agent.services.terminal import AsyncPersistentTerminal, LocalTerminalManager
+
 
 # Check if running in CI environment
 SKIP_IN_CI = bool(os.getenv("CI")) or bool(os.getenv("GITLAB_CI"))
-from kolega_code.agent.services.terminal import AsyncPersistentTerminal, LocalTerminalManager
 
 
 @pytest.fixture
@@ -59,7 +59,7 @@ class TestAsyncPersistentTerminalCommandTracking:
         """Test that command tracking attributes are initialized correctly"""
         assert mock_terminal.active_commands == {}
         assert mock_terminal.command_counter == 0
-        assert mock_terminal.shell_prompt_detected == True
+        assert mock_terminal.shell_prompt_detected
 
     @pytest.mark.asyncio
     async def test_send_command_tracked_success(self, mock_terminal):
@@ -90,7 +90,7 @@ class TestAsyncPersistentTerminalCommandTracking:
 
             # Verify monitoring task was created
             assert mock_create_task_patch.call_count == 1
-            assert mock_terminal.shell_prompt_detected == False
+            assert not mock_terminal.shell_prompt_detected
 
     @pytest.mark.asyncio
     async def test_send_command_tracked_failure(self, mock_terminal):
@@ -172,14 +172,14 @@ class TestAsyncPersistentTerminalCommandTracking:
         mock_terminal.shell_prompt_detected = True
         mock_terminal.active_commands = {}
 
-        assert mock_terminal.is_ready_for_commands() == True
+        assert mock_terminal.is_ready_for_commands()
 
     def test_is_ready_for_commands_false_no_prompt(self, mock_terminal):
         """Test terminal not ready when no prompt detected"""
         mock_terminal.shell_prompt_detected = False
         mock_terminal.active_commands = {}
 
-        assert mock_terminal.is_ready_for_commands() == False
+        assert not mock_terminal.is_ready_for_commands()
 
     def test_is_ready_for_commands_false_active_commands(self, mock_terminal):
         """Test terminal not ready when commands are active"""
@@ -194,21 +194,21 @@ class TestAsyncPersistentTerminalCommandTracking:
             }
         }
 
-        assert mock_terminal.is_ready_for_commands() == False
+        assert not mock_terminal.is_ready_for_commands()
 
     def test_check_for_shell_prompt_detected(self, mock_terminal):
         """Test shell prompt detection"""
         # Mock read_output to return output with prompt
         mock_terminal.read_output = Mock(return_value="some output\n$ ")
 
-        assert mock_terminal._check_for_shell_prompt() == True
+        assert mock_terminal._check_for_shell_prompt()
 
     def test_check_for_shell_prompt_not_detected(self, mock_terminal):
         """Test shell prompt not detected"""
         # Mock read_output to return output without prompt
         mock_terminal.read_output = Mock(return_value="some output\nstill processing...")
 
-        assert mock_terminal._check_for_shell_prompt() == False
+        assert not mock_terminal._check_for_shell_prompt()
 
     @pytest.mark.asyncio
     @pytest.mark.skipif(SKIP_IN_CI, reason="Skipping slow test in CI environment")
@@ -239,7 +239,7 @@ class TestAsyncPersistentTerminalCommandTracking:
             # Check that command was marked as completed
             assert mock_terminal.active_commands[command_id]["status"] == "completed"
             assert mock_terminal.active_commands[command_id]["return_code"] == 0
-            assert mock_terminal.shell_prompt_detected == True
+            assert mock_terminal.shell_prompt_detected
 
     @pytest.mark.asyncio
     @pytest.mark.skipif(SKIP_IN_CI, reason="Skipping slow test in CI environment")
@@ -261,6 +261,27 @@ class TestAsyncPersistentTerminalCommandTracking:
             # Check that command was marked as terminated
             assert mock_terminal.active_commands[command_id]["status"] == "terminated"
             assert mock_terminal.active_commands[command_id]["return_code"] == -1
+
+    @pytest.mark.asyncio
+    async def test_monitor_command_completion_monitor_timeout(self, mock_terminal):
+        """Test command monitoring timeout is not reported as completion."""
+        command_id = "test_cmd"
+        mock_terminal.active_commands[command_id] = {
+            "command": "sleep 999",
+            "start_time": time.time(),
+            "status": "running",
+            "child_pids": set(),
+            "return_code": None,
+        }
+
+        with patch.object(AsyncPersistentTerminal, "COMMAND_MONITOR_TIMEOUT_SECONDS", 0):
+            await mock_terminal._monitor_command_completion(command_id)
+
+        command_info = mock_terminal.active_commands[command_id]
+        assert command_info["status"] == "monitor_timeout"
+        assert command_info["return_code"] is None
+        assert command_info["monitor_timeout_seconds"] == 0
+        assert command_id in mock_terminal.get_active_commands()
 
 
 class TestLocalTerminalManagerCommandTracking:
@@ -297,6 +318,40 @@ class TestLocalTerminalManagerCommandTracking:
         with pytest.raises(KeyError, match="Terminal with ID invalid not found"):
             await terminal_manager.send_command_tracked("invalid", "echo test", "Test purpose")
 
+    @pytest.mark.asyncio
+    async def test_send_input_success(self, terminal_manager, mock_terminal):
+        """Test sending input through manager to an active command."""
+        mock_terminal.get_active_commands = Mock(return_value={"cmd_1": {"status": "running"}})
+        mock_terminal.get_command_status = Mock(return_value={"status": "running"})
+        mock_terminal.send_input = AsyncMock(return_value=True)
+        terminal_manager.terminals["terminal_1"] = mock_terminal
+
+        result = await terminal_manager.send_input("terminal_1", "Ada", submit=True, command_id="cmd_1")
+
+        assert result is True
+        mock_terminal.get_command_status.assert_called_once_with("cmd_1")
+        mock_terminal.send_input.assert_awaited_once_with("Ada", submit=True)
+
+    @pytest.mark.asyncio
+    async def test_send_input_requires_active_command(self, terminal_manager, mock_terminal):
+        """Test sending input without an active command is rejected."""
+        mock_terminal.get_active_commands = Mock(return_value={})
+        terminal_manager.terminals["terminal_1"] = mock_terminal
+
+        with pytest.raises(ValueError, match="No active command is running"):
+            await terminal_manager.send_input("terminal_1", "Ada")
+
+    @pytest.mark.asyncio
+    async def test_send_input_requires_command_id_when_ambiguous(self, terminal_manager, mock_terminal):
+        """Test sending input with multiple active commands requires command_id."""
+        mock_terminal.get_active_commands = Mock(
+            return_value={"cmd_1": {"status": "running"}, "cmd_2": {"status": "running"}}
+        )
+        terminal_manager.terminals["terminal_1"] = mock_terminal
+
+        with pytest.raises(ValueError, match="Multiple active commands"):
+            await terminal_manager.send_input("terminal_1", "Ada")
+
     def test_get_command_status_success(self, terminal_manager, mock_terminal):
         """Test getting command status through manager"""
         terminal_manager.terminals["terminal_1"] = mock_terminal
@@ -318,8 +373,8 @@ class TestLocalTerminalManagerCommandTracking:
 
         status = await terminal_manager.get_terminal_status("terminal_1")
 
-        assert status["running"] == True
-        assert status["ready_for_commands"] == True
+        assert status["running"]
+        assert status["ready_for_commands"]
         assert status["active_commands"] == {}
         assert status["last_command"] == "echo test"
 

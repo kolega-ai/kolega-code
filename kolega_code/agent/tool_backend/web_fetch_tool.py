@@ -18,6 +18,7 @@ class WebFetchTool(StreamingTool):
     FETCH_TIMEOUT_SECONDS = 20
     MAX_CONTENT_CHARS = 100_000
     DEFAULT_RESPONSE_CHAR_LIMIT = 512
+    WEB_FETCH_MAX_COMPLETION_TOKENS = 4096
 
     def __init__(
         self,
@@ -137,6 +138,10 @@ class WebFetchTool(StreamingTool):
 
         try:
             model_specs = get_model_specs(provider, self.config.fast_config.model)
+            max_completion_tokens = min(
+                int(model_specs["max_completion_tokens"]),
+                self.WEB_FETCH_MAX_COMPLETION_TOKENS,
+            )
 
             target_chars = self.DEFAULT_RESPONSE_CHAR_LIMIT
 
@@ -165,13 +170,18 @@ class WebFetchTool(StreamingTool):
 
             response_message = await client.generate(
                 model=self.config.fast_config.model,
-                max_completion_tokens=model_specs["max_completion_tokens"],
+                max_completion_tokens=max_completion_tokens,
                 system=system_prompt,
                 messages=MessageHistory([user_prompt]),
                 temperature=0.0,
             )
 
             response_text = (response_message.get_text_content() or "").strip()
+            if not response_text:
+                error_message = "Error: Fast model returned an empty response for fetched content."
+                if tool_call_id:
+                    await self.send_streaming_update(error_message, tool_call_id, "web_fetch", is_complete=True)
+                return error_message
 
             hard_cut_threshold = target_chars * 2
             if len(response_text) > hard_cut_threshold:

@@ -2,7 +2,6 @@ from functools import wraps
 from typing import Any, AsyncGenerator, Dict, List, Optional, Type
 
 from ..llm.models import MessageHistory
-from ..models.public import AgentStatus
 
 
 class CommandProcessor:
@@ -22,6 +21,7 @@ class CommandProcessor:
             "/help": self._handle_help,
             "/compress": self._handle_compress,
             "/clear": self._handle_clear,
+            "/reset": self._handle_clear,
             "/context": self._handle_context,
         }
 
@@ -32,6 +32,7 @@ class CommandProcessor:
 - `/help` - Show this help message
 - `/compress` - Compress message history
 - `/clear` - Clear message history
+- `/reset` - Clear message history
 - `/context` - Show current context token count"""
         return help_text
 

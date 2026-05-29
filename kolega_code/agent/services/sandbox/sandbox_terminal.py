@@ -4,7 +4,7 @@ import uuid
 import asyncio
 import re
 import os
-from typing import Any, Dict, Optional, List, Callable, Awaitable
+from typing import Any, Dict, Optional, Callable, Awaitable
 from datetime import datetime, timezone
 
 from ..base import TerminalManager
@@ -242,7 +242,7 @@ class SandboxTerminalManager(TerminalManager):
         try:
             # Check if directory exists
             await self.sandbox.commands.run(f"test -d {cwd}")
-        except:
+        except Exception:
             # Directory doesn't exist, try to create it
             try:
                 await self.sandbox.commands.run(f"mkdir -p {cwd}")
@@ -308,7 +308,7 @@ class SandboxTerminalManager(TerminalManager):
         if self.connection_manager:
             try:
                 await self._broadcast_output(terminal_id, f"$ {command}\n")
-            except:
+            except Exception:
                 pass  # Don't fail if broadcast fails
 
         # Create streaming output handlers
@@ -414,6 +414,45 @@ class SandboxTerminalManager(TerminalManager):
 
             return False  # Command failed
 
+    async def send_input(
+        self, terminal_id: str, text: str, submit: bool = True, command_id: Optional[str] = None
+    ) -> bool:
+        """
+        Send input to an active tracked command in the sandbox.
+        """
+        if terminal_id not in self.terminals:
+            raise KeyError(f"Terminal {terminal_id} not found")
+
+        terminal_info = self.terminals[terminal_id]
+        active_commands = terminal_info["active_commands"]
+
+        if command_id is None:
+            if not active_commands:
+                raise ValueError(f"No active command is running in terminal {terminal_id}")
+            if len(active_commands) > 1:
+                raise ValueError(f"Multiple active commands are running in terminal {terminal_id}; provide command_id")
+            command_id = next(iter(active_commands))
+
+        command_info = self.command_history.get(command_id)
+        if not command_info or command_info.get("terminal_id") != terminal_id:
+            raise ValueError(f"Command ID {command_id} not found in terminal {terminal_id}")
+        if command_info.get("status") != "running":
+            raise ValueError(f"Command {command_id} is not running in terminal {terminal_id}")
+
+        pid = command_info.get("pid")
+        if pid is None:
+            raise ValueError(f"Command {command_id} is not ready for input yet")
+
+        payload = text
+        if submit and not payload.endswith("\n"):
+            payload += "\n"
+
+        try:
+            await self.sandbox.commands.send_stdin(pid, payload)
+            return True
+        except AttributeError as exc:
+            raise ValueError("Sandbox command stdin is not supported by this E2B SDK version") from exc
+
     async def _broadcast_output(self, terminal_id: str, output: str):
         """Broadcast terminal output to connected clients."""
         if not self.connection_manager:
@@ -468,6 +507,8 @@ class SandboxTerminalManager(TerminalManager):
             "start_time": start_time,
             "status": "running",
             "return_code": None,
+            "pid": None,
+            "handle": None,
         }
 
         # Also track in terminal's active commands
@@ -507,23 +548,35 @@ class SandboxTerminalManager(TerminalManager):
             # Determine timeout settings
             sandbox_timeout = timeout if timeout is not None else 0  # Default to no timeout
 
-            # Execute with streaming
+            # Execute with streaming and keep stdin open for interactive prompts.
             try:
                 if sandbox_timeout == 0:
-                    # No timeout - let it run indefinitely
-                    result = await self.sandbox.commands.run(
-                        command, cwd=working_dir, on_stdout=stdout_handler, on_stderr=stderr_handler, timeout=0
+                    handle = await self.sandbox.commands.run(
+                        command,
+                        background=True,
+                        cwd=working_dir,
+                        on_stdout=stdout_handler,
+                        on_stderr=stderr_handler,
+                        stdin=True,
+                        timeout=0,
                     )
+                    self.command_history[command_id]["pid"] = handle.pid
+                    self.command_history[command_id]["handle"] = handle
+                    result = await handle.wait()
                 else:
-                    # Use timeout with buffer for asyncio
+                    handle = await self.sandbox.commands.run(
+                        command,
+                        background=True,
+                        cwd=working_dir,
+                        on_stdout=stdout_handler,
+                        on_stderr=stderr_handler,
+                        stdin=True,
+                        timeout=sandbox_timeout,
+                    )
+                    self.command_history[command_id]["pid"] = handle.pid
+                    self.command_history[command_id]["handle"] = handle
                     result = await asyncio.wait_for(
-                        self.sandbox.commands.run(
-                            command,
-                            cwd=working_dir,
-                            on_stdout=stdout_handler,
-                            on_stderr=stderr_handler,
-                            timeout=sandbox_timeout,
-                        ),
+                        handle.wait(),
                         timeout=sandbox_timeout + 5,  # Give 5 seconds more than the sandbox timeout
                     )
             except asyncio.TimeoutError:
@@ -785,8 +838,6 @@ class SandboxTerminalManager(TerminalManager):
         """
         if terminal_id not in self.terminals:
             raise KeyError(f"Terminal {terminal_id} not found")
-
-        terminal_info = self.terminals[terminal_id]
 
         # Clean up
         del self.terminals[terminal_id]

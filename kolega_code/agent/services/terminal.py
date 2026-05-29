@@ -22,6 +22,8 @@ class AsyncPersistentTerminal:
     and return output over time.
     """
 
+    COMMAND_MONITOR_TIMEOUT_SECONDS = 300
+
     def __init__(
         self,
         workspace_id: str,
@@ -234,7 +236,7 @@ class AsyncPersistentTerminal:
                             # EOF - process has exited
                             self.is_running = False
                             break
-                    except (OSError, IOError) as e:
+                    except (OSError, IOError):
                         # Check if process has exited
                         try:
                             pid, status = os.waitpid(self.pid, os.WNOHANG)
@@ -247,7 +249,7 @@ class AsyncPersistentTerminal:
 
                         # If read error but process still running, just continue
                         continue
-            except Exception as e:
+            except Exception:
                 self.is_running = False
                 break
 
@@ -274,6 +276,24 @@ class AsyncPersistentTerminal:
             os.write(self.master_fd, command.encode())
             self.last_command = command
             self.last_command_purpose = purpose
+            return True
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            self.is_running = False
+            return False
+
+    async def send_input(self, text: str, submit: bool = True) -> bool:
+        """
+        Send raw input to the foreground process without changing command tracking.
+        """
+        if not self.is_running or self.master_fd is None:
+            return False
+
+        payload = text
+        if submit and not payload.endswith("\n"):
+            payload += "\n"
+
+        try:
+            os.write(self.master_fd, payload.encode())
             return True
         except (BrokenPipeError, ConnectionResetError, OSError):
             self.is_running = False
@@ -459,9 +479,8 @@ class AsyncPersistentTerminal:
         # Initial delay to let command start
         await asyncio.sleep(0.1)
 
-        max_monitor_time = 300  # 5 minutes max monitoring
+        max_monitor_time = self.COMMAND_MONITOR_TIMEOUT_SECONDS
         check_interval = 0.2  # Check every 200ms for faster response
-        last_child_check = 0
         consecutive_no_children = 0
 
         start_time = time.time()
@@ -471,8 +490,9 @@ class AsyncPersistentTerminal:
 
             # Timeout protection - don't monitor forever
             if current_time - start_time > max_monitor_time:
-                command_info["status"] = "completed"
-                command_info["return_code"] = -1  # Unknown exit code
+                command_info["status"] = "monitor_timeout"
+                command_info["return_code"] = None
+                command_info["monitor_timeout_seconds"] = max_monitor_time
                 break
 
             try:
@@ -562,6 +582,7 @@ class AsyncPersistentTerminal:
             "purpose": command_info.get("purpose"),
             "duration": time.time() - command_info["start_time"],
             "return_code": command_info.get("return_code"),
+            "monitor_timeout_seconds": command_info.get("monitor_timeout_seconds"),
             "child_pids": list(command_info["child_pids"]),
         }
 
@@ -570,7 +591,7 @@ class AsyncPersistentTerminal:
         return {
             cmd_id: self.get_command_status(cmd_id)
             for cmd_id in self.active_commands
-            if self.active_commands[cmd_id]["status"] == "running"
+            if self.active_commands[cmd_id]["status"] in {"running", "monitor_timeout"}
         }
 
     def is_ready_for_commands(self) -> bool:
@@ -655,6 +676,31 @@ class LocalTerminalManager(TerminalManager):
 
         # Note: timeout is not implemented for local terminals as they use persistent shell sessions
         return await self.terminals[term_id].send_command(command, purpose=purpose)
+
+    async def send_input(
+        self, term_id: str, text: str, submit: bool = True, command_id: Optional[str] = None
+    ) -> bool:
+        """
+        Send input to a running command in a local terminal.
+        """
+        if term_id not in self.terminals:
+            raise KeyError(f"Terminal with ID {term_id} not found")
+
+        terminal = self.terminals[term_id]
+        active_commands = terminal.get_active_commands()
+
+        if command_id is not None:
+            status = terminal.get_command_status(command_id)
+            if status["status"] == "not_found":
+                raise ValueError(f"Command ID {command_id} not found in terminal {term_id}")
+            if status["status"] not in {"running", "monitor_timeout"}:
+                raise ValueError(f"Command {command_id} is not running in terminal {term_id}")
+        elif not active_commands:
+            raise ValueError(f"No active command is running in terminal {term_id}")
+        elif len(active_commands) > 1:
+            raise ValueError(f"Multiple active commands are running in terminal {term_id}; provide command_id")
+
+        return await terminal.send_input(text, submit=submit)
 
     async def get_output(self, terminal_id: str, **kwargs) -> str:
         """

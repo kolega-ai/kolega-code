@@ -1119,6 +1119,30 @@ class ToolCollection(LogMixin):
         """
         return await self.terminal_tool.run_command_tracked(terminal_id, command, purpose)
 
+    async def send_terminal_input(
+        self, terminal_id: str, text: str, submit: bool = True, command_id: Optional[str] = None
+    ) -> str:
+        """
+        Send input to an already-running terminal command.
+
+        Use this tool when a command started with run_command_tracked is waiting for
+        interactive input, such as a confirmation prompt or a password prompt. Read
+        the terminal first to confirm it is waiting, then send the exact response.
+
+        This tool does not start a new command and does not echo or store the input
+        text in terminal output.
+
+        Args:
+            terminal_id: The ID of the terminal where the command is running
+            text: Text to send to the running process
+            submit: Whether to append a newline before sending (default: true)
+            command_id: Optional command ID when more than one command is active
+
+        Returns:
+            Confirmation that input was sent, or an error explaining why it could not be sent
+        """
+        return await self.terminal_tool.send_terminal_input(terminal_id, text, submit=submit, command_id=command_id)
+
     async def check_command_status(self, terminal_id: str, command_id: str) -> str:
         """
         Check if a command has finished running and get its results.
@@ -1163,7 +1187,7 @@ class ToolCollection(LogMixin):
         """
         return await self.terminal_tool.check_terminal_status(terminal_id)
 
-    async def wait_for_command_completion(self, terminal_id: str, command_id: str, timeout: int = 120) -> str:
+    async def wait_for_command_completion(self, terminal_id: str, command_id: str, timeout: Optional[int] = 120) -> str:
         """
         Wait for a command to finish before continuing with other tasks.
 
@@ -1172,6 +1196,9 @@ class ToolCollection(LogMixin):
         results, such as running tests before deployment or building before serving.
 
         The tool will block execution until the command finishes or the timeout expires.
+        Timeout defaults to 120 seconds and is capped at 300 seconds. If the timeout
+        expires, the command is left running in the terminal and the response tells you
+        how to check it again with check_command_status.
         After completion, you can read the terminal output to see the results.
 
         Common scenarios:
@@ -1183,10 +1210,10 @@ class ToolCollection(LogMixin):
         Args:
             terminal_id: The ID of the terminal where the command is running
             command_id: The command ID returned from run_command_tracked
-            timeout: Maximum time to wait in seconds (default: 5 minutes)
+            timeout: Maximum time to wait in seconds (default: 120, capped at 300)
 
         Returns:
-            Completion status message or timeout notification
+            Completion status message or timeout notification with follow-up status-check guidance
         """
         return await self.terminal_tool.wait_for_command_completion(terminal_id, command_id, timeout)
 
