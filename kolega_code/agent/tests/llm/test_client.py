@@ -262,6 +262,76 @@ async def test_moonshot_generate_maps_provider_response_usage(capsys):
     assert capsys.readouterr().out == ""
 
 
+@pytest.mark.asyncio
+async def test_anthropic_opus_47_generate_omits_deprecated_temperature():
+    client = LLMClient("anthropic", "test-key")
+
+    class TextContent:
+        type = "text"
+        text = "ok"
+
+    class AnthropicMessage:
+        role = "assistant"
+        content = [TextContent()]
+        stop_reason = "end_turn"
+        usage = None
+
+    create = AsyncMock(return_value=AnthropicMessage())
+    with patch.object(client.provider.async_client.messages, "create", create):
+        await client.generate(
+            messages=TEST_MESSAGES,
+            system=TEST_SYSTEM,
+            model="claude-opus-4-7",
+            temperature=0.7,
+            max_completion_tokens=8,
+        )
+
+    assert "temperature" not in create.await_args.kwargs
+
+
+@pytest.mark.asyncio
+async def test_anthropic_opus_47_stream_omits_deprecated_temperature():
+    client = LLMClient("anthropic", "test-key")
+
+    with patch.object(client.provider.async_client.messages, "stream", return_value=object()) as stream:
+        await client.stream(
+            messages=TEST_MESSAGES,
+            system=TEST_SYSTEM,
+            model="claude-opus-4-7",
+            temperature=0.7,
+            max_completion_tokens=8,
+        )
+
+    assert "temperature" not in stream.call_args.kwargs
+
+
+@pytest.mark.asyncio
+async def test_anthropic_non_opus_47_generate_keeps_temperature():
+    client = LLMClient("anthropic", "test-key")
+
+    class TextContent:
+        type = "text"
+        text = "ok"
+
+    class AnthropicMessage:
+        role = "assistant"
+        content = [TextContent()]
+        stop_reason = "end_turn"
+        usage = None
+
+    create = AsyncMock(return_value=AnthropicMessage())
+    with patch.object(client.provider.async_client.messages, "create", create):
+        await client.generate(
+            messages=TEST_MESSAGES,
+            system=TEST_SYSTEM,
+            model="claude-sonnet-4-5-20250929",
+            temperature=0.7,
+            max_completion_tokens=8,
+        )
+
+    assert create.await_args.kwargs["temperature"] == 0.7
+
+
 @pytest.fixture(scope="session", autouse=True)
 def load_env():
     """This fixture ensures env vars are loaded in pytest-specific contexts"""

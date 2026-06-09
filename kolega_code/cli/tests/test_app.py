@@ -13,9 +13,20 @@ from kolega_code.cli.session_store import SessionStore
 from kolega_code.cli.settings import CliSettings, SettingsStore
 
 
+def extension_by_name(extensions, name: str):
+    return next(
+        extension
+        for extension in extensions
+        if getattr(extension, "name", None) == name or getattr(extension, "id", None) == name
+    )
+
+
 @pytest.mark.asyncio
 async def test_textual_app_mounts_with_fake_agent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
+
+    from textual.containers import VerticalScroll
+    from textual.widgets import Collapsible, Markdown
 
     from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
@@ -53,18 +64,1069 @@ async def test_textual_app_mounts_with_fake_agent(tmp_path: Path, monkeypatch: p
     async with app.run_test():
         assert isinstance(app.agent, FakeCoderAgent)
         assert app.mode == AgentMode.CLI.value
+        assert app.interaction_mode == "build"
         assert app.session.mode == AgentMode.CLI.value
         assert app.agent.kwargs["agent_mode"] == AgentMode.CLI
         assert app.query_one("#conversation") is not None
         assert app.query_one("#composer") is not None
+        assert app.query_one("#planning_pane") is not None
+        assert app.query_one("#planning_form", VerticalScroll) is not None
+        assert app.query_one("#planning_plan", Collapsible).collapsed is False
+        assert app.query_one("#planning_task_list", Collapsible).collapsed is False
+        assert app.query_one("#planning_plan_markdown", Markdown).source == "No plan captured yet."
+        assert app.query_one("#planning_task_list_markdown", Markdown).source == "No task list has been set."
         assert app.conversation_entries[0].kind == "startup"
         startup = app.conversation_entries[0].content
         assert "____          _" in startup
         assert f"Project: {project}" in startup
         assert f"Session: {session.session_id[:8]}" in startup
         assert "Mode: cli" in startup
+        assert "Interaction: build" in startup
         expected_model = f"{config.long_context_config.provider.value}/{config.long_context_config.model}"
         assert f"Model: {expected_model}" in startup
+
+
+@pytest.mark.asyncio
+async def test_textual_app_status_tab_is_default_dashboard(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from textual.widgets import Static, TabbedContent
+
+    from kolega_code.cli import app as app_module
+    from kolega_code.cli.app import KolegaCodeApp
+
+    class FakeCoderAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def restore_message_history(self, history):
+            return None
+
+        def dump_message_history(self):
+            return []
+
+        async def cleanup(self):
+            return None
+
+    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test():
+        assert app.query_one("#events", TabbedContent).active == "status_pane"
+        dashboard = str(app.query_one("#status_dashboard", Static).render())
+
+        assert "Status" in dashboard
+        assert f"{config.long_context_config.provider.value}/{config.long_context_config.model}" in dashboard
+        assert "Build" in dashboard
+        assert "Idle" in dashboard
+        assert "Waiting for first context count" in dashboard
+        assert list(app.query("#status")) == []
+
+
+@pytest.mark.asyncio
+async def test_textual_app_context_usage_updates_status_without_raw_json(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from textual.widgets import Static
+
+    from kolega_code.cli import app as app_module
+    from kolega_code.cli.app import COMPOSER_PLACEHOLDER, ChatComposer, KolegaCodeApp
+
+    class FakeCoderAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def restore_message_history(self, history):
+            return None
+
+        def dump_message_history(self):
+            return []
+
+        async def cleanup(self):
+            return None
+
+    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test():
+        composer = app.query_one("#composer", ChatComposer)
+        app._render_event(
+            AgentEvent(
+                event_type="llm_context_update",
+                sender="coder",
+                content={
+                    "input_tokens": 123456,
+                    "max_tokens": 200000,
+                    "usage_percentage": 61.7,
+                    "alert_level": "info",
+                    "message": "Context is getting large.",
+                    "compression_threshold": 80.0,
+                },
+            )
+        )
+        dashboard = str(app.query_one("#status_dashboard", Static).render())
+
+        assert "61.7%" in dashboard
+        assert "123,456 / 200,000" in dashboard
+        assert "Compresses at 80%" in dashboard
+        assert "Context is getting large." in dashboard
+        assert "input_tokens" not in dashboard
+        assert composer.placeholder == COMPOSER_PLACEHOLDER
+
+        app._render_event(AgentEvent(event_type="status_update", sender="coder", content={"input_tokens": 5}))
+        assert composer.placeholder == COMPOSER_PLACEHOLDER
+
+
+@pytest.mark.asyncio
+async def test_textual_app_status_dashboard_tracks_interaction_mode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from textual.widgets import Static
+
+    from kolega_code.cli import app as app_module
+    from kolega_code.cli.app import KolegaCodeApp
+
+    class FakeAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def restore_message_history(self, history):
+            return None
+
+        def dump_message_history(self):
+            return []
+
+        async def cleanup(self):
+            return None
+
+    monkeypatch.setattr(app_module, "CoderAgent", FakeAgent)
+    monkeypatch.setattr(app_module, "PlanningAgent", FakeAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test():
+        await app._set_interaction_mode("plan")
+        dashboard = str(app.query_one("#status_dashboard", Static).render())
+        assert "Plan" in dashboard
+
+        await app._set_interaction_mode("build")
+        dashboard = str(app.query_one("#status_dashboard", Static).render())
+        assert "Build" in dashboard
+
+
+@pytest.mark.asyncio
+async def test_textual_app_turn_status_formats_error_duration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from textual.widgets import Static
+
+    from kolega_code.cli import app as app_module
+    from kolega_code.cli.app import KolegaCodeApp
+
+    class FakeCoderAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def restore_message_history(self, history):
+            return None
+
+        def dump_message_history(self):
+            return []
+
+        async def cleanup(self):
+            return None
+
+    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+    now = 0.0
+    monkeypatch.setattr(app, "_now", lambda: now)
+
+    async with app.run_test():
+        app._begin_turn_progress()
+        now = 83.0
+        app._finish_turn_progress("Stopped due to error: boom")
+
+        assert "Errored after 1m 23s" in str(app.query_one("#turn_status", Static).render())
+
+
+@pytest.mark.asyncio
+async def test_textual_app_keeps_command_c_for_screen_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from textual.widgets import Markdown
+
+    from kolega_code.cli import app as app_module
+    from kolega_code.cli.app import KolegaCodeApp
+
+    class FakeCoderAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def restore_message_history(self, history):
+            return None
+
+        def dump_message_history(self):
+            return []
+
+        async def cleanup(self):
+            return None
+
+    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test():
+        cancel_binding = next(binding for binding in app.BINDINGS if binding.action == "cancel_generation")
+        assert cancel_binding.key == "ctrl+c"
+        assert all("super+c" not in binding.key for binding in app.BINDINGS)
+
+
+@pytest.mark.asyncio
+async def test_textual_app_shift_tab_toggles_between_build_and_plan_agents(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli import app as app_module
+    from kolega_code.cli.app import BUILD_INTERACTION_MODE, PLAN_INTERACTION_MODE, KolegaCodeApp, PendingQuestion
+
+    class FakeBaseAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.history = []
+            self.cleaned = False
+
+        def restore_message_history(self, history):
+            self.history = list(history)
+
+        def dump_message_history(self):
+            return self.history
+
+        async def cleanup(self):
+            self.cleaned = True
+
+    class FakeCoderAgent(FakeBaseAgent):
+        pass
+
+    class FakePlanningAgent(FakeBaseAgent):
+        pass
+
+    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(app_module, "PlanningAgent", FakePlanningAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test() as pilot:
+        toggle_binding = next(binding for binding in app.BINDINGS if binding.action == "toggle_interaction_mode")
+        assert toggle_binding.key == "shift+tab"
+        assert toggle_binding.key_display == "Shift+Tab"
+        assert toggle_binding.priority is True
+
+        assert isinstance(app.agent, FakeCoderAgent)
+        assert app.interaction_mode == BUILD_INTERACTION_MODE
+
+        await pilot.press("shift+tab")
+
+        assert app.interaction_mode == PLAN_INTERACTION_MODE
+        assert isinstance(app.agent, FakePlanningAgent)
+        startup = app.conversation_entries[0].content
+        assert "Interaction: plan" in startup
+
+        app._latest_plan = "# Plan\n\nDo it."
+        app._plan_decision_active = False
+        app._set_plan_actions_visible(True)
+        question_future = asyncio.get_running_loop().create_future()
+        app._pending_question = PendingQuestion(
+            question="Choose?",
+            options=["A", "B"],
+            future=question_future,
+        )
+        app._set_question_actions_visible(True)
+
+        await pilot.press("shift+tab")
+
+        assert app.interaction_mode == BUILD_INTERACTION_MODE
+        assert isinstance(app.agent, FakeCoderAgent)
+        assert app._latest_plan == "# Plan\n\nDo it."
+        assert app._plan_decision_active is False
+        assert app._pending_question is None
+        assert question_future.cancelled()
+        assert app.query_one("#implement_plan").display is True
+        assert app.query_one("#question_actions").display is False
+        loaded = store.load(session.session_id)
+        assert loaded.latest_plan_markdown == "# Plan\n\nDo it."
+        assert loaded.interaction_mode == BUILD_INTERACTION_MODE
+
+
+@pytest.mark.asyncio
+async def test_textual_app_restores_saved_plan_and_interaction_mode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from textual.widgets import Button, Markdown
+
+    from kolega_code.cli import app as app_module
+    from kolega_code.cli.app import ChatComposer, KolegaCodeApp
+
+    class FakeBaseAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.history = []
+
+        def restore_message_history(self, history):
+            self.history = list(history)
+
+        def dump_message_history(self):
+            return self.history
+
+        async def cleanup(self):
+            return None
+
+    class FakeCoderAgent(FakeBaseAgent):
+        pass
+
+    class FakePlanningAgent(FakeBaseAgent):
+        pass
+
+    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(app_module, "PlanningAgent", FakePlanningAgent)
+
+    saved_plan = "# Saved plan\n\nUse the restored plan."
+    saved_history = [Message(role="assistant", content=[TextBlock("saved response")]).to_dict()]
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    session.history = saved_history
+    session.latest_plan_markdown = saved_plan
+    session.interaction_mode = "plan"
+    store.save(session)
+
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test():
+        assert app.interaction_mode == "plan"
+        assert isinstance(app.agent, FakePlanningAgent)
+        assert app._latest_plan == saved_plan
+        assert app._plan_decision_active is False
+        assert app.query_one("#planning_plan_markdown", Markdown).source == saved_plan
+        assert app.query_one("#implement_plan", Button).display is True
+        assert app.query_one("#discuss_plan", Button).display is False
+        assert app.query_one("#composer", ChatComposer).disabled is False
+
+
+@pytest.mark.asyncio
+async def test_textual_app_invalid_saved_interaction_mode_falls_back_to_build(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli import app as app_module
+    from kolega_code.cli.app import BUILD_INTERACTION_MODE, KolegaCodeApp
+
+    class FakeCoderAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def restore_message_history(self, history):
+            return None
+
+        def dump_message_history(self):
+            return []
+
+        async def cleanup(self):
+            return None
+
+    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    session.interaction_mode = "invalid"
+    store.save(session)
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test():
+        assert app.interaction_mode == BUILD_INTERACTION_MODE
+        assert app.session.interaction_mode == BUILD_INTERACTION_MODE
+        assert isinstance(app.agent, FakeCoderAgent)
+
+
+@pytest.mark.asyncio
+async def test_textual_app_passes_shared_task_list_tools_to_build_and_plan_agents(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from textual.widgets import Markdown
+
+    from kolega_code.cli import app as app_module
+    from kolega_code.cli.app import KolegaCodeApp
+
+    class FakeBaseAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.history = []
+
+        def restore_message_history(self, history):
+            self.history = list(history)
+
+        def dump_message_history(self):
+            return self.history
+
+        async def cleanup(self):
+            return None
+
+    class FakeCoderAgent(FakeBaseAgent):
+        pass
+
+    class FakePlanningAgent(FakeBaseAgent):
+        pass
+
+    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(app_module, "PlanningAgent", FakePlanningAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test() as pilot:
+        assert isinstance(app.agent, FakeCoderAgent)
+        build_tools = extension_by_name(app.agent.kwargs["tool_extensions"], "cli-shared-task-list").tools
+        assert {"get_task_list", "update_task_list"} == set(build_tools)
+        assert all("ask_user_choice" not in extension.tools for extension in app.agent.kwargs["tool_extensions"])
+        assert "check off completed implementation tasks" in app.agent.kwargs["prompt_extensions"][0].markdown
+
+        assert await build_tools["get_task_list"]() == "No task list has been set."
+        assert await build_tools["update_task_list"]("- [ ] inspect\n- [x] plan") == "Task list updated."
+        assert app.session.task_list_markdown == "- [ ] inspect\n- [x] plan"
+        assert app.query_one("#planning_task_list_markdown", Markdown).source == "- [ ] inspect\n- [x] plan"
+        assert store.load(session.session_id).task_list_markdown == "- [ ] inspect\n- [x] plan"
+
+        await pilot.press("shift+tab")
+
+        assert isinstance(app.agent, FakePlanningAgent)
+        plan_tools = extension_by_name(app.agent.kwargs["tool_extensions"], "cli-shared-task-list").tools
+        question_tools = extension_by_name(app.agent.kwargs["tool_extensions"], "cli-planning-questions").tools
+        prompt_markdown = "\n".join(extension.markdown for extension in app.agent.kwargs["prompt_extensions"])
+        assert await plan_tools["get_task_list"]() == "- [ ] inspect\n- [x] plan"
+        assert await plan_tools["update_task_list"]("- [x] inspect\n- [x] plan") == "Task list updated."
+        assert {"ask_user_choice"} == set(question_tools)
+        assert "multiple-choice" in prompt_markdown
+        assert app.session.task_list_markdown == "- [x] inspect\n- [x] plan"
+        assert app.query_one("#planning_task_list_markdown", Markdown).source == "- [x] inspect\n- [x] plan"
+
+
+@pytest.mark.asyncio
+async def test_textual_app_passes_skill_extensions_to_build_and_plan_agents(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli import app as app_module
+    from kolega_code.cli.app import KolegaCodeApp
+
+    class FakeBaseAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.history = []
+
+        def restore_message_history(self, history):
+            self.history = list(history)
+
+        def dump_message_history(self):
+            return self.history
+
+        async def cleanup(self):
+            return None
+
+    class FakeCoderAgent(FakeBaseAgent):
+        pass
+
+    class FakePlanningAgent(FakeBaseAgent):
+        pass
+
+    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(app_module, "PlanningAgent", FakePlanningAgent)
+
+    project = tmp_path / "project"
+    skill_dir = project / ".agents" / "skills" / "demo-skill"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: demo-skill\ndescription: Use this demo skill.\n---\n\nFollow demo instructions.\n",
+        encoding="utf-8",
+    )
+    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test() as pilot:
+        skill_prompt = extension_by_name(app.agent.kwargs["prompt_extensions"], "cli-agent-skills")
+        skill_tools = extension_by_name(app.agent.kwargs["tool_extensions"], "cli-agent-skills").tools
+
+        assert "demo-skill" in skill_prompt.markdown
+        assert {"list_skills", "activate_skill", "read_skill_resource"} == set(skill_tools)
+        assert "demo-skill" in await skill_tools["list_skills"]()
+
+        await pilot.press("shift+tab")
+
+        planning_skill_tools = extension_by_name(app.agent.kwargs["tool_extensions"], "cli-agent-skills")
+        assert "activate_skill" in planning_skill_tools.tools
+
+
+@pytest.mark.asyncio
+async def test_textual_app_skill_slash_commands_list_and_activate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli import app as app_module
+    from kolega_code.cli.app import ChatComposer, KolegaCodeApp
+
+    class FakeCoderAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.history = []
+
+        def append_user_message(self, content):
+            self.history.append(Message(role="user", content=content))
+
+        def restore_message_history(self, history):
+            self.history = [Message.from_dict(item) for item in history]
+
+        def dump_message_history(self):
+            return [message.to_dict() for message in self.history]
+
+        async def cleanup(self):
+            return None
+
+    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+
+    project = tmp_path / "project"
+    skill_dir = project / ".agents" / "skills" / "demo-skill"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: demo-skill\ndescription: Use this demo skill.\n---\n\nFollow demo instructions.\n",
+        encoding="utf-8",
+    )
+    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test():
+        composer = app.query_one("#composer", ChatComposer)
+        composer.load_text("/skills")
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+
+        assert app.conversation_entries[-1].kind == "system"
+        assert "`/demo-skill`" in app.conversation_entries[-1].content
+
+        composer.load_text("/demo-skill")
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+
+        assert app.conversation_entries[-1].kind == "skill"
+        assert '<skill_content name="demo-skill">' in app.agent.history[-1].get_text_content()
+        assert '<skill_content name="demo-skill">' in store.load(session.session_id).history[-1]["content"][0]["text"]
+
+
+@pytest.mark.asyncio
+async def test_textual_app_skill_slash_command_with_prompt_starts_turn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli import app as app_module
+    from kolega_code.cli.app import ChatComposer, KolegaCodeApp
+
+    class FakeCoderAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.history = []
+            self.messages = []
+
+        def append_user_message(self, content):
+            self.history.append(Message(role="user", content=content))
+
+        def restore_message_history(self, history):
+            self.history = [Message.from_dict(item) for item in history]
+
+        def dump_message_history(self):
+            return [message.to_dict() for message in self.history]
+
+        async def cleanup(self):
+            return None
+
+        async def process_message_stream(self, message):
+            self.messages.append(message)
+            yield {"type": "response", "content": "done", "complete": True, "uuid": "response-1"}
+
+    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+
+    project = tmp_path / "project"
+    skill_dir = project / ".agents" / "skills" / "demo-skill"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: demo-skill\ndescription: Use this demo skill.\n---\n\nFollow demo instructions.\n",
+        encoding="utf-8",
+    )
+    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test() as pilot:
+        composer = app.query_one("#composer", ChatComposer)
+        composer.load_text("/demo-skill Build the feature")
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+        await pilot.pause()
+
+        assert app.agent.messages == ["Build the feature"]
+        assert any(entry.kind == "skill" for entry in app.conversation_entries)
+        assert any(entry.kind == "user" and entry.content == "Build the feature" for entry in app.conversation_entries)
+
+
+@pytest.mark.asyncio
+async def test_textual_app_planning_question_tool_accepts_option_button_answer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from textual.widgets import Button, Markdown
+
+    from kolega_code.cli import app as app_module
+    from kolega_code.cli.app import ChatComposer, KolegaCodeApp
+
+    class FakeBaseAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.history = []
+
+        def restore_message_history(self, history):
+            self.history = list(history)
+
+        def dump_message_history(self):
+            return self.history
+
+        async def cleanup(self):
+            return None
+
+    class FakeCoderAgent(FakeBaseAgent):
+        pass
+
+    class FakePlanningAgent(FakeBaseAgent):
+        pass
+
+    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(app_module, "PlanningAgent", FakePlanningAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test() as pilot:
+        await app.action_toggle_interaction_mode()
+        ask_user_choice = extension_by_name(
+            app.agent.kwargs["tool_extensions"], "cli-planning-questions"
+        ).tools["ask_user_choice"]
+
+        app._turn_active = True
+        answer_task = asyncio.create_task(
+            ask_user_choice("Which approach should we use?", ["Keep state local", "Persist it"])
+        )
+        await pilot.pause()
+
+        assert app._pending_question is not None
+        assert app.query_one("#composer", ChatComposer).disabled is False
+        assert app.query_one("#question_option_0", Button).label.plain == "1. Keep state local"
+        assert app.conversation_entries[-1].kind == "question"
+
+        await app.on_button_pressed(Button.Pressed(app.query_one("#question_option_1", Button)))
+
+        assert await answer_task == "Persist it"
+        assert app._pending_question is None
+        assert app.query_one("#question_actions").display is False
+        assert app.query_one("#composer", ChatComposer).disabled is True
+        assert app.conversation_entries[-1].kind == "user"
+        assert app.conversation_entries[-1].content == "Persist it"
+        app._turn_active = False
+
+
+@pytest.mark.asyncio
+async def test_textual_app_planning_question_tool_accepts_custom_text_answer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from textual.widgets import Button
+
+    from kolega_code.cli import app as app_module
+    from kolega_code.cli.app import ChatComposer, KolegaCodeApp
+
+    class FakeBaseAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.history = []
+
+        def restore_message_history(self, history):
+            self.history = list(history)
+
+        def dump_message_history(self):
+            return self.history
+
+        async def cleanup(self):
+            return None
+
+    class FakeCoderAgent(FakeBaseAgent):
+        pass
+
+    class FakePlanningAgent(FakeBaseAgent):
+        pass
+
+    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(app_module, "PlanningAgent", FakePlanningAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test() as pilot:
+        await app.action_toggle_interaction_mode()
+        ask_user_choice = extension_by_name(
+            app.agent.kwargs["tool_extensions"], "cli-planning-questions"
+        ).tools["ask_user_choice"]
+
+        answer_task = asyncio.create_task(
+            ask_user_choice("Which scope?", ["Small fix", "Full workflow"])
+        )
+        await pilot.pause()
+
+        composer = app.query_one("#composer", ChatComposer)
+        composer.load_text("Start with the small fix, but keep the API extensible.")
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+
+        assert await answer_task == "Start with the small fix, but keep the API extensible."
+        assert composer.text == ""
+        assert app._pending_question is None
+        assert app.query_one("#question_actions").display is False
+        assert app.query_one("#question_option_0", Button).label.plain == "1. Small fix"
+        assert app.conversation_entries[-1].content == "Start with the small fix, but keep the API extensible."
+
+
+@pytest.mark.asyncio
+async def test_textual_app_blocks_mode_toggle_during_active_turn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli import app as app_module
+    from kolega_code.cli.app import ChatComposer, KolegaCodeApp
+
+    class FakeCoderAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def restore_message_history(self, history):
+            return None
+
+        def dump_message_history(self):
+            return []
+
+        async def cleanup(self):
+            return None
+
+    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test():
+        app._turn_active = True
+
+        await app.action_toggle_interaction_mode()
+
+        assert app.interaction_mode == "build"
+        assert app.query_one("#composer", ChatComposer).placeholder == "Stop the current turn before switching modes."
+
+
+@pytest.mark.asyncio
+async def test_textual_app_shows_plan_decision_when_planning_agent_writes_plan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli import app as app_module
+    from textual.widgets import Button, Markdown
+
+    from kolega_code.cli.app import ChatComposer, KolegaCodeApp
+
+    class FakeCoderAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def restore_message_history(self, history):
+            return None
+
+        def dump_message_history(self):
+            return []
+
+        async def cleanup(self):
+            return None
+
+    class FakePlanningAgent(FakeCoderAgent):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.completed_plan = "# Plan\n\n" + "\n".join(
+                f"- Step {index}: keep the planning sidebar readable."
+                for index in range(1, 26)
+            )
+
+        async def process_message_stream(self, message):
+            yield {"type": "response", "content": "I have a plan.", "complete": True, "uuid": "response-1"}
+
+        def consume_completed_plan(self):
+            plan = self.completed_plan
+            self.completed_plan = None
+            return plan
+
+    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(app_module, "PlanningAgent", FakePlanningAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test():
+        await app.action_toggle_interaction_mode()
+        await app._process_message("plan this")
+
+        initial_plan = app.agent.completed_plan or app._latest_plan
+        assert app._plan_decision_active is True
+        assert app._latest_plan == initial_plan
+        assert app.query_one("#composer", ChatComposer).disabled is True
+        assert app.query_one("#composer", ChatComposer).placeholder == "Plan ready. Choose Implement plan or Discuss further."
+        assert app.query_one("#implement_plan", Button).display is True
+        assert app.query_one("#discuss_plan", Button).display is True
+        assert app.query_one("#planning_plan_markdown", Markdown).source == initial_plan
+        assert "Step 25" in app.query_one("#planning_plan_markdown", Markdown).source
+        assert app.conversation_entries[-1].kind == "plan"
+        loaded = store.load(session.session_id)
+        assert loaded.latest_plan_markdown == initial_plan
+        assert loaded.interaction_mode == "plan"
+
+        app._discuss_pending_plan()
+
+        assert app._plan_decision_active is False
+        assert app._latest_plan == initial_plan
+        assert app.query_one("#composer", ChatComposer).disabled is False
+        assert app.query_one("#implement_plan", Button).display is True
+        assert app.query_one("#discuss_plan", Button).display is False
+        assert store.load(session.session_id).latest_plan_markdown == initial_plan
+
+        app.agent.completed_plan = "# Revised plan\n\nBuild planning mode carefully."
+        app._capture_completed_plan()
+
+        assert app._plan_decision_active is True
+        assert app._latest_plan == "# Revised plan\n\nBuild planning mode carefully."
+        assert app.query_one("#composer", ChatComposer).disabled is True
+        assert app.query_one("#implement_plan", Button).display is True
+        assert app.query_one("#discuss_plan", Button).display is True
+        assert (
+            app.query_one("#planning_plan_markdown", Markdown).source
+            == "# Revised plan\n\nBuild planning mode carefully."
+        )
+        assert store.load(session.session_id).latest_plan_markdown == "# Revised plan\n\nBuild planning mode carefully."
+
+
+@pytest.mark.asyncio
+async def test_textual_app_implement_plan_switches_to_build_and_sends_plan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from textual.widgets import Markdown
+
+    from kolega_code.cli import app as app_module
+    from kolega_code.cli.app import KolegaCodeApp
+
+    class FakeCoderAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.messages: list[str] = []
+            self.history = []
+
+        def restore_message_history(self, history):
+            self.history = list(history)
+
+        def dump_message_history(self):
+            return self.history
+
+        async def cleanup(self):
+            return None
+
+        async def process_message_stream(self, message):
+            self.messages.append(message)
+            yield {"type": "response", "content": "implemented", "complete": True, "uuid": "response-1"}
+
+    class FakePlanningAgent(FakeCoderAgent):
+        pass
+
+    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(app_module, "PlanningAgent", FakePlanningAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test():
+        await app.action_toggle_interaction_mode()
+        app._latest_plan = "# Plan\n\nBuild it."
+        app._plan_decision_active = True
+
+        await app._implement_pending_plan()
+        assert app.agent_worker is not None
+        await app.agent_worker.wait()
+
+        assert app.interaction_mode == "build"
+        assert isinstance(app.agent, FakeCoderAgent)
+        assert app.agent.messages
+        assert "# Plan\n\nBuild it." in app.agent.messages[-1]
+        assert app._plan_decision_active is False
+        assert app._latest_plan is None
+        assert app.query_one("#planning_plan_markdown", Markdown).source == "No plan captured yet."
+        loaded = store.load(session.session_id)
+        assert loaded.latest_plan_markdown == ""
+        assert loaded.interaction_mode == "build"
+
+
+@pytest.mark.asyncio
+async def test_textual_app_implement_plan_after_discuss_uses_latest_plan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli import app as app_module
+    from kolega_code.cli.app import KolegaCodeApp
+
+    class FakeCoderAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.messages: list[str] = []
+            self.history = []
+
+        def restore_message_history(self, history):
+            self.history = list(history)
+
+        def dump_message_history(self):
+            return self.history
+
+        async def cleanup(self):
+            return None
+
+        async def process_message_stream(self, message):
+            self.messages.append(message)
+            yield {"type": "response", "content": "implemented", "complete": True, "uuid": "response-1"}
+
+    class FakePlanningAgent(FakeCoderAgent):
+        pass
+
+    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(app_module, "PlanningAgent", FakePlanningAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test():
+        await app.action_toggle_interaction_mode()
+        app._latest_plan = "# Plan\n\nBuild it after discussing."
+        app._plan_decision_active = True
+
+        app._discuss_pending_plan()
+
+        assert app._latest_plan == "# Plan\n\nBuild it after discussing."
+        assert app._plan_decision_active is False
+        assert store.load(session.session_id).latest_plan_markdown == "# Plan\n\nBuild it after discussing."
+
+        await app._implement_pending_plan()
+        assert app.agent_worker is not None
+        await app.agent_worker.wait()
+
+        assert app.interaction_mode == "build"
+        assert isinstance(app.agent, FakeCoderAgent)
+        assert "# Plan\n\nBuild it after discussing." in app.agent.messages[-1]
+        assert app._latest_plan is None
+        assert store.load(session.session_id).latest_plan_markdown == ""
 
 
 @pytest.mark.asyncio
@@ -109,7 +1171,7 @@ async def test_textual_app_does_not_save_startup_entry_to_history(
 
 
 @pytest.mark.asyncio
-async def test_textual_app_composer_ctrl_enter_inserts_line_break_and_enter_submits(
+async def test_textual_app_composer_shift_enter_inserts_line_break_and_enter_submits(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     pytest.importorskip("textual")
@@ -149,7 +1211,7 @@ async def test_textual_app_composer_ctrl_enter_inserts_line_break_and_enter_subm
         composer.focus()
 
         await pilot.press("h", "i")
-        await pilot.press("ctrl+enter")
+        await pilot.press("shift+enter")
         await pilot.press("t", "h", "e", "r", "e")
         assert composer.text == "hi\nthere"
 
@@ -161,6 +1223,48 @@ async def test_textual_app_composer_ctrl_enter_inserts_line_break_and_enter_subm
         assert composer.text == ""
         user_entries = [entry for entry in app.conversation_entries if entry.kind == "user"]
         assert user_entries[-1].content == "hi\nthere"
+
+
+@pytest.mark.asyncio
+async def test_textual_app_composer_ctrl_enter_still_inserts_line_break(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli import app as app_module
+    from kolega_code.cli.app import ChatComposer, KolegaCodeApp
+
+    class FakeCoderAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def restore_message_history(self, history):
+            return None
+
+        def dump_message_history(self):
+            return []
+
+        async def cleanup(self):
+            return None
+
+    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test() as pilot:
+        composer = app.query_one("#composer", ChatComposer)
+        composer.focus()
+
+        await pilot.press("h", "i")
+        await pilot.press("ctrl+enter")
+        await pilot.press("t", "h", "e", "r", "e")
+
+        assert composer.text == "hi\nthere"
 
 
 @pytest.mark.asyncio
@@ -226,8 +1330,10 @@ async def test_textual_app_reset_command_clears_current_thread(
 ) -> None:
     pytest.importorskip("textual")
 
+    from textual.widgets import Button, Markdown
+
     from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import ChatComposer, KolegaCodeApp, THREAD_RESET_MESSAGE
+    from kolega_code.cli.app import ChatComposer, KolegaCodeApp, PendingQuestion, THREAD_RESET_MESSAGE
 
     class FakeCoderAgent:
         def __init__(self, **kwargs):
@@ -258,6 +1364,8 @@ async def test_textual_app_reset_command_clears_current_thread(
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
     session.history = saved_history
+    session.task_list_markdown = "- [ ] old task"
+    session.latest_plan_markdown = "# Plan\n\nOld plan."
     store.save(session)
 
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
@@ -266,6 +1374,16 @@ async def test_textual_app_reset_command_clears_current_thread(
         assert app.agent is not None
         assert len(app.agent.history) == 2
         assert any(entry.content == "old request" for entry in app.conversation_entries)
+        app._latest_plan = "# Plan\n\nOld plan."
+        app._plan_decision_active = False
+        app._set_plan_actions_visible(True)
+        question_future = asyncio.get_running_loop().create_future()
+        app._pending_question = PendingQuestion(
+            question="Old question?",
+            options=["A", "B"],
+            future=question_future,
+        )
+        app._set_question_actions_visible(True)
 
         composer = app.query_one("#composer", ChatComposer)
         composer.load_text(command)
@@ -274,7 +1392,19 @@ async def test_textual_app_reset_command_clears_current_thread(
         assert app.agent_worker is None
         assert len(app.agent.history) == 0
         assert app.session.history == []
+        assert app.session.task_list_markdown == ""
+        assert app._latest_plan is None
+        assert app._plan_decision_active is False
+        assert app._pending_question is None
+        assert question_future.cancelled()
+        assert app.query_one("#implement_plan", Button).display is False
+        assert app.query_one("#discuss_plan", Button).display is False
+        assert app.query_one("#question_actions").display is False
+        assert app.query_one("#planning_plan_markdown", Markdown).source == "No plan captured yet."
+        assert app.query_one("#planning_task_list_markdown", Markdown).source == "No task list has been set."
         assert store.load(session.session_id).history == []
+        assert store.load(session.session_id).task_list_markdown == ""
+        assert store.load(session.session_id).latest_plan_markdown == ""
         assert composer.text == ""
         assert [entry.kind for entry in app.conversation_entries] == ["startup", "progress"]
         assert app.conversation_entries[-1].content == THREAD_RESET_MESSAGE
@@ -769,6 +1899,148 @@ def test_textual_app_separates_chat_entries_with_blank_lines(
 
 
 @pytest.mark.asyncio
+async def test_copyable_rich_log_extracts_plain_selected_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from textual.selection import Selection
+
+    from kolega_code.cli import app as app_module
+    from kolega_code.cli.app import CopyableRichLog, KolegaCodeApp
+
+    class FakeCoderAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def restore_message_history(self, history):
+            return None
+
+        def dump_message_history(self):
+            return []
+
+        async def cleanup(self):
+            return None
+
+    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test():
+        conversation = app.query_one("#conversation", CopyableRichLog)
+        conversation.clear()
+        conversation.write("[bold magenta]Agent[/bold magenta]\ncopy [red]this[/red]")
+
+        selected = conversation.get_selection(Selection(None, None))
+
+        assert selected == ("Agent\ncopy this", "\n")
+
+
+@pytest.mark.asyncio
+async def test_copyable_rich_log_supports_mouse_drag_selection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from textual import events
+
+    from kolega_code.cli import app as app_module
+    from kolega_code.cli.app import CopyableRichLog, KolegaCodeApp
+
+    class FakeCoderAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def restore_message_history(self, history):
+            return None
+
+        def dump_message_history(self):
+            return []
+
+        async def cleanup(self):
+            return None
+
+    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test() as pilot:
+        conversation = app.query_one("#conversation", CopyableRichLog)
+        conversation.clear()
+        conversation.write("[bold magenta]Agent[/bold magenta]\nselect this text")
+
+        await pilot.mouse_down(conversation, offset=(1, 2))
+        await pilot._post_mouse_events([events.MouseMove], conversation, offset=(18, 2), button=1)
+        await pilot.mouse_up(conversation, offset=(18, 2))
+
+        assert app.screen.get_selected_text() == "select this text"
+
+
+@pytest.mark.asyncio
+async def test_command_c_copies_selected_chat_text_to_macos_clipboard(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from textual.selection import Selection
+
+    from kolega_code.cli import app as app_module
+    from kolega_code.cli.app import CopyableRichLog, KolegaCodeApp
+
+    class FakeCoderAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def restore_message_history(self, history):
+            return None
+
+        def dump_message_history(self):
+            return []
+
+        async def cleanup(self):
+            return None
+
+    pbcopy_calls: list[dict] = []
+
+    def fake_run(args, *, input, text, check):
+        pbcopy_calls.append({"args": args, "input": input, "text": text, "check": check})
+
+    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(app_module.sys, "platform", "darwin")
+    monkeypatch.setattr(app_module.subprocess, "run", fake_run)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test() as pilot:
+        conversation = app.query_one("#conversation", CopyableRichLog)
+        conversation.clear()
+        conversation.write("[bold magenta]Agent[/bold magenta]\ncopy [red]this[/red]")
+        app.screen.selections = {conversation: Selection(None, None)}
+
+        await pilot.press("super+c")
+
+        assert app.clipboard == "Agent\ncopy this"
+        assert pbcopy_calls == [
+            {"args": ["pbcopy"], "input": "Agent\ncopy this", "text": True, "check": True}
+        ]
+
+
+@pytest.mark.asyncio
 async def test_textual_app_formats_agent_and_tool_chat_entries(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -875,6 +2147,8 @@ async def test_textual_app_shows_working_progress_during_active_turn(
 ) -> None:
     pytest.importorskip("textual")
 
+    from textual.widgets import Static
+
     from kolega_code.cli import app as app_module
     from kolega_code.cli.app import COMPOSER_PLACEHOLDER, ChatComposer, KolegaCodeApp
 
@@ -907,9 +2181,14 @@ async def test_textual_app_shows_working_progress_during_active_turn(
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+    now = 100.0
+    monkeypatch.setattr(app, "_now", lambda: now)
 
     async with app.run_test():
         composer = app.query_one("#composer", ChatComposer)
+        turn_status = app.query_one("#turn_status", Static)
+        assert turn_status.display is False
+
         task = asyncio.create_task(app._process_message("hi"))
         await started.wait()
 
@@ -917,18 +2196,26 @@ async def test_textual_app_shows_working_progress_during_active_turn(
         assert progress_entries == []
         assert composer.placeholder == "Agent is working..."
         assert composer.disabled is True
+        assert "Agent is working..." in str(turn_status.render())
+        assert "0s" in str(turn_status.render())
 
+        now = 103.0
         app._render_event(
             AgentEvent(event_type="status_update", sender="coder", content={"text": "Indexing workspace"})
         )
         assert composer.placeholder == "Indexing workspace"
+        app._refresh_turn_status_strip()
+        assert "Indexing workspace" in str(turn_status.render())
+        assert "3s" in str(turn_status.render())
 
+        now = 423.0
         release.set()
         await task
 
         assert [entry for entry in app.conversation_entries if entry.kind == "progress"] == []
         assert composer.placeholder == COMPOSER_PLACEHOLDER
         assert composer.disabled is False
+        assert "Worked for 5m 23s" in str(turn_status.render())
 
 
 @pytest.mark.asyncio
@@ -1008,7 +2295,7 @@ async def test_textual_app_renders_tool_events_in_chat(tmp_path: Path, monkeypat
 
 
 @pytest.mark.asyncio
-async def test_textual_app_updates_tool_streaming_events_in_chat(
+async def test_textual_app_appends_append_mode_tool_streaming_events_in_chat(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     pytest.importorskip("textual")
@@ -1060,9 +2347,30 @@ async def test_textual_app_updates_tool_streaming_events_in_chat(
                     "tool_name": "think_hard",
                     "tool_call_id": "tool-1",
                     "is_complete": False,
+                    "stream_mode": "append",
                 },
             )
         )
+        app._render_event(
+            AgentEvent(
+                event_type="tool_streaming_update",
+                sender="coder",
+                content={
+                    "text": "\ncontinued analysis",
+                    "tool_name": "think_hard",
+                    "tool_call_id": "tool-1",
+                    "is_complete": False,
+                    "stream_mode": "append",
+                },
+            )
+        )
+
+        tool_entries = [entry for entry in app.conversation_entries if entry.kind.startswith("tool")]
+        assert len(tool_entries) == 1
+        assert tool_entries[0].kind == "tool_call"
+        assert tool_entries[0].content == "partial analysis\ncontinued analysis"
+        assert tool_entries[0].complete is False
+
         app._render_event(
             AgentEvent(
                 event_type="tool_streaming_update",
@@ -1081,6 +2389,122 @@ async def test_textual_app_updates_tool_streaming_events_in_chat(
         assert tool_entries[0].kind == "tool_result"
         assert tool_entries[0].content == "completed\nfinal analysis"
         assert tool_entries[0].complete is True
+        assert app._tool_stream_buffers == {}
+
+
+@pytest.mark.asyncio
+async def test_textual_app_replaces_default_tool_streaming_events_in_chat(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli import app as app_module
+    from kolega_code.cli.app import KolegaCodeApp
+
+    class FakeCoderAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def restore_message_history(self, history):
+            return None
+
+        def dump_message_history(self):
+            return []
+
+        async def cleanup(self):
+            return None
+
+    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test():
+        app._render_event(
+            AgentEvent(
+                event_type="tool_streaming_update",
+                sender="coder",
+                content={
+                    "text": "Fetching content...",
+                    "tool_name": "web_fetch",
+                    "tool_call_id": "tool-1",
+                    "is_complete": False,
+                },
+            )
+        )
+        app._render_event(
+            AgentEvent(
+                event_type="tool_streaming_update",
+                sender="coder",
+                content={
+                    "text": "Processing content...",
+                    "tool_name": "web_fetch",
+                    "tool_call_id": "tool-1",
+                    "is_complete": False,
+                },
+            )
+        )
+
+        tool_entries = [entry for entry in app.conversation_entries if entry.kind.startswith("tool")]
+        assert len(tool_entries) == 1
+        assert tool_entries[0].kind == "tool_call"
+        assert tool_entries[0].content == "Processing content..."
+
+
+@pytest.mark.asyncio
+async def test_textual_app_caps_long_append_mode_tool_streaming_events(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli import app as app_module
+    from kolega_code.cli.app import KolegaCodeApp, TOOL_STREAM_PREVIEW_CHARS
+
+    class FakeCoderAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def restore_message_history(self, history):
+            return None
+
+        def dump_message_history(self):
+            return []
+
+        async def cleanup(self):
+            return None
+
+    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test():
+        app._render_event(
+            AgentEvent(
+                event_type="tool_streaming_update",
+                sender="coder",
+                content={
+                    "text": "a" * (TOOL_STREAM_PREVIEW_CHARS + 10),
+                    "tool_name": "think_hard",
+                    "tool_call_id": "tool-1",
+                    "is_complete": False,
+                    "stream_mode": "append",
+                },
+            )
+        )
+
+        tool_entries = [entry for entry in app.conversation_entries if entry.kind.startswith("tool")]
+        assert len(tool_entries) == 1
+        assert tool_entries[0].content.startswith(f"[stream truncated to last {TOOL_STREAM_PREVIEW_CHARS} chars]")
+        assert tool_entries[0].content.endswith("a" * TOOL_STREAM_PREVIEW_CHARS)
 
 
 @pytest.mark.asyncio
@@ -1088,6 +2512,8 @@ async def test_textual_app_renders_queued_tool_events_during_active_turn(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     pytest.importorskip("textual")
+
+    from textual.widgets import Static
 
     from kolega_code.cli import app as app_module
     from kolega_code.cli.app import COMPOSER_PLACEHOLDER, ChatComposer, KolegaCodeApp
@@ -1159,9 +2585,12 @@ async def test_textual_app_renders_queued_tool_events_during_active_turn(
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+    now = 10.0
+    monkeypatch.setattr(app, "_now", lambda: now)
 
     async with app.run_test():
         composer = app.query_one("#composer", ChatComposer)
+        turn_status = app.query_one("#turn_status", Static)
         await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, "hi"))
         worker = app.agent_worker
         assert worker is not None
@@ -1176,7 +2605,9 @@ async def test_textual_app_renders_queued_tool_events_during_active_turn(
         assert tool_entries[0].kind == "tool_call"
         assert tool_entries[0].content == "Calling read_file"
         assert composer.placeholder == "Running read_file..."
+        assert "Running read_file..." in str(turn_status.render())
 
+        now = 25.0
         release.set()
         await worker.wait()
 
@@ -1185,6 +2616,7 @@ async def test_textual_app_renders_queued_tool_events_during_active_turn(
         assert tool_entries[0].kind == "tool_result"
         assert tool_entries[0].content == "completed\nREADME contents"
         assert composer.placeholder == COMPOSER_PLACEHOLDER
+        assert "Worked for 15s" in str(turn_status.render())
 
 
 @pytest.mark.asyncio
@@ -1259,6 +2691,8 @@ async def test_textual_app_cancellation_is_visible_in_chat(
 ) -> None:
     pytest.importorskip("textual")
 
+    from textual.widgets import Static
+
     from kolega_code.cli import app as app_module
     from kolega_code.cli.app import COMPOSER_PLACEHOLDER, ChatComposer, KolegaCodeApp
 
@@ -1291,17 +2725,23 @@ async def test_textual_app_cancellation_is_visible_in_chat(
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+    now = 10.0
+    monkeypatch.setattr(app, "_now", lambda: now)
 
     async with app.run_test():
         composer = app.query_one("#composer", ChatComposer)
+        turn_status = app.query_one("#turn_status", Static)
         task = asyncio.create_task(app._process_message("hi"))
         app.agent_worker = task
         await started.wait()
 
+        now = 52.0
         app.action_cancel_generation()
         progress_entries = [entry for entry in app.conversation_entries if entry.kind == "progress"]
         assert progress_entries == []
         assert composer.placeholder == "Stop requested..."
+        assert "Stop requested..." in str(turn_status.render())
+        assert "42s" in str(turn_status.render())
 
         await task
 
@@ -1310,6 +2750,7 @@ async def test_textual_app_cancellation_is_visible_in_chat(
         assert progress_entries[0].content == "Stopped by user"
         assert progress_entries[0].complete is True
         assert composer.placeholder == COMPOSER_PLACEHOLDER
+        assert "Stopped after 42s" in str(turn_status.render())
 
 
 @pytest.mark.asyncio

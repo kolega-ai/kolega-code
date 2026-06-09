@@ -30,6 +30,9 @@ class SessionRecord:
     updated_at: str
     config: dict[str, Any] = field(default_factory=dict)
     history: list[dict[str, Any]] = field(default_factory=list)
+    task_list_markdown: str = ""
+    latest_plan_markdown: str = ""
+    interaction_mode: str = "build"
     schema_version: int = SCHEMA_VERSION
 
     @classmethod
@@ -74,6 +77,9 @@ class SessionRecord:
             updated_at=data["updated_at"],
             config=data.get("config") or {},
             history=data.get("history") or [],
+            task_list_markdown=data.get("task_list_markdown") or "",
+            latest_plan_markdown=data.get("latest_plan_markdown") or "",
+            interaction_mode=data.get("interaction_mode") or "build",
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -89,6 +95,9 @@ class SessionRecord:
             "updated_at": self.updated_at,
             "config": self.config,
             "history": self.history,
+            "task_list_markdown": self.task_list_markdown,
+            "latest_plan_markdown": self.latest_plan_markdown,
+            "interaction_mode": self.interaction_mode,
         }
 
 

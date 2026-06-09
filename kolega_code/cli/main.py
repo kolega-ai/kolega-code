@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Iterable, Optional
 
 from kolega_code.agent import CoderAgent
+from kolega_code.agent.llm.models import TextBlock
 from kolega_code.agent.prompt_provider import AgentMode
 from kolega_code.agent.services.browser import PlaywrightBrowserManager
 
@@ -18,10 +19,19 @@ from .config import CliConfigError, CliConfigOverrides, build_agent_config, conf
 from .connection import CliConnectionManager
 from .session_store import SessionRecord, SessionStore, SessionStoreError
 from .settings import SettingsStore, SettingsStoreError
+from .skills import (
+    SkillCatalog,
+    activated_skill_names,
+    build_skill_prompt_extension,
+    build_skill_tool_extension,
+    discover_skills,
+)
 
 SUBCOMMANDS = {"ask", "sessions", "doctor"}
 RESUME_LATEST = "__latest__"
 CLI_AGENT_MODE = AgentMode.CLI.value
+AGENT_BUILTIN_COMMANDS = {"/help", "/compress", "/clear", "/reset", "/context"}
+SKILLS_LIST_COMMAND = "/skills"
 
 
 def main(argv: Optional[Iterable[str]] = None) -> int:
@@ -259,6 +269,35 @@ def _run_tui(args: argparse.Namespace) -> int:
 
 async def _run_ask(args: argparse.Namespace) -> int:
     project_path = _validate_project(args.project)
+    skill_catalog = discover_skills(project_path)
+    skill_command = _parse_skill_prompt(args.prompt, skill_catalog)
+
+    if skill_command and skill_command[0] == "skills":
+        if args.json:
+            print(json.dumps({"kind": "skills", "data": skill_catalog.format_catalog()}, default=str))
+        else:
+            print(skill_catalog.format_catalog())
+        return 0
+
+    if skill_command and skill_command[0] != "skills" and not skill_command[1] and not (args.save or args.session):
+        activation_content = skill_catalog.activation_content(skill_command[0])
+        if args.json:
+            print(
+                json.dumps(
+                    {
+                        "kind": "skill",
+                        "data": {
+                            "name": skill_command[0],
+                            "content": activation_content,
+                        },
+                    },
+                    default=str,
+                )
+            )
+        else:
+            print(activation_content)
+        return 0
+
     store = _store_from_args(args)
     settings_store = _settings_store_from_args(args)
     settings = settings_store.load()
@@ -276,6 +315,18 @@ async def _run_ask(args: argparse.Namespace) -> int:
     manager = CliConnectionManager()
     browser_manager = PlaywrightBrowserManager()
     browser_manager.headless = not args.browser_visible
+    agent_ref: dict[str, CoderAgent] = {}
+    prompt_extensions = []
+    tool_extensions = []
+    skill_prompt_extension = build_skill_prompt_extension(skill_catalog)
+    skill_tool_extension = build_skill_tool_extension(
+        skill_catalog,
+        lambda: agent_ref["agent"].history if "agent" in agent_ref else [],
+    )
+    if skill_prompt_extension is not None:
+        prompt_extensions.append(skill_prompt_extension)
+    if skill_tool_extension is not None:
+        tool_extensions.append(skill_tool_extension)
     agent = CoderAgent(
         project_path=project_path,
         workspace_id=session.workspace_id,
@@ -284,13 +335,49 @@ async def _run_ask(args: argparse.Namespace) -> int:
         config=config,
         browser_manager=browser_manager,
         agent_mode=AgentMode.CLI,
+        prompt_extensions=prompt_extensions,
+        tool_extensions=tool_extensions,
     )
+    agent_ref["agent"] = agent
     if session.history:
         agent.restore_message_history(session.history)
 
+    prompt = args.prompt
+    if skill_command:
+        skill_name, skill_prompt = skill_command
+        active_names = activated_skill_names(agent.history)
+        activation_content = skill_catalog.activation_content(skill_name, active_names=active_names)
+        if skill_name not in active_names:
+            agent.append_user_message([TextBlock(text=activation_content)])
+        if args.json:
+            print(
+                json.dumps(
+                    {
+                        "kind": "skill",
+                        "data": {
+                            "name": skill_name,
+                            "already_active": skill_name in active_names,
+                        },
+                    },
+                    default=str,
+                )
+            )
+        prompt = skill_prompt
+        if not prompt:
+            if args.json:
+                print(json.dumps({"kind": "chunk", "data": {"type": "response", "content": activation_content}}))
+            else:
+                print(activation_content)
+            if args.save or args.session:
+                session.history = agent.dump_message_history()
+                session.config = summary
+                store.save(session)
+            await agent.cleanup()
+            return 0
+
     response_chunks: list[dict] = []
     try:
-        async for chunk in agent.process_message_stream(args.prompt):
+        async for chunk in agent.process_message_stream(prompt):
             response_chunks.append(chunk)
             if args.json:
                 print(json.dumps({"kind": "chunk", "data": chunk}, default=str))
@@ -312,6 +399,24 @@ async def _run_ask(args: argparse.Namespace) -> int:
     if args.json:
         print(json.dumps({"kind": "summary", "chunks": len(response_chunks), "session_id": session.session_id}))
     return 0
+
+
+def _parse_skill_prompt(prompt: str, catalog: SkillCatalog) -> Optional[tuple[str, str]]:
+    stripped = prompt.strip()
+    if not stripped.startswith("/"):
+        return None
+
+    command_text, _, rest = stripped.partition(" ")
+    command = command_text.lower()
+    if command == SKILLS_LIST_COMMAND:
+        return "skills", rest.strip()
+    if command in AGENT_BUILTIN_COMMANDS:
+        return None
+
+    skill_name = command.removeprefix("/")
+    if catalog.get(skill_name) is None:
+        return None
+    return skill_name, rest.strip()
 
 
 def _run_sessions(args: argparse.Namespace) -> int:

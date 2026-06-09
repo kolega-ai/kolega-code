@@ -113,7 +113,11 @@ class ThinkHardTool(StreamingTool):
                             # Send header if first thinking content
                             if not has_sent_thinking_header:
                                 await self.send_streaming_update(
-                                    "# Extended Thinking Process\n\n", tool_call_id, "think_hard", is_complete=False
+                                    "# Extended Thinking Process\n\n",
+                                    tool_call_id,
+                                    "think_hard",
+                                    is_complete=False,
+                                    stream_mode="append",
                                 )
                                 has_sent_thinking_header = True
 
@@ -121,7 +125,11 @@ class ThinkHardTool(StreamingTool):
                             # Stream thinking content periodically
                             if len(accumulated_thinking) >= 50:
                                 await self.send_streaming_update(
-                                    accumulated_thinking, tool_call_id, "think_hard", is_complete=False
+                                    accumulated_thinking,
+                                    tool_call_id,
+                                    "think_hard",
+                                    is_complete=False,
+                                    stream_mode="append",
                                 )
                                 accumulated_thinking = ""
 
@@ -130,13 +138,21 @@ class ThinkHardTool(StreamingTool):
                             # Send any remaining thinking content and analysis header
                             if accumulated_thinking:
                                 await self.send_streaming_update(
-                                    accumulated_thinking + "\n\n", tool_call_id, "think_hard", is_complete=False
+                                    accumulated_thinking + "\n\n",
+                                    tool_call_id,
+                                    "think_hard",
+                                    is_complete=False,
+                                    stream_mode="append",
                                 )
                                 accumulated_thinking = ""
 
                             if not has_sent_analysis_header:
                                 await self.send_streaming_update(
-                                    "# Final Analysis\n\n", tool_call_id, "think_hard", is_complete=False
+                                    "# Final Analysis\n\n",
+                                    tool_call_id,
+                                    "think_hard",
+                                    is_complete=False,
+                                    stream_mode="append",
                                 )
                                 has_sent_analysis_header = True
 
@@ -144,7 +160,11 @@ class ThinkHardTool(StreamingTool):
                             # Stream text content periodically
                             if len(accumulated_text) >= 50:
                                 await self.send_streaming_update(
-                                    accumulated_text, tool_call_id, "think_hard", is_complete=False
+                                    accumulated_text,
+                                    tool_call_id,
+                                    "think_hard",
+                                    is_complete=False,
+                                    stream_mode="append",
                                 )
                                 accumulated_text = ""
 
@@ -152,7 +172,11 @@ class ThinkHardTool(StreamingTool):
                     remaining_content = accumulated_thinking + accumulated_text
                     if remaining_content:
                         await self.send_streaming_update(
-                            remaining_content, tool_call_id, "think_hard", is_complete=False
+                            remaining_content,
+                            tool_call_id,
+                            "think_hard",
+                            is_complete=False,
+                            stream_mode="append",
                         )
 
                 # Get the final message regardless of streaming
@@ -175,7 +199,9 @@ class ThinkHardTool(StreamingTool):
 
             # Send final complete update if streaming
             if tool_call_id:
-                await self.send_streaming_update(result, tool_call_id, "think_hard", is_complete=True)
+                await self.send_streaming_update(
+                    result, tool_call_id, "think_hard", is_complete=True, stream_mode="replace"
+                )
 
             return result
 
