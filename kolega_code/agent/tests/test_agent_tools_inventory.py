@@ -10,6 +10,7 @@ from kolega_code.agent.coder import CoderAgent
 from kolega_code.agent.config import AgentConfig
 from kolega_code.agent.connection_manager import AgentConnectionManager
 from kolega_code.agent.investigationagent import InvestigationAgent
+from kolega_code.agent.planningagent import PlanningAgent
 from kolega_code.agent.prompt_provider import AgentMode
 
 
@@ -129,6 +130,30 @@ def test_non_cli_coder_agent_keeps_manifest_build_tools(project_path, mock_conne
 
     assert "build_backend" in tool_names
     assert "build_frontend" in tool_names
+
+
+def test_planning_agent_exposes_read_only_and_planning_tools(project_path, mock_connection_manager, agent_config):
+    """PlanningAgent cannot edit files and can capture a final plan."""
+    agent = PlanningAgent(
+        project_path=project_path,
+        workspace_id="test_workspace",
+        thread_id=str(uuid.uuid4()),
+        connection_manager=mock_connection_manager,
+        config=agent_config,
+        agent_mode=AgentMode.CLI,
+    )
+
+    tool_names = {tool.name for tool in agent.tool_collection.get_tool_list()}
+    expected_planning_tools = {"write_plan"}
+
+    assert expected_planning_tools.issubset(tool_names)
+    assert "get_task_list" not in tool_names
+    assert "update_task_list" not in tool_names
+    assert "create_file" not in tool_names
+    assert "replace_entire_file" not in tool_names
+    assert "apply_patch" not in tool_names
+    assert "run_command_tracked" not in tool_names
+    assert tool_names - expected_planning_tools <= set(agent.tool_collection.read_only_tools)
 
 
 def test_shared_tool_names_are_well_formed(project_path, mock_connection_manager, agent_config):

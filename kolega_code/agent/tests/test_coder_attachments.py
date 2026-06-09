@@ -1,10 +1,131 @@
 """Tests for coder agent image attachment handling."""
 
 import base64
-import pytest
-from unittest.mock import MagicMock, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock
 
-from kolega_code.agent.llm.models import ImageBlock, TextBlock
+import pytest
+
+from kolega_code.agent.baseagent import BaseAgent
+from kolega_code.agent.coder import CoderAgent
+from kolega_code.agent.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
+from kolega_code.agent.llm.models import ImageBlock, Message, TextBlock
+from kolega_code.agent.llm.providers.models import TokenCount
+from kolega_code.agent.prompt_provider import AgentMode
+
+
+def _deepseek_config() -> AgentConfig:
+    model_config = ModelConfig(
+        provider=ModelProvider.DEEPSEEK,
+        model="deepseek-v4-pro",
+        rate_limits=RateLimitConfig(),
+    )
+    return AgentConfig(
+        deepseek_api_key="test-key",
+        long_context_config=model_config,
+        fast_config=model_config,
+        edit_model_config=model_config,
+        thinking_config=model_config,
+    )
+
+
+def _image_attachment() -> dict:
+    return {
+        "type": "image",
+        "media_type": "image/png",
+        "data": base64.b64encode(b"fake-image-data").decode("utf-8"),
+        "filename": "test-image.png",
+    }
+
+
+class _EmptyStream:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        raise StopAsyncIteration
+
+    async def get_final_message(self):
+        return Message("assistant", [TextBlock("done")], stop_reason="end_turn")
+
+
+def test_deepseek_image_attachment_is_rejected_by_provider_check():
+    agent = object.__new__(BaseAgent)
+    agent.config = SimpleNamespace(
+        long_context_config=SimpleNamespace(provider=ModelProvider.DEEPSEEK.value),
+    )
+
+    assert (
+        agent._unsupported_attachment_message([_image_attachment()])
+        == BaseAgent.deepseek_image_unsupported_message
+    )
+
+
+def test_deepseek_attachment_check_allows_non_images_and_other_providers():
+    agent = object.__new__(BaseAgent)
+    agent.config = SimpleNamespace(
+        long_context_config=SimpleNamespace(provider=ModelProvider.DEEPSEEK),
+    )
+    assert agent._unsupported_attachment_message(None) is None
+    assert agent._unsupported_attachment_message([{"type": "document", "data": "abc"}]) is None
+
+    agent.config.long_context_config.provider = ModelProvider.ANTHROPIC
+    assert agent._unsupported_attachment_message([_image_attachment()]) is None
+
+
+@pytest.mark.asyncio
+async def test_coder_agent_rejects_deepseek_image_without_llm_call(tmp_path):
+    connection_manager = Mock()
+    connection_manager.broadcast_event = AsyncMock()
+    agent = CoderAgent(
+        project_path=tmp_path,
+        workspace_id="workspace-123",
+        thread_id="thread-123",
+        connection_manager=connection_manager,
+        config=_deepseek_config(),
+        agent_mode=AgentMode.CLI,
+    )
+    agent.llm = Mock()
+
+    chunks = [
+        chunk
+        async for chunk in agent.process_message_stream("What is in this image?", [_image_attachment()])
+    ]
+
+    assert len(chunks) == 1
+    assert chunks[0]["type"] == "response"
+    assert chunks[0]["content"] == BaseAgent.deepseek_image_unsupported_message
+    assert chunks[0]["complete"] is True
+    assert agent.history == []
+    agent.llm.stream.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_coder_agent_does_not_print_context_token_counts(tmp_path, capsys):
+    connection_manager = Mock()
+    connection_manager.broadcast_event = AsyncMock()
+    agent = CoderAgent(
+        project_path=tmp_path,
+        workspace_id="workspace-123",
+        thread_id="thread-123",
+        connection_manager=connection_manager,
+        config=_deepseek_config(),
+        agent_mode=AgentMode.CLI,
+    )
+    agent.count_current_context = AsyncMock(return_value=TokenCount(input_tokens=42))
+    agent.llm = Mock()
+    agent.llm.stream = AsyncMock(return_value=_EmptyStream())
+
+    chunks = [chunk async for chunk in agent.process_message_stream("hello")]
+
+    assert chunks[-1]["complete"] is True
+    assert capsys.readouterr().out == ""
 
 
 class TestCoderAgentAttachments:

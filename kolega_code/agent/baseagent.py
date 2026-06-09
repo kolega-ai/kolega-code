@@ -1,5 +1,6 @@
 import asyncio
 import os
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Optional
@@ -47,6 +48,11 @@ class BaseAgent(LogMixin):
     history_compression_threshold = 0.8
     long_content_tool_calls = ["create_file", "replace_entire_file"]
     max_tool_result_chars_in_history = 100_000
+    skill_content_pattern = re.compile(r'<skill_content name="[^"]+">')
+    deepseek_image_unsupported_message = (
+        "DeepSeek V4 Pro does not support image input via the DeepSeek API. "
+        "Remove the image or switch to a vision-capable model for this request."
+    )
 
     def __init__(
         self,
@@ -226,6 +232,20 @@ class BaseAgent(LogMixin):
             workspace_environment_variables=self.workspace_env_var_descriptions,
             memories=self.workspace_memories,
         )
+
+    def _unsupported_attachment_message(self, attachments: Optional[List[Dict[str, Any]]]) -> Optional[str]:
+        provider = getattr(
+            self.config.long_context_config.provider,
+            "value",
+            self.config.long_context_config.provider,
+        )
+        if provider != ModelProvider.DEEPSEEK.value:
+            return None
+
+        if any(attachment.get("type") == "image" for attachment in attachments or []):
+            return self.deepseek_image_unsupported_message
+
+        return None
 
     async def process_message_stream(
         self, message: str, attachments: List[Dict[str, Any]] = None
@@ -623,11 +643,26 @@ class BaseAgent(LogMixin):
             summary_idx = self.last_compression_index + 1
             if summary_idx < len(self.history):
                 summary_msg = self.history[summary_idx]
+                protected = [
+                    message for message in self.history[:summary_idx] if self._is_protected_skill_content(message)
+                ]
                 # Tail starts after the summary
                 tail = list(self.history[summary_idx + 1 :]) if summary_idx + 1 < len(self.history) else []
-                return MessageHistory([summary_msg] + tail)
+                return MessageHistory(protected + [summary_msg] + tail)
 
         return MessageHistory(list(self.history))
+
+    def _is_protected_skill_content(self, message: Message) -> bool:
+        if message.role != "user":
+            return False
+        if isinstance(message.content, str):
+            return bool(self.skill_content_pattern.search(message.content))
+        if not isinstance(message.content, list):
+            return False
+        return any(
+            isinstance(block, TextBlock) and self.skill_content_pattern.search(block.text)
+            for block in message.content
+        )
 
     def extend_history(self, messages: List[Message]) -> None:
         """

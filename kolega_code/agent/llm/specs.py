@@ -1,10 +1,16 @@
 from typing import Dict, Tuple
 
 # Dictionary mapping (provider, model_name) to model specifications
-# Each entry contains context_length (maximum input tokens), max_completion_tokens, and default_temperature
-MODEL_SPECS: Dict[Tuple[str, str], Dict[str, int | float]] = {
+# Each entry contains context_length (maximum input tokens), max_completion_tokens, default_temperature,
+# and optional model capability flags.
+MODEL_SPECS: Dict[Tuple[str, str], Dict[str, int | float | bool]] = {
     # Anthropic models
-    ("anthropic", "claude-opus-4-7"): {"context_length": 1000000, "max_completion_tokens": 128000, "default_temperature": 1.0},
+    ("anthropic", "claude-opus-4-7"): {
+        "context_length": 1000000,
+        "max_completion_tokens": 128000,
+        "default_temperature": 1.0,
+        "supports_temperature": False,
+    },
     ("anthropic", "claude-sonnet-4-6"): {"context_length": 1000000, "max_completion_tokens": 64000, "default_temperature": 1.0},
     ("anthropic", "claude-3-7-sonnet-20250219"): {"context_length": 200000, "max_completion_tokens": 16384, "default_temperature": 1.0},
     ("anthropic", "claude-3-haiku-20240307"): {"context_length": 200000, "max_completion_tokens": 4096, "default_temperature": 1.0},
@@ -40,7 +46,7 @@ MODEL_SPECS: Dict[Tuple[str, str], Dict[str, int | float]] = {
 }
 
 
-def get_model_specs(provider: str, model_name: str) -> Dict[str, int | float]:
+def get_model_specs(provider: str, model_name: str) -> Dict[str, int | float | bool]:
     """
     Get the specifications for a given model.
 

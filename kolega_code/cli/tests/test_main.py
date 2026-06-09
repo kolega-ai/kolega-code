@@ -6,6 +6,16 @@ from kolega_code.cli.main import CLI_AGENT_MODE, RESUME_LATEST, _resolve_tui_ses
 from kolega_code.cli.provider_registry import UI_DEFAULT_MODEL, UI_DEFAULT_PROVIDER
 from kolega_code.cli.session_store import SessionStore, SessionStoreError
 from kolega_code.cli.settings import CliSettings, SettingsStore
+from kolega_code.agent.llm.models import Message
+
+
+def write_skill(root: Path, name: str = "demo-skill") -> None:
+    skill_dir = root / ".agents" / "skills" / name
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        f"---\nname: {name}\ndescription: Use this demo skill.\n---\n\nFollow demo instructions.\n",
+        encoding="utf-8",
+    )
 
 
 def test_parse_default_command_as_tui() -> None:
@@ -56,6 +66,84 @@ def test_parse_sessions_list_subcommand() -> None:
     assert args.command == "sessions"
     assert args.sessions_command == "list"
     assert args.project == Path("/tmp/project")
+
+
+def test_ask_skills_lists_discovered_skills_without_api_key(
+    tmp_path: Path, capsys, isolated_cli_env: None
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    write_skill(project)
+
+    exit_code = main(["ask", "/skills", "--project", str(project)])
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "`/demo-skill`" in output
+    assert "Use this demo skill." in output
+
+
+def test_ask_skill_only_prints_activation_without_model_call(
+    tmp_path: Path, capsys, isolated_cli_env: None
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    write_skill(project)
+
+    exit_code = main(["ask", "/demo-skill", "--project", str(project)])
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert '<skill_content name="demo-skill">' in output
+    assert "Follow demo instructions." in output
+
+
+def test_ask_skill_with_prompt_activates_before_dispatch(
+    tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
+) -> None:
+    from kolega_code.cli import main as main_module
+
+    class FakeCoderAgent:
+        instances = []
+
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.history = []
+            self.messages = []
+            self.cleaned = False
+            self.__class__.instances.append(self)
+
+        def append_user_message(self, content):
+            self.history.append(Message(role="user", content=content))
+
+        def restore_message_history(self, history):
+            self.history = [Message.from_dict(item) for item in history]
+
+        def dump_message_history(self):
+            return [message.to_dict() for message in self.history]
+
+        async def process_message_stream(self, message):
+            self.messages.append(message)
+            yield {"type": "response", "content": "ok", "complete": True, "uuid": "response-1"}
+
+        async def cleanup(self):
+            self.cleaned = True
+
+    project = tmp_path / "project"
+    project.mkdir()
+    write_skill(project)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setattr(main_module, "CoderAgent", FakeCoderAgent)
+
+    exit_code = main_module.main(["ask", "/demo-skill do the task", "--project", str(project)])
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "ok" in output
+    agent = FakeCoderAgent.instances[0]
+    assert agent.messages == ["do the task"]
+    assert '<skill_content name="demo-skill">' in agent.history[0].get_text_content()
+    assert any(extension.name == "cli-agent-skills" for extension in agent.kwargs["tool_extensions"])
 
 
 def test_doctor_uses_stored_kimi_settings(tmp_path: Path, capsys, isolated_cli_env: None) -> None:

@@ -18,6 +18,8 @@ Run the Textual UI and open the Settings tab to select Moonshot Kimi K2.6 or Dee
 kolega-code .
 ```
 
+In the Textual UI, press `Shift+Tab` to switch between build mode and planning mode. Planning mode uses a standalone read-only planning agent; when it submits a complete plan, choose whether to implement it or keep discussing the plan.
+
 All CLI sessions use the CLI-specific coding-agent prompt, including resumed sessions. Launching the UI starts a fresh thread by default. Resume an existing thread explicitly:
 
 ```bash

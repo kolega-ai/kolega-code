@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 
 import pytest
 
@@ -16,17 +17,46 @@ def test_session_store_create_load_list_export_delete(tmp_path: Path) -> None:
 
     record = store.create(project, "code", {"long_model": "claude-opus-4-7"}, title="Project")
     record.history = [{"role": "user", "content": []}]
+    record.task_list_markdown = "- [ ] inspect\n- [x] plan"
+    record.latest_plan_markdown = "# Plan\n\nImplement it."
+    record.interaction_mode = "plan"
     store.save(record)
 
     loaded = store.load(record.session_id)
     assert loaded.project_path == str(project.resolve())
     assert loaded.history == [{"role": "user", "content": []}]
+    assert loaded.task_list_markdown == "- [ ] inspect\n- [x] plan"
+    assert loaded.latest_plan_markdown == "# Plan\n\nImplement it."
+    assert loaded.interaction_mode == "plan"
     assert store.latest_for_project(project).session_id == record.session_id
-    assert record.session_id in store.export(record.session_id)
+    exported = store.export(record.session_id)
+    assert record.session_id in exported
+    assert "task_list_markdown" in exported
+    assert "latest_plan_markdown" in exported
+    assert "interaction_mode" in exported
 
     store.delete(record.session_id)
     with pytest.raises(SessionStoreError):
         store.load(record.session_id)
+
+
+def test_session_store_loads_old_sessions_without_planning_state(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    store = SessionStore(tmp_path / "state")
+
+    record = store.create(project, "code", {})
+    payload = record.to_dict()
+    payload.pop("task_list_markdown")
+    payload.pop("latest_plan_markdown")
+    payload.pop("interaction_mode")
+    store.path_for(record.session_id).write_text(json.dumps(payload), encoding="utf-8")
+
+    loaded = store.load(record.session_id)
+
+    assert loaded.task_list_markdown == ""
+    assert loaded.latest_plan_markdown == ""
+    assert loaded.interaction_mode == "build"
 
 
 def test_session_store_ignores_corrupt_files_when_listing(tmp_path: Path) -> None:

@@ -1,3 +1,4 @@
+import logging
 import uuid
 from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Optional
@@ -10,6 +11,9 @@ from .llm.models import Message, MessageHistory, TextBlock, ToolResult, ImageBlo
 from .prompt_provider import AgentType, AgentMode, PromptExtension
 from .tools import ToolCollection, ToolCollectionConfig
 from .utils.commands import CommandProcessor
+
+
+logger = logging.getLogger(__name__)
 
 
 @CommandProcessor.process_commands
@@ -193,6 +197,16 @@ class CoderAgent(BaseAgent, LogMixin):
         Yields:
             Dict containing message content and metadata
         """
+        unsupported_attachment_message = self._unsupported_attachment_message(attachments)
+        if unsupported_attachment_message:
+            yield {
+                "type": "response",
+                "content": unsupported_attachment_message,
+                "complete": True,
+                "uuid": str(uuid.uuid4()),
+            }
+            return
+
         content_blocks = [TextBlock(text=message)]
 
         # Process any image attachments
@@ -223,8 +237,7 @@ class CoderAgent(BaseAgent, LogMixin):
             try:
                 # Token counting logic
                 token_count = await self.count_current_context()
-                print("Input token count: ")
-                print(token_count)
+                logger.debug("Input token count: %s", token_count)
 
                 if token_count.input_tokens > self.model_context_length * self.history_compression_threshold:
                     await self._compress_message_history()
@@ -234,7 +247,12 @@ class CoderAgent(BaseAgent, LogMixin):
 
                     if token_count.input_tokens > self.model_context_length * self.history_compression_threshold:
                         summary_message = self.history[0]
-                        self.history = MessageHistory([summary_message])
+                        protected = [
+                            message
+                            for message in self.history
+                            if message is not summary_message and self._is_protected_skill_content(message)
+                        ]
+                        self.history = MessageHistory(protected + [summary_message])
 
                     self._mark_last_message_for_cache()
 
