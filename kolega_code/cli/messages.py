@@ -60,6 +60,18 @@ BLOCK_PENDING_QUESTION_SKILL = "Answer the pending planning question before acti
 SETTINGS_REQUIRED = "Save a provider, model, and API key before chatting."
 SETTINGS_REQUIRED_SKILL = "Save a provider, model, and API key before activating a skill."
 
+# Settings tab
+SETTINGS_SAVED = "Settings saved."
+SETTINGS_INCOMPLETE = "Configuration incomplete: {error}"
+SETTINGS_ACTIVE_MODEL = "Active model: {provider}/{model}"
+SETTINGS_API_KEY_LINE = "API key: {status}"
+
+# Status dashboard
+STATUS_TOKENS_UNKNOWN = "Token counts unavailable."
+
+# Logs
+LOG_IGNORED_EVENT = "Ignored non-display event: {event_type}"
+
 # Misc
 COPY_MACOS_FAILED = "Copied for supported terminals, but the macOS clipboard failed."
 STREAM_TRUNCATED = "[stream truncated to the last {chars} characters]"
