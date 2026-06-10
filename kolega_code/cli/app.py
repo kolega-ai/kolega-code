@@ -396,6 +396,14 @@ class KolegaCodeApp(App):
         margin-top: 1;
     }
 
+    #settings_form Label {
+        margin-top: 1;
+    }
+
+    #settings_form Button {
+        margin-top: 1;
+    }
+
     #composer {
         dock: bottom;
         height: 5;
@@ -700,7 +708,7 @@ class KolegaCodeApp(App):
 
         if not stripped_text or self.agent is None:
             if stripped_text:
-                self._settings_status.update(messages.SETTINGS_REQUIRED)
+                self._set_settings_status(messages.SETTINGS_REQUIRED, tone="warning")
             return
         event.composer.load_text("")
         self._add_conversation_entry(ConversationEntry(kind="user", content=text))
@@ -906,6 +914,8 @@ class KolegaCodeApp(App):
         api_key_input.placeholder = self._api_key_placeholder(provider)
 
         await self._ensure_agent_from_settings(rebuild=True)
+        if self.config is not None:
+            self._notify_user(messages.SETTINGS_SAVED)
 
     async def _ensure_agent_from_settings(self, rebuild: bool = False) -> None:
         try:
@@ -914,7 +924,7 @@ class KolegaCodeApp(App):
             self.config = None
             self._set_chat_enabled(False)
             self._refresh_status_dashboard()
-            self._settings_status.update(f"Configuration incomplete: {exc}")
+            self._set_settings_status(messages.SETTINGS_INCOMPLETE.format(error=exc), tone="error")
             self._ensure_startup_entry()
             self.query_one("#events", TabbedContent).active = "settings_pane"
             return
@@ -1129,7 +1139,7 @@ class KolegaCodeApp(App):
             return True
 
         if self.agent is None:
-            self._settings_status.update(messages.SETTINGS_REQUIRED_SKILL)
+            self._set_settings_status(messages.SETTINGS_REQUIRED_SKILL, tone="warning")
             return True
 
         activated = self._activate_skill_in_agent(command_name)
@@ -1394,11 +1404,33 @@ class KolegaCodeApp(App):
         self._add_conversation_entry(ConversationEntry(kind="progress", content=THREAD_RESET_MESSAGE, complete=True))
         self._notify_user(THREAD_RESET_MESSAGE)
 
+    def _set_settings_status(self, text: str, tone: str = "info") -> None:
+        """Update the settings status with a tone glyph in the semantic palette."""
+        glyph, style = {
+            "ok": (Glyph.CHECK, Color.SUCCESS),
+            "error": (Glyph.CROSS, Color.ERROR),
+            "warning": (Glyph.STATUS, Color.WARNING),
+        }.get(tone, (Glyph.STATUS, Color.MUTED))
+        content = Text()
+        content.append(theme.g(glyph) + " ", style=style)
+        content.append(text)
+        try:
+            self._settings_status.update(content)
+        except Exception:
+            return
+
     def _update_settings_status(self) -> None:
         provider = self.settings.active_provider or UI_DEFAULT_PROVIDER
         model = self.settings.active_model or UI_DEFAULT_MODEL
         status = key_status(provider, self.project_path, self.settings)
-        self._settings_status.update(f"Active model: {provider}/{model}\nAPI key: {status}")
+        tone = "warning" if "missing" in status.lower() else "ok"
+        text = "\n".join(
+            [
+                messages.SETTINGS_ACTIVE_MODEL.format(provider=provider, model=model),
+                messages.SETTINGS_API_KEY_LINE.format(status=status),
+            ]
+        )
+        self._set_settings_status(text, tone)
         self._refresh_status_dashboard()
 
     def _api_key_placeholder(self, provider: str) -> str:
