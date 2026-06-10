@@ -249,7 +249,7 @@ async def test_textual_app_turn_status_formats_error_duration(
     from textual.widgets import Static
 
     from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.app import KolegaCodeApp, TurnState
 
     class FakeCoderAgent:
         def __init__(self, **kwargs):
@@ -278,9 +278,72 @@ async def test_textual_app_turn_status_formats_error_duration(
     async with app.run_test():
         app._begin_turn_progress()
         now = 83.0
-        app._finish_turn_progress("Stopped due to error: boom")
+        app._finish_turn_progress("Stopped due to an error: boom", TurnState.ERROR)
 
         assert "Errored after 1m 23s" in str(app.query_one("#turn_status", Static).render())
+
+
+def test_turn_state_styles_do_not_depend_on_content_text() -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.app import TURN_STATE_STYLES, TurnState
+
+    assert TURN_STATE_STYLES[TurnState.ERROR] == "red"
+    assert TURN_STATE_STYLES[TurnState.STOPPED] == "yellow"
+    assert TURN_STATE_STYLES[TurnState.STOPPING] == "yellow"
+    assert TURN_STATE_STYLES[TurnState.IDLE] == "green"
+    assert TURN_STATE_STYLES.get(TurnState.GENERATING) is None  # falls back to accent
+
+
+@pytest.mark.asyncio
+async def test_progress_entry_tone_drives_styling_not_prose(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli import app as app_module
+    from kolega_code.cli.app import ConversationEntry, KolegaCodeApp, TurnState
+
+    class FakeCoderAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def restore_message_history(self, history):
+            return None
+
+        def dump_message_history(self):
+            return []
+
+        async def cleanup(self):
+            return None
+
+    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test():
+        # Prose mentioning "error" with a warning tone must not render as an error
+        warning_entry = ConversationEntry(
+            kind="progress", content="Stopped before the error handler ran", complete=True, tone="warning"
+        )
+        rendered = app._format_conversation_entry(warning_entry)
+        assert "bold yellow" in str(rendered)
+        assert "bold red" not in str(rendered)
+
+        error_entry = ConversationEntry(kind="progress", content="All good otherwise", complete=True, tone="error")
+        rendered = app._format_conversation_entry(error_entry)
+        assert "bold red" in str(rendered)
+
+        # Explicit state drives the dashboard, not content keywords
+        app._turn_active = True
+        app._begin_turn_progress()
+        app._finish_turn_progress("Wrapped up without issue", TurnState.STOPPED)
+        assert app._status_state.turn_state is TurnState.STOPPED
 
 
 @pytest.mark.asyncio
@@ -2275,7 +2338,7 @@ async def test_textual_app_shows_working_progress_during_active_turn(
         assert progress_entries == []
         assert composer.placeholder == COMPOSER_PLACEHOLDER
         assert composer.disabled is True
-        assert "Agent is working..." in str(turn_status.render())
+        assert "Working…" in str(turn_status.render())
         assert "0s" in str(turn_status.render())
 
         now = 103.0
@@ -2294,7 +2357,7 @@ async def test_textual_app_shows_working_progress_during_active_turn(
         assert [entry for entry in app.conversation_entries if entry.kind == "progress"] == []
         assert composer.placeholder == COMPOSER_PLACEHOLDER
         assert composer.disabled is False
-        assert "Worked for 5m 23s" in str(turn_status.render())
+        assert "Done in 5m 23s" in str(turn_status.render())
 
 
 @pytest.mark.asyncio
@@ -2684,7 +2747,7 @@ async def test_textual_app_renders_queued_tool_events_during_active_turn(
         assert tool_entries[0].kind == "tool_call"
         assert tool_entries[0].content == "Calling read_file"
         assert composer.placeholder == COMPOSER_PLACEHOLDER
-        assert "Running read_file..." in str(turn_status.render())
+        assert "Running read_file…" in str(turn_status.render())
 
         now = 25.0
         release.set()
@@ -2695,7 +2758,7 @@ async def test_textual_app_renders_queued_tool_events_during_active_turn(
         assert tool_entries[0].kind == "tool_result"
         assert tool_entries[0].content == "completed\nREADME contents"
         assert composer.placeholder == COMPOSER_PLACEHOLDER
-        assert "Worked for 15s" in str(turn_status.render())
+        assert "Done in 15s" in str(turn_status.render())
 
 
 @pytest.mark.asyncio
@@ -2819,14 +2882,14 @@ async def test_textual_app_cancellation_is_visible_in_chat(
         progress_entries = [entry for entry in app.conversation_entries if entry.kind == "progress"]
         assert progress_entries == []
         assert composer.placeholder == COMPOSER_PLACEHOLDER
-        assert "Stop requested..." in str(turn_status.render())
+        assert "Stopping…" in str(turn_status.render())
         assert "42s" in str(turn_status.render())
 
         await task
 
         progress_entries = [entry for entry in app.conversation_entries if entry.kind == "progress"]
         assert len(progress_entries) == 1
-        assert progress_entries[0].content == "Stopped by user"
+        assert progress_entries[0].content == "Stopped by user."
         assert progress_entries[0].complete is True
         assert composer.placeholder == COMPOSER_PLACEHOLDER
         assert "Stopped after 42s" in str(turn_status.render())
@@ -3060,17 +3123,17 @@ async def test_activity_strip_running_sub_agents(tmp_path: Path, monkeypatch: py
     async with app.run_test():
         app._turn_active = True
         app._render_event(_sub_agent_event(agent_id="a1", status="GENERATING", message="Starting"))
-        assert app._status_state.activity == "Running sub-agent general-agent #1..."
+        assert app._status_state.activity == "Running sub-agent general-agent #1…"
 
         app._render_event(
             _sub_agent_event(agent_id="a2", parent_tool_call_id="tc-2", status="GENERATING", message="Starting")
         )
-        assert app._status_state.activity == "Running 2 sub-agents..."
+        assert app._status_state.activity == "Running 2 sub-agents…"
         assert app._status_state.turn_state == "Running sub-agents"
 
         app._render_event(_sub_agent_event(agent_id="a1", status="STOPPED", message="Completed"))
         app._render_event(_sub_agent_event(agent_id="a2", parent_tool_call_id="tc-2", status="STOPPED", message="Completed"))
-        assert app._status_state.activity == "Agent is working..."
+        assert app._status_state.activity == "Working…"
 
 
 @pytest.mark.asyncio
