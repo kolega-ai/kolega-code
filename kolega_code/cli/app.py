@@ -1891,7 +1891,11 @@ class KolegaCodeApp(App):
 
     def _render_conversation(self) -> None:
         self._render_pending = False
-        conversation = self._conversation
+        try:
+            conversation = self._conversation
+        except Exception:
+            # A coalesced flush can fire after the widget is unmounted (e.g. on exit).
+            return
         conversation.clear()
         for index, entry in enumerate(self.conversation_entries):
             if index:
