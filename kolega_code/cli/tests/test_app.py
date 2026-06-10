@@ -1996,103 +1996,14 @@ async def test_textual_app_formats_thinking_as_italic_chat_entry(
         assert formatted.endswith("\n[dim]...[/dim]")
 
 
-def test_textual_app_separates_chat_entries_with_blank_lines(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    pytest.importorskip("textual")
-
-    from kolega_code.cli.app import ConversationEntry, KolegaCodeApp
-
-    class FakeConversation:
-        def __init__(self) -> None:
-            self.cleared = False
-            self.writes: list[object] = []
-
-        def clear(self) -> None:
-            self.cleared = True
-
-        def write(self, renderable: object) -> None:
-            self.writes.append(renderable)
-
-    project = tmp_path / "project"
-    project.mkdir()
-    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
-    store = SessionStore(tmp_path / "state")
-    session = store.create(project, "code", config_summary(config))
-    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
-    fake_conversation = FakeConversation()
-    monkeypatch.setattr(KolegaCodeApp, "_conversation", property(lambda self: fake_conversation))
-    app.conversation_entries = [
-        ConversationEntry(kind="user", content="first"),
-        ConversationEntry(kind="assistant", content="second"),
-        ConversationEntry(kind="user", content="third"),
-    ]
-
-    app._render_conversation()
-
-    assert fake_conversation.cleared is True
-    assert fake_conversation.writes == [
-        "[bold cyan]You[/bold cyan]\nfirst",
-        "",
-        "[bold magenta]Agent[/bold magenta]\nsecond",
-        "",
-        "[bold cyan]You[/bold cyan]\nthird",
-    ]
-
-
 @pytest.mark.asyncio
-async def test_copyable_rich_log_extracts_plain_selected_text(
+async def test_textual_app_renders_one_widget_per_chat_entry(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     pytest.importorskip("textual")
-
-    from textual.selection import Selection
 
     from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import CopyableRichLog, KolegaCodeApp
-
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-        def restore_message_history(self, history):
-            return None
-
-        def dump_message_history(self):
-            return []
-
-        async def cleanup(self):
-            return None
-
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
-
-    project = tmp_path / "project"
-    project.mkdir()
-    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
-    store = SessionStore(tmp_path / "state")
-    session = store.create(project, "code", config_summary(config))
-    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
-
-    async with app.run_test():
-        conversation = app.query_one("#conversation", CopyableRichLog)
-        conversation.clear()
-        conversation.write("[bold magenta]Agent[/bold magenta]\ncopy [red]this[/red]")
-
-        selected = conversation.get_selection(Selection(None, None))
-
-        assert selected == ("Agent\ncopy this", "\n")
-
-
-@pytest.mark.asyncio
-async def test_copyable_rich_log_supports_mouse_drag_selection(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    pytest.importorskip("textual")
-
-    from textual import events
-
-    from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import CopyableRichLog, KolegaCodeApp
+    from kolega_code.cli.app import ConversationEntry, ConversationEntryWidget, KolegaCodeApp
 
     class FakeCoderAgent:
         def __init__(self, **kwargs):
@@ -2117,13 +2028,119 @@ async def test_copyable_rich_log_supports_mouse_drag_selection(
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
 
     async with app.run_test() as pilot:
-        conversation = app.query_one("#conversation", CopyableRichLog)
-        conversation.clear()
-        conversation.write("[bold magenta]Agent[/bold magenta]\nselect this text")
+        app.conversation_entries = [
+            ConversationEntry(kind="user", content="first"),
+            ConversationEntry(kind="assistant", content="second"),
+            ConversationEntry(kind="user", content="third"),
+        ]
+        app._render_conversation()
+        await pilot.pause()
 
-        await pilot.mouse_down(conversation, offset=(1, 2))
-        await pilot._post_mouse_events([events.MouseMove], conversation, offset=(18, 2), button=1)
-        await pilot.mouse_up(conversation, offset=(18, 2))
+        widgets = list(app.query(ConversationEntryWidget))
+        assert len(widgets) == 3
+        assert [widget.entry.content for widget in widgets] == ["first", "second", "third"]
+        assert widgets[0].has_class("entry-user")
+        assert widgets[1].has_class("entry-assistant")
+
+        # Streaming into an entry updates its widget in place without remounting
+        app.conversation_entries[1].content = "second updated"
+        app._invalidate_conversation(app.conversation_entries[1])
+        app._flush_conversation_render()
+        await pilot.pause()
+
+        same_widgets = list(app.query(ConversationEntryWidget))
+        assert len(same_widgets) == 3
+        assert same_widgets[1] is widgets[1]
+        assert "second updated" in str(same_widgets[1].visual)
+
+
+@pytest.mark.asyncio
+async def test_conversation_entry_widget_extracts_plain_selected_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from textual.selection import Selection
+
+    from kolega_code.cli import app as app_module
+    from kolega_code.cli.app import ConversationEntry, ConversationEntryWidget, KolegaCodeApp
+
+    class FakeCoderAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def restore_message_history(self, history):
+            return None
+
+        def dump_message_history(self):
+            return []
+
+        async def cleanup(self):
+            return None
+
+    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test() as pilot:
+        app.conversation_entries = [ConversationEntry(kind="assistant", content="copy this")]
+        app._render_conversation()
+        await pilot.pause()
+
+        widget = app.query(ConversationEntryWidget).last()
+        selected = widget.get_selection(Selection(None, None))
+
+        assert selected == ("Agent\ncopy this", "\n")
+
+
+@pytest.mark.asyncio
+async def test_conversation_entry_supports_mouse_drag_selection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from textual import events
+
+    from kolega_code.cli import app as app_module
+    from kolega_code.cli.app import ConversationEntry, ConversationEntryWidget, KolegaCodeApp
+
+    class FakeCoderAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def restore_message_history(self, history):
+            return None
+
+        def dump_message_history(self):
+            return []
+
+        async def cleanup(self):
+            return None
+
+    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test() as pilot:
+        app.conversation_entries = [ConversationEntry(kind="assistant", content="select this text")]
+        app._render_conversation()
+        await pilot.pause()
+
+        widget = app.query(ConversationEntryWidget).last()
+
+        await pilot.mouse_down(widget, offset=(0, 1))
+        await pilot._post_mouse_events([events.MouseMove], widget, offset=(17, 1), button=1)
+        await pilot.mouse_up(widget, offset=(17, 1))
 
         assert app.screen.get_selected_text() == "select this text"
 
@@ -2137,7 +2154,7 @@ async def test_command_c_copies_selected_chat_text_to_macos_clipboard(
     from textual.selection import Selection
 
     from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import CopyableRichLog, KolegaCodeApp
+    from kolega_code.cli.app import ConversationEntry, ConversationEntryWidget, KolegaCodeApp
 
     class FakeCoderAgent:
         def __init__(self, **kwargs):
@@ -2169,10 +2186,12 @@ async def test_command_c_copies_selected_chat_text_to_macos_clipboard(
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
 
     async with app.run_test() as pilot:
-        conversation = app.query_one("#conversation", CopyableRichLog)
-        conversation.clear()
-        conversation.write("[bold magenta]Agent[/bold magenta]\ncopy [red]this[/red]")
-        app.screen.selections = {conversation: Selection(None, None)}
+        app.conversation_entries = [ConversationEntry(kind="assistant", content="copy this")]
+        app._render_conversation()
+        await pilot.pause()
+
+        widget = app.query(ConversationEntryWidget).last()
+        app.screen.selections = {widget: Selection(None, None)}
 
         await pilot.press("super+c")
 
@@ -3260,3 +3279,44 @@ async def test_rapid_stream_chunks_coalesce_renders(tmp_path: Path, monkeypatch:
         assert "word0" in entry.content
         assert "word49" in entry.content
         assert entry.content.endswith("done")
+
+
+@pytest.mark.asyncio
+async def test_conversation_scroll_position_survives_streaming(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.app import ConversationEntry, JumpToBottomBar
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        view = app._conversation
+        for index in range(40):
+            app._add_conversation_entry(ConversationEntry(kind="user", content=f"message {index}"))
+        app._flush_conversation_render()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert view.max_scroll_y > 0
+        # Anchored: streaming keeps the view pinned to the bottom
+        assert view.scroll_y == view.max_scroll_y
+
+        # User scrolls up; new entries must not yank the view back down
+        view.scroll_to(y=0, animate=False)
+        await pilot.pause()
+        for index in range(5):
+            app._add_conversation_entry(ConversationEntry(kind="user", content=f"late message {index}"))
+        app._flush_conversation_render()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert view.scroll_y == 0
+        assert app.query_one("#jump_to_bottom", JumpToBottomBar).display is True
+
+        # Jump-to-bottom restores the anchor and hides the bar
+        app.on_jump_to_bottom_bar_pressed(JumpToBottomBar.Pressed(app.query_one("#jump_to_bottom", JumpToBottomBar)))
+        await pilot.pause()
+        assert view.scroll_y == view.max_scroll_y
+        assert app.query_one("#jump_to_bottom", JumpToBottomBar).display is False
