@@ -3531,3 +3531,37 @@ async def test_terminal_commands_render_as_styled_blocks(
         plains = [item.plain if hasattr(item, "plain") else item for item in written]
         # Second command block is preceded by a blank separator line
         assert plains == [f"{theme.g(theme.Glyph.USER)} echo one", "one", "", f"{theme.g(theme.Glyph.USER)} echo two"]
+
+
+@pytest.mark.asyncio
+async def test_status_dashboard_context_note_uses_alert_level(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.agent import AgentEvent
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        def context_event(alert_level):
+            return AgentEvent(
+                event_type="llm_context_update",
+                sender="coder",
+                content={
+                    "input_tokens": 1000,
+                    "max_tokens": 2000,
+                    "usage_percentage": 50.0,
+                    "compression_threshold": 80.0,
+                    "alert_level": alert_level,
+                    "message": "Context is getting large.",
+                },
+            )
+
+        app._render_event(context_event("info"))
+        dashboard = app._format_status_dashboard()
+        assert "[yellow]Context is getting large.[/yellow]" in dashboard
+
+        app._render_event(context_event("critical"))
+        dashboard = app._format_status_dashboard()
+        assert "[red]Context is getting large.[/red]" in dashboard
