@@ -7,7 +7,7 @@ import pytest
 from kolega_code.agent.baseagent import BaseAgent
 from kolega_code.agent.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
 from kolega_code.agent.connection_manager import AgentConnectionManager
-from kolega_code.agent.llm.models import Message, TextBlock
+from kolega_code.agent.llm.models import Message, TextBlock, ToolCall
 from kolega_code.agent.llm.providers.models import TokenCount
 from kolega_code.agent.planningagent import PlanningAgent
 from kolega_code.agent.prompt_provider import AgentMode
@@ -105,10 +105,14 @@ async def test_planning_agent_uses_host_task_list_extension(tmp_path, mock_conne
     )
 
     result = await agent.tool_collection.update_task_list("- [ ] inspect CLI\n- [x] choose tool shape")
+    tool_names = {tool.name for tool in agent.tool_collection.get_tool_list()}
 
     assert result == "Task list updated."
     assert task_list == "- [ ] inspect CLI\n- [x] choose tool shape"
     assert await agent.tool_collection.get_task_list() == task_list
+    assert {"write_plan", "get_task_list", "update_task_list"}.issubset(tool_names)
+    assert "replace_entire_file" not in tool_names
+    assert "create_file" not in tool_names
 
 
 def test_planning_agent_only_exposes_write_plan_without_host_task_tools(
@@ -128,6 +132,34 @@ def test_planning_agent_only_exposes_write_plan_without_host_task_tools(
     assert "write_plan" in tool_names
     assert "update_task_list" not in tool_names
     assert "get_task_list" not in tool_names
+
+
+@pytest.mark.asyncio
+async def test_planning_agent_rejects_unavailable_file_edit_tool(
+    tmp_path, mock_connection_manager, agent_config
+):
+    target = tmp_path / "notes.txt"
+    target.write_text("original\n", encoding="utf-8")
+    agent = PlanningAgent(
+        project_path=tmp_path,
+        workspace_id="test_workspace",
+        thread_id=str(uuid.uuid4()),
+        connection_manager=mock_connection_manager,
+        config=agent_config,
+        agent_mode=AgentMode.CLI,
+    )
+
+    result = await agent.execute_single_tool(
+        ToolCall(
+            id="tool-call-1",
+            name="replace_entire_file",
+            input={"relative_path": "notes.txt", "content": "mutated\n"},
+        )
+    )
+
+    assert result.is_error is True
+    assert result.content == "Tool 'replace_entire_file' is not available in this mode."
+    assert target.read_text(encoding="utf-8") == "original\n"
 
 
 @pytest.mark.asyncio

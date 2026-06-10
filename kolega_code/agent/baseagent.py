@@ -784,25 +784,44 @@ class BaseAgent(LogMixin):
         self.current_tool_execution_id = tool_execution_id
         self.current_tool_call_id = tool_execution_id
 
-        # Log the tool being called
-        await self.log_info(f"Executing tool: {tool_name}", sender=self.agent_name)
-
-        # Send tool_call message to indicate we're starting execution
-        if not all(
-            [
-                self.config.long_context_config.provider == ModelProvider.ANTHROPIC,
-                tool_name in self.long_content_tool_calls,
-            ]
-        ):
-            await self.send_chat_message(
-                message_type="tool_call",
-                content=f"Calling {tool_name}",
-                is_streaming=False,
-                tool_description=tool_name,
-                tool_call_id=tool_execution_id,
-            )
-
         try:
+            available_tools = {tool.name for tool in self.tool_collection.get_tool_list()}
+            if tool_name not in available_tools:
+                error_message = f"Tool '{tool_name}' is not available in this mode."
+                await self.log_error(error_message, sender=self.agent_name)
+                await self.send_chat_message(
+                    message_type="tool_error",
+                    content=error_message,
+                    is_streaming=False,
+                    tool_description=tool_name,
+                    tool_call_id=tool_execution_id,
+                )
+                return ToolResult(
+                    tool_use_id=provider_tool_call_id,
+                    content=error_message,
+                    name=tool_name,
+                    is_error=True,
+                    execution_id=tool_execution_id,
+                )
+
+            # Log the tool being called
+            await self.log_info(f"Executing tool: {tool_name}", sender=self.agent_name)
+
+            # Send tool_call message to indicate we're starting execution
+            if not all(
+                [
+                    self.config.long_context_config.provider == ModelProvider.ANTHROPIC,
+                    tool_name in self.long_content_tool_calls,
+                ]
+            ):
+                await self.send_chat_message(
+                    message_type="tool_call",
+                    content=f"Calling {tool_name}",
+                    is_streaming=False,
+                    tool_description=tool_name,
+                    tool_call_id=tool_execution_id,
+                )
+
             output = await self.tool_collection.__getattribute__(tool_name)(**inputs)
 
             # Handle the case where the output is a list of ContentBlock objects
