@@ -3565,3 +3565,24 @@ async def test_status_dashboard_context_note_uses_alert_level(
         app._render_event(context_event("critical"))
         dashboard = app._format_status_dashboard()
         assert "[red]Context is getting large.[/red]" in dashboard
+
+
+@pytest.mark.asyncio
+async def test_save_settings_toasts_on_success(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("textual")
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        notifications: list[tuple[str, str]] = []
+
+        def fake_notify(message, *, severity="information", title=None, **kwargs):
+            notifications.append((message, severity))
+
+        monkeypatch.setattr(app, "notify", fake_notify)
+
+        await app._save_settings_from_ui()
+
+        assert ("Settings saved.", "information") in notifications
+        status_text = str(app.query_one("#settings_status").render())
+        assert "Active model:" in status_text
