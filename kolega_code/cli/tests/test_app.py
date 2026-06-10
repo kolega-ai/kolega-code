@@ -3231,3 +3231,32 @@ async def test_thread_reset_clears_sub_agent_state(tmp_path: Path, monkeypatch: 
         assert app._sub_agent_activities == {}
         assert app._sub_agent_by_tool_call == {}
         assert not _sub_agent_entries(app)
+
+
+@pytest.mark.asyncio
+async def test_rapid_stream_chunks_coalesce_renders(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        render_calls = 0
+        original_render = app._render_conversation
+
+        def counting_render() -> None:
+            nonlocal render_calls
+            render_calls += 1
+            original_render()
+
+        monkeypatch.setattr(app, "_render_conversation", counting_render)
+
+        for index in range(50):
+            app._apply_stream_chunk({"uuid": "chunk-1", "content": f"word{index} ", "complete": False}, kind="assistant")
+        app._apply_stream_chunk({"uuid": "chunk-1", "content": "done", "complete": True}, kind="assistant")
+
+        await pilot.pause(0.1)
+
+        assert render_calls < 10
+        entry = app._stream_entries["chunk-1"]
+        assert entry.complete is True
+        assert "word0" in entry.content
+        assert "word49" in entry.content
+        assert entry.content.endswith("done")
