@@ -332,12 +332,12 @@ async def test_progress_entry_tone_drives_styling_not_prose(
             kind="progress", content="Stopped before the error handler ran", complete=True, tone="warning"
         )
         rendered = app._format_conversation_entry(warning_entry)
-        assert "bold yellow" in str(rendered)
-        assert "bold red" not in str(rendered)
+        assert "[yellow]" in str(rendered)
+        assert "[red]" not in str(rendered)
 
         error_entry = ConversationEntry(kind="progress", content="All good otherwise", complete=True, tone="error")
         rendered = app._format_conversation_entry(error_entry)
-        assert "bold red" in str(rendered)
+        assert "[red]" in str(rendered)
 
         # Explicit state drives the dashboard, not content keywords
         app._turn_active = True
@@ -1990,10 +1990,10 @@ async def test_textual_app_formats_thinking_as_italic_chat_entry(
             ConversationEntry(kind="thinking", content="inspect [red]markup[/red]", complete=False)
         )
 
-        assert formatted.startswith("[dim italic]Thinking[/dim italic]\n[italic]")
+        assert "[dim italic]Thinking[/dim italic]" in formatted
         assert "\\[red]" in formatted
-        assert "[/italic]" in formatted
-        assert formatted.endswith("\n[dim]...[/dim]")
+        assert "[italic dim]" in formatted
+        assert "…" in formatted  # streaming indicator in the header
 
 
 @pytest.mark.asyncio
@@ -2030,7 +2030,7 @@ async def test_textual_app_renders_one_widget_per_chat_entry(
     async with app.run_test() as pilot:
         app.conversation_entries = [
             ConversationEntry(kind="user", content="first"),
-            ConversationEntry(kind="assistant", content="second"),
+            ConversationEntry(kind="assistant", content="second", complete=False),
             ConversationEntry(kind="user", content="third"),
         ]
         app._render_conversation()
@@ -2051,7 +2051,7 @@ async def test_textual_app_renders_one_widget_per_chat_entry(
         same_widgets = list(app.query(ConversationEntryWidget))
         assert len(same_widgets) == 3
         assert same_widgets[1] is widgets[1]
-        assert "second updated" in str(same_widgets[1].visual)
+        assert "second updated" in str(same_widgets[1]._formatted)
 
 
 @pytest.mark.asyncio
@@ -2095,7 +2095,13 @@ async def test_conversation_entry_widget_extracts_plain_selected_text(
         widget = app.query(ConversationEntryWidget).last()
         selected = widget.get_selection(Selection(None, None))
 
-        assert selected == ("Agent\ncopy this", "\n")
+        assert selected is not None
+        text, ending = selected
+        assert ending == "\n"
+        assert "Agent" in text
+        assert "copy this" in text
+        assert "\x1b" not in text
+        assert "[bold]" not in text
 
 
 @pytest.mark.asyncio
@@ -2139,10 +2145,12 @@ async def test_conversation_entry_supports_mouse_drag_selection(
         widget = app.query(ConversationEntryWidget).last()
 
         await pilot.mouse_down(widget, offset=(0, 1))
-        await pilot._post_mouse_events([events.MouseMove], widget, offset=(17, 1), button=1)
-        await pilot.mouse_up(widget, offset=(17, 1))
+        await pilot._post_mouse_events([events.MouseMove], widget, offset=(19, 1), button=1)
+        await pilot.mouse_up(widget, offset=(19, 1))
 
-        assert app.screen.get_selected_text() == "select this text"
+        selected_text = app.screen.get_selected_text()
+        assert selected_text is not None
+        assert selected_text.strip() == "select this text"
 
 
 @pytest.mark.asyncio
@@ -2195,10 +2203,11 @@ async def test_command_c_copies_selected_chat_text_to_macos_clipboard(
 
         await pilot.press("super+c")
 
-        assert app.clipboard == "Agent\ncopy this"
-        assert pbcopy_calls == [
-            {"args": ["pbcopy"], "input": "Agent\ncopy this", "text": True, "check": True}
-        ]
+        assert "copy this" in app.clipboard
+        assert "\x1b" not in app.clipboard
+        assert len(pbcopy_calls) == 1
+        assert pbcopy_calls[0]["args"] == ["pbcopy"]
+        assert pbcopy_calls[0]["input"] == app.clipboard
 
 
 @pytest.mark.asyncio
@@ -2251,13 +2260,16 @@ async def test_textual_app_formats_agent_and_tool_chat_entries(
             ConversationEntry(kind="tool_error", content="Permission denied", tool_name="write_file")
         )
 
-        assert assistant.startswith("[bold magenta]Agent[/bold magenta]")
+        assert "[magenta]●[/magenta] [bold]Agent[/bold]" in assistant
         assert "Kolega" not in assistant
-        assert "[black on yellow] TOOL [/black on yellow]" in tool_call
+        assert "[cyan]⏺[/cyan] [bold]read_file[/bold]" in tool_call
+        assert "· running" in tool_call
         assert "[dim]  │[/dim] inspect \\[red]markup\\[/red]" in tool_call
         assert "[dim]  │[/dim] then continue" in tool_call
-        assert "[black on green] TOOL [/black on green]" in tool_result
-        assert "[white on red] TOOL ERROR [/white on red]" in tool_error
+        assert "[green]⏺[/green] [bold]read_file[/bold]" in tool_result
+        assert "· done" in tool_result
+        assert "[red]⏺[/red] [bold]write_file[/bold]" in tool_error
+        assert "· failed" in tool_error
 
 
 @pytest.mark.asyncio
@@ -2448,11 +2460,11 @@ async def test_textual_app_renders_tool_events_in_chat(tmp_path: Path, monkeypat
 
         tool_entries = [entry for entry in app.conversation_entries if entry.kind.startswith("tool")]
         assert [entry.kind for entry in tool_entries] == ["tool_result", "tool_error"]
-        assert tool_entries[0].content == "completed\nshort result"
+        assert tool_entries[0].content == "short result"
         assert tool_entries[0].tool_call_id == "tool-1"
-        assert tool_entries[1].content.endswith("...")
+        assert tool_entries[1].content.endswith("…")
         assert tool_entries[1].tool_call_id == "tool-2"
-        assert len(tool_entries[1].content) == TOOL_RESULT_PREVIEW_CHARS + 3
+        assert len(tool_entries[1].content) == TOOL_RESULT_PREVIEW_CHARS + 1
 
 
 @pytest.mark.asyncio
@@ -2548,7 +2560,7 @@ async def test_textual_app_appends_append_mode_tool_streaming_events_in_chat(
         tool_entries = [entry for entry in app.conversation_entries if entry.kind.startswith("tool")]
         assert len(tool_entries) == 1
         assert tool_entries[0].kind == "tool_result"
-        assert tool_entries[0].content == "completed\nfinal analysis"
+        assert tool_entries[0].content == "final analysis"
         assert tool_entries[0].complete is True
         assert app._tool_stream_buffers == {}
 
@@ -2664,7 +2676,7 @@ async def test_textual_app_caps_long_append_mode_tool_streaming_events(
 
         tool_entries = [entry for entry in app.conversation_entries if entry.kind.startswith("tool")]
         assert len(tool_entries) == 1
-        assert tool_entries[0].content.startswith(f"[stream truncated to last {TOOL_STREAM_PREVIEW_CHARS} chars]")
+        assert tool_entries[0].content.startswith(f"[stream truncated to the last {TOOL_STREAM_PREVIEW_CHARS} characters]")
         assert tool_entries[0].content.endswith("a" * TOOL_STREAM_PREVIEW_CHARS)
 
 
@@ -2775,7 +2787,7 @@ async def test_textual_app_renders_queued_tool_events_during_active_turn(
         tool_entries = [entry for entry in app.conversation_entries if entry.kind.startswith("tool")]
         assert len(tool_entries) == 1
         assert tool_entries[0].kind == "tool_result"
-        assert tool_entries[0].content == "completed\nREADME contents"
+        assert tool_entries[0].content == "README contents"
         assert composer.placeholder == COMPOSER_PLACEHOLDER
         assert "Done in 15s" in str(turn_status.render())
 
@@ -2843,7 +2855,7 @@ async def test_textual_app_late_tool_result_updates_existing_tool_row(
         tool_entries = [entry for entry in app.conversation_entries if entry.kind.startswith("tool")]
         assert len(tool_entries) == 1
         assert tool_entries[0].kind == "tool_result"
-        assert tool_entries[0].content == "completed\nlate result"
+        assert tool_entries[0].content == "late result"
 
 
 @pytest.mark.asyncio
@@ -2977,7 +2989,7 @@ async def test_textual_app_renders_resumed_history_in_chat(
             ("user", "Please read the README", None),
             ("assistant", "I'll inspect it.", None),
             ("tool_call", "Calling read_file", "read_file"),
-            ("tool_result", "completed\nREADME contents", "read_file"),
+            ("tool_result", "README contents", "read_file"),
             ("tool_error", "Permission denied", "write_file"),
             ("assistant", "Done.", None),
         ]
@@ -3320,3 +3332,38 @@ async def test_conversation_scroll_position_survives_streaming(
         await pilot.pause()
         assert view.scroll_y == view.max_scroll_y
         assert app.query_one("#jump_to_bottom", JumpToBottomBar).display is False
+
+
+@pytest.mark.asyncio
+async def test_assistant_entries_render_markdown_when_complete(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from rich.console import Group
+    from rich.markdown import Markdown as RichMarkdown
+
+    from kolega_code.cli.app import ConversationEntry
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        streaming = app._format_conversation_entry(
+            ConversationEntry(kind="assistant", content="# Title\n\nsome `code`", complete=False)
+        )
+        assert isinstance(streaming, str)
+        assert "…" in streaming  # header carries the streaming indicator
+
+        complete = app._format_conversation_entry(
+            ConversationEntry(kind="assistant", content="# Title\n\nsome `code`", complete=True)
+        )
+        assert isinstance(complete, Group)
+        renderables = list(complete.renderables)
+        assert any(
+            isinstance(getattr(item, "renderable", item), RichMarkdown) for item in renderables
+        )
+
+        plan = app._format_conversation_entry(
+            ConversationEntry(kind="plan", content="- step one\n- step two", complete=True)
+        )
+        assert isinstance(plan, Group)

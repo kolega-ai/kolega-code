@@ -82,11 +82,20 @@ RENDER_COALESCE_INTERVAL = 0.05
 
 @lru_cache(maxsize=None)
 def supports_unicode(encoding: Optional[str] = None) -> bool:
-    """Whether the output encoding can represent the glyphs above."""
-    resolved: str = encoding or getattr(sys.stdout, "encoding", None) or "ascii"
+    """Whether the output encoding can represent the glyphs above.
+
+    Probes the original stdout (sys.__stdout__) because Textual redirects
+    sys.stdout while the app is running.
+    """
+    if encoding is None:
+        encoding = getattr(sys.__stdout__, "encoding", None)
+    if encoding is None:
+        import locale
+
+        encoding = locale.getpreferredencoding(False) or "ascii"
     try:
-        Glyph.TOOL.encode(resolved)
-        SPINNER_FRAMES.encode(resolved)
+        Glyph.TOOL.encode(encoding)
+        SPINNER_FRAMES.encode(encoding)
     except (UnicodeEncodeError, LookupError):
         return False
     return True
