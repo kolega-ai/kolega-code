@@ -25,7 +25,6 @@ from textual.widgets import (
     Button,
     Collapsible,
     Footer,
-    Header,
     Input,
     Label,
     Markdown,
@@ -73,7 +72,9 @@ SHARED_TASK_LIST_PROMPT = """The CLI provides a shared Markdown task list throug
 Use it to coordinate planning and implementation.
 
 In planning mode, create or update the task list before calling `write_plan`.
-In build mode, read the task list when useful and check off completed implementation tasks by rewriting the full Markdown list."""
+In build mode, call `get_task_list` when a shared task list exists or when implementing an approved plan.
+After each meaningful task is completed, call `update_task_list` to check off that item by rewriting the full Markdown list.
+Do not wait until every TODO is complete to update the shared task list."""
 PLANNING_QUESTION_PROMPT = """The CLI provides `ask_user_choice` for important multiple-choice planning decisions.
 Use it only when a decision materially changes the plan. Provide concise options; the user can also type a custom answer."""
 IMPLEMENT_PLAN_PROMPT = """Implement the approved plan below. Follow it as the source of truth, but still inspect the code before editing and run appropriate checks.
@@ -214,7 +215,7 @@ class KolegaCodeApp(App):
     #status_dashboard {
         height: 1fr;
         min-height: 15;
-        border: round $primary;
+        border: round $surface;
         padding: 1;
     }
 
@@ -307,7 +308,6 @@ class KolegaCodeApp(App):
         self._turn_final_text = ""
 
     def compose(self) -> ComposeResult:
-        yield Header(show_clock=True)
         with Horizontal(id="body"):
             with Vertical(id="conversation_panel"):
                 yield Static(
@@ -418,7 +418,10 @@ class KolegaCodeApp(App):
         self.store.save(self.session)
 
     def _restore_plan_action_visibility(self) -> None:
-        self._set_plan_actions_visible(bool(self._latest_plan), allow_discuss=self._plan_decision_active)
+        self._set_plan_actions_visible(
+            self.interaction_mode == PLAN_INTERACTION_MODE and bool(self._latest_plan),
+            allow_discuss=self._plan_decision_active,
+        )
 
     async def on_chat_composer_submitted(self, event: ChatComposer.Submitted) -> None:
         text = event.value
@@ -754,12 +757,11 @@ class KolegaCodeApp(App):
         if not plan or self._turn_active or self.agent_worker is not None:
             return
 
-        self._latest_plan = None
         self._plan_decision_active = False
         self._save_session()
+        await self._set_interaction_mode(BUILD_INTERACTION_MODE)
         self._refresh_planning_sidebar()
         self._set_plan_actions_visible(False)
-        await self._set_interaction_mode(BUILD_INTERACTION_MODE)
 
         prompt = IMPLEMENT_PLAN_PROMPT.format(plan=plan)
         self._add_conversation_entry(ConversationEntry(kind="user", content="Implement the approved plan."))
@@ -769,9 +771,11 @@ class KolegaCodeApp(App):
         if not self._latest_plan:
             return
 
+        self._latest_plan = None
         self._plan_decision_active = False
         self._save_session()
-        self._set_plan_actions_visible(True)
+        self._refresh_planning_sidebar()
+        self._set_plan_actions_visible(False)
         self._restore_composer_placeholder()
         self._set_chat_enabled(self.agent is not None)
         self.query_one("#composer", ChatComposer).focus()
@@ -919,6 +923,8 @@ class KolegaCodeApp(App):
             Replace the shared CLI task list.
 
             Format the list as Markdown checkboxes, for example `- [ ] inspect CLI state handling`.
+            Use this after completing individual task-list items so progress is visible incrementally; do not wait
+            until every TODO is complete before updating the list.
 
             Args:
                 task_list_markdown: The full current shared task list as Markdown.
@@ -1036,6 +1042,7 @@ class KolegaCodeApp(App):
             pending_question.future.set_result(clean_answer)
 
         if self._turn_active:
+            self._restore_composer_placeholder()
             self._set_chat_enabled(False)
             self._update_progress("Agent is working...", complete=False)
         else:
@@ -1487,7 +1494,6 @@ class KolegaCodeApp(App):
         self._turn_status_text = content
         self._refresh_turn_status_strip()
         self._set_status_activity(content, turn_state=self._turn_state_for_activity(content))
-        self._set_composer_status(content)
 
     def _update_activity_progress(self, content: str) -> None:
         if self._turn_active:

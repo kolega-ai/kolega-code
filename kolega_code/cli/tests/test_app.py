@@ -26,7 +26,7 @@ async def test_textual_app_mounts_with_fake_agent(tmp_path: Path, monkeypatch: p
     pytest.importorskip("textual")
 
     from textual.containers import VerticalScroll
-    from textual.widgets import Collapsible, Markdown
+    from textual.widgets import Collapsible, Header, Markdown
 
     from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
@@ -67,6 +67,7 @@ async def test_textual_app_mounts_with_fake_agent(tmp_path: Path, monkeypatch: p
         assert app.interaction_mode == "build"
         assert app.session.mode == AgentMode.CLI.value
         assert app.agent.kwargs["agent_mode"] == AgentMode.CLI
+        assert list(app.query(Header)) == []
         assert app.query_one("#conversation") is not None
         assert app.query_one("#composer") is not None
         assert app.query_one("#planning_pane") is not None
@@ -121,13 +122,15 @@ async def test_textual_app_status_tab_is_default_dashboard(
 
     async with app.run_test():
         assert app.query_one("#events", TabbedContent).active == "status_pane"
-        dashboard = str(app.query_one("#status_dashboard", Static).render())
+        dashboard_widget = app.query_one("#status_dashboard", Static)
+        dashboard = str(dashboard_widget.render())
 
         assert "Status" in dashboard
         assert f"{config.long_context_config.provider.value}/{config.long_context_config.model}" in dashboard
         assert "Build" in dashboard
         assert "Idle" in dashboard
         assert "Waiting for first context count" in dashboard
+        assert dashboard_widget.styles.border == app.query_one("#logs").styles.border
         assert list(app.query("#status")) == []
 
 
@@ -325,6 +328,8 @@ async def test_textual_app_shift_tab_toggles_between_build_and_plan_agents(
 ) -> None:
     pytest.importorskip("textual")
 
+    from textual.widgets import Markdown
+
     from kolega_code.cli import app as app_module
     from kolega_code.cli.app import BUILD_INTERACTION_MODE, PLAN_INTERACTION_MODE, KolegaCodeApp, PendingQuestion
 
@@ -394,7 +399,9 @@ async def test_textual_app_shift_tab_toggles_between_build_and_plan_agents(
         assert app._plan_decision_active is False
         assert app._pending_question is None
         assert question_future.cancelled()
-        assert app.query_one("#implement_plan").display is True
+        assert app.query_one("#planning_plan_markdown", Markdown).source == "# Plan\n\nDo it."
+        assert app.query_one("#implement_plan").display is False
+        assert app.query_one("#discuss_plan").display is False
         assert app.query_one("#question_actions").display is False
         loaded = store.load(session.session_id)
         assert loaded.latest_plan_markdown == "# Plan\n\nDo it."
@@ -458,6 +465,53 @@ async def test_textual_app_restores_saved_plan_and_interaction_mode(
         assert app.query_one("#implement_plan", Button).display is True
         assert app.query_one("#discuss_plan", Button).display is False
         assert app.query_one("#composer", ChatComposer).disabled is False
+
+
+@pytest.mark.asyncio
+async def test_textual_app_restores_saved_plan_in_build_mode_without_plan_actions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from textual.widgets import Button, Markdown
+
+    from kolega_code.cli import app as app_module
+    from kolega_code.cli.app import KolegaCodeApp
+
+    class FakeCoderAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def restore_message_history(self, history):
+            return None
+
+        def dump_message_history(self):
+            return []
+
+        async def cleanup(self):
+            return None
+
+    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+
+    saved_plan = "# Saved plan\n\nKeep this visible."
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    session.latest_plan_markdown = saved_plan
+    session.interaction_mode = "build"
+    store.save(session)
+
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test():
+        assert app.interaction_mode == "build"
+        assert isinstance(app.agent, FakeCoderAgent)
+        assert app._latest_plan == saved_plan
+        assert app.query_one("#planning_plan_markdown", Markdown).source == saved_plan
+        assert app.query_one("#implement_plan", Button).display is False
+        assert app.query_one("#discuss_plan", Button).display is False
 
 
 @pytest.mark.asyncio
@@ -545,7 +599,12 @@ async def test_textual_app_passes_shared_task_list_tools_to_build_and_plan_agent
         build_tools = extension_by_name(app.agent.kwargs["tool_extensions"], "cli-shared-task-list").tools
         assert {"get_task_list", "update_task_list"} == set(build_tools)
         assert all("ask_user_choice" not in extension.tools for extension in app.agent.kwargs["tool_extensions"])
-        assert "check off completed implementation tasks" in app.agent.kwargs["prompt_extensions"][0].markdown
+        build_task_list_prompt = app.agent.kwargs["prompt_extensions"][0].markdown
+        assert "After each meaningful task is completed" in build_task_list_prompt
+        assert "Do not wait until every TODO is complete" in build_task_list_prompt
+        update_task_list_doc = build_tools["update_task_list"].__doc__ or ""
+        assert "progress is visible incrementally" in update_task_list_doc
+        assert "do not wait" in update_task_list_doc.lower()
 
         assert await build_tools["get_task_list"]() == "No task list has been set."
         assert await build_tools["update_task_list"]("- [ ] inspect\n- [x] plan") == "Task list updated."
@@ -746,7 +805,7 @@ async def test_textual_app_planning_question_tool_accepts_option_button_answer(
     from textual.widgets import Button, Markdown
 
     from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import ChatComposer, KolegaCodeApp
+    from kolega_code.cli.app import COMPOSER_PLACEHOLDER, ChatComposer, KolegaCodeApp
 
     class FakeBaseAgent:
         def __init__(self, **kwargs):
@@ -801,6 +860,7 @@ async def test_textual_app_planning_question_tool_accepts_option_button_answer(
         assert app._pending_question is None
         assert app.query_one("#question_actions").display is False
         assert app.query_one("#composer", ChatComposer).disabled is True
+        assert app.query_one("#composer", ChatComposer).placeholder == COMPOSER_PLACEHOLDER
         assert app.conversation_entries[-1].kind == "user"
         assert app.conversation_entries[-1].content == "Persist it"
         app._turn_active = False
@@ -981,11 +1041,12 @@ async def test_textual_app_shows_plan_decision_when_planning_agent_writes_plan(
         app._discuss_pending_plan()
 
         assert app._plan_decision_active is False
-        assert app._latest_plan == initial_plan
+        assert app._latest_plan is None
         assert app.query_one("#composer", ChatComposer).disabled is False
-        assert app.query_one("#implement_plan", Button).display is True
+        assert app.query_one("#planning_plan_markdown", Markdown).source == "No plan captured yet."
+        assert app.query_one("#implement_plan", Button).display is False
         assert app.query_one("#discuss_plan", Button).display is False
-        assert store.load(session.session_id).latest_plan_markdown == initial_plan
+        assert store.load(session.session_id).latest_plan_markdown == ""
 
         app.agent.completed_plan = "# Revised plan\n\nBuild planning mode carefully."
         app._capture_completed_plan()
@@ -1008,7 +1069,7 @@ async def test_textual_app_implement_plan_switches_to_build_and_sends_plan(
 ) -> None:
     pytest.importorskip("textual")
 
-    from textual.widgets import Markdown
+    from textual.widgets import Button, Markdown
 
     from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
@@ -1059,18 +1120,22 @@ async def test_textual_app_implement_plan_switches_to_build_and_sends_plan(
         assert app.agent.messages
         assert "# Plan\n\nBuild it." in app.agent.messages[-1]
         assert app._plan_decision_active is False
-        assert app._latest_plan is None
-        assert app.query_one("#planning_plan_markdown", Markdown).source == "No plan captured yet."
+        assert app._latest_plan == "# Plan\n\nBuild it."
+        assert app.query_one("#planning_plan_markdown", Markdown).source == "# Plan\n\nBuild it."
+        assert app.query_one("#implement_plan", Button).display is False
+        assert app.query_one("#discuss_plan", Button).display is False
         loaded = store.load(session.session_id)
-        assert loaded.latest_plan_markdown == ""
+        assert loaded.latest_plan_markdown == "# Plan\n\nBuild it."
         assert loaded.interaction_mode == "build"
 
 
 @pytest.mark.asyncio
-async def test_textual_app_implement_plan_after_discuss_uses_latest_plan(
+async def test_textual_app_discuss_plan_clears_old_plan_until_new_plan_is_written(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     pytest.importorskip("textual")
+
+    from textual.widgets import Button, Markdown
 
     from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
@@ -1114,9 +1179,19 @@ async def test_textual_app_implement_plan_after_discuss_uses_latest_plan(
 
         app._discuss_pending_plan()
 
-        assert app._latest_plan == "# Plan\n\nBuild it after discussing."
+        assert app._latest_plan is None
         assert app._plan_decision_active is False
-        assert store.load(session.session_id).latest_plan_markdown == "# Plan\n\nBuild it after discussing."
+        assert app.query_one("#planning_plan_markdown", Markdown).source == "No plan captured yet."
+        assert app.query_one("#implement_plan", Button).display is False
+        assert app.query_one("#discuss_plan", Button).display is False
+        assert store.load(session.session_id).latest_plan_markdown == ""
+
+        await app._implement_pending_plan()
+        assert app.agent_worker is None
+        assert app.interaction_mode == "plan"
+
+        app._latest_plan = "# New plan\n\nBuild this instead."
+        app._plan_decision_active = True
 
         await app._implement_pending_plan()
         assert app.agent_worker is not None
@@ -1124,9 +1199,13 @@ async def test_textual_app_implement_plan_after_discuss_uses_latest_plan(
 
         assert app.interaction_mode == "build"
         assert isinstance(app.agent, FakeCoderAgent)
-        assert "# Plan\n\nBuild it after discussing." in app.agent.messages[-1]
-        assert app._latest_plan is None
-        assert store.load(session.session_id).latest_plan_markdown == ""
+        assert "# New plan\n\nBuild this instead." in app.agent.messages[-1]
+        assert "# Plan\n\nBuild it after discussing." not in app.agent.messages[-1]
+        assert app._latest_plan == "# New plan\n\nBuild this instead."
+        assert app.query_one("#planning_plan_markdown", Markdown).source == "# New plan\n\nBuild this instead."
+        assert app.query_one("#implement_plan", Button).display is False
+        assert app.query_one("#discuss_plan", Button).display is False
+        assert store.load(session.session_id).latest_plan_markdown == "# New plan\n\nBuild this instead."
 
 
 @pytest.mark.asyncio
@@ -2194,7 +2273,7 @@ async def test_textual_app_shows_working_progress_during_active_turn(
 
         progress_entries = [entry for entry in app.conversation_entries if entry.kind == "progress"]
         assert progress_entries == []
-        assert composer.placeholder == "Agent is working..."
+        assert composer.placeholder == COMPOSER_PLACEHOLDER
         assert composer.disabled is True
         assert "Agent is working..." in str(turn_status.render())
         assert "0s" in str(turn_status.render())
@@ -2203,7 +2282,7 @@ async def test_textual_app_shows_working_progress_during_active_turn(
         app._render_event(
             AgentEvent(event_type="status_update", sender="coder", content={"text": "Indexing workspace"})
         )
-        assert composer.placeholder == "Indexing workspace"
+        assert composer.placeholder == COMPOSER_PLACEHOLDER
         app._refresh_turn_status_strip()
         assert "Indexing workspace" in str(turn_status.render())
         assert "3s" in str(turn_status.render())
@@ -2604,7 +2683,7 @@ async def test_textual_app_renders_queued_tool_events_during_active_turn(
         tool_entries = await asyncio.wait_for(wait_for_tool_entries(app, 1), timeout=1)
         assert tool_entries[0].kind == "tool_call"
         assert tool_entries[0].content == "Calling read_file"
-        assert composer.placeholder == "Running read_file..."
+        assert composer.placeholder == COMPOSER_PLACEHOLDER
         assert "Running read_file..." in str(turn_status.render())
 
         now = 25.0
@@ -2739,7 +2818,7 @@ async def test_textual_app_cancellation_is_visible_in_chat(
         app.action_cancel_generation()
         progress_entries = [entry for entry in app.conversation_entries if entry.kind == "progress"]
         assert progress_entries == []
-        assert composer.placeholder == "Stop requested..."
+        assert composer.placeholder == COMPOSER_PLACEHOLDER
         assert "Stop requested..." in str(turn_status.render())
         assert "42s" in str(turn_status.render())
 
