@@ -1478,8 +1478,11 @@ class KolegaCodeApp(App):
         turn_style = TURN_STATE_STYLES.get(state.turn_state, Color.ACCENT)
         context_style = self._context_style(state.usage_percentage, state.compression_threshold)
 
+        def label(text: str) -> str:
+            return theme.styled(text, Color.MUTED)
+
         if state.usage_percentage is None:
-            context_lines = "[dim]Waiting for first context count[/dim]"
+            context_lines = theme.styled("Waiting for first context count", Color.MUTED)
         else:
             percentage = f"{state.usage_percentage:.1f}%"
             token_line = self._context_token_line(state.input_tokens, state.max_tokens)
@@ -1488,19 +1491,25 @@ class KolegaCodeApp(App):
                 f"[{context_style}]{self._context_bar(state.usage_percentage)}[/] "
                 f"[bold {context_style}]{percentage}[/]\n"
                 f"{token_line}\n"
-                f"[dim]{threshold}[/]"
+                f"{theme.styled(threshold, Color.MUTED)}"
             )
             if state.context_note:
-                context_lines += f"\n[yellow]{escape(state.context_note)}[/yellow]"
+                note_style = self._context_note_style(state.alert_level)
+                context_lines += f"\n[{note_style}]{escape(state.context_note)}[/{note_style}]"
 
+        title = theme.role_header(Glyph.STATUS, "Status", Color.ACCENT)
+        turn_line = (
+            f"{label('Turn')} [{turn_style}]{theme.g(Glyph.STATUS)}[/{turn_style}] "
+            f"[bold]{escape(state.turn_state.value)}[/bold]"
+        )
         return (
-            "[bold]Status[/bold]\n\n"
-            f"[dim]Model[/dim]\n[bold]{escape(provider_model)}[/bold]\n\n"
-            f"[dim]Mode[/dim] [bold]{mode}[/bold]\n"
-            f"[dim]Turn[/dim] [{turn_style}]{escape(state.turn_state.value)}[/{turn_style}]\n\n"
-            "[dim]Context[/dim]\n"
+            f"{title}\n\n"
+            f"{label('Model')}\n[bold]{escape(provider_model)}[/bold]\n\n"
+            f"{label('Mode')} [bold]{mode}[/bold]\n"
+            f"{turn_line}\n\n"
+            f"{label('Context')}\n"
             f"{context_lines}\n\n"
-            "[dim]Activity[/dim]\n"
+            f"{label('Activity')}\n"
             f"{escape(state.activity)}"
         )
 
@@ -1509,7 +1518,7 @@ class KolegaCodeApp(App):
 
     def _context_token_line(self, input_tokens: Optional[int], max_tokens: Optional[int]) -> str:
         if input_tokens is None or max_tokens is None:
-            return "Tokens: -"
+            return theme.styled(messages.STATUS_TOKENS_UNKNOWN, Color.MUTED)
         return f"Tokens: {input_tokens:,} / {max_tokens:,}"
 
     def _compression_threshold_line(self, compression_threshold: Optional[float]) -> str:
@@ -1519,12 +1528,17 @@ class KolegaCodeApp(App):
 
     def _context_style(self, usage_percentage: Optional[float], compression_threshold: Optional[float]) -> str:
         if usage_percentage is None:
-            return "green"
+            return Color.SUCCESS
         if compression_threshold is not None and usage_percentage >= compression_threshold:
-            return "red"
+            return Color.ERROR
         if usage_percentage >= 60:
-            return "yellow"
-        return "green"
+            return Color.WARNING
+        return Color.SUCCESS
+
+    def _context_note_style(self, alert_level: str) -> str:
+        if alert_level.lower() in {"error", "critical"}:
+            return Color.ERROR
+        return Color.WARNING
 
     def _set_status_activity(self, content: str, *, turn_state: Optional[TurnState] = None) -> None:
         if content:
