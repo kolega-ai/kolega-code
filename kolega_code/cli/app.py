@@ -64,7 +64,6 @@ TOOL_RESULT_PREVIEW_CHARS = theme.TOOL_RESULT_PREVIEW_CHARS
 TOOL_STREAM_PREVIEW_CHARS = theme.TOOL_STREAM_PREVIEW_CHARS
 SUB_AGENT_TAIL_CHARS = theme.SUB_AGENT_TAIL_CHARS
 SUB_AGENT_TASK_PREVIEW_CHARS = theme.SUB_AGENT_TASK_PREVIEW_CHARS
-SUB_AGENT_RENDER_INTERVAL = 0.1
 COMPOSER_PLACEHOLDER = messages.COMPOSER_PLACEHOLDER
 PLAN_READY_PLACEHOLDER = messages.PLAN_READY_PLACEHOLDER
 THREAD_RESET_MESSAGE = messages.THREAD_RESET_MESSAGE
@@ -346,7 +345,7 @@ class KolegaCodeApp(App):
         self._sub_agent_activities: dict[str, SubAgentActivity] = {}
         self._sub_agent_by_tool_call: dict[str, str] = {}
         self._sub_agent_seq = 0
-        self._last_sub_agent_render = 0.0
+        self._render_pending = False
         self._active_progress_entry: Optional[ConversationEntry] = None
         self._turn_active = False
         self._latest_plan: Optional[str] = self.session.latest_plan_markdown or None
@@ -563,6 +562,7 @@ class KolegaCodeApp(App):
             self._log_status(messages.STOPPED_WITH_ERROR.format(error=exc), "error")
             raise
         finally:
+            self._flush_conversation_render()
             self._active_progress_entry = None
             self._turn_active = False
             self.agent_worker = None
@@ -1208,7 +1208,7 @@ class KolegaCodeApp(App):
             self._stream_entries[entry.uuid] = entry
         if entry.tool_call_id:
             self._tool_entries[entry.tool_call_id] = entry
-        self._render_conversation()
+        self._invalidate_conversation(entry)
 
     def _ensure_startup_entry(self, *, render: bool = True) -> None:
         existing = next((entry for entry in self.conversation_entries if entry.kind == "startup"), None)
@@ -1533,7 +1533,7 @@ class KolegaCodeApp(App):
 
         entry.content += content
         entry.complete = complete
-        self._render_conversation()
+        self._invalidate_conversation(entry)
 
     def _begin_turn_progress(self) -> None:
         self._tool_entries = {}
@@ -1620,7 +1620,7 @@ class KolegaCodeApp(App):
         entry.tool_call_id = tool_call_id or entry.tool_call_id
         if entry.tool_call_id:
             self._tool_entries[entry.tool_call_id] = entry
-        self._render_conversation()
+        self._invalidate_conversation(entry)
 
     def _apply_tool_streaming_update(self, content: dict) -> None:
         tool_name = str(content.get("tool_name") or content.get("tool_description") or "tool")
@@ -1666,7 +1666,7 @@ class KolegaCodeApp(App):
         entry.tool_call_id = tool_call_id or entry.tool_call_id
         if entry.tool_call_id:
             self._tool_entries[entry.tool_call_id] = entry
-        self._render_conversation()
+        self._invalidate_conversation(entry)
 
     def _tool_stream_buffer_key(self, tool_call_id: str, tool_name: str) -> str:
         return tool_call_id or f"name:{tool_name}"
@@ -1764,10 +1764,10 @@ class KolegaCodeApp(App):
 
     def _refresh_sub_agent_entry(self, activity: SubAgentActivity, *, force: bool = False) -> None:
         activity.entry.content = self._format_sub_agent_content(activity)
-        now = self._now()
-        if force or now - self._last_sub_agent_render >= SUB_AGENT_RENDER_INTERVAL:
-            self._last_sub_agent_render = now
+        if force:
             self._render_conversation()
+        else:
+            self._invalidate_conversation(activity.entry)
 
     def _format_sub_agent_content(self, activity: SubAgentActivity) -> str:
         if activity.finished_at is not None:
@@ -1844,7 +1844,7 @@ class KolegaCodeApp(App):
             return
         for activity in running:
             activity.entry.content = self._format_sub_agent_content(activity)
-        self._render_conversation()
+        self._invalidate_conversation()
 
     def _tool_result_preview(self, text: str) -> str:
         if not text:
@@ -1863,7 +1863,34 @@ class KolegaCodeApp(App):
             return text
         return f"[stream truncated to last {TOOL_STREAM_PREVIEW_CHARS} chars]\n{text[-TOOL_STREAM_PREVIEW_CHARS:]}"
 
+    def _invalidate_conversation(self, entry: Optional[ConversationEntry] = None) -> None:
+        """Mark the conversation dirty and coalesce re-renders.
+
+        Hot paths (stream chunks, tool updates, sub-agent ticks) call this
+        instead of rendering directly, so rapid event bursts produce at most
+        one render per coalesce interval.
+        """
+        if self._render_pending:
+            return
+        self._render_pending = True
+        try:
+            self.set_timer(
+                theme.RENDER_COALESCE_INTERVAL,
+                self._flush_conversation_render,
+                name="conversation-render",
+            )
+        except Exception:
+            # Timers are unavailable before the app is running; render directly.
+            self._flush_conversation_render()
+
+    def _flush_conversation_render(self) -> None:
+        if not self._render_pending:
+            return
+        self._render_pending = False
+        self._render_conversation()
+
     def _render_conversation(self) -> None:
+        self._render_pending = False
         conversation = self._conversation
         conversation.clear()
         for index, entry in enumerate(self.conversation_entries):
