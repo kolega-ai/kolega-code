@@ -3505,3 +3505,29 @@ async def test_log_lines_carry_timestamp_and_level_glyph(
         assert len(written) == 1
         assert "[error]" not in written[0].plain  # no raw level prefix
         assert "it [broke]" in written[0].plain  # brackets survive without markup errors
+
+
+@pytest.mark.asyncio
+async def test_terminal_commands_render_as_styled_blocks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.agent import AgentEvent
+    from kolega_code.cli import theme
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        formatted = app._format_terminal_command("ls -la")
+        assert formatted.plain == f"{theme.g(theme.Glyph.USER)} ls -la"
+
+        written: list[object] = []
+        monkeypatch.setattr(app._terminal, "write", written.append)
+        app._render_event(AgentEvent(event_type="terminal_command", sender="coder", content={"command": "echo one"}))
+        app._render_event(AgentEvent(event_type="terminal_output", sender="coder", content={"output": "one"}))
+        app._render_event(AgentEvent(event_type="terminal_command", sender="coder", content={"command": "echo two"}))
+
+        plains = [item.plain if hasattr(item, "plain") else item for item in written]
+        # Second command block is preceded by a blank separator line
+        assert plains == [f"{theme.g(theme.Glyph.USER)} echo one", "one", "", f"{theme.g(theme.Glyph.USER)} echo two"]

@@ -503,6 +503,7 @@ class KolegaCodeApp(App):
         self._turn_final_state = TurnState.IDLE
         self._spinner_frame = 0
         self._last_sub_agent_tick = 0.0
+        self._terminal_has_content = False
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="body"):
@@ -590,6 +591,23 @@ class KolegaCodeApp(App):
     @property
     def _terminal(self) -> RichLog:
         return self.query_one("#terminal", RichLog)
+
+    def _format_terminal_command(self, command: str) -> Text:
+        """Accent prompt glyph plus the command in bold."""
+        return Text.assemble(
+            (theme.g(Glyph.USER) + " ", Color.ACCENT),
+            (command, "bold"),
+        )
+
+    def _write_terminal_command(self, command: str) -> None:
+        try:
+            terminal = self._terminal
+        except Exception:
+            return
+        if self._terminal_has_content:
+            terminal.write("")
+        terminal.write(self._format_terminal_command(command))
+        self._terminal_has_content = True
 
     def _format_log_line(self, text: str, level: str = "info") -> Text:
         """One log line: muted HH:MM:SS, a level-colored glyph, then the text."""
@@ -781,9 +799,10 @@ class KolegaCodeApp(App):
             self._write_log(text, level)
         elif event.event_type == "terminal_output":
             self._terminal.write(event.content.get("output", ""))
+            self._terminal_has_content = True
         elif event.event_type == "terminal_command":
             command = str(event.content.get("command") or "")
-            self._terminal.write(f"$ {command}")
+            self._write_terminal_command(command)
             if command:
                 self._update_activity_progress(messages.RUNNING_TERMINAL_COMMAND, state=TurnState.RUNNING_TOOL)
         elif event.event_type == "chat_message":
