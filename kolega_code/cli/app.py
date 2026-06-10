@@ -132,6 +132,11 @@ TOOL_STATE_PRESENTATION = {
     "tool_error": ("failed", Color.ERROR),
 }
 
+TAB_BASE_LABELS = {
+    "logs_pane": "Logs",
+    "terminal_pane": "Terminal",
+}
+
 
 _ENTRY_ID_COUNTER = itertools.count(1)
 
@@ -543,9 +548,9 @@ class KolegaCodeApp(App):
                     with TabPane("Status", id="status_pane"):
                         with Vertical(id="status_container"):
                             yield Static("", id="status_dashboard", markup=True)
-                    with TabPane("Logs"):
+                    with TabPane("Logs", id="logs_pane"):
                         yield RichLog(id="logs", wrap=True, markup=True)
-                    with TabPane("Terminal"):
+                    with TabPane("Terminal", id="terminal_pane"):
                         yield RichLog(id="terminal", wrap=True, markup=False)
                     with TabPane("Planning", id="planning_pane"):
                         with VerticalScroll(id="planning_form"):
@@ -620,6 +625,7 @@ class KolegaCodeApp(App):
             terminal.write("")
         terminal.write(self._format_terminal_command(command))
         self._terminal_has_content = True
+        self._mark_tab_activity("terminal_pane")
 
     def _format_log_line(self, text: str, level: str = "info") -> Text:
         """One log line: muted HH:MM:SS, a level-colored glyph, then the text."""
@@ -637,6 +643,37 @@ class KolegaCodeApp(App):
         except Exception:
             return
         logs.write(self._format_log_line(text, level))
+        self._mark_tab_activity("logs_pane")
+
+    def _mark_tab_activity(self, pane_id: str) -> None:
+        """Add an activity dot to a background tab's label."""
+        base = TAB_BASE_LABELS.get(pane_id)
+        if base is None:
+            return
+        try:
+            tabs = self.query_one("#events", TabbedContent)
+            if tabs.active == pane_id:
+                return
+            tabs.get_tab(pane_id).label = f"{base} {theme.g(Glyph.STATUS)}"
+        except Exception:
+            return
+
+    def _clear_tab_activity(self, pane_id: str) -> None:
+        base = TAB_BASE_LABELS.get(pane_id)
+        if base is None:
+            return
+        try:
+            self.query_one("#events", TabbedContent).get_tab(pane_id).label = base
+        except Exception:
+            return
+
+    def on_tabbed_content_tab_activated(self, event: TabbedContent.TabActivated) -> None:
+        tabbed_content = getattr(event, "tabbed_content", None)
+        if tabbed_content is None or tabbed_content.id != "events":
+            return
+        pane_id = getattr(event.pane, "id", None)
+        if pane_id in TAB_BASE_LABELS:
+            self._clear_tab_activity(pane_id)
 
     def _log_status(self, text: str, level: str = "info") -> None:
         """Write a status line to the Logs tab with the semantic palette."""
@@ -812,6 +849,7 @@ class KolegaCodeApp(App):
         elif event.event_type == "terminal_output":
             self._terminal.write(event.content.get("output", ""))
             self._terminal_has_content = True
+            self._mark_tab_activity("terminal_pane")
         elif event.event_type == "terminal_command":
             command = str(event.content.get("command") or "")
             self._write_terminal_command(command)

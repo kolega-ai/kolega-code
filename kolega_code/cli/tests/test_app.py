@@ -3608,3 +3608,32 @@ async def test_planning_sidebar_marks_empty_states(tmp_path: Path, monkeypatch: 
 
         assert plan_md.source == "# Plan\n\n- do the thing"
         assert not plan_md.has_class("empty-state")
+
+
+@pytest.mark.asyncio
+async def test_logs_tab_shows_activity_dot_until_visited(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from textual.widgets import TabbedContent
+
+    from kolega_code.cli import theme
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        tabs = app.query_one("#events", TabbedContent)
+        assert tabs.active == "status_pane"
+
+        app._write_log("background activity")
+        dot = theme.g(theme.Glyph.STATUS)
+        assert str(tabs.get_tab("logs_pane").label) == f"Logs {dot}"
+
+        tabs.active = "logs_pane"
+        await pilot.pause()
+        assert str(tabs.get_tab("logs_pane").label) == "Logs"
+
+        # Writing while the tab is active does not re-add the dot
+        app._write_log("foreground activity")
+        assert str(tabs.get_tab("logs_pane").label) == "Logs"
