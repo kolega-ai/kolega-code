@@ -3,24 +3,23 @@
 from __future__ import annotations
 
 import asyncio
+import itertools
 import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
+from rich.console import Console
 from rich.markup import escape
-from rich.segment import Segment
-from rich.style import Style
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message as TextualMessage
 from textual.selection import Selection
-from textual.strip import Strip
 from textual.timer import Timer
 from textual.widgets import (
     Button,
@@ -123,6 +122,13 @@ TURN_STATE_STYLES = {
 }
 
 
+_ENTRY_ID_COUNTER = itertools.count(1)
+
+
+def _next_entry_id() -> str:
+    return f"entry-{next(_ENTRY_ID_COUNTER)}"
+
+
 @dataclass
 class ConversationEntry:
     kind: str
@@ -132,6 +138,7 @@ class ConversationEntry:
     tool_name: Optional[str] = None
     tool_call_id: Optional[str] = None
     tone: Optional[str] = None  # "warning" | "error" styling hint for progress entries
+    entry_id: str = field(default_factory=_next_entry_id)  # UI-only widget key, not persisted
 
 
 @dataclass
@@ -174,33 +181,67 @@ class StatusDashboardState:
     context_note: str = ""
 
 
-class CopyableRichLog(RichLog):
-    """RichLog variant that exposes rendered plain text to Textual selection copying."""
+class ConversationEntryWidget(Static):
+    """Displays one ConversationEntry and is updated in place as the entry changes."""
 
-    def render_line(self, y: int) -> Strip:
-        strip = super().render_line(y)
-        scroll_x, scroll_y = self.scroll_offset
-        source_y = scroll_y + y
-        source_x = scroll_x
-        selectable_segments: list[Segment] = []
+    def __init__(self, entry: ConversationEntry, format_entry: Callable[[ConversationEntry], object]) -> None:
+        super().__init__("")
+        self.entry = entry
+        self._format_entry = format_entry
+        self._kind_class = ""
+        self._formatted: object = None
+        self.refresh_content()
 
-        for segment in strip:
-            if segment.control:
-                selectable_segments.append(segment)
-                continue
-
-            offset_style = Style.from_meta({"offset": (source_x, source_y)})
-            style = segment.style + offset_style if segment.style is not None else offset_style
-            selectable_segments.append(Segment(segment.text, style, segment.control))
-            source_x += len(segment.text)
-
-        return Strip(selectable_segments, strip.cell_length)
+    def refresh_content(self) -> None:
+        kind_class = f"entry-{self.entry.kind}"
+        if kind_class != self._kind_class:
+            if self._kind_class:
+                self.remove_class(self._kind_class)
+            self.add_class(kind_class)
+            self._kind_class = kind_class
+        self._formatted = self._format_entry(self.entry)
+        self.update(self._formatted)
 
     def get_selection(self, selection: Selection) -> tuple[str, str] | None:
-        text = "\n".join(line.text.rstrip() for line in self.lines)
+        result = super().get_selection(selection)
+        if result is not None:
+            return result
+        # Rich renderables (e.g. Markdown groups) are not Content; render them
+        # to plain text at the current width so selection copying still works.
+        formatted = self._formatted
+        if formatted is None or isinstance(formatted, str):
+            return None
+        console = Console(width=max(1, self.size.width or 80))
+        with console.capture() as capture:
+            console.print(formatted)
+        text = capture.get().rstrip("\n")
         if not text:
             return None
         return selection.extract(text), "\n"
+
+
+class ConversationView(VerticalScroll):
+    """Scrollable list of per-entry widgets, anchored to the bottom while streaming."""
+
+    def watch_scroll_y(self, old_value: float, new_value: float) -> None:
+        super().watch_scroll_y(old_value, new_value)
+        try:
+            update = getattr(self.app, "_update_jump_button", None)
+        except Exception:
+            return
+        if update is not None:
+            update()
+
+
+class JumpToBottomBar(Static):
+    """One-line affordance shown when the conversation is scrolled away from the end."""
+
+    @dataclass
+    class Pressed(TextualMessage):
+        bar: JumpToBottomBar
+
+    def on_click(self) -> None:
+        self.post_message(self.Pressed(self))
 
 
 class ChatComposer(TextArea):
@@ -254,6 +295,20 @@ class KolegaCodeApp(App):
     #conversation, #logs, #terminal {
         height: 1fr;
         border: round $surface;
+    }
+
+    ConversationEntryWidget {
+        height: auto;
+        margin-bottom: 1;
+    }
+
+    #jump_to_bottom {
+        display: none;
+        height: 1;
+        padding: 0 1;
+        background: $surface;
+        color: $text-muted;
+        text-align: center;
     }
 
     #status_container {
@@ -346,6 +401,8 @@ class KolegaCodeApp(App):
         self._sub_agent_by_tool_call: dict[str, str] = {}
         self._sub_agent_seq = 0
         self._render_pending = False
+        self._entry_widgets: dict[str, ConversationEntryWidget] = {}
+        self._dirty_entry_ids: set[str] = set()
         self._active_progress_entry: Optional[ConversationEntry] = None
         self._turn_active = False
         self._latest_plan: Optional[str] = self.session.latest_plan_markdown or None
@@ -367,7 +424,11 @@ class KolegaCodeApp(App):
                     classes="meta",
                     id="session_meta",
                 )
-                yield CopyableRichLog(id="conversation", wrap=True, markup=True, highlight=True)
+                yield ConversationView(id="conversation")
+                yield JumpToBottomBar(
+                    f"{theme.g(Glyph.DOWN)} More output below — click to jump to the latest",
+                    id="jump_to_bottom",
+                )
                 with Horizontal(id="plan_actions"):
                     yield Button("Implement plan", variant="primary", id="implement_plan")
                     yield Button("Discuss further", id="discuss_plan")
@@ -420,6 +481,7 @@ class KolegaCodeApp(App):
         self._set_question_actions_visible(False)
         self._refresh_planning_sidebar()
         self._ensure_startup_entry()
+        self._conversation.anchor()
         self.run_worker(self._consume_events(), name="kolega-events", group="events")
         if self.config is not None:
             await self._build_agent(self.config)
@@ -429,8 +491,8 @@ class KolegaCodeApp(App):
             await self._ensure_agent_from_settings()
 
     @property
-    def _conversation(self) -> RichLog:
-        return self.query_one("#conversation", RichLog)
+    def _conversation(self) -> ConversationView:
+        return self.query_one("#conversation", ConversationView)
 
     @property
     def _logs(self) -> RichLog:
@@ -1764,10 +1826,9 @@ class KolegaCodeApp(App):
 
     def _refresh_sub_agent_entry(self, activity: SubAgentActivity, *, force: bool = False) -> None:
         activity.entry.content = self._format_sub_agent_content(activity)
+        self._invalidate_conversation(activity.entry)
         if force:
-            self._render_conversation()
-        else:
-            self._invalidate_conversation(activity.entry)
+            self._flush_conversation_render()
 
     def _format_sub_agent_content(self, activity: SubAgentActivity) -> str:
         if activity.finished_at is not None:
@@ -1834,9 +1895,10 @@ class KolegaCodeApp(App):
                 activity.finished_at = self._now()
                 activity.entry.complete = True
                 activity.entry.content = self._format_sub_agent_content(activity)
+                self._invalidate_conversation(activity.entry)
                 changed = True
         if changed:
-            self._render_conversation()
+            self._flush_conversation_render()
 
     def _tick_running_sub_agents(self) -> None:
         running = self._running_sub_agents()
@@ -1844,7 +1906,7 @@ class KolegaCodeApp(App):
             return
         for activity in running:
             activity.entry.content = self._format_sub_agent_content(activity)
-        self._invalidate_conversation()
+            self._invalidate_conversation(activity.entry)
 
     def _tool_result_preview(self, text: str) -> str:
         if not text:
@@ -1868,8 +1930,11 @@ class KolegaCodeApp(App):
 
         Hot paths (stream chunks, tool updates, sub-agent ticks) call this
         instead of rendering directly, so rapid event bursts produce at most
-        one render per coalesce interval.
+        one flush per coalesce interval, and a flush only touches new or
+        changed entry widgets.
         """
+        if entry is not None:
+            self._dirty_entry_ids.add(entry.entry_id)
         if self._render_pending:
             return
         self._render_pending = True
@@ -1887,20 +1952,69 @@ class KolegaCodeApp(App):
         if not self._render_pending:
             return
         self._render_pending = False
-        self._render_conversation()
-
-    def _render_conversation(self) -> None:
-        self._render_pending = False
         try:
-            conversation = self._conversation
+            view = self._conversation
         except Exception:
             # A coalesced flush can fire after the widget is unmounted (e.g. on exit).
+            self._dirty_entry_ids.clear()
             return
-        conversation.clear()
-        for index, entry in enumerate(self.conversation_entries):
-            if index:
-                conversation.write("")
-            conversation.write(self._format_conversation_entry(entry))
+
+        rendered_ids = list(self._entry_widgets)
+        current_ids = [entry.entry_id for entry in self.conversation_entries]
+        if current_ids[: len(rendered_ids)] != rendered_ids:
+            # Entries were removed, replaced, or inserted before the end; rebuild.
+            self._render_conversation()
+            return
+
+        for entry_id in self._dirty_entry_ids:
+            widget = self._entry_widgets.get(entry_id)
+            if widget is not None:
+                widget.refresh_content()
+        self._dirty_entry_ids.clear()
+
+        new_entries = self.conversation_entries[len(rendered_ids):]
+        if new_entries:
+            widgets = []
+            for entry in new_entries:
+                widget = ConversationEntryWidget(entry, self._format_conversation_entry)
+                self._entry_widgets[entry.entry_id] = widget
+                widgets.append(widget)
+            view.mount(*widgets)
+        self._update_jump_button()
+
+    def _render_conversation(self) -> None:
+        """Full rebuild of the conversation view (restore, reset, startup changes)."""
+        self._render_pending = False
+        self._dirty_entry_ids.clear()
+        try:
+            view = self._conversation
+        except Exception:
+            return
+        view.remove_children()
+        self._entry_widgets = {}
+        widgets = []
+        for entry in self.conversation_entries:
+            widget = ConversationEntryWidget(entry, self._format_conversation_entry)
+            self._entry_widgets[entry.entry_id] = widget
+            widgets.append(widget)
+        if widgets:
+            view.mount(*widgets)
+        view.anchor()
+        self._update_jump_button()
+
+    def _update_jump_button(self) -> None:
+        try:
+            view = self._conversation
+            bar = self.query_one("#jump_to_bottom", JumpToBottomBar)
+        except Exception:
+            return
+        bar.display = view.max_scroll_y > 0 and view.scroll_y < view.max_scroll_y - 1
+
+    def on_jump_to_bottom_bar_pressed(self, message: JumpToBottomBar.Pressed) -> None:
+        view = self._conversation
+        view.scroll_end(animate=False)
+        view.anchor()
+        self._update_jump_button()
 
     def _format_conversation_entry(self, entry: ConversationEntry) -> str | Text:
         escaped_content = escape(entry.content)

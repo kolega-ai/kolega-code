@@ -45,6 +45,7 @@ class Glyph:
     BAR_EMPTY = "░"  # ░
     CHECK = "✓"  # ✓
     CROSS = "✗"  # ✗
+    DOWN = "↓"  # ↓
 
 
 ASCII_FALLBACKS = {
@@ -60,6 +61,7 @@ ASCII_FALLBACKS = {
     Glyph.BAR_EMPTY: "-",
     Glyph.CHECK: "ok",
     Glyph.CROSS: "x",
+    Glyph.DOWN: "v",
 }
 
 SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"  # ⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏
