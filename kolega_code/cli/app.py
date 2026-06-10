@@ -7,6 +7,7 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 from typing import Optional
 
@@ -101,6 +102,28 @@ STARTUP_WORDMARK = (
 )
 
 
+class TurnState(str, Enum):
+    """Explicit lifecycle state of the active turn, shown on the status dashboard."""
+
+    IDLE = "Idle"
+    GENERATING = "Generating"
+    THINKING = "Thinking"
+    RUNNING_TOOL = "Running tool"
+    RUNNING_SUB_AGENTS = "Running sub-agents"
+    WAITING_FOR_USER = "Waiting for input"
+    STOPPING = "Stopping"
+    STOPPED = "Stopped"
+    ERROR = "Error"
+
+
+TURN_STATE_STYLES = {
+    TurnState.IDLE: Color.SUCCESS,
+    TurnState.STOPPING: Color.WARNING,
+    TurnState.STOPPED: Color.WARNING,
+    TurnState.ERROR: Color.ERROR,
+}
+
+
 @dataclass
 class ConversationEntry:
     kind: str
@@ -109,6 +132,7 @@ class ConversationEntry:
     uuid: Optional[str] = None
     tool_name: Optional[str] = None
     tool_call_id: Optional[str] = None
+    tone: Optional[str] = None  # "warning" | "error" styling hint for progress entries
 
 
 @dataclass
@@ -141,7 +165,7 @@ class StatusDashboardState:
     provider: str = UI_DEFAULT_PROVIDER
     model: str = UI_DEFAULT_MODEL
     mode: str = BUILD_INTERACTION_MODE
-    turn_state: str = "Idle"
+    turn_state: TurnState = TurnState.IDLE
     activity: str = "Ready"
     input_tokens: Optional[int] = None
     max_tokens: Optional[int] = None
@@ -421,6 +445,16 @@ class KolegaCodeApp(App):
     def _status(self) -> RichLog:
         return self._logs
 
+    def _log_status(self, text: str, level: str = "info") -> None:
+        """Write a status line to the Logs tab with the semantic palette."""
+        style = {
+            "info": Color.MUTED,
+            "ok": Color.SUCCESS,
+            "warn": Color.WARNING,
+            "error": Color.ERROR,
+        }.get(level, Color.MUTED)
+        self._status.write(f"[{style}]{escape(text)}[/{style}]")
+
     @property
     def _status_dashboard(self) -> Static:
         return self.query_one("#status_dashboard", Static)
@@ -457,8 +491,8 @@ class KolegaCodeApp(App):
         stripped_text = text.strip()
         if stripped_text.lower() in THREAD_RESET_COMMANDS:
             if self._turn_active or self.agent_worker is not None:
-                self._set_composer_status("Stop the current turn before resetting the thread.")
-                self._status.write("[yellow]Stop the current turn before resetting the thread.[/yellow]")
+                self._set_composer_status(messages.BLOCK_STOP_BEFORE_RESET)
+                self._log_status(messages.BLOCK_STOP_BEFORE_RESET, "warn")
                 return
             event.composer.load_text("")
             self._reset_current_thread()
@@ -477,12 +511,12 @@ class KolegaCodeApp(App):
 
         if self._plan_decision_active:
             self._set_composer_status(PLAN_READY_PLACEHOLDER)
-            self._status.write("[yellow]Choose Implement plan or Discuss further before sending another message.[/yellow]")
+            self._log_status(messages.BLOCK_PLAN_DECISION, "warn")
             return
 
         if not stripped_text or self.agent is None:
             if stripped_text:
-                self._settings_status.update("Save a provider, model, and API key before chatting.")
+                self._settings_status.update(messages.SETTINGS_REQUIRED)
             return
         event.composer.load_text("")
         self._add_conversation_entry(ConversationEntry(kind="user", content=text))
@@ -492,41 +526,41 @@ class KolegaCodeApp(App):
         if self.agent is None:
             return
         self._begin_turn_progress()
-        self._status.write("[green]Generating...[/green]")
+        self._log_status(messages.GENERATING, "ok")
         try:
             async for chunk in self.agent.process_message_stream(message):
                 if chunk.get("type") == "response":
                     if chunk.get("content"):
-                        self._update_progress("Reading model response...", complete=False)
+                        self._update_progress(messages.READING_RESPONSE, complete=False, state=TurnState.GENERATING)
                     self._apply_stream_chunk(chunk, kind="assistant")
                     continue
 
                 content = chunk.get("content")
                 if chunk.get("type") == "thinking":
-                    self._update_progress("Thinking...", complete=False)
+                    self._update_progress(messages.THINKING, complete=False, state=TurnState.THINKING)
                     self._apply_stream_chunk(chunk, kind="thinking")
                     if content:
                         self._status.write(f"[dim]{content}[/dim]")
             await self._drain_pending_events()
             self._finalize_sub_agent_activities()
             self._save_session_history()
-            self._finish_turn_progress("Finished")
+            self._finish_turn_progress(messages.FINISHED, TurnState.IDLE)
             self._capture_completed_plan()
-            self._status.write("[green]Finished[/green]")
+            self._log_status(messages.FINISHED, "ok")
         except asyncio.CancelledError:
             self._cancel_pending_question()
             await self._drain_pending_events()
             self._finalize_sub_agent_activities()
             self._save_session_history()
-            self._finish_turn_progress("Stopped by user")
-            self._status.write("[yellow]Stopped by user.[/yellow]")
+            self._finish_turn_progress(messages.STOPPED_BY_USER, TurnState.STOPPED)
+            self._log_status(messages.STOPPED_BY_USER, "warn")
         except Exception as exc:
             self._cancel_pending_question()
             await self._drain_pending_events()
             self._finalize_sub_agent_activities()
             self._save_session_history()
-            self._finish_turn_progress(f"Stopped due to error: {exc}")
-            self._status.write(f"[red]Stopped due to error: {escape(str(exc))}[/red]")
+            self._finish_turn_progress(messages.STOPPED_WITH_ERROR.format(error=exc), TurnState.ERROR)
+            self._log_status(messages.STOPPED_WITH_ERROR.format(error=exc), "error")
             raise
         finally:
             self._active_progress_entry = None
@@ -584,7 +618,7 @@ class KolegaCodeApp(App):
             command = str(event.content.get("command") or "")
             self._terminal.write(f"$ {command}")
             if command:
-                self._update_activity_progress("Running terminal command...")
+                self._update_activity_progress(messages.RUNNING_TERMINAL_COMMAND, state=TurnState.RUNNING_TOOL)
         elif event.event_type == "chat_message":
             if event.sub_agent_info:
                 self._render_sub_agent_event(event)
@@ -621,25 +655,25 @@ class KolegaCodeApp(App):
             subprocess.run(["pbcopy"], input=text, text=True, check=True)
         except (OSError, subprocess.CalledProcessError):
             try:
-                self._status.write("[yellow]Copied for supported terminals, but macOS clipboard failed.[/yellow]")
+                self._log_status(messages.COPY_MACOS_FAILED, "warn")
             except Exception:
                 pass
 
     def action_cancel_generation(self) -> None:
         if self.agent_worker is not None:
-            self._update_progress("Stop requested...", complete=False)
+            self._update_progress(messages.STOP_REQUESTED, complete=False, state=TurnState.STOPPING)
             self._cancel_pending_question()
             self.agent_worker.cancel()
-            self._status.write("[yellow]Cancellation requested.[/yellow]")
+            self._log_status(messages.CANCEL_REQUESTED, "warn")
 
     async def action_toggle_interaction_mode(self) -> None:
         if self._turn_active or self.agent_worker is not None:
-            self._set_composer_status("Stop the current turn before switching modes.")
-            self._status.write("[yellow]Stop the current turn before switching modes.[/yellow]")
+            self._set_composer_status(messages.BLOCK_STOP_BEFORE_MODE_SWITCH)
+            self._log_status(messages.BLOCK_STOP_BEFORE_MODE_SWITCH, "warn")
             return
         if self._plan_decision_active:
             self._set_composer_status(PLAN_READY_PLACEHOLDER)
-            self._status.write("[yellow]Choose Implement plan or Discuss further before switching modes.[/yellow]")
+            self._log_status(messages.BLOCK_PLAN_DECISION_MODE_SWITCH, "warn")
             return
 
         target = PLAN_INTERACTION_MODE if self.interaction_mode == BUILD_INTERACTION_MODE else BUILD_INTERACTION_MODE
@@ -770,7 +804,7 @@ class KolegaCodeApp(App):
         self._update_mode_chrome()
         self._restore_composer_placeholder()
         self._set_chat_enabled(self.agent is not None)
-        self._status.write(f"[green]Switched to {self.interaction_mode} mode.[/green]")
+        self._log_status(messages.SWITCHED_MODE.format(mode=self.interaction_mode), "ok")
 
     def _capture_completed_plan(self) -> None:
         if self.interaction_mode != PLAN_INTERACTION_MODE or not isinstance(self.agent, PlanningAgent):
@@ -788,7 +822,7 @@ class KolegaCodeApp(App):
         self._set_plan_actions_visible(True, allow_discuss=True)
         self._set_composer_status(PLAN_READY_PLACEHOLDER)
         self._set_chat_enabled(False)
-        self._status.write("[green]Plan captured. Choose Implement plan or Discuss further.[/green]")
+        self._log_status(messages.PLAN_CAPTURED, "ok")
 
     async def _implement_pending_plan(self) -> None:
         plan = self._latest_plan
@@ -817,7 +851,7 @@ class KolegaCodeApp(App):
         self._restore_composer_placeholder()
         self._set_chat_enabled(self.agent is not None)
         self.query_one("#composer", ChatComposer).focus()
-        self._status.write("[green]Planning discussion resumed.[/green]")
+        self._log_status(messages.PLAN_DISCUSSION_RESUMED, "ok")
 
     def _set_plan_actions_visible(self, visible: bool, *, allow_discuss: bool = False) -> None:
         try:
@@ -871,31 +905,31 @@ class KolegaCodeApp(App):
 
         if command_name == "skills":
             self._add_conversation_entry(ConversationEntry(kind="system", content=self.skill_catalog.format_catalog()))
-            self._status.write("[green]Listed Agent Skills.[/green]")
+            self._log_status(messages.SKILLS_LISTED, "ok")
             return True
 
         if self._pending_question is not None:
             self._set_composer_status(QUESTION_PLACEHOLDER)
-            self._status.write("[yellow]Answer the pending planning question before activating a skill.[/yellow]")
+            self._log_status(messages.BLOCK_PENDING_QUESTION_SKILL, "warn")
             return True
 
         if self._plan_decision_active:
             self._set_composer_status(PLAN_READY_PLACEHOLDER)
-            self._status.write("[yellow]Choose Implement plan or Discuss further before activating a skill.[/yellow]")
+            self._log_status(messages.BLOCK_PLAN_DECISION_SKILL, "warn")
             return True
 
         if self._turn_active or self.agent_worker is not None:
-            self._set_composer_status("Stop the current turn before activating a skill.")
-            self._status.write("[yellow]Stop the current turn before activating a skill.[/yellow]")
+            self._set_composer_status(messages.BLOCK_STOP_BEFORE_SKILL)
+            self._log_status(messages.BLOCK_STOP_BEFORE_SKILL, "warn")
             return True
 
         if self.agent is None:
-            self._settings_status.update("Save a provider, model, and API key before activating a skill.")
+            self._settings_status.update(messages.SETTINGS_REQUIRED_SKILL)
             return True
 
         activated = self._activate_skill_in_agent(command_name)
         self._add_conversation_entry(ConversationEntry(kind="skill", content=activated))
-        self._status.write(f"[green]Activated skill {escape(command_name)}.[/green]")
+        self._log_status(messages.SKILL_ACTIVATED.format(name=command_name), "ok")
 
         if prompt:
             self._add_conversation_entry(ConversationEntry(kind="user", content=prompt))
@@ -1042,7 +1076,7 @@ class KolegaCodeApp(App):
         await self._show_question_actions(options)
         self._set_composer_status(QUESTION_PLACEHOLDER)
         self._set_chat_enabled(True)
-        self._update_activity_progress("Waiting for your answer...")
+        self._update_activity_progress(messages.WAITING_FOR_ANSWER, state=TurnState.WAITING_FOR_USER)
 
         try:
             return await future
@@ -1082,7 +1116,7 @@ class KolegaCodeApp(App):
         if self._turn_active:
             self._restore_composer_placeholder()
             self._set_chat_enabled(False)
-            self._update_progress("Agent is working...", complete=False)
+            self._update_progress(messages.WORKING, complete=False, state=TurnState.GENERATING)
         else:
             self._restore_composer_placeholder()
             self._set_chat_enabled(self.agent is not None)
@@ -1153,7 +1187,7 @@ class KolegaCodeApp(App):
         self._set_chat_enabled(self.agent is not None)
         self._ensure_startup_entry(render=False)
         self._add_conversation_entry(ConversationEntry(kind="progress", content=THREAD_RESET_MESSAGE, complete=True))
-        self._status.write(f"[green]{THREAD_RESET_MESSAGE}[/green]")
+        self._log_status(THREAD_RESET_MESSAGE, "ok")
 
     def _update_settings_status(self) -> None:
         provider = self.settings.active_provider or UI_DEFAULT_PROVIDER
@@ -1234,7 +1268,7 @@ class KolegaCodeApp(App):
         state = self._status_state
         provider_model = f"{state.provider}/{state.model}"
         mode = state.mode.title()
-        turn_style = self._turn_state_style(state.turn_state)
+        turn_style = TURN_STATE_STYLES.get(state.turn_state, Color.ACCENT)
         context_style = self._context_style(state.usage_percentage, state.compression_threshold)
 
         if state.usage_percentage is None:
@@ -1256,7 +1290,7 @@ class KolegaCodeApp(App):
             "[bold]Status[/bold]\n\n"
             f"[dim]Model[/dim]\n[bold]{escape(provider_model)}[/bold]\n\n"
             f"[dim]Mode[/dim] [bold]{mode}[/bold]\n"
-            f"[dim]Turn[/dim] [{turn_style}]{escape(state.turn_state)}[/{turn_style}]\n\n"
+            f"[dim]Turn[/dim] [{turn_style}]{escape(state.turn_state.value)}[/{turn_style}]\n\n"
             "[dim]Context[/dim]\n"
             f"{context_lines}\n\n"
             "[dim]Activity[/dim]\n"
@@ -1287,17 +1321,7 @@ class KolegaCodeApp(App):
             return "yellow"
         return "green"
 
-    def _turn_state_style(self, turn_state: str) -> str:
-        normalized = turn_state.lower()
-        if "error" in normalized:
-            return "red"
-        if normalized in {"stopping", "stopped"}:
-            return "yellow"
-        if normalized == "idle":
-            return "green"
-        return "cyan"
-
-    def _set_status_activity(self, content: str, *, turn_state: Optional[str] = None) -> None:
+    def _set_status_activity(self, content: str, *, turn_state: Optional[TurnState] = None) -> None:
         if content:
             self._status_state.activity = content
         if turn_state is not None:
@@ -1346,7 +1370,7 @@ class KolegaCodeApp(App):
         self._turn_timer = self.set_interval(1.0, self._refresh_turn_status_strip, name="turn-status")
         self._refresh_turn_status_strip()
 
-    def _complete_turn_timer(self, content: str) -> None:
+    def _complete_turn_timer(self, content: str, state: TurnState = TurnState.IDLE) -> None:
         if self._turn_timer is not None:
             self._turn_timer.stop()
             self._turn_timer = None
@@ -1354,14 +1378,13 @@ class KolegaCodeApp(App):
             return
 
         self._turn_finished_duration = max(0.0, self._now() - self._turn_started_at)
-        normalized = content.lower()
         duration = self._format_turn_duration(self._turn_finished_duration)
-        if "error" in normalized:
-            self._turn_final_text = f"Errored after {duration}"
-        elif "stopped" in normalized:
-            self._turn_final_text = f"Stopped after {duration}"
+        if state is TurnState.ERROR:
+            self._turn_final_text = messages.ERRORED_AFTER.format(duration=duration)
+        elif state in {TurnState.STOPPED, TurnState.STOPPING}:
+            self._turn_final_text = messages.STOPPED_AFTER.format(duration=duration)
         else:
-            self._turn_final_text = f"Worked for {duration}"
+            self._turn_final_text = messages.DONE_IN.format(duration=duration)
         self._turn_started_at = None
         self._refresh_turn_status_strip()
 
@@ -1390,7 +1413,7 @@ class KolegaCodeApp(App):
     def _turn_status_content(self) -> str:
         if self._turn_started_at is not None:
             elapsed = max(0.0, self._now() - self._turn_started_at)
-            status = self._turn_status_text or "Agent is working..."
+            status = self._turn_status_text or messages.WORKING
             return f"{escape(status)} [dim]· {self._format_turn_duration(elapsed)}[/dim]"
         if self._turn_final_text:
             return escape(self._turn_final_text)
@@ -1521,49 +1544,32 @@ class KolegaCodeApp(App):
         self._active_progress_entry = None
         self._turn_active = True
         self._set_chat_enabled(False)
-        self._start_turn_timer("Agent is working...")
-        self._set_status_activity("Agent is working...", turn_state="Generating")
-        self._update_progress("Agent is working...", complete=False)
+        self._start_turn_timer(messages.WORKING)
+        self._set_status_activity(messages.WORKING, turn_state=TurnState.GENERATING)
+        self._update_progress(messages.WORKING, complete=False, state=TurnState.GENERATING)
 
-    def _update_progress(self, content: str, complete: bool) -> None:
+    def _update_progress(self, content: str, complete: bool, state: Optional[TurnState] = None) -> None:
         if complete:
-            self._complete_turn_timer(content)
-            normalized = content.lower()
-            if "error" in normalized:
-                turn_state = "Error"
-            elif "stopped" in normalized:
-                turn_state = "Stopped"
-            else:
-                turn_state = "Idle"
-            self._set_status_activity(content, turn_state=turn_state)
-            if content != "Finished":
-                self._add_conversation_entry(ConversationEntry(kind="progress", content=content, complete=True))
+            final_state = state or TurnState.IDLE
+            self._complete_turn_timer(content, final_state)
+            self._set_status_activity(content, turn_state=final_state)
+            if final_state is not TurnState.IDLE:
+                tone = "error" if final_state is TurnState.ERROR else "warning"
+                self._add_conversation_entry(
+                    ConversationEntry(kind="progress", content=content, complete=True, tone=tone)
+                )
             self._restore_composer_placeholder()
             return
         self._turn_status_text = content
         self._refresh_turn_status_strip()
-        self._set_status_activity(content, turn_state=self._turn_state_for_activity(content))
+        self._set_status_activity(content, turn_state=state)
 
-    def _update_activity_progress(self, content: str) -> None:
+    def _update_activity_progress(self, content: str, state: Optional[TurnState] = None) -> None:
         if self._turn_active:
-            self._update_progress(content, complete=False)
+            self._update_progress(content, complete=False, state=state)
 
-    def _finish_turn_progress(self, content: str) -> None:
-        self._update_progress(content, complete=True)
-
-    def _turn_state_for_activity(self, content: str) -> str:
-        normalized = content.lower()
-        if "thinking" in normalized:
-            return "Thinking"
-        if "sub-agent" in normalized:
-            return "Running sub-agents"
-        if normalized.startswith("running"):
-            return "Running tool"
-        if "stop requested" in normalized:
-            return "Stopping"
-        if "error" in normalized:
-            return "Error"
-        return "Generating"
+    def _finish_turn_progress(self, content: str, state: TurnState = TurnState.IDLE) -> None:
+        self._update_progress(content, complete=True, state=state)
 
     def _save_session_history(self) -> None:
         if self.agent is None:
@@ -1583,17 +1589,17 @@ class KolegaCodeApp(App):
             self._clear_tool_stream_buffer(tool_call_id, tool_name)
             entry_content = text or f"Calling {tool_name}"
             complete = False
-            self._update_activity_progress(f"Running {tool_name}...")
+            self._update_activity_progress(messages.RUNNING_TOOL.format(tool=tool_name), state=TurnState.RUNNING_TOOL)
         elif message_type == "tool_error":
             entry_content = self._truncate_tool_text(text)
             complete = True
             self._clear_tool_stream_buffer(tool_call_id, tool_name)
-            self._update_activity_progress(f"Tool {tool_name} failed.")
+            self._update_activity_progress(messages.TOOL_FAILED.format(tool=tool_name))
         else:
             entry_content = self._tool_result_preview(text)
             complete = True
             self._clear_tool_stream_buffer(tool_call_id, tool_name)
-            self._update_activity_progress(f"Tool {tool_name} completed.")
+            self._update_activity_progress(messages.TOOL_DONE.format(tool=tool_name))
 
         if entry is None:
             self._add_conversation_entry(
@@ -1636,7 +1642,10 @@ class KolegaCodeApp(App):
             self._tool_stream_buffers[buffer_key] = text
             entry_content = self._truncate_tool_text(text)
 
-        self._update_activity_progress(f"Tool {tool_name} completed." if is_complete else f"Running {tool_name}...")
+        if is_complete:
+            self._update_activity_progress(messages.TOOL_DONE.format(tool=tool_name))
+        else:
+            self._update_activity_progress(messages.RUNNING_TOOL.format(tool=tool_name), state=TurnState.RUNNING_TOOL)
 
         if entry is None:
             self._add_conversation_entry(
@@ -1809,12 +1818,12 @@ class KolegaCodeApp(App):
         running = self._running_sub_agents()
         if running:
             if len(running) == 1:
-                text = f"Running sub-agent {running[0].agent_name} #{running[0].index}..."
+                text = messages.RUNNING_SUB_AGENT.format(name=running[0].agent_name, index=running[0].index)
             else:
-                text = f"Running {len(running)} sub-agents..."
-            self._update_activity_progress(text)
+                text = messages.RUNNING_SUB_AGENTS.format(count=len(running))
+            self._update_activity_progress(text, state=TurnState.RUNNING_SUB_AGENTS)
         elif self._turn_active:
-            self._update_activity_progress("Agent is working...")
+            self._update_activity_progress(messages.WORKING, state=TurnState.GENERATING)
 
     def _finalize_sub_agent_activities(self, status: str = "stopped") -> None:
         """Mark still-running sub-agents as finished (no lifecycle event arrives on cancel)."""
@@ -1876,7 +1885,7 @@ class KolegaCodeApp(App):
             return f"[dim italic]Thinking[/dim italic]\n[italic]{escaped_content}[/italic]{suffix}"
         if entry.kind == "progress":
             suffix = "" if entry.complete else "\n[dim]...[/dim]"
-            label_style = "bold red" if "error" in entry.content.lower() else "bold yellow"
+            label_style = f"bold {Color.ERROR}" if entry.tone == "error" else f"bold {Color.WARNING}"
             return f"[{label_style}]Status[/]\n{escaped_content}{suffix}"
         if entry.kind == "plan":
             return f"[bold green]Plan[/bold green]\n{escaped_content}"
