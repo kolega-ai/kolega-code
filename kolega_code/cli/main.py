@@ -376,6 +376,9 @@ async def _run_ask(args: argparse.Namespace) -> int:
             return 0
 
     response_chunks: list[dict] = []
+    # Pump connection-manager events concurrently so sub-agent activity is
+    # reported in real time instead of all at once after streaming finishes.
+    pump_task = asyncio.create_task(_pump_ask_events(manager, args.json))
     try:
         async for chunk in agent.process_message_stream(prompt):
             response_chunks.append(chunk)
@@ -384,21 +387,52 @@ async def _run_ask(args: argparse.Namespace) -> int:
             elif chunk.get("type") == "response" and chunk.get("content"):
                 print(chunk["content"], end="" if not chunk.get("complete") else "\n")
 
-        while not manager.events.empty():
-            event = manager.events.get_nowait()
-            if args.json:
-                print(json.dumps({"kind": "event", "data": event.model_dump()}, default=str))
-
         if args.save or args.session:
             session.history = agent.dump_message_history()
             session.config = summary
             store.save(session)
     finally:
+        pump_task.cancel()
+        try:
+            await pump_task
+        except asyncio.CancelledError:
+            pass
+        while not manager.events.empty():
+            event = manager.events.get_nowait()
+            _print_ask_event(event, args.json)
         await agent.cleanup()
 
     if args.json:
         print(json.dumps({"kind": "summary", "chunks": len(response_chunks), "session_id": session.session_id}))
     return 0
+
+
+async def _pump_ask_events(manager: CliConnectionManager, json_mode: bool) -> None:
+    while True:
+        event = await manager.next_event()
+        _print_ask_event(event, json_mode)
+
+
+def _print_ask_event(event, json_mode: bool) -> None:
+    if json_mode:
+        print(json.dumps({"kind": "event", "data": event.model_dump()}, default=str))
+        return
+
+    # Plain mode: keep piped stdout as the pure answer; report concise
+    # sub-agent lifecycle and tool activity on stderr.
+    info = event.sub_agent_info
+    if not info:
+        return
+    label = f"[{info.get('agent_name', event.sender)}]"
+    content = event.content
+    status = content.get("status")
+    message_type = content.get("message_type")
+    if status:
+        print(f"{label} {str(status).lower()}: {content.get('message', '')}", file=sys.stderr)
+    elif message_type in {"tool_call", "tool_error"}:
+        tool = content.get("tool_description") or content.get("tool_name") or "tool"
+        print(f"{label} {message_type}: {tool}", file=sys.stderr)
+    # Streamed response chunks are suppressed in plain mode.
 
 
 def _parse_skill_prompt(prompt: str, catalog: SkillCatalog) -> Optional[tuple[str, str]]:

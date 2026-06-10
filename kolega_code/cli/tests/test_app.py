@@ -2899,3 +2899,272 @@ async def test_textual_app_renders_resumed_history_in_chat(
             ("tool_error", "Permission denied", "write_file"),
             ("assistant", "Done.", None),
         ]
+
+
+# ---------------------------------------------------------------------------
+# Parallel sub-agent rendering
+# ---------------------------------------------------------------------------
+
+
+def _build_sub_agent_test_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    pytest.importorskip("textual")
+
+    from kolega_code.cli import app as app_module
+    from kolega_code.cli.app import KolegaCodeApp
+
+    class FakeCoderAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def restore_message_history(self, history):
+            return None
+
+        def dump_message_history(self):
+            return []
+
+        async def cleanup(self):
+            return None
+
+    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    return KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+
+def _sub_agent_event(
+    agent_id="agent-1",
+    agent_name="general-agent",
+    task="inspect sessions",
+    parent_tool_call_id="tc-1",
+    uuid=None,
+    **content,
+):
+    kwargs = {"uuid": uuid} if uuid is not None else {}
+    return AgentEvent(
+        event_type="chat_message",
+        sender=agent_name,
+        content=content,
+        sub_agent_info={
+            "agent_id": agent_id,
+            "agent_name": agent_name,
+            "task": task,
+            "parent_tool_call_id": parent_tool_call_id,
+            "conversation_id": None,
+            "depth": 1,
+        },
+        **kwargs,
+    )
+
+
+def _sub_agent_entries(app):
+    return [entry for entry in app.conversation_entries if entry.kind == "sub_agent"]
+
+
+@pytest.mark.asyncio
+async def test_sub_agent_stream_chunks_group_into_single_entry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        app._render_event(_sub_agent_event(uuid="u1", text="The session store wri"))
+        app._render_event(_sub_agent_event(uuid="u1", text="tes JSON records"))
+
+        entries = _sub_agent_entries(app)
+        assert len(entries) == 1
+        assert not any(entry.kind == "message" for entry in app.conversation_entries)
+        assert "general-agent" in entries[0].content
+        assert "#1" in entries[0].content
+        assert "The session store writes JSON records" in entries[0].content
+        assert "Task: inspect sessions" in entries[0].content
+
+
+@pytest.mark.asyncio
+async def test_parallel_sub_agents_create_separate_entries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        app._render_event(_sub_agent_event(agent_id="a1", task="task one", uuid="u1", text="alpha"))
+        app._render_event(_sub_agent_event(agent_id="a2", task="task two", parent_tool_call_id="tc-2", uuid="u2", text="beta"))
+        app._render_event(_sub_agent_event(agent_id="a1", task="task one", uuid="u1", text=" more"))
+
+        entries = _sub_agent_entries(app)
+        assert len(entries) == 2
+        assert "#1" in entries[0].content and "alpha more" in entries[0].content
+        assert "#2" in entries[1].content and "beta" in entries[1].content
+        assert "alpha" not in entries[1].content
+
+
+@pytest.mark.asyncio
+async def test_sub_agent_tool_events_update_counters_not_top_level(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        app._render_event(
+            _sub_agent_event(message_type="tool_call", text="Calling search_codebase", tool_description="search_codebase")
+        )
+        app._render_event(
+            _sub_agent_event(message_type="tool_result", text="found things", tool_description="search_codebase")
+        )
+
+        assert not any(entry.kind.startswith("tool") for entry in app.conversation_entries)
+        entries = _sub_agent_entries(app)
+        assert len(entries) == 1
+        assert "1 tool" in entries[0].content
+        assert "last: search_codebase done" in entries[0].content
+        activity = next(iter(app._sub_agent_activities.values()))
+        assert activity.tool_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_sub_agent_status_events_complete_entry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        app._render_event(_sub_agent_event(status="GENERATING", message="Starting general-agent task"))
+        activity = next(iter(app._sub_agent_activities.values()))
+        assert activity.status == "running"
+        assert activity.entry.complete is False
+
+        app._render_event(_sub_agent_event(status="STOPPED", message="Completed general-agent task"))
+        assert activity.status == "completed"
+        assert activity.entry.complete is True
+        assert "completed in" in activity.entry.content
+
+
+@pytest.mark.asyncio
+async def test_sub_agent_error_status_marks_failed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        app._render_event(_sub_agent_event(status="GENERATING", message="Starting general-agent task"))
+        app._render_event(_sub_agent_event(status="ERROR", message="Error in general-agent: boom"))
+
+        activity = next(iter(app._sub_agent_activities.values()))
+        assert activity.status == "failed"
+        assert "failed after" in activity.entry.content
+
+
+@pytest.mark.asyncio
+async def test_activity_strip_running_sub_agents(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        app._turn_active = True
+        app._render_event(_sub_agent_event(agent_id="a1", status="GENERATING", message="Starting"))
+        assert app._status_state.activity == "Running sub-agent general-agent #1..."
+
+        app._render_event(
+            _sub_agent_event(agent_id="a2", parent_tool_call_id="tc-2", status="GENERATING", message="Starting")
+        )
+        assert app._status_state.activity == "Running 2 sub-agents..."
+        assert app._status_state.turn_state == "Running sub-agents"
+
+        app._render_event(_sub_agent_event(agent_id="a1", status="STOPPED", message="Completed"))
+        app._render_event(_sub_agent_event(agent_id="a2", parent_tool_call_id="tc-2", status="STOPPED", message="Completed"))
+        assert app._status_state.activity == "Agent is working..."
+
+
+@pytest.mark.asyncio
+async def test_main_agent_tool_events_unaffected_by_sub_agent_routing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        app._render_event(
+            AgentEvent(
+                event_type="chat_message",
+                sender="coder",
+                content={
+                    "message_type": "tool_call",
+                    "text": "Calling read_file",
+                    "tool_description": "read_file",
+                    "tool_call_id": "tool-1",
+                },
+            )
+        )
+
+        tool_entries = [entry for entry in app.conversation_entries if entry.kind == "tool_call"]
+        assert len(tool_entries) == 1
+        assert not _sub_agent_entries(app)
+
+
+@pytest.mark.asyncio
+async def test_sub_agent_event_without_agent_id_uses_fallback_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        event1 = _sub_agent_event(uuid="u1", text="part one ")
+        event2 = _sub_agent_event(uuid="u1", text="part two")
+        for event in (event1, event2):
+            del event.sub_agent_info["agent_id"]
+            app._render_event(event)
+
+        entries = _sub_agent_entries(app)
+        assert len(entries) == 1
+        assert "part one part two" in entries[0].content
+        assert "tc-1" in app._sub_agent_activities
+
+
+@pytest.mark.asyncio
+async def test_sub_agent_tool_streaming_update_routes_to_activity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        event = _sub_agent_event(text="ignored")
+        streaming = AgentEvent(
+            event_type="tool_streaming_update",
+            sender="general-agent",
+            content={"text": "partial", "tool_call_id": "t1", "tool_name": "run_command_tracked", "is_complete": False},
+            sub_agent_info=event.sub_agent_info,
+        )
+        app._render_event(streaming)
+
+        assert not any(entry.kind.startswith("tool") for entry in app.conversation_entries)
+        entries = _sub_agent_entries(app)
+        assert len(entries) == 1
+        assert "run_command_tracked streaming" in entries[0].content
+
+
+@pytest.mark.asyncio
+async def test_cancel_finalizes_running_sub_agents(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        app._render_event(_sub_agent_event(status="GENERATING", message="Starting"))
+        activity = next(iter(app._sub_agent_activities.values()))
+        assert activity.status == "running"
+
+        app._finalize_sub_agent_activities()
+
+        assert activity.status == "stopped"
+        assert activity.entry.complete is True
+        assert "stopped after" in activity.entry.content
+
+
+@pytest.mark.asyncio
+async def test_thread_reset_clears_sub_agent_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        app._render_event(_sub_agent_event(uuid="u1", text="some output"))
+        assert app._sub_agent_activities
+
+        app._reset_current_thread()
+
+        assert app._sub_agent_activities == {}
+        assert app._sub_agent_by_tool_call == {}
+        assert not _sub_agent_entries(app)

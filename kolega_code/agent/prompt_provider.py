@@ -19,6 +19,7 @@ class AgentType(Enum):
     CODER = "coder"
     INVESTIGATION = "investigation"
     BROWSER = "browser"
+    GENERAL = "general"
 
 
 class AgentMode(Enum):

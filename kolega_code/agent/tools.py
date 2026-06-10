@@ -116,6 +116,7 @@ class ToolCollection(LogMixin):
         "dispatch_investigation_agent",
         "dispatch_browser_agent",
         "dispatch_coding_agent",
+        "dispatch_general_agent",
     ]
 
     # Legacy name for backward compatibility
@@ -125,6 +126,7 @@ class ToolCollection(LogMixin):
     coder_agent_tools = [
         "dispatch_investigation_agent",
         "dispatch_browser_agent",
+        "dispatch_general_agent",
     ]
 
     # Memory tools group
@@ -799,6 +801,47 @@ class ToolCollection(LogMixin):
             A summary of the coding process outcome
         """
         return await self.agent_tool.dispatch_coding_agent(task)
+
+    async def dispatch_general_agent(self, task: str) -> str:
+        """
+        Dispatch an autonomous general-purpose agent to complete a self-contained task.
+
+        This tool launches a sub-agent with the full set of workspace tools (read, search,
+        edit files, run commands). It works autonomously on the task you give it and returns
+        a single final report. You will not see its intermediate steps, and you cannot send
+        it follow-up messages, so the task description must contain everything it needs.
+
+        PARALLEL EXECUTION: If you issue multiple dispatch_general_agent calls in a single
+        response, the agents run CONCURRENTLY. Use this to fan out work that can proceed
+        independently (e.g., "update module A's tests" and "update module B's tests").
+
+        When to use this tool:
+        - The work splits into independent subtasks that do not touch the same files
+        - A subtask is large or noisy (broad searches, mechanical multi-file edits) and you
+          only need the outcome, not every intermediate step
+        - You want several independent investigations or changes done at once
+
+        When NOT to use this tool:
+        - Tasks that depend on each other's output or edit the same files - do those
+          yourself sequentially, or dispatch them one at a time
+        - Small tasks you can do directly with one or two tool calls
+        - Anything requiring back-and-forth with the user
+
+        Usage notes:
+        1. Each task must be INDEPENDENT and SELF-CONTAINED: include the goal, relevant
+           file paths, constraints, and exactly what the final report should contain.
+        2. Never dispatch two parallel agents whose work could overlap on the same files.
+        3. The agent cannot spawn further sub-agents.
+        4. The agent's report is not automatically shown to the user - you should summarize
+           the key results.
+
+        Args:
+            task: A detailed, self-contained description of the task to perform
+
+        Returns:
+            The agent's final report on the completed task
+        """
+        return await self.agent_tool.dispatch_general_agent(task)
 
     async def think_hard(self, problem_statement: str) -> str:
         """

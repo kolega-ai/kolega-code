@@ -1,4 +1,5 @@
 import asyncio
+import contextvars
 import os
 import re
 from datetime import datetime
@@ -46,6 +47,10 @@ class BaseAgent(LogMixin):
 
     agent_name = "base-agent"  # you should never see this
     history_compression_threshold = 0.8
+    # Cap on concurrently executing tool calls within one batch (each dispatched
+    # sub-agent runs its own multi-turn LLM loop, so an unbounded fan-out would
+    # multiply token spend and shared-resource pressure).
+    PARALLEL_TOOL_LIMIT = 8
     long_content_tool_calls = ["create_file", "replace_entire_file"]
     max_tool_result_chars_in_history = 100_000
     skill_content_pattern = re.compile(r'<skill_content name="[^"]+">')
@@ -197,11 +202,44 @@ class BaseAgent(LogMixin):
         self.command_processor = CommandProcessor(self)
 
         self.sub_agent = sub_agent
-        self.current_tool_call_id = None  # Internal execution ID for UI and sub-agent records
-        self.current_tool_execution_id = None
-        self.current_provider_tool_call_id = None
+        # Per-instance ContextVars so concurrent tool executions (asyncio.gather in
+        # process_tool_calls) each see their own current tool call IDs. Instance-level
+        # (rather than module-level) vars also keep a nested sub-agent, which executes
+        # tools within the same asyncio task as the parent's dispatch call, from
+        # clobbering the parent's values.
+        self._current_tool_call_id_var = contextvars.ContextVar("current_tool_call_id", default=None)
+        self._current_tool_execution_id_var = contextvars.ContextVar("current_tool_execution_id", default=None)
+        self._current_provider_tool_call_id_var = contextvars.ContextVar("current_provider_tool_call_id", default=None)
         self.parent_tool_call_id = None  # Parent tool call ID when running as sub-agent
         self.conversation_id = None  # Sub-agent conversation ID
+        self.sub_agent_context = None  # Dispatch metadata (agent_id, task) set by AgentTool
+
+    @property
+    def current_tool_call_id(self):
+        """Internal execution ID for UI and sub-agent records (task-local)."""
+        return self._current_tool_call_id_var.get()
+
+    @current_tool_call_id.setter
+    def current_tool_call_id(self, value):
+        self._current_tool_call_id_var.set(value)
+
+    @property
+    def current_tool_execution_id(self):
+        """App-unique tool execution ID for the tool call currently running (task-local)."""
+        return self._current_tool_execution_id_var.get()
+
+    @current_tool_execution_id.setter
+    def current_tool_execution_id(self, value):
+        self._current_tool_execution_id_var.set(value)
+
+    @property
+    def current_provider_tool_call_id(self):
+        """Provider-issued tool call ID for the tool call currently running (task-local)."""
+        return self._current_provider_tool_call_id_var.get()
+
+    @current_provider_tool_call_id.setter
+    def current_provider_tool_call_id(self, value):
+        self._current_provider_tool_call_id_var.set(value)
 
     def _build_prompt_context(self) -> PromptContext:
         """Build PromptContext from agent state."""
@@ -888,21 +926,27 @@ class BaseAgent(LogMixin):
         if len(tool_use_blocks) == 1:
             return [await self.execute_single_tool(tool_use_blocks[0])]
 
-        # Check if all tools are read-only
-        all_read_only = all(block.name in ToolCollection.read_only_tools for block in tool_use_blocks)
+        # Read-only tools have no side effects and agent dispatches operate on
+        # independent sub-agents, so batches made up entirely of these can run
+        # concurrently. Any other tool in the batch forces sequential execution.
+        parallel_safe_tools = set(ToolCollection.read_only_tools) | set(ToolCollection.agent_dispatch_tools)
+        all_parallel_safe = all(block.name in parallel_safe_tools for block in tool_use_blocks)
 
-        if all_read_only:
+        if all_parallel_safe:
             # Execute all tools in parallel
             await self.log_info(
-                f"Executing {len(tool_use_blocks)} read-only tool calls in parallel", sender=self.agent_name
+                f"Executing {len(tool_use_blocks)} parallel-safe tool calls in parallel", sender=self.agent_name
             )
-            tasks = []
-            for block in tool_use_blocks:
-                tasks.append(self.execute_single_tool(block))
+            semaphore = asyncio.Semaphore(self.PARALLEL_TOOL_LIMIT)
 
-            # Wait for all tasks to complete
-            results = await asyncio.gather(*tasks)
-            return results
+            async def run_limited(block: ToolCall) -> ToolResult:
+                async with semaphore:
+                    return await self.execute_single_tool(block)
+
+            # Wait for all tasks to complete; gather preserves input order so
+            # tool results stay aligned with their tool calls in history.
+            results = await asyncio.gather(*(run_limited(block) for block in tool_use_blocks))
+            return list(results)
         else:
             # Execute tools sequentially
             await self.log_info(
@@ -929,7 +973,10 @@ class BaseAgent(LogMixin):
 
         # Include sub_agent_info if this is a sub-agent
         sub_agent_info = None
-        if self.sub_agent and self.parent_tool_call_id:
+        if self.sub_agent and self.sub_agent_context:
+            # Dispatch metadata set by AgentTool (agent_id, task, parent IDs)
+            sub_agent_info = dict(self.sub_agent_context)
+        elif self.sub_agent and self.parent_tool_call_id:
             sub_agent_info = {
                 "agent_name": self.agent_name,
                 "conversation_id": self.conversation_id,
