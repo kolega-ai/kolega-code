@@ -41,8 +41,11 @@ from kolega_code.agent.llm.models import Message, MessageHistory, TextBlock, Too
 from kolega_code.agent.prompt_provider import AgentMode
 from kolega_code.agent.services.browser import PlaywrightBrowserManager
 
+from . import messages
+from . import theme
 from .config import CliConfigError, CliConfigOverrides, build_agent_config, config_summary, key_status
 from .connection import CliConnectionManager
+from .theme import Color, Glyph
 from .provider_registry import UI_DEFAULT_MODEL, UI_DEFAULT_PROVIDER, get_ui_model, ui_model_options, ui_provider_options
 from .session_store import SessionRecord, SessionStore
 from .settings import CliSettings, SettingsStore
@@ -55,22 +58,23 @@ from .skills import (
     skill_names_in_text,
 )
 
-TOOL_RESULT_PREVIEW_CHARS = 500
-TOOL_STREAM_PREVIEW_CHARS = 4_000
-SUB_AGENT_TAIL_CHARS = 200
-SUB_AGENT_TASK_PREVIEW_CHARS = 120
+# Re-exported from theme/messages so existing importers (including tests) keep working.
+TOOL_RESULT_PREVIEW_CHARS = theme.TOOL_RESULT_PREVIEW_CHARS
+TOOL_STREAM_PREVIEW_CHARS = theme.TOOL_STREAM_PREVIEW_CHARS
+SUB_AGENT_TAIL_CHARS = theme.SUB_AGENT_TAIL_CHARS
+SUB_AGENT_TASK_PREVIEW_CHARS = theme.SUB_AGENT_TASK_PREVIEW_CHARS
 SUB_AGENT_RENDER_INTERVAL = 0.1
+COMPOSER_PLACEHOLDER = messages.COMPOSER_PLACEHOLDER
+PLAN_READY_PLACEHOLDER = messages.PLAN_READY_PLACEHOLDER
+THREAD_RESET_MESSAGE = messages.THREAD_RESET_MESSAGE
+TASK_LIST_EMPTY_MESSAGE = messages.TASK_LIST_EMPTY_MESSAGE
+PLAN_EMPTY_MESSAGE = messages.PLAN_EMPTY_MESSAGE
 CLI_AGENT_MODE = AgentMode.CLI.value
 BUILD_INTERACTION_MODE = "build"
 PLAN_INTERACTION_MODE = "plan"
-COMPOSER_PLACEHOLDER = "Ask Kolega Code..."
-PLAN_READY_PLACEHOLDER = "Plan ready. Choose Implement plan or Discuss further."
 THREAD_RESET_COMMANDS = {"/clear", "/reset"}
 AGENT_BUILTIN_COMMANDS = {"/help", "/compress", "/clear", "/reset", "/context"}
 SKILLS_LIST_COMMAND = "/skills"
-THREAD_RESET_MESSAGE = "Thread reset. Previous messages were cleared."
-TASK_LIST_EMPTY_MESSAGE = "No task list has been set."
-PLAN_EMPTY_MESSAGE = "No plan captured yet."
 SHARED_TASK_LIST_PROMPT = """The CLI provides a shared Markdown task list through `get_task_list` and `update_task_list`.
 Use it to coordinate planning and implementation.
 
@@ -86,7 +90,7 @@ IMPLEMENT_PLAN_PROMPT = """Implement the approved plan below. Follow it as the s
 """
 QUESTION_TOOL_NAME = "ask_user_choice"
 QUESTION_OPTION_BUTTON_PREFIX = "question_option_"
-QUESTION_PLACEHOLDER = "Choose an option below or type a custom answer..."
+QUESTION_PLACEHOLDER = messages.QUESTION_PLACEHOLDER
 STARTUP_WORDMARK = (
     " _  __     _                    ____          _",
     "| |/ /___ | | ___  __ _  __ _ / ___|___   __| | ___",
