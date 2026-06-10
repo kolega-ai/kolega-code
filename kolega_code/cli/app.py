@@ -12,14 +12,19 @@ from enum import Enum
 from pathlib import Path
 from typing import Callable, Optional
 
-from rich.console import Console
+from rich.console import Group
+from rich.markdown import Markdown as RichMarkdown
 from rich.markup import escape
+from rich.padding import Padding
+from rich.segment import Segment
+from rich.style import Style
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message as TextualMessage
 from textual.selection import Selection
+from textual.strip import Strip
 from textual.timer import Timer
 from textual.widgets import (
     Button,
@@ -202,20 +207,32 @@ class ConversationEntryWidget(Static):
         self._formatted = self._format_entry(self.entry)
         self.update(self._formatted)
 
+    def render_line(self, y: int) -> Strip:
+        # Tag each segment with its rendered (x, y) offset so the compositor can
+        # map mouse positions to text offsets, enabling drag selection over any
+        # visual type, including rich renderables such as Markdown.
+        strip = super().render_line(y)
+        source_x = 0
+        selectable_segments: list[Segment] = []
+        for segment in strip:
+            if segment.control:
+                selectable_segments.append(segment)
+                continue
+            offset_style = Style.from_meta({"offset": (source_x, y)})
+            style = segment.style + offset_style if segment.style is not None else offset_style
+            selectable_segments.append(Segment(segment.text, style, segment.control))
+            source_x += len(segment.text)
+        return Strip(selectable_segments, strip.cell_length)
+
     def get_selection(self, selection: Selection) -> tuple[str, str] | None:
-        result = super().get_selection(selection)
-        if result is not None:
-            return result
-        # Rich renderables (e.g. Markdown groups) are not Content; render them
-        # to plain text at the current width so selection copying still works.
-        formatted = self._formatted
-        if formatted is None or isinstance(formatted, str):
+        # Extract from the rendered lines so coordinates match what is on screen,
+        # regardless of whether the entry is plain markup or a rich renderable.
+        height = self.size.height
+        if height <= 0:
             return None
-        console = Console(width=max(1, self.size.width or 80))
-        with console.capture() as capture:
-            console.print(formatted)
-        text = capture.get().rstrip("\n")
-        if not text:
+        lines = [super(ConversationEntryWidget, self).render_line(y).text.rstrip() for y in range(height)]
+        text = "\n".join(lines)
+        if not text.strip():
             return None
         return selection.extract(text), "\n"
 
@@ -1838,24 +1855,26 @@ class KolegaCodeApp(App):
         duration = self._format_turn_duration(elapsed)
 
         if activity.status == "running":
-            state = f"[cyan]running[/cyan] [dim]· {duration}[/dim]"
+            color, state = Color.ACCENT, f"running {theme.g(Glyph.BULLET_SEP)} {duration}"
         elif activity.status == "completed":
-            state = f"[green]completed in {duration}[/green]"
+            color, state = Color.SUCCESS, f"completed in {duration}"
         elif activity.status == "failed":
-            state = f"[red]failed after {duration}[/red]"
+            color, state = Color.ERROR, f"failed after {duration}"
         else:
-            state = f"[yellow]stopped after {duration}[/yellow]"
+            color, state = Color.WARNING, f"stopped after {duration}"
 
-        header = (
-            f"[black on blue] AGENT [/black on blue] "
-            f"[bold]{escape(activity.agent_name)}[/bold] [dim]#{activity.index}[/dim]  {state}"
+        header = theme.role_header(
+            Glyph.SUB_AGENT,
+            escape(activity.agent_name),
+            color,
+            state=f"#{activity.index} {theme.g(Glyph.BULLET_SEP)} {state}",
         )
 
         body_lines: list[str] = []
         if activity.task:
             task = activity.task
             if len(task) > SUB_AGENT_TASK_PREVIEW_CHARS:
-                task = f"{task[:SUB_AGENT_TASK_PREVIEW_CHARS]}..."
+                task = f"{task[:SUB_AGENT_TASK_PREVIEW_CHARS]}{theme.g(Glyph.ELLIPSIS)}"
             body_lines.append(f"Task: {task}")
         tools_line = f"{activity.tool_calls} tool{'' if activity.tool_calls == 1 else 's'}"
         if activity.last_activity:
@@ -1909,21 +1928,19 @@ class KolegaCodeApp(App):
             self._invalidate_conversation(activity.entry)
 
     def _tool_result_preview(self, text: str) -> str:
-        if not text:
-            return "completed"
-        if len(text) <= TOOL_RESULT_PREVIEW_CHARS:
-            return f"completed\n{text}"
-        return f"completed\n{text[:TOOL_RESULT_PREVIEW_CHARS]}..."
+        # The entry header already conveys completion; the body is just the preview.
+        return self._truncate_tool_text(text)
 
     def _truncate_tool_text(self, text: str) -> str:
         if len(text) <= TOOL_RESULT_PREVIEW_CHARS:
             return text
-        return f"{text[:TOOL_RESULT_PREVIEW_CHARS]}..."
+        return f"{text[:TOOL_RESULT_PREVIEW_CHARS]}{theme.g(Glyph.ELLIPSIS)}"
 
     def _tool_stream_preview(self, text: str) -> str:
         if len(text) <= TOOL_STREAM_PREVIEW_CHARS:
             return text
-        return f"[stream truncated to last {TOOL_STREAM_PREVIEW_CHARS} chars]\n{text[-TOOL_STREAM_PREVIEW_CHARS:]}"
+        notice = messages.STREAM_TRUNCATED.format(chars=TOOL_STREAM_PREVIEW_CHARS)
+        return f"{notice}\n{text[-TOOL_STREAM_PREVIEW_CHARS:]}"
 
     def _invalidate_conversation(self, entry: Optional[ConversationEntry] = None) -> None:
         """Mark the conversation dirty and coalesce re-renders.
@@ -2016,39 +2033,60 @@ class KolegaCodeApp(App):
         view.anchor()
         self._update_jump_button()
 
-    def _format_conversation_entry(self, entry: ConversationEntry) -> str | Text:
-        escaped_content = escape(entry.content)
+    def _format_conversation_entry(self, entry: ConversationEntry) -> str | Text | Group:
+        """Render an entry using the shared header grammar.
+
+        GRAMMAR: <colored glyph> <bold label> [ · state] — body inset beneath.
+        """
         if entry.kind == "startup":
             return self._format_startup_entry(entry)
+        streaming = None if entry.complete else theme.g(Glyph.ELLIPSIS)
         if entry.kind == "user":
-            return f"[bold cyan]You[/bold cyan]\n{escaped_content}"
+            header = theme.role_header(Glyph.USER, "You", Color.USER)
+            return f"{header}\n{self._format_inset_content(entry.content)}"
         if entry.kind == "assistant":
-            suffix = "" if entry.complete else "\n[dim]...[/dim]"
-            return f"[bold magenta]Agent[/bold magenta]\n{escaped_content}{suffix}"
+            header = theme.role_header(Glyph.AGENT, "Agent", Color.AGENT, state=streaming)
+            if entry.complete and entry.content.strip():
+                return self._markdown_entry(header, entry.content)
+            return f"{header}\n{self._format_inset_content(entry.content)}"
         if entry.kind == "thinking":
-            suffix = "" if entry.complete else "\n[dim]...[/dim]"
-            return f"[dim italic]Thinking[/dim italic]\n[italic]{escaped_content}[/italic]{suffix}"
+            header = theme.role_header(Glyph.STATUS, "Thinking", Color.THINKING, label_style="dim italic", state=streaming)
+            return f"{header}\n{self._format_inset_content(entry.content, style='italic dim')}"
         if entry.kind == "progress":
-            suffix = "" if entry.complete else "\n[dim]...[/dim]"
-            label_style = f"bold {Color.ERROR}" if entry.tone == "error" else f"bold {Color.WARNING}"
-            return f"[{label_style}]Status[/]\n{escaped_content}{suffix}"
+            color = Color.ERROR if entry.tone == "error" else Color.WARNING
+            header = theme.role_header(Glyph.STATUS, "Status", color, state=streaming)
+            return f"{header}\n{self._format_inset_content(entry.content)}"
         if entry.kind == "plan":
-            return f"[bold green]Plan[/bold green]\n{escaped_content}"
+            header = theme.role_header(Glyph.PLAN, "Plan", Color.SUCCESS)
+            if entry.content.strip():
+                return self._markdown_entry(header, entry.content)
+            return header
         if entry.kind == "question":
-            return f"[bold blue]Question[/bold blue]\n{escaped_content}"
+            header = theme.role_header(Glyph.QUESTION, "Question", Color.ACCENT)
+            return f"{header}\n{self._format_inset_content(entry.content)}"
         if entry.kind == "skill":
-            return f"[bold green]Skill[/bold green]\n{escaped_content}"
+            header = theme.role_header(Glyph.PLAN, "Skill", Color.SUCCESS)
+            return f"{header}\n{self._format_inset_content(entry.content)}"
         if entry.kind == "sub_agent":
             return entry.content  # pre-formatted markup, see _format_sub_agent_content
         if entry.kind == "tool_call":
-            return self._format_tool_entry(entry, label="[black on yellow] TOOL [/black on yellow]", state="running")
+            return self._format_tool_entry(entry, state="running", color=Color.ACCENT)
         if entry.kind == "tool_result":
-            return self._format_tool_entry(entry, label="[black on green] TOOL [/black on green]", state="completed")
+            return self._format_tool_entry(entry, state="done", color=Color.SUCCESS)
         if entry.kind == "tool_error":
-            return self._format_tool_entry(entry, label="[white on red] TOOL ERROR [/white on red]", state="failed")
+            return self._format_tool_entry(entry, state="failed", color=Color.ERROR)
         if entry.kind == "system":
-            return f"[dim]{escaped_content}[/dim]"
-        return escaped_content
+            return f"[dim]{escape(entry.content)}[/dim]"
+        return escape(entry.content)
+
+    def _markdown_entry(self, header: str, content: str) -> Group:
+        return Group(
+            Text.from_markup(header),
+            Padding(
+                RichMarkdown(content, code_theme=theme.MARKDOWN_CODE_THEME),
+                (0, 0, 0, theme.INSET_WIDTH),
+            ),
+        )
 
     def _format_startup_entry(self, entry: ConversationEntry) -> Text:
         lines = entry.content.splitlines()
@@ -2067,11 +2105,16 @@ class KolegaCodeApp(App):
             rendered.append(body, style="dim")
         return rendered
 
-    def _format_tool_entry(self, entry: ConversationEntry, *, label: str, state: str) -> str:
+    def _format_tool_entry(self, entry: ConversationEntry, *, state: str, color: str) -> str:
         tool_name = escape(entry.tool_name or "tool")
-        body = self._format_inset_content(entry.content)
-        return f"{label} [bold]{tool_name}[/bold] [dim]{state}[/dim]\n{body}"
+        header = theme.role_header(Glyph.TOOL, tool_name, color, state=state)
+        if not entry.content:
+            return header
+        return f"{header}\n{self._format_inset_content(entry.content)}"
 
-    def _format_inset_content(self, content: str) -> str:
+    def _format_inset_content(self, content: str, style: Optional[str] = None) -> str:
+        bar = f"[dim]  {theme.g(Glyph.INSET_BAR)}[/dim]"
         lines = content.splitlines() or [""]
-        return "\n".join(f"[dim]  │[/dim] {escape(line)}" if line else "[dim]  │[/dim]" for line in lines)
+        if style:
+            return "\n".join(f"{bar} [{style}]{escape(line)}[/{style}]" if line else bar for line in lines)
+        return "\n".join(f"{bar} {escape(line)}" if line else bar for line in lines)
