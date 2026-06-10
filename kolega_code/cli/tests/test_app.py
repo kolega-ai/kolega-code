@@ -3438,3 +3438,44 @@ async def test_turn_status_strip_shows_spinner_and_outcome_glyph(
         content = app._turn_status_content()
         assert theme.g(theme.Glyph.CHECK) in content
         assert "Done in 12s" in content
+
+
+@pytest.mark.asyncio
+async def test_tool_entries_render_as_collapsibles_with_full_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from textual.widgets import Collapsible
+
+    from kolega_code.cli.app import TOOL_RESULT_PREVIEW_CHARS, ToolEntryWidget
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        app._turn_active = True
+        long_output = "x" * (TOOL_RESULT_PREVIEW_CHARS + 200)
+        app._add_tool_message(
+            "tool_call", {"tool_name": "read_file", "tool_call_id": "tc-1", "text": "Calling read_file"}
+        )
+        app._flush_conversation_render()
+        await pilot.pause()
+
+        widget = app.query(ToolEntryWidget).last()
+        collapsible = widget.query_one(Collapsible)
+        assert collapsible.collapsed is True
+        assert "running" in str(collapsible.title)
+
+        app._add_tool_message(
+            "tool_result", {"tool_name": "read_file", "tool_call_id": "tc-1", "text": long_output}
+        )
+        app._flush_conversation_render()
+        await pilot.pause()
+
+        # The same widget is updated in place: title flips to done, body holds full output
+        same_widget = app.query(ToolEntryWidget).last()
+        assert same_widget is widget
+        assert "done" in str(widget.query_one(Collapsible).title)
+        entry = widget.entry
+        assert len(entry.content) == TOOL_RESULT_PREVIEW_CHARS + 1  # preview stays truncated
+        assert entry.full_content == long_output  # expand-on-demand shows everything

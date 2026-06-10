@@ -126,6 +126,12 @@ TURN_STATE_STYLES = {
     TurnState.ERROR: Color.ERROR,
 }
 
+TOOL_STATE_PRESENTATION = {
+    "tool_call": ("running", Color.ACCENT),
+    "tool_result": ("done", Color.SUCCESS),
+    "tool_error": ("failed", Color.ERROR),
+}
+
 
 _ENTRY_ID_COUNTER = itertools.count(1)
 
@@ -143,6 +149,7 @@ class ConversationEntry:
     tool_name: Optional[str] = None
     tool_call_id: Optional[str] = None
     tone: Optional[str] = None  # "warning" | "error" styling hint for progress entries
+    full_content: str = ""  # untruncated tool output for expand-on-demand (capped)
     entry_id: str = field(default_factory=_next_entry_id)  # UI-only widget key, not persisted
 
 
@@ -237,6 +244,31 @@ class ConversationEntryWidget(Static):
         return selection.extract(text), "\n"
 
 
+class ToolEntryWidget(Vertical):
+    """Tool entry rendered as a collapsed-by-default Collapsible with the full output inside."""
+
+    def __init__(self, entry: ConversationEntry, title_factory: Callable[[ConversationEntry], str]) -> None:
+        super().__init__()
+        self.entry = entry
+        self._title_factory = title_factory
+        self._collapsible: Optional[Collapsible] = None
+        self._body: Optional[Static] = None
+
+    def compose(self) -> ComposeResult:
+        self._body = Static("", markup=False, classes="tool-body")
+        self._collapsible = Collapsible(self._body, title=self._title_factory(self.entry), collapsed=True)
+        yield self._collapsible
+
+    def on_mount(self) -> None:
+        self.refresh_content()
+
+    def refresh_content(self) -> None:
+        if self._collapsible is None or self._body is None:
+            return
+        self._collapsible.title = self._title_factory(self.entry)
+        self._body.update(self.entry.full_content or self.entry.content)
+
+
 class ConversationView(VerticalScroll):
     """Scrollable list of per-entry widgets, anchored to the bottom while streaming."""
 
@@ -317,6 +349,22 @@ class KolegaCodeApp(App):
     ConversationEntryWidget {
         height: auto;
         margin-bottom: 1;
+    }
+
+    ToolEntryWidget {
+        height: auto;
+        margin-bottom: 1;
+    }
+
+    ToolEntryWidget Collapsible {
+        background: transparent;
+        border-top: none;
+        padding-bottom: 0;
+        padding-left: 0;
+    }
+
+    ToolEntryWidget .tool-body {
+        color: $text-muted;
     }
 
     #jump_to_bottom {
@@ -438,7 +486,7 @@ class KolegaCodeApp(App):
         self._sub_agent_by_tool_call: dict[str, str] = {}
         self._sub_agent_seq = 0
         self._render_pending = False
-        self._entry_widgets: dict[str, ConversationEntryWidget] = {}
+        self._entry_widgets: dict[str, ConversationEntryWidget | ToolEntryWidget] = {}
         self._dirty_entry_ids: set[str] = set()
         self._active_progress_entry: Optional[ConversationEntry] = None
         self._turn_active = False
@@ -1639,6 +1687,7 @@ class KolegaCodeApp(App):
                         content=self._truncate_tool_text(text) if block.is_error else self._tool_result_preview(text),
                         tool_name=block.name,
                         tool_call_id=getattr(block, "execution_id", None),
+                        full_content=self._capped_tool_text(text),
                     )
                 )
 
@@ -1739,15 +1788,18 @@ class KolegaCodeApp(App):
         if message_type == "tool_call":
             self._clear_tool_stream_buffer(tool_call_id, tool_name)
             entry_content = text or f"Calling {tool_name}"
+            full_content = ""
             complete = False
             self._update_activity_progress(messages.RUNNING_TOOL.format(tool=tool_name), state=TurnState.RUNNING_TOOL)
         elif message_type == "tool_error":
             entry_content = self._truncate_tool_text(text)
+            full_content = self._capped_tool_text(text)
             complete = True
             self._clear_tool_stream_buffer(tool_call_id, tool_name)
             self._update_activity_progress(messages.TOOL_FAILED.format(tool=tool_name))
         else:
             entry_content = self._tool_result_preview(text)
+            full_content = self._capped_tool_text(text)
             complete = True
             self._clear_tool_stream_buffer(tool_call_id, tool_name)
             self._update_activity_progress(messages.TOOL_DONE.format(tool=tool_name))
@@ -1760,6 +1812,7 @@ class KolegaCodeApp(App):
                     complete=complete,
                     tool_name=tool_name,
                     tool_call_id=tool_call_id or None,
+                    full_content=full_content,
                 )
             )
             return
@@ -1768,6 +1821,7 @@ class KolegaCodeApp(App):
         entry.content = entry_content
         entry.complete = complete
         entry.tool_name = tool_name
+        entry.full_content = full_content
         entry.tool_call_id = tool_call_id or entry.tool_call_id
         if entry.tool_call_id:
             self._tool_entries[entry.tool_call_id] = entry
@@ -1785,13 +1839,16 @@ class KolegaCodeApp(App):
         if is_complete:
             self._clear_tool_stream_buffer(tool_call_id, tool_name)
             entry_content = self._tool_result_preview(text)
+            full_content = self._capped_tool_text(text)
         elif stream_mode == "append":
             buffer_text = self._tool_stream_buffers.get(buffer_key, "") + text
             self._tool_stream_buffers[buffer_key] = buffer_text
             entry_content = self._tool_stream_preview(buffer_text)
+            full_content = self._capped_tool_text(buffer_text)
         else:
             self._tool_stream_buffers[buffer_key] = text
             entry_content = self._truncate_tool_text(text)
+            full_content = self._capped_tool_text(text)
 
         if is_complete:
             self._update_activity_progress(messages.TOOL_DONE.format(tool=tool_name))
@@ -1806,6 +1863,7 @@ class KolegaCodeApp(App):
                     complete=is_complete,
                     tool_name=tool_name,
                     tool_call_id=tool_call_id or None,
+                    full_content=full_content,
                 )
             )
             return
@@ -1814,6 +1872,7 @@ class KolegaCodeApp(App):
         entry.content = entry_content or entry.content
         entry.complete = is_complete
         entry.tool_name = tool_name
+        entry.full_content = full_content or entry.full_content
         entry.tool_call_id = tool_call_id or entry.tool_call_id
         if entry.tool_call_id:
             self._tool_entries[entry.tool_call_id] = entry
@@ -2008,6 +2067,11 @@ class KolegaCodeApp(App):
             return text
         return f"{text[:TOOL_RESULT_PREVIEW_CHARS]}{theme.g(Glyph.ELLIPSIS)}"
 
+    def _capped_tool_text(self, text: str) -> str:
+        if len(text) <= theme.TOOL_FULL_CONTENT_CAP_CHARS:
+            return text
+        return f"{text[:theme.TOOL_FULL_CONTENT_CAP_CHARS]}{theme.g(Glyph.ELLIPSIS)}"
+
     def _tool_stream_preview(self, text: str) -> str:
         if len(text) <= TOOL_STREAM_PREVIEW_CHARS:
             return text
@@ -2065,7 +2129,7 @@ class KolegaCodeApp(App):
         if new_entries:
             widgets = []
             for entry in new_entries:
-                widget = ConversationEntryWidget(entry, self._format_conversation_entry)
+                widget = self._make_entry_widget(entry)
                 self._entry_widgets[entry.entry_id] = widget
                 widgets.append(widget)
             view.mount(*widgets)
@@ -2083,13 +2147,18 @@ class KolegaCodeApp(App):
         self._entry_widgets = {}
         widgets = []
         for entry in self.conversation_entries:
-            widget = ConversationEntryWidget(entry, self._format_conversation_entry)
+            widget = self._make_entry_widget(entry)
             self._entry_widgets[entry.entry_id] = widget
             widgets.append(widget)
         if widgets:
             view.mount(*widgets)
         view.anchor()
         self._update_jump_button()
+
+    def _make_entry_widget(self, entry: ConversationEntry) -> ConversationEntryWidget | ToolEntryWidget:
+        if entry.kind in {"tool_call", "tool_result", "tool_error"}:
+            return ToolEntryWidget(entry, self._tool_entry_title)
+        return ConversationEntryWidget(entry, self._format_conversation_entry)
 
     def _update_jump_button(self) -> None:
         try:
@@ -2141,12 +2210,9 @@ class KolegaCodeApp(App):
             return f"{header}\n{self._format_inset_content(entry.content)}"
         if entry.kind == "sub_agent":
             return entry.content  # pre-formatted markup, see _format_sub_agent_content
-        if entry.kind == "tool_call":
-            return self._format_tool_entry(entry, state="running", color=Color.ACCENT)
-        if entry.kind == "tool_result":
-            return self._format_tool_entry(entry, state="done", color=Color.SUCCESS)
-        if entry.kind == "tool_error":
-            return self._format_tool_entry(entry, state="failed", color=Color.ERROR)
+        if entry.kind in TOOL_STATE_PRESENTATION:
+            state, color = TOOL_STATE_PRESENTATION[entry.kind]
+            return self._format_tool_entry(entry, state=state, color=color)
         if entry.kind == "system":
             return f"[dim]{escape(entry.content)}[/dim]"
         return escape(entry.content)
@@ -2187,6 +2253,10 @@ class KolegaCodeApp(App):
         if not entry.content:
             return header
         return f"{header}\n{self._format_inset_content(entry.content)}"
+
+    def _tool_entry_title(self, entry: ConversationEntry) -> str:
+        state, color = TOOL_STATE_PRESENTATION.get(entry.kind, ("running", Color.ACCENT))
+        return theme.role_header(Glyph.TOOL, escape(entry.tool_name or "tool"), color, state=state)
 
     def _format_inset_content(self, content: str, style: Optional[str] = None) -> str:
         bar = f"[dim]  {theme.g(Glyph.INSET_BAR)}[/dim]"
