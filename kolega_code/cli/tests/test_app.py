@@ -999,8 +999,10 @@ async def test_textual_app_blocks_mode_toggle_during_active_turn(
 ) -> None:
     pytest.importorskip("textual")
 
+    from textual.widgets import Static
+
     from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import ChatComposer, KolegaCodeApp
+    from kolega_code.cli.app import COMPOSER_PLACEHOLDER, ChatComposer, KolegaCodeApp
 
     class FakeCoderAgent:
         def __init__(self, **kwargs):
@@ -1030,7 +1032,10 @@ async def test_textual_app_blocks_mode_toggle_during_active_turn(
         await app.action_toggle_interaction_mode()
 
         assert app.interaction_mode == "build"
-        assert app.query_one("#composer", ChatComposer).placeholder == "Stop the current turn before switching modes."
+        assert app.query_one("#composer", ChatComposer).placeholder == COMPOSER_PLACEHOLDER
+        hint = app.query_one("#composer_hint", Static)
+        assert hint.display is True
+        assert "Stop the current turn before switching modes." in str(hint.render())
 
 
 @pytest.mark.asyncio
@@ -1559,8 +1564,10 @@ async def test_textual_app_reset_command_waits_for_active_turn(
 ) -> None:
     pytest.importorskip("textual")
 
+    from textual.widgets import Static
+
     from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import ChatComposer, KolegaCodeApp
+    from kolega_code.cli.app import COMPOSER_PLACEHOLDER, ChatComposer, KolegaCodeApp
 
     class FakeCoderAgent:
         def __init__(self, **kwargs):
@@ -1599,7 +1606,10 @@ async def test_textual_app_reset_command_waits_for_active_turn(
         assert app.session.history == saved_history
         assert store.load(session.session_id).history == saved_history
         assert composer.text == "/clear"
-        assert composer.placeholder == "Stop the current turn before resetting the thread."
+        assert composer.placeholder == COMPOSER_PLACEHOLDER
+        hint = app.query_one("#composer_hint", Static)
+        assert hint.display is True
+        assert "Stop the current turn before resetting the thread." in str(hint.render())
 
 
 @pytest.mark.asyncio
@@ -3367,3 +3377,64 @@ async def test_assistant_entries_render_markdown_when_complete(
             ConversationEntry(kind="plan", content="- step one\n- step two", complete=True)
         )
         assert isinstance(plan, Group)
+
+
+@pytest.mark.asyncio
+async def test_confirmations_surface_as_toasts_and_logs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        notifications: list[tuple[str, str]] = []
+        logged: list[tuple[str, str]] = []
+
+        def fake_notify(message, *, severity="information", title=None, **kwargs):
+            notifications.append((message, severity))
+
+        original_log_status = app._log_status
+
+        def spy_log_status(text, level="info"):
+            logged.append((text, level))
+            original_log_status(text, level)
+
+        monkeypatch.setattr(app, "notify", fake_notify)
+        monkeypatch.setattr(app, "_log_status", spy_log_status)
+
+        await app._set_interaction_mode("plan")
+
+        assert ("Switched to plan mode.", "information") in notifications
+        assert ("Switched to plan mode.", "ok") in logged  # diagnostic record kept
+
+        # Blockers surface as warning toasts
+        app._turn_active = True
+        await app.action_toggle_interaction_mode()
+        assert ("Stop the current turn before switching modes.", "warning") in notifications
+
+
+@pytest.mark.asyncio
+async def test_turn_status_strip_shows_spinner_and_outcome_glyph(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli import theme
+    from kolega_code.cli.app import TurnState
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+    now = 0.0
+    monkeypatch.setattr(app, "_now", lambda: now)
+
+    async with app.run_test():
+        app._begin_turn_progress()
+        content = app._turn_status_content()
+        assert any(frame in content for frame in theme.spinner_frames())
+        assert "Working…" in content
+
+        now = 12.0
+        app._finish_turn_progress("Finished.", TurnState.IDLE)
+        content = app._turn_status_content()
+        assert theme.g(theme.Glyph.CHECK) in content
+        assert "Done in 12s" in content

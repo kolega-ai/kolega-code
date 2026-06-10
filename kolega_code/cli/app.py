@@ -361,6 +361,25 @@ class KolegaCodeApp(App):
         background: $surface;
     }
 
+    #composer_hint {
+        display: none;
+        height: 1;
+        padding: 0 1;
+        background: $surface;
+    }
+
+    #composer_hint.hint-warning {
+        color: $warning;
+    }
+
+    #composer_hint.hint-info {
+        color: $text-muted;
+    }
+
+    #composer:disabled {
+        opacity: 0.6;
+    }
+
     #plan_actions, #question_actions {
         display: none;
         height: auto;
@@ -379,6 +398,7 @@ class KolegaCodeApp(App):
     BINDINGS = [
         Binding("shift+tab", "toggle_interaction_mode", "Plan/Build", show=True, key_display="Shift+Tab", priority=True),
         Binding("ctrl+c", "cancel_generation", "Cancel", show=True),
+        Binding("escape", "cancel_generation", "Cancel", show=False),
         Binding("ctrl+q", "quit", "Quit", show=True),
     ]
 
@@ -432,6 +452,9 @@ class KolegaCodeApp(App):
         self._turn_timer: Optional[Timer] = None
         self._turn_status_text = ""
         self._turn_final_text = ""
+        self._turn_final_state = TurnState.IDLE
+        self._spinner_frame = 0
+        self._last_sub_agent_tick = 0.0
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="body"):
@@ -452,6 +475,7 @@ class KolegaCodeApp(App):
                 with Horizontal(id="question_actions"):
                     pass
                 yield Static("", id="turn_status", markup=True)
+                yield Static("", id="composer_hint", markup=False)
                 yield ChatComposer(placeholder=COMPOSER_PLACEHOLDER, id="composer")
             with Vertical(id="side_panel"):
                 with TabbedContent(id="events"):
@@ -533,6 +557,15 @@ class KolegaCodeApp(App):
         }.get(level, Color.MUTED)
         self._status.write(f"[{style}]{escape(text)}[/{style}]")
 
+    def _notify_user(self, message: str, *, severity: str = "information", title: Optional[str] = None) -> None:
+        """Show a transient toast and keep a copy in the Logs tab."""
+        level = {"information": "ok", "warning": "warn", "error": "error"}.get(severity, "info")
+        self._log_status(message, level)
+        try:
+            self.notify(message, severity=severity, title=title)
+        except Exception:
+            pass
+
     @property
     def _status_dashboard(self) -> Static:
         return self.query_one("#status_dashboard", Static)
@@ -569,8 +602,8 @@ class KolegaCodeApp(App):
         stripped_text = text.strip()
         if stripped_text.lower() in THREAD_RESET_COMMANDS:
             if self._turn_active or self.agent_worker is not None:
-                self._set_composer_status(messages.BLOCK_STOP_BEFORE_RESET)
-                self._log_status(messages.BLOCK_STOP_BEFORE_RESET, "warn")
+                self._show_composer_hint(messages.BLOCK_STOP_BEFORE_RESET)
+                self._notify_user(messages.BLOCK_STOP_BEFORE_RESET, severity="warning")
                 return
             event.composer.load_text("")
             self._reset_current_thread()
@@ -589,7 +622,7 @@ class KolegaCodeApp(App):
 
         if self._plan_decision_active:
             self._set_composer_status(PLAN_READY_PLACEHOLDER)
-            self._log_status(messages.BLOCK_PLAN_DECISION, "warn")
+            self._notify_user(messages.BLOCK_PLAN_DECISION, severity="warning")
             return
 
         if not stripped_text or self.agent is None:
@@ -734,7 +767,7 @@ class KolegaCodeApp(App):
             subprocess.run(["pbcopy"], input=text, text=True, check=True)
         except (OSError, subprocess.CalledProcessError):
             try:
-                self._log_status(messages.COPY_MACOS_FAILED, "warn")
+                self._notify_user(messages.COPY_MACOS_FAILED, severity="warning")
             except Exception:
                 pass
 
@@ -743,16 +776,16 @@ class KolegaCodeApp(App):
             self._update_progress(messages.STOP_REQUESTED, complete=False, state=TurnState.STOPPING)
             self._cancel_pending_question()
             self.agent_worker.cancel()
-            self._log_status(messages.CANCEL_REQUESTED, "warn")
+            self._notify_user(messages.CANCEL_REQUESTED, severity="warning")
 
     async def action_toggle_interaction_mode(self) -> None:
         if self._turn_active or self.agent_worker is not None:
-            self._set_composer_status(messages.BLOCK_STOP_BEFORE_MODE_SWITCH)
-            self._log_status(messages.BLOCK_STOP_BEFORE_MODE_SWITCH, "warn")
+            self._show_composer_hint(messages.BLOCK_STOP_BEFORE_MODE_SWITCH)
+            self._notify_user(messages.BLOCK_STOP_BEFORE_MODE_SWITCH, severity="warning")
             return
         if self._plan_decision_active:
             self._set_composer_status(PLAN_READY_PLACEHOLDER)
-            self._log_status(messages.BLOCK_PLAN_DECISION_MODE_SWITCH, "warn")
+            self._notify_user(messages.BLOCK_PLAN_DECISION_MODE_SWITCH, severity="warning")
             return
 
         target = PLAN_INTERACTION_MODE if self.interaction_mode == BUILD_INTERACTION_MODE else BUILD_INTERACTION_MODE
@@ -883,7 +916,7 @@ class KolegaCodeApp(App):
         self._update_mode_chrome()
         self._restore_composer_placeholder()
         self._set_chat_enabled(self.agent is not None)
-        self._log_status(messages.SWITCHED_MODE.format(mode=self.interaction_mode), "ok")
+        self._notify_user(messages.SWITCHED_MODE.format(mode=self.interaction_mode))
 
     def _capture_completed_plan(self) -> None:
         if self.interaction_mode != PLAN_INTERACTION_MODE or not isinstance(self.agent, PlanningAgent):
@@ -901,7 +934,7 @@ class KolegaCodeApp(App):
         self._set_plan_actions_visible(True, allow_discuss=True)
         self._set_composer_status(PLAN_READY_PLACEHOLDER)
         self._set_chat_enabled(False)
-        self._log_status(messages.PLAN_CAPTURED, "ok")
+        self._notify_user(messages.PLAN_CAPTURED)
 
     async def _implement_pending_plan(self) -> None:
         plan = self._latest_plan
@@ -930,7 +963,7 @@ class KolegaCodeApp(App):
         self._restore_composer_placeholder()
         self._set_chat_enabled(self.agent is not None)
         self.query_one("#composer", ChatComposer).focus()
-        self._log_status(messages.PLAN_DISCUSSION_RESUMED, "ok")
+        self._notify_user(messages.PLAN_DISCUSSION_RESUMED)
 
     def _set_plan_actions_visible(self, visible: bool, *, allow_discuss: bool = False) -> None:
         try:
@@ -973,6 +1006,25 @@ class KolegaCodeApp(App):
 
     def _restore_composer_placeholder(self) -> None:
         self.query_one("#composer", ChatComposer).placeholder = COMPOSER_PLACEHOLDER
+        self._clear_composer_hint()
+
+    def _show_composer_hint(self, text: str, tone: str = "warning") -> None:
+        try:
+            hint = self.query_one("#composer_hint", Static)
+        except Exception:
+            return
+        hint.set_class(tone == "warning", "hint-warning")
+        hint.set_class(tone != "warning", "hint-info")
+        hint.update(text)
+        hint.display = bool(text)
+
+    def _clear_composer_hint(self) -> None:
+        try:
+            hint = self.query_one("#composer_hint", Static)
+        except Exception:
+            return
+        hint.update("")
+        hint.display = False
 
     async def _handle_skill_slash_command(self, stripped_text: str, composer: ChatComposer) -> bool:
         command = self._parse_skill_slash_command(stripped_text)
@@ -989,17 +1041,17 @@ class KolegaCodeApp(App):
 
         if self._pending_question is not None:
             self._set_composer_status(QUESTION_PLACEHOLDER)
-            self._log_status(messages.BLOCK_PENDING_QUESTION_SKILL, "warn")
+            self._notify_user(messages.BLOCK_PENDING_QUESTION_SKILL, severity="warning")
             return True
 
         if self._plan_decision_active:
             self._set_composer_status(PLAN_READY_PLACEHOLDER)
-            self._log_status(messages.BLOCK_PLAN_DECISION_SKILL, "warn")
+            self._notify_user(messages.BLOCK_PLAN_DECISION_SKILL, severity="warning")
             return True
 
         if self._turn_active or self.agent_worker is not None:
-            self._set_composer_status(messages.BLOCK_STOP_BEFORE_SKILL)
-            self._log_status(messages.BLOCK_STOP_BEFORE_SKILL, "warn")
+            self._show_composer_hint(messages.BLOCK_STOP_BEFORE_SKILL)
+            self._notify_user(messages.BLOCK_STOP_BEFORE_SKILL, severity="warning")
             return True
 
         if self.agent is None:
@@ -1008,7 +1060,7 @@ class KolegaCodeApp(App):
 
         activated = self._activate_skill_in_agent(command_name)
         self._add_conversation_entry(ConversationEntry(kind="skill", content=activated))
-        self._log_status(messages.SKILL_ACTIVATED.format(name=command_name), "ok")
+        self._notify_user(messages.SKILL_ACTIVATED.format(name=command_name))
 
         if prompt:
             self._add_conversation_entry(ConversationEntry(kind="user", content=prompt))
@@ -1266,7 +1318,7 @@ class KolegaCodeApp(App):
         self._set_chat_enabled(self.agent is not None)
         self._ensure_startup_entry(render=False)
         self._add_conversation_entry(ConversationEntry(kind="progress", content=THREAD_RESET_MESSAGE, complete=True))
-        self._log_status(THREAD_RESET_MESSAGE, "ok")
+        self._notify_user(THREAD_RESET_MESSAGE)
 
     def _update_settings_status(self) -> None:
         provider = self.settings.active_provider or UI_DEFAULT_PROVIDER
@@ -1315,7 +1367,9 @@ class KolegaCodeApp(App):
                 f"Interaction: {self.interaction_mode}",
                 f"Model: {provider}/{model}",
                 f"API key: {api_key}",
-                "Type a request below. Use /skills to list skills. Press Shift+Enter for a newline, Shift+Tab to switch plan/build mode, Cmd+C to copy selected transcript text, Ctrl+C to stop a turn.",
+                "",
+                f"Enter send {theme.g(Glyph.BULLET_SEP)} Shift+Enter newline {theme.g(Glyph.BULLET_SEP)} Shift+Tab plan/build",
+                f"Ctrl+C stop turn {theme.g(Glyph.BULLET_SEP)} Cmd+C copy selection {theme.g(Glyph.BULLET_SEP)} /skills list skills",
             ]
         )
 
@@ -1377,9 +1431,7 @@ class KolegaCodeApp(App):
         )
 
     def _context_bar(self, usage_percentage: float) -> str:
-        width = 18
-        filled = max(0, min(width, round((usage_percentage / 100) * width)))
-        return "[" + ("#" * filled) + ("-" * (width - filled)) + "]"
+        return theme.context_bar(usage_percentage)
 
     def _context_token_line(self, input_tokens: Optional[int], max_tokens: Optional[int]) -> str:
         if input_tokens is None or max_tokens is None:
@@ -1446,7 +1498,9 @@ class KolegaCodeApp(App):
         self._turn_finished_duration = None
         self._turn_status_text = status_text
         self._turn_final_text = ""
-        self._turn_timer = self.set_interval(1.0, self._refresh_turn_status_strip, name="turn-status")
+        self._turn_final_state = TurnState.IDLE
+        self._spinner_frame = 0
+        self._turn_timer = self.set_interval(theme.SPINNER_INTERVAL, self._refresh_turn_status_strip, name="turn-status")
         self._refresh_turn_status_strip()
 
     def _complete_turn_timer(self, content: str, state: TurnState = TurnState.IDLE) -> None:
@@ -1458,6 +1512,7 @@ class KolegaCodeApp(App):
 
         self._turn_finished_duration = max(0.0, self._now() - self._turn_started_at)
         duration = self._format_turn_duration(self._turn_finished_duration)
+        self._turn_final_state = state
         if state is TurnState.ERROR:
             self._turn_final_text = messages.ERRORED_AFTER.format(duration=duration)
         elif state in {TurnState.STOPPED, TurnState.STOPPING}:
@@ -1475,6 +1530,7 @@ class KolegaCodeApp(App):
         self._turn_finished_duration = None
         self._turn_status_text = ""
         self._turn_final_text = ""
+        self._turn_final_state = TurnState.IDLE
         self._refresh_turn_status_strip()
 
     def _refresh_turn_status_strip(self) -> None:
@@ -1483,19 +1539,35 @@ class KolegaCodeApp(App):
         except Exception:
             return
 
+        self._spinner_frame += 1
         content = self._turn_status_content()
         strip.display = bool(content)
         strip.update(content)
-        # Reuse the 1 Hz turn timer to tick elapsed time on running sub-agents
-        self._tick_running_sub_agents()
+        # Tick elapsed time on running sub-agents at most once per second so the
+        # faster spinner cadence only touches this cheap status strip.
+        now = self._now()
+        if now - self._last_sub_agent_tick >= 1.0:
+            self._last_sub_agent_tick = now
+            self._tick_running_sub_agents()
 
     def _turn_status_content(self) -> str:
         if self._turn_started_at is not None:
             elapsed = max(0.0, self._now() - self._turn_started_at)
             status = self._turn_status_text or messages.WORKING
-            return f"{escape(status)} [dim]· {self._format_turn_duration(elapsed)}[/dim]"
+            frames = theme.spinner_frames()
+            frame = frames[self._spinner_frame % len(frames)]
+            return (
+                f"[{Color.ACCENT}]{frame}[/{Color.ACCENT}] {escape(status)} "
+                f"[dim]{theme.g(Glyph.BULLET_SEP)} {self._format_turn_duration(elapsed)}[/dim]"
+            )
         if self._turn_final_text:
-            return escape(self._turn_final_text)
+            if self._turn_final_state is TurnState.ERROR:
+                glyph, color = Glyph.CROSS, Color.ERROR
+            elif self._turn_final_state in {TurnState.STOPPED, TurnState.STOPPING}:
+                glyph, color = Glyph.CROSS, Color.WARNING
+            else:
+                glyph, color = Glyph.CHECK, Color.SUCCESS
+            return f"[{color}]{theme.g(glyph)}[/{color}] {escape(self._turn_final_text)}"
         return ""
 
     def _format_turn_duration(self, seconds: float) -> str:
@@ -2096,13 +2168,17 @@ class KolegaCodeApp(App):
             separator = len(STARTUP_WORDMARK)
         rendered = Text()
         logo = "\n".join(lines[:separator])
-        body = "\n".join(lines[separator + 1 :])
         if logo:
-            rendered.append(logo, style="bold")
-        if body:
-            if logo:
-                rendered.append("\n")
-            rendered.append(body, style="dim")
+            rendered.append(logo, style=f"bold {Color.ACCENT}")
+        for line in lines[separator + 1 :]:
+            rendered.append("\n")
+            label, sep, value = line.partition(": ")
+            if sep and label and len(label) <= 12:
+                # Aligned two-column key/value line: muted label, normal value.
+                rendered.append(f"{label + ':':<13}", style="dim")
+                rendered.append(value)
+            else:
+                rendered.append(line, style="dim")
         return rendered
 
     def _format_tool_entry(self, entry: ConversationEntry, *, state: str, color: str) -> str:
