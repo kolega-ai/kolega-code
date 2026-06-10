@@ -6,7 +6,7 @@ import asyncio
 import subprocess
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
@@ -57,6 +57,9 @@ from .skills import (
 
 TOOL_RESULT_PREVIEW_CHARS = 500
 TOOL_STREAM_PREVIEW_CHARS = 4_000
+SUB_AGENT_TAIL_CHARS = 200
+SUB_AGENT_TASK_PREVIEW_CHARS = 120
+SUB_AGENT_RENDER_INTERVAL = 0.1
 CLI_AGENT_MODE = AgentMode.CLI.value
 BUILD_INTERACTION_MODE = "build"
 PLAN_INTERACTION_MODE = "plan"
@@ -102,6 +105,24 @@ class ConversationEntry:
     uuid: Optional[str] = None
     tool_name: Optional[str] = None
     tool_call_id: Optional[str] = None
+
+
+@dataclass
+class SubAgentActivity:
+    """Live display state for one dispatched sub-agent."""
+
+    agent_id: str
+    agent_name: str
+    task: str
+    index: int  # display ordinal within the turn: #1, #2, ...
+    entry: ConversationEntry  # kind="sub_agent", updated in place
+    status: str = "running"  # running | completed | failed | stopped
+    tool_calls: int = 0
+    last_activity: str = ""
+    started_at: float = 0.0
+    finished_at: Optional[float] = None
+    stream_buffers: dict[str, str] = field(default_factory=dict)  # chunk uuid -> accumulated text
+    active_stream_uuid: Optional[str] = None
 
 
 @dataclass
@@ -294,6 +315,10 @@ class KolegaCodeApp(App):
         self._stream_entries: dict[str, ConversationEntry] = {}
         self._tool_entries: dict[str, ConversationEntry] = {}
         self._tool_stream_buffers: dict[str, str] = {}
+        self._sub_agent_activities: dict[str, SubAgentActivity] = {}
+        self._sub_agent_by_tool_call: dict[str, str] = {}
+        self._sub_agent_seq = 0
+        self._last_sub_agent_render = 0.0
         self._active_progress_entry: Optional[ConversationEntry] = None
         self._turn_active = False
         self._latest_plan: Optional[str] = self.session.latest_plan_markdown or None
@@ -479,6 +504,7 @@ class KolegaCodeApp(App):
                     if content:
                         self._status.write(f"[dim]{content}[/dim]")
             await self._drain_pending_events()
+            self._finalize_sub_agent_activities()
             self._save_session_history()
             self._finish_turn_progress("Finished")
             self._capture_completed_plan()
@@ -486,12 +512,14 @@ class KolegaCodeApp(App):
         except asyncio.CancelledError:
             self._cancel_pending_question()
             await self._drain_pending_events()
+            self._finalize_sub_agent_activities()
             self._save_session_history()
             self._finish_turn_progress("Stopped by user")
             self._status.write("[yellow]Stopped by user.[/yellow]")
         except Exception as exc:
             self._cancel_pending_question()
             await self._drain_pending_events()
+            self._finalize_sub_agent_activities()
             self._save_session_history()
             self._finish_turn_progress(f"Stopped due to error: {exc}")
             self._status.write(f"[red]Stopped due to error: {escape(str(exc))}[/red]")
@@ -554,6 +582,9 @@ class KolegaCodeApp(App):
             if command:
                 self._update_activity_progress("Running terminal command...")
         elif event.event_type == "chat_message":
+            if event.sub_agent_info:
+                self._render_sub_agent_event(event)
+                return
             message_text = event.content.get("text", "")
             message_type = event.content.get("message_type", "message")
             if message_type in {"tool_call", "tool_result", "tool_error"}:
@@ -561,7 +592,10 @@ class KolegaCodeApp(App):
             elif message_text:
                 self._add_conversation_entry(ConversationEntry(kind="message", content=message_text))
         elif event.event_type == "tool_streaming_update":
-            self._apply_tool_streaming_update(event.content)
+            if event.sub_agent_info:
+                self._note_sub_agent_tool_stream(event)
+            else:
+                self._apply_tool_streaming_update(event.content)
         elif event.event_type == "llm_context_update":
             self._apply_context_status_update(event.content)
         elif event.event_type in {"llm_status_update", "status_update"}:
@@ -1099,6 +1133,9 @@ class KolegaCodeApp(App):
         self._stream_entries = {}
         self._tool_entries = {}
         self._tool_stream_buffers = {}
+        self._sub_agent_activities = {}
+        self._sub_agent_by_tool_call = {}
+        self._sub_agent_seq = 0
         self._active_progress_entry = None
         self._latest_plan = None
         self._plan_decision_active = False
@@ -1343,6 +1380,8 @@ class KolegaCodeApp(App):
         content = self._turn_status_content()
         strip.display = bool(content)
         strip.update(content)
+        # Reuse the 1 Hz turn timer to tick elapsed time on running sub-agents
+        self._tick_running_sub_agents()
 
     def _turn_status_content(self) -> str:
         if self._turn_started_at is not None:
@@ -1365,6 +1404,9 @@ class KolegaCodeApp(App):
         self._stream_entries = {}
         self._tool_entries = {}
         self._tool_stream_buffers = {}
+        self._sub_agent_activities = {}
+        self._sub_agent_by_tool_call = {}
+        self._sub_agent_seq = 0
         self._active_progress_entry = None
         self._plan_decision_active = False
         self._restore_plan_action_visibility()
@@ -1469,6 +1511,9 @@ class KolegaCodeApp(App):
     def _begin_turn_progress(self) -> None:
         self._tool_entries = {}
         self._tool_stream_buffers = {}
+        self._sub_agent_activities = {}
+        self._sub_agent_by_tool_call = {}
+        self._sub_agent_seq = 0
         self._active_progress_entry = None
         self._turn_active = True
         self._set_chat_enabled(False)
@@ -1506,6 +1551,8 @@ class KolegaCodeApp(App):
         normalized = content.lower()
         if "thinking" in normalized:
             return "Thinking"
+        if "sub-agent" in normalized:
+            return "Running sub-agents"
         if normalized.startswith("running"):
             return "Running tool"
         if "stop requested" in normalized:
@@ -1628,6 +1675,164 @@ class KolegaCodeApp(App):
                 return entry
         return None
 
+    def _sub_agent_key(self, event: AgentEvent) -> str:
+        info = event.sub_agent_info or {}
+        return str(
+            info.get("agent_id")
+            or info.get("parent_tool_call_id")
+            or info.get("agent_name")
+            or event.sender
+        )
+
+    def _ensure_sub_agent_activity(self, event: AgentEvent) -> SubAgentActivity:
+        key = self._sub_agent_key(event)
+        activity = self._sub_agent_activities.get(key)
+        if activity is None:
+            info = event.sub_agent_info or {}
+            self._sub_agent_seq += 1
+            entry = ConversationEntry(kind="sub_agent", content="", complete=False)
+            activity = SubAgentActivity(
+                agent_id=key,
+                agent_name=str(info.get("agent_name") or event.sender or "sub-agent"),
+                task=str(info.get("task") or ""),
+                index=self._sub_agent_seq,
+                entry=entry,
+                started_at=self._now(),
+            )
+            self._sub_agent_activities[key] = activity
+            parent_id = info.get("parent_tool_call_id")
+            if parent_id:
+                self._sub_agent_by_tool_call[str(parent_id)] = key
+            entry.content = self._format_sub_agent_content(activity)
+            self._add_conversation_entry(entry)
+            self._refresh_sub_agent_activity_status()
+        return activity
+
+    def _render_sub_agent_event(self, event: AgentEvent) -> None:
+        activity = self._ensure_sub_agent_activity(event)
+        content = event.content
+        status = content.get("status")
+        if status:  # lifecycle event from AgentTool
+            if status != "GENERATING":
+                message = str(content.get("message") or "")
+                failed = status == "ERROR" or message.startswith("Error")
+                activity.status = "failed" if failed else "completed"
+                activity.finished_at = self._now()
+                activity.entry.complete = True
+                activity.last_activity = message if failed else ""
+                self._refresh_sub_agent_activity_status()
+            self._refresh_sub_agent_entry(activity, force=True)
+            return
+
+        message_type = content.get("message_type", "message")
+        text = str(content.get("text") or "")
+        if message_type == "tool_call":
+            activity.tool_calls += 1
+            activity.last_activity = str(content.get("tool_description") or content.get("tool_name") or "tool")
+        elif message_type in {"tool_result", "tool_error"}:
+            suffix = "failed" if message_type == "tool_error" else "done"
+            tool = str(content.get("tool_description") or content.get("tool_name") or "tool")
+            activity.last_activity = f"{tool} {suffix}"
+        elif message_type == "thinking":
+            activity.last_activity = "thinking"
+        else:  # streamed response text - accumulate by chunk uuid
+            if event.uuid and text:
+                buffer = activity.stream_buffers.get(event.uuid, "") + text
+                activity.stream_buffers[event.uuid] = buffer
+                activity.active_stream_uuid = event.uuid
+        self._refresh_sub_agent_entry(activity)
+
+    def _note_sub_agent_tool_stream(self, event: AgentEvent) -> None:
+        activity = self._ensure_sub_agent_activity(event)
+        tool_name = str(event.content.get("tool_name") or event.content.get("tool_description") or "tool")
+        is_complete = bool(event.content.get("is_complete"))
+        activity.last_activity = f"{tool_name} done" if is_complete else f"{tool_name} streaming"
+        self._refresh_sub_agent_entry(activity)
+
+    def _refresh_sub_agent_entry(self, activity: SubAgentActivity, *, force: bool = False) -> None:
+        activity.entry.content = self._format_sub_agent_content(activity)
+        now = self._now()
+        if force or now - self._last_sub_agent_render >= SUB_AGENT_RENDER_INTERVAL:
+            self._last_sub_agent_render = now
+            self._render_conversation()
+
+    def _format_sub_agent_content(self, activity: SubAgentActivity) -> str:
+        if activity.finished_at is not None:
+            elapsed = max(0.0, activity.finished_at - activity.started_at)
+        else:
+            elapsed = max(0.0, self._now() - activity.started_at)
+        duration = self._format_turn_duration(elapsed)
+
+        if activity.status == "running":
+            state = f"[cyan]running[/cyan] [dim]· {duration}[/dim]"
+        elif activity.status == "completed":
+            state = f"[green]completed in {duration}[/green]"
+        elif activity.status == "failed":
+            state = f"[red]failed after {duration}[/red]"
+        else:
+            state = f"[yellow]stopped after {duration}[/yellow]"
+
+        header = (
+            f"[black on blue] AGENT [/black on blue] "
+            f"[bold]{escape(activity.agent_name)}[/bold] [dim]#{activity.index}[/dim]  {state}"
+        )
+
+        body_lines: list[str] = []
+        if activity.task:
+            task = activity.task
+            if len(task) > SUB_AGENT_TASK_PREVIEW_CHARS:
+                task = f"{task[:SUB_AGENT_TASK_PREVIEW_CHARS]}..."
+            body_lines.append(f"Task: {task}")
+        tools_line = f"{activity.tool_calls} tool{'' if activity.tool_calls == 1 else 's'}"
+        if activity.last_activity:
+            tools_line += f" · last: {activity.last_activity}"
+        body_lines.append(tools_line)
+        if activity.status == "running" and activity.active_stream_uuid:
+            tail = activity.stream_buffers.get(activity.active_stream_uuid, "")
+            tail = " ".join(tail.split())
+            if tail:
+                if len(tail) > SUB_AGENT_TAIL_CHARS:
+                    tail = f"…{tail[-SUB_AGENT_TAIL_CHARS:]}"
+                body_lines.append(tail)
+
+        body = self._format_inset_content("\n".join(body_lines))
+        return f"{header}\n{body}"
+
+    def _running_sub_agents(self) -> list[SubAgentActivity]:
+        return [a for a in self._sub_agent_activities.values() if a.status == "running"]
+
+    def _refresh_sub_agent_activity_status(self) -> None:
+        running = self._running_sub_agents()
+        if running:
+            if len(running) == 1:
+                text = f"Running sub-agent {running[0].agent_name} #{running[0].index}..."
+            else:
+                text = f"Running {len(running)} sub-agents..."
+            self._update_activity_progress(text)
+        elif self._turn_active:
+            self._update_activity_progress("Agent is working...")
+
+    def _finalize_sub_agent_activities(self, status: str = "stopped") -> None:
+        """Mark still-running sub-agents as finished (no lifecycle event arrives on cancel)."""
+        changed = False
+        for activity in self._sub_agent_activities.values():
+            if activity.status == "running":
+                activity.status = status
+                activity.finished_at = self._now()
+                activity.entry.complete = True
+                activity.entry.content = self._format_sub_agent_content(activity)
+                changed = True
+        if changed:
+            self._render_conversation()
+
+    def _tick_running_sub_agents(self) -> None:
+        running = self._running_sub_agents()
+        if not running:
+            return
+        for activity in running:
+            activity.entry.content = self._format_sub_agent_content(activity)
+        self._render_conversation()
+
     def _tool_result_preview(self, text: str) -> str:
         if not text:
             return "completed"
@@ -1675,6 +1880,8 @@ class KolegaCodeApp(App):
             return f"[bold blue]Question[/bold blue]\n{escaped_content}"
         if entry.kind == "skill":
             return f"[bold green]Skill[/bold green]\n{escaped_content}"
+        if entry.kind == "sub_agent":
+            return entry.content  # pre-formatted markup, see _format_sub_agent_content
         if entry.kind == "tool_call":
             return self._format_tool_entry(entry, label="[black on yellow] TOOL [/black on yellow]", state="running")
         if entry.kind == "tool_result":

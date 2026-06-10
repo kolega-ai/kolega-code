@@ -1,3 +1,5 @@
+import asyncio
+import json
 from pathlib import Path
 
 import pytest
@@ -252,3 +254,95 @@ def test_tui_legacy_session_alias_loads_specific_session(tmp_path: Path) -> None
 
     assert session.session_id == existing.session_id
     assert session.mode == CLI_AGENT_MODE
+
+
+def _sub_agent_test_event():
+    from kolega_code.agent.models.public import AgentEvent
+
+    return AgentEvent(
+        event_type="chat_message",
+        sender="general-agent",
+        content={"status": "GENERATING", "message": "Starting general-agent task"},
+        sub_agent_info={
+            "agent_id": "agent-1",
+            "agent_name": "general-agent",
+            "task": "do sub-task",
+            "parent_tool_call_id": "exec-1",
+            "conversation_id": None,
+            "depth": 1,
+        },
+    )
+
+
+class _SubAgentEventCoderAgent:
+    """Fake CoderAgent that broadcasts a sub-agent event mid-stream."""
+
+    instances = []
+
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+        self.history = []
+        self.__class__.instances.append(self)
+
+    def append_user_message(self, content):
+        self.history.append(content)
+
+    def restore_message_history(self, history):
+        return None
+
+    def dump_message_history(self):
+        return []
+
+    async def process_message_stream(self, message):
+        yield {"type": "response", "content": "first ", "complete": False, "uuid": "response-1"}
+        manager = self.kwargs["connection_manager"]
+        await manager.broadcast_event(_sub_agent_test_event(), "ws", "thread")
+        # Give the event pump a chance to run before the final chunk
+        for _ in range(5):
+            await asyncio.sleep(0)
+        yield {"type": "response", "content": "second", "complete": True, "uuid": "response-1"}
+
+    async def cleanup(self):
+        return None
+
+
+def test_ask_json_interleaves_sub_agent_events(
+    tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
+) -> None:
+    from kolega_code.cli import main as main_module
+
+    _SubAgentEventCoderAgent.instances = []
+    project = tmp_path / "project"
+    project.mkdir()
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setattr(main_module, "CoderAgent", _SubAgentEventCoderAgent)
+
+    exit_code = main_module.main(["ask", "do the task", "--project", str(project), "--json"])
+
+    assert exit_code == 0
+    lines = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.strip()]
+    kinds = [line["kind"] for line in lines]
+    event_index = kinds.index("event")
+    final_chunk_index = max(i for i, line in enumerate(lines) if line["kind"] == "chunk")
+    assert event_index < final_chunk_index, "sub-agent event should interleave before the final chunk"
+    event_line = lines[event_index]
+    assert event_line["data"]["sub_agent_info"]["agent_name"] == "general-agent"
+
+
+def test_ask_plain_writes_sub_agent_lifecycle_to_stderr(
+    tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
+) -> None:
+    from kolega_code.cli import main as main_module
+
+    _SubAgentEventCoderAgent.instances = []
+    project = tmp_path / "project"
+    project.mkdir()
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setattr(main_module, "CoderAgent", _SubAgentEventCoderAgent)
+
+    exit_code = main_module.main(["ask", "do the task", "--project", str(project)])
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    assert captured.out.strip() == "first second"
+    assert "[general-agent] generating: Starting general-agent task" in captured.err

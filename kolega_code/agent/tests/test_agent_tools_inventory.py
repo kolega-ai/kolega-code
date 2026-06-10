@@ -9,6 +9,7 @@ from kolega_code.agent.browseragent import BrowserAgent
 from kolega_code.agent.coder import CoderAgent
 from kolega_code.agent.config import AgentConfig
 from kolega_code.agent.connection_manager import AgentConnectionManager
+from kolega_code.agent.generalagent import GeneralAgent
 from kolega_code.agent.investigationagent import InvestigationAgent
 from kolega_code.agent.planningagent import PlanningAgent
 from kolega_code.agent.prompt_provider import AgentMode
@@ -130,6 +131,80 @@ def test_non_cli_coder_agent_keeps_manifest_build_tools(project_path, mock_conne
 
     assert "build_backend" in tool_names
     assert "build_frontend" in tool_names
+
+
+def test_coder_agent_exposes_dispatch_general_agent(project_path, mock_connection_manager, agent_config):
+    """CoderAgent can dispatch general sub-agents but still not coding agents."""
+    agent = CoderAgent(
+        project_path=project_path,
+        workspace_id="test_workspace",
+        thread_id=str(uuid.uuid4()),
+        connection_manager=mock_connection_manager,
+        config=agent_config,
+        agent_mode=AgentMode.CLI,
+    )
+
+    tool_names = {tool.name for tool in agent.tool_collection.get_tool_list()}
+
+    assert "dispatch_general_agent" in tool_names
+    assert "dispatch_investigation_agent" in tool_names
+    assert "dispatch_coding_agent" not in tool_names
+
+
+def test_sub_agent_coder_cannot_dispatch_general_agent(project_path, mock_connection_manager, agent_config):
+    """A dispatched CoderAgent must not fan out into further sub-agents."""
+    agent = CoderAgent(
+        project_path=project_path,
+        workspace_id="test_workspace",
+        thread_id=str(uuid.uuid4()),
+        connection_manager=mock_connection_manager,
+        config=agent_config,
+        agent_mode=AgentMode.CLI,
+        sub_agent=True,
+    )
+
+    tool_names = {tool.name for tool in agent.tool_collection.get_tool_list()}
+
+    assert "dispatch_general_agent" not in tool_names
+
+
+def test_general_agent_tool_inventory(project_path, mock_connection_manager, agent_config):
+    """GeneralAgent has the full toolset but cannot dispatch sub-agents."""
+    agent = GeneralAgent(
+        project_path=project_path,
+        workspace_id="test_workspace",
+        thread_id=str(uuid.uuid4()),
+        connection_manager=mock_connection_manager,
+        config=agent_config,
+    )
+
+    tool_names = {tool.name for tool in agent.tool_collection.get_tool_list()}
+
+    # Full read/write/terminal access
+    assert "read_entire_file" in tool_names
+    assert "search_codebase" in tool_names
+    assert "create_file" in tool_names
+    assert "replace_entire_file" in tool_names
+    assert "run_command_tracked" in tool_names
+    # Recursion guard: no dispatch tools at all
+    assert not any(name.startswith("dispatch_") for name in tool_names)
+
+
+def test_cli_general_agent_excludes_manifest_build_tools(project_path, mock_connection_manager, agent_config):
+    """GeneralAgent inherits the CLI-mode exclusion of platform build tools."""
+    agent = GeneralAgent(
+        project_path=project_path,
+        workspace_id="test_workspace",
+        thread_id=str(uuid.uuid4()),
+        connection_manager=mock_connection_manager,
+        config=agent_config,
+        agent_mode=AgentMode.CLI,
+    )
+
+    tool_names = {tool.name for tool in agent.tool_collection.get_tool_list()}
+
+    assert "build_backend" not in tool_names
+    assert "build_frontend" not in tool_names
 
 
 def test_planning_agent_exposes_read_only_and_planning_tools(project_path, mock_connection_manager, agent_config):

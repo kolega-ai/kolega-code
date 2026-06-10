@@ -1,31 +1,29 @@
-import logging
 import uuid
 from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from .baseagent import BaseAgent
-from .common import LogMixin
 from .config import AgentConfig
 from .connection_manager import AgentConnectionManager
-from .llm.models import Message, MessageHistory, TextBlock, ToolResult, ImageBlock
-from .prompt_provider import AgentType, AgentMode, PromptExtension
+from .llm.models import Message, MessageHistory, TextBlock, ToolResult
+from .prompt_provider import AgentMode, AgentType, PromptExtension
 from .tools import ToolCollection, ToolCollectionConfig
-from .utils.commands import CommandProcessor
 
 
-logger = logging.getLogger(__name__)
-
-
-@CommandProcessor.process_commands
-class CoderAgent(BaseAgent, LogMixin):
+class GeneralAgent(BaseAgent):
     """
-    An AI coding agent that operates within a workspace to assist with programming tasks.
+    A general-purpose sub-agent with the full workspace toolset.
 
-    The agent has access to the project filesystem and can perform coding operations
-    like reading, analyzing, and modifying code files.
+    Dispatched by a parent agent to complete one self-contained task autonomously
+    (multiple GeneralAgents may run concurrently on independent tasks). It cannot
+    spawn further sub-agents, and its final message is returned to the parent as
+    the task report.
+
+    NOTE: process_message_stream duplicates InvestigationAgent's loop; hoisting the
+    shared loop into BaseAgent is a known follow-up refactor.
     """
 
-    agent_name = "coder"
+    agent_name = "general-agent"
 
     def __init__(
         self,
@@ -34,7 +32,7 @@ class CoderAgent(BaseAgent, LogMixin):
         thread_id: str,
         connection_manager: AgentConnectionManager,
         config: AgentConfig,
-        sub_agent: bool = False,
+        sub_agent: bool = True,
         filesystem=None,
         terminal_manager=None,
         browser_manager=None,
@@ -43,7 +41,7 @@ class CoderAgent(BaseAgent, LogMixin):
         user_email: Optional[str] = None,
         project_template_slug: Optional[str] = None,
         protected_files: Optional[List[str]] = None,
-        agent_mode: Optional[AgentMode] = None,
+        agent_mode: Optional["AgentMode"] = None,
         workspace_env_var_descriptions: Optional[Dict[str, str]] = None,
         workspace_memories: Optional[List[str]] = None,
         prompt_extensions: Optional[List[PromptExtension]] = None,
@@ -52,24 +50,24 @@ class CoderAgent(BaseAgent, LogMixin):
         sub_agent_recorder: Optional[Any] = None,
     ) -> None:
         """
-        Initialize a new CoderAgent instance.
+        Initialize a new GeneralAgent instance.
 
         Args:
             project_path: File system path to the project root directory
             workspace_id: Identifier for the workspace
             thread_id: Identifier for the thread
             connection_manager: Manager for handling agent connections
-            config: Agent configuration settings
-            sub_agent: Whether this is a sub-agent (default: False)
-            filesystem: File system implementation (optional)
-            terminal_manager: Terminal manager implementation (optional)
-            browser_manager: Browser manager implementation (optional)
+            config: Agent configuration
+            sub_agent: Whether this agent is a sub-agent of another agent
+            filesystem: Optional filesystem implementation
+            terminal_manager: Optional terminal manager implementation
+            browser_manager: Optional browser manager implementation
             langfuse_client: Optional Langfuse client for LLM observability
             user_id: Optional ID of user who created this job
             user_email: Optional email of user who created this job
             project_template_slug: Optional slug of the project template being used
             protected_files: Optional list of file basenames protected from edits in vibe mode
-            agent_mode: Optional agent mode (CLI, VIBE, CODE, or FIX)
+            agent_mode: Optional agent mode inherited from the dispatching agent
             workspace_env_var_descriptions: Optional mapping of workspace environment variable descriptions
             workspace_memories: Optional list of workspace memories to inject into prompts
             prompt_extensions: Host-provided prompt sections for app-specific context
@@ -77,14 +75,13 @@ class CoderAgent(BaseAgent, LogMixin):
             usage_recorder: Optional callback for recording normalized LLM usage
             sub_agent_recorder: Optional callback for persisting sub-agent conversation state
         """
-        # Call parent constructor
         super().__init__(
             project_path,
             workspace_id,
             thread_id,
             connection_manager,
             config,
-            sub_agent,
+            sub_agent=sub_agent,
             filesystem=filesystem,
             terminal_manager=terminal_manager,
             browser_manager=browser_manager,
@@ -102,7 +99,8 @@ class CoderAgent(BaseAgent, LogMixin):
             sub_agent_recorder=sub_agent_recorder,
         )
 
-        # Configure tool collection with custom coder agent tools
+        # Full coder-style toolset, minus sub-agent dispatch (a dispatched agent
+        # may not fan out further) and build tools in CLI mode.
         tool_exclusions = [
             "read_memory",
             "write_memory",
@@ -114,20 +112,14 @@ class CoderAgent(BaseAgent, LogMixin):
             "log_error",
             "log_info",
             "run_command",  # Disabled: unreliable completion detection, use run_command_tracked instead
-            # Exclude task-specific dispatch tools since coder shouldn't call itself or other agents
-            "dispatch_coding_agent",
+            # Recursion guard: a general sub-agent may not spawn further sub-agents
+            *ToolCollection.agent_dispatch_tools,
         ]
         mode_value = self.agent_mode.value if isinstance(self.agent_mode, AgentMode) else self.agent_mode
         if mode_value == AgentMode.CLI.value:
             tool_exclusions.extend(["build_backend", "build_frontend"])
-        if sub_agent:
-            # A dispatched coder must not fan out into further sub-agents
-            tool_exclusions.append("dispatch_general_agent")
 
-        tool_config = ToolCollectionConfig(
-            custom_tool_groups=["coder_agent_tools"],
-            tool_exclusions=tool_exclusions,
-        )
+        tool_config = ToolCollectionConfig(tool_exclusions=tool_exclusions)
 
         self.tool_collection = ToolCollection(
             self.project_path,
@@ -148,9 +140,8 @@ class CoderAgent(BaseAgent, LogMixin):
 
     def _initialize_system_prompt(self):
         """Initialize system prompt using PromptProvider."""
-        # Generate prompt using the shared prompt provider
         prompt_text = self.prompt_provider.get_system_prompt(
-            agent_type=AgentType.CODER,
+            agent_type=AgentType.GENERAL,
             mode=self.agent_mode,
             template_slug=self.project_template_slug,
             prompt_extensions=self.prompt_extensions,
@@ -158,34 +149,17 @@ class CoderAgent(BaseAgent, LogMixin):
         )
         self.system_prompt = Message(role="system", content=[TextBlock(text=prompt_text)])
 
-    def _prune_files_from_history(self, inputs, output):
+    async def recap_agent_outcome(self) -> str:
         """
-        Prune file contents from history to avoid redundancy.
+        Return the agent's final report.
 
-        When a file is modified multiple times, we only need to keep the most recent version
-        in the history to avoid bloating the context.
+        The last message in the conversation history is the agent's self-contained
+        task report, which is what the dispatching agent receives.
 
-        Args:
-            inputs: The inputs to the tool call
-            output: The output from the tool call
+        Returns:
+            str: Markdown formatted final task report
         """
-        if "relative_path" not in inputs:
-            return
-
-        file_path = inputs["relative_path"]
-
-        # Find any previous tool results for the same file and mark them as replaced
-        for message in self.history:
-            if (
-                message["role"] == "user"
-                and isinstance(message["content"], list)
-                and message["content"][0]["type"] == "tool_result"
-                and isinstance(message["content"][0]["content"], str)
-                and file_path in message["content"][0]["content"]
-            ):
-
-                # Replace the content with a placeholder to save context space
-                message["content"][0]["content"] = "Content replaced by later tool call"
+        return self.history[-1].get_text_content()
 
     async def process_message_stream(
         self, message: str, attachments: List[Dict[str, Any]] = None
@@ -200,37 +174,7 @@ class CoderAgent(BaseAgent, LogMixin):
         Yields:
             Dict containing message content and metadata
         """
-        unsupported_attachment_message = self._unsupported_attachment_message(attachments)
-        if unsupported_attachment_message:
-            yield {
-                "type": "response",
-                "content": unsupported_attachment_message,
-                "complete": True,
-                "uuid": str(uuid.uuid4()),
-            }
-            return
-
-        content_blocks = [TextBlock(text=message)]
-
-        # Process any image attachments
-        if attachments:
-            for attachment in attachments:
-                if attachment.get("type") == "image":
-                    image_block = ImageBlock(
-                        image_type="base64",
-                        media_type=attachment.get("media_type", "image/png"),
-                        data=attachment["data"],
-                    )
-                    content_blocks.append(image_block)
-
-                    # Log that we received an image
-                    await self.log_info(
-                        f"Received image attachment: {attachment.get('filename', 'unnamed')} ({attachment.get('media_type', 'unknown')})",
-                        sender=self.agent_name,
-                    )
-
-        # Add the message with all content blocks to history
-        self.append_user_message(content_blocks)
+        self.append_user_message(message)
 
         stop_reason = None
         while stop_reason not in ["end_turn", "max_tokens", "stop_sequence"]:
@@ -240,7 +184,6 @@ class CoderAgent(BaseAgent, LogMixin):
             try:
                 # Token counting logic
                 token_count = await self.count_current_context()
-                logger.debug("Input token count: %s", token_count)
 
                 if token_count.input_tokens > self.model_context_length * self.history_compression_threshold:
                     await self._compress_message_history()
@@ -250,12 +193,7 @@ class CoderAgent(BaseAgent, LogMixin):
 
                     if token_count.input_tokens > self.model_context_length * self.history_compression_threshold:
                         summary_message = self.history[0]
-                        protected = [
-                            message
-                            for message in self.history
-                            if message is not summary_message and self._is_protected_skill_content(message)
-                        ]
-                        self.history = MessageHistory(protected + [summary_message])
+                        self.history = MessageHistory([summary_message])
 
                     self._mark_last_message_for_cache()
 
@@ -286,12 +224,14 @@ class CoderAgent(BaseAgent, LogMixin):
 
                             # Send periodic updates as the response grows
                             if len(current_response) >= 50:
-                                yield {
+                                response_data = {
                                     "type": "response",
                                     "content": current_response,
                                     "complete": False,
                                     "uuid": response_uuid,
                                 }
+
+                                yield response_data
                                 current_response = ""
 
                         elif event.type == "thinking" and event.thinking:
@@ -307,31 +247,6 @@ class CoderAgent(BaseAgent, LogMixin):
                                 }
                                 current_thinking = ""
 
-                        # Handle tool use start events (Anthropic only)
-                        elif event.type == "tool_use_start" and event.tool_call_delta:
-                            # Yield the accumulated text first so the user doesn't have to wait for it.
-                            yield {
-                                "type": "response",
-                                "content": current_response,
-                                "complete": True,
-                                "uuid": response_uuid,
-                            }
-                            current_response = ""
-
-                            tool_id = event.tool_call_delta.get("id")
-                            tool_name = event.tool_call_delta.get("name")
-                            tool_execution_id = event.tool_call_delta.get("execution_id") or tool_id
-
-                            # We need to start the tool call here and skip it in BaseAgent.execute_single_tool
-                            if tool_name in self.long_content_tool_calls:
-                                await self.send_chat_message(
-                                    message_type="tool_call",
-                                    content=f"Calling {tool_name}",
-                                    is_streaming=False,
-                                    tool_description=tool_name,
-                                    tool_call_id=tool_execution_id,
-                                )
-
                 message = await stream.get_final_message()
                 stop_reason = message.stop_reason
 
@@ -341,7 +256,14 @@ class CoderAgent(BaseAgent, LogMixin):
                     yield {"type": "thinking", "content": current_thinking, "complete": True, "uuid": thinking_uuid}
 
                 # Send the final message to mark it complete.
-                yield {"type": "response", "content": current_response, "complete": True, "uuid": response_uuid}
+                final_response = {
+                    "type": "response",
+                    "content": current_response,
+                    "complete": True,
+                    "uuid": response_uuid,
+                }
+
+                yield final_response
 
                 if message.tool_calls:
                     # Process the tool calls and get the results
@@ -374,15 +296,3 @@ class CoderAgent(BaseAgent, LogMixin):
 
         # Log completion message
         await self.log_info("Processing complete", sender=self.agent_name)
-
-    async def recap_agent_outcome(self) -> str:
-        """
-        Convert the conversation history into a markdown representation.
-
-        This method retrieves the text content from the last message in the agent's
-        conversation history, which represents a summary or outcome of the coding work.
-
-        Returns:
-            str: Markdown formatted conversation history containing the final coding outcome
-        """
-        return self.history[-1].get_text_content()

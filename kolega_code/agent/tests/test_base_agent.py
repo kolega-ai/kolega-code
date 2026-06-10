@@ -1,5 +1,6 @@
 import os
 import uuid
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -66,6 +67,9 @@ class TestBaseAgent:
     @pytest.mark.asyncio
     async def test_execute_single_tool_uses_execution_id_for_app_events_and_provider_id_for_result(self, base_agent):
         class TestTools:
+            def get_tool_list(self):
+                return [SimpleNamespace(name="dispatch_investigation_agent")]
+
             async def dispatch_investigation_agent(self, **_inputs):
                 return "investigation complete"
 
