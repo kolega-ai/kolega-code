@@ -345,4 +345,8 @@ def test_ask_plain_writes_sub_agent_lifecycle_to_stderr(
     assert exit_code == 0
     captured = capsys.readouterr()
     assert captured.out.strip() == "first second"
-    assert "[general-agent] generating: Starting general-agent task" in captured.err
+    from kolega_code.cli import theme
+
+    sep = theme.g(theme.Glyph.BULLET_SEP)
+    glyph = theme.g(theme.Glyph.SUB_AGENT)
+    assert f"{glyph} general-agent {sep} generating {sep} Starting general-agent task" in captured.err

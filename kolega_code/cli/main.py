@@ -45,11 +45,34 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
             return _run_doctor(args)
         return _run_tui(args)
     except (CliConfigError, SessionStoreError, SettingsStoreError, ValueError) as exc:
-        print(f"kolega-code: {exc}", file=sys.stderr)
+        _print_styled(f"kolega-code: {exc}", style="error", stderr=True)
         return 2
     except KeyboardInterrupt:
-        print("\nInterrupted.", file=sys.stderr)
+        _print_styled("\nInterrupted.", style="warning", stderr=True)
         return 130
+
+
+def _make_console(stderr: bool = False):
+    """Build a themed rich Console, or None when rich is unavailable.
+
+    rich is only a transitive dependency via textual, so plain installs
+    without the [cli] extra fall back to unstyled print output.
+    """
+    try:
+        from rich.console import Console
+
+        from .theme import build_rich_theme
+    except ImportError:
+        return None
+    return Console(theme=build_rich_theme(), stderr=stderr)
+
+
+def _print_styled(text: str, style: Optional[str] = None, stderr: bool = False) -> None:
+    console = _make_console(stderr=stderr)
+    if console is None:
+        print(text, file=sys.stderr if stderr else sys.stdout)
+        return
+    console.print(text, style=style, highlight=False, markup=False, soft_wrap=True)
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -423,15 +446,21 @@ def _print_ask_event(event, json_mode: bool) -> None:
     info = event.sub_agent_info
     if not info:
         return
-    label = f"[{info.get('agent_name', event.sender)}]"
+    from . import theme
+    from .theme import Glyph
+
+    name = info.get("agent_name", event.sender)
+    sep = theme.g(Glyph.BULLET_SEP)
     content = event.content
     status = content.get("status")
     message_type = content.get("message_type")
     if status:
-        print(f"{label} {str(status).lower()}: {content.get('message', '')}", file=sys.stderr)
+        line = f"{theme.g(Glyph.SUB_AGENT)} {name} {sep} {str(status).lower()} {sep} {content.get('message', '')}"
+        _print_styled(line.rstrip(f" {sep}"), style="muted", stderr=True)
     elif message_type in {"tool_call", "tool_error"}:
         tool = content.get("tool_description") or content.get("tool_name") or "tool"
-        print(f"{label} {message_type}: {tool}", file=sys.stderr)
+        state = "failed" if message_type == "tool_error" else "running"
+        _print_styled(f"{theme.g(Glyph.TOOL)} {tool} {sep} {state}", style="muted", stderr=True)
     # Streamed response chunks are suppressed in plain mode.
 
 
@@ -479,31 +508,48 @@ def _run_sessions(args: argparse.Namespace) -> int:
 
 
 def _run_doctor(args: argparse.Namespace) -> int:
+    from . import theme
+    from .theme import Glyph
+
+    console = _make_console()
+
+    def line(label: str, value: object, value_style: Optional[str] = None) -> None:
+        if console is None:
+            print(f"{label}: {value}")
+            return
+        from rich.text import Text
+
+        text = Text()
+        text.append(f"{label}: ", style="muted")
+        text.append(str(value), style=value_style or "")
+        console.print(text, highlight=False, soft_wrap=True)
+
     project_path = _validate_project(args.project)
     store = _store_from_args(args)
     settings_store = _settings_store_from_args(args)
     settings = settings_store.load()
-    print(f"Project: {project_path}")
-    print(f"State dir: {store.root}")
-    print(f"Textual installed: {importlib.util.find_spec('textual') is not None}")
+    line("Project", project_path)
+    line("State dir", store.root)
+    textual_installed = importlib.util.find_spec("textual") is not None
+    line("Textual installed", textual_installed, "success" if textual_installed else "warning")
     if settings.active_provider and settings.active_model:
-        print(f"Stored active model: {settings.active_provider}/{settings.active_model}")
-        print(f"Stored API key: {key_status(settings.active_provider, project_path, settings)}")
+        line("Stored active model", f"{settings.active_provider}/{settings.active_model}")
+        line("Stored API key", key_status(settings.active_provider, project_path, settings))
     else:
-        print("Stored active model: not configured")
+        line("Stored active model", "not configured", "warning")
 
     try:
         config = build_agent_config(project_path, _overrides_from_args(args), settings=settings)
     except CliConfigError as exc:
-        print(f"Configuration: invalid ({exc})")
+        _print_styled(f"{theme.g(Glyph.CROSS)} Configuration: invalid ({exc})", style="error")
         return 2
 
     summary = config_summary(config)
-    print("Configuration: valid")
-    print(f"Long model: {summary['long_provider']}/{summary['long_model']}")
-    print(f"Fast model: {summary['fast_provider']}/{summary['fast_model']}")
-    print(f"Edit model: {summary['edit_provider']}/{summary['edit_model']}")
-    print(f"Thinking model: {summary['thinking_provider']}/{summary['thinking_model']}")
+    _print_styled(f"{theme.g(Glyph.CHECK)} Configuration: valid", style="success")
+    line("Long model", f"{summary['long_provider']}/{summary['long_model']}")
+    line("Fast model", f"{summary['fast_provider']}/{summary['fast_model']}")
+    line("Edit model", f"{summary['edit_provider']}/{summary['edit_model']}")
+    line("Thinking model", f"{summary['thinking_provider']}/{summary['thinking_model']}")
     return 0
 
 
