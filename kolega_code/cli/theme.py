@@ -112,6 +112,22 @@ def spinner_frames() -> str:
     return SPINNER_FRAMES if supports_unicode() else SPINNER_FRAMES_ASCII
 
 
+LOG_LEVEL_COLORS = {
+    "debug": Color.MUTED,
+    "info": Color.MUTED,
+    "ok": Color.SUCCESS,
+    "warn": Color.WARNING,
+    "warning": Color.WARNING,
+    "error": Color.ERROR,
+    "critical": Color.ERROR,
+}
+
+
+def log_level_color(level: str) -> str:
+    """Semantic color for a log level, defaulting to muted."""
+    return LOG_LEVEL_COLORS.get(level.lower(), Color.MUTED)
+
+
 def styled(text: str, style: str) -> str:
     """Wrap text in Rich markup for the given style."""
     return f"[{style}]{text}[/{style}]"
