@@ -591,19 +591,26 @@ class KolegaCodeApp(App):
     def _terminal(self) -> RichLog:
         return self.query_one("#terminal", RichLog)
 
-    @property
-    def _status(self) -> RichLog:
-        return self._logs
+    def _format_log_line(self, text: str, level: str = "info") -> Text:
+        """One log line: muted HH:MM:SS, a level-colored glyph, then the text."""
+        body_style = Color.MUTED if level == "debug" else ""
+        return Text.assemble(
+            (time.strftime("%H:%M:%S") + " ", Color.MUTED),
+            (theme.g(Glyph.STATUS) + " ", theme.log_level_color(level)),
+            (text, body_style),
+        )
+
+    def _write_log(self, text: str, level: str = "info") -> None:
+        """Single write path into the Logs tab."""
+        try:
+            logs = self._logs
+        except Exception:
+            return
+        logs.write(self._format_log_line(text, level))
 
     def _log_status(self, text: str, level: str = "info") -> None:
         """Write a status line to the Logs tab with the semantic palette."""
-        style = {
-            "info": Color.MUTED,
-            "ok": Color.SUCCESS,
-            "warn": Color.WARNING,
-            "error": Color.ERROR,
-        }.get(level, Color.MUTED)
-        self._status.write(f"[{style}]{escape(text)}[/{style}]")
+        self._write_log(text, level)
 
     def _notify_user(self, message: str, *, severity: str = "information", title: Optional[str] = None) -> None:
         """Show a transient toast and keep a copy in the Logs tab."""
@@ -699,7 +706,7 @@ class KolegaCodeApp(App):
                     self._update_progress(messages.THINKING, complete=False, state=TurnState.THINKING)
                     self._apply_stream_chunk(chunk, kind="thinking")
                     if content:
-                        self._status.write(f"[dim]{content}[/dim]")
+                        self._write_log(content, "debug")
             await self._drain_pending_events()
             self._finalize_sub_agent_activities()
             self._save_session_history()
@@ -770,8 +777,8 @@ class KolegaCodeApp(App):
     def _render_event(self, event: AgentEvent) -> None:
         text = self._display_text_from_event(event)
         if event.event_type == "log_message":
-            level = event.content.get("level", "info")
-            self._logs.write(f"[{level}] {text}")
+            level = str(event.content.get("level", "info"))
+            self._write_log(text, level)
         elif event.event_type == "terminal_output":
             self._terminal.write(event.content.get("output", ""))
         elif event.event_type == "terminal_command":
@@ -798,13 +805,13 @@ class KolegaCodeApp(App):
             self._apply_context_status_update(event.content)
         elif event.event_type in {"llm_status_update", "status_update"}:
             if text:
-                self._status.write(escape(text))
+                self._write_log(text, "info")
                 self._update_activity_progress(text)
         else:
             if text:
-                self._status.write(f"{escape(event.event_type)}: {escape(text)}")
+                self._write_log(f"{event.event_type}: {text}", "info")
             else:
-                self._logs.write(f"[dim]Ignored non-display event: {escape(event.event_type)}[/dim]")
+                self._write_log(messages.LOG_IGNORED_EVENT.format(event_type=event.event_type), "debug")
 
     def copy_to_clipboard(self, text: str) -> None:
         super().copy_to_clipboard(text)

@@ -3479,3 +3479,29 @@ async def test_tool_entries_render_as_collapsibles_with_full_output(
         entry = widget.entry
         assert len(entry.content) == TOOL_RESULT_PREVIEW_CHARS + 1  # preview stays truncated
         assert entry.full_content == long_output  # expand-on-demand shows everything
+
+
+@pytest.mark.asyncio
+async def test_log_lines_carry_timestamp_and_level_glyph(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    import re
+
+    from kolega_code.agent import AgentEvent
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        line = app._format_log_line("boom", "error")
+        assert re.fullmatch(r"\d{2}:\d{2}:\d{2} \S+ boom", line.plain)
+
+        written: list[object] = []
+        monkeypatch.setattr(app._logs, "write", written.append)
+        app._render_event(
+            AgentEvent(event_type="log_message", sender="coder", content={"level": "error", "message": "it [broke]"})
+        )
+        assert len(written) == 1
+        assert "[error]" not in written[0].plain  # no raw level prefix
+        assert "it [broke]" in written[0].plain  # brackets survive without markup errors
