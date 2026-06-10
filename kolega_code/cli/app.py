@@ -404,6 +404,10 @@ class KolegaCodeApp(App):
         margin-top: 1;
     }
 
+    #planning_form Markdown.empty-state {
+        color: $text-muted;
+    }
+
     #composer {
         dock: bottom;
         height: 5;
@@ -1076,8 +1080,12 @@ class KolegaCodeApp(App):
         plan_content = self._latest_plan or PLAN_EMPTY_MESSAGE
         task_list_content = self.session.task_list_markdown or TASK_LIST_EMPTY_MESSAGE
         try:
-            self.query_one("#planning_plan_markdown", Markdown).update(plan_content)
-            self.query_one("#planning_task_list_markdown", Markdown).update(task_list_content)
+            plan_markdown = self.query_one("#planning_plan_markdown", Markdown)
+            task_list_markdown = self.query_one("#planning_task_list_markdown", Markdown)
+            plan_markdown.update(plan_content)
+            task_list_markdown.update(task_list_content)
+            plan_markdown.set_class(plan_content == PLAN_EMPTY_MESSAGE, "empty-state")
+            task_list_markdown.set_class(task_list_content == TASK_LIST_EMPTY_MESSAGE, "empty-state")
         except Exception:
             pass
 

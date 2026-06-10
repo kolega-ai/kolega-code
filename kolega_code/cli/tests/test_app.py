@@ -3586,3 +3586,25 @@ async def test_save_settings_toasts_on_success(tmp_path: Path, monkeypatch: pyte
         assert ("Settings saved.", "information") in notifications
         status_text = str(app.query_one("#settings_status").render())
         assert "Active model:" in status_text
+
+
+@pytest.mark.asyncio
+async def test_planning_sidebar_marks_empty_states(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("textual")
+
+    from textual.widgets import Markdown
+
+    from kolega_code.cli.app import PLAN_EMPTY_MESSAGE
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        plan_md = app.query_one("#planning_plan_markdown", Markdown)
+        assert plan_md.source == PLAN_EMPTY_MESSAGE
+        assert plan_md.has_class("empty-state")
+
+        app._latest_plan = "# Plan\n\n- do the thing"
+        app._refresh_planning_sidebar()
+
+        assert plan_md.source == "# Plan\n\n- do the thing"
+        assert not plan_md.has_class("empty-state")
