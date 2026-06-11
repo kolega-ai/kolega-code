@@ -6,6 +6,7 @@ import tiktoken
 from anthropic import Anthropic, AsyncAnthropic
 
 from ..models import Message, MessageChunk, MessageHistory, ToolDefinition
+from ..specs import get_model_specs
 from ..tool_execution_ids import ToolExecutionIdRegistry
 from .base import BaseLLMProvider
 from .models import GenerationParams, ReasoningEffort, ThinkingConfig, TokenCount
@@ -91,6 +92,10 @@ class AnthropicStreamWrapper:
 
 
 class AnthropicProvider(BaseLLMProvider):
+    SYSTEM_OVERHEAD = 4
+    MESSAGE_OVERHEAD = 3
+    TOOL_DEFINITION_OVERHEAD = 65
+
     def __init__(
         self,
         api_key: str,
@@ -105,11 +110,11 @@ class AnthropicProvider(BaseLLMProvider):
         self.async_client = AsyncAnthropic(api_key=api_key, base_url=base_url)
         self.sync_client = Anthropic(api_key=api_key, base_url=base_url)
         
-        # Moonshot's Anthropic-shaped API does not expose messages/count_tokens,
-        # so local counting is only a preflight context-size estimate for Kimi.
+        # OpenAI-compatible Anthropic-shaped APIs do not expose messages/count_tokens,
+        # so local counting is only a preflight context-size estimate for those models.
         # Billing/accounting must use provider response usage metadata instead.
         self.use_local_token_counting = (
-            provider_name == "moonshot"
+            provider_name in {"moonshot", "deepseek"}
             or os.getenv('ANTHROPIC_USE_LOCAL_TOKEN_COUNTING', 'false').lower() == 'true'
         )
 
@@ -125,7 +130,7 @@ class AnthropicProvider(BaseLLMProvider):
     def _prepare_generation_params(self, params: Optional[GenerationParams] = None) -> Dict[str, Any]:
         """Convert common parameters to provider-specific format"""
         generation_params = {
-            "model": "claude-opus-4-5-20251101",  # Default model
+            "model": "claude-opus-4-7",  # Default model
             "max_tokens": 1024,  # Default max tokens
         }
 
@@ -142,6 +147,22 @@ class AnthropicProvider(BaseLLMProvider):
 
         return generation_params
 
+    def _sanitize_generation_params(self, generation_params: Dict[str, Any]) -> Dict[str, Any]:
+        """Remove parameters unsupported by the selected Anthropic model."""
+        model = generation_params.get("model")
+        if self.provider_name != "anthropic" or not isinstance(model, str):
+            return generation_params
+
+        try:
+            model_specs = get_model_specs(self.provider_name, model)
+        except ValueError:
+            return generation_params
+
+        if model_specs.get("supports_temperature", True) is False:
+            generation_params.pop("temperature", None)
+
+        return generation_params
+
     async def count_tokens(
         self,
         messages: MessageHistory,
@@ -150,6 +171,7 @@ class AnthropicProvider(BaseLLMProvider):
         tools: List[ToolDefinition] = None,
         **kwargs,
     ) -> TokenCount:
+        tools = tools or []
         if self.use_local_token_counting:
             # Use local tiktoken-based counting (no API call). This is an
             # estimate for context management, not authoritative billing usage.
@@ -195,27 +217,54 @@ class AnthropicProvider(BaseLLMProvider):
         """
         encoding = tiktoken.get_encoding("p50k_base")
         num_tokens = 0
+        tools = tools or []
 
-        # Count system message tokens (minimal overhead)
         if system:
-            num_tokens += 3
-            num_tokens += self._count_value_tokens(encoding, system.to_anthropic())
+            num_tokens += self.SYSTEM_OVERHEAD
+            num_tokens += self._count_message_content_tokens(encoding, system.content)
 
-        # Count message history tokens (minimal overhead). Convert through the
-        # provider payload shape so tool_result content is counted too.
         for message in messages:
-            num_tokens += 3
-            num_tokens += self._count_value_tokens(encoding, message.to_anthropic())
+            num_tokens += self.MESSAGE_OVERHEAD
+            num_tokens += self._count_message_content_tokens(encoding, message.content)
 
-        # Count tool definition tokens
-        if tools:
-            # Tools add significant overhead in Anthropic's API
-            for tool in tools:
-                num_tokens += self._count_value_tokens(encoding, tool.to_anthropic())
-                # Add per-tool overhead (Anthropic adds structure markup)
-                num_tokens += 20
+        for tool in tools:
+            num_tokens += self._count_value_tokens(encoding, tool.to_anthropic())
+            num_tokens += self.TOOL_DEFINITION_OVERHEAD
 
         return TokenCount(input_tokens=num_tokens, output_tokens=None)
+
+    def _count_message_content_tokens(self, encoding, content: Any) -> int:
+        if isinstance(content, str):
+            return len(encoding.encode(content))
+
+        if isinstance(content, list):
+            return sum(self._count_content_block_tokens(encoding, block) for block in content)
+
+        return self._count_value_tokens(encoding, content)
+
+    def _count_content_block_tokens(self, encoding, block: Any) -> int:
+        if hasattr(block, "text"):
+            return len(encoding.encode(block.text))
+
+        if getattr(block, "type", None) == "image_url":
+            data = getattr(block, "data", None)
+            if isinstance(data, str):
+                return self._estimate_image_tokens(len(data))
+
+        if getattr(block, "type", None) == "tool_result":
+            content = getattr(block, "content", "")
+            return self._count_message_content_tokens(encoding, content)
+
+        if hasattr(block, "thinking"):
+            return len(encoding.encode(block.thinking))
+
+        if hasattr(block, "data"):
+            return len(encoding.encode(str(block.data)))
+
+        if hasattr(block, "to_anthropic"):
+            return self._count_value_tokens(encoding, block.to_anthropic())
+
+        return self._count_value_tokens(encoding, block)
 
     def _count_value_tokens(self, encoding, value: Any) -> int:
         if value is None:
@@ -295,6 +344,7 @@ class AnthropicProvider(BaseLLMProvider):
         """
         generation_params = self._prepare_generation_params(params)
         generation_params.update(kwargs)
+        generation_params = self._sanitize_generation_params(generation_params)
 
         if generation_params["model"].startswith("claude-3-7"):
             generation_params["extra_headers"] = {"anthropic-beta": "output-128k-2025-02-19"}
@@ -320,6 +370,7 @@ class AnthropicProvider(BaseLLMProvider):
     ) -> Message:
         generation_params = self._prepare_generation_params(params)
         generation_params.update(kwargs)
+        generation_params = self._sanitize_generation_params(generation_params)
 
         if generation_params["model"].startswith("claude-3-7"):
             generation_params["extra_headers"] = {"anthropic-beta": "output-128k-2025-02-19"}

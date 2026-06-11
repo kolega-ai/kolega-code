@@ -71,6 +71,7 @@ def tool_collection(
     collection.search_codebase_tool.search_codebase = AsyncMock()
     collection.glob_tool.find_files_by_pattern = AsyncMock()
     collection.web_fetch_tool.web_fetch = AsyncMock()
+    collection.terminal_tool.send_terminal_input = AsyncMock()
 
     return collection
 
@@ -226,6 +227,17 @@ class TestToolCollection:
         assert result == expected_response
         tool_collection.terminal_tool.execute_terminal_command.assert_called_once_with(command)
 
+    async def test_send_terminal_input(self, tool_collection: AsyncMock) -> None:
+        expected_response = "Sent input"
+        tool_collection.terminal_tool.send_terminal_input.return_value = expected_response
+
+        result = await tool_collection.send_terminal_input("terminal_1", "Ada", submit=True, command_id="cmd_1")
+
+        assert result == expected_response
+        tool_collection.terminal_tool.send_terminal_input.assert_called_once_with(
+            "terminal_1", "Ada", submit=True, command_id="cmd_1"
+        )
+
     async def test_read_entire_file(self, tool_collection: AsyncMock) -> None:
         relative_path = "test.txt"
         expected_response = "File content"
@@ -365,6 +377,7 @@ class TestToolCollection:
         # Check that excluded tools are not in the list
         excluded_tools = tool_collection.tool_exclusions
         tool_names = [tool.name for tool in tool_list]
+        assert "send_terminal_input" in tool_names
         for excluded_tool in excluded_tools:
             assert excluded_tool not in tool_names
 

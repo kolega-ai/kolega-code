@@ -1,14 +1,31 @@
+from dataclasses import dataclass
 from functools import wraps
 from typing import Any, AsyncGenerator, Dict, List, Optional, Type
 
 from ..llm.models import MessageHistory
-from ..models.public import AgentStatus
+
+
+@dataclass(frozen=True)
+class AgentCommandSpec:
+    """Declarative description of a built-in agent command."""
+
+    name: str  # including the leading "/", e.g. "/help"
+    description: str
+    handler_attr: str  # name of the CommandProcessor method that handles it
 
 
 class CommandProcessor:
     """
     Processes special commands in agent messages and handles their execution.
     """
+
+    SPECS: tuple[AgentCommandSpec, ...] = (
+        AgentCommandSpec("/help", "Show this help message", "_handle_help"),
+        AgentCommandSpec("/compress", "Compress message history", "_handle_compress"),
+        AgentCommandSpec("/clear", "Clear message history", "_handle_clear"),
+        AgentCommandSpec("/reset", "Clear message history", "_handle_clear"),
+        AgentCommandSpec("/context", "Show current context token count", "_handle_context"),
+    )
 
     def __init__(self, agent: Any) -> None:
         """
@@ -18,22 +35,12 @@ class CommandProcessor:
             agent: The agent instance this processor belongs to
         """
         self.agent = agent
-        self.commands = {
-            "/help": self._handle_help,
-            "/compress": self._handle_compress,
-            "/clear": self._handle_clear,
-            "/context": self._handle_context,
-        }
+        self.commands = {spec.name: getattr(self, spec.handler_attr) for spec in self.SPECS}
 
     async def _handle_help(self) -> str:
         """Handle the /help command."""
-        help_text = """# Available Commands
-
-- `/help` - Show this help message
-- `/compress` - Compress message history
-- `/clear` - Clear message history
-- `/context` - Show current context token count"""
-        return help_text
+        lines = [f"- `{spec.name}` - {spec.description}" for spec in self.SPECS]
+        return "# Available Commands\n\n" + "\n".join(lines)
 
     async def _handle_compress(self) -> str:
         """Handle the /compress command."""

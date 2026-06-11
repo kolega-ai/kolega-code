@@ -95,12 +95,13 @@ class AgentTool(BaseTool):
     async def _interrupt_conversation(self, conversation_id: str, update_data: dict) -> None:
         await self._call_recorder("interrupt_conversation", conversation_id, update_data)
 
-    async def _send_status_event(self, status: str, message: str) -> None:
+    async def _send_status_event(self, status: str, message: str, sub_agent_info: Optional[dict] = None) -> None:
         """Helper method to send status events."""
         event = AgentEvent(
             event_type="chat_message",
             content={"status": status, "message": message},
             sender=self.caller.agent_name if self.caller else "agent-tool",
+            sub_agent_info=sub_agent_info,
         )
         await self.connection_manager.broadcast_event(event, self.workspace_id, self.thread_id)
 
@@ -145,8 +146,26 @@ class AgentTool(BaseTool):
                 task=task,
             )
 
+        # Calculate depth based on whether the caller is also a sub-agent
+        parent_depth = 0
+        if hasattr(self.caller, "sub_agent") and self.caller.sub_agent:
+            # If the caller is a sub-agent, get its depth
+            # For now, we'll increment from 1, but ideally we'd track this
+            parent_depth = 1
+
+        # Attached to every event from this dispatch so the UI can group and
+        # disambiguate concurrently running sub-agents.
+        sub_agent_info = {
+            "agent_id": agent_id,
+            "agent_name": agent_name,
+            "task": task[:120],
+            "conversation_id": conversation_id,
+            "parent_tool_call_id": tool_call_id,
+            "depth": parent_depth + 1,
+        }
+
         # Send start status
-        await self._send_status_event("GENERATING", f"Starting {agent_name} task")
+        await self._send_status_event("GENERATING", f"Starting {agent_name} task", sub_agent_info=sub_agent_info)
         conversation_finished = False
 
         try:
@@ -180,10 +199,10 @@ class AgentTool(BaseTool):
             # Store agent reference
             self.agents[agent_id] = agent
 
-            # Set parent context for sub_agent_info
-            if tool_call_id:
-                agent.parent_tool_call_id = tool_call_id
-                agent.conversation_id = conversation_id
+            # Set parent context so the agent's own events carry sub_agent_info
+            agent.parent_tool_call_id = tool_call_id
+            agent.conversation_id = conversation_id
+            agent.sub_agent_context = sub_agent_info
 
             # Track messages and their sequence
             last_saved_index = -1  # Track what we've already saved
@@ -197,24 +216,6 @@ class AgentTool(BaseTool):
                 complete = msg.get("complete", False)
                 msg_uuid = msg.get("uuid", str(uuid.uuid4()))
                 timestamp = datetime.now().isoformat()
-
-                # Create event based on message type
-                # Build proper sub_agent_info structure
-                sub_agent_info = None
-                if conversation_id and tool_call_id:
-                    # Calculate depth based on whether the caller is also a sub-agent
-                    parent_depth = 0
-                    if hasattr(self.caller, "sub_agent") and self.caller.sub_agent:
-                        # If the caller is a sub-agent, get its depth
-                        # For now, we'll increment from 1, but ideally we'd track this
-                        parent_depth = 1
-
-                    sub_agent_info = {
-                        "agent_name": agent_name,
-                        "conversation_id": conversation_id,
-                        "parent_tool_call_id": tool_call_id,
-                        "depth": parent_depth + 1,
-                    }
 
                 content_payload = {"text": content}
                 if message_type != "response":
@@ -309,7 +310,9 @@ class AgentTool(BaseTool):
                 conversation_finished = True
 
             # Send completion status
-            await self._send_status_event("STOPPED", f"Completed {agent_name} task")
+            await self._send_status_event(
+                "STOPPED", f"Completed {agent_name} task", sub_agent_info=sub_agent_info
+            )
 
             return result
 
@@ -330,7 +333,7 @@ class AgentTool(BaseTool):
 
             # Log and re-raise the error
             await self.log_error(f"Error in {agent_name}: {str(e)}", sender="AgentTool")
-            await self._send_status_event("STOPPED", f"Error in {agent_name}: {str(e)}")
+            await self._send_status_event("ERROR", f"Error in {agent_name}: {str(e)}", sub_agent_info=sub_agent_info)
             raise
 
         finally:
@@ -392,5 +395,20 @@ class AgentTool(BaseTool):
         """
         return await self._dispatch_agent(
             agent_class_import="kolega_code.agent.coder.CoderAgent",
+            task=task,
+        )
+
+    async def dispatch_general_agent(self, task: str) -> str:
+        """
+        Dispatch a general-purpose agent to autonomously complete a self-contained task.
+
+        Args:
+            task: A detailed, self-contained description of the task to perform
+
+        Returns:
+            The agent's final report on the completed task
+        """
+        return await self._dispatch_agent(
+            agent_class_import="kolega_code.agent.generalagent.GeneralAgent",
             task=task,
         )

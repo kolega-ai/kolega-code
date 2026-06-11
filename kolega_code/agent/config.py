@@ -17,6 +17,7 @@ class ModelProvider(str, Enum):
     LLAMA = "llama"
     DASHSCOPE = "dashscope"
     MOONSHOT = "moonshot"
+    DEEPSEEK = "deepseek"
 
 
 class RateLimitConfig(BaseModel):
@@ -87,6 +88,7 @@ class AgentConfig(BaseModel):
     xai_api_key: Optional[str] = Field(default=None, description="API key for X.ai")
     dashscope_api_key: Optional[str] = Field(default=None, description="API key for Dashscope (Alibaba Model Studio)")
     moonshot_api_key: Optional[str] = Field(default=None, description="API key for Moonshot.ai")
+    deepseek_api_key: Optional[str] = Field(default=None, description="API key for DeepSeek")
 
     # Langfuse configuration
     langfuse_enabled: bool = Field(default=False, description="Enable Langfuse tracing")
@@ -97,7 +99,7 @@ class AgentConfig(BaseModel):
 
     # Model configurations
     long_context_config: ModelConfig = Field(
-        default_factory=lambda: ModelConfig(provider=ModelProvider.ANTHROPIC, model="claude-3-7-sonnet-20250219"),
+        default_factory=lambda: ModelConfig(provider=ModelProvider.ANTHROPIC, model="claude-opus-4-7"),
         description="Configuration for long context operations",
     )
 
@@ -107,13 +109,13 @@ class AgentConfig(BaseModel):
     )
 
     edit_model_config: ModelConfig = Field(
-        default_factory=lambda: ModelConfig(provider=ModelProvider.OPENAI, model="gpt-4.1-mini"),
+        default_factory=lambda: ModelConfig(provider=ModelProvider.ANTHROPIC, model="claude-sonnet-4-6"),
         description="Configuration for applying edits",
     )
 
     thinking_config: ModelConfig = Field(
         default_factory=lambda: ModelConfig(
-            provider=ModelProvider.ANTHROPIC, model="claude-3-7-sonnet-20250219", thinking_tokens=1024
+            provider=ModelProvider.ANTHROPIC, model="claude-opus-4-7", thinking_tokens=1024
         ),
         description="Configuration for thinking operations",
     )
@@ -130,6 +132,7 @@ class AgentConfig(BaseModel):
             ModelProvider.XAI: self.xai_api_key,
             ModelProvider.DASHSCOPE: self.dashscope_api_key,
             ModelProvider.MOONSHOT: self.moonshot_api_key,
+            ModelProvider.DEEPSEEK: self.deepseek_api_key,
             ModelProvider.LLAMA: None,  # Local model, no API key needed
         }
         return api_key_map[provider]

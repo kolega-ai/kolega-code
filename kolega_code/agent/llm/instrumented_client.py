@@ -10,9 +10,8 @@ import logging
 from langfuse import Langfuse
 
 from .client import LLMClient
-from .models import Message, MessageHistory, ToolDefinition
-from .providers.models import GenerationParams, TokenCount
-from .providers.base import BaseLLMProvider
+from .models import Message, MessageHistory
+from .providers.models import GenerationParams
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +88,7 @@ class InstrumentedLLMClient(LLMClient):
 
         provider = usage_metadata.get("provider", self.provider_name)
 
-        if provider in ["anthropic", "moonshot"]:
+        if provider in ["anthropic", "moonshot", "deepseek"]:
             input_tokens = usage_metadata.get("input_tokens", 0)
             output_tokens = usage_metadata.get("output_tokens", 0)
             cache_read_tokens = usage_metadata.get("cache_read_input_tokens", 0)
@@ -246,7 +245,7 @@ class InstrumentedLLMClient(LLMClient):
             normalized_usage = None
             if usage_details:
                 provider = usage_details.get("provider", self.provider_name)
-                if provider in ["anthropic", "moonshot"]:
+                if provider in ["anthropic", "moonshot", "deepseek"]:
                     normalized_usage = {
                         "input": usage_details.get("input_tokens", 0),
                         "output": usage_details.get("output_tokens", 0),
@@ -495,7 +494,7 @@ class MinimalLangfuseStreamWrapper:
         usage_metadata = message.usage_metadata
         provider = usage_metadata.get("provider", "")
 
-        if provider in ["anthropic", "moonshot"]:
+        if provider in ["anthropic", "moonshot", "deepseek"]:
             return {
                 "input": usage_metadata.get("input_tokens", 0),
                 "output": usage_metadata.get("output_tokens", 0),

@@ -116,6 +116,7 @@ class ToolCollection(LogMixin):
         "dispatch_investigation_agent",
         "dispatch_browser_agent",
         "dispatch_coding_agent",
+        "dispatch_general_agent",
     ]
 
     # Legacy name for backward compatibility
@@ -125,6 +126,7 @@ class ToolCollection(LogMixin):
     coder_agent_tools = [
         "dispatch_investigation_agent",
         "dispatch_browser_agent",
+        "dispatch_general_agent",
     ]
 
     # Memory tools group
@@ -800,6 +802,47 @@ class ToolCollection(LogMixin):
         """
         return await self.agent_tool.dispatch_coding_agent(task)
 
+    async def dispatch_general_agent(self, task: str) -> str:
+        """
+        Dispatch an autonomous general-purpose agent to complete a self-contained task.
+
+        This tool launches a sub-agent with the full set of workspace tools (read, search,
+        edit files, run commands). It works autonomously on the task you give it and returns
+        a single final report. You will not see its intermediate steps, and you cannot send
+        it follow-up messages, so the task description must contain everything it needs.
+
+        PARALLEL EXECUTION: If you issue multiple dispatch_general_agent calls in a single
+        response, the agents run CONCURRENTLY. Use this to fan out work that can proceed
+        independently (e.g., "update module A's tests" and "update module B's tests").
+
+        When to use this tool:
+        - The work splits into independent subtasks that do not touch the same files
+        - A subtask is large or noisy (broad searches, mechanical multi-file edits) and you
+          only need the outcome, not every intermediate step
+        - You want several independent investigations or changes done at once
+
+        When NOT to use this tool:
+        - Tasks that depend on each other's output or edit the same files - do those
+          yourself sequentially, or dispatch them one at a time
+        - Small tasks you can do directly with one or two tool calls
+        - Anything requiring back-and-forth with the user
+
+        Usage notes:
+        1. Each task must be INDEPENDENT and SELF-CONTAINED: include the goal, relevant
+           file paths, constraints, and exactly what the final report should contain.
+        2. Never dispatch two parallel agents whose work could overlap on the same files.
+        3. The agent cannot spawn further sub-agents.
+        4. The agent's report is not automatically shown to the user - you should summarize
+           the key results.
+
+        Args:
+            task: A detailed, self-contained description of the task to perform
+
+        Returns:
+            The agent's final report on the completed task
+        """
+        return await self.agent_tool.dispatch_general_agent(task)
+
     async def think_hard(self, problem_statement: str) -> str:
         """
         Uses Claude 3.7 Sonnet in extended thinking mode to analyze a problem deeply.
@@ -1119,6 +1162,30 @@ class ToolCollection(LogMixin):
         """
         return await self.terminal_tool.run_command_tracked(terminal_id, command, purpose)
 
+    async def send_terminal_input(
+        self, terminal_id: str, text: str, submit: bool = True, command_id: Optional[str] = None
+    ) -> str:
+        """
+        Send input to an already-running terminal command.
+
+        Use this tool when a command started with run_command_tracked is waiting for
+        interactive input, such as a confirmation prompt or a password prompt. Read
+        the terminal first to confirm it is waiting, then send the exact response.
+
+        This tool does not start a new command and does not echo or store the input
+        text in terminal output.
+
+        Args:
+            terminal_id: The ID of the terminal where the command is running
+            text: Text to send to the running process
+            submit: Whether to append a newline before sending (default: true)
+            command_id: Optional command ID when more than one command is active
+
+        Returns:
+            Confirmation that input was sent, or an error explaining why it could not be sent
+        """
+        return await self.terminal_tool.send_terminal_input(terminal_id, text, submit=submit, command_id=command_id)
+
     async def check_command_status(self, terminal_id: str, command_id: str) -> str:
         """
         Check if a command has finished running and get its results.
@@ -1163,7 +1230,7 @@ class ToolCollection(LogMixin):
         """
         return await self.terminal_tool.check_terminal_status(terminal_id)
 
-    async def wait_for_command_completion(self, terminal_id: str, command_id: str, timeout: int = 120) -> str:
+    async def wait_for_command_completion(self, terminal_id: str, command_id: str, timeout: Optional[int] = 120) -> str:
         """
         Wait for a command to finish before continuing with other tasks.
 
@@ -1172,6 +1239,9 @@ class ToolCollection(LogMixin):
         results, such as running tests before deployment or building before serving.
 
         The tool will block execution until the command finishes or the timeout expires.
+        Timeout defaults to 120 seconds and is capped at 300 seconds. If the timeout
+        expires, the command is left running in the terminal and the response tells you
+        how to check it again with check_command_status.
         After completion, you can read the terminal output to see the results.
 
         Common scenarios:
@@ -1183,10 +1253,10 @@ class ToolCollection(LogMixin):
         Args:
             terminal_id: The ID of the terminal where the command is running
             command_id: The command ID returned from run_command_tracked
-            timeout: Maximum time to wait in seconds (default: 5 minutes)
+            timeout: Maximum time to wait in seconds (default: 120, capped at 300)
 
         Returns:
-            Completion status message or timeout notification
+            Completion status message or timeout notification with follow-up status-check guidance
         """
         return await self.terminal_tool.wait_for_command_completion(terminal_id, command_id, timeout)
 

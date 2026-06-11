@@ -1,5 +1,3 @@
-import pytest
-
 from kolega_code.agent.llm.instrumented_client import MinimalLangfuseStreamWrapper
 from kolega_code.agent.llm.models import Message
 
@@ -22,4 +20,20 @@ def test_langfuse_normalizes_openai_cache_tokens():
     assert usage['cache_read_input_tokens'] == 2048
 
 
+def test_langfuse_normalizes_deepseek_usage():
+    msg = Message(role='assistant', content='ok', usage_metadata={
+        'provider': 'deepseek',
+        'input_tokens': 10,
+        'output_tokens': 2,
+        'cache_read_input_tokens': 3,
+        'cache_write_input_tokens': 4,
+    })
+
+    wrapper = MinimalLangfuseStreamWrapper(stream=None, generation=None, trace=None, instrumented_client=None, model='x')
+    usage = wrapper._extract_langfuse_usage(msg)
+    assert usage['input'] == 10
+    assert usage['output'] == 2
+    assert usage['total'] == 12
+    assert usage['cache_read_input_tokens'] == 3
+    assert usage['cache_creation_input_tokens'] == 4
 

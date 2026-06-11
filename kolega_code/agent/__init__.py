@@ -5,6 +5,8 @@ from .baseagent import BaseAgent
 from .coder import CoderAgent
 from .investigationagent import InvestigationAgent
 from .browseragent import BrowserAgent
+from .generalagent import GeneralAgent
+from .planningagent import PlanningAgent
 
 # Export agent models
 from .models.public import AgentStatus, AgentEvent
@@ -21,6 +23,8 @@ __all__ = [
     "CoderAgent",
     "InvestigationAgent",
     "BrowserAgent",
+    "GeneralAgent",
+    "PlanningAgent",
     "AgentStatus",
     "AgentEvent",
     "AgentConfig",
