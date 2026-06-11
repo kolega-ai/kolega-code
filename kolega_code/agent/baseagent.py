@@ -4,7 +4,6 @@ import logging
 import os
 import re
 import uuid
-import warnings
 from datetime import datetime
 from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Optional
@@ -993,36 +992,3 @@ class BaseAgent(LogMixin):
 
         # Log cleanup
         await self.log_info("Agent cleanup completed", sender=self.agent_name)
-
-    # ------------------------------------------------------------------
-    # Deprecated aliases
-    #
-    # These methods started as private helpers but host applications built
-    # subclasses on top of them, so the underscore names are de-facto public.
-    # The supported names are the contract going forward; these aliases exist
-    # so existing subclasses keep working and will be removed once all hosts
-    # have migrated.
-    # ------------------------------------------------------------------
-
-    def _warn_deprecated(self, old: str, new: str) -> None:
-        warnings.warn(
-            f"BaseAgent.{old} is deprecated; use BaseAgent.{new} instead.",
-            DeprecationWarning,
-            stacklevel=3,
-        )
-
-    def _build_prompt_context(self) -> PromptContext:
-        self._warn_deprecated("_build_prompt_context", "build_prompt_context")
-        return self.build_prompt_context()
-
-    def _mark_last_message_for_cache(self) -> None:
-        self._warn_deprecated("_mark_last_message_for_cache", "mark_cache_checkpoint")
-        return self.mark_cache_checkpoint()
-
-    async def _compress_message_history(self) -> None:
-        self._warn_deprecated("_compress_message_history", "compress_history")
-        return await self.compress_history()
-
-    def _fix_incomplete_tool_calls(self, messages: List[Message]) -> List[Message]:
-        self._warn_deprecated("_fix_incomplete_tool_calls", "fix_incomplete_tool_calls")
-        return self.fix_incomplete_tool_calls(messages)
