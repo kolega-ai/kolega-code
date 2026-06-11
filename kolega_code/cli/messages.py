@@ -49,10 +49,22 @@ PLAN_DISCUSSION_RESUMED = "Planning discussion resumed."
 SKILL_ACTIVATED = "Activated skill {name}."
 SKILLS_LISTED = "Listed agent skills."
 
+# Mentions
+MENTIONS_NOT_FOUND = "Not found, sent as plain text: {mentions}"
+
+# Slash commands
+MODEL_SWITCHED = "Switched model to {provider}/{model}."
+MODEL_UNKNOWN = "Unknown model {model} for provider {provider}."
+MODEL_SWITCH_HINT = "Switch with /model <name>."
+COPY_LAST_RESPONSE = "Copied the last response to the clipboard."
+COPY_NOTHING = "No response to copy yet."
+VERSION_INFO = "Kolega Code version {version}."
+
 # Blockers
 BLOCK_STOP_BEFORE_RESET = "Stop the current turn before resetting the thread."
 BLOCK_STOP_BEFORE_MODE_SWITCH = "Stop the current turn before switching modes."
 BLOCK_STOP_BEFORE_SKILL = "Stop the current turn before activating a skill."
+BLOCK_STOP_BEFORE_MODEL_SWITCH = "Stop the current turn before switching models."
 BLOCK_PLAN_DECISION = "Choose Implement plan or Discuss further before sending another message."
 BLOCK_PLAN_DECISION_MODE_SWITCH = "Choose Implement plan or Discuss further before switching modes."
 BLOCK_PLAN_DECISION_SKILL = "Choose Implement plan or Discuss further before activating a skill."

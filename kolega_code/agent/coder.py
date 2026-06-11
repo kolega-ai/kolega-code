@@ -7,7 +7,7 @@ from .baseagent import BaseAgent
 from .common import LogMixin
 from .config import AgentConfig
 from .connection_manager import AgentConnectionManager
-from .llm.models import Message, MessageHistory, TextBlock, ToolResult, ImageBlock
+from .llm.models import Message, MessageHistory, TextBlock, ToolResult
 from .prompt_provider import AgentType, AgentMode, PromptExtension
 from .tools import ToolCollection, ToolCollectionConfig
 from .utils.commands import CommandProcessor
@@ -211,21 +211,18 @@ class CoderAgent(BaseAgent, LogMixin):
             return
 
         content_blocks = [TextBlock(text=message)]
+        content_blocks.extend(self._attachment_blocks(attachments))
 
-        # Process any image attachments
         if attachments:
             for attachment in attachments:
                 if attachment.get("type") == "image":
-                    image_block = ImageBlock(
-                        image_type="base64",
-                        media_type=attachment.get("media_type", "image/png"),
-                        data=attachment["data"],
-                    )
-                    content_blocks.append(image_block)
-
-                    # Log that we received an image
                     await self.log_info(
                         f"Received image attachment: {attachment.get('filename', 'unnamed')} ({attachment.get('media_type', 'unknown')})",
+                        sender=self.agent_name,
+                    )
+                elif attachment.get("type") == "file":
+                    await self.log_info(
+                        f"Attached file from @ mention: {attachment.get('path', 'unnamed')}",
                         sender=self.agent_name,
                     )
 

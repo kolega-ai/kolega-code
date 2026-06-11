@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import itertools
+import re
 import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Awaitable, Callable, Optional
 
 from rich.console import Group
 from rich.markdown import Markdown as RichMarkdown
@@ -33,6 +34,7 @@ from textual.widgets import (
     Input,
     Label,
     Markdown,
+    OptionList,
     RichLog,
     Select,
     Static,
@@ -41,6 +43,7 @@ from textual.widgets import (
     TextArea,
 )
 
+from kolega_code import __version__ as kolega_code_version
 from kolega_code.agent import AgentConfig, AgentEvent, CoderAgent, PlanningAgent, PromptExtension, ToolExtension
 from kolega_code.agent.llm.models import Message, MessageHistory, TextBlock, ToolCall, ToolResult
 from kolega_code.agent.prompt_provider import AgentMode
@@ -50,10 +53,20 @@ from . import messages
 from . import theme
 from .config import CliConfigError, CliConfigOverrides, build_agent_config, config_summary, key_status
 from .connection import CliConnectionManager
+from .file_index import IndexEntry, WorkspaceFileIndex
+from .mentions import build_file_attachments
 from .theme import Color, Glyph
 from .provider_registry import UI_DEFAULT_MODEL, UI_DEFAULT_PROVIDER, get_ui_model, ui_model_options, ui_provider_options
 from .session_store import SessionRecord, SessionStore
 from .settings import CliSettings, SettingsStore
+from .slash_commands import (
+    SKILLS_LIST_COMMAND,
+    THREAD_RESET_COMMANDS,
+    TUI_COMMAND_NAMES,
+    SlashCommandEntry,
+    agent_command_names,
+    search_commands,
+)
 from .skills import (
     SkillCatalog,
     activated_skill_names,
@@ -76,9 +89,6 @@ PLAN_EMPTY_MESSAGE = messages.PLAN_EMPTY_MESSAGE
 CLI_AGENT_MODE = AgentMode.CLI.value
 BUILD_INTERACTION_MODE = "build"
 PLAN_INTERACTION_MODE = "plan"
-THREAD_RESET_COMMANDS = {"/clear", "/reset"}
-AGENT_BUILTIN_COMMANDS = {"/help", "/compress", "/clear", "/reset", "/context"}
-SKILLS_LIST_COMMAND = "/skills"
 SHARED_TASK_LIST_PROMPT = """The CLI provides a shared Markdown task list through `get_task_list` and `update_task_list`.
 Use it to coordinate planning and implementation.
 
@@ -298,6 +308,62 @@ class JumpToBottomBar(Static):
         self.post_message(self.Pressed(self))
 
 
+@dataclass(frozen=True)
+class CompletionItem:
+    """One row in the completion dropdown: a display prompt plus the value it completes to."""
+
+    prompt: Text | str
+    value: IndexEntry | SlashCommandEntry
+
+
+def file_completion_item(entry: IndexEntry) -> CompletionItem:
+    return CompletionItem(prompt=entry.path, value=entry)
+
+
+def command_completion_item(entry: SlashCommandEntry) -> CompletionItem:
+    prompt = Text.assemble((entry.token, "bold"), "  ", (entry.description, "dim"))
+    return CompletionItem(prompt=prompt, value=entry)
+
+
+class CompletionDropdown(OptionList):
+    """Completion list shown above the composer for @ file mentions and / commands."""
+
+    can_focus = False
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._items: list[CompletionItem] = []
+
+    @property
+    def is_open(self) -> bool:
+        return self.display
+
+    def open_with(self, items: list[CompletionItem]) -> None:
+        self._items = list(items)
+        self.clear_options()
+        self.add_options([item.prompt for item in self._items])
+        if self._items:
+            self.highlighted = 0
+        self.display = True
+
+    def close(self) -> None:
+        self.display = False
+        self._items = []
+        self.clear_options()
+
+    def highlighted_entry(self) -> Optional[IndexEntry | SlashCommandEntry]:
+        if self.highlighted is None or not self._items:
+            return None
+        if 0 <= self.highlighted < len(self._items):
+            return self._items[self.highlighted].value
+        return None
+
+    def entry_at(self, index: int) -> Optional[IndexEntry | SlashCommandEntry]:
+        if 0 <= index < len(self._items):
+            return self._items[index].value
+        return None
+
+
 class ChatComposer(TextArea):
     """Multiline chat input that submits on Enter and inserts newlines on Shift+Enter."""
 
@@ -305,7 +371,15 @@ class ChatComposer(TextArea):
         *TextArea.BINDINGS,
         Binding("enter", "submit", "Send", priority=True),
         Binding("shift+enter,ctrl+enter,ctrl+j", "insert_newline", "New line", key_display="Shift+Enter", priority=True),
+        Binding("up", "mention_prev", "Previous match", show=False, priority=True),
+        Binding("down", "mention_next", "Next match", show=False, priority=True),
+        Binding("tab", "mention_accept", "Complete path", show=False, priority=True),
+        Binding("escape", "mention_dismiss", "Dismiss matches", show=False, priority=True),
     ]
+
+    MENTION_QUERY_RE = re.compile(r"(?:^|(?<=\s))@(\S*)$")
+    SLASH_QUERY_RE = re.compile(r"^\s*/([\w-]*)$")
+    MENTION_ACTIONS = {"mention_prev", "mention_next", "mention_accept", "mention_dismiss"}
 
     @dataclass
     class Submitted(TextualMessage):
@@ -316,11 +390,108 @@ class ChatComposer(TextArea):
         def control(self) -> ChatComposer:
             return self.composer
 
+    def check_action(self, action: str, parameters: tuple) -> bool | None:
+        if action in self.MENTION_ACTIONS:
+            dropdown = self.mention_dropdown()
+            return dropdown is not None and dropdown.is_open
+        return super().check_action(action, parameters)
+
+    def mention_dropdown(self) -> Optional[CompletionDropdown]:
+        try:
+            return self.screen.query_one("#completion_dropdown", CompletionDropdown)
+        except Exception:
+            return None
+
+    def active_mention_query(self) -> Optional[tuple[str, int, int]]:
+        """Return (query, start_col, end_col) for the @ token under the cursor, if any."""
+        row, col = self.cursor_location
+        try:
+            line = self.document.get_line(row)
+        except Exception:
+            return None
+        match = self.MENTION_QUERY_RE.search(line[:col])
+        if match is None:
+            return None
+        return match.group(1), match.start(), col
+
+    def active_slash_query(self) -> Optional[tuple[str, int, int]]:
+        """Return (query, start_col, end_col) for a /command token starting the input, if any.
+
+        Only fires when the cursor is on the first line and the slash is the
+        first non-whitespace character, so paths like ``src/foo`` never match.
+        """
+        row, col = self.cursor_location
+        if row != 0:
+            return None
+        try:
+            line = self.document.get_line(0)
+        except Exception:
+            return None
+        match = self.SLASH_QUERY_RE.match(line[:col])
+        if match is None:
+            return None
+        return match.group(1), match.start(1) - 1, col
+
+    def apply_completion(self, entry: IndexEntry | SlashCommandEntry) -> None:
+        if isinstance(entry, SlashCommandEntry):
+            active = self.active_slash_query()
+            if active is None:
+                return
+            _, start_col, end_col = active
+            self.replace(f"{entry.token} ", (0, start_col), (0, end_col), maintain_selection_offset=False)
+            return
+        active = self.active_mention_query()
+        if active is None:
+            return
+        _, start_col, end_col = active
+        row, _ = self.cursor_location
+        token = f'@"{entry.path}"' if " " in entry.path else f"@{entry.path}"
+        if not entry.is_dir:
+            token += " "
+        self.replace(token, (row, start_col), (row, end_col), maintain_selection_offset=False)
+
+    def _accept_mention_completion(self) -> bool:
+        dropdown = self.mention_dropdown()
+        if dropdown is None or not dropdown.is_open:
+            return False
+        entry = dropdown.highlighted_entry()
+        if entry is None:
+            return False
+        self.apply_completion(entry)
+        if isinstance(entry, SlashCommandEntry) or not entry.is_dir:
+            dropdown.close()
+        return True
+
     def action_submit(self) -> None:
+        if self._accept_mention_completion():
+            return
         self.post_message(self.Submitted(self, self.text))
 
     def action_insert_newline(self) -> None:
         self.insert("\n", maintain_selection_offset=False)
+
+    def action_mention_prev(self) -> None:
+        dropdown = self.mention_dropdown()
+        if dropdown is not None and dropdown.is_open:
+            dropdown.action_cursor_up()
+
+    def action_mention_next(self) -> None:
+        dropdown = self.mention_dropdown()
+        if dropdown is not None and dropdown.is_open:
+            dropdown.action_cursor_down()
+
+    def action_mention_accept(self) -> None:
+        self._accept_mention_completion()
+
+    def action_mention_dismiss(self) -> None:
+        dropdown = self.mention_dropdown()
+        if dropdown is not None:
+            dropdown.close()
+
+    def on_blur(self, event) -> None:
+        dropdown = self.mention_dropdown()
+        if dropdown is not None:
+            dropdown.close()
 
 
 class KolegaCodeApp(App):
@@ -433,6 +604,14 @@ class KolegaCodeApp(App):
         background: $surface;
     }
 
+    #completion_dropdown {
+        display: none;
+        height: auto;
+        max-height: 10;
+        border: round $surface;
+        background: $surface;
+    }
+
     #composer_hint.hint-warning {
         color: $warning;
     }
@@ -491,6 +670,7 @@ class KolegaCodeApp(App):
         self.overrides = overrides or CliConfigOverrides()
         self.settings: CliSettings = CliSettings()
         self.skill_catalog: SkillCatalog = discover_skills(self.project_path)
+        self.file_index = WorkspaceFileIndex(self.project_path)
         self.browser_visible = browser_visible
         self.connection_manager = CliConnectionManager()
         self.agent: Optional[CoderAgent | PlanningAgent] = None
@@ -542,6 +722,7 @@ class KolegaCodeApp(App):
                     pass
                 yield Static("", id="turn_status", markup=True)
                 yield Static("", id="composer_hint", markup=False)
+                yield CompletionDropdown(id="completion_dropdown")
                 yield ChatComposer(placeholder=COMPOSER_PLACEHOLDER, id="composer")
             with Vertical(id="side_panel"):
                 with TabbedContent(id="events"):
@@ -731,6 +912,9 @@ class KolegaCodeApp(App):
             self._reset_current_thread()
             return
 
+        if await self._handle_tui_slash_command(stripped_text, event.composer):
+            return
+
         if await self._handle_skill_slash_command(stripped_text, event.composer):
             return
 
@@ -752,16 +936,79 @@ class KolegaCodeApp(App):
                 self._set_settings_status(messages.SETTINGS_REQUIRED, tone="warning")
             return
         event.composer.load_text("")
+        attachments = self._build_mention_attachments(text)
         self._add_conversation_entry(ConversationEntry(kind="user", content=text))
-        self.agent_worker = self.run_worker(self._process_message(text), name="kolega-turn", group="turns", exclusive=True)
+        self.agent_worker = self.run_worker(
+            self._process_message(text, attachments), name="kolega-turn", group="turns", exclusive=True
+        )
 
-    async def _process_message(self, message: str) -> None:
+    def on_text_area_changed(self, event: TextArea.Changed) -> None:
+        if event.text_area.id == "composer":
+            self._refresh_completion_dropdown()
+
+    def _refresh_completion_dropdown(self) -> None:
+        try:
+            dropdown = self.query_one("#completion_dropdown", CompletionDropdown)
+            composer = self.query_one("#composer", ChatComposer)
+        except Exception:
+            return
+        slash = composer.active_slash_query()
+        if slash is not None:
+            commands = search_commands(slash[0], self.skill_catalog, limit=8)
+            if not commands:
+                dropdown.close()
+                return
+            dropdown.open_with([command_completion_item(entry) for entry in commands])
+            return
+        active = composer.active_mention_query()
+        if active is None:
+            dropdown.close()
+            return
+        entries = self.file_index.search(active[0], limit=8)
+        if not entries:
+            dropdown.close()
+            return
+        dropdown.open_with([file_completion_item(entry) for entry in entries])
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        if event.option_list.id != "completion_dropdown":
+            return
+        event.stop()
+        try:
+            dropdown = self.query_one("#completion_dropdown", CompletionDropdown)
+            composer = self.query_one("#composer", ChatComposer)
+        except Exception:
+            return
+        entry = dropdown.entry_at(event.option_index)
+        if entry is not None:
+            composer.apply_completion(entry)
+            if isinstance(entry, SlashCommandEntry) or not entry.is_dir:
+                dropdown.close()
+        composer.focus()
+
+    def _build_mention_attachments(self, text: str) -> list[dict] | None:
+        """Expand @path mentions in a prompt into file attachments."""
+        try:
+            attachments, unresolved = build_file_attachments(text, self.project_path)
+        except Exception:
+            return None
+        if unresolved:
+            joined = ", ".join(f"@{path}" for path in unresolved)
+            self._show_composer_hint(messages.MENTIONS_NOT_FOUND.format(mentions=joined))
+        return attachments or None
+
+    async def _process_message(self, message: str, attachments: list[dict] | None = None) -> None:
         if self.agent is None:
             return
         self._begin_turn_progress()
         self._log_status(messages.GENERATING, "ok")
         try:
-            async for chunk in self.agent.process_message_stream(message):
+            stream = (
+                self.agent.process_message_stream(message, attachments)
+                if attachments
+                else self.agent.process_message_stream(message)
+            )
+            async for chunk in stream:
                 if chunk.get("type") == "response":
                     if chunk.get("content"):
                         self._update_progress(messages.READING_RESPONSE, complete=False, state=TurnState.GENERATING)
@@ -902,14 +1149,19 @@ class KolegaCodeApp(App):
             self.agent_worker.cancel()
             self._notify_user(messages.CANCEL_REQUESTED, severity="warning")
 
-    async def action_toggle_interaction_mode(self) -> None:
+    def _mode_switch_blocked(self) -> bool:
         if self._turn_active or self.agent_worker is not None:
             self._show_composer_hint(messages.BLOCK_STOP_BEFORE_MODE_SWITCH)
             self._notify_user(messages.BLOCK_STOP_BEFORE_MODE_SWITCH, severity="warning")
-            return
+            return True
         if self._plan_decision_active:
             self._set_composer_status(PLAN_READY_PLACEHOLDER)
             self._notify_user(messages.BLOCK_PLAN_DECISION_MODE_SWITCH, severity="warning")
+            return True
+        return False
+
+    async def action_toggle_interaction_mode(self) -> None:
+        if self._mode_switch_blocked():
             return
 
         target = PLAN_INTERACTION_MODE if self.interaction_mode == BUILD_INTERACTION_MODE else BUILD_INTERACTION_MODE
@@ -1156,6 +1408,91 @@ class KolegaCodeApp(App):
         hint.update("")
         hint.display = False
 
+    def _tui_command_handlers(self) -> dict[str, Callable[[str], Awaitable[None]]]:
+        return {
+            "/plan": self._command_plan,
+            "/build": self._command_build,
+            "/model": self._command_model,
+            "/copy": self._command_copy,
+            "/version": self._command_version,
+            "/quit": self._command_quit,
+        }
+
+    async def _handle_tui_slash_command(self, stripped_text: str, composer: ChatComposer) -> bool:
+        if not stripped_text.startswith("/"):
+            return False
+        command_text, _, args = stripped_text.partition(" ")
+        handler = self._tui_command_handlers().get(command_text.lower())
+        if handler is None:
+            return False
+        composer.load_text("")
+        await handler(args.strip())
+        return True
+
+    async def _command_plan(self, args: str) -> None:
+        if self._mode_switch_blocked():
+            return
+        await self._set_interaction_mode(PLAN_INTERACTION_MODE)
+
+    async def _command_build(self, args: str) -> None:
+        if self._mode_switch_blocked():
+            return
+        await self._set_interaction_mode(BUILD_INTERACTION_MODE)
+
+    async def _command_model(self, args: str) -> None:
+        provider = self.settings.active_provider or UI_DEFAULT_PROVIDER
+        model_options = ui_model_options(provider)
+        if not args:
+            current_provider, current_model = self._startup_model()
+            lines = [
+                messages.SETTINGS_ACTIVE_MODEL.format(provider=current_provider, model=current_model),
+                "",
+                "Available models:",
+                *(f"- `{value}` ({label})" for label, value in model_options),
+                "",
+                messages.MODEL_SWITCH_HINT,
+            ]
+            self._add_conversation_entry(ConversationEntry(kind="system", content="\n".join(lines)))
+            return
+
+        if self._turn_active or self.agent_worker is not None:
+            self._show_composer_hint(messages.BLOCK_STOP_BEFORE_MODEL_SWITCH)
+            self._notify_user(messages.BLOCK_STOP_BEFORE_MODEL_SWITCH, severity="warning")
+            return
+
+        matched = next((value for _, value in model_options if value.lower() == args.lower()), None)
+        if matched is None:
+            self._notify_user(messages.MODEL_UNKNOWN.format(model=args, provider=provider), severity="warning")
+            return
+
+        self.settings.active_model = matched
+        self.settings_store.save(self.settings)
+        await self._ensure_agent_from_settings(rebuild=True)
+        try:
+            self._populate_settings_controls()
+        except Exception:
+            pass
+        self._notify_user(messages.MODEL_SWITCHED.format(provider=provider, model=matched))
+
+    async def _command_copy(self, args: str) -> None:
+        entry = next(
+            (entry for entry in reversed(self.conversation_entries) if entry.kind == "assistant" and entry.content),
+            None,
+        )
+        if entry is None:
+            self._notify_user(messages.COPY_NOTHING, severity="warning")
+            return
+        self.copy_to_clipboard(entry.content)
+        self._notify_user(messages.COPY_LAST_RESPONSE)
+
+    async def _command_version(self, args: str) -> None:
+        self._add_conversation_entry(
+            ConversationEntry(kind="system", content=messages.VERSION_INFO.format(version=kolega_code_version))
+        )
+
+    async def _command_quit(self, args: str) -> None:
+        await self.action_quit()
+
     async def _handle_skill_slash_command(self, stripped_text: str, composer: ChatComposer) -> bool:
         command = self._parse_skill_slash_command(stripped_text)
         if command is None:
@@ -1193,9 +1530,10 @@ class KolegaCodeApp(App):
         self._notify_user(messages.SKILL_ACTIVATED.format(name=command_name))
 
         if prompt:
+            attachments = self._build_mention_attachments(prompt)
             self._add_conversation_entry(ConversationEntry(kind="user", content=prompt))
             self.agent_worker = self.run_worker(
-                self._process_message(prompt), name="kolega-turn", group="turns", exclusive=True
+                self._process_message(prompt, attachments), name="kolega-turn", group="turns", exclusive=True
             )
         else:
             self._save_session_history()
@@ -1212,7 +1550,7 @@ class KolegaCodeApp(App):
         command = command_text.lower()
         if command == SKILLS_LIST_COMMAND:
             return "skills", prompt.strip()
-        if command in AGENT_BUILTIN_COMMANDS:
+        if command in agent_command_names() or command in TUI_COMMAND_NAMES:
             return None
 
         skill_name = command.removeprefix("/")
@@ -1521,7 +1859,7 @@ class KolegaCodeApp(App):
                 f"API key: {api_key}",
                 "",
                 f"Enter send {theme.g(Glyph.BULLET_SEP)} Shift+Enter newline {theme.g(Glyph.BULLET_SEP)} Shift+Tab plan/build",
-                f"Ctrl+C stop turn {theme.g(Glyph.BULLET_SEP)} Cmd+C copy selection {theme.g(Glyph.BULLET_SEP)} /skills list skills",
+                f"Ctrl+C stop turn {theme.g(Glyph.BULLET_SEP)} Cmd+C copy selection {theme.g(Glyph.BULLET_SEP)} / commands",
             ]
         )
 

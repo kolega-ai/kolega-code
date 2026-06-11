@@ -350,3 +350,97 @@ def test_ask_plain_writes_sub_agent_lifecycle_to_stderr(
     sep = theme.g(theme.Glyph.BULLET_SEP)
     glyph = theme.g(theme.Glyph.SUB_AGENT)
     assert f"{glyph} general-agent {sep} generating {sep} Starting general-agent task" in captured.err
+
+
+def test_ask_prompt_with_file_mention_attaches_content(
+    tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
+) -> None:
+    from kolega_code.cli import main as main_module
+
+    class FakeCoderAgent:
+        instances = []
+
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.history = []
+            self.messages = []
+            self.attachments = []
+            self.__class__.instances.append(self)
+
+        def append_user_message(self, content):
+            self.history.append(Message(role="user", content=content))
+
+        def restore_message_history(self, history):
+            self.history = [Message.from_dict(item) for item in history]
+
+        def dump_message_history(self):
+            return [message.to_dict() for message in self.history]
+
+        async def process_message_stream(self, message, attachments=None):
+            self.messages.append(message)
+            self.attachments.append(attachments)
+            yield {"type": "response", "content": "ok", "complete": True, "uuid": "response-1"}
+
+        async def cleanup(self):
+            return None
+
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "notes.md").write_text("remember the milk\n", encoding="utf-8")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setattr(main_module, "CoderAgent", FakeCoderAgent)
+
+    exit_code = main_module.main(["ask", "summarize @notes.md", "--project", str(project)])
+
+    assert exit_code == 0
+    assert "ok" in capsys.readouterr().out
+    agent = FakeCoderAgent.instances[0]
+    assert agent.messages == ["summarize @notes.md"]
+    attachments = agent.attachments[0]
+    assert attachments is not None and len(attachments) == 1
+    assert attachments[0]["type"] == "file"
+    assert attachments[0]["path"] == "notes.md"
+    assert attachments[0]["content"] == "remember the milk\n"
+
+
+def test_ask_prompt_with_unresolved_mention_warns_on_stderr(
+    tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
+) -> None:
+    from kolega_code.cli import main as main_module
+
+    class FakeCoderAgent:
+        instances = []
+
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.history = []
+            self.attachments = []
+            self.__class__.instances.append(self)
+
+        def append_user_message(self, content):
+            self.history.append(Message(role="user", content=content))
+
+        def restore_message_history(self, history):
+            self.history = [Message.from_dict(item) for item in history]
+
+        def dump_message_history(self):
+            return [message.to_dict() for message in self.history]
+
+        async def process_message_stream(self, message, attachments=None):
+            self.attachments.append(attachments)
+            yield {"type": "response", "content": "ok", "complete": True, "uuid": "response-1"}
+
+        async def cleanup(self):
+            return None
+
+    project = tmp_path / "project"
+    project.mkdir()
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setattr(main_module, "CoderAgent", FakeCoderAgent)
+
+    exit_code = main_module.main(["ask", "summarize @missing.md", "--project", str(project)])
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    assert "@missing.md not found" in captured.err
+    assert FakeCoderAgent.instances[0].attachments == [None]
