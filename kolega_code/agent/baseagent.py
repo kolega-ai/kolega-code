@@ -1,7 +1,9 @@
 import asyncio
 import contextvars
+import logging
 import os
 import re
+import uuid
 import warnings
 from datetime import datetime
 from pathlib import Path
@@ -36,6 +38,9 @@ from .services.browser import PlaywrightBrowserManager
 from .tools import ToolCollection
 from .utils.commands import CommandProcessor
 from langfuse import Langfuse
+
+
+logger = logging.getLogger(__name__)
 
 
 class BaseAgent(LogMixin):
@@ -305,10 +310,221 @@ class BaseAgent(LogMixin):
                 blocks.append(TextBlock(text=f'<attached-file path="{path}">\n{content}\n</attached-file>'))
         return blocks
 
+    # ------------------------------------------------------------------
+    # The agent loop
+    #
+    # process_message_stream is the single canonical loop shared by every
+    # agent. Subclasses customize behavior through the hook methods below
+    # (build_user_content, apply_compression_fallback, on_tool_use_start,
+    # should_stop_after_tools, recap_agent_outcome) rather than overriding
+    # the loop itself.
+    # ------------------------------------------------------------------
+
+    completion_log_message = "Processing complete"
+
+    async def build_user_content(self, message: str, attachments: Optional[List[Dict[str, Any]]]) -> List[Any]:
+        """
+        Build the content blocks for an incoming user message.
+
+        Default: the message text plus blocks for any image/file attachments.
+        """
+        content_blocks: List[Any] = [TextBlock(text=message)]
+        content_blocks.extend(self._attachment_blocks(attachments))
+
+        for attachment in attachments or []:
+            if attachment.get("type") == "image":
+                await self.log_info(
+                    f"Received image attachment: {attachment.get('filename', 'unnamed')} ({attachment.get('media_type', 'unknown')})",
+                    sender=self.agent_name,
+                )
+            elif attachment.get("type") == "file":
+                await self.log_info(
+                    f"Attached file from @ mention: {attachment.get('path', 'unnamed')}",
+                    sender=self.agent_name,
+                )
+
+        return content_blocks
+
+    def apply_compression_fallback(self) -> None:
+        """
+        Hard-truncate history when compression alone could not get under budget.
+
+        Default: keep the first message (the original task) plus any protected
+        skill-content messages.
+        """
+        first_message = self.history[0]
+        protected = [
+            message
+            for message in self.history
+            if message is not first_message and self._is_protected_skill_content(message)
+        ]
+        self.history = MessageHistory(protected + [first_message])
+
+    async def on_tool_use_start(self, tool_call_delta: Dict[str, Any]) -> None:
+        """
+        Called when the provider streams a tool_use_start event (Anthropic only).
+
+        Long-content tools stream large arguments, so announce them as soon as
+        they start instead of waiting for the arguments to finish streaming
+        (execute_single_tool skips the announcement for these tools).
+        """
+        tool_name = tool_call_delta.get("name")
+        tool_execution_id = tool_call_delta.get("execution_id") or tool_call_delta.get("id")
+        if tool_name in self.long_content_tool_calls:
+            await self.send_chat_message(
+                message_type="tool_call",
+                content=f"Calling {tool_name}",
+                is_streaming=False,
+                tool_description=tool_name,
+                tool_call_id=tool_execution_id,
+            )
+
+    def should_stop_after_tools(self) -> bool:
+        """Return True to end the loop after a successful tool batch (e.g. a plan was written)."""
+        return False
+
+    async def recap_agent_outcome(self) -> str:
+        """Return the agent's final report: the text of the last message in history."""
+        return self.history[-1].get_text_content()
+
     async def process_message_stream(
         self, message: str, attachments: List[Dict[str, Any]] = None
     ) -> AsyncGenerator[Dict[str, Any], None]:
-        raise NotImplementedError
+        """
+        Process a user message and yield response/thinking chunks while the agent works.
+
+        Yields dicts of the form
+        ``{"type": "response"|"thinking", "content": str, "complete": bool, "uuid": str}``.
+        """
+        unsupported_attachment_message = self._unsupported_attachment_message(attachments)
+        if unsupported_attachment_message:
+            yield {
+                "type": "response",
+                "content": unsupported_attachment_message,
+                "complete": True,
+                "uuid": str(uuid.uuid4()),
+            }
+            return
+
+        self.append_user_message(await self.build_user_content(message, attachments))
+
+        stop_reason = None
+        while stop_reason not in ["end_turn", "max_tokens", "stop_sequence"]:
+            self.mark_cache_checkpoint()
+
+            try:
+                token_count = await self.count_current_context()
+                logger.debug("Input token count: %s", token_count)
+
+                if token_count.input_tokens > self.model_context_length * self.history_compression_threshold:
+                    await self.compress_history()
+                    token_count = await self.count_current_context()
+
+                    if token_count.input_tokens > self.model_context_length * self.history_compression_threshold:
+                        self.apply_compression_fallback()
+
+                    self.mark_cache_checkpoint()
+
+                current_response = ""
+                current_thinking = ""
+                thinking_started = False
+                # Use the same UUID for each segment of the response
+                response_uuid = str(uuid.uuid4())
+                thinking_uuid = str(uuid.uuid4())
+
+                # Fix history before sending to LLM to ensure valid tool call sequences
+                effective = self.get_effective_history_for_llm()
+                fixed_history = MessageHistory(self.fix_incomplete_tool_calls(list(effective)))
+
+                async with await self.llm.stream(
+                    system=self.system_prompt,
+                    max_completion_tokens=self.model_completion_tokens,
+                    temperature=self.model_default_temperature,
+                    messages=fixed_history,
+                    model=self.config.long_context_config.model,
+                    tools=self.tool_collection.get_tool_list(),
+                    thinking=self.config.long_context_config.thinking_tokens,
+                ) as stream:
+                    async for event in stream:
+                        if event.type == "text":
+                            current_response += event.text
+
+                            # Send periodic updates as the response grows
+                            if len(current_response) >= 50:
+                                yield {
+                                    "type": "response",
+                                    "content": current_response,
+                                    "complete": False,
+                                    "uuid": response_uuid,
+                                }
+                                current_response = ""
+
+                        elif event.type == "thinking" and event.thinking:
+                            current_thinking += event.thinking
+
+                            if len(current_thinking) >= 50:
+                                thinking_started = True
+                                yield {
+                                    "type": "thinking",
+                                    "content": current_thinking,
+                                    "complete": False,
+                                    "uuid": thinking_uuid,
+                                }
+                                current_thinking = ""
+
+                        elif event.type == "tool_use_start" and event.tool_call_delta:
+                            # Flush accumulated text first so the user doesn't have to wait for it.
+                            yield {
+                                "type": "response",
+                                "content": current_response,
+                                "complete": True,
+                                "uuid": response_uuid,
+                            }
+                            current_response = ""
+
+                            await self.on_tool_use_start(event.tool_call_delta)
+
+                assistant_message = await stream.get_final_message()
+                stop_reason = assistant_message.stop_reason
+
+                self.append_assistant_message(assistant_message)
+
+                if thinking_started or current_thinking:
+                    yield {"type": "thinking", "content": current_thinking, "complete": True, "uuid": thinking_uuid}
+
+                # Send the final message to mark it complete.
+                yield {"type": "response", "content": current_response, "complete": True, "uuid": response_uuid}
+
+                if assistant_message.tool_calls:
+                    await self.log_info(
+                        f"Received {len(assistant_message.tool_calls)} tool call(s)", sender=self.agent_name
+                    )
+
+                    try:
+                        tool_responses = await self.process_tool_calls(assistant_message.tool_calls)
+                        self.append_user_message(tool_responses)
+
+                        if self.should_stop_after_tools():
+                            break
+                    except Exception as ex:
+                        error_message = f"Error processing tool calls: {str(ex)}"
+                        await self.log_error(error_message, sender=self.agent_name)
+
+                        error_responses = [
+                            ToolResult(
+                                tool_use_id=tool_call.id,
+                                content=f"Failed to process tool calls: {str(ex)}",
+                                name=tool_call.name,
+                                is_error=True,
+                            )
+                            for tool_call in assistant_message.tool_calls
+                        ]
+                        self.append_user_message(error_responses)
+
+            except Exception as ex:
+                await self.handle_llm_error(ex)
+
+        await self.log_info(self.completion_log_message, sender=self.agent_name)
 
     async def count_current_context(self) -> TokenCount:
         self._sanitize_oversized_tool_results()

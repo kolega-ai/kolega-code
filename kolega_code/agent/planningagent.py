@@ -1,18 +1,13 @@
-import logging
-import uuid
 from pathlib import Path
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from .baseagent import BaseAgent
 from .config import AgentConfig
 from .connection_manager import AgentConnectionManager
-from .llm.models import Message, MessageHistory, TextBlock, ToolResult
+from .llm.models import Message, TextBlock
 from .prompt_provider import AgentMode, PromptExtension
 from .tools import ToolCollection, ToolCollectionConfig, ToolExtension
 from .utils.commands import CommandProcessor
-
-
-logger = logging.getLogger(__name__)
 
 
 PLANNING_AGENT_SYSTEM_PROMPT = """## Introduction
@@ -62,6 +57,7 @@ class PlanningAgent(BaseAgent):
     """Standalone planning agent with read-only repository tools and plan-specific state."""
 
     agent_name = "planning-agent"
+    completion_log_message = "Planning complete"
 
     def __init__(
         self,
@@ -186,124 +182,6 @@ class PlanningAgent(BaseAgent):
             return self._completed_plan
         return self.history[-1].get_text_content()
 
-    async def process_message_stream(
-        self, message: str, attachments: List[Dict[str, Any]] = None
-    ) -> AsyncGenerator[Dict[str, Any], None]:
-        unsupported_attachment_message = self._unsupported_attachment_message(attachments)
-        if unsupported_attachment_message:
-            yield {
-                "type": "response",
-                "content": unsupported_attachment_message,
-                "complete": True,
-                "uuid": str(uuid.uuid4()),
-            }
-            return
-
-        content_blocks = [TextBlock(text=message)]
-        content_blocks.extend(self._attachment_blocks(attachments))
-
-        self.append_user_message(content_blocks)
-
-        stop_reason = None
-        while stop_reason not in ["end_turn", "max_tokens", "stop_sequence"]:
-            self.mark_cache_checkpoint()
-
-            try:
-                token_count = await self.count_current_context()
-                logger.debug("Input token count: %s", token_count)
-
-                if token_count.input_tokens > self.model_context_length * self.history_compression_threshold:
-                    await self.compress_history()
-                    token_count = await self.count_current_context()
-
-                    if token_count.input_tokens > self.model_context_length * self.history_compression_threshold:
-                        summary_message = self.history[0]
-                        protected = [
-                            message
-                            for message in self.history
-                            if message is not summary_message and self._is_protected_skill_content(message)
-                        ]
-                        self.history = MessageHistory(protected + [summary_message])
-
-                    self.mark_cache_checkpoint()
-
-                current_response = ""
-                current_thinking = ""
-                thinking_started = False
-                response_uuid = str(uuid.uuid4())
-                thinking_uuid = str(uuid.uuid4())
-
-                effective = self.get_effective_history_for_llm()
-                fixed_history = MessageHistory(self.fix_incomplete_tool_calls(list(effective)))
-
-                async with await self.llm.stream(
-                    system=self.system_prompt,
-                    max_completion_tokens=self.model_completion_tokens,
-                    temperature=self.model_default_temperature,
-                    messages=fixed_history,
-                    model=self.config.long_context_config.model,
-                    tools=self.tool_collection.get_tool_list(),
-                    thinking=self.config.long_context_config.thinking_tokens,
-                ) as stream:
-                    async for event in stream:
-                        if event.type == "text":
-                            current_response += event.text
-                            if len(current_response) >= 50:
-                                yield {
-                                    "type": "response",
-                                    "content": current_response,
-                                    "complete": False,
-                                    "uuid": response_uuid,
-                                }
-                                current_response = ""
-
-                        elif event.type == "thinking" and event.thinking:
-                            current_thinking += event.thinking
-                            if len(current_thinking) >= 50:
-                                thinking_started = True
-                                yield {
-                                    "type": "thinking",
-                                    "content": current_thinking,
-                                    "complete": False,
-                                    "uuid": thinking_uuid,
-                                }
-                                current_thinking = ""
-
-                assistant_message = await stream.get_final_message()
-                stop_reason = assistant_message.stop_reason
-                self.append_assistant_message(assistant_message)
-
-                if thinking_started or current_thinking:
-                    yield {"type": "thinking", "content": current_thinking, "complete": True, "uuid": thinking_uuid}
-
-                yield {"type": "response", "content": current_response, "complete": True, "uuid": response_uuid}
-
-                if assistant_message.tool_calls:
-                    await self.log_info(
-                        f"Received {len(assistant_message.tool_calls)} tool call(s)", sender=self.agent_name
-                    )
-
-                    try:
-                        tool_responses = await self.process_tool_calls(assistant_message.tool_calls)
-                        self.append_user_message(tool_responses)
-                        if self._completed_plan:
-                            break
-                    except Exception as ex:
-                        error_message = f"Error processing tool calls: {str(ex)}"
-                        await self.log_error(error_message, sender=self.agent_name)
-                        error_responses = []
-                        for tool_call in assistant_message.tool_calls:
-                            error_responses.append(
-                                ToolResult(
-                                    tool_use_id=tool_call.id,
-                                    content=f"Failed to process tool calls: {str(ex)}",
-                                    name=tool_call.name,
-                                    is_error=True,
-                                )
-                            )
-                        self.append_user_message(error_responses)
-
-            except Exception as ex:
-                await self.handle_llm_error(ex)
-
-        await self.log_info("Planning complete", sender=self.agent_name)
+    def should_stop_after_tools(self) -> bool:
+        # End the loop as soon as write_plan has captured a complete plan.
+        return self._completed_plan is not None
