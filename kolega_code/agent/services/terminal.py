@@ -488,8 +488,9 @@ class AsyncPersistentTerminal:
         while command_info["status"] == "running":
             current_time = time.time()
 
-            # Timeout protection - don't monitor forever
-            if current_time - start_time > max_monitor_time:
+            # Timeout protection - don't monitor forever (>= so a zero timeout
+            # deterministically times out on the first check)
+            if current_time - start_time >= max_monitor_time:
                 command_info["status"] = "monitor_timeout"
                 command_info["return_code"] = None
                 command_info["monitor_timeout_seconds"] = max_monitor_time
