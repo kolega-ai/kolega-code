@@ -36,14 +36,14 @@ class TestDuplicateToolResultPrevention:
 
         with patch("kolega_code.agent.baseagent.AgentConnectionManager"), patch(
             "kolega_code.agent.baseagent.get_model_specs"
-        ) as mock_get_model_specs, patch("kolega_code.agent.baseagent.LocalTerminalManager"), patch(
-            "kolega_code.agent.baseagent.PlaywrightBrowserManager"
+        ) as mock_get_model_specs, patch("kolega_code.agent.context.LocalTerminalManager"), patch(
+            "kolega_code.agent.context.PlaywrightBrowserManager"
         ), patch(
-            "kolega_code.agent.baseagent.LLMClient"
+            "kolega_code.agent.context.LLMClient"
         ), patch(
             "kolega_code.agent.baseagent.ToolCollection"
         ), patch(
-            "kolega_code.agent.baseagent.LocalFileSystem"
+            "kolega_code.agent.context.LocalFileSystem"
         ) as mock_filesystem_class:
 
             # Mock get_model_specs to return reasonable values

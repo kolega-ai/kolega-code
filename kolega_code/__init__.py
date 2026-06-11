@@ -14,6 +14,12 @@ from .agent.generalagent import GeneralAgent
 from .agent.investigationagent import InvestigationAgent
 from .agent.planningagent import PlanningAgent
 
+# Agent collaborators
+from .agent.compression import HistoryCompressor
+from .agent.context import AgentContext, AgentServices, Telemetry, WorkspaceInfo
+from .agent.conversation import Conversation
+from .agent.events import AgentEventEmitter
+
 # Configuration
 from .agent.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
 
@@ -74,6 +80,14 @@ __all__ = [
     "GeneralAgent",
     "InvestigationAgent",
     "PlanningAgent",
+    # Agent collaborators
+    "AgentContext",
+    "AgentServices",
+    "Telemetry",
+    "WorkspaceInfo",
+    "Conversation",
+    "HistoryCompressor",
+    "AgentEventEmitter",
     # Configuration
     "AgentConfig",
     "ModelConfig",
