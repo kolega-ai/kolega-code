@@ -20,6 +20,7 @@ from rich.padding import Padding
 from rich.segment import Segment
 from rich.style import Style
 from rich.text import Text
+from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -42,6 +43,7 @@ from textual.widgets import (
     TabbedContent,
     TextArea,
 )
+from textual.widgets.option_list import Option
 
 from kolega_code import __version__ as kolega_code_version
 from kolega_code.agent import AgentConfig, AgentEvent, CoderAgent, PlanningAgent, PromptExtension, ToolExtension
@@ -103,7 +105,7 @@ IMPLEMENT_PLAN_PROMPT = """Implement the approved plan below. Follow it as the s
 {plan}
 """
 QUESTION_TOOL_NAME = "ask_user_choice"
-QUESTION_OPTION_BUTTON_PREFIX = "question_option_"
+QUESTION_OPTION_ID_PREFIX = "question_option_"
 QUESTION_PLACEHOLDER = messages.QUESTION_PLACEHOLDER
 STARTUP_WORDMARK = (
     " _  __     _                    ____          _",
@@ -362,6 +364,38 @@ class CompletionDropdown(OptionList):
         if 0 <= index < len(self._items):
             return self._items[index].value
         return None
+
+
+class ActionList(OptionList):
+    """Vertical list of selectable actions (question options, plan decision).
+
+    Unlike CompletionDropdown this list takes focus itself, so arrow keys and
+    Enter work directly. Pressing a digit selects the matching option.
+    """
+
+    def show_options(self, options: list[Option]) -> None:
+        self.clear_options()
+        self.add_options(options)
+        if options:
+            self.highlighted = 0
+        self.display = True
+
+    def hide(self) -> None:
+        had_focus = self.has_focus
+        self.display = False
+        self.clear_options()
+        if had_focus:
+            composer = self.screen.query_one("#composer", ChatComposer)
+            if not composer.disabled:
+                composer.focus()
+
+    def on_key(self, event: events.Key) -> None:
+        if event.character and event.character.isdigit():
+            index = int(event.character) - 1
+            if 0 <= index < self.option_count:
+                self.highlighted = index
+                self.action_select()
+                event.stop()
 
 
 class ChatComposer(TextArea):
@@ -627,11 +661,9 @@ class KolegaCodeApp(App):
     #plan_actions, #question_actions {
         display: none;
         height: auto;
-        padding: 0 1;
-    }
-
-    #plan_actions Button, #question_actions Button {
-        margin-right: 1;
+        max-height: 12;
+        border: round $surface;
+        background: $surface;
     }
 
     .meta {
@@ -715,11 +747,8 @@ class KolegaCodeApp(App):
                     f"{theme.g(Glyph.DOWN)} More output below — click to jump to the latest",
                     id="jump_to_bottom",
                 )
-                with Horizontal(id="plan_actions"):
-                    yield Button("Implement plan", variant="primary", id="implement_plan")
-                    yield Button("Discuss further", id="discuss_plan")
-                with Horizontal(id="question_actions"):
-                    pass
+                yield ActionList(id="plan_actions")
+                yield ActionList(id="question_actions")
                 yield Static("", id="turn_status", markup=True)
                 yield Static("", id="composer_hint", markup=False)
                 yield CompletionDropdown(id="completion_dropdown")
@@ -970,7 +999,18 @@ class KolegaCodeApp(App):
             return
         dropdown.open_with([file_completion_item(entry) for entry in entries])
 
-    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+    async def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        if event.option_list.id == "question_actions":
+            event.stop()
+            await self._answer_question_option(event.option_index)
+            return
+        if event.option_list.id == "plan_actions":
+            event.stop()
+            if event.option_id == "implement_plan":
+                await self._implement_pending_plan()
+            elif event.option_id == "discuss_plan":
+                self._discuss_pending_plan()
+            return
         if event.option_list.id != "completion_dropdown":
             return
         event.stop()
@@ -1056,12 +1096,6 @@ class KolegaCodeApp(App):
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "save_settings":
             await self._save_settings_from_ui()
-        elif event.button.id == "implement_plan":
-            await self._implement_pending_plan()
-        elif event.button.id == "discuss_plan":
-            self._discuss_pending_plan()
-        elif event.button.id and event.button.id.startswith(QUESTION_OPTION_BUTTON_PREFIX):
-            await self._answer_question_option(event.button.id)
 
     def on_select_changed(self, event: Select.Changed) -> None:
         if event.select.id != "provider_select":
@@ -1312,6 +1346,10 @@ class KolegaCodeApp(App):
         self._set_plan_actions_visible(True, allow_discuss=True)
         self._set_composer_status(PLAN_READY_PLACEHOLDER)
         self._set_chat_enabled(False)
+        try:
+            self.screen.set_focus(self.query_one("#plan_actions", ActionList))
+        except Exception:
+            pass
         self._notify_user(messages.PLAN_CAPTURED)
 
     async def _implement_pending_plan(self) -> None:
@@ -1345,9 +1383,14 @@ class KolegaCodeApp(App):
 
     def _set_plan_actions_visible(self, visible: bool, *, allow_discuss: bool = False) -> None:
         try:
-            self.query_one("#plan_actions", Horizontal).display = visible
-            self.query_one("#implement_plan", Button).display = visible
-            self.query_one("#discuss_plan", Button).display = visible and allow_discuss
+            plan_actions = self.query_one("#plan_actions", ActionList)
+            if visible:
+                options = [Option("Implement plan", id="implement_plan")]
+                if allow_discuss:
+                    options.append(Option("Discuss further", id="discuss_plan"))
+                plan_actions.show_options(options)
+            else:
+                plan_actions.hide()
         except Exception:
             return
 
@@ -1672,7 +1715,7 @@ class KolegaCodeApp(App):
         self._add_conversation_entry(
             ConversationEntry(kind="question", content=self._format_question_content(question, options))
         )
-        await self._show_question_actions(options)
+        self._show_question_options(options)
         self._set_composer_status(QUESTION_PLACEHOLDER)
         self._set_chat_enabled(True)
         self._update_activity_progress(messages.WAITING_FOR_ANSWER, state=TurnState.WAITING_FOR_USER)
@@ -1684,13 +1727,8 @@ class KolegaCodeApp(App):
                 self._pending_question = None
                 self._set_question_actions_visible(False)
 
-    async def _answer_question_option(self, button_id: str) -> None:
+    async def _answer_question_option(self, option_index: int) -> None:
         if self._pending_question is None:
-            return
-        index_text = button_id.removeprefix(QUESTION_OPTION_BUTTON_PREFIX)
-        try:
-            option_index = int(index_text)
-        except ValueError:
             return
         if option_index < 0 or option_index >= len(self._pending_question.options):
             return
@@ -1720,27 +1758,26 @@ class KolegaCodeApp(App):
             self._restore_composer_placeholder()
             self._set_chat_enabled(self.agent is not None)
 
-    async def _show_question_actions(self, options: list[str]) -> None:
+    def _show_question_options(self, options: list[str]) -> None:
         try:
-            question_actions = self.query_one("#question_actions", Horizontal)
-            await question_actions.remove_children()
-            buttons = [
-                Button(
-                    self._question_option_button_label(index, option),
-                    id=f"{QUESTION_OPTION_BUTTON_PREFIX}{index}",
-                    variant="primary" if index == 0 else "default",
-                )
-                for index, option in enumerate(options)
-            ]
-            if buttons:
-                await question_actions.mount(*buttons)
-            self._set_question_actions_visible(True)
+            question_actions = self.query_one("#question_actions", ActionList)
+            question_actions.show_options(
+                [
+                    Option(self._question_option_label(index, option), id=f"{QUESTION_OPTION_ID_PREFIX}{index}")
+                    for index, option in enumerate(options)
+                ]
+            )
+            question_actions.focus()
         except Exception:
             return
 
     def _set_question_actions_visible(self, visible: bool) -> None:
         try:
-            self.query_one("#question_actions", Horizontal).display = visible
+            question_actions = self.query_one("#question_actions", ActionList)
+            if visible:
+                question_actions.display = True
+            else:
+                question_actions.hide()
         except Exception:
             return
 
@@ -1755,11 +1792,8 @@ class KolegaCodeApp(App):
         option_lines = [f"{index + 1}. {option}" for index, option in enumerate(options)]
         return "\n".join([question, "", *option_lines])
 
-    def _question_option_button_label(self, index: int, option: str) -> str:
-        label = f"{index + 1}. {option}"
-        if len(label) <= 60:
-            return label
-        return f"{label[:57]}..."
+    def _question_option_label(self, index: int, option: str) -> str:
+        return f"{index + 1}. {option}"
 
     def _reset_current_thread(self) -> None:
         if self.agent is not None:

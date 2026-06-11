@@ -463,8 +463,7 @@ async def test_textual_app_shift_tab_toggles_between_build_and_plan_agents(
         assert app._pending_question is None
         assert question_future.cancelled()
         assert app.query_one("#planning_plan_markdown", Markdown).source == "# Plan\n\nDo it."
-        assert app.query_one("#implement_plan").display is False
-        assert app.query_one("#discuss_plan").display is False
+        assert app.query_one("#plan_actions").display is False
         assert app.query_one("#question_actions").display is False
         loaded = store.load(session.session_id)
         assert loaded.latest_plan_markdown == "# Plan\n\nDo it."
@@ -477,10 +476,10 @@ async def test_textual_app_restores_saved_plan_and_interaction_mode(
 ) -> None:
     pytest.importorskip("textual")
 
-    from textual.widgets import Button, Markdown
+    from textual.widgets import Markdown
 
     from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import ChatComposer, KolegaCodeApp
+    from kolega_code.cli.app import ActionList, ChatComposer, KolegaCodeApp
 
     class FakeBaseAgent:
         def __init__(self, **kwargs):
@@ -525,8 +524,9 @@ async def test_textual_app_restores_saved_plan_and_interaction_mode(
         assert app._latest_plan == saved_plan
         assert app._plan_decision_active is False
         assert app.query_one("#planning_plan_markdown", Markdown).source == saved_plan
-        assert app.query_one("#implement_plan", Button).display is True
-        assert app.query_one("#discuss_plan", Button).display is False
+        plan_actions = app.query_one("#plan_actions", ActionList)
+        assert plan_actions.display is True
+        assert [option.id for option in plan_actions.options] == ["implement_plan"]
         assert app.query_one("#composer", ChatComposer).disabled is False
 
 
@@ -536,7 +536,7 @@ async def test_textual_app_restores_saved_plan_in_build_mode_without_plan_action
 ) -> None:
     pytest.importorskip("textual")
 
-    from textual.widgets import Button, Markdown
+    from textual.widgets import Markdown
 
     from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
@@ -573,8 +573,7 @@ async def test_textual_app_restores_saved_plan_in_build_mode_without_plan_action
         assert isinstance(app.agent, FakeCoderAgent)
         assert app._latest_plan == saved_plan
         assert app.query_one("#planning_plan_markdown", Markdown).source == saved_plan
-        assert app.query_one("#implement_plan", Button).display is False
-        assert app.query_one("#discuss_plan", Button).display is False
+        assert app.query_one("#plan_actions").display is False
 
 
 @pytest.mark.asyncio
@@ -860,15 +859,15 @@ async def test_textual_app_skill_slash_command_with_prompt_starts_turn(
 
 
 @pytest.mark.asyncio
-async def test_textual_app_planning_question_tool_accepts_option_button_answer(
+async def test_textual_app_planning_question_tool_accepts_option_list_answer(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     pytest.importorskip("textual")
 
-    from textual.widgets import Button, Markdown
+    from textual.widgets import OptionList
 
     from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import COMPOSER_PLACEHOLDER, ChatComposer, KolegaCodeApp
+    from kolega_code.cli.app import COMPOSER_PLACEHOLDER, ActionList, ChatComposer, KolegaCodeApp
 
     class FakeBaseAgent:
         def __init__(self, **kwargs):
@@ -914,10 +913,15 @@ async def test_textual_app_planning_question_tool_accepts_option_button_answer(
 
         assert app._pending_question is not None
         assert app.query_one("#composer", ChatComposer).disabled is False
-        assert app.query_one("#question_option_0", Button).label.plain == "1. Keep state local"
+        question_actions = app.query_one("#question_actions", ActionList)
+        assert question_actions.display is True
+        assert app.focused is question_actions
+        assert question_actions.highlighted == 0
+        assert question_actions.get_option("question_option_0").prompt == "1. Keep state local"
         assert app.conversation_entries[-1].kind == "question"
 
-        await app.on_button_pressed(Button.Pressed(app.query_one("#question_option_1", Button)))
+        selected = question_actions.get_option("question_option_1")
+        await app.on_option_list_option_selected(OptionList.OptionSelected(question_actions, selected, 1))
 
         assert await answer_task == "Persist it"
         assert app._pending_question is None
@@ -930,15 +934,78 @@ async def test_textual_app_planning_question_tool_accepts_option_button_answer(
 
 
 @pytest.mark.asyncio
+async def test_textual_app_planning_question_supports_arrow_and_digit_selection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli import app as app_module
+    from kolega_code.cli.app import ActionList, KolegaCodeApp
+
+    class FakeBaseAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.history = []
+
+        def restore_message_history(self, history):
+            self.history = list(history)
+
+        def dump_message_history(self):
+            return self.history
+
+        async def cleanup(self):
+            return None
+
+    class FakeCoderAgent(FakeBaseAgent):
+        pass
+
+    class FakePlanningAgent(FakeBaseAgent):
+        pass
+
+    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(app_module, "PlanningAgent", FakePlanningAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test() as pilot:
+        await app.action_toggle_interaction_mode()
+        ask_user_choice = extension_by_name(
+            app.agent.kwargs["tool_extensions"], "cli-planning-questions"
+        ).tools["ask_user_choice"]
+
+        options = ["Alpha", "Beta", "Gamma", "Delta"]
+        answer_task = asyncio.create_task(ask_user_choice("Pick one of four?", options))
+        await pilot.pause()
+
+        question_actions = app.query_one("#question_actions", ActionList)
+        assert question_actions.option_count == 4
+        assert app.focused is question_actions
+
+        await pilot.press("down", "down", "enter")
+        assert await answer_task == "Gamma"
+        assert question_actions.display is False
+
+        answer_task = asyncio.create_task(ask_user_choice("Pick again?", options))
+        await pilot.pause()
+
+        assert app.focused is app.query_one("#question_actions", ActionList)
+        await pilot.press("4")
+        assert await answer_task == "Delta"
+
+
+@pytest.mark.asyncio
 async def test_textual_app_planning_question_tool_accepts_custom_text_answer(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     pytest.importorskip("textual")
 
-    from textual.widgets import Button
-
     from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import ChatComposer, KolegaCodeApp
+    from kolega_code.cli.app import ActionList, ChatComposer, KolegaCodeApp
 
     class FakeBaseAgent:
         def __init__(self, **kwargs):
@@ -981,6 +1048,9 @@ async def test_textual_app_planning_question_tool_accepts_custom_text_answer(
         )
         await pilot.pause()
 
+        question_actions = app.query_one("#question_actions", ActionList)
+        assert question_actions.get_option("question_option_0").prompt == "1. Small fix"
+
         composer = app.query_one("#composer", ChatComposer)
         composer.load_text("Start with the small fix, but keep the API extensible.")
         await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
@@ -988,8 +1058,8 @@ async def test_textual_app_planning_question_tool_accepts_custom_text_answer(
         assert await answer_task == "Start with the small fix, but keep the API extensible."
         assert composer.text == ""
         assert app._pending_question is None
-        assert app.query_one("#question_actions").display is False
-        assert app.query_one("#question_option_0", Button).label.plain == "1. Small fix"
+        assert question_actions.display is False
+        assert question_actions.option_count == 0
         assert app.conversation_entries[-1].content == "Start with the small fix, but keep the API extensible."
 
 
@@ -1045,9 +1115,9 @@ async def test_textual_app_shows_plan_decision_when_planning_agent_writes_plan(
     pytest.importorskip("textual")
 
     from kolega_code.cli import app as app_module
-    from textual.widgets import Button, Markdown
+    from textual.widgets import Markdown
 
-    from kolega_code.cli.app import ChatComposer, KolegaCodeApp
+    from kolega_code.cli.app import ActionList, ChatComposer, KolegaCodeApp
 
     class FakeCoderAgent:
         def __init__(self, **kwargs):
@@ -1097,8 +1167,10 @@ async def test_textual_app_shows_plan_decision_when_planning_agent_writes_plan(
         assert app._latest_plan == initial_plan
         assert app.query_one("#composer", ChatComposer).disabled is True
         assert app.query_one("#composer", ChatComposer).placeholder == "Plan ready. Choose Implement plan or Discuss further."
-        assert app.query_one("#implement_plan", Button).display is True
-        assert app.query_one("#discuss_plan", Button).display is True
+        plan_actions = app.query_one("#plan_actions", ActionList)
+        assert plan_actions.display is True
+        assert [option.id for option in plan_actions.options] == ["implement_plan", "discuss_plan"]
+        assert app.focused is plan_actions
         assert app.query_one("#planning_plan_markdown", Markdown).source == initial_plan
         assert "Step 25" in app.query_one("#planning_plan_markdown", Markdown).source
         assert app.conversation_entries[-1].kind == "plan"
@@ -1112,8 +1184,8 @@ async def test_textual_app_shows_plan_decision_when_planning_agent_writes_plan(
         assert app._latest_plan is None
         assert app.query_one("#composer", ChatComposer).disabled is False
         assert app.query_one("#planning_plan_markdown", Markdown).source == "No plan captured yet."
-        assert app.query_one("#implement_plan", Button).display is False
-        assert app.query_one("#discuss_plan", Button).display is False
+        assert plan_actions.display is False
+        assert plan_actions.option_count == 0
         assert store.load(session.session_id).latest_plan_markdown == ""
 
         app.agent.completed_plan = "# Revised plan\n\nBuild planning mode carefully."
@@ -1122,8 +1194,8 @@ async def test_textual_app_shows_plan_decision_when_planning_agent_writes_plan(
         assert app._plan_decision_active is True
         assert app._latest_plan == "# Revised plan\n\nBuild planning mode carefully."
         assert app.query_one("#composer", ChatComposer).disabled is True
-        assert app.query_one("#implement_plan", Button).display is True
-        assert app.query_one("#discuss_plan", Button).display is True
+        assert plan_actions.display is True
+        assert [option.id for option in plan_actions.options] == ["implement_plan", "discuss_plan"]
         assert (
             app.query_one("#planning_plan_markdown", Markdown).source
             == "# Revised plan\n\nBuild planning mode carefully."
@@ -1137,7 +1209,7 @@ async def test_textual_app_implement_plan_switches_to_build_and_sends_plan(
 ) -> None:
     pytest.importorskip("textual")
 
-    from textual.widgets import Button, Markdown
+    from textual.widgets import Markdown
 
     from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
@@ -1190,8 +1262,7 @@ async def test_textual_app_implement_plan_switches_to_build_and_sends_plan(
         assert app._plan_decision_active is False
         assert app._latest_plan == "# Plan\n\nBuild it."
         assert app.query_one("#planning_plan_markdown", Markdown).source == "# Plan\n\nBuild it."
-        assert app.query_one("#implement_plan", Button).display is False
-        assert app.query_one("#discuss_plan", Button).display is False
+        assert app.query_one("#plan_actions").display is False
         loaded = store.load(session.session_id)
         assert loaded.latest_plan_markdown == "# Plan\n\nBuild it."
         assert loaded.interaction_mode == "build"
@@ -1203,7 +1274,7 @@ async def test_textual_app_discuss_plan_clears_old_plan_until_new_plan_is_writte
 ) -> None:
     pytest.importorskip("textual")
 
-    from textual.widgets import Button, Markdown
+    from textual.widgets import Markdown
 
     from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
@@ -1250,8 +1321,7 @@ async def test_textual_app_discuss_plan_clears_old_plan_until_new_plan_is_writte
         assert app._latest_plan is None
         assert app._plan_decision_active is False
         assert app.query_one("#planning_plan_markdown", Markdown).source == "No plan captured yet."
-        assert app.query_one("#implement_plan", Button).display is False
-        assert app.query_one("#discuss_plan", Button).display is False
+        assert app.query_one("#plan_actions").display is False
         assert store.load(session.session_id).latest_plan_markdown == ""
 
         await app._implement_pending_plan()
@@ -1271,8 +1341,7 @@ async def test_textual_app_discuss_plan_clears_old_plan_until_new_plan_is_writte
         assert "# Plan\n\nBuild it after discussing." not in app.agent.messages[-1]
         assert app._latest_plan == "# New plan\n\nBuild this instead."
         assert app.query_one("#planning_plan_markdown", Markdown).source == "# New plan\n\nBuild this instead."
-        assert app.query_one("#implement_plan", Button).display is False
-        assert app.query_one("#discuss_plan", Button).display is False
+        assert app.query_one("#plan_actions").display is False
         assert store.load(session.session_id).latest_plan_markdown == "# New plan\n\nBuild this instead."
 
 
@@ -1477,7 +1546,7 @@ async def test_textual_app_reset_command_clears_current_thread(
 ) -> None:
     pytest.importorskip("textual")
 
-    from textual.widgets import Button, Markdown
+    from textual.widgets import Markdown
 
     from kolega_code.cli import app as app_module
     from kolega_code.cli.app import ChatComposer, KolegaCodeApp, PendingQuestion, THREAD_RESET_MESSAGE
@@ -1544,8 +1613,7 @@ async def test_textual_app_reset_command_clears_current_thread(
         assert app._plan_decision_active is False
         assert app._pending_question is None
         assert question_future.cancelled()
-        assert app.query_one("#implement_plan", Button).display is False
-        assert app.query_one("#discuss_plan", Button).display is False
+        assert app.query_one("#plan_actions").display is False
         assert app.query_one("#question_actions").display is False
         assert app.query_one("#planning_plan_markdown", Markdown).source == "No plan captured yet."
         assert app.query_one("#planning_task_list_markdown", Markdown).source == "No task list has been set."
