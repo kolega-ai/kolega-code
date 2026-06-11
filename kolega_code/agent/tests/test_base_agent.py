@@ -94,7 +94,7 @@ class TestBaseAgent:
         assert base_agent.current_provider_tool_call_id is None
 
     @pytest.mark.asyncio
-    async def test_compress_message_history(self, base_agent):
+    async def testcompress_history(self, base_agent):
         # Setup test data
         conversation = [
             ("user", "Message 1"),
@@ -123,7 +123,7 @@ class TestBaseAgent:
             mock_generate.return_value = mock_response
 
             # Call the method (non-destructive)
-            await base_agent._compress_message_history()
+            await base_agent.compress_history()
 
             # Verify full history retained plus appended summary
             assert len(base_agent.history) == len(conversation) + 1
@@ -141,7 +141,7 @@ class TestBaseAgent:
             )  # Use the model's actual limit
 
     @pytest.mark.asyncio
-    async def test_compress_message_history_insufficient_history(self, base_agent):
+    async def testcompress_history_insufficient_history(self, base_agent):
         # Setup test data with less than 5 messages
         conversation = [
             ("user", "Message 1"),
@@ -157,7 +157,7 @@ class TestBaseAgent:
         # Mock the LLM client's generate method
         with patch.object(base_agent.llm, "generate", new_callable=AsyncMock) as mock_generate:
             # Call the method
-            await base_agent._compress_message_history()
+            await base_agent.compress_history()
 
             # Verify the history was not compressed
             assert len(base_agent.history) == 4
@@ -166,7 +166,7 @@ class TestBaseAgent:
             mock_generate.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_compress_message_history_error_handling(self, base_agent):
+    async def testcompress_history_error_handling(self, base_agent):
         # Setup test data
         conversation = [
             ("user", "Message 1"),
@@ -190,7 +190,7 @@ class TestBaseAgent:
             mock_generate.side_effect = Exception("Test error")
 
             # Call the method
-            await base_agent._compress_message_history()
+            await base_agent.compress_history()
 
             # Verify the history was not modified
             assert len(base_agent.history) == 10
@@ -200,7 +200,7 @@ class TestBaseAgent:
     @pytest.mark.slow
     @pytest.mark.integration
     @pytest.mark.asyncio
-    async def test_compress_message_history_with_real_llm(self, base_agent):
+    async def testcompress_history_with_real_llm(self, base_agent):
         """Integration test using the real LLM client to test message compression.
 
         Note: This test requires a valid API key to be set in the environment.
@@ -246,7 +246,7 @@ class TestBaseAgent:
 
         try:
             # Call the method with real LLM
-            await base_agent._compress_message_history()
+            await base_agent.compress_history()
 
             # Verify the summary was appended (allowing for environments where real LLM may be skipped)
             assert len(base_agent.history) >= len(conversation)
@@ -548,7 +548,7 @@ class TestBaseAgent:
 
         assert base_agent._is_history_valid_for_anthropic() is False
 
-    def test_fix_incomplete_tool_calls_no_changes_needed(self, base_agent):
+    def testfix_incomplete_tool_calls_no_changes_needed(self, base_agent):
         """Test fix method doesn't modify valid history."""
         valid_history = [
             Message(role="user", content=[TextBlock(text="Test message")]),
@@ -559,14 +559,14 @@ class TestBaseAgent:
             ),
         ]
 
-        fixed_history = base_agent._fix_incomplete_tool_calls(valid_history)
+        fixed_history = base_agent.fix_incomplete_tool_calls(valid_history)
 
         assert len(fixed_history) == 3
         assert fixed_history[0].to_dict() == valid_history[0].to_dict()
         assert fixed_history[1].to_dict() == valid_history[1].to_dict()
         assert fixed_history[2].to_dict() == valid_history[2].to_dict()
 
-    def test_fix_incomplete_tool_calls_adds_placeholder_result(self, base_agent):
+    def testfix_incomplete_tool_calls_adds_placeholder_result(self, base_agent):
         """Test fix method adds placeholder result for orphaned tool call."""
         incomplete_history = [
             Message(role="user", content=[TextBlock(text="Test message")]),
@@ -574,7 +574,7 @@ class TestBaseAgent:
             # Missing tool result
         ]
 
-        fixed_history = base_agent._fix_incomplete_tool_calls(incomplete_history)
+        fixed_history = base_agent.fix_incomplete_tool_calls(incomplete_history)
 
         assert len(fixed_history) == 3  # Original 2 + 1 placeholder
 
@@ -592,7 +592,7 @@ class TestBaseAgent:
         assert placeholder_msg.content[0].is_error is True
         assert "interrupted" in placeholder_msg.content[0].content.lower()
 
-    def test_fix_incomplete_tool_calls_multiple_tools(self, base_agent):
+    def testfix_incomplete_tool_calls_multiple_tools(self, base_agent):
         """Test fix method handles multiple incomplete tool calls."""
         incomplete_history = [
             Message(
@@ -605,7 +605,7 @@ class TestBaseAgent:
             # Missing tool results
         ]
 
-        fixed_history = base_agent._fix_incomplete_tool_calls(incomplete_history)
+        fixed_history = base_agent.fix_incomplete_tool_calls(incomplete_history)
 
         assert len(fixed_history) == 2  # Original 1 + 1 placeholder
 
@@ -621,7 +621,7 @@ class TestBaseAgent:
             assert isinstance(result, ToolResult)
             assert result.is_error is True
 
-    def test_fix_incomplete_tool_calls_partial_results(self, base_agent):
+    def testfix_incomplete_tool_calls_partial_results(self, base_agent):
         """Test fix method handles partial tool results correctly."""
         incomplete_history = [
             Message(
@@ -640,7 +640,7 @@ class TestBaseAgent:
             ),
         ]
 
-        fixed_history = base_agent._fix_incomplete_tool_calls(incomplete_history)
+        fixed_history = base_agent.fix_incomplete_tool_calls(incomplete_history)
 
         # Should have same length since placeholder is merged into existing user message
         assert len(fixed_history) == 2  # Same as original
@@ -662,9 +662,9 @@ class TestBaseAgent:
         # Verify the fixed history is valid
         assert base_agent._is_history_valid_for_anthropic(fixed_history) is True
 
-    def test_fix_incomplete_tool_calls_empty_history(self, base_agent):
+    def testfix_incomplete_tool_calls_empty_history(self, base_agent):
         """Test fix method handles empty history."""
-        fixed_history = base_agent._fix_incomplete_tool_calls([])
+        fixed_history = base_agent.fix_incomplete_tool_calls([])
         assert fixed_history == []
 
     def test_restore_message_history_with_incomplete_tool_calls(self, base_agent):
@@ -705,13 +705,13 @@ class TestBaseAgent:
         # Verify the history is still invalid for Anthropic (not fixed)
         assert base_agent._is_history_valid_for_anthropic() is False
 
-        # But verify that _fix_incomplete_tool_calls can fix it
-        fixed_history = base_agent._fix_incomplete_tool_calls(list(base_agent.history))
+        # But verify that fix_incomplete_tool_calls can fix it
+        fixed_history = base_agent.fix_incomplete_tool_calls(list(base_agent.history))
         assert len(fixed_history) == 3  # Now fixed with placeholder
         assert base_agent._is_history_valid_for_anthropic(fixed_history) is True
 
     # Tests for robustness - incomplete tool calls at various positions
-    def test_fix_incomplete_tool_calls_at_beginning_of_history(self, base_agent):
+    def testfix_incomplete_tool_calls_at_beginning_of_history(self, base_agent):
         """Test fix method handles incomplete tool calls at the beginning of message history."""
         corrupted_history = [
             # Incomplete tool call sequence at the beginning
@@ -742,7 +742,7 @@ class TestBaseAgent:
             ),
         ]
 
-        fixed_history = base_agent._fix_incomplete_tool_calls(corrupted_history)
+        fixed_history = base_agent.fix_incomplete_tool_calls(corrupted_history)
 
         # Should have same length since placeholder is merged into existing user message
         assert len(fixed_history) == 6  # Same as original
@@ -770,7 +770,7 @@ class TestBaseAgent:
         # Verify final history is valid
         assert base_agent._is_history_valid_for_anthropic(fixed_history) is True
 
-    def test_fix_incomplete_tool_calls_in_middle_of_history(self, base_agent):
+    def testfix_incomplete_tool_calls_in_middle_of_history(self, base_agent):
         """Test fix method handles incomplete tool calls in the middle of message history."""
         corrupted_history = [
             # Normal conversation start
@@ -798,7 +798,7 @@ class TestBaseAgent:
             Message(role="user", content=[TextBlock(text="Sounds good")]),
         ]
 
-        fixed_history = base_agent._fix_incomplete_tool_calls(corrupted_history)
+        fixed_history = base_agent.fix_incomplete_tool_calls(corrupted_history)
 
         # Should have same length since placeholder is merged into existing user message
         assert len(fixed_history) == 6  # Same as original
@@ -864,7 +864,7 @@ class TestBaseAgent:
             Message(role="assistant", content=[TextBlock(text="Done")]),
         ]
 
-        fixed_history = base_agent._fix_incomplete_tool_calls(corrupted_history)
+        fixed_history = base_agent.fix_incomplete_tool_calls(corrupted_history)
 
         # Should have same length since placeholders are merged into existing user messages
         assert len(fixed_history) == 7  # Same as original
@@ -888,7 +888,7 @@ class TestBaseAgent:
         # Verify final history is valid
         assert base_agent._is_history_valid_for_anthropic(fixed_history) is True
 
-    def test_fix_incomplete_tool_calls_at_end_with_no_user_message(self, base_agent):
+    def testfix_incomplete_tool_calls_at_end_with_no_user_message(self, base_agent):
         """Test fix method handles incomplete tool calls at the very end with no following user message."""
         corrupted_history = [
             Message(role="user", content=[TextBlock(text="Do something")]),
@@ -904,7 +904,7 @@ class TestBaseAgent:
             # No user message follows (interrupted)
         ]
 
-        fixed_history = base_agent._fix_incomplete_tool_calls(corrupted_history)
+        fixed_history = base_agent.fix_incomplete_tool_calls(corrupted_history)
 
         # Should have added 1 new user message for the missing tools
         assert len(fixed_history) == 4  # Original 3 + 1 new user message
@@ -952,7 +952,7 @@ class TestBaseAgent:
             # No user message (interrupted)
         ]
 
-        fixed_history = base_agent._fix_incomplete_tool_calls(corrupted_history)
+        fixed_history = base_agent.fix_incomplete_tool_calls(corrupted_history)
 
         # Should have same length since one placeholder is merged, one new message is added
         assert len(fixed_history) == 6  # Same as original (merge + add)
@@ -1015,7 +1015,7 @@ class TestBaseAgent:
             Message(role="assistant", content=[TextBlock(text="Great work!")]),
         ]
 
-        fixed_history = base_agent._fix_incomplete_tool_calls(mixed_history)
+        fixed_history = base_agent.fix_incomplete_tool_calls(mixed_history)
 
         # Should have same length since placeholder is merged into existing user message
         assert len(fixed_history) == 8  # Same as original
@@ -1102,7 +1102,7 @@ class TestBaseAgent:
         # Verify original history is invalid
         assert base_agent._is_history_valid_for_anthropic(heavily_corrupted_history) is False
 
-        fixed_history = base_agent._fix_incomplete_tool_calls(heavily_corrupted_history)
+        fixed_history = base_agent.fix_incomplete_tool_calls(heavily_corrupted_history)
 
         # Should have same length since 2 placeholders are merged, 1 new message is added
         assert len(fixed_history) == 10  # Same as original (2 merges + 1 add = net 0 change)
@@ -1137,7 +1137,7 @@ class TestBaseAgent:
     @pytest.mark.slow
     @pytest.mark.integration
     @pytest.mark.asyncio
-    async def test_fix_incomplete_tool_calls_with_real_api_simple_case(self, base_agent):
+    async def testfix_incomplete_tool_calls_with_real_api_simple_case(self, base_agent):
         """Integration test: Fix simple incomplete tool call and verify it works with real Anthropic API."""
         # Skip if no API key is available
         api_key = base_agent.config.get_api_key(base_agent.config.long_context_config.provider)
@@ -1159,7 +1159,7 @@ class TestBaseAgent:
         assert base_agent._is_history_valid_for_anthropic(corrupted_history) is False
 
         # Fix the corrupted history
-        fixed_history = base_agent._fix_incomplete_tool_calls(corrupted_history)
+        fixed_history = base_agent.fix_incomplete_tool_calls(corrupted_history)
 
         # Verify the fix worked
         assert base_agent._is_history_valid_for_anthropic(fixed_history) is True
@@ -1244,7 +1244,7 @@ class TestBaseAgent:
         assert base_agent._is_history_valid_for_anthropic(corrupted_history) is False
 
         # Fix the corrupted history
-        fixed_history = base_agent._fix_incomplete_tool_calls(corrupted_history)
+        fixed_history = base_agent.fix_incomplete_tool_calls(corrupted_history)
 
         # Verify the fix worked
         assert base_agent._is_history_valid_for_anthropic(fixed_history) is True
@@ -1369,7 +1369,7 @@ class TestBaseAgent:
             assert base_agent._is_history_valid_for_anthropic() is False
 
             # Fix the history manually
-            fixed_history = MessageHistory(base_agent._fix_incomplete_tool_calls(list(base_agent.history)))
+            fixed_history = MessageHistory(base_agent.fix_incomplete_tool_calls(list(base_agent.history)))
 
             # Verify the fix was applied correctly
             # Should have merged placeholders for missing tool results
@@ -1461,7 +1461,7 @@ class TestBaseAgent:
         assert base_agent._is_history_valid_for_anthropic(corrupted_history) is False
 
         # Fix the corrupted history
-        fixed_history = base_agent._fix_incomplete_tool_calls(corrupted_history)
+        fixed_history = base_agent.fix_incomplete_tool_calls(corrupted_history)
 
         # Verify the fix worked
         assert base_agent._is_history_valid_for_anthropic(fixed_history) is True
@@ -1546,7 +1546,7 @@ class TestBaseAgent:
         assert base_agent._is_history_valid_for_anthropic(edge_case_history) is False
 
         # Fix the edge case
-        fixed_history = base_agent._fix_incomplete_tool_calls(edge_case_history)
+        fixed_history = base_agent.fix_incomplete_tool_calls(edge_case_history)
 
         # Verify the fix worked
         assert base_agent._is_history_valid_for_anthropic(fixed_history) is True
@@ -1595,8 +1595,8 @@ class TestBaseAgent:
         assert new_msg.role == "user"
         assert new_msg.content[0].text == "New user message"
 
-        # But verify that _fix_incomplete_tool_calls can fix it
-        fixed_history = base_agent._fix_incomplete_tool_calls(list(base_agent.history))
+        # But verify that fix_incomplete_tool_calls can fix it
+        fixed_history = base_agent.fix_incomplete_tool_calls(list(base_agent.history))
         assert len(fixed_history) == 3  # assistant, user (tool result), user (new message)
         assert base_agent._is_history_valid_for_anthropic(fixed_history) is True
 
@@ -1761,7 +1761,7 @@ class TestBaseAgent:
         assert not base_agent._is_history_valid_for_anthropic()
 
         # Fix history before API call
-        fixed_history = MessageHistory(base_agent._fix_incomplete_tool_calls(list(base_agent.history)))
+        fixed_history = MessageHistory(base_agent.fix_incomplete_tool_calls(list(base_agent.history)))
 
         # Verify we can make an API call with fixed history
         system_message = Message(role="system", content=[TextBlock(text="You are a helpful assistant.")])
@@ -1810,8 +1810,8 @@ class TestBaseAgent:
         # History should still be invalid - append doesn't fix
         assert not base_agent._is_history_valid_for_anthropic()
 
-        # But _fix_incomplete_tool_calls should be able to fix it
-        fixed_history = base_agent._fix_incomplete_tool_calls(list(base_agent.history))
+        # But fix_incomplete_tool_calls should be able to fix it
+        fixed_history = base_agent.fix_incomplete_tool_calls(list(base_agent.history))
         assert base_agent._is_history_valid_for_anthropic(fixed_history)
 
         # Verify the fixed history has all tool results
@@ -1875,7 +1875,7 @@ class TestBaseAgent:
         assert not base_agent._is_history_valid_for_anthropic()
 
         # Fix history before API call
-        fixed_history = MessageHistory(base_agent._fix_incomplete_tool_calls(list(base_agent.history)))
+        fixed_history = MessageHistory(base_agent.fix_incomplete_tool_calls(list(base_agent.history)))
 
         # Test with real API
         system_message = Message(role="system", content=[TextBlock(text="You are a helpful assistant.")])
