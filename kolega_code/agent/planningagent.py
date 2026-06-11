@@ -6,7 +6,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 from .baseagent import BaseAgent
 from .config import AgentConfig
 from .connection_manager import AgentConnectionManager
-from .llm.models import ImageBlock, Message, MessageHistory, TextBlock, ToolResult
+from .llm.models import Message, MessageHistory, TextBlock, ToolResult
 from .prompt_provider import AgentMode, PromptExtension
 from .tools import ToolCollection, ToolCollectionConfig, ToolExtension
 from .utils.commands import CommandProcessor
@@ -200,17 +200,7 @@ class PlanningAgent(BaseAgent):
             return
 
         content_blocks = [TextBlock(text=message)]
-
-        if attachments:
-            for attachment in attachments:
-                if attachment.get("type") == "image":
-                    content_blocks.append(
-                        ImageBlock(
-                            image_type="base64",
-                            media_type=attachment.get("media_type", "image/png"),
-                            data=attachment["data"],
-                        )
-                    )
+        content_blocks.extend(self._attachment_blocks(attachments))
 
         self.append_user_message(content_blocks)
 

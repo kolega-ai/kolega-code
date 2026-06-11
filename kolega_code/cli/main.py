@@ -17,8 +17,10 @@ from kolega_code.agent.services.browser import PlaywrightBrowserManager
 
 from .config import CliConfigError, CliConfigOverrides, build_agent_config, config_summary, key_status
 from .connection import CliConnectionManager
+from .mentions import build_file_attachments
 from .session_store import SessionRecord, SessionStore, SessionStoreError
 from .settings import SettingsStore, SettingsStoreError
+from .slash_commands import SKILLS_LIST_COMMAND, agent_command_names
 from .skills import (
     SkillCatalog,
     activated_skill_names,
@@ -30,8 +32,6 @@ from .skills import (
 SUBCOMMANDS = {"ask", "sessions", "doctor"}
 RESUME_LATEST = "__latest__"
 CLI_AGENT_MODE = AgentMode.CLI.value
-AGENT_BUILTIN_COMMANDS = {"/help", "/compress", "/clear", "/reset", "/context"}
-SKILLS_LIST_COMMAND = "/skills"
 
 
 def main(argv: Optional[Iterable[str]] = None) -> int:
@@ -398,12 +398,17 @@ async def _run_ask(args: argparse.Namespace) -> int:
             await agent.cleanup()
             return 0
 
+    attachments, unresolved_mentions = build_file_attachments(prompt, project_path)
+    for mention in unresolved_mentions:
+        print(f"Note: @{mention} not found, sent as plain text", file=sys.stderr)
+
     response_chunks: list[dict] = []
     # Pump connection-manager events concurrently so sub-agent activity is
     # reported in real time instead of all at once after streaming finishes.
     pump_task = asyncio.create_task(_pump_ask_events(manager, args.json))
     try:
-        async for chunk in agent.process_message_stream(prompt):
+        stream = agent.process_message_stream(prompt, attachments) if attachments else agent.process_message_stream(prompt)
+        async for chunk in stream:
             response_chunks.append(chunk)
             if args.json:
                 print(json.dumps({"kind": "chunk", "data": chunk}, default=str))
@@ -473,7 +478,7 @@ def _parse_skill_prompt(prompt: str, catalog: SkillCatalog) -> Optional[tuple[st
     command = command_text.lower()
     if command == SKILLS_LIST_COMMAND:
         return "skills", rest.strip()
-    if command in AGENT_BUILTIN_COMMANDS:
+    if command in agent_command_names():
         return None
 
     skill_name = command.removeprefix("/")

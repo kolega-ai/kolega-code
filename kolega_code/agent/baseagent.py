@@ -18,7 +18,7 @@ from .llm.exceptions import (
     LLMRateLimitError,
     map_to_llm_error,
 )
-from .llm.models import Message, MessageHistory, TextBlock, ToolCall, ToolResult
+from .llm.models import ImageBlock, Message, MessageHistory, TextBlock, ToolCall, ToolResult
 from .llm.providers.models import TokenCount
 from .llm.specs import get_model_specs
 from .models.public import AgentEvent, AgentStatus
@@ -284,6 +284,25 @@ class BaseAgent(LogMixin):
             return self.deepseek_image_unsupported_message
 
         return None
+
+    def _attachment_blocks(self, attachments: Optional[List[Dict[str, Any]]]) -> List[Any]:
+        """Convert attachment payloads into content blocks for a user message."""
+        blocks: List[Any] = []
+        for attachment in attachments or []:
+            attachment_type = attachment.get("type")
+            if attachment_type == "image":
+                blocks.append(
+                    ImageBlock(
+                        image_type="base64",
+                        media_type=attachment.get("media_type", "image/png"),
+                        data=attachment["data"],
+                    )
+                )
+            elif attachment_type == "file":
+                path = attachment.get("path", "")
+                content = attachment.get("content", "")
+                blocks.append(TextBlock(text=f'<attached-file path="{path}">\n{content}\n</attached-file>'))
+        return blocks
 
     async def process_message_stream(
         self, message: str, attachments: List[Dict[str, Any]] = None

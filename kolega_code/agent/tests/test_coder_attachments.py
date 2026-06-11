@@ -281,3 +281,50 @@ async def test_coder_agent_process_message_imports():
     # Just verify the imports work
     assert ImageBlock is not None
     assert TextBlock is not None
+
+
+def test_attachment_blocks_mixes_images_and_files():
+    agent = object.__new__(BaseAgent)
+    blocks = agent._attachment_blocks(
+        [
+            _image_attachment(),
+            {"type": "file", "path": "src/app.py", "content": "print('hi')"},
+            {"type": "unknown", "data": "ignored"},
+        ]
+    )
+
+    assert len(blocks) == 2
+    assert isinstance(blocks[0], ImageBlock)
+    assert isinstance(blocks[1], TextBlock)
+    assert blocks[1].text == '<attached-file path="src/app.py">\nprint(\'hi\')\n</attached-file>'
+
+
+def test_attachment_blocks_handles_none():
+    agent = object.__new__(BaseAgent)
+    assert agent._attachment_blocks(None) == []
+
+
+@pytest.mark.asyncio
+async def test_coder_agent_file_attachment_added_to_history(tmp_path):
+    connection_manager = Mock()
+    connection_manager.broadcast_event = AsyncMock()
+    agent = CoderAgent(
+        project_path=tmp_path,
+        workspace_id="workspace-123",
+        thread_id="thread-123",
+        connection_manager=connection_manager,
+        config=_deepseek_config(),
+        agent_mode=AgentMode.CLI,
+    )
+    agent.count_current_context = AsyncMock(return_value=TokenCount(input_tokens=42))
+    agent.llm = Mock()
+    agent.llm.stream = AsyncMock(return_value=_EmptyStream())
+
+    attachments = [{"type": "file", "path": "notes.md", "content": "remember the milk"}]
+    chunks = [chunk async for chunk in agent.process_message_stream("see the notes", attachments)]
+
+    assert chunks[-1]["complete"] is True
+    user_message = agent.history[0]
+    texts = [block.text for block in user_message.content if isinstance(block, TextBlock)]
+    assert texts[0] == "see the notes"
+    assert texts[1] == '<attached-file path="notes.md">\nremember the milk\n</attached-file>'

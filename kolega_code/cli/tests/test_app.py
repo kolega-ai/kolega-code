@@ -3637,3 +3637,544 @@ async def test_logs_tab_shows_activity_dot_until_visited(
         # Writing while the tab is active does not re-add the dot
         app._write_log("foreground activity")
         assert str(tabs.get_tab("logs_pane").label) == "Logs"
+
+
+def _build_mention_test_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    from kolega_code.cli import app as app_module
+    from kolega_code.cli.app import KolegaCodeApp
+
+    class FakeCoderAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.history = []
+            self.messages = []
+            self.attachments = []
+
+        def append_user_message(self, content):
+            self.history.append(Message(role="user", content=content))
+
+        def restore_message_history(self, history):
+            self.history = [Message.from_dict(item) for item in history]
+
+        def dump_message_history(self):
+            return [message.to_dict() for message in self.history]
+
+        async def cleanup(self):
+            return None
+
+        async def process_message_stream(self, message, attachments=None):
+            self.messages.append(message)
+            self.attachments.append(attachments)
+            yield {"type": "response", "content": "done", "complete": True, "uuid": "response-1"}
+
+    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "src").mkdir()
+    (project / "src" / "alpha.py").write_text("print('alpha')\n", encoding="utf-8")
+    (project / "src" / "alpine.txt").write_text("mountains\n", encoding="utf-8")
+    (project / "README.md").write_text("# Readme\n", encoding="utf-8")
+    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    return KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+
+@pytest.mark.asyncio
+async def test_textual_app_mention_dropdown_opens_and_escape_dismisses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.app import ChatComposer, CompletionDropdown
+
+    app = _build_mention_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        composer = app.query_one("#composer", ChatComposer)
+        dropdown = app.query_one("#completion_dropdown", CompletionDropdown)
+        composer.focus()
+        await pilot.pause()
+
+        composer.insert("@alp")
+        await pilot.pause()
+        assert dropdown.is_open
+        assert dropdown.option_count > 0
+
+        await pilot.press("escape")
+        assert not dropdown.is_open
+        assert composer.text == "@alp"
+
+
+@pytest.mark.asyncio
+async def test_textual_app_mention_dropdown_not_opened_by_email_address(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.app import ChatComposer, CompletionDropdown
+
+    app = _build_mention_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        composer = app.query_one("#composer", ChatComposer)
+        dropdown = app.query_one("#completion_dropdown", CompletionDropdown)
+        composer.focus()
+        composer.insert("mail user@example")
+        await pilot.pause()
+        assert not dropdown.is_open
+
+
+@pytest.mark.asyncio
+async def test_textual_app_mention_dropdown_down_and_tab_completes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.app import ChatComposer, CompletionDropdown
+
+    app = _build_mention_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        composer = app.query_one("#composer", ChatComposer)
+        dropdown = app.query_one("#completion_dropdown", CompletionDropdown)
+        composer.focus()
+        composer.insert("@alp")
+        await pilot.pause()
+        assert dropdown.is_open
+
+        expected = dropdown.entry_at(1).path
+        await pilot.press("down")
+        assert dropdown.highlighted == 1
+        await pilot.press("tab")
+        assert composer.text == f"@{expected} "
+        assert not dropdown.is_open
+
+
+@pytest.mark.asyncio
+async def test_textual_app_mention_enter_completes_instead_of_submitting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.app import ChatComposer, CompletionDropdown
+
+    app = _build_mention_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        composer = app.query_one("#composer", ChatComposer)
+        dropdown = app.query_one("#completion_dropdown", CompletionDropdown)
+        composer.focus()
+        composer.insert("@README")
+        await pilot.pause()
+        assert dropdown.is_open
+
+        await pilot.press("enter")
+        await pilot.pause()
+        assert composer.text == "@README.md "
+        assert not dropdown.is_open
+        # No message was submitted, only the completion was applied.
+        assert app.agent.messages == []
+
+
+@pytest.mark.asyncio
+async def test_textual_app_submitting_mention_attaches_file_and_keeps_short_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.app import ChatComposer
+
+    app = _build_mention_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        composer = app.query_one("#composer", ChatComposer)
+        composer.load_text("summarize @src/alpha.py please")
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+        await pilot.pause()
+
+        assert app.agent.messages == ["summarize @src/alpha.py please"]
+        attachments = app.agent.attachments[0]
+        assert attachments is not None and len(attachments) == 1
+        assert attachments[0]["type"] == "file"
+        assert attachments[0]["path"] == "src/alpha.py"
+        assert attachments[0]["content"] == "print('alpha')\n"
+        assert any(
+            entry.kind == "user" and entry.content == "summarize @src/alpha.py please"
+            for entry in app.conversation_entries
+        )
+
+
+@pytest.mark.asyncio
+async def test_textual_app_unresolved_mention_shows_hint_and_sends_plain_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from textual.widgets import Static
+
+    from kolega_code.cli.app import ChatComposer
+
+    app = _build_mention_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        composer = app.query_one("#composer", ChatComposer)
+        composer.load_text("look at @does/not/exist.py")
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+
+        # The hint is visible while the turn runs; end-of-turn cleanup restores the placeholder.
+        hint = app.query_one("#composer_hint", Static)
+        assert "does/not/exist.py" in str(hint.render())
+
+        await pilot.pause()
+        assert app.agent.messages == ["look at @does/not/exist.py"]
+        assert app.agent.attachments == [None]
+
+
+@pytest.mark.asyncio
+async def test_textual_app_slash_dropdown_opens_filters_and_tab_completes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.app import ChatComposer, CompletionDropdown
+    from kolega_code.cli.slash_commands import SlashCommandEntry
+
+    app = _build_mention_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        composer = app.query_one("#composer", ChatComposer)
+        dropdown = app.query_one("#completion_dropdown", CompletionDropdown)
+        composer.focus()
+        await pilot.pause()
+
+        composer.insert("/")
+        await pilot.pause()
+        assert dropdown.is_open
+        assert dropdown.option_count > 1
+        assert isinstance(dropdown.highlighted_entry(), SlashCommandEntry)
+
+        composer.insert("pl")
+        await pilot.pause()
+        assert dropdown.is_open
+        assert dropdown.highlighted_entry().name == "plan"
+
+        await pilot.press("tab")
+        assert composer.text == "/plan "
+        assert not dropdown.is_open
+
+
+@pytest.mark.asyncio
+async def test_textual_app_slash_dropdown_lists_skills_with_descriptions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.app import ChatComposer, CompletionDropdown
+
+    app = _build_mention_test_app(tmp_path, monkeypatch)
+    skill_dir = app.project_path / ".agents" / "skills" / "demo-skill"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: demo-skill\ndescription: Use this demo skill.\n---\n\nFollow demo instructions.\n",
+        encoding="utf-8",
+    )
+
+    async with app.run_test() as pilot:
+        composer = app.query_one("#composer", ChatComposer)
+        dropdown = app.query_one("#completion_dropdown", CompletionDropdown)
+        composer.focus()
+        composer.insert("/demo")
+        await pilot.pause()
+
+        assert dropdown.is_open
+        entry = dropdown.highlighted_entry()
+        assert entry.name == "demo-skill"
+        assert entry.description == "Use this demo skill."
+
+        await pilot.press("tab")
+        assert composer.text == "/demo-skill "
+
+
+@pytest.mark.asyncio
+async def test_textual_app_slash_dropdown_enter_completes_instead_of_submitting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.app import ChatComposer, CompletionDropdown
+
+    app = _build_mention_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        composer = app.query_one("#composer", ChatComposer)
+        dropdown = app.query_one("#completion_dropdown", CompletionDropdown)
+        composer.focus()
+        composer.insert("/versio")
+        await pilot.pause()
+        assert dropdown.is_open
+
+        await pilot.press("enter")
+        await pilot.pause()
+        assert composer.text == "/version "
+        assert not dropdown.is_open
+        assert app.agent.messages == []
+
+
+@pytest.mark.asyncio
+async def test_textual_app_slash_dropdown_does_not_open_mid_text_or_after_args(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.app import ChatComposer, CompletionDropdown
+
+    app = _build_mention_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        composer = app.query_one("#composer", ChatComposer)
+        dropdown = app.query_one("#completion_dropdown", CompletionDropdown)
+        composer.focus()
+
+        composer.insert("see src/")
+        await pilot.pause()
+        assert not dropdown.is_open
+
+        composer.load_text("")
+        composer.insert("first line")
+        composer.action_insert_newline()
+        composer.insert("/")
+        await pilot.pause()
+        assert not dropdown.is_open
+
+        composer.load_text("")
+        composer.insert("/skills extra")
+        await pilot.pause()
+        assert not dropdown.is_open
+
+
+@pytest.mark.asyncio
+async def test_chat_composer_active_slash_query(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.app import ChatComposer
+
+    app = _build_mention_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        composer = app.query_one("#composer", ChatComposer)
+        composer.focus()
+
+        composer.insert("/")
+        assert composer.active_slash_query() == ("", 0, 1)
+
+        composer.insert("mod")
+        assert composer.active_slash_query() == ("mod", 0, 4)
+
+        composer.load_text("")
+        composer.insert("  /he")
+        assert composer.active_slash_query() == ("he", 2, 5)
+
+        composer.load_text("")
+        composer.insert("hello /he")
+        assert composer.active_slash_query() is None
+
+        composer.load_text("")
+        composer.insert("/model kimi")
+        assert composer.active_slash_query() is None
+
+
+@pytest.mark.asyncio
+async def test_textual_app_plan_and_build_slash_commands_switch_mode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli import app as app_module
+    from kolega_code.cli.app import ChatComposer, KolegaCodeApp
+
+    class FakeAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def restore_message_history(self, history):
+            return None
+
+        def dump_message_history(self):
+            return []
+
+        async def cleanup(self):
+            return None
+
+    class FakeCoderAgent(FakeAgent):
+        pass
+
+    class FakePlanningAgent(FakeAgent):
+        pass
+
+    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(app_module, "PlanningAgent", FakePlanningAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test():
+        composer = app.query_one("#composer", ChatComposer)
+        assert app.interaction_mode == "build"
+
+        composer.load_text("/plan")
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+        assert app.interaction_mode == "plan"
+        assert isinstance(app.agent, FakePlanningAgent)
+        assert composer.text == ""
+
+        composer.load_text("/build")
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+        assert app.interaction_mode == "build"
+        assert isinstance(app.agent, FakeCoderAgent)
+
+
+@pytest.mark.asyncio
+async def test_textual_app_model_slash_command_shows_and_switches_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli import app as app_module
+    from kolega_code.cli.app import ChatComposer, KolegaCodeApp
+
+    class FakeCoderAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def restore_message_history(self, history):
+            return None
+
+        def dump_message_history(self):
+            return []
+
+        async def cleanup(self):
+            return None
+
+    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(
+        app_module,
+        "ui_model_options",
+        lambda provider: [("Kimi K2.6", "kimi-k2.6"), ("Kimi K3", "kimi-k3")],
+    )
+
+    project = tmp_path / "project"
+    project.mkdir()
+    state_dir = tmp_path / "state"
+    store = SessionStore(state_dir)
+    settings_store = SettingsStore(state_dir)
+    session = store.create(project, "code", {})
+    app = KolegaCodeApp(
+        project_path=project,
+        mode="code",
+        store=store,
+        settings_store=settings_store,
+        session=session,
+    )
+
+    async with app.run_test():
+        from textual.widgets import Input
+
+        app.query_one("#api_key_input", Input).value = "moonshot-key"
+        await app._save_settings_from_ui()
+        first_agent = app.agent
+        assert isinstance(first_agent, FakeCoderAgent)
+
+        composer = app.query_one("#composer", ChatComposer)
+        composer.load_text("/model")
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+        entry = app.conversation_entries[-1]
+        assert entry.kind == "system"
+        assert "kimi-k2.6" in entry.content and "kimi-k3" in entry.content
+
+        # kimi-k3 is a fake model the real config builder rejects, so stub it for the rebuild step.
+        saved_config = app.config
+        monkeypatch.setattr(app_module, "build_agent_config", lambda *args, **kwargs: saved_config)
+
+        composer.load_text("/model kimi-k3")
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+        assert settings_store.load().active_model == "kimi-k3"
+        assert isinstance(app.agent, FakeCoderAgent)
+        assert app.agent is not first_agent
+
+        composer.load_text("/model does-not-exist")
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+        assert settings_store.load().active_model == "kimi-k3"
+
+
+@pytest.mark.asyncio
+async def test_textual_app_copy_and_version_slash_commands(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    import kolega_code
+    from kolega_code.cli.app import ChatComposer, ConversationEntry
+
+    app = _build_mention_test_app(tmp_path, monkeypatch)
+    copied: list[str] = []
+
+    async with app.run_test():
+        monkeypatch.setattr(app, "copy_to_clipboard", copied.append)
+        composer = app.query_one("#composer", ChatComposer)
+
+        composer.load_text("/copy")
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+        assert copied == []
+
+        app._add_conversation_entry(ConversationEntry(kind="assistant", content="the answer"))
+        composer.load_text("/copy")
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+        assert copied == ["the answer"]
+
+        composer.load_text("/version")
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+        entry = app.conversation_entries[-1]
+        assert entry.kind == "system"
+        assert kolega_code.__version__ in entry.content
+
+
+@pytest.mark.asyncio
+async def test_textual_app_quit_slash_command_exits(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.app import ChatComposer
+
+    app = _build_mention_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        composer = app.query_one("#composer", ChatComposer)
+        composer.load_text("/quit")
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+
+    assert app.return_value is None
+    assert not app.is_running
+
+
+@pytest.mark.asyncio
+async def test_textual_app_unknown_slash_command_falls_through_to_agent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.app import ChatComposer
+
+    app = _build_mention_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        composer = app.query_one("#composer", ChatComposer)
+        composer.load_text("/help")
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+        await pilot.pause()
+
+        assert app.agent.messages == ["/help"]
