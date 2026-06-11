@@ -30,6 +30,7 @@ from .prompt_provider import PromptProvider, AgentMode, PromptContext, PromptExt
 from kolega_code.services.base import TerminalManager, BrowserManager
 from kolega_code.services.file_system import FileSystem
 from .tools import ToolCollection
+from kolega_code.tools import ToolError
 from .utils.commands import CommandProcessor
 from langfuse import Langfuse
 
@@ -516,8 +517,8 @@ class BaseAgent(LogMixin):
         self.current_tool_call_id = tool_execution_id
 
         try:
-            available_tools = {tool.name for tool in self.tool_collection.get_tool_list()}
-            if tool_name not in available_tools:
+            registry = self.tool_collection.registry()
+            if tool_name not in registry:
                 error_message = f"Tool '{tool_name}' is not available in this mode."
                 await self.log_error(error_message, sender=self.agent_name)
                 await self.send_chat_message(
@@ -553,7 +554,7 @@ class BaseAgent(LogMixin):
                     tool_call_id=tool_execution_id,
                 )
 
-            output = await self.tool_collection.__getattribute__(tool_name)(**inputs)
+            output = await registry.call(tool_name, **inputs)
 
             # Handle the case where the output is a list of ContentBlock objects
             chat_message_content = output
@@ -577,6 +578,27 @@ class BaseAgent(LogMixin):
                 content=output,
                 name=tool_name,
                 is_error=False,
+                execution_id=tool_execution_id,
+            )
+        except ToolError as ex:
+            # Expected tool failure: surface to the model without an
+            # internal-error log.
+            error_message = str(ex)
+            await self.log_warning(f"Tool {tool_name} failed: {error_message}", sender=self.agent_name)
+
+            await self.send_chat_message(
+                message_type="tool_error",
+                content=error_message,
+                is_streaming=False,
+                tool_description=tool_name,
+                tool_call_id=tool_execution_id,
+            )
+
+            return ToolResult(
+                tool_use_id=provider_tool_call_id,
+                content=error_message,
+                name=tool_use_block.name,
+                is_error=True,
                 execution_id=tool_execution_id,
             )
         except Exception as ex:
@@ -619,11 +641,13 @@ class BaseAgent(LogMixin):
         if len(tool_use_blocks) == 1:
             return [await self.execute_single_tool(tool_use_blocks[0])]
 
-        # Read-only tools have no side effects and agent dispatches operate on
-        # independent sub-agents, so batches made up entirely of these can run
-        # concurrently. Any other tool in the batch forces sequential execution.
-        parallel_safe_tools = set(ToolCollection.read_only_tools) | set(ToolCollection.agent_dispatch_tools)
-        all_parallel_safe = all(block.name in parallel_safe_tools for block in tool_use_blocks)
+        # A batch runs concurrently only when every tool in it is marked
+        # parallel-safe (read-only operations and independent sub-agent
+        # dispatches); any other tool forces sequential execution.
+        registry = self.tool_collection.registry()
+        all_parallel_safe = all(
+            block.name in registry and registry.get(block.name).parallel_safe for block in tool_use_blocks
+        )
 
         if all_parallel_safe:
             # Execute all tools in parallel
