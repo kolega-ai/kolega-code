@@ -85,13 +85,35 @@ class ConcurrencyTracker:
         self.active -= 1
 
 
+class FakeToolCollection:
+    """Test stand-in for ToolCollection: builds a registry from get_tool_list + methods."""
+
+    def registry(self):
+        from kolega_code.agent.tools import ToolCollection
+        from kolega_code.llm.models import ToolDefinition
+        from kolega_code.tools import Tool, ToolRegistry
+
+        parallel = set(ToolCollection.read_only_tools) | set(ToolCollection.agent_dispatch_tools)
+        registry = ToolRegistry()
+        for spec in self.get_tool_list():
+            registry.add(
+                Tool(
+                    name=spec.name,
+                    definition=ToolDefinition(name=spec.name, description="", parameters=[]),
+                    handler=getattr(self, spec.name),
+                    parallel_safe=spec.name in parallel,
+                )
+            )
+        return registry
+
+
 class TestParallelToolCalls:
     @pytest.mark.asyncio
     async def test_dispatch_tools_run_concurrently(self, base_agent):
         first_started = asyncio.Event()
         second_started = asyncio.Event()
 
-        class Tools:
+        class Tools(FakeToolCollection):
             def __init__(self):
                 self.calls = 0
 
@@ -121,7 +143,7 @@ class TestParallelToolCalls:
     async def test_mixed_read_only_and_dispatch_parallelize(self, base_agent):
         tracker = ConcurrencyTracker()
 
-        class Tools:
+        class Tools(FakeToolCollection):
             def get_tool_list(self):
                 return [
                     SimpleNamespace(name="dispatch_general_agent"),
@@ -152,7 +174,7 @@ class TestParallelToolCalls:
     async def test_write_tool_forces_sequential(self, base_agent):
         tracker = ConcurrencyTracker()
 
-        class Tools:
+        class Tools(FakeToolCollection):
             def get_tool_list(self):
                 return [
                     SimpleNamespace(name="dispatch_general_agent"),
@@ -183,7 +205,7 @@ class TestParallelToolCalls:
         tracker = ConcurrencyTracker()
         total = BaseAgent.PARALLEL_TOOL_LIMIT + 4
 
-        class Tools:
+        class Tools(FakeToolCollection):
             def get_tool_list(self):
                 return [SimpleNamespace(name="dispatch_general_agent")]
 
@@ -204,7 +226,7 @@ class TestParallelToolCalls:
     async def test_contextvar_isolation_under_gather(self, base_agent):
         captured: dict[str, str] = {}
 
-        class Tools:
+        class Tools(FakeToolCollection):
             def get_tool_list(self):
                 return [SimpleNamespace(name="dispatch_general_agent")]
 
@@ -242,7 +264,7 @@ class TestParallelToolCalls:
         nested_agent.send_chat_message = AsyncMock()
         nested_agent.log_info = AsyncMock()
 
-        class NestedTools:
+        class NestedTools(FakeToolCollection):
             def get_tool_list(self):
                 return [SimpleNamespace(name="read_entire_file")]
 
@@ -252,7 +274,7 @@ class TestParallelToolCalls:
         nested_agent.tool_collection = NestedTools()
         observed = {}
 
-        class ParentTools:
+        class ParentTools(FakeToolCollection):
             def get_tool_list(self):
                 return [SimpleNamespace(name="dispatch_general_agent")]
 
