@@ -8,6 +8,7 @@ from typing import Any, Callable, List, Optional, Union
 from .common import LogMixin
 from kolega_code.config import AgentConfig
 from kolega_code.llm.models import ImageBlock, ToolDefinition, ToolParameter
+from kolega_code.tools import Tool, ToolRegistry, tool_definition_from_callable
 from kolega_code.services.file_system import FileSystem, LocalFileSystem
 from kolega_code.services.base import TerminalManager, BrowserManager
 from kolega_code.services.terminal import LocalTerminalManager
@@ -208,6 +209,7 @@ class ToolCollection(LogMixin):
         self.langfuse_client = langfuse_client
         self.tool_extensions = tool_extensions or []
         self.extension_callbacks = {}
+        self._extension_group_names = set()
 
         # Set legacy attributes for backward compatibility
         self.read_only = tool_config.read_only
@@ -246,6 +248,7 @@ class ToolCollection(LogMixin):
                 existing_group = list(getattr(self, group_name, []))
                 merged_group = list(dict.fromkeys(existing_group + list(tool_names)))
                 setattr(self, group_name, merged_group)
+                self._extension_group_names.add(group_name)
 
     def _initialize_tools(self):
         """Initialize all tool backends based on configuration."""
@@ -1538,106 +1541,78 @@ class ToolCollection(LogMixin):
 
     def _tool_definition_from_callable(self, method_name: str, method: Callable[..., Any]) -> ToolDefinition:
         """Build a provider-agnostic tool definition from a Python callable."""
-        signature = inspect.signature(method)
-        docstring = inspect.getdoc(method) or ""
-
-        description = docstring.split("Raises:")[0].strip() if "Raises:" in docstring else docstring.strip()
-
-        if method_name == "apply_patch":
-            description = APPLY_PATCH_TOOL_DESC
-
-        properties = {}
-        required = []
-
-        for param_name, param in signature.parameters.items():
-            if param_name == "self":
-                continue
-
-            if param.default == inspect.Parameter.empty:
-                required.append(param_name)
-
-            param_type = "string"
-            param_description = ""
-
-            param_doc_match = re.search(rf"{param_name}:\s*(.*?)(?:\n\s*\w+:|$)", docstring, re.DOTALL)
-            if param_doc_match:
-                param_description = param_doc_match.group(1).strip()
-
-            if param.annotation != inspect.Parameter.empty:
-                annotation = str(param.annotation)
-                if "str" in annotation:
-                    param_type = "string"
-                elif "int" in annotation:
-                    param_type = "integer"
-                elif "float" in annotation:
-                    param_type = "number"
-                elif "bool" in annotation:
-                    param_type = "boolean"
-                elif "List" in annotation or "list" in annotation:
-                    param_type = "array"
-                elif "Dict" in annotation or "dict" in annotation:
-                    param_type = "object"
-
-            properties[param_name] = {
-                "type": param_type,
-                "description": param_description,
-            }
-
-        tool_parameters = [
-            ToolParameter(
-                name=param_name,
-                type=param_info["type"],
-                description=param_info["description"],
-                required=param_name in required,
-            )
-            for param_name, param_info in properties.items()
-        ]
-
-        return ToolDefinition(
-            name=method_name,
-            description=description,
-            parameters=tool_parameters,
+        return tool_definition_from_callable(
+            method_name, method, description_overrides={"apply_patch": APPLY_PATCH_TOOL_DESC}
         )
 
-    def get_tool_list(self) -> List[dict]:
+    def _groups_for(self, method_name: str) -> frozenset:
+        """Group tags for a tool, from the core group lists plus extension groups."""
+        group_attrs = {
+            "read_only_tools",
+            "browser_tools",
+            "agent_dispatch_tools",
+            "coder_agent_tools",
+            "memory_tools",
+            *self._extension_group_names,
+        }
+        return frozenset(
+            group_name for group_name in group_attrs if method_name in (getattr(self, group_name, None) or [])
+        )
+
+    def registry(self) -> ToolRegistry:
         """
-        Returns a list of tool definitions in the format required by the Anthropic API.
+        Build the ToolRegistry of currently enabled tools.
 
-        Dynamically generates tool definitions by introspecting the methods in this class.
-        Each public method (not starting with '_') is converted to a tool definition with
-        name, description from docstring, and input schema based on type annotations.
-
-        Returns:
-            List of tool definitions compatible with Anthropic's tool calling format
+        Rebuilt per call (matching the previous dynamic get_tool_list behavior)
+        so tools added by subclasses or extensions after construction are seen.
         """
-        tools = []
-        added_names = set()
+        registry = ToolRegistry()
 
-        # Get all methods in the class
         for method_name, method in inspect.getmembers(self, predicate=inspect.ismethod):
-            # Skip private methods and this method itself
             if method_name.startswith("_") or method_name in self.tool_exclusions:
-                continue
-
-            # Apply tool group filtering based on configuration
-            should_include = self._should_include_tool(method_name)
-            if not should_include:
-                continue
-
-            tools.append(self._tool_definition_from_callable(method_name, method))
-            added_names.add(method_name)
-
-        for method_name, method in self.extension_callbacks.items():
-            if method_name in added_names or method_name in self.tool_exclusions:
                 continue
             if not self._should_include_tool(method_name):
                 continue
-            tools.append(self._tool_definition_from_callable(method_name, method))
-            added_names.add(method_name)
+            registry.add(self._build_tool(method_name, method))
 
-        if tools:
-            tools[-1].cache_checkpoint = True
-        return tools
+        for method_name, method in self.extension_callbacks.items():
+            if method_name in registry or method_name in self.tool_exclusions:
+                continue
+            if not self._should_include_tool(method_name):
+                continue
+            registry.add(self._build_tool(method_name, method))
+
+        return registry
+
+    def _build_tool(self, method_name: str, method: Callable[..., Any]) -> Tool:
+        return Tool(
+            name=method_name,
+            definition=self._tool_definition_from_callable(method_name, method),
+            handler=method,
+            groups=self._groups_for(method_name),
+            # Read-only tools have no side effects and agent dispatches operate
+            # on independent sub-agents, so these may run concurrently.
+            parallel_safe=(
+                method_name in (self.read_only_tools or []) or method_name in (self.agent_dispatch_tools or [])
+            ),
+        )
+
+    def has_tool(self, name: str) -> bool:
+        """True if the named tool is currently enabled."""
+        return name in self.registry()
+
+    async def call(self, name: str, **inputs: Any) -> Any:
+        """Dispatch an enabled tool by name."""
+        return await self.registry().call(name, **inputs)
+
+    def get_tool_list(self) -> List[ToolDefinition]:
+        """
+        Returns a list of tool definitions in the format required by the Anthropic API.
+
+        Definitions are generated from the enabled tools' signatures and
+        docstrings; the last definition carries the prompt-cache checkpoint.
+        """
+        return self.registry().definitions()
 
     def _should_include_tool(self, method_name: str) -> bool:
         """

@@ -169,6 +169,24 @@ class TestDispatchGeneralAgent:
             def get_tool_list(self):
                 return [SimpleNamespace(name="dispatch_general_agent")]
 
+            def registry(self):
+                from kolega_code.agent.tools import ToolCollection
+                from kolega_code.llm.models import ToolDefinition
+                from kolega_code.tools import Tool, ToolRegistry
+
+                parallel = set(ToolCollection.read_only_tools) | set(ToolCollection.agent_dispatch_tools)
+                registry = ToolRegistry()
+                for spec in self.get_tool_list():
+                    registry.add(
+                        Tool(
+                            name=spec.name,
+                            definition=ToolDefinition(name=spec.name, description="", parameters=[]),
+                            handler=getattr(self, spec.name),
+                            parallel_safe=spec.name in parallel,
+                        )
+                    )
+                return registry
+
             async def dispatch_general_agent(self, task: str):
                 return await agent_tool.dispatch_general_agent(task)
 

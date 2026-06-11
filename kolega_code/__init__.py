@@ -54,6 +54,7 @@ from .agent.prompt_provider import (
 # Tools
 from .agent.tool_backend.base_tool import BaseTool
 from .agent.tools import ToolCollection, ToolCollectionConfig, ToolExtension
+from .tools import Tool, ToolError, ToolPolicy, ToolRegistry, tool_definition_from_callable
 
 # Host environment services
 from .agent.common import LogMixin
@@ -120,6 +121,11 @@ __all__ = [
     "ToolCollection",
     "ToolCollectionConfig",
     "ToolExtension",
+    "Tool",
+    "ToolError",
+    "ToolPolicy",
+    "ToolRegistry",
+    "tool_definition_from_callable",
     # Services
     "LogMixin",
     "BrowserManager",
