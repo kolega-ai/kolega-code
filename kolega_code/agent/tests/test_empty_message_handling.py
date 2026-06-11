@@ -1,25 +1,48 @@
-"""Tests for shared BaseAgent empty message handling."""
+"""Tests for Conversation empty message handling."""
 
-from unittest.mock import Mock, patch
+import logging
 
-from kolega_code.agent.baseagent import BaseAgent
-from kolega_code.agent.llm.models import Message
+from kolega_code.agent.conversation import Conversation
+from kolega_code.agent.llm.models import Message, TextBlock
 
 
-def test_append_assistant_message_with_empty_content():
+def test_append_assistant_message_with_empty_content(caplog):
     """Empty assistant messages get placeholder text."""
-    mock_agent = Mock(spec=BaseAgent)
-    mock_agent.history = []
+    conversation = Conversation()
 
     empty_message = Message(role="assistant", content=[])
 
-    with patch("builtins.print") as mock_print:
-        BaseAgent.append_assistant_message(mock_agent, empty_message)
+    with caplog.at_level(logging.WARNING, logger="kolega_code.agent.conversation"):
+        conversation.append_assistant(empty_message)
 
-    mock_print.assert_called_with("Warning: Assistant message has empty content, replacing with placeholder")
+    assert "Assistant message has empty content" in caplog.text
 
-    assert len(mock_agent.history) == 1
-    appended_msg = mock_agent.history[0]
+    assert len(conversation.history) == 1
+    appended_msg = conversation.history[0]
     assert appended_msg.role == "assistant"
     assert len(appended_msg.content) == 1
     assert appended_msg.content[0].text == "[Assistant returned no message content]"
+
+
+def test_append_user_message_with_empty_content(caplog):
+    """Empty user messages get placeholder text."""
+    conversation = Conversation()
+
+    with caplog.at_level(logging.WARNING, logger="kolega_code.agent.conversation"):
+        conversation.append_user([])
+
+    assert "User message has empty content" in caplog.text
+
+    assert len(conversation.history) == 1
+    appended_msg = conversation.history[0]
+    assert appended_msg.role == "user"
+    assert appended_msg.content[0].text == "[User provided no message content]"
+
+
+def test_append_assistant_message_with_content_is_untouched():
+    conversation = Conversation()
+
+    message = Message(role="assistant", content=[TextBlock(text="hello")])
+    conversation.append_assistant(message)
+
+    assert conversation.history[-1] is message

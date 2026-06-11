@@ -10,10 +10,12 @@ from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from .common import LogMixin
+from .compression import HistoryCompressor
 from .config import AgentConfig, ModelProvider
 from .connection_manager import AgentConnectionManager
-from .llm.client import LLMClient
-from .llm.instrumented_client import InstrumentedLLMClient
+from .context import AgentContext, AgentServices, Telemetry, WorkspaceInfo
+from .conversation import Conversation
+from .events import AgentEventEmitter
 from .llm.exceptions import (
     LLMContextWindowExceededError,
     LLMError,
@@ -24,17 +26,9 @@ from .llm.exceptions import (
 from .llm.models import ImageBlock, Message, MessageHistory, TextBlock, ToolCall, ToolResult
 from .llm.providers.models import TokenCount
 from .llm.specs import get_model_specs
-from .models.public import AgentEvent, AgentStatus
-from .prompt_provider import PromptProvider, AgentType, AgentMode, PromptContext, PromptExtension
-from .prompts import (
-    COMPRESSION_PROMPT,
-    COMPRESSION_SUMMARY_SYSTEM_PROMPT,
-    COMPRESSION_SUMMARY_USER_PROMPT_TEMPLATE,
-)
-from .services.file_system import FileSystem, LocalFileSystem
+from .prompt_provider import PromptProvider, AgentMode, PromptContext, PromptExtension
 from .services.base import TerminalManager, BrowserManager
-from .services.terminal import LocalTerminalManager
-from .services.browser import PlaywrightBrowserManager
+from .services.file_system import FileSystem
 from .tools import ToolCollection
 from .utils.commands import CommandProcessor
 from langfuse import Langfuse
@@ -47,8 +41,11 @@ class BaseAgent(LogMixin):
     """
     Base class for all AI agents in the system.
 
-    Provides common functionality for agent operations including history management,
-    logging, and communication with the LLM service.
+    BaseAgent owns the canonical agent loop and composes the pieces that do
+    the real work: a Conversation (history and its invariants), a
+    HistoryCompressor (context-budget management), and an AgentEventEmitter
+    (event construction and broadcast). Subclasses configure tools and the
+    system prompt, and customize behavior through the documented hook methods.
     """
 
     agent_name = "base-agent"  # you should never see this
@@ -67,11 +64,11 @@ class BaseAgent(LogMixin):
 
     def __init__(
         self,
-        project_path: str | Path,
-        workspace_id: str,
-        thread_id: str,
-        connection_manager: AgentConnectionManager,
-        config: AgentConfig,
+        project_path: str | Path | None = None,
+        workspace_id: Optional[str] = None,
+        thread_id: Optional[str] = None,
+        connection_manager: Optional[AgentConnectionManager] = None,
+        config: Optional[AgentConfig] = None,
         sub_agent: bool = False,
         filesystem: Optional[FileSystem] = None,
         terminal_manager: Optional[TerminalManager] = None,
@@ -88,9 +85,13 @@ class BaseAgent(LogMixin):
         tool_extensions: Optional[List[Any]] = None,
         usage_recorder: Optional[Any] = None,
         sub_agent_recorder: Optional[Any] = None,
+        context: Optional[AgentContext] = None,
     ) -> None:
         """
         Initialize a new BaseAgent instance.
+
+        Preferred: pass a fully-built ``context`` (AgentContext). The flat
+        keyword signature remains supported and is converted internally.
 
         Args:
             project_path: File system path to the project root directory
@@ -114,27 +115,73 @@ class BaseAgent(LogMixin):
             tool_extensions: Host-provided tool providers for app-specific tools
             usage_recorder: Optional callback for recording normalized LLM usage
             sub_agent_recorder: Optional callback for persisting sub-agent conversation state
+            context: Pre-built AgentContext; takes precedence over the flat keywords
         """
-        # Convert string path to Path object if needed
-        self.project_path = Path(project_path) if isinstance(project_path, str) else project_path
+        if context is None:
+            if project_path is None or workspace_id is None or thread_id is None:
+                raise TypeError(
+                    "BaseAgent requires either an AgentContext or project_path/workspace_id/thread_id"
+                )
 
-        # Create filesystem instance if not provided
-        if filesystem is None:
-            self.filesystem = LocalFileSystem(root_path=self.project_path)
-        else:
-            self.filesystem = filesystem
+            workspace = WorkspaceInfo(
+                project_path=Path(project_path) if isinstance(project_path, str) else project_path,
+                workspace_id=workspace_id,
+                thread_id=thread_id,
+                project_template_slug=project_template_slug,
+                protected_files=protected_files or [],
+                env_var_descriptions=workspace_env_var_descriptions or {},
+                memories=workspace_memories or [],
+            )
 
-        # Create terminal manager instance if not provided
-        if terminal_manager is None:
-            self.terminal_manager = LocalTerminalManager(workspace_id, thread_id, connection_manager)
-        else:
-            self.terminal_manager = terminal_manager
+            defaults = AgentServices.local(workspace, connection_manager)
+            services = AgentServices(
+                filesystem=filesystem or defaults.filesystem,
+                terminal_manager=terminal_manager or defaults.terminal_manager,
+                browser_manager=browser_manager or defaults.browser_manager,
+            )
 
-        # Create browser manager instance if not provided
-        if browser_manager is None:
-            self.browser_manager = PlaywrightBrowserManager()
-        else:
-            self.browser_manager = browser_manager
+            context = AgentContext(
+                workspace=workspace,
+                config=config,
+                connection_manager=connection_manager,
+                services=services,
+                telemetry=Telemetry(
+                    langfuse_client=langfuse_client,
+                    user_id=user_id,
+                    user_email=user_email,
+                    usage_recorder=usage_recorder,
+                    sub_agent_recorder=sub_agent_recorder,
+                ),
+                agent_mode=agent_mode,
+                prompt_extensions=prompt_extensions or [],
+                tool_extensions=tool_extensions or [],
+            )
+
+        self.context = context
+
+        # Flat attributes kept for compatibility with subclasses, tools, and hosts.
+        self.project_path = context.workspace.project_path
+        self.workspace_id = context.workspace.workspace_id
+        self.thread_id = context.workspace.thread_id
+        self.connection_manager = context.connection_manager
+        self.config = context.config
+        self.filesystem = context.services.filesystem
+        self.terminal_manager = context.services.terminal_manager
+        self.browser_manager = context.services.browser_manager
+        self.langfuse_client = context.telemetry.langfuse_client
+        self.user_id = context.telemetry.user_id
+        self.user_email = context.telemetry.user_email
+        self.project_template_slug = context.workspace.project_template_slug
+        self.protected_files = context.workspace.protected_files
+        self.agent_mode = context.agent_mode
+        self.workspace_env_var_descriptions = context.workspace.env_var_descriptions
+        self.workspace_memories = context.workspace.memories
+        self.prompt_extensions = context.prompt_extensions
+        self.tool_extensions = context.tool_extensions
+        self.usage_recorder = context.telemetry.usage_recorder
+        self.sub_agent_recorder = context.telemetry.sub_agent_recorder
+
+        self.available_ports = "9001-9999"
 
         # Validate that the project path exists and is a directory using the filesystem
         if not self.filesystem.exists("."):
@@ -142,64 +189,26 @@ class BaseAgent(LogMixin):
         if not self.filesystem.is_dir("."):
             raise ValueError(f"Project path is not a directory: {self.project_path}")
 
-        self.workspace_id = workspace_id
-        self.thread_id = thread_id
-        self.connection_manager = connection_manager
-        self.config = config
-        self.available_ports = "9001-9999"
-        self.langfuse_client = langfuse_client
-        self.user_id = user_id
-        self.user_email = user_email
-
-        # Store prompt-related parameters
-        self.project_template_slug = project_template_slug
-        self.protected_files = protected_files or []
-        self.agent_mode = agent_mode
-        self.workspace_env_var_descriptions = workspace_env_var_descriptions or {}
-        self.workspace_memories = workspace_memories or []
-        self.prompt_extensions = prompt_extensions or []
-        self.tool_extensions = tool_extensions or []
-        self.usage_recorder = usage_recorder
-        self.sub_agent_recorder = sub_agent_recorder
-
         # Initialize PromptProvider
         self.prompt_provider = PromptProvider()
 
-        self.history = MessageHistory()
-
-        # Compression marker: index of the last message before a summary was appended
-        self.last_compression_index = None
+        self.conversation = Conversation(max_tool_result_chars=self.max_tool_result_chars_in_history)
+        self.conversation.skill_content_pattern = self.skill_content_pattern
+        self.compressor = HistoryCompressor(threshold=self.history_compression_threshold)
+        self.emitter = AgentEventEmitter(
+            connection_manager=self.connection_manager,
+            workspace_id=self.workspace_id,
+            thread_id=self.thread_id,
+            sender=self.agent_name,
+            sub_agent_info_provider=self._sub_agent_info,
+        )
 
         model_specs = get_model_specs(self.config.long_context_config.provider, self.config.long_context_config.model)
         self.model_context_length = model_specs["context_length"]
         self.model_completion_tokens = model_specs["max_completion_tokens"]
         self.model_default_temperature = model_specs.get("default_temperature", 1.0)
 
-        # Create LLM client - use instrumented version if Langfuse is available
-        if langfuse_client:
-            self.llm = InstrumentedLLMClient(
-                provider=self.config.long_context_config.provider,
-                api_key=self.config.get_api_key(self.config.long_context_config.provider),
-                max_retries=self.config.long_context_config.rate_limits.max_retries,
-                requests_per_minute=self.config.long_context_config.rate_limits.requests_per_minute,
-                tokens_per_minute=self.config.long_context_config.rate_limits.tokens_per_minute,
-                langfuse_client=langfuse_client,
-                workspace_id=workspace_id,
-                thread_id=thread_id,
-                agent_type=self.agent_name,
-                environment=config.environment,
-                user_id=user_id,
-                user_email=user_email,
-                usage_recorder=usage_recorder,
-            )
-        else:
-            self.llm = LLMClient(
-                provider=self.config.long_context_config.provider,
-                api_key=self.config.get_api_key(self.config.long_context_config.provider),
-                max_retries=self.config.long_context_config.rate_limits.max_retries,
-                requests_per_minute=self.config.long_context_config.rate_limits.requests_per_minute,
-                tokens_per_minute=self.config.long_context_config.rate_limits.tokens_per_minute,
-            )
+        self.llm = context.create_llm_client(agent_name=self.agent_name)
 
         # Tool collection must be initialized by subclass with appropriate configuration
         # (e.g., read_only, browser_only, custom tool_config, etc.)
@@ -220,32 +229,114 @@ class BaseAgent(LogMixin):
         self.conversation_id = None  # Sub-agent conversation ID
         self.sub_agent_context = None  # Dispatch metadata (agent_id, task) set by AgentTool
 
-    @property
-    def current_tool_call_id(self):
-        """Internal execution ID for UI and sub-agent records (task-local)."""
-        return self._current_tool_call_id_var.get()
-
-    @current_tool_call_id.setter
-    def current_tool_call_id(self, value):
-        self._current_tool_call_id_var.set(value)
+    # ------------------------------------------------------------------
+    # Conversation delegation
+    #
+    # self.conversation owns the message history; these wrappers preserve the
+    # established BaseAgent surface for subclasses and hosts.
+    # ------------------------------------------------------------------
 
     @property
-    def current_tool_execution_id(self):
-        """App-unique tool execution ID for the tool call currently running (task-local)."""
-        return self._current_tool_execution_id_var.get()
+    def history(self) -> MessageHistory:
+        return self.conversation.history
 
-    @current_tool_execution_id.setter
-    def current_tool_execution_id(self, value):
-        self._current_tool_execution_id_var.set(value)
+    @history.setter
+    def history(self, value) -> None:
+        self.conversation.history = value if isinstance(value, MessageHistory) else MessageHistory(list(value))
 
     @property
-    def current_provider_tool_call_id(self):
-        """Provider-issued tool call ID for the tool call currently running (task-local)."""
-        return self._current_provider_tool_call_id_var.get()
+    def last_compression_index(self) -> Optional[int]:
+        return self.conversation.last_compression_index
 
-    @current_provider_tool_call_id.setter
-    def current_provider_tool_call_id(self, value):
-        self._current_provider_tool_call_id_var.set(value)
+    @last_compression_index.setter
+    def last_compression_index(self, value: Optional[int]) -> None:
+        self.conversation.last_compression_index = value
+
+    def append_user_message(self, content) -> None:
+        """
+        Safely append a user message to history, fixing any incomplete tool calls first.
+
+        Args:
+            content: Either a string (converted to TextBlock) or list of ContentBlocks
+        """
+        self.conversation.append_user(content)
+
+    def append_assistant_message(self, message: Message) -> None:
+        """
+        Safely append an assistant message to history.
+
+        Args:
+            message: The assistant message to append
+        """
+        self.conversation.append_assistant(message)
+
+    def extend_history(self, messages: List[Message]) -> None:
+        """
+        Safely extend history with multiple messages, validating the sequence.
+
+        Args:
+            messages: List of messages to append
+        """
+        self.conversation.extend(messages)
+
+    def get_effective_history_for_llm(self) -> MessageHistory:
+        """
+        Return the subset of history to send to the LLM:
+        - If compressed: [summary] + all messages after the compression boundary (excluding the summary itself)
+        - Else: the full history
+        """
+        return self.conversation.effective_history()
+
+    def fix_incomplete_tool_calls(self, messages: List[Message]) -> List[Message]:
+        """
+        Fix incomplete tool call sequences by adding placeholder tool_result blocks
+        for any orphaned tool_use blocks.
+
+        Args:
+            messages: List of messages to validate and fix
+
+        Returns:
+            List[Message]: Fixed messages with placeholder tool results added where needed
+        """
+        return self.conversation.repaired(messages)
+
+    def mark_cache_checkpoint(self) -> None:
+        """
+        Mark the last message in history for caching and remove cache_control from all other messages.
+
+        This ensures that only the most recent message is cached, preventing redundant caching
+        of older messages in the conversation history.
+        """
+        self.conversation.mark_cache_checkpoint()
+
+    def dump_message_history(self) -> List[Dict[str, Any]]:
+        """Serializes the message history into a list of dictionaries using custom methods."""
+        return self.conversation.dump()
+
+    def restore_message_history(self, serialized_history: List[Dict[str, Any]]) -> None:
+        """Restores the message history from a list of dictionaries using custom methods."""
+        self.conversation.restore(serialized_history)
+
+    def _sanitize_oversized_tool_results(self) -> int:
+        return self.conversation.sanitize_oversized_tool_results()
+
+    def _is_history_valid_for_anthropic(self, messages: List[Message] = None) -> bool:
+        """
+        Check if the message history is valid for Anthropic API.
+        Every tool_use block must be followed by a tool_result block.
+        """
+        return self.conversation.is_valid_for_anthropic(messages)
+
+    def _is_protected_skill_content(self, message: Message) -> bool:
+        return self.conversation.is_protected(message)
+
+    def _needs_tool_call_fix(self) -> bool:
+        """Check if the last message has incomplete tool calls."""
+        return self.conversation.needs_tool_call_fix()
+
+    # ------------------------------------------------------------------
+    # Prompt context
+    # ------------------------------------------------------------------
 
     def build_prompt_context(self) -> PromptContext:
         """Build PromptContext from agent state."""
@@ -276,6 +367,10 @@ class BaseAgent(LogMixin):
             workspace_environment_variables=self.workspace_env_var_descriptions,
             memories=self.workspace_memories,
         )
+
+    # ------------------------------------------------------------------
+    # Attachments
+    # ------------------------------------------------------------------
 
     def _unsupported_attachment_message(self, attachments: Optional[List[Dict[str, Any]]]) -> Optional[str]:
         provider = getattr(
@@ -311,220 +406,8 @@ class BaseAgent(LogMixin):
         return blocks
 
     # ------------------------------------------------------------------
-    # The agent loop
-    #
-    # process_message_stream is the single canonical loop shared by every
-    # agent. Subclasses customize behavior through the hook methods below
-    # (build_user_content, apply_compression_fallback, on_tool_use_start,
-    # should_stop_after_tools, recap_agent_outcome) rather than overriding
-    # the loop itself.
+    # Context budget
     # ------------------------------------------------------------------
-
-    completion_log_message = "Processing complete"
-
-    async def build_user_content(self, message: str, attachments: Optional[List[Dict[str, Any]]]) -> List[Any]:
-        """
-        Build the content blocks for an incoming user message.
-
-        Default: the message text plus blocks for any image/file attachments.
-        """
-        content_blocks: List[Any] = [TextBlock(text=message)]
-        content_blocks.extend(self._attachment_blocks(attachments))
-
-        for attachment in attachments or []:
-            if attachment.get("type") == "image":
-                await self.log_info(
-                    f"Received image attachment: {attachment.get('filename', 'unnamed')} ({attachment.get('media_type', 'unknown')})",
-                    sender=self.agent_name,
-                )
-            elif attachment.get("type") == "file":
-                await self.log_info(
-                    f"Attached file from @ mention: {attachment.get('path', 'unnamed')}",
-                    sender=self.agent_name,
-                )
-
-        return content_blocks
-
-    def apply_compression_fallback(self) -> None:
-        """
-        Hard-truncate history when compression alone could not get under budget.
-
-        Default: keep the first message (the original task) plus any protected
-        skill-content messages.
-        """
-        first_message = self.history[0]
-        protected = [
-            message
-            for message in self.history
-            if message is not first_message and self._is_protected_skill_content(message)
-        ]
-        self.history = MessageHistory(protected + [first_message])
-
-    async def on_tool_use_start(self, tool_call_delta: Dict[str, Any]) -> None:
-        """
-        Called when the provider streams a tool_use_start event (Anthropic only).
-
-        Long-content tools stream large arguments, so announce them as soon as
-        they start instead of waiting for the arguments to finish streaming
-        (execute_single_tool skips the announcement for these tools).
-        """
-        tool_name = tool_call_delta.get("name")
-        tool_execution_id = tool_call_delta.get("execution_id") or tool_call_delta.get("id")
-        if tool_name in self.long_content_tool_calls:
-            await self.send_chat_message(
-                message_type="tool_call",
-                content=f"Calling {tool_name}",
-                is_streaming=False,
-                tool_description=tool_name,
-                tool_call_id=tool_execution_id,
-            )
-
-    def should_stop_after_tools(self) -> bool:
-        """Return True to end the loop after a successful tool batch (e.g. a plan was written)."""
-        return False
-
-    async def recap_agent_outcome(self) -> str:
-        """Return the agent's final report: the text of the last message in history."""
-        return self.history[-1].get_text_content()
-
-    async def process_message_stream(
-        self, message: str, attachments: List[Dict[str, Any]] = None
-    ) -> AsyncGenerator[Dict[str, Any], None]:
-        """
-        Process a user message and yield response/thinking chunks while the agent works.
-
-        Yields dicts of the form
-        ``{"type": "response"|"thinking", "content": str, "complete": bool, "uuid": str}``.
-        """
-        unsupported_attachment_message = self._unsupported_attachment_message(attachments)
-        if unsupported_attachment_message:
-            yield {
-                "type": "response",
-                "content": unsupported_attachment_message,
-                "complete": True,
-                "uuid": str(uuid.uuid4()),
-            }
-            return
-
-        self.append_user_message(await self.build_user_content(message, attachments))
-
-        stop_reason = None
-        while stop_reason not in ["end_turn", "max_tokens", "stop_sequence"]:
-            self.mark_cache_checkpoint()
-
-            try:
-                token_count = await self.count_current_context()
-                logger.debug("Input token count: %s", token_count)
-
-                if token_count.input_tokens > self.model_context_length * self.history_compression_threshold:
-                    await self.compress_history()
-                    token_count = await self.count_current_context()
-
-                    if token_count.input_tokens > self.model_context_length * self.history_compression_threshold:
-                        self.apply_compression_fallback()
-
-                    self.mark_cache_checkpoint()
-
-                current_response = ""
-                current_thinking = ""
-                thinking_started = False
-                # Use the same UUID for each segment of the response
-                response_uuid = str(uuid.uuid4())
-                thinking_uuid = str(uuid.uuid4())
-
-                # Fix history before sending to LLM to ensure valid tool call sequences
-                effective = self.get_effective_history_for_llm()
-                fixed_history = MessageHistory(self.fix_incomplete_tool_calls(list(effective)))
-
-                async with await self.llm.stream(
-                    system=self.system_prompt,
-                    max_completion_tokens=self.model_completion_tokens,
-                    temperature=self.model_default_temperature,
-                    messages=fixed_history,
-                    model=self.config.long_context_config.model,
-                    tools=self.tool_collection.get_tool_list(),
-                    thinking=self.config.long_context_config.thinking_tokens,
-                ) as stream:
-                    async for event in stream:
-                        if event.type == "text":
-                            current_response += event.text
-
-                            # Send periodic updates as the response grows
-                            if len(current_response) >= 50:
-                                yield {
-                                    "type": "response",
-                                    "content": current_response,
-                                    "complete": False,
-                                    "uuid": response_uuid,
-                                }
-                                current_response = ""
-
-                        elif event.type == "thinking" and event.thinking:
-                            current_thinking += event.thinking
-
-                            if len(current_thinking) >= 50:
-                                thinking_started = True
-                                yield {
-                                    "type": "thinking",
-                                    "content": current_thinking,
-                                    "complete": False,
-                                    "uuid": thinking_uuid,
-                                }
-                                current_thinking = ""
-
-                        elif event.type == "tool_use_start" and event.tool_call_delta:
-                            # Flush accumulated text first so the user doesn't have to wait for it.
-                            yield {
-                                "type": "response",
-                                "content": current_response,
-                                "complete": True,
-                                "uuid": response_uuid,
-                            }
-                            current_response = ""
-
-                            await self.on_tool_use_start(event.tool_call_delta)
-
-                assistant_message = await stream.get_final_message()
-                stop_reason = assistant_message.stop_reason
-
-                self.append_assistant_message(assistant_message)
-
-                if thinking_started or current_thinking:
-                    yield {"type": "thinking", "content": current_thinking, "complete": True, "uuid": thinking_uuid}
-
-                # Send the final message to mark it complete.
-                yield {"type": "response", "content": current_response, "complete": True, "uuid": response_uuid}
-
-                if assistant_message.tool_calls:
-                    await self.log_info(
-                        f"Received {len(assistant_message.tool_calls)} tool call(s)", sender=self.agent_name
-                    )
-
-                    try:
-                        tool_responses = await self.process_tool_calls(assistant_message.tool_calls)
-                        self.append_user_message(tool_responses)
-
-                        if self.should_stop_after_tools():
-                            break
-                    except Exception as ex:
-                        error_message = f"Error processing tool calls: {str(ex)}"
-                        await self.log_error(error_message, sender=self.agent_name)
-
-                        error_responses = [
-                            ToolResult(
-                                tool_use_id=tool_call.id,
-                                content=f"Failed to process tool calls: {str(ex)}",
-                                name=tool_call.name,
-                                is_error=True,
-                            )
-                            for tool_call in assistant_message.tool_calls
-                        ]
-                        self.append_user_message(error_responses)
-
-            except Exception as ex:
-                await self.handle_llm_error(ex)
-
-        await self.log_info(self.completion_log_message, sender=self.agent_name)
 
     async def count_current_context(self) -> TokenCount:
         self._sanitize_oversized_tool_results()
@@ -559,492 +442,66 @@ class BaseAgent(LogMixin):
                 "You can start fresh by clicking \"New Thread\" in the sidebar."
             )
 
-        event = AgentEvent(
-            event_type="llm_context_update",
-            sender=self.agent_name,
-            content={
-                "input_tokens": token_count.input_tokens,
-                "max_tokens": self.model_context_length,
-                "usage_percentage": round(usage_percentage, 1),
-                "alert_level": alert_level,
-                "message": message,
-                "compression_threshold": self.history_compression_threshold * 100,  # Convert to percentage
-                "will_compress_at": int(self.model_context_length * self.history_compression_threshold),
-            },
+        await self.emitter.context_update(
+            input_tokens=token_count.input_tokens,
+            model_context_length=self.model_context_length,
+            compression_threshold=self.history_compression_threshold,
+            alert_level=alert_level,
+            message=message,
         )
-        await self.connection_manager.broadcast_event(event, self.workspace_id, self.thread_id)
-
-    def dump_message_history(self) -> List[Dict[str, Any]]:
-        """Serializes the message history into a list of dictionaries using custom methods."""
-        return [message.to_dict() for message in self.history]
-
-    def restore_message_history(self, serialized_history: List[Dict[str, Any]]) -> None:
-        """Restores the message history from a list of dictionaries using custom methods."""
-        parsed_messages = [Message.from_dict(item) for item in serialized_history]
-        # Keep history authentic - no fixing here
-        self.history = MessageHistory(parsed_messages)
-        self._sanitize_oversized_tool_results()
-
-    def _sanitize_oversized_tool_results(self) -> int:
-        sanitized_count = 0
-        for message in self.history:
-            if not isinstance(message.content, list):
-                continue
-
-            for block in message.content:
-                if not isinstance(block, ToolResult) or not isinstance(block.content, str):
-                    continue
-
-                content_length = len(block.content)
-                if content_length <= self.max_tool_result_chars_in_history:
-                    continue
-
-                block.content = (
-                    f"[Tool result omitted from history because it was {content_length:,} characters, "
-                    f"exceeding the {self.max_tool_result_chars_in_history:,} character safety cap. "
-                    f"Re-run `{block.name}` with narrower inputs if the content is still needed.]"
-                )
-                sanitized_count += 1
-
-        return sanitized_count
-
-    def _is_history_valid_for_anthropic(self, messages: List[Message] = None) -> bool:
-        """
-        Check if the message history is valid for Anthropic API.
-        Every tool_use block must be followed by a tool_result block.
-
-        Args:
-            messages: Optional list of messages to validate. If None, uses self.history
-
-        Returns:
-            bool: True if history is valid, False otherwise
-        """
-        if messages is None:
-            messages = list(self.history)
-
-        for i, message in enumerate(messages):
-            if message.role == "assistant" and isinstance(message.content, list):
-                # Check if this message contains tool calls
-                tool_calls = [block for block in message.content if isinstance(block, ToolCall)]
-
-                if tool_calls:
-                    # Check if next message exists and has tool results
-                    if i + 1 >= len(messages):
-                        return False  # No next message
-
-                    next_message = messages[i + 1]
-                    if next_message.role != "user":
-                        return False  # Next message should be user role
-
-                    if not isinstance(next_message.content, list):
-                        return False  # Should contain list of tool results
-
-                    # Check if all tool calls have corresponding results
-                    tool_call_ids = {call.id for call in tool_calls}
-                    tool_result_ids = {
-                        block.tool_use_id for block in next_message.content if isinstance(block, ToolResult)
-                    }
-
-                    if not tool_call_ids.issubset(tool_result_ids):
-                        return False  # Missing tool results
-
-        return True
-
-    def fix_incomplete_tool_calls(self, messages: List[Message]) -> List[Message]:
-        """
-        Fix incomplete tool call sequences by adding placeholder tool_result blocks
-        for any orphaned tool_use blocks.
-
-        Args:
-            messages: List of messages to validate and fix
-
-        Returns:
-            List[Message]: Fixed messages with placeholder tool results added where needed
-        """
-        if not messages:
-            return messages
-
-        fixed_messages = []
-        i = 0
-        processed_indices = set()  # Track which messages we've already processed
-
-        while i < len(messages):
-            if i in processed_indices:
-                i += 1
-                continue
-
-            current_message = messages[i]
-
-            # Check if this message contains tool calls
-            if current_message.role == "assistant" and isinstance(current_message.content, list):
-                tool_calls = [block for block in current_message.content if isinstance(block, ToolCall)]
-
-                if tool_calls:
-                    # Add the assistant message with tool calls
-                    fixed_messages.append(current_message)
-                    processed_indices.add(i)
-
-                    # Collect all tool results from the entire remaining conversation
-                    tool_call_ids = {call.id for call in tool_calls}
-                    all_tool_results = {}
-                    other_content_blocks = []  # Non-tool-result content from the next user message
-
-                    # First, check the immediately following message (expected position)
-                    next_user_message = None
-                    if i + 1 < len(messages) and messages[i + 1].role == "user":
-                        next_user_message = messages[i + 1]
-                        if isinstance(next_user_message.content, list):
-                            for block in next_user_message.content:
-                                if isinstance(block, ToolResult) and block.tool_use_id in tool_call_ids:
-                                    all_tool_results[block.tool_use_id] = block
-                                else:
-                                    other_content_blocks.append(block)
-
-                            # If we found some results here, mark this message as processed
-                            if all_tool_results:
-                                processed_indices.add(i + 1)
-
-                    # Search the entire remaining conversation for any missing tool results
-                    missing_ids = tool_call_ids - set(all_tool_results.keys())
-                    if missing_ids:
-                        for j in range(i + 1, len(messages)):
-                            if j in processed_indices:
-                                continue
-
-                            msg = messages[j]
-                            if msg.role == "user" and isinstance(msg.content, list):
-                                remaining_content = []
-                                found_any = False
-
-                                for block in msg.content:
-                                    if isinstance(block, ToolResult) and block.tool_use_id in missing_ids:
-                                        print(
-                                            f"Warning: Found tool result {block.tool_use_id} at position {j} instead of expected position {i+1}"
-                                        )
-                                        all_tool_results[block.tool_use_id] = block
-                                        missing_ids.remove(block.tool_use_id)
-                                        found_any = True
-                                    else:
-                                        remaining_content.append(block)
-
-                                # If we found tool results in this message, we need to handle it
-                                if found_any:
-                                    if remaining_content:
-                                        # Message has other content - keep it but remove tool results
-                                        updated_msg = Message(
-                                            role=msg.role, content=remaining_content, stop_reason=msg.stop_reason
-                                        )
-                                        messages[j] = updated_msg
-                                    else:
-                                        # Message only had tool results - mark for skipping
-                                        processed_indices.add(j)
-
-                    # Create the complete tool results list in the correct order
-                    complete_tool_results = []
-                    for tool_call in tool_calls:
-                        if tool_call.id in all_tool_results:
-                            complete_tool_results.append(all_tool_results[tool_call.id])
-                        else:
-                            # Add placeholder for truly missing results
-                            print(f"Adding placeholder result for missing tool call: {tool_call.id}")
-                            complete_tool_results.append(
-                                ToolResult(
-                                    tool_use_id=tool_call.id,
-                                    content="Operation was interrupted. Please retry if needed.",
-                                    name=tool_call.name,
-                                    is_error=True,
-                                )
-                            )
-
-                    # Create the user message with all tool results
-                    # Include any other content that was in the original next user message
-                    all_content = complete_tool_results + other_content_blocks
-                    if all_content:  # Only add if there's content
-                        complete_user_message = Message(
-                            role="user",
-                            content=all_content,
-                            stop_reason=next_user_message.stop_reason if next_user_message else None,
-                        )
-                        fixed_messages.append(complete_user_message)
-
-                    i += 1
-                else:
-                    # No tool calls, just add the message normally
-                    fixed_messages.append(current_message)
-                    processed_indices.add(i)
-                    i += 1
-            else:
-                # Not an assistant message with tool calls
-                # Skip if already processed (was a tool result message we moved)
-                if i not in processed_indices:
-                    fixed_messages.append(current_message)
-                i += 1
-
-        return fixed_messages
-
-    def append_user_message(self, content) -> None:
-        """
-        Safely append a user message to history, fixing any incomplete tool calls first.
-
-        Args:
-            content: Either a string (converted to TextBlock) or list of ContentBlocks
-        """
-        # Convert string to ContentBlock list if needed
-        if isinstance(content, str):
-            content_blocks = [TextBlock(text=content)]
-        elif isinstance(content, list):
-            content_blocks = content
-        else:
-            # Handle single ContentBlock
-            content_blocks = [content]
-
-        # Check if we're providing tool results for pending tool calls
-        incoming_tool_result_ids = set()
-        if isinstance(content_blocks, list):
-            for block in content_blocks:
-                if isinstance(block, ToolResult):
-                    incoming_tool_result_ids.add(block.tool_use_id)
-
-        # Check what tool calls are pending
-        pending_tool_call_ids = set()
-        if self._needs_tool_call_fix():
-            last_message = self.history[-1]
-            if last_message.role == "assistant" and isinstance(last_message.content, list):
-                for block in last_message.content:
-                    if isinstance(block, ToolCall):
-                        pending_tool_call_ids.add(block.id)
-
-        # Only run fix if we have pending tool calls that aren't being provided
-        missing_tool_call_ids = pending_tool_call_ids - incoming_tool_result_ids
-        if missing_tool_call_ids:
-            # We have tool calls without corresponding results in the incoming content
-            # Don't fix here - only fix when sending to LLM
-            pass
-
-        # Check for tool results in the new content
-        if isinstance(content_blocks, list):
-            new_tool_results = {}
-            other_blocks = []
-
-            for block in content_blocks:
-                if isinstance(block, ToolResult):
-                    new_tool_results[block.tool_use_id] = block
-                else:
-                    other_blocks.append(block)
-
-            if new_tool_results:
-                # Find and update any existing tool results with the same IDs
-                for i, msg in enumerate(self.history):
-                    if msg.role == "user" and isinstance(msg.content, list):
-                        updated_content = []
-                        replaced_any = False
-
-                        for block in msg.content:
-                            if isinstance(block, ToolResult) and block.tool_use_id in new_tool_results:
-                                new_result = new_tool_results[block.tool_use_id]
-                                # Replace if: old is dummy error OR new is success and old is error
-                                should_replace = (block.is_error and "Operation was interrupted" in block.content) or (
-                                    not new_result.is_error and block.is_error
-                                )
-
-                                if should_replace:
-                                    updated_content.append(new_result)
-                                    replaced_any = True
-                                    print(f"Replaced tool result for tool_use_id: {block.tool_use_id}")
-                                    # Remove from new_tool_results since we've used it
-                                    del new_tool_results[block.tool_use_id]
-                                else:
-                                    # Keep existing result
-                                    updated_content.append(block)
-                                    # Remove from new_tool_results to prevent duplicate
-                                    if block.tool_use_id in new_tool_results:
-                                        print(f"Skipping duplicate tool result for tool_use_id: {block.tool_use_id}")
-                                        del new_tool_results[block.tool_use_id]
-                            else:
-                                # Keep non-tool-result blocks
-                                updated_content.append(block)
-
-                        if replaced_any:
-                            # Update the message with replaced content
-                            self.history[i] = Message(
-                                role=msg.role, content=updated_content, stop_reason=msg.stop_reason
-                            )
-
-                # Add any remaining new tool results along with other blocks
-                content_blocks = list(new_tool_results.values()) + other_blocks
-
-                # If all blocks were handled (replaced or skipped), don't add empty message
-                if not content_blocks:
-                    return
-
-        # Replace empty content with placeholder
-        if not content_blocks or (isinstance(content_blocks, list) and len(content_blocks) == 0):
-            print(f"Warning: User message has empty content, replacing with placeholder")
-            content_blocks = [TextBlock(text="[User provided no message content]")]
-
-        # Now safe to append
-        self.history.append(Message(role="user", content=content_blocks))
-
-    def append_assistant_message(self, message: Message) -> None:
-        """
-        Safely append an assistant message to history.
-
-        Args:
-            message: The assistant message to append
-        """
-        # Replace empty content with placeholder
-        if not message.content or (isinstance(message.content, list) and len(message.content) == 0):
-            print(f"Warning: Assistant message has empty content, replacing with placeholder")
-            # Create a new message with placeholder content
-            message = Message(
-                role=message.role,
-                content=[TextBlock(text="[Assistant returned no message content]")],
-                stop_reason=message.stop_reason,
-                tool_calls=message.tool_calls,
-            )
-
-        # Assistant messages can be appended directly
-        self.history.append(message)
-
-    def get_effective_history_for_llm(self) -> MessageHistory:
-        """
-        Return the subset of history to send to the LLM:
-        - If compressed: [summary] + all messages after the compression boundary (excluding the summary itself)
-        - Else: the full history
-        """
-        if self.last_compression_index is not None and self.history:
-            # Summary is the message immediately after the boundary
-            summary_idx = self.last_compression_index + 1
-            if summary_idx < len(self.history):
-                summary_msg = self.history[summary_idx]
-                protected = [
-                    message for message in self.history[:summary_idx] if self._is_protected_skill_content(message)
-                ]
-                # Tail starts after the summary
-                tail = list(self.history[summary_idx + 1 :]) if summary_idx + 1 < len(self.history) else []
-                return MessageHistory(protected + [summary_msg] + tail)
-
-        return MessageHistory(list(self.history))
-
-    def _is_protected_skill_content(self, message: Message) -> bool:
-        if message.role != "user":
-            return False
-        if isinstance(message.content, str):
-            return bool(self.skill_content_pattern.search(message.content))
-        if not isinstance(message.content, list):
-            return False
-        return any(
-            isinstance(block, TextBlock) and self.skill_content_pattern.search(block.text)
-            for block in message.content
-        )
-
-    def extend_history(self, messages: List[Message]) -> None:
-        """
-        Safely extend history with multiple messages, validating the sequence.
-
-        Args:
-            messages: List of messages to append
-        """
-        # First, combine existing history with new messages
-        all_messages = list(self.history) + messages
-
-        # Fix any incomplete tool calls in the combined history
-        fixed_messages = self.fix_incomplete_tool_calls(all_messages)
-
-        # Replace history with the fixed version
-        self.history = MessageHistory(fixed_messages)
-
-    def _needs_tool_call_fix(self) -> bool:
-        """
-        Check if the last message has incomplete tool calls.
-
-        Returns:
-            bool: True if fix is needed, False otherwise
-        """
-        if not self.history:
-            return False
-
-        last_message = self.history[-1]
-
-        # Only need to fix if last message is assistant with tool calls
-        if last_message.role != "assistant":
-            return False
-
-        if not isinstance(last_message.content, list):
-            return False
-
-        # Check if it has tool calls
-        return any(isinstance(block, ToolCall) for block in last_message.content)
 
     async def compress_history(self) -> None:
         """
         Non-destructively summarize the current history and mark a compression boundary.
-
-        Records:
-        - last_compression_index: index of the last message before compression
-        - last_compression_summary: synthetic summary Message
         """
-        if not self.history or len(self.history) < 5:
-            return
 
-        await self.log_info("Compressing message history...", sender=self.agent_name)
+        async def on_info(message: str) -> None:
+            await self.log_info(message, sender=self.agent_name)
 
-        try:
-            # Build new compression prompts (system + user) per spec
-            conversation_markdown = self.history.get_markdown_conversation()
-            user_prompt_filled = COMPRESSION_SUMMARY_USER_PROMPT_TEMPLATE.replace("{HISTORY}", conversation_markdown)
+        async def on_error(message: str) -> None:
+            await self.log_error(message, sender=self.agent_name)
 
-            messages = MessageHistory([Message(role="user", content=[TextBlock(text=user_prompt_filled)])])
+        await self.compressor.summarize(
+            self.conversation,
+            llm=self.llm,
+            model=self.config.long_context_config.model,
+            max_completion_tokens=self.model_completion_tokens,
+            temperature=self.model_default_temperature,
+            thinking=self.config.long_context_config.thinking_tokens,
+            on_info=on_info,
+            on_error=on_error,
+        )
 
-            system_message = Message(role="system", content=[TextBlock(text=COMPRESSION_SUMMARY_SYSTEM_PROMPT)])
+    # ------------------------------------------------------------------
+    # Tool execution
+    # ------------------------------------------------------------------
 
-            response = await self.llm.generate(
-                messages=messages,
-                system=system_message,
-                temperature=self.model_default_temperature,
-                model=self.config.long_context_config.model,
-                max_completion_tokens=self.model_completion_tokens,
-                thinking=self.config.long_context_config.thinking_tokens,
-            )
+    @property
+    def current_tool_call_id(self):
+        """Internal execution ID for UI and sub-agent records (task-local)."""
+        return self._current_tool_call_id_var.get()
 
-            summary = response.get_text_content()
+    @current_tool_call_id.setter
+    def current_tool_call_id(self, value):
+        self._current_tool_call_id_var.set(value)
 
-            # Append a single compressed user message at the end
-            summary_message = Message(role="user", content=[TextBlock(text=summary)])
-            self.history.append(summary_message)
-            # Mark boundary as the last original index before the summary
-            self.last_compression_index = len(self.history) - 2
+    @property
+    def current_tool_execution_id(self):
+        """App-unique tool execution ID for the tool call currently running (task-local)."""
+        return self._current_tool_execution_id_var.get()
 
-            await self.log_info("Message history compressed (non-destructive).", sender=self.agent_name)
+    @current_tool_execution_id.setter
+    def current_tool_execution_id(self, value):
+        self._current_tool_execution_id_var.set(value)
 
-        except Exception as e:
-            await self.log_error(f"Failed to compress message history: {str(e)}", sender=self.agent_name)
+    @property
+    def current_provider_tool_call_id(self):
+        """Provider-issued tool call ID for the tool call currently running (task-local)."""
+        return self._current_provider_tool_call_id_var.get()
 
-    def mark_cache_checkpoint(self):
-        """
-        Mark the last message in history for caching and remove cache_control from all other messages.
-
-        This ensures that only the most recent message is cached, preventing redundant caching
-        of older messages in the conversation history.
-
-        To avoid exceeding Anthropic's limit of 4 blocks with cache_control, we only add
-        cache_control to the very last content element of the last message.
-        """
-        # Remove cache_checkpoint from all content blocks in all messages
-        for message in self.history:
-            if hasattr(message, "content") and isinstance(message.content, list):
-                for content_block in message.content:
-                    if hasattr(content_block, "cache_checkpoint"):
-                        content_block.cache_checkpoint = False
-
-        # Set cache_checkpoint to True only for the last content block of the last message if history exists
-        if self.history:
-            last_message = self.history[-1]
-            if hasattr(last_message, "content") and isinstance(last_message.content, list) and last_message.content:
-                # Get the last content block only
-                last_content_block = last_message.content[-1]
-                if hasattr(last_content_block, "cache_checkpoint"):
-                    last_content_block.cache_checkpoint = True
+    @current_provider_tool_call_id.setter
+    def current_provider_tool_call_id(self, value):
+        self._current_provider_tool_call_id_var.set(value)
 
     async def execute_single_tool(self, tool_use_block: ToolCall) -> ToolResult:
         """Execute a single tool and return its result with metadata"""
@@ -1195,6 +652,24 @@ class BaseAgent(LogMixin):
                 results.append(result)
             return results
 
+    # ------------------------------------------------------------------
+    # Events
+    # ------------------------------------------------------------------
+
+    def _sub_agent_info(self) -> Optional[Dict[str, Any]]:
+        """Sub-agent dispatch metadata included in chat events, when applicable."""
+        if self.sub_agent and self.sub_agent_context:
+            # Dispatch metadata set by AgentTool (agent_id, task, parent IDs)
+            return dict(self.sub_agent_context)
+        if self.sub_agent and self.parent_tool_call_id:
+            return {
+                "agent_name": self.agent_name,
+                "conversation_id": self.conversation_id,
+                "parent_tool_call_id": self.parent_tool_call_id,
+                "depth": 1,  # Can be enhanced to track nested depth
+            }
+        return None
+
     async def send_chat_message(
         self, message_type: str, content: str, is_streaming: bool = False, tool_description=None, tool_call_id=None
     ) -> None:
@@ -1205,35 +680,13 @@ class BaseAgent(LogMixin):
             content: The message content to send
             is_streaming: Whether this is part of a streaming message
         """
-        timestamp = datetime.now().isoformat()
-
-        # Include sub_agent_info if this is a sub-agent
-        sub_agent_info = None
-        if self.sub_agent and self.sub_agent_context:
-            # Dispatch metadata set by AgentTool (agent_id, task, parent IDs)
-            sub_agent_info = dict(self.sub_agent_context)
-        elif self.sub_agent and self.parent_tool_call_id:
-            sub_agent_info = {
-                "agent_name": self.agent_name,
-                "conversation_id": self.conversation_id,
-                "parent_tool_call_id": self.parent_tool_call_id,
-                "depth": 1,  # Can be enhanced to track nested depth
-            }
-
-        event = AgentEvent(
-            sender=self.agent_name,
-            event_type="chat_message",
-            content={
-                "message_type": message_type,
-                "text": content,
-                "tool_description": tool_description,
-                "tool_call_id": tool_call_id,
-            },
-            timestamp=timestamp,
+        await self.emitter.chat(
+            message_type,
+            content,
             is_streaming=is_streaming,
-            sub_agent_info=sub_agent_info,
+            tool_description=tool_description,
+            tool_call_id=tool_call_id,
         )
-        await self.connection_manager.broadcast_event(event, self.workspace_id, self.thread_id)
 
     async def handle_llm_error(self, error: Exception) -> None:
         """
@@ -1262,34 +715,20 @@ class BaseAgent(LogMixin):
             # Don't re-raise - allow retry
 
         elif isinstance(error, LLMInternalServerError):
-            event = AgentEvent(
-                sender=self.agent_name,
-                event_type="llm_status_update",
-                content={
-                    "status": "error",
-                    "message": "There is high traffic on our LLM provider right now. Please try again in a few seconds.",
-                },
-                timestamp=datetime.now().isoformat(),
-                is_streaming=False,
+            await self.emitter.llm_status(
+                "error",
+                "There is high traffic on our LLM provider right now. Please try again in a few seconds.",
             )
-            await self.connection_manager.broadcast_event(event, self.workspace_id, self.thread_id)
             raise
 
         elif isinstance(error, LLMContextWindowExceededError):
-            event = AgentEvent(
-                sender=self.agent_name,
-                event_type="llm_status_update",
-                content={
-                    "status": "error",
-                    "message": (
-                        "The conversation context became too large for the model. "
-                        "Oversized tool output is trimmed automatically; please retry the message."
-                    ),
-                },
-                timestamp=datetime.now().isoformat(),
-                is_streaming=False,
+            await self.emitter.llm_status(
+                "error",
+                (
+                    "The conversation context became too large for the model. "
+                    "Oversized tool output is trimmed automatically; please retry the message."
+                ),
             )
-            await self.connection_manager.broadcast_event(event, self.workspace_id, self.thread_id)
             raise
 
         elif isinstance(error, LLMError):
@@ -1298,6 +737,226 @@ class BaseAgent(LogMixin):
         else:
             # Non-LLM error - just re-raise
             raise
+
+    # ------------------------------------------------------------------
+    # The agent loop
+    #
+    # process_message_stream is the single canonical loop shared by every
+    # agent. Subclasses customize behavior through the hook methods below
+    # (build_user_content, apply_compression_fallback, on_tool_use_start,
+    # should_stop_after_tools, recap_agent_outcome) rather than overriding
+    # the loop itself.
+    # ------------------------------------------------------------------
+
+    completion_log_message = "Processing complete"
+
+    async def build_user_content(self, message: str, attachments: Optional[List[Dict[str, Any]]]) -> List[Any]:
+        """
+        Build the content blocks for an incoming user message.
+
+        Default: the message text plus blocks for any image/file attachments.
+        """
+        content_blocks: List[Any] = [TextBlock(text=message)]
+        content_blocks.extend(self._attachment_blocks(attachments))
+
+        for attachment in attachments or []:
+            if attachment.get("type") == "image":
+                await self.log_info(
+                    f"Received image attachment: {attachment.get('filename', 'unnamed')} ({attachment.get('media_type', 'unknown')})",
+                    sender=self.agent_name,
+                )
+            elif attachment.get("type") == "file":
+                await self.log_info(
+                    f"Attached file from @ mention: {attachment.get('path', 'unnamed')}",
+                    sender=self.agent_name,
+                )
+
+        return content_blocks
+
+    def apply_compression_fallback(self) -> None:
+        """
+        Hard-truncate history when compression alone could not get under budget.
+
+        Default: keep the first message (the original task) plus any protected
+        skill-content messages.
+        """
+        first_message = self.history[0]
+        protected = [
+            message
+            for message in self.history
+            if message is not first_message and self._is_protected_skill_content(message)
+        ]
+        self.history = MessageHistory(protected + [first_message])
+
+    async def on_tool_use_start(self, tool_call_delta: Dict[str, Any]) -> None:
+        """
+        Called when the provider streams a tool_use_start event (Anthropic only).
+
+        Long-content tools stream large arguments, so announce them as soon as
+        they start instead of waiting for the arguments to finish streaming
+        (execute_single_tool skips the announcement for these tools).
+        """
+        tool_name = tool_call_delta.get("name")
+        tool_execution_id = tool_call_delta.get("execution_id") or tool_call_delta.get("id")
+        if tool_name in self.long_content_tool_calls:
+            await self.send_chat_message(
+                message_type="tool_call",
+                content=f"Calling {tool_name}",
+                is_streaming=False,
+                tool_description=tool_name,
+                tool_call_id=tool_execution_id,
+            )
+
+    def should_stop_after_tools(self) -> bool:
+        """Return True to end the loop after a successful tool batch (e.g. a plan was written)."""
+        return False
+
+    async def recap_agent_outcome(self) -> str:
+        """Return the agent's final report: the text of the last message in history."""
+        return self.history[-1].get_text_content()
+
+    async def process_message_stream(
+        self, message: str, attachments: List[Dict[str, Any]] = None
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """
+        Process a user message and yield response/thinking chunks while the agent works.
+
+        Yields dicts of the form
+        ``{"type": "response"|"thinking", "content": str, "complete": bool, "uuid": str}``.
+        """
+        unsupported_attachment_message = self._unsupported_attachment_message(attachments)
+        if unsupported_attachment_message:
+            yield {
+                "type": "response",
+                "content": unsupported_attachment_message,
+                "complete": True,
+                "uuid": str(uuid.uuid4()),
+            }
+            return
+
+        self.append_user_message(await self.build_user_content(message, attachments))
+
+        stop_reason = None
+        while stop_reason not in ["end_turn", "max_tokens", "stop_sequence"]:
+            self.mark_cache_checkpoint()
+
+            try:
+                token_count = await self.count_current_context()
+                logger.debug("Input token count: %s", token_count)
+
+                if self.compressor.over_budget(token_count.input_tokens, self.model_context_length):
+                    await self.compress_history()
+                    token_count = await self.count_current_context()
+
+                    if self.compressor.over_budget(token_count.input_tokens, self.model_context_length):
+                        self.apply_compression_fallback()
+
+                    self.mark_cache_checkpoint()
+
+                current_response = ""
+                current_thinking = ""
+                thinking_started = False
+                # Use the same UUID for each segment of the response
+                response_uuid = str(uuid.uuid4())
+                thinking_uuid = str(uuid.uuid4())
+
+                # Fix history before sending to LLM to ensure valid tool call sequences
+                effective = self.get_effective_history_for_llm()
+                fixed_history = MessageHistory(self.fix_incomplete_tool_calls(list(effective)))
+
+                async with await self.llm.stream(
+                    system=self.system_prompt,
+                    max_completion_tokens=self.model_completion_tokens,
+                    temperature=self.model_default_temperature,
+                    messages=fixed_history,
+                    model=self.config.long_context_config.model,
+                    tools=self.tool_collection.get_tool_list(),
+                    thinking=self.config.long_context_config.thinking_tokens,
+                ) as stream:
+                    async for event in stream:
+                        if event.type == "text":
+                            current_response += event.text
+
+                            # Send periodic updates as the response grows
+                            if len(current_response) >= 50:
+                                yield {
+                                    "type": "response",
+                                    "content": current_response,
+                                    "complete": False,
+                                    "uuid": response_uuid,
+                                }
+                                current_response = ""
+
+                        elif event.type == "thinking" and event.thinking:
+                            current_thinking += event.thinking
+
+                            if len(current_thinking) >= 50:
+                                thinking_started = True
+                                yield {
+                                    "type": "thinking",
+                                    "content": current_thinking,
+                                    "complete": False,
+                                    "uuid": thinking_uuid,
+                                }
+                                current_thinking = ""
+
+                        elif event.type == "tool_use_start" and event.tool_call_delta:
+                            # Flush accumulated text first so the user doesn't have to wait for it.
+                            yield {
+                                "type": "response",
+                                "content": current_response,
+                                "complete": True,
+                                "uuid": response_uuid,
+                            }
+                            current_response = ""
+
+                            await self.on_tool_use_start(event.tool_call_delta)
+
+                assistant_message = await stream.get_final_message()
+                stop_reason = assistant_message.stop_reason
+
+                self.append_assistant_message(assistant_message)
+
+                if thinking_started or current_thinking:
+                    yield {"type": "thinking", "content": current_thinking, "complete": True, "uuid": thinking_uuid}
+
+                # Send the final message to mark it complete.
+                yield {"type": "response", "content": current_response, "complete": True, "uuid": response_uuid}
+
+                if assistant_message.tool_calls:
+                    await self.log_info(
+                        f"Received {len(assistant_message.tool_calls)} tool call(s)", sender=self.agent_name
+                    )
+
+                    try:
+                        tool_responses = await self.process_tool_calls(assistant_message.tool_calls)
+                        self.append_user_message(tool_responses)
+
+                        if self.should_stop_after_tools():
+                            break
+                    except Exception as ex:
+                        error_message = f"Error processing tool calls: {str(ex)}"
+                        await self.log_error(error_message, sender=self.agent_name)
+
+                        error_responses = [
+                            ToolResult(
+                                tool_use_id=tool_call.id,
+                                content=f"Failed to process tool calls: {str(ex)}",
+                                name=tool_call.name,
+                                is_error=True,
+                            )
+                            for tool_call in assistant_message.tool_calls
+                        ]
+                        self.append_user_message(error_responses)
+
+            except Exception as ex:
+                await self.handle_llm_error(ex)
+
+        await self.log_info(self.completion_log_message, sender=self.agent_name)
+
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
 
     async def cleanup(self) -> None:
         """
