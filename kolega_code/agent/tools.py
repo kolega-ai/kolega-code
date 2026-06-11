@@ -6,13 +6,12 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, List, Optional, Union
 
 from .common import LogMixin
-from .config import AgentConfig
-from kolega_code.config.sandbox_config import is_sandbox_enabled
-from .llm.models import ImageBlock, ToolDefinition, ToolParameter
-from .services.file_system import FileSystem, LocalFileSystem
-from .services.base import TerminalManager, BrowserManager
-from .services.terminal import LocalTerminalManager
-from .services.browser import PlaywrightBrowserManager
+from kolega_code.config import AgentConfig
+from kolega_code.llm.models import ImageBlock, ToolDefinition, ToolParameter
+from kolega_code.services.file_system import FileSystem, LocalFileSystem
+from kolega_code.services.base import TerminalManager, BrowserManager
+from kolega_code.services.terminal import LocalTerminalManager
+from kolega_code.services.browser import PlaywrightBrowserManager
 from .tool_backend.agent_tool import AgentTool
 from .tool_backend.apply_edit_tool import ApplyEditTool
 from .tool_backend.apply_patch_tool import APPLY_PATCH_TOOL_DESC, ApplyPatchTool
@@ -199,13 +198,9 @@ class ToolCollection(LogMixin):
         else:
             self.browser_manager = browser_manager
 
-        # Validate that the project path exists and is a directory using the filesystem
-        # Skip validation when running in E2B sandbox as we know it exists
-        if not is_sandbox_enabled():
-            if not self.filesystem.exists("."):
-                raise ValueError(f"Project path does not exist: {self.project_path}")
-            if not self.filesystem.is_dir("."):
-                raise ValueError(f"Project path is not a directory: {self.project_path}")
+        # Validate the filesystem root. Local filesystems check the directory
+        # eagerly; sandbox filesystems are provisioned by their manager and no-op.
+        self.filesystem.validate_root()
 
         self.connection_manager = connection_manager
         self.config = config

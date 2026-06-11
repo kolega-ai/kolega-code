@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from kolega_code.agent.config import ModelProvider
+from kolega_code.config import ModelProvider
 from kolega_code.cli.config import (
     DEFAULT_EDIT_MODEL,
     DEFAULT_FAST_MODEL,

@@ -4,8 +4,8 @@ import pytest
 from unittest.mock import AsyncMock, Mock, patch
 from pathlib import Path
 
-from kolega_code.agent.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
-from kolega_code.agent.connection_manager import AgentConnectionManager
+from kolega_code.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
+from kolega_code.events import AgentConnectionManager
 from kolega_code.agent.tool_backend.think_hard_tool import ThinkHardTool
 
 
@@ -111,7 +111,7 @@ async def test_think_hard_returns_string(think_hard_tool):
                     return chunk
 
                 async def get_final_message(self):
-                    from kolega_code.agent.llm.models import Message, TextBlock
+                    from kolega_code.llm.models import Message, TextBlock
 
                     return Message(role="assistant", content=[TextBlock(text="Test response")])
 
@@ -169,7 +169,7 @@ async def test_think_hard_logging(think_hard_tool):
                     return chunk
 
                 async def get_final_message(self):
-                    from kolega_code.agent.llm.models import Message, TextBlock
+                    from kolega_code.llm.models import Message, TextBlock
 
                     return Message(role="assistant", content=[TextBlock(text="Response")])
 

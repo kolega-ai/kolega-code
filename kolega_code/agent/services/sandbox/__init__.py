@@ -1,21 +1,11 @@
-"""Sandbox services for cloud-based agent execution."""
+"""Deprecated location. Import from kolega_code.sandbox instead."""
 
-from .base import SandboxConfig, ProjectManifest, SandboxManager
-from .sandbox_filesystem import SandboxFileSystem
-from .async_sandbox_filesystem import AsyncSandboxFileSystem
-from .sandbox_terminal import SandboxTerminalManager
-from .sandbox_browser import SandboxBrowserManager
-from .local_sandbox import LocalSandboxManager
-from .utils import get_modified_files_from_sandbox
+import warnings
 
-__all__ = [
-    "SandboxConfig",
-    "ProjectManifest",
-    "SandboxManager",
-    "SandboxFileSystem",
-    "AsyncSandboxFileSystem",
-    "SandboxTerminalManager",
-    "SandboxBrowserManager",
-    "LocalSandboxManager",
-    "get_modified_files_from_sandbox",
-]
+warnings.warn(
+    "kolega_code.agent.services.sandbox is deprecated; import from kolega_code.sandbox instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
+from kolega_code.sandbox import *  # noqa: F401,F403,E402

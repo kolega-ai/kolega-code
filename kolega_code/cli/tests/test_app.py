@@ -3,9 +3,9 @@ import asyncio
 
 import pytest
 
-from kolega_code.agent.config import ModelProvider
-from kolega_code.agent.llm.models import Message, TextBlock, ToolCall, ToolResult
-from kolega_code.agent.models.public import AgentEvent
+from kolega_code.config import ModelProvider
+from kolega_code.llm.models import Message, TextBlock, ToolCall, ToolResult
+from kolega_code.events import AgentEvent
 from kolega_code.agent.prompt_provider import AgentMode
 from kolega_code.cli.config import build_agent_config, config_summary
 from kolega_code.cli.provider_registry import DEEPSEEK_DEFAULT_MODEL, UI_DEFAULT_MODEL, UI_DEFAULT_PROVIDER

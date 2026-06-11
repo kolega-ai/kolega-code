@@ -6,12 +6,12 @@ from pathlib import Path
 from typing import Optional, Tuple, Union
 
 from .. import prompts
-from ..config import AgentConfig
-from ..llm.client import LLMClient
-from ..llm.models import Message, MessageHistory, TextBlock
-from ..llm.specs import get_model_specs
-from ..models.public import AgentEvent
-from ..services.terminal import LocalTerminalManager
+from kolega_code.config import AgentConfig
+from kolega_code.llm.client import LLMClient
+from kolega_code.llm.models import Message, MessageHistory, TextBlock
+from kolega_code.llm.specs import get_model_specs
+from kolega_code.events import AgentEvent
+from kolega_code.services.terminal import LocalTerminalManager
 from .base_tool import BaseTool
 
 

@@ -2,8 +2,8 @@ import os
 import types
 import pytest
 
-from kolega_code.agent.llm.providers.openai import OpenAIProvider
-from kolega_code.agent.llm.models import Message, MessageHistory
+from kolega_code.llm.providers.openai import OpenAIProvider
+from kolega_code.llm.models import Message, MessageHistory
 
 # Check if running in CI environment
 SKIP_IN_CI = bool(os.getenv("CI")) or bool(os.getenv("GITLAB_CI"))

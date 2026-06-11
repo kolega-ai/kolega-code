@@ -5,10 +5,10 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from kolega_code.agent.baseagent import BaseAgent
-from kolega_code.agent.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
-from kolega_code.agent.connection_manager import AgentConnectionManager
-from kolega_code.agent.llm.models import Message, TextBlock, ToolCall
-from kolega_code.agent.llm.providers.models import TokenCount
+from kolega_code.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
+from kolega_code.events import AgentConnectionManager
+from kolega_code.llm.models import Message, TextBlock, ToolCall
+from kolega_code.llm.providers.models import TokenCount
 from kolega_code.agent.planningagent import PlanningAgent
 from kolega_code.agent.prompt_provider import AgentMode
 from kolega_code.agent.tools import ToolExtension

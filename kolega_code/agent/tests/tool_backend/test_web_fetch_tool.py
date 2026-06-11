@@ -2,7 +2,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from kolega_code.agent.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
+from kolega_code.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
 from kolega_code.agent.tool_backend.web_fetch_tool import WebFetchTool
 
 

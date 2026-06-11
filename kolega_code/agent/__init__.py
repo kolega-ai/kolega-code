@@ -9,12 +9,12 @@ from .generalagent import GeneralAgent
 from .planningagent import PlanningAgent
 
 # Export agent models
-from .models.public import AgentStatus, AgentEvent
+from kolega_code.events import AgentStatus, AgentEvent
 
 # Export configuration
-from .config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
-from .connection_manager import AgentConnectionManager
-from .services.base import TerminalManager
+from kolega_code.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
+from kolega_code.events import AgentConnectionManager
+from kolega_code.services.base import TerminalManager
 from .prompt_provider import PromptExtension
 from .tools import ToolExtension
 

@@ -1,7 +1,7 @@
 """Base class for tools that support streaming responses."""
 
 from .base_tool import BaseTool
-from ..models.public import AgentEvent
+from kolega_code.events import AgentEvent
 
 
 class StreamingTool(BaseTool):

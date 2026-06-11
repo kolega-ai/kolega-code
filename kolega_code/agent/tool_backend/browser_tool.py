@@ -1,9 +1,9 @@
 from pathlib import Path
 from typing import Union
 
-from ..config import AgentConfig
-from ..models.public import AgentEvent
-from ..services.browser import PlaywrightBrowserManager
+from kolega_code.config import AgentConfig
+from kolega_code.events import AgentEvent
+from kolega_code.services.browser import PlaywrightBrowserManager
 from .base_tool import BaseTool
 
 

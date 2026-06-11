@@ -2,7 +2,7 @@ import datetime
 import os
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from kolega_code.agent.services.browser import PlaywrightBrowserManager
+from kolega_code.services.browser import PlaywrightBrowserManager
 
 # Check if running in CI environment
 SKIP_IN_CI = bool(os.getenv("CI")) or bool(os.getenv("GITLAB_CI"))
