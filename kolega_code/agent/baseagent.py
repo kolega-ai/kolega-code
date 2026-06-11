@@ -2,6 +2,7 @@ import asyncio
 import contextvars
 import os
 import re
+import warnings
 from datetime import datetime
 from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Optional
@@ -241,7 +242,7 @@ class BaseAgent(LogMixin):
     def current_provider_tool_call_id(self, value):
         self._current_provider_tool_call_id_var.set(value)
 
-    def _build_prompt_context(self) -> PromptContext:
+    def build_prompt_context(self) -> PromptContext:
         """Build PromptContext from agent state."""
         import platform
 
@@ -313,7 +314,7 @@ class BaseAgent(LogMixin):
         self._sanitize_oversized_tool_results()
         # Fix history before counting to get accurate count for what LLM will see
         effective = self.get_effective_history_for_llm()
-        fixed_history = MessageHistory(self._fix_incomplete_tool_calls(list(effective)))
+        fixed_history = MessageHistory(self.fix_incomplete_tool_calls(list(effective)))
         token_count = await self.llm.count_tokens(
             system=self.system_prompt,
             messages=fixed_history,
@@ -433,7 +434,7 @@ class BaseAgent(LogMixin):
 
         return True
 
-    def _fix_incomplete_tool_calls(self, messages: List[Message]) -> List[Message]:
+    def fix_incomplete_tool_calls(self, messages: List[Message]) -> List[Message]:
         """
         Fix incomplete tool call sequences by adding placeholder tool_result blocks
         for any orphaned tool_use blocks.
@@ -732,7 +733,7 @@ class BaseAgent(LogMixin):
         all_messages = list(self.history) + messages
 
         # Fix any incomplete tool calls in the combined history
-        fixed_messages = self._fix_incomplete_tool_calls(all_messages)
+        fixed_messages = self.fix_incomplete_tool_calls(all_messages)
 
         # Replace history with the fixed version
         self.history = MessageHistory(fixed_messages)
@@ -759,7 +760,7 @@ class BaseAgent(LogMixin):
         # Check if it has tool calls
         return any(isinstance(block, ToolCall) for block in last_message.content)
 
-    async def _compress_message_history(self) -> None:
+    async def compress_history(self) -> None:
         """
         Non-destructively summarize the current history and mark a compression boundary.
 
@@ -803,7 +804,7 @@ class BaseAgent(LogMixin):
         except Exception as e:
             await self.log_error(f"Failed to compress message history: {str(e)}", sender=self.agent_name)
 
-    def _mark_last_message_for_cache(self):
+    def mark_cache_checkpoint(self):
         """
         Mark the last message in history for caching and remove cache_control from all other messages.
 
@@ -1093,3 +1094,36 @@ class BaseAgent(LogMixin):
 
         # Log cleanup
         await self.log_info("Agent cleanup completed", sender=self.agent_name)
+
+    # ------------------------------------------------------------------
+    # Deprecated aliases
+    #
+    # These methods started as private helpers but host applications built
+    # subclasses on top of them, so the underscore names are de-facto public.
+    # The supported names are the contract going forward; these aliases exist
+    # so existing subclasses keep working and will be removed once all hosts
+    # have migrated.
+    # ------------------------------------------------------------------
+
+    def _warn_deprecated(self, old: str, new: str) -> None:
+        warnings.warn(
+            f"BaseAgent.{old} is deprecated; use BaseAgent.{new} instead.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+
+    def _build_prompt_context(self) -> PromptContext:
+        self._warn_deprecated("_build_prompt_context", "build_prompt_context")
+        return self.build_prompt_context()
+
+    def _mark_last_message_for_cache(self) -> None:
+        self._warn_deprecated("_mark_last_message_for_cache", "mark_cache_checkpoint")
+        return self.mark_cache_checkpoint()
+
+    async def _compress_message_history(self) -> None:
+        self._warn_deprecated("_compress_message_history", "compress_history")
+        return await self.compress_history()
+
+    def _fix_incomplete_tool_calls(self, messages: List[Message]) -> List[Message]:
+        self._warn_deprecated("_fix_incomplete_tool_calls", "fix_incomplete_tool_calls")
+        return self.fix_incomplete_tool_calls(messages)

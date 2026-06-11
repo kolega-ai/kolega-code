@@ -44,7 +44,7 @@ class CommandProcessor:
 
     async def _handle_compress(self) -> str:
         """Handle the /compress command."""
-        await self.agent._compress_message_history()
+        await self.agent.compress_history()
         return "Message history compressed."
 
     async def _handle_clear(self) -> str:

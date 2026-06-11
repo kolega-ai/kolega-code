@@ -75,7 +75,7 @@ class TestDuplicateToolResultPrevention:
             ]
         )
 
-        # The append_user_message will trigger _fix_incomplete_tool_calls
+        # The append_user_message will trigger fix_incomplete_tool_calls
         # which adds a dummy result, then the real result should replace it
         real_result = ToolResult(
             tool_use_id="tool_123", name="test_tool", content="Real tool execution result", is_error=False
@@ -130,7 +130,7 @@ class TestDuplicateToolResultPrevention:
         assert len(tool_result_msg.content) == 2
 
         # But when we fix the history, it should have all 3
-        fixed_history = base_agent._fix_incomplete_tool_calls(list(base_agent.history))
+        fixed_history = base_agent.fix_incomplete_tool_calls(list(base_agent.history))
 
         # Find the tool result message in fixed history
         fixed_user_messages = [msg for msg in fixed_history if msg.role == "user"]
@@ -215,7 +215,7 @@ class TestDuplicateToolResultPrevention:
         base_agent.history = base_agent.history[:-1]
 
         # Manually fix the history to simulate what would happen before sending to LLM
-        fixed_history = base_agent._fix_incomplete_tool_calls(list(base_agent.history))
+        fixed_history = base_agent.fix_incomplete_tool_calls(list(base_agent.history))
 
         # Verify dummy was created in the fixed history
         tool_results = []
@@ -414,8 +414,8 @@ class TestDuplicateToolResultPrevention:
             ),
         ]
 
-        # Test _fix_incomplete_tool_calls
-        fixed_messages = base_agent._fix_incomplete_tool_calls(messages)
+        # Test fix_incomplete_tool_calls
+        fixed_messages = base_agent.fix_incomplete_tool_calls(messages)
 
         # Should have 3 messages: assistant with tool call, user with tool result, user with text
         assert len(fixed_messages) == 3
@@ -473,7 +473,7 @@ class TestDuplicateToolResultPrevention:
             ),
         ]
 
-        fixed_messages = base_agent._fix_incomplete_tool_calls(messages)
+        fixed_messages = base_agent.fix_incomplete_tool_calls(messages)
 
         # First message: assistant with tool calls
         assert fixed_messages[0].role == "assistant"
@@ -496,15 +496,15 @@ class TestDuplicateToolResultPrevention:
 
     def test_no_dummy_creation_when_providing_all_results(self, base_agent, monkeypatch):
         """Test that dummy results are not created when all tool results are provided immediately."""
-        # Track calls to _fix_incomplete_tool_calls
+        # Track calls to fix_incomplete_tool_calls
         fix_calls = []
-        original_fix = base_agent._fix_incomplete_tool_calls
+        original_fix = base_agent.fix_incomplete_tool_calls
 
         def mock_fix(messages):
             fix_calls.append(True)
             return original_fix(messages)
 
-        monkeypatch.setattr(base_agent, "_fix_incomplete_tool_calls", mock_fix)
+        monkeypatch.setattr(base_agent, "fix_incomplete_tool_calls", mock_fix)
 
         # Set up history with tool calls
         base_agent.history.extend(
@@ -520,7 +520,7 @@ class TestDuplicateToolResultPrevention:
             ]
         )
 
-        # Append all results immediately - this should NOT trigger _fix_incomplete_tool_calls
+        # Append all results immediately - this should NOT trigger fix_incomplete_tool_calls
         results = [
             ToolResult(tool_use_id="tool_1", name="tool1", content="Result 1", is_error=False),
             ToolResult(tool_use_id="tool_2", name="tool2", content="Result 2", is_error=False),
@@ -528,8 +528,8 @@ class TestDuplicateToolResultPrevention:
 
         base_agent.append_user_message(results)
 
-        # Verify _fix_incomplete_tool_calls was NOT called
-        assert len(fix_calls) == 0, "_fix_incomplete_tool_calls should not be called when all results are provided"
+        # Verify fix_incomplete_tool_calls was NOT called
+        assert len(fix_calls) == 0, "fix_incomplete_tool_calls should not be called when all results are provided"
 
         # Verify the results were added correctly
         tool_results = []
