@@ -1,3 +1,4 @@
+import logging
 import uuid
 from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Optional
@@ -6,10 +7,13 @@ from .baseagent import BaseAgent
 from .common import LogMixin
 from .config import AgentConfig
 from .connection_manager import AgentConnectionManager
-from .llm.models import Message, MessageHistory, TextBlock, ToolResult, ImageBlock
+from .llm.models import Message, MessageHistory, TextBlock, ToolResult
 from .prompt_provider import AgentType, AgentMode, PromptExtension
 from .tools import ToolCollection, ToolCollectionConfig
 from .utils.commands import CommandProcessor
+
+
+logger = logging.getLogger(__name__)
 
 
 @CommandProcessor.process_commands
@@ -65,7 +69,7 @@ class CoderAgent(BaseAgent, LogMixin):
             user_email: Optional email of user who created this job
             project_template_slug: Optional slug of the project template being used
             protected_files: Optional list of file basenames protected from edits in vibe mode
-            agent_mode: Optional agent mode (VIBE or CODE)
+            agent_mode: Optional agent mode (CLI, VIBE, CODE, or FIX)
             workspace_env_var_descriptions: Optional mapping of workspace environment variable descriptions
             workspace_memories: Optional list of workspace memories to inject into prompts
             prompt_extensions: Host-provided prompt sections for app-specific context
@@ -99,42 +103,31 @@ class CoderAgent(BaseAgent, LogMixin):
         )
 
         # Configure tool collection with custom coder agent tools
-        if self.agent_mode == AgentMode.VIBE.value:
-            tool_config = ToolCollectionConfig(
-                custom_tool_groups=["coder_agent_tools"],
-                tool_exclusions=[
-                    "read_memory",
-                    "write_memory",
-                    "execute_terminal_command",
-                    "replace_lines",
-                    "apply_patch",
-                    "edit_file",
-                    "get_tool_list",
-                    "log_error",
-                    "log_info",
-                    "run_command",  # Disabled: unreliable completion detection, use run_command_tracked instead
-                    # Exclude task-specific dispatch tools since coder shouldn't call itself or other agents
-                    "dispatch_coding_agent",
-                ],
-            )
-        else:
-            tool_config = ToolCollectionConfig(
-                custom_tool_groups=["coder_agent_tools"],
-                tool_exclusions=[
-                    "read_memory",
-                    "write_memory",
-                    "execute_terminal_command",
-                    "replace_lines",
-                    "apply_patch",
-                    "edit_file",
-                    "get_tool_list",
-                    "log_error",
-                    "log_info",
-                    "run_command",  # Disabled: unreliable completion detection, use run_command_tracked instead
-                    # Exclude task-specific dispatch tools since coder shouldn't call itself or other agents
-                    "dispatch_coding_agent",
-                ],
-            )
+        tool_exclusions = [
+            "read_memory",
+            "write_memory",
+            "execute_terminal_command",
+            "replace_lines",
+            "apply_patch",
+            "edit_file",
+            "get_tool_list",
+            "log_error",
+            "log_info",
+            "run_command",  # Disabled: unreliable completion detection, use run_command_tracked instead
+            # Exclude task-specific dispatch tools since coder shouldn't call itself or other agents
+            "dispatch_coding_agent",
+        ]
+        mode_value = self.agent_mode.value if isinstance(self.agent_mode, AgentMode) else self.agent_mode
+        if mode_value == AgentMode.CLI.value:
+            tool_exclusions.extend(["build_backend", "build_frontend"])
+        if sub_agent:
+            # A dispatched coder must not fan out into further sub-agents
+            tool_exclusions.append("dispatch_general_agent")
+
+        tool_config = ToolCollectionConfig(
+            custom_tool_groups=["coder_agent_tools"],
+            tool_exclusions=tool_exclusions,
+        )
 
         self.tool_collection = ToolCollection(
             self.project_path,
@@ -207,22 +200,29 @@ class CoderAgent(BaseAgent, LogMixin):
         Yields:
             Dict containing message content and metadata
         """
-        content_blocks = [TextBlock(text=message)]
+        unsupported_attachment_message = self._unsupported_attachment_message(attachments)
+        if unsupported_attachment_message:
+            yield {
+                "type": "response",
+                "content": unsupported_attachment_message,
+                "complete": True,
+                "uuid": str(uuid.uuid4()),
+            }
+            return
 
-        # Process any image attachments
+        content_blocks = [TextBlock(text=message)]
+        content_blocks.extend(self._attachment_blocks(attachments))
+
         if attachments:
             for attachment in attachments:
                 if attachment.get("type") == "image":
-                    image_block = ImageBlock(
-                        image_type="base64",
-                        media_type=attachment.get("media_type", "image/png"),
-                        data=attachment["data"],
-                    )
-                    content_blocks.append(image_block)
-
-                    # Log that we received an image
                     await self.log_info(
                         f"Received image attachment: {attachment.get('filename', 'unnamed')} ({attachment.get('media_type', 'unknown')})",
+                        sender=self.agent_name,
+                    )
+                elif attachment.get("type") == "file":
+                    await self.log_info(
+                        f"Attached file from @ mention: {attachment.get('path', 'unnamed')}",
                         sender=self.agent_name,
                     )
 
@@ -237,8 +237,7 @@ class CoderAgent(BaseAgent, LogMixin):
             try:
                 # Token counting logic
                 token_count = await self.count_current_context()
-                print("Input token count: ")
-                print(token_count)
+                logger.debug("Input token count: %s", token_count)
 
                 if token_count.input_tokens > self.model_context_length * self.history_compression_threshold:
                     await self._compress_message_history()
@@ -248,7 +247,12 @@ class CoderAgent(BaseAgent, LogMixin):
 
                     if token_count.input_tokens > self.model_context_length * self.history_compression_threshold:
                         summary_message = self.history[0]
-                        self.history = MessageHistory([summary_message])
+                        protected = [
+                            message
+                            for message in self.history
+                            if message is not summary_message and self._is_protected_skill_content(message)
+                        ]
+                        self.history = MessageHistory(protected + [summary_message])
 
                     self._mark_last_message_for_cache()
 

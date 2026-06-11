@@ -417,14 +417,14 @@ async def test_with_images(
 
     # Calculate percentage difference
     diff_pct = calculate_percentage_difference(local_result.input_tokens, api_result.input_tokens)
-    threshold = get_accuracy_threshold(api_result.input_tokens)
+    image_threshold = 200.0
 
     print(f"\nWith images comparison:")
     print(f"  Image size: {len(tiny_image_base64)} chars (base64)")
     print(f"  Local count: {local_result.input_tokens}")
     print(f"  API count: {api_result.input_tokens}")
     print(f"  Difference: {diff_pct:.2f}%")
-    print(f"  Threshold: {threshold:.1f}%")
+    print(f"  Threshold: {image_threshold:.1f}% (image estimate)")
 
     # Images are harder to estimate precisely without decoding, but we verify:
     # 1. Both methods counted more than text-only (proving images are counted)
@@ -438,7 +438,6 @@ async def test_with_images(
     # - This tiny 1x1 test image is an edge case (96 chars base64)
     # - Normal conversation images (screenshots, etc.) will be much larger and more accurate
     # - The key goal is images aren't ignored (count > 0)
-    image_threshold = 200.0
     assert (
         diff_pct <= image_threshold
     ), f"Difference {diff_pct:.2f}% exceeds {image_threshold:.1f}% threshold for images (local={local_result.input_tokens}, api={api_result.input_tokens})"

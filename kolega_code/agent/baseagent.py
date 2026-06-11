@@ -1,5 +1,7 @@
 import asyncio
+import contextvars
 import os
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Optional
@@ -16,7 +18,7 @@ from .llm.exceptions import (
     LLMRateLimitError,
     map_to_llm_error,
 )
-from .llm.models import Message, MessageHistory, TextBlock, ToolCall, ToolResult
+from .llm.models import ImageBlock, Message, MessageHistory, TextBlock, ToolCall, ToolResult
 from .llm.providers.models import TokenCount
 from .llm.specs import get_model_specs
 from .models.public import AgentEvent, AgentStatus
@@ -45,8 +47,17 @@ class BaseAgent(LogMixin):
 
     agent_name = "base-agent"  # you should never see this
     history_compression_threshold = 0.8
+    # Cap on concurrently executing tool calls within one batch (each dispatched
+    # sub-agent runs its own multi-turn LLM loop, so an unbounded fan-out would
+    # multiply token spend and shared-resource pressure).
+    PARALLEL_TOOL_LIMIT = 8
     long_content_tool_calls = ["create_file", "replace_entire_file"]
     max_tool_result_chars_in_history = 100_000
+    skill_content_pattern = re.compile(r'<skill_content name="[^"]+">')
+    deepseek_image_unsupported_message = (
+        "DeepSeek V4 Pro does not support image input via the DeepSeek API. "
+        "Remove the image or switch to a vision-capable model for this request."
+    )
 
     def __init__(
         self,
@@ -191,11 +202,44 @@ class BaseAgent(LogMixin):
         self.command_processor = CommandProcessor(self)
 
         self.sub_agent = sub_agent
-        self.current_tool_call_id = None  # Internal execution ID for UI and sub-agent records
-        self.current_tool_execution_id = None
-        self.current_provider_tool_call_id = None
+        # Per-instance ContextVars so concurrent tool executions (asyncio.gather in
+        # process_tool_calls) each see their own current tool call IDs. Instance-level
+        # (rather than module-level) vars also keep a nested sub-agent, which executes
+        # tools within the same asyncio task as the parent's dispatch call, from
+        # clobbering the parent's values.
+        self._current_tool_call_id_var = contextvars.ContextVar("current_tool_call_id", default=None)
+        self._current_tool_execution_id_var = contextvars.ContextVar("current_tool_execution_id", default=None)
+        self._current_provider_tool_call_id_var = contextvars.ContextVar("current_provider_tool_call_id", default=None)
         self.parent_tool_call_id = None  # Parent tool call ID when running as sub-agent
         self.conversation_id = None  # Sub-agent conversation ID
+        self.sub_agent_context = None  # Dispatch metadata (agent_id, task) set by AgentTool
+
+    @property
+    def current_tool_call_id(self):
+        """Internal execution ID for UI and sub-agent records (task-local)."""
+        return self._current_tool_call_id_var.get()
+
+    @current_tool_call_id.setter
+    def current_tool_call_id(self, value):
+        self._current_tool_call_id_var.set(value)
+
+    @property
+    def current_tool_execution_id(self):
+        """App-unique tool execution ID for the tool call currently running (task-local)."""
+        return self._current_tool_execution_id_var.get()
+
+    @current_tool_execution_id.setter
+    def current_tool_execution_id(self, value):
+        self._current_tool_execution_id_var.set(value)
+
+    @property
+    def current_provider_tool_call_id(self):
+        """Provider-issued tool call ID for the tool call currently running (task-local)."""
+        return self._current_provider_tool_call_id_var.get()
+
+    @current_provider_tool_call_id.setter
+    def current_provider_tool_call_id(self, value):
+        self._current_provider_tool_call_id_var.set(value)
 
     def _build_prompt_context(self) -> PromptContext:
         """Build PromptContext from agent state."""
@@ -226,6 +270,39 @@ class BaseAgent(LogMixin):
             workspace_environment_variables=self.workspace_env_var_descriptions,
             memories=self.workspace_memories,
         )
+
+    def _unsupported_attachment_message(self, attachments: Optional[List[Dict[str, Any]]]) -> Optional[str]:
+        provider = getattr(
+            self.config.long_context_config.provider,
+            "value",
+            self.config.long_context_config.provider,
+        )
+        if provider != ModelProvider.DEEPSEEK.value:
+            return None
+
+        if any(attachment.get("type") == "image" for attachment in attachments or []):
+            return self.deepseek_image_unsupported_message
+
+        return None
+
+    def _attachment_blocks(self, attachments: Optional[List[Dict[str, Any]]]) -> List[Any]:
+        """Convert attachment payloads into content blocks for a user message."""
+        blocks: List[Any] = []
+        for attachment in attachments or []:
+            attachment_type = attachment.get("type")
+            if attachment_type == "image":
+                blocks.append(
+                    ImageBlock(
+                        image_type="base64",
+                        media_type=attachment.get("media_type", "image/png"),
+                        data=attachment["data"],
+                    )
+                )
+            elif attachment_type == "file":
+                path = attachment.get("path", "")
+                content = attachment.get("content", "")
+                blocks.append(TextBlock(text=f'<attached-file path="{path}">\n{content}\n</attached-file>'))
+        return blocks
 
     async def process_message_stream(
         self, message: str, attachments: List[Dict[str, Any]] = None
@@ -623,11 +700,26 @@ class BaseAgent(LogMixin):
             summary_idx = self.last_compression_index + 1
             if summary_idx < len(self.history):
                 summary_msg = self.history[summary_idx]
+                protected = [
+                    message for message in self.history[:summary_idx] if self._is_protected_skill_content(message)
+                ]
                 # Tail starts after the summary
                 tail = list(self.history[summary_idx + 1 :]) if summary_idx + 1 < len(self.history) else []
-                return MessageHistory([summary_msg] + tail)
+                return MessageHistory(protected + [summary_msg] + tail)
 
         return MessageHistory(list(self.history))
+
+    def _is_protected_skill_content(self, message: Message) -> bool:
+        if message.role != "user":
+            return False
+        if isinstance(message.content, str):
+            return bool(self.skill_content_pattern.search(message.content))
+        if not isinstance(message.content, list):
+            return False
+        return any(
+            isinstance(block, TextBlock) and self.skill_content_pattern.search(block.text)
+            for block in message.content
+        )
 
     def extend_history(self, messages: List[Message]) -> None:
         """
@@ -749,25 +841,44 @@ class BaseAgent(LogMixin):
         self.current_tool_execution_id = tool_execution_id
         self.current_tool_call_id = tool_execution_id
 
-        # Log the tool being called
-        await self.log_info(f"Executing tool: {tool_name}", sender=self.agent_name)
-
-        # Send tool_call message to indicate we're starting execution
-        if not all(
-            [
-                self.config.long_context_config.provider == ModelProvider.ANTHROPIC,
-                tool_name in self.long_content_tool_calls,
-            ]
-        ):
-            await self.send_chat_message(
-                message_type="tool_call",
-                content=f"Calling {tool_name}",
-                is_streaming=False,
-                tool_description=tool_name,
-                tool_call_id=tool_execution_id,
-            )
-
         try:
+            available_tools = {tool.name for tool in self.tool_collection.get_tool_list()}
+            if tool_name not in available_tools:
+                error_message = f"Tool '{tool_name}' is not available in this mode."
+                await self.log_error(error_message, sender=self.agent_name)
+                await self.send_chat_message(
+                    message_type="tool_error",
+                    content=error_message,
+                    is_streaming=False,
+                    tool_description=tool_name,
+                    tool_call_id=tool_execution_id,
+                )
+                return ToolResult(
+                    tool_use_id=provider_tool_call_id,
+                    content=error_message,
+                    name=tool_name,
+                    is_error=True,
+                    execution_id=tool_execution_id,
+                )
+
+            # Log the tool being called
+            await self.log_info(f"Executing tool: {tool_name}", sender=self.agent_name)
+
+            # Send tool_call message to indicate we're starting execution
+            if not all(
+                [
+                    self.config.long_context_config.provider == ModelProvider.ANTHROPIC,
+                    tool_name in self.long_content_tool_calls,
+                ]
+            ):
+                await self.send_chat_message(
+                    message_type="tool_call",
+                    content=f"Calling {tool_name}",
+                    is_streaming=False,
+                    tool_description=tool_name,
+                    tool_call_id=tool_execution_id,
+                )
+
             output = await self.tool_collection.__getattribute__(tool_name)(**inputs)
 
             # Handle the case where the output is a list of ContentBlock objects
@@ -834,21 +945,27 @@ class BaseAgent(LogMixin):
         if len(tool_use_blocks) == 1:
             return [await self.execute_single_tool(tool_use_blocks[0])]
 
-        # Check if all tools are read-only
-        all_read_only = all(block.name in ToolCollection.read_only_tools for block in tool_use_blocks)
+        # Read-only tools have no side effects and agent dispatches operate on
+        # independent sub-agents, so batches made up entirely of these can run
+        # concurrently. Any other tool in the batch forces sequential execution.
+        parallel_safe_tools = set(ToolCollection.read_only_tools) | set(ToolCollection.agent_dispatch_tools)
+        all_parallel_safe = all(block.name in parallel_safe_tools for block in tool_use_blocks)
 
-        if all_read_only:
+        if all_parallel_safe:
             # Execute all tools in parallel
             await self.log_info(
-                f"Executing {len(tool_use_blocks)} read-only tool calls in parallel", sender=self.agent_name
+                f"Executing {len(tool_use_blocks)} parallel-safe tool calls in parallel", sender=self.agent_name
             )
-            tasks = []
-            for block in tool_use_blocks:
-                tasks.append(self.execute_single_tool(block))
+            semaphore = asyncio.Semaphore(self.PARALLEL_TOOL_LIMIT)
 
-            # Wait for all tasks to complete
-            results = await asyncio.gather(*tasks)
-            return results
+            async def run_limited(block: ToolCall) -> ToolResult:
+                async with semaphore:
+                    return await self.execute_single_tool(block)
+
+            # Wait for all tasks to complete; gather preserves input order so
+            # tool results stay aligned with their tool calls in history.
+            results = await asyncio.gather(*(run_limited(block) for block in tool_use_blocks))
+            return list(results)
         else:
             # Execute tools sequentially
             await self.log_info(
@@ -875,7 +992,10 @@ class BaseAgent(LogMixin):
 
         # Include sub_agent_info if this is a sub-agent
         sub_agent_info = None
-        if self.sub_agent and self.parent_tool_call_id:
+        if self.sub_agent and self.sub_agent_context:
+            # Dispatch metadata set by AgentTool (agent_id, task, parent IDs)
+            sub_agent_info = dict(self.sub_agent_context)
+        elif self.sub_agent and self.parent_tool_call_id:
             sub_agent_info = {
                 "agent_name": self.agent_name,
                 "conversation_id": self.conversation_id,

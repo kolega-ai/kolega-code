@@ -42,6 +42,27 @@ class TerminalManager(ABC):
         """
 
     @abstractmethod
+    async def send_input(
+        self, term_id: str, text: str, submit: bool = True, command_id: Optional[str] = None
+    ) -> bool:
+        """
+        Send input to a command that is already running in a terminal.
+
+        Args:
+            term_id: ID of the terminal to send input to
+            text: Input text to send
+            submit: Whether to append a newline before sending
+            command_id: Optional active command ID when the backend requires disambiguation
+
+        Returns:
+            True if input was sent successfully
+
+        Raises:
+            KeyError: If terminal_id doesn't exist
+            ValueError: If no running command can receive input
+        """
+
+    @abstractmethod
     async def get_output(self, terminal_id: str, **kwargs) -> str:
         """
         Get output from a specific terminal.

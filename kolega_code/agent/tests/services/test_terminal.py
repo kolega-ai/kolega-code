@@ -1,7 +1,9 @@
-import pytest
-from unittest.mock import Mock
+import asyncio
+from unittest.mock import AsyncMock, Mock, patch
 
-from kolega_code.agent.services.terminal import AsyncPersistentTerminal
+import pytest
+
+from kolega_code.agent.services.terminal import AsyncPersistentTerminal, LocalTerminalManager
 
 
 class TestAsyncPersistentTerminal:
@@ -71,3 +73,82 @@ class TestAsyncPersistentTerminal:
         expected_end = max(0, expected_total_chars - 5)
         expected = test_output[expected_start:expected_end]
         assert result == expected
+
+    @pytest.mark.asyncio
+    async def test_send_input_appends_newline_without_mutating_last_command(self):
+        terminal = AsyncPersistentTerminal(
+            workspace_id="test_workspace",
+            thread_id="test_thread",
+            terminal_id="test_terminal",
+            connection_manager=Mock(),
+            auto_activate_venv=False,
+        )
+        terminal.is_running = True
+        terminal.master_fd = 123
+        terminal.last_command = "python prompt.py\n"
+        terminal.last_command_purpose = "Prompt test"
+
+        with patch("kolega_code.agent.services.terminal.os.write") as mock_write:
+            result = await terminal.send_input("Ada", submit=True)
+
+        assert result is True
+        mock_write.assert_called_once_with(123, b"Ada\n")
+        assert terminal.last_command == "python prompt.py\n"
+        assert terminal.last_command_purpose == "Prompt test"
+
+    @pytest.mark.asyncio
+    async def test_send_input_can_send_raw_text(self):
+        terminal = AsyncPersistentTerminal(
+            workspace_id="test_workspace",
+            thread_id="test_thread",
+            terminal_id="test_terminal",
+            connection_manager=Mock(),
+            auto_activate_venv=False,
+        )
+        terminal.is_running = True
+        terminal.master_fd = 123
+
+        with patch("kolega_code.agent.services.terminal.os.write") as mock_write:
+            result = await terminal.send_input("A", submit=False)
+
+        assert result is True
+        mock_write.assert_called_once_with(123, b"A")
+
+
+@pytest.mark.asyncio
+async def test_local_terminal_manager_can_answer_python_prompt(tmp_path):
+    manager = LocalTerminalManager("test_workspace", "test_thread", AsyncMock())
+    terminal_id = await manager.launch_terminal(cwd=tmp_path, auto_activate_venv=False)
+    command_id = None
+
+    try:
+        command_id = await manager.send_command_tracked(
+            terminal_id,
+            'python -c "prompt = \'READY_\' + \'FOR_\' + \'INPUT>\'; name = input(prompt); print(\'hello \' + name)"',
+            "Prompt for a name and echo it",
+        )
+        assert command_id
+
+        prompt_seen = False
+        for _ in range(50):
+            if "READY_FOR_INPUT>" in manager.read_output(terminal_id, num_chars=500):
+                prompt_seen = True
+                break
+            await asyncio.sleep(0.1)
+
+        assert prompt_seen
+        assert await manager.send_input(terminal_id, "Ada", command_id=command_id)
+
+        completed = False
+        for _ in range(50):
+            status = manager.get_command_status(terminal_id, command_id)
+            if status["status"] == "completed":
+                completed = True
+                break
+            await asyncio.sleep(0.1)
+
+        assert completed
+        assert "hello Ada" in manager.read_output(terminal_id, num_chars=1000)
+    finally:
+        if terminal_id in manager.terminals:
+            await manager.close_terminal(terminal_id)

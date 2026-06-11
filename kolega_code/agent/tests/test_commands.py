@@ -3,7 +3,6 @@ from unittest.mock import AsyncMock, MagicMock, create_autospec
 import pytest
 
 from ..llm.models import Message, MessageHistory
-from ..models.public import AgentStatus
 from ..utils.commands import CommandProcessor
 
 
@@ -47,6 +46,7 @@ async def test_handle_help(command_processor):
     assert "/help" in help_text
     assert "/compress" in help_text
     assert "/clear" in help_text
+    assert "/reset" in help_text
     assert "/context" in help_text
 
     # Verify help text formatting
@@ -75,6 +75,19 @@ async def test_handle_clear(command_processor, mock_agent, mock_message):
     result = await command_processor._handle_clear()
 
     # Verify history was cleared and returned expected message
+    assert len(mock_agent.history) == 0
+    assert result == "Message history cleared."
+
+
+@pytest.mark.asyncio
+async def test_handle_reset_alias(command_processor, mock_agent, mock_message):
+    """Test the /reset command alias"""
+    mock_agent.history.append(mock_message)
+    mock_agent.history.append(mock_message)
+    assert len(mock_agent.history) == 2
+
+    result = await command_processor.commands["/reset"]()
+
     assert len(mock_agent.history) == 0
     assert result == "Message history cleared."
 
