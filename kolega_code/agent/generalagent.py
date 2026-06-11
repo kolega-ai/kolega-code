@@ -1,11 +1,10 @@
-import uuid
 from pathlib import Path
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from .baseagent import BaseAgent
 from .config import AgentConfig
 from .connection_manager import AgentConnectionManager
-from .llm.models import Message, MessageHistory, TextBlock, ToolResult
+from .llm.models import Message, TextBlock
 from .prompt_provider import AgentMode, AgentType, PromptExtension
 from .tools import ToolCollection, ToolCollectionConfig
 
@@ -18,9 +17,6 @@ class GeneralAgent(BaseAgent):
     (multiple GeneralAgents may run concurrently on independent tasks). It cannot
     spawn further sub-agents, and its final message is returned to the parent as
     the task report.
-
-    NOTE: process_message_stream duplicates InvestigationAgent's loop; hoisting the
-    shared loop into BaseAgent is a known follow-up refactor.
     """
 
     agent_name = "general-agent"
@@ -148,151 +144,3 @@ class GeneralAgent(BaseAgent):
             context=self.build_prompt_context(),
         )
         self.system_prompt = Message(role="system", content=[TextBlock(text=prompt_text)])
-
-    async def recap_agent_outcome(self) -> str:
-        """
-        Return the agent's final report.
-
-        The last message in the conversation history is the agent's self-contained
-        task report, which is what the dispatching agent receives.
-
-        Returns:
-            str: Markdown formatted final task report
-        """
-        return self.history[-1].get_text_content()
-
-    async def process_message_stream(
-        self, message: str, attachments: List[Dict[str, Any]] = None
-    ) -> AsyncGenerator[Dict[str, Any], None]:
-        """
-        Process a message and yield multiple discrete response messages throughout processing.
-
-        Args:
-            message: The user message to process
-            attachments: Optional list of attachments to include with the message
-
-        Yields:
-            Dict containing message content and metadata
-        """
-        self.append_user_message(message)
-
-        stop_reason = None
-        while stop_reason not in ["end_turn", "max_tokens", "stop_sequence"]:
-
-            self.mark_cache_checkpoint()
-
-            try:
-                # Token counting logic
-                token_count = await self.count_current_context()
-
-                if token_count.input_tokens > self.model_context_length * self.history_compression_threshold:
-                    await self.compress_history()
-
-                    # Get new token count after compression
-                    token_count = await self.count_current_context()
-
-                    if token_count.input_tokens > self.model_context_length * self.history_compression_threshold:
-                        summary_message = self.history[0]
-                        self.history = MessageHistory([summary_message])
-
-                    self.mark_cache_checkpoint()
-
-                # Buffer for accumulated response
-                current_response = ""
-                current_thinking = ""
-                thinking_started = False
-                # Use the same UUID for each segment of the response
-                response_uuid = str(uuid.uuid4())
-                thinking_uuid = str(uuid.uuid4())
-
-                # Fix history before sending to LLM to ensure valid tool call sequences
-                effective = self.get_effective_history_for_llm()
-                fixed_history = MessageHistory(self.fix_incomplete_tool_calls(list(effective)))
-
-                async with await self.llm.stream(
-                    system=self.system_prompt,
-                    max_completion_tokens=self.model_completion_tokens,
-                    temperature=self.model_default_temperature,
-                    messages=fixed_history,
-                    model=self.config.long_context_config.model,
-                    tools=self.tool_collection.get_tool_list(),
-                    thinking=self.config.long_context_config.thinking_tokens,
-                ) as stream:
-                    async for event in stream:
-                        if event.type == "text":
-                            current_response += event.text
-
-                            # Send periodic updates as the response grows
-                            if len(current_response) >= 50:
-                                response_data = {
-                                    "type": "response",
-                                    "content": current_response,
-                                    "complete": False,
-                                    "uuid": response_uuid,
-                                }
-
-                                yield response_data
-                                current_response = ""
-
-                        elif event.type == "thinking" and event.thinking:
-                            current_thinking += event.thinking
-
-                            if len(current_thinking) >= 50:
-                                thinking_started = True
-                                yield {
-                                    "type": "thinking",
-                                    "content": current_thinking,
-                                    "complete": False,
-                                    "uuid": thinking_uuid,
-                                }
-                                current_thinking = ""
-
-                message = await stream.get_final_message()
-                stop_reason = message.stop_reason
-
-                self.append_assistant_message(message)
-
-                if thinking_started or current_thinking:
-                    yield {"type": "thinking", "content": current_thinking, "complete": True, "uuid": thinking_uuid}
-
-                # Send the final message to mark it complete.
-                final_response = {
-                    "type": "response",
-                    "content": current_response,
-                    "complete": True,
-                    "uuid": response_uuid,
-                }
-
-                yield final_response
-
-                if message.tool_calls:
-                    # Process the tool calls and get the results
-                    await self.log_info(f"Received {len(message.tool_calls)} tool call(s)", sender=self.agent_name)
-
-                    try:
-                        tool_responses = await self.process_tool_calls(message.tool_calls)
-
-                        self.append_user_message(tool_responses)
-                    except Exception as ex:
-                        error_message = f"Error processing tool calls: {str(ex)}"
-                        await self.log_error(error_message, sender=self.agent_name)
-
-                        # Add error responses to history
-                        error_responses = []
-                        for tool_call in message.tool_calls:
-                            error_responses.append(
-                                ToolResult(
-                                    tool_use_id=tool_call.id,
-                                    content=f"Failed to process tool calls: {str(ex)}",
-                                    name=tool_call.name,
-                                    is_error=True,
-                                )
-                            )
-
-                        self.append_user_message(error_responses)
-
-            except Exception as ex:
-                await self.handle_llm_error(ex)
-
-        # Log completion message
-        await self.log_info("Processing complete", sender=self.agent_name)
