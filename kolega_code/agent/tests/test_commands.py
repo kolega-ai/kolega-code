@@ -12,7 +12,7 @@ class MockAgent:
     def __init__(self):
         self.history = MessageHistory()
         self.command_processor = CommandProcessor(self)
-        self._compress_message_history = AsyncMock()
+        self.compress_history = AsyncMock()
         self.count_current_context = AsyncMock()
 
 
@@ -60,7 +60,7 @@ async def test_handle_compress(command_processor, mock_agent):
     result = await command_processor._handle_compress()
 
     # Verify compress was called and returned expected message
-    mock_agent._compress_message_history.assert_called_once()
+    mock_agent.compress_history.assert_called_once()
     assert result == "Message history compressed."
 
 

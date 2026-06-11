@@ -139,7 +139,7 @@ class PlanningAgent(BaseAgent):
         self._initialize_system_prompt()
 
     def _initialize_system_prompt(self) -> None:
-        context = self._build_prompt_context()
+        context = self.build_prompt_context()
         prompt = PLANNING_AGENT_SYSTEM_PROMPT.format(
             system_name=context.system_name,
             project_path=context.project_path,
@@ -206,14 +206,14 @@ class PlanningAgent(BaseAgent):
 
         stop_reason = None
         while stop_reason not in ["end_turn", "max_tokens", "stop_sequence"]:
-            self._mark_last_message_for_cache()
+            self.mark_cache_checkpoint()
 
             try:
                 token_count = await self.count_current_context()
                 logger.debug("Input token count: %s", token_count)
 
                 if token_count.input_tokens > self.model_context_length * self.history_compression_threshold:
-                    await self._compress_message_history()
+                    await self.compress_history()
                     token_count = await self.count_current_context()
 
                     if token_count.input_tokens > self.model_context_length * self.history_compression_threshold:
@@ -225,7 +225,7 @@ class PlanningAgent(BaseAgent):
                         ]
                         self.history = MessageHistory(protected + [summary_message])
 
-                    self._mark_last_message_for_cache()
+                    self.mark_cache_checkpoint()
 
                 current_response = ""
                 current_thinking = ""
@@ -234,7 +234,7 @@ class PlanningAgent(BaseAgent):
                 thinking_uuid = str(uuid.uuid4())
 
                 effective = self.get_effective_history_for_llm()
-                fixed_history = MessageHistory(self._fix_incomplete_tool_calls(list(effective)))
+                fixed_history = MessageHistory(self.fix_incomplete_tool_calls(list(effective)))
 
                 async with await self.llm.stream(
                     system=self.system_prompt,

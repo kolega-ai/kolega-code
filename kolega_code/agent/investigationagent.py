@@ -125,7 +125,7 @@ class InvestigationAgent(BaseAgent):
             mode=self.agent_mode,
             template_slug=self.project_template_slug,
             prompt_extensions=self.prompt_extensions,
-            context=self._build_prompt_context(),
+            context=self.build_prompt_context(),
         )
         self.system_prompt = Message(role="system", content=[TextBlock(text=prompt_text)])
 
@@ -159,7 +159,7 @@ class InvestigationAgent(BaseAgent):
         stop_reason = None
         while stop_reason not in ["end_turn", "max_tokens", "stop_sequence"]:
 
-            self._mark_last_message_for_cache()
+            self.mark_cache_checkpoint()
 
             try:
                 # Token counting logic
@@ -168,7 +168,7 @@ class InvestigationAgent(BaseAgent):
                 print(token_count)
 
                 if token_count.input_tokens > self.model_context_length * self.history_compression_threshold:
-                    await self._compress_message_history()
+                    await self.compress_history()
 
                     # Get new token count after compression
                     token_count = await self.count_current_context()
@@ -177,7 +177,7 @@ class InvestigationAgent(BaseAgent):
                         summary_message = self.history[0]
                         self.history = MessageHistory([summary_message])
 
-                    self._mark_last_message_for_cache()
+                    self.mark_cache_checkpoint()
 
                 # Buffer for accumulated response
                 current_response = ""
@@ -189,7 +189,7 @@ class InvestigationAgent(BaseAgent):
 
                 # Fix history before sending to LLM to ensure valid tool call sequences
                 effective = self.get_effective_history_for_llm()
-                fixed_history = MessageHistory(self._fix_incomplete_tool_calls(list(effective)))
+                fixed_history = MessageHistory(self.fix_incomplete_tool_calls(list(effective)))
 
                 async with await self.llm.stream(
                     system=self.system_prompt,
