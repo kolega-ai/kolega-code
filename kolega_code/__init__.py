@@ -18,19 +18,19 @@ from .agent.planningagent import PlanningAgent
 from .agent.compression import HistoryCompressor
 from .agent.context import AgentContext, AgentServices, Telemetry, WorkspaceInfo
 from .agent.conversation import Conversation
-from .agent.events import AgentEventEmitter
+from .events import AgentEventEmitter
 
 # Configuration
-from .agent.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
+from .config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
 
 # Events and connection management
-from .agent.connection_manager import AgentConnectionManager
-from .agent.models.public import AgentEvent, AgentStatus
+from .events import AgentConnectionManager
+from .events import AgentEvent, AgentStatus
 
 # LLM clients and message models
-from .agent.llm.client import LLMClient
-from .agent.llm.instrumented_client import InstrumentedLLMClient
-from .agent.llm.models import (
+from .llm.client import LLMClient
+from .llm.instrumented_client import InstrumentedLLMClient
+from .llm.models import (
     ImageBlock,
     Message,
     MessageHistory,
@@ -57,16 +57,16 @@ from .agent.tools import ToolCollection, ToolCollectionConfig, ToolExtension
 
 # Host environment services
 from .agent.common import LogMixin
-from .agent.services.base import BrowserManager, TerminalManager
-from .agent.services.browser import PlaywrightBrowserManager
-from .agent.services.file_system import FileSystem, LocalFileSystem
-from .agent.services.terminal import LocalTerminalManager
+from .services.base import BrowserManager, TerminalManager
+from .services.browser import PlaywrightBrowserManager
+from .services.file_system import FileSystem, LocalFileSystem
+from .services.terminal import LocalTerminalManager
 
 # Sandbox abstractions (implemented by provider packages such as kolega-code-e2b)
-from .agent.services.sandbox.base import ProjectManifest, SandboxConfig, SandboxManager
-from .agent.services.sandbox.local_sandbox import LocalSandboxManager
-from .agent.services.sandbox.terminal_state_serializer import TerminalStateSerializer
-from .agent.services.sandbox.utils import (
+from .sandbox.base import ProjectManifest, SandboxConfig, SandboxHandle, SandboxManager
+from .sandbox.local import LocalSandboxManager
+from .sandbox.serializer import TerminalStateSerializer
+from .sandbox.utils import (
     get_git_diff_from_sandbox,
     get_modified_files_from_sandbox,
     parse_git_status_output,
@@ -131,6 +131,7 @@ __all__ = [
     # Sandbox
     "ProjectManifest",
     "SandboxConfig",
+    "SandboxHandle",
     "SandboxManager",
     "LocalSandboxManager",
     "TerminalStateSerializer",

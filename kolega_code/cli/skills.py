@@ -10,7 +10,7 @@ from typing import Callable, Iterable, Optional
 import yaml
 
 from kolega_code.agent import PromptExtension, ToolExtension
-from kolega_code.agent.llm.models import Message
+from kolega_code.llm.models import Message
 from kolega_code.agent.prompt_provider import AgentMode
 
 

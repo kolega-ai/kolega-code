@@ -1,7 +1,7 @@
 import pytest
 from bs4 import BeautifulSoup
 
-from kolega_code.agent.utils.html import build_css_selector, extract_interactive_elements_from_html, get_associated_text
+from kolega_code.services.html import build_css_selector, extract_interactive_elements_from_html, get_associated_text
 
 
 @pytest.fixture

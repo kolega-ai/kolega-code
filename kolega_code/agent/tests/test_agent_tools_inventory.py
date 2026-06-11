@@ -7,8 +7,8 @@ import pytest
 
 from kolega_code.agent.browseragent import BrowserAgent
 from kolega_code.agent.coder import CoderAgent
-from kolega_code.agent.config import AgentConfig
-from kolega_code.agent.connection_manager import AgentConnectionManager
+from kolega_code.config import AgentConfig
+from kolega_code.events import AgentConnectionManager
 from kolega_code.agent.generalagent import GeneralAgent
 from kolega_code.agent.investigationagent import InvestigationAgent
 from kolega_code.agent.planningagent import PlanningAgent

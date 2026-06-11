@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from functools import wraps
 from typing import Any, AsyncGenerator, Dict, List, Optional, Type
 
-from ..llm.models import MessageHistory
+from kolega_code.llm.models import MessageHistory
 
 
 @dataclass(frozen=True)

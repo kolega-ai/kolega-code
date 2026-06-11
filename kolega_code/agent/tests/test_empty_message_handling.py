@@ -3,7 +3,7 @@
 import logging
 
 from kolega_code.agent.conversation import Conversation
-from kolega_code.agent.llm.models import Message, TextBlock
+from kolega_code.llm.models import Message, TextBlock
 
 
 def test_append_assistant_message_with_empty_content(caplog):

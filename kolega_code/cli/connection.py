@@ -6,8 +6,8 @@ import asyncio
 from collections import Counter
 from typing import Any
 
-from kolega_code.agent.connection_manager import AgentConnectionManager
-from kolega_code.agent.models.public import AgentEvent
+from kolega_code.events import AgentConnectionManager
+from kolega_code.events import AgentEvent
 
 
 class CliConnectionManager(AgentConnectionManager):

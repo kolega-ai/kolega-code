@@ -3,7 +3,7 @@ import pytest
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 from kolega_code.agent.tool_backend.browser_tool import BrowserTool
-from kolega_code.agent.config import AgentConfig
+from kolega_code.config import AgentConfig
 
 
 class TestBrowserTool:

@@ -6,8 +6,8 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
 from dotenv import load_dotenv
 
-from kolega_code.agent.services.browser import PlaywrightBrowserManager
-from kolega_code.agent.services.sandbox.sandbox_browser import SandboxBrowserManager
+from kolega_code.services.browser import PlaywrightBrowserManager
+from kolega_code.sandbox.browser import SandboxBrowserManager
 
 # Load environment variables from .env file
 load_dotenv()
@@ -104,7 +104,7 @@ class TestBrowserManagerParity:
     async def test_launch_browser_interface(self, local_browser_manager, browserstack_browser_manager):
         """Test that launch_browser has the same interface for both managers."""
         # Mock the playwright async_playwright
-        with patch("kolega_code.agent.services.browser.async_playwright") as mock_playwright:
+        with patch("kolega_code.services.browser.async_playwright") as mock_playwright:
             # Setup mock playwright - fix the async mock issue
             mock_pw_instance = MagicMock()
             mock_async_playwright = AsyncMock()
@@ -148,7 +148,7 @@ class TestBrowserManagerParity:
     async def test_browser_info_structure(self, local_browser_manager, browserstack_browser_manager):
         """Test that browser info structure is identical for both managers."""
         # Mock the playwright async_playwright
-        with patch("kolega_code.agent.services.browser.async_playwright") as mock_playwright:
+        with patch("kolega_code.services.browser.async_playwright") as mock_playwright:
             # Setup mock playwright - fix the async mock issue
             mock_pw_instance = MagicMock()
             mock_async_playwright = AsyncMock()

@@ -45,9 +45,9 @@ from textual.widgets import (
 
 from kolega_code import __version__ as kolega_code_version
 from kolega_code.agent import AgentConfig, AgentEvent, CoderAgent, PlanningAgent, PromptExtension, ToolExtension
-from kolega_code.agent.llm.models import Message, MessageHistory, TextBlock, ToolCall, ToolResult
+from kolega_code.llm.models import Message, MessageHistory, TextBlock, ToolCall, ToolResult
 from kolega_code.agent.prompt_provider import AgentMode
-from kolega_code.agent.services.browser import PlaywrightBrowserManager
+from kolega_code.services.browser import PlaywrightBrowserManager
 
 from . import messages
 from . import theme

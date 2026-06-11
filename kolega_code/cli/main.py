@@ -11,9 +11,9 @@ from pathlib import Path
 from typing import Iterable, Optional
 
 from kolega_code.agent import CoderAgent
-from kolega_code.agent.llm.models import TextBlock
+from kolega_code.llm.models import TextBlock
 from kolega_code.agent.prompt_provider import AgentMode
-from kolega_code.agent.services.browser import PlaywrightBrowserManager
+from kolega_code.services.browser import PlaywrightBrowserManager
 
 from .config import CliConfigError, CliConfigOverrides, build_agent_config, config_summary, key_status
 from .connection import CliConnectionManager

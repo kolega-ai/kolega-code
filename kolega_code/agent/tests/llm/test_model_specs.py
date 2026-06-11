@@ -1,4 +1,4 @@
-from kolega_code.agent.llm.specs import get_model_specs
+from kolega_code.llm.specs import get_model_specs
 
 
 def test_kimi_k26_model_specs():

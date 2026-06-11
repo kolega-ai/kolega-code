@@ -36,13 +36,13 @@ if os.path.exists(backend_env_path):
     load_dotenv(backend_env_path)
     print(f"MOONSHOT_API_KEY present: {bool(os.getenv('MOONSHOT_API_KEY'))}")
 
-from kolega_code.agent.llm.client import (
+from kolega_code.llm.client import (
     GenerationParams,
     LLMClient,
     ThinkingConfig,
     TokenCount,
 )
-from kolega_code.agent.llm.models import (
+from kolega_code.llm.models import (
     Message,
     MessageChunk,
     MessageHistory,
@@ -52,7 +52,7 @@ from kolega_code.agent.llm.models import (
     ToolCall,
     ToolResult,
 )
-from kolega_code.agent.llm.providers.anthropic import AnthropicProvider, AnthropicStreamWrapper
+from kolega_code.llm.providers.anthropic import AnthropicProvider, AnthropicStreamWrapper
 
 # Test data
 TEST_MESSAGES = MessageHistory([Message("user", [TextBlock("Hello, how are you?")])])
@@ -748,7 +748,7 @@ async def test_google_generate_stream(google_client):
 async def test_google_with_tools(google_client):
     """Test Google with tools/function calling"""
     # Import needed classes
-    from kolega_code.agent.llm.models import ToolDefinition, ToolParameter
+    from kolega_code.llm.models import ToolDefinition, ToolParameter
 
     # Create proper ToolDefinition objects instead of plain dictionaries
     location_param = ToolParameter(

@@ -8,7 +8,7 @@ from kolega_code.cli.main import CLI_AGENT_MODE, RESUME_LATEST, _resolve_tui_ses
 from kolega_code.cli.provider_registry import UI_DEFAULT_MODEL, UI_DEFAULT_PROVIDER
 from kolega_code.cli.session_store import SessionStore, SessionStoreError
 from kolega_code.cli.settings import CliSettings, SettingsStore
-from kolega_code.agent.llm.models import Message
+from kolega_code.llm.models import Message
 
 
 def write_skill(root: Path, name: str = "demo-skill") -> None:
@@ -257,7 +257,7 @@ def test_tui_legacy_session_alias_loads_specific_session(tmp_path: Path) -> None
 
 
 def _sub_agent_test_event():
-    from kolega_code.agent.models.public import AgentEvent
+    from kolega_code.events import AgentEvent
 
     return AgentEvent(
         event_type="chat_message",

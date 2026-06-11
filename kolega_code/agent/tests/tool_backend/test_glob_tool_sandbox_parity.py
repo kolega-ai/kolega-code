@@ -7,10 +7,10 @@ import pytest
 import uuid
 from unittest.mock import AsyncMock, Mock
 
-from kolega_code.agent.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
+from kolega_code.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
 from kolega_code.agent.tool_backend.glob_tool import GlobTool
-from kolega_code.agent.services.file_system import LocalFileSystem
-from kolega_code.agent.services.sandbox.sandbox_filesystem import SandboxFileSystem
+from kolega_code.services.file_system import LocalFileSystem
+from kolega_code.sandbox.filesystem import SandboxFileSystem
 
 
 @pytest.fixture

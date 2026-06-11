@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import Mock, AsyncMock
 from datetime import datetime
 
-from kolega_code.agent.services.file_system import LocalFileSystem
+from kolega_code.services.file_system import LocalFileSystem
 from kolega_code.agent.tool_backend.list_directory_tool import ListDirectoryTool
 from kolega_code.agent.baseagent import BaseAgent
 

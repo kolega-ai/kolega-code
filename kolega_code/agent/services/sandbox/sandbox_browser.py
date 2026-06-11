@@ -1,25 +1,12 @@
-"""Browser manager implementation for sandbox environments."""
+"""Deprecated location. Import from kolega_code.sandbox.browser instead."""
 
-from typing import Any
+import warnings
 
-from ..browser import PlaywrightBrowserManager
+warnings.warn(
+    "kolega_code.agent.services.sandbox.sandbox_browser is deprecated; import from kolega_code.sandbox.browser instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
-
-class SandboxBrowserManager(PlaywrightBrowserManager):
-    """
-    Browser manager for sandbox environments using Browserless.
-
-    This class extends PlaywrightBrowserManager with Browserless support enabled,
-    providing remote browser capabilities for sandbox environments.
-    """
-
-    def __init__(self, sandbox: Any = None):
-        """
-        Initialize sandbox browser manager with Browserless support.
-
-        Args:
-            sandbox: The sandbox instance (optional, kept for compatibility)
-        """
-        # Initialize parent class with Browserless backend
-        super().__init__(browser_backend="browserless")
-        self.sandbox = sandbox
+from kolega_code.sandbox.browser import *  # noqa: F401,F403,E402
+from kolega_code.sandbox.browser import SandboxBrowserManager  # noqa: F401,E402
