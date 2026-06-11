@@ -6,8 +6,8 @@ import os
 import pytest
 from unittest.mock import Mock, AsyncMock, patch, MagicMock
 
-from kolega_code.agent.llm.models import Message, MessageHistory, TextBlock
-from kolega_code.agent.llm.instrumented_client import (
+from kolega_code.llm.models import Message, MessageHistory, TextBlock
+from kolega_code.llm.instrumented_client import (
     InstrumentedLLMClient,
     MinimalLangfuseStreamWrapper,
 )
@@ -215,7 +215,7 @@ class TestInstrumentedLLMClient:
         }
 
         # Use patch on the parent class method
-        with patch("kolega_code.agent.llm.client.LLMClient.generate", AsyncMock(return_value=mock_response)):
+        with patch("kolega_code.llm.client.LLMClient.generate", AsyncMock(return_value=mock_response)):
             messages = MessageHistory([Message(role="user", content=[TextBlock(text="Hello")])])
 
             await instrumented_client.generate(
@@ -285,7 +285,7 @@ class TestInstrumentedLLMClient:
         }
 
         # Use patch on the parent class method
-        with patch("kolega_code.agent.llm.client.LLMClient.generate", AsyncMock(return_value=mock_response)):
+        with patch("kolega_code.llm.client.LLMClient.generate", AsyncMock(return_value=mock_response)):
             messages = MessageHistory([Message(role="user", content=[TextBlock(text="Hello")])])
 
             await client.generate(
@@ -316,7 +316,7 @@ class TestInstrumentedLLMClient:
 
         # Mock parent generate
         mock_response = Mock()
-        with patch("kolega_code.agent.llm.client.LLMClient.generate", AsyncMock(return_value=mock_response)):
+        with patch("kolega_code.llm.client.LLMClient.generate", AsyncMock(return_value=mock_response)):
             messages = MessageHistory([Message(role="user", content=[TextBlock(text="Hello")])])
 
             result = await client.generate(messages=messages)
@@ -329,7 +329,7 @@ class TestInstrumentedLLMClient:
         trace = langfuse.start_span.return_value
 
         error_msg = "API Error"
-        with patch("kolega_code.agent.llm.client.LLMClient.generate", AsyncMock(side_effect=Exception(error_msg))):
+        with patch("kolega_code.llm.client.LLMClient.generate", AsyncMock(side_effect=Exception(error_msg))):
             messages = MessageHistory([Message(role="user", content=[TextBlock(text="Hello")])])
 
             with pytest.raises(Exception) as exc_info:
@@ -359,7 +359,7 @@ class TestInstrumentedLLMClient:
         mock_stream.__aenter__ = AsyncMock(return_value=mock_stream)
         mock_stream.__aexit__ = AsyncMock(return_value=None)
 
-        with patch("kolega_code.agent.llm.client.LLMClient.stream", MagicMock(return_value=mock_stream)):
+        with patch("kolega_code.llm.client.LLMClient.stream", MagicMock(return_value=mock_stream)):
             messages = MessageHistory([Message(role="user", content=[TextBlock(text="Hello")])])
 
             # stream() now returns a coroutine, so we need to await it

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from kolega_code.agent.config import ModelProvider
-from kolega_code.agent.llm.specs import get_model_specs
+from kolega_code.config import ModelProvider
+from kolega_code.llm.specs import get_model_specs
 
 UI_DEFAULT_PROVIDER = ModelProvider.MOONSHOT.value
 UI_DEFAULT_MODEL = "kimi-k2.6"

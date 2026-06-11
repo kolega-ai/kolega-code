@@ -1,6 +1,6 @@
 import pytest
 
-from kolega_code.agent.llm.models import Message, MessageHistory, ToolCall, ToolResult, TextBlock
+from kolega_code.llm.models import Message, MessageHistory, ToolCall, ToolResult, TextBlock
 
 
 # TODO: Fix after qwen-3-coder-plus PR is merged - needs tool result filtering in Message.to_openai()

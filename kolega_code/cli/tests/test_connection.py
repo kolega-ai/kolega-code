@@ -1,6 +1,6 @@
 import pytest
 
-from kolega_code.agent.models.public import AgentEvent
+from kolega_code.events import AgentEvent
 from kolega_code.cli.connection import CliConnectionManager
 
 

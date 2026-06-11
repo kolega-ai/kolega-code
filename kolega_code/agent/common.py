@@ -1,4 +1,4 @@
-from .models.public import AgentEvent
+from kolega_code.events import AgentEvent
 
 
 class LogMixin:

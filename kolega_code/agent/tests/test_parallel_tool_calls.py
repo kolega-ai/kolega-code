@@ -10,9 +10,9 @@ import pytest
 from dotenv import load_dotenv
 
 from kolega_code.agent.baseagent import BaseAgent
-from kolega_code.agent.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
-from kolega_code.agent.connection_manager import AgentConnectionManager
-from kolega_code.agent.llm.models import ToolCall
+from kolega_code.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
+from kolega_code.events import AgentConnectionManager
+from kolega_code.llm.models import ToolCall
 
 # Load environment variables
 load_dotenv()

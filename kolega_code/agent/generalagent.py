@@ -2,9 +2,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from .baseagent import BaseAgent
-from .config import AgentConfig
-from .connection_manager import AgentConnectionManager
-from .llm.models import Message, TextBlock
+from kolega_code.config import AgentConfig
+from kolega_code.events import AgentConnectionManager
+from kolega_code.llm.models import Message, TextBlock
 from .prompt_provider import AgentMode, AgentType, PromptExtension
 from .tools import ToolCollection, ToolCollectionConfig
 

@@ -1,7 +1,7 @@
 from unittest.mock import AsyncMock, Mock
 
 from kolega_code.agent.coder import CoderAgent
-from kolega_code.agent.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
+from kolega_code.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
 from kolega_code.agent.prompt_provider import AgentMode, AgentType, PromptExtension
 
 

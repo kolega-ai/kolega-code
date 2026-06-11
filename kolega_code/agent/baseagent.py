@@ -11,24 +11,24 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from .common import LogMixin
 from .compression import HistoryCompressor
-from .config import AgentConfig, ModelProvider
-from .connection_manager import AgentConnectionManager
+from kolega_code.config import AgentConfig, ModelProvider
+from kolega_code.events import AgentConnectionManager
 from .context import AgentContext, AgentServices, Telemetry, WorkspaceInfo
 from .conversation import Conversation
-from .events import AgentEventEmitter
-from .llm.exceptions import (
+from kolega_code.events import AgentEventEmitter
+from kolega_code.llm.exceptions import (
     LLMContextWindowExceededError,
     LLMError,
     LLMInternalServerError,
     LLMRateLimitError,
     map_to_llm_error,
 )
-from .llm.models import ImageBlock, Message, MessageHistory, TextBlock, ToolCall, ToolResult
-from .llm.providers.models import TokenCount
-from .llm.specs import get_model_specs
+from kolega_code.llm.models import ImageBlock, Message, MessageHistory, TextBlock, ToolCall, ToolResult
+from kolega_code.llm.providers.models import TokenCount
+from kolega_code.llm.specs import get_model_specs
 from .prompt_provider import PromptProvider, AgentMode, PromptContext, PromptExtension
-from .services.base import TerminalManager, BrowserManager
-from .services.file_system import FileSystem
+from kolega_code.services.base import TerminalManager, BrowserManager
+from kolega_code.services.file_system import FileSystem
 from .tools import ToolCollection
 from .utils.commands import CommandProcessor
 from langfuse import Langfuse

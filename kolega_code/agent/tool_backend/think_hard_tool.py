@@ -1,8 +1,8 @@
 from .. import prompts
-from ..llm.client import LLMClient
-from ..llm.instrumented_client import InstrumentedLLMClient
-from ..llm.models import Message, MessageHistory, TextBlock, ThinkingBlock
-from ..llm.specs import get_model_specs
+from kolega_code.llm.client import LLMClient
+from kolega_code.llm.instrumented_client import InstrumentedLLMClient
+from kolega_code.llm.models import Message, MessageHistory, TextBlock, ThinkingBlock
+from kolega_code.llm.specs import get_model_specs
 from .streaming_tool import StreamingTool
 
 

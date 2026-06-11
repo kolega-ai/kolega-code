@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import patch, mock_open
 from datetime import datetime
 
-from ...services.file_system import LocalFileSystem, FileSystemPath
+from kolega_code.services.file_system import LocalFileSystem, FileSystemPath
 
 
 class TestLocalFileSystem:

@@ -1,6 +1,6 @@
 import pytest
 
-from kolega_code.agent.llm.instrumented_client import InstrumentedLLMClient
+from kolega_code.llm.instrumented_client import InstrumentedLLMClient
 
 
 class _UsageRecorder:

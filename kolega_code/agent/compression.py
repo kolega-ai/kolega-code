@@ -4,7 +4,7 @@ import logging
 from typing import Awaitable, Callable, Optional
 
 from .conversation import Conversation
-from .llm.models import Message, MessageHistory, TextBlock
+from kolega_code.llm.models import Message, MessageHistory, TextBlock
 from .prompts import (
     COMPRESSION_SUMMARY_SYSTEM_PROMPT,
     COMPRESSION_SUMMARY_USER_PROMPT_TEMPLATE,

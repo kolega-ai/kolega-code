@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 import psutil
 
-from kolega_code.agent.services.terminal import AsyncPersistentTerminal, LocalTerminalManager
+from kolega_code.services.terminal import AsyncPersistentTerminal, LocalTerminalManager
 
 
 # Check if running in CI environment
@@ -33,9 +33,9 @@ class TestAsyncPersistentTerminalCommandTracking:
     @pytest.fixture
     def mock_terminal(self, workspace_id, terminal_id, mock_connection_manager):
         """Create a mock terminal without actually starting it"""
-        with patch("kolega_code.agent.services.terminal.pty.fork"), patch(
-            "kolega_code.agent.services.terminal.os.execvpe"
-        ), patch("kolega_code.agent.services.terminal.fcntl.fcntl"):
+        with patch("kolega_code.services.terminal.pty.fork"), patch(
+            "kolega_code.services.terminal.os.execvpe"
+        ), patch("kolega_code.services.terminal.fcntl.fcntl"):
             # Don't patch asyncio.create_task here - let each test handle it
 
             terminal = AsyncPersistentTerminal(

@@ -14,10 +14,10 @@ from unittest.mock import Mock
 import pytest
 from dotenv import load_dotenv
 
-from kolega_code.agent.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
-from kolega_code.agent.connection_manager import AgentConnectionManager
-from kolega_code.agent.llm.client import LLMClient
-from kolega_code.agent.llm.models import (
+from kolega_code.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
+from kolega_code.events import AgentConnectionManager
+from kolega_code.llm.client import LLMClient
+from kolega_code.llm.models import (
     ImageBlock,
     Message,
     MessageHistory,
@@ -27,7 +27,7 @@ from kolega_code.agent.llm.models import (
     ToolParameter,
     ToolResult,
 )
-from kolega_code.agent.llm.providers.openai import OpenAIProvider
+from kolega_code.llm.providers.openai import OpenAIProvider
 from kolega_code.agent.prompt_provider import AgentMode, AgentType, PromptContext, PromptProvider
 from kolega_code.agent.tools import ToolCollection, ToolCollectionConfig
 

@@ -15,9 +15,9 @@ from dotenv import load_dotenv
 from langfuse import Langfuse
 from opentelemetry.sdk.trace import TracerProvider as _OtelTracerProvider
 
-from kolega_code.agent.llm.instrumented_client import InstrumentedLLMClient
-from kolega_code.agent.llm.models import Message, MessageHistory, TextBlock, ToolCall
-from kolega_code.agent.llm.providers.models import GenerationParams
+from kolega_code.llm.instrumented_client import InstrumentedLLMClient
+from kolega_code.llm.models import Message, MessageHistory, TextBlock, ToolCall
+from kolega_code.llm.providers.models import GenerationParams
 
 # Load environment variables
 # Navigate up to backend directory: tests/llm -> tests -> agent -> kolega_code -> backend
@@ -504,7 +504,7 @@ class TestInstrumentedClientCompatibility:
         )
 
         # Define a simple tool using proper ToolDefinition
-        from kolega_code.agent.llm.models import ToolDefinition, ToolParameter
+        from kolega_code.llm.models import ToolDefinition, ToolParameter
 
         tools = [
             ToolDefinition(

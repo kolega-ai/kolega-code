@@ -1,7 +1,7 @@
 import pytest
 
-from kolega_code.agent.llm.providers.openai import OpenAIProvider
-from kolega_code.agent.llm.models import Message, MessageHistory
+from kolega_code.llm.providers.openai import OpenAIProvider
+from kolega_code.llm.models import Message, MessageHistory
 
 
 class _Delta:

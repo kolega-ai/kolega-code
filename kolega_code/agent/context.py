@@ -11,15 +11,15 @@ from typing import Any, Dict, List, Optional
 
 from langfuse import Langfuse
 
-from .config import AgentConfig
-from .connection_manager import AgentConnectionManager
-from .llm.client import LLMClient
-from .llm.instrumented_client import InstrumentedLLMClient
+from kolega_code.config import AgentConfig
+from kolega_code.events import AgentConnectionManager
+from kolega_code.llm.client import LLMClient
+from kolega_code.llm.instrumented_client import InstrumentedLLMClient
 from .prompt_provider import AgentMode, PromptExtension
-from .services.base import BrowserManager, TerminalManager
-from .services.browser import PlaywrightBrowserManager
-from .services.file_system import FileSystem, LocalFileSystem
-from .services.terminal import LocalTerminalManager
+from kolega_code.services.base import BrowserManager, TerminalManager
+from kolega_code.services.browser import PlaywrightBrowserManager
+from kolega_code.services.file_system import FileSystem, LocalFileSystem
+from kolega_code.services.terminal import LocalTerminalManager
 
 
 @dataclass

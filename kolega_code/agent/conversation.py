@@ -11,7 +11,7 @@ import logging
 import re
 from typing import Any, Dict, List, Optional
 
-from .llm.models import Message, MessageHistory, TextBlock, ToolCall, ToolResult
+from kolega_code.llm.models import Message, MessageHistory, TextBlock, ToolCall, ToolResult
 
 logger = logging.getLogger(__name__)
 
