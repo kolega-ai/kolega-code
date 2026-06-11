@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from kolega_code.agent.services.sandbox.sandbox_terminal import SandboxTerminalManager
+from kolega_code.sandbox.terminal import SandboxTerminalManager
 
 
 class FakeCommandHandle:

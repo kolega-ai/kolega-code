@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from kolega_code.cli.skills import activated_skill_names, discover_skills
-from kolega_code.agent.llm.models import Message, TextBlock, ToolResult
+from kolega_code.llm.models import Message, TextBlock, ToolResult
 
 
 def write_skill(root: Path, name: str, description: str = "Use this skill for testing.", body: str = "Do the work.") -> Path:

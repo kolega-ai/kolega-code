@@ -25,8 +25,8 @@ class MockAnthropicError(Exception):
         self.status_code = status_code
 
 
-from kolega_code.agent.config import ModelProvider
-from kolega_code.agent.llm.exceptions import (
+from kolega_code.config import ModelProvider
+from kolega_code.llm.exceptions import (
     LLMAuthenticationError,
     LLMBadRequestError,
     LLMContentPolicyViolationError,
@@ -221,7 +221,7 @@ def test_map_anthropic_api_status_error_invalid_request():
 
     err = APIStatusError("invalid request", response=response, body=body)
 
-    from kolega_code.agent.llm.exceptions import map_anthropic_errors, LLMContentPolicyViolationError
+    from kolega_code.llm.exceptions import map_anthropic_errors, LLMContentPolicyViolationError
 
     mapped = map_anthropic_errors(err)
     assert isinstance(mapped, LLMContentPolicyViolationError)

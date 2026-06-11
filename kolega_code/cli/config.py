@@ -9,8 +9,8 @@ from typing import Mapping, Optional
 
 from dotenv import dotenv_values
 
-from kolega_code.agent.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
-from kolega_code.agent.llm.specs import get_model_specs
+from kolega_code.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
+from kolega_code.llm.specs import get_model_specs
 
 from .provider_registry import UI_DEFAULT_PROVIDER, default_model_for_provider
 from .settings import CliSettings

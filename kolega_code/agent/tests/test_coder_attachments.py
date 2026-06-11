@@ -8,9 +8,9 @@ import pytest
 
 from kolega_code.agent.baseagent import BaseAgent
 from kolega_code.agent.coder import CoderAgent
-from kolega_code.agent.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
-from kolega_code.agent.llm.models import ImageBlock, Message, TextBlock
-from kolega_code.agent.llm.providers.models import TokenCount
+from kolega_code.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
+from kolega_code.llm.models import ImageBlock, Message, TextBlock
+from kolega_code.llm.providers.models import TokenCount
 from kolega_code.agent.prompt_provider import AgentMode
 
 
@@ -276,7 +276,7 @@ async def test_coder_agent_process_message_imports():
     """Test that the coder agent has the necessary imports for image handling."""
     # This test verifies the imports are correct
     from kolega_code.agent.coder import CoderAgent
-    from kolega_code.agent.llm.models import ImageBlock, TextBlock
+    from kolega_code.llm.models import ImageBlock, TextBlock
 
     # Just verify the imports work
     assert ImageBlock is not None

@@ -5,8 +5,8 @@ from typing import Union, Optional
 from datetime import datetime, timezone
 import time
 
-from ..config import AgentConfig
-from ..models.public import AgentEvent
+from kolega_code.config import AgentConfig
+from kolega_code.events import AgentEvent
 from .base_tool import BaseTool
 
 

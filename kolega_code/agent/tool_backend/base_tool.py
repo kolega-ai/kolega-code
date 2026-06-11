@@ -3,10 +3,10 @@ from pathlib import Path
 from typing import Union, Optional, Set
 
 from ..common import LogMixin
-from ..config import AgentConfig
-from ..connection_manager import AgentConnectionManager
-from ..services.file_system import FileSystem, LocalFileSystem
-from ..services.base import TerminalManager, BrowserManager
+from kolega_code.config import AgentConfig
+from kolega_code.events import AgentConnectionManager
+from kolega_code.services.file_system import FileSystem, LocalFileSystem
+from kolega_code.services.base import TerminalManager, BrowserManager
 from ..prompt_provider import AgentMode
 
 

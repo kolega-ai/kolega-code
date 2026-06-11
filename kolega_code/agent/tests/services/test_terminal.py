@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from kolega_code.agent.services.terminal import AsyncPersistentTerminal, LocalTerminalManager
+from kolega_code.services.terminal import AsyncPersistentTerminal, LocalTerminalManager
 
 
 class TestAsyncPersistentTerminal:
@@ -88,7 +88,7 @@ class TestAsyncPersistentTerminal:
         terminal.last_command = "python prompt.py\n"
         terminal.last_command_purpose = "Prompt test"
 
-        with patch("kolega_code.agent.services.terminal.os.write") as mock_write:
+        with patch("kolega_code.services.terminal.os.write") as mock_write:
             result = await terminal.send_input("Ada", submit=True)
 
         assert result is True
@@ -108,7 +108,7 @@ class TestAsyncPersistentTerminal:
         terminal.is_running = True
         terminal.master_fd = 123
 
-        with patch("kolega_code.agent.services.terminal.os.write") as mock_write:
+        with patch("kolega_code.services.terminal.os.write") as mock_write:
             result = await terminal.send_input("A", submit=False)
 
         assert result is True

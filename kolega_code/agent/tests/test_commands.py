@@ -2,7 +2,7 @@ from unittest.mock import AsyncMock, MagicMock, create_autospec
 
 import pytest
 
-from ..llm.models import Message, MessageHistory
+from kolega_code.llm.models import Message, MessageHistory
 from ..utils.commands import CommandProcessor
 
 

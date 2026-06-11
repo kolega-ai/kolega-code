@@ -5,8 +5,8 @@ import uuid
 import pytest
 
 from kolega_code.agent.baseagent import BaseAgent
-from kolega_code.agent.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
-from kolega_code.agent.connection_manager import AgentConnectionManager
+from kolega_code.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
+from kolega_code.events import AgentConnectionManager
 from kolega_code.agent.tools import ToolCollection, ToolDefinition, ToolCollectionConfig
 
 
@@ -109,18 +109,17 @@ class TestToolCollection:
     async def test_initialization_with_nonexistent_path(
         self, mock_connection_manager: AgentConnectionManager, agent_config: AgentConfig, mock_base_agent: BaseAgent
     ) -> None:
-        # Mock is_sandbox_enabled to return False so validation runs
-        with patch("kolega_code.agent.tools.is_sandbox_enabled", return_value=False):
-            with pytest.raises(ValueError) as exc_info:
-                ToolCollection(
-                    "/nonexistent/path",
-                    "test_workspace",
-                    str(uuid.uuid4()),
-                    mock_connection_manager,
-                    agent_config,
-                    mock_base_agent,
-                )
-            assert "Project path does not exist" in str(exc_info.value)
+        # Local filesystems validate their root eagerly
+        with pytest.raises(ValueError) as exc_info:
+            ToolCollection(
+                "/nonexistent/path",
+                "test_workspace",
+                str(uuid.uuid4()),
+                mock_connection_manager,
+                agent_config,
+                mock_base_agent,
+            )
+        assert "Project path does not exist" in str(exc_info.value)
 
     async def test_initialization_with_file_path(
         self,
@@ -131,53 +130,52 @@ class TestToolCollection:
     ) -> None:
         file_path = tmp_path / "test.txt"
         file_path.touch()
-        # Mock is_sandbox_enabled to return False so validation runs
-        with patch("kolega_code.agent.tools.is_sandbox_enabled", return_value=False):
-            with pytest.raises(ValueError) as exc_info:
-                ToolCollection(
-                    file_path, "test_workspace", str(uuid.uuid4()), mock_connection_manager, agent_config, mock_base_agent
-                )
-            assert "Project path is not a directory" in str(exc_info.value)
+        # Local filesystems validate their root eagerly
+        with pytest.raises(ValueError) as exc_info:
+            ToolCollection(
+                file_path, "test_workspace", str(uuid.uuid4()), mock_connection_manager, agent_config, mock_base_agent
+            )
+        assert "Project path is not a directory" in str(exc_info.value)
 
-    async def test_initialization_with_nonexistent_path_sandbox_enabled(
+    async def test_initialization_with_nonexistent_path_sandbox_filesystem(
         self, mock_connection_manager: AgentConnectionManager, agent_config: AgentConfig, mock_base_agent: BaseAgent
     ) -> None:
-        """Test that when sandbox is enabled, validation is skipped for nonexistent paths."""
-        # Mock is_sandbox_enabled to return True so validation is skipped
-        with patch("kolega_code.agent.tools.is_sandbox_enabled", return_value=True):
-            # Should NOT raise ValueError because validation is skipped in sandbox mode
-            tool_collection = ToolCollection(
-                "/nonexistent/path",
-                "test_workspace",
-                str(uuid.uuid4()),
-                mock_connection_manager,
-                agent_config,
-                mock_base_agent,
-            )
-            # Tool collection should be created successfully
-            assert tool_collection.workspace_id == "test_workspace"
-            assert str(tool_collection.project_path) == "/nonexistent/path"
+        """Sandbox filesystems don't validate their root locally (validate_root is a no-op)."""
+        sandbox_fs = Mock()
+        sandbox_fs.validate_root = Mock(return_value=None)
+        tool_collection = ToolCollection(
+            "/nonexistent/path",
+            "test_workspace",
+            str(uuid.uuid4()),
+            mock_connection_manager,
+            agent_config,
+            mock_base_agent,
+            filesystem=sandbox_fs,
+        )
+        sandbox_fs.validate_root.assert_called_once()
+        assert tool_collection.workspace_id == "test_workspace"
+        assert str(tool_collection.project_path) == "/nonexistent/path"
 
-    async def test_initialization_with_file_path_sandbox_enabled(
+    async def test_initialization_with_file_path_sandbox_filesystem(
         self,
         tmp_path: Path,
         mock_connection_manager: AgentConnectionManager,
         agent_config: AgentConfig,
         mock_base_agent: BaseAgent,
     ) -> None:
-        """Test that when sandbox is enabled, validation is skipped even for file paths."""
+        """Sandbox filesystems accept any project path; the sandbox provisions the root."""
         file_path = tmp_path / "test.txt"
         file_path.touch()
 
-        # Mock is_sandbox_enabled to return True so validation is skipped
-        with patch("kolega_code.agent.tools.is_sandbox_enabled", return_value=True):
-            # Should NOT raise ValueError because validation is skipped in sandbox mode
-            tool_collection = ToolCollection(
-                file_path, "test_workspace", str(uuid.uuid4()), mock_connection_manager, agent_config, mock_base_agent
-            )
-            # Tool collection should be created successfully
-            assert tool_collection.workspace_id == "test_workspace"
-            assert tool_collection.project_path == file_path
+        sandbox_fs = Mock()
+        sandbox_fs.validate_root = Mock(return_value=None)
+        tool_collection = ToolCollection(
+            file_path, "test_workspace", str(uuid.uuid4()), mock_connection_manager, agent_config, mock_base_agent,
+            filesystem=sandbox_fs,
+        )
+        sandbox_fs.validate_root.assert_called_once()
+        assert tool_collection.workspace_id == "test_workspace"
+        assert tool_collection.project_path == file_path
 
     async def test_think_hard(self, tool_collection: AsyncMock) -> None:
         problem = "Test problem"

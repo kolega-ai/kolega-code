@@ -1,5 +1,5 @@
-from kolega_code.agent.llm.models import ContentBlock, Message, ToolCall
-from kolega_code.agent.llm.tool_execution_ids import ToolExecutionIdRegistry, new_tool_execution_id
+from kolega_code.llm.models import ContentBlock, Message, ToolCall
+from kolega_code.llm.tool_execution_ids import ToolExecutionIdRegistry, new_tool_execution_id
 
 
 def test_new_tool_execution_id_uses_internal_prefix_and_is_unique():

@@ -3,9 +3,9 @@
 import pytest
 from unittest.mock import AsyncMock, Mock, patch
 
-from kolega_code.agent.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
-from kolega_code.agent.connection_manager import AgentConnectionManager
-from kolega_code.agent.llm.models import Message, TextBlock, ThinkingBlock
+from kolega_code.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
+from kolega_code.events import AgentConnectionManager
+from kolega_code.llm.models import Message, TextBlock, ThinkingBlock
 from kolega_code.agent.tool_backend.think_hard_tool import ThinkHardTool
 
 
@@ -302,7 +302,7 @@ async def test_think_hard_stream_context_manager_error(think_hard_tool, mock_con
 async def test_think_hard_mixed_content_blocks(think_hard_tool, mock_connection_manager):
     """Test think_hard with mixed content blocks including tool calls (should be ignored)."""
 
-    from kolega_code.agent.llm.models import ToolCall
+    from kolega_code.llm.models import ToolCall
 
     # Create a mock final message with mixed content types
     final_message = Message(

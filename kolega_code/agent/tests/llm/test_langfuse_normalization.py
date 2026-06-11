@@ -1,5 +1,5 @@
-from kolega_code.agent.llm.instrumented_client import MinimalLangfuseStreamWrapper
-from kolega_code.agent.llm.models import Message
+from kolega_code.llm.instrumented_client import MinimalLangfuseStreamWrapper
+from kolega_code.llm.models import Message
 
 
 # TODO: Fix after qwen-3-coder-plus PR is merged - needs OpenAI cache token support in Langfuse

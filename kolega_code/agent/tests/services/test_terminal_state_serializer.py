@@ -3,7 +3,7 @@
 import pytest
 from datetime import datetime
 from unittest.mock import Mock, MagicMock
-from kolega_code.agent.services.sandbox.terminal_state_serializer import TerminalStateSerializer
+from kolega_code.sandbox.serializer import TerminalStateSerializer
 from kolega_code.models.sandbox_terminal_state import SandboxTerminalState, TerminalInfo, TerminalOutput
 
 

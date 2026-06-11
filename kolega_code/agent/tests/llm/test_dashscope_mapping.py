@@ -1,6 +1,6 @@
-from kolega_code.agent.llm.client import LLMClient
-from kolega_code.agent.llm.providers.anthropic import AnthropicProvider
-from kolega_code.agent.llm.providers.openai import OpenAIProvider
+from kolega_code.llm.client import LLMClient
+from kolega_code.llm.providers.anthropic import AnthropicProvider
+from kolega_code.llm.providers.openai import OpenAIProvider
 
 
 # TODO: Fix after qwen-3-coder-plus PR is merged - needs dashscope provider mapping

@@ -13,8 +13,8 @@ from anthropic import AnthropicError
 from google.genai.errors import APIError as GoogleAPIError
 from openai import OpenAIError
 
-from kolega_code.agent.llm.client import LLMClient
-from kolega_code.agent.llm.exceptions import (
+from kolega_code.llm.client import LLMClient
+from kolega_code.llm.exceptions import (
     LLMAuthenticationError,
     LLMContextWindowExceededError,
     LLMError,
@@ -24,7 +24,7 @@ from kolega_code.agent.llm.exceptions import (
     LLMTimeout,
     map_to_llm_error,
 )
-from kolega_code.agent.llm.models import Message, MessageHistory
+from kolega_code.llm.models import Message, MessageHistory
 
 # Check if running in CI environment
 SKIP_IN_CI = bool(os.getenv("CI")) or bool(os.getenv("GITLAB_CI"))
@@ -314,7 +314,7 @@ class TestProviderInitialization:
     def test_provider_initialization_with_error(self):
         """Test that provider initialization errors are properly wrapped."""
         # Mock the provider class to raise an error during initialization
-        with patch("kolega_code.agent.llm.client.OpenAIProvider") as MockProvider:
+        with patch("kolega_code.llm.client.OpenAIProvider") as MockProvider:
             MockProvider.side_effect = RuntimeError("Provider init failed")
 
             with pytest.raises(LLMInternalServerError) as exc_info:

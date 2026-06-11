@@ -1,7 +1,7 @@
 from .. import prompts
-from ..llm.client import LLMClient
-from ..llm.models import Message, MessageHistory, TextBlock
-from ..llm.specs import get_model_specs
+from kolega_code.llm.client import LLMClient
+from kolega_code.llm.models import Message, MessageHistory, TextBlock
+from kolega_code.llm.specs import get_model_specs
 from .base_tool import BaseTool
 
 
