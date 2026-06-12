@@ -1,0 +1,57 @@
+---
+title: Introduction
+description: What Kolega Code is, what it does, and who it's for.
+---
+
+**Kolega Code** is an AI coding agent that runs in your terminal. You point it at
+a project directory, and it opens an interactive UI where you can talk to an agent
+that can read and edit your code, run shell commands, search the codebase, browse
+the web, and dispatch specialized sub-agents to get work done.
+
+It's **local-first**: the agent operates on your actual filesystem and terminal,
+and your sessions, settings, and API keys are stored on your own machine.
+
+## What it does
+
+- **Reads and edits your code.** The agent can open files, search across the
+  codebase, create new files, and apply precise edits.
+- **Runs commands.** It can execute shell commands and watch their output, with a
+  dedicated terminal view in the UI.
+- **Plans before it builds.** A read-only **Plan mode** produces a reviewable plan
+  and a shared task list; **Build mode** implements it.
+- **Browses the web.** A built-in browser agent (powered by Playwright) can fetch
+  pages and interact with sites when a task needs it.
+- **Dispatches sub-agents.** For larger tasks, the main agent can hand off to
+  specialized agents (investigation, browser, coding, general) and track their
+  activity live.
+- **Works non-interactively too.** Run a single prompt with
+  [`kolega-code ask`](../../cli/ask/), get JSON output, and save or resume
+  sessions.
+
+## Two ways to use it
+
+| Mode | Command | Best for |
+| --- | --- | --- |
+| **Interactive TUI** | `kolega-code .` | Day-to-day development, exploration, pair-programming |
+| **One-shot** | `kolega-code ask "…"` | Scripting, automation, quick questions, CI |
+
+There are also helper commands for managing
+[sessions](../../cli/sessions/) and checking your
+[configuration](../../cli/doctor/).
+
+## Bring your own model
+
+Kolega Code talks to a range of LLM providers — including Anthropic, OpenAI,
+Google, Moonshot, and DeepSeek — and lets you assign **different models to
+different roles** (a strong long-context model for coding, a fast cheap model for
+small utility calls, a dedicated model for applying edits, and one for extended
+"thinking"). See [Providers & Models](../../configuration/providers-and-models/).
+
+## What you need
+
+- **Python 3.11+**
+- An **API key** for at least one supported provider
+- A terminal that supports a modern TUI (most do)
+
+Head to [Installation](../installation/) to set it up, then the
+[Quick Start](../quick-start/) to run your first session.
