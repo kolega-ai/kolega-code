@@ -14,6 +14,13 @@ export default defineConfig({
       title: "Kolega Code",
       description:
         "A local-first, terminal AI coding agent. Plan, build, and ship from your CLI.",
+      // Brand fonts (Geist) + the Kolega Code theme. Order matters: fonts first
+      // so the brand stylesheet can reference their family names.
+      customCss: [
+        "@fontsource-variable/geist/index.css",
+        "@fontsource-variable/geist-mono/index.css",
+        "./src/styles/brand.css",
+      ],
       social: [
         {
           icon: "github",
