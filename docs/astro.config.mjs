@@ -14,6 +14,12 @@ export default defineConfig({
       title: "Kolega Code",
       description:
         "A local-first, terminal AI coding agent. Plan, build, and ship from your CLI.",
+      // The Kolega "</>" mark, alongside the "Kolega Code" wordmark in the nav.
+      logo: {
+        light: "./src/assets/kolega-light.svg",
+        dark: "./src/assets/kolega-dark.svg",
+        alt: "Kolega Code",
+      },
       // Brand fonts (Geist) + the Kolega Code theme. Order matters: fonts first
       // so the brand stylesheet can reference their family names.
       customCss: [
