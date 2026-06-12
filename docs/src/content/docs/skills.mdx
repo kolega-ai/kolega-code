@@ -1,0 +1,91 @@
+---
+title: Agent Skills
+description: Package reusable workflows as skills and invoke them as slash commands.
+---
+
+import { FileTree, Aside } from '@astrojs/starlight/components';
+
+**Agent Skills** are reusable, project-specific (or user-wide) workflows. Each skill
+is a folder with a `SKILL.md` file describing what it does and how to do it. Kolega
+Code discovers them automatically and exposes each one as a `/skill-name`
+[slash command](../tui/slash-commands/).
+
+When you activate a skill, its instructions — and a manifest of any bundled
+resource files — are loaded into the conversation, so the agent can follow a
+specialized procedure on demand.
+
+## Where skills live
+
+Skills are discovered from two locations:
+
+| Scope | Location |
+| --- | --- |
+| **User** | `~/.agents/skills/` |
+| **Project** | `<project>/.agents/skills/` |
+
+Each skill is a directory containing a `SKILL.md`:
+
+<FileTree>
+- .agents/
+  - skills/
+    - release-notes/
+      - SKILL.md       Required: frontmatter + instructions
+      - template.md     Optional bundled resource
+    - triage-issue/
+      - SKILL.md
+</FileTree>
+
+If a project skill and a user skill share a name, the **project** skill wins.
+
+## Writing a `SKILL.md`
+
+A `SKILL.md` is Markdown with a YAML frontmatter block. Two fields are required:
+
+```markdown title=".agents/skills/release-notes/SKILL.md"
+---
+name: release-notes
+description: Draft release notes by summarizing changes since the last git tag.
+---
+
+# Release Notes
+
+1. Find the most recent git tag.
+2. Collect the commits since that tag.
+3. Group them into Features, Fixes, and Chores.
+4. Write the notes using `template.md` in this skill's directory.
+```
+
+Conventions Kolega Code checks (and warns about):
+
+- `name` and `description` are **required**.
+- `name` should match the skill's directory name.
+- `name` should be lowercase, use hyphens, be ≤ 64 characters, and avoid `--`.
+- `description` should be ≤ 1024 characters.
+
+Bundled resource files (anything other than `SKILL.md`) can be referenced with
+paths **relative to the skill directory**, and the agent can read them on demand.
+
+## Using skills
+
+- **List them:** run `/skills` in the composer, or `kolega-code ask "/skills"`.
+- **Activate one:** run `/release-notes`, optionally followed by a request:
+
+  ```text
+  /release-notes summarize changes since v0.1.0
+  ```
+
+- **In `ask`:** the same `/skill-name` syntax works — see
+  [`kolega-code ask`](../cli/ask/#skills).
+
+<Aside type="note">
+When a skill is active, the agent has helper tools to inspect and load skills —
+`list_skills`, `activate_skill`, and `read_skill_resource` — so it can pull in a
+skill's instructions and resources itself when a task calls for it.
+</Aside>
+
+## Diagnostics
+
+If a `SKILL.md` is malformed or a name doesn't follow the conventions above, the
+catalog records a diagnostic (error or warning) instead of silently dropping the
+skill. `/skills` shows these diagnostics alongside the list, so you can spot a
+skill that isn't loading and why.
