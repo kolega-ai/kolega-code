@@ -6,7 +6,9 @@ hero:
   tagline: A local-first AI coding agent that lives in your terminal. Plan, build, and ship — without leaving the keyboard.
   actions:
     - text: Get Started
-      link: getting-started/introduction/
+      # Splash hero links are used verbatim by Starlight (no base prefixing),
+      # so they must include the site `base` from astro.config.mjs.
+      link: /kolega-code/getting-started/introduction/
       icon: right-arrow
       variant: primary
     - text: View on GitHub
@@ -61,8 +63,8 @@ into other tools, and resumable sessions.
 
 ## Where to next?
 
-- New here? Start with the [Introduction](getting-started/introduction/).
-- Ready to run it? See [Installation](getting-started/installation/) and the
-  [Quick Start](getting-started/quick-start/).
+- New here? Start with the [Introduction](/kolega-code/getting-started/introduction/).
+- Ready to run it? See [Installation](/kolega-code/getting-started/installation/) and the
+  [Quick Start](/kolega-code/getting-started/quick-start/).
 - Looking for a specific command or flag? Jump to the
-  [CLI Reference](cli/overview/).
+  [CLI Reference](/kolega-code/cli/overview/).
