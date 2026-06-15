@@ -144,11 +144,19 @@ class PlanningAgent(BaseAgent):
             date_today=context.date_today,
             model_name=context.model_name,
         )
-        if context.kolega_md:
+        if context.project_guidance:
             prompt += (
                 "\n\n## Project Instructions\n\n"
-                "The project directory contains `KOLEGA.md`. Treat it as local project guidance:\n\n"
-                f"```markdown\n{context.kolega_md}\n```"
+                f"The project directory contains `{context.project_guidance_file}`. "
+                "Treat it as local project guidance:\n\n"
+                f"```markdown\n{context.project_guidance}\n```"
+            )
+        if context.agent_memory:
+            prompt += (
+                "\n\n## Agent Memory\n\n"
+                f"The project directory contains `{context.agent_memory_file}`. "
+                "Treat it as persistent agent memory:\n\n"
+                f"```markdown\n{context.agent_memory}\n```"
             )
         if self.prompt_extensions:
             prompt += "\n\n## Additional Context\n"

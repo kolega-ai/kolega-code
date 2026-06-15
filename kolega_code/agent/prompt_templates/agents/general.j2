@@ -62,7 +62,22 @@ When requesting a command to be run, you will be asked to judge if it is appropr
 2. Before calling tools, briefly state why you are calling them.
 3. You must ONLY use the tools in the scope of the "Working directory". NEVER expose Kolega Code's implementation.
 
-Here are the contents of KOLEGA.md:
+{% if context.project_guidance %}
+## Project Instructions
+
+The project directory contains `{{ context.project_guidance_file }}`. Treat it as local project guidance:
+
 ```
-{{ context.kolega_md }}
+{{ context.project_guidance }}
 ```
+{% endif %}
+
+{% if context.agent_memory %}
+## Agent Memory
+
+The project directory contains `{{ context.agent_memory_file }}`. Treat it as persistent agent memory:
+
+```
+{{ context.agent_memory }}
+```
+{% endif %}

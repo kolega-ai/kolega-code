@@ -1,13 +1,12 @@
 import asyncio
 import inspect
-import re
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Any, Callable, List, Optional, Union
 
 from .common import LogMixin
 from kolega_code.config import AgentConfig
-from kolega_code.llm.models import ImageBlock, ToolDefinition, ToolParameter
+from kolega_code.llm.models import ImageBlock, ToolDefinition
 from kolega_code.tools import Tool, ToolRegistry, tool_definition_from_callable
 from kolega_code.services.file_system import FileSystem, LocalFileSystem
 from kolega_code.services.base import TerminalManager, BrowserManager
@@ -1360,19 +1359,19 @@ class ToolCollection(LogMixin):
 
     async def read_memory(self) -> str:
         """
-        Read the contents of the KOLEGA.md file which serves as the agent's memory.
+        Read the contents of the AGENT_MEMORY.md file which serves as the agent's memory.
 
         Returns:
-            The contents of the KOLEGA.md file as a string
+            The contents of the AGENT_MEMORY.md file as a string
 
         Raises:
-            FileNotFoundError: If the KOLEGA.md file doesn't exist
+            FileNotFoundError: If the AGENT_MEMORY.md file doesn't exist
         """
         return await self.memory_tool.read_memory()
 
     async def write_memory(self, memory_content: str) -> str:
         """
-        Write a new memory to the KOLEGA.md file which serves as the agent's memory.
+        Write a new memory to the AGENT_MEMORY.md file which serves as the agent's memory.
 
         The memory is added as a markdown bullet point to the file.
 
