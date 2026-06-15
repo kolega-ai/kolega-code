@@ -14,7 +14,6 @@ def mock_config():
     """Create a mock agent configuration."""
     return AgentConfig(
         anthropic_api_key="test-key",
-        openai_api_key="test-openai-key",  # Required for edit_model_config
         thinking_config=ModelConfig(
             provider=ModelProvider.ANTHROPIC,
             model="claude-3-7-sonnet-20250131",

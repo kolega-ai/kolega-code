@@ -110,11 +110,6 @@ class AgentConfig(BaseModel):
         description="Configuration for fast operations",
     )
 
-    edit_model_config: ModelConfig = Field(
-        default_factory=lambda: ModelConfig(provider=ModelProvider.ANTHROPIC, model="claude-sonnet-4-6"),
-        description="Configuration for applying edits",
-    )
-
     thinking_config: ModelConfig = Field(
         default_factory=lambda: ModelConfig(
             provider=ModelProvider.ANTHROPIC, model="claude-opus-4-7", thinking_effort="medium"
@@ -146,7 +141,6 @@ class AgentConfig(BaseModel):
             (self.long_context_config, "long context"),
             (self.fast_config, "fast"),
             (self.thinking_config, "thinking"),
-            (self.edit_model_config, "edit model"),
         ]
 
         for config, config_name in configs:

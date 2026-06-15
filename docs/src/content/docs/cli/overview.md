@@ -54,8 +54,6 @@ for the run.
 | `--model` | Main coding model |
 | `--fast-provider` | Provider for fast utility calls |
 | `--fast-model` | Fast utility model |
-| `--edit-provider` | Provider for edit-file operations |
-| `--edit-model` | Model for edit-file operations |
 | `--thinking-provider` | Provider for think-hard operations |
 | `--thinking-model` | Model for think-hard operations |
 | `--thinking-effort` | Model-specific thinking effort, such as `auto`, `medium`, `high`, or `max` |

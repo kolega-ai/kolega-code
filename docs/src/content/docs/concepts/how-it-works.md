@@ -41,9 +41,9 @@ toolsets. See [Agents](../agents/).
 ## Models per role
 
 A single turn may use more than one model. The main reasoning runs on the
-**long-context** model, small utility calls use the **fast** model, file edits use
-the **edit** model, and extended reasoning uses the **thinking** model. You control
-each independently — see [Providers & Models](../../configuration/providers-and-models/).
+**long-context** model, small utility calls use the **fast** model, and extended
+reasoning uses the **thinking** model. You control each independently — see
+[Providers & Models](../../configuration/providers-and-models/).
 
 ## Local execution
 

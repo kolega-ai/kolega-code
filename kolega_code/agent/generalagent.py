@@ -103,7 +103,6 @@ class GeneralAgent(BaseAgent):
             "execute_terminal_command",
             "replace_lines",
             "apply_patch",
-            "edit_file",
             "get_tool_list",
             "log_error",
             "log_info",

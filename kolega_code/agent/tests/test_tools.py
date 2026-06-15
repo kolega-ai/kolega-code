@@ -56,7 +56,6 @@ def tool_collection(
 
     # Mock all tool methods
     collection.think_hard_tool.think_hard = AsyncMock()
-    collection.apply_edit_tool.edit_file = AsyncMock()
     collection.search_and_replace_tool.search_and_replace = AsyncMock()
     collection.list_directory_tool.list_directory = AsyncMock()
     collection.terminal_tool.execute_terminal_command = AsyncMock()
@@ -185,17 +184,6 @@ class TestToolCollection:
         result = await tool_collection.think_hard(problem)
         assert result == expected_response
         tool_collection.think_hard_tool.think_hard.assert_called_once_with(problem)
-
-    async def test_edit_file(self, tool_collection: AsyncMock) -> None:
-        relative_path = "test.txt"
-        instructions = "instructions"
-        code_edit = "test content"
-        expected_response = "Updated content"
-        tool_collection.apply_edit_tool.edit_file.return_value = expected_response
-
-        result = await tool_collection.edit_file(relative_path, instructions, code_edit)
-        assert result == expected_response
-        tool_collection.apply_edit_tool.edit_file.assert_called_once_with(relative_path, instructions, code_edit)
 
     async def test_search_and_replace(self, tool_collection: AsyncMock) -> None:
         relative_path = "test.txt"
@@ -406,7 +394,7 @@ class TestToolCollection:
             assert tool_name in ToolCollection.read_only_tools
 
         # Should not include write tools
-        write_tools = ["create_file", "replace_entire_file", "edit_file"]
+        write_tools = ["create_file", "replace_entire_file"]
         for write_tool in write_tools:
             assert write_tool not in tool_names
 

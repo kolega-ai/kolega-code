@@ -24,7 +24,6 @@ def _deepseek_config() -> AgentConfig:
         deepseek_api_key="test-key",
         long_context_config=model_config,
         fast_config=model_config,
-        edit_model_config=model_config,
         thinking_config=model_config,
     )
 

@@ -50,7 +50,6 @@ provider's default model, or set both provider and model.
 | --- | --- |
 | `KOLEGA_CODE_PROVIDER` / `KOLEGA_CODE_MODEL` | Main (long-context) coding model |
 | `KOLEGA_CODE_FAST_PROVIDER` / `KOLEGA_CODE_FAST_MODEL` | Fast utility model |
-| `KOLEGA_CODE_EDIT_PROVIDER` / `KOLEGA_CODE_EDIT_MODEL` | Edit-file model |
 | `KOLEGA_CODE_THINKING_PROVIDER` / `KOLEGA_CODE_THINKING_MODEL` | Thinking model |
 | `KOLEGA_CODE_THINKING_EFFORT` | Model-specific thinking effort |
 

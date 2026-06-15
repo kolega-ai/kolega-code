@@ -14,7 +14,6 @@ from kolega_code.services.base import TerminalManager, BrowserManager
 from kolega_code.services.terminal import LocalTerminalManager
 from kolega_code.services.browser import PlaywrightBrowserManager
 from .tool_backend.agent_tool import AgentTool
-from .tool_backend.apply_edit_tool import ApplyEditTool
 from .tool_backend.apply_patch_tool import APPLY_PATCH_TOOL_DESC, ApplyPatchTool
 from .tool_backend.browser_tool import BrowserTool
 from .tool_backend.create_file_tool import CreateFileTool
@@ -222,7 +221,6 @@ class ToolCollection(LogMixin):
             "execute_terminal_command",
             "replace_lines",
             "apply_patch",
-            "edit_file",
             "get_tool_list",
             "log_error",
             "log_warning",
@@ -254,15 +252,6 @@ class ToolCollection(LogMixin):
         """Initialize all tool backends based on configuration."""
         # Core tool backends (always available)
         self.think_hard_tool = ThinkHardTool(
-            self.project_path,
-            self.workspace_id,
-            self.thread_id,
-            self.connection_manager,
-            self.config,
-            self.caller,
-            self.filesystem,
-        )
-        self.apply_edit_tool = ApplyEditTool(
             self.project_path,
             self.workspace_id,
             self.thread_id,
@@ -903,45 +892,6 @@ class ToolCollection(LogMixin):
             return f"✅ Paused execution for {seconds} second"
         else:
             return f"✅ Paused execution for {seconds} seconds"
-
-    async def edit_file(self, relative_path: str, instructions: str, code_edit: str) -> str:
-        """
-        Use this tool to propose an edit to an existing file.
-
-        This will be read by a less intelligent model, which will quickly apply the edit.
-
-        You should make it clear what the edit is, while also minimizing the unchanged code you write.
-
-        When writing the edit, you should specify each edit in sequence, with the special comment `// ... existing code ...` to represent unchanged code in between edited lines.
-
-        For example:
-
-        ```
-        // ... existing code ...
-        FIRST_EDIT
-        // ... existing code ...
-        SECOND_EDIT
-        // ... existing code ...
-        THIRD_EDIT
-        // ... existing code ...
-        ```
-
-        You should still bias towards repeating as few lines of the original file as possible to convey the change.
-
-        But, each edit should contain sufficient context of unchanged lines around the code you're editing to resolve ambiguity.
-
-        DO NOT omit spans of pre-existing code (or comments) without using the `// ... existing code ...` comment to indicate its absence.
-
-        If you omit the existing code comment, the model may inadvertently delete these lines.
-
-        Make sure it is clear what the edit should be, and where it should be applied.
-
-        Args:
-            relative_path: Path to the file to edit, relative to the project root
-            instructions: A single sentence instruction describing what you are going to do for the sketched edit. This is used to assist the less intelligent model in applying the edit. Please use the first person to describe what you are going to do. Dont repeat what you have said previously in normal messages. And use it to disambiguate uncertainty in the edit.
-            code_edit: Specify ONLY the precise lines of code that you wish to edit. **NEVER specify or write out unchanged code**. Instead, represent all unchanged code using the comment of the language you're editing in - example: `// ... existing code ...`
-        """
-        return await self.apply_edit_tool.edit_file(relative_path, instructions, code_edit)
 
     async def search_and_replace(self, relative_path: str, block: str) -> str:
         """
