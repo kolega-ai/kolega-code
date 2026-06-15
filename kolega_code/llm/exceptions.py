@@ -26,6 +26,7 @@ Error Mapping:
 | Anthropic | 401         | `LLMAuthenticationError`       |
 | Anthropic | 403         | `LLMPermissionDeniedError`     |
 | Anthropic | 404         | `LLMNotFoundError`             |
+| Anthropic | 402         | `LLMBillingError`              |
 | Anthropic | 413         | `LLMContextWindowExceededError`|
 | Anthropic | 429         | `LLMRateLimitError`            |
 | Anthropic | 500         | `LLMInternalServerError`       |
@@ -110,8 +111,72 @@ class LLMRateLimitError(LLMError):
     """Raised when the rate limit for the LLM service is exceeded."""
 
 
+class LLMBillingError(LLMError):
+    """Raised when the LLM provider rejects a request due to billing or credits."""
+
+
 class LLMInternalServerError(LLMError):
     """Raised when the LLM service encounters an internal error."""
+
+
+_BILLING_ERROR_PHRASES = (
+    "insufficient balance",
+    "insufficient credit",
+    "insufficient credits",
+    "payment required",
+    "billing",
+)
+
+
+def _provider_display_name(provider: str | None) -> str:
+    provider_names = {
+        ModelProvider.ANTHROPIC.value: "Anthropic",
+        ModelProvider.OPENAI.value: "OpenAI",
+        ModelProvider.GOOGLE.value: "Google",
+        ModelProvider.GROQ.value: "Groq",
+        ModelProvider.TOGETHER.value: "Together",
+        ModelProvider.FIREWORKS.value: "Fireworks",
+        ModelProvider.XAI.value: "xAI",
+        ModelProvider.DASHSCOPE.value: "DashScope",
+        ModelProvider.MOONSHOT.value: "Moonshot",
+        ModelProvider.DEEPSEEK.value: "DeepSeek",
+        ModelProvider.LLAMA.value: "Llama",
+    }
+    if not provider:
+        return "The selected provider"
+    return provider_names.get(provider, provider.replace("_", " ").replace("-", " ").title())
+
+
+def billing_error_message(error: LLMBillingError, model: str | None = None) -> str:
+    """Return a concise user-facing message for provider billing failures."""
+    provider = error.provider
+    provider_name = _provider_display_name(provider)
+    model_label = f"/{model}" if model else ""
+    provider_model = f"{provider_name}{model_label}"
+
+    return (
+        f"{provider_model} could not run this request because {provider_name} reported insufficient balance. "
+        f"Add credits to your {provider_name} account or switch to another provider/model in Settings or with /model."
+    )
+
+
+def _is_billing_status(error: Exception) -> bool:
+    return getattr(error, "status_code", None) == 402 or getattr(error, "status", None) == 402
+
+
+def _is_billing_message(message: str) -> bool:
+    message_lower = message.lower()
+    return any(phrase in message_lower for phrase in _BILLING_ERROR_PHRASES)
+
+
+def _anthropic_body_error_message(error: Exception) -> str:
+    body = getattr(error, "body", None)
+    if not isinstance(body, dict):
+        return ""
+    error_info = body.get("error")
+    if not isinstance(error_info, dict):
+        return ""
+    return str(error_info.get("message") or "").strip()
 
 
 def map_openai_errors(error: OpenAIError) -> LLMError:
@@ -155,7 +220,8 @@ def map_google_errors(error: GoogleAPIError) -> LLMError:
     return LLMError(message=f"Google APIError: {str(error)}", provider=ModelProvider.GOOGLE.value)
 
 
-def map_anthropic_errors(error: AnthropicError) -> LLMError:
+def map_anthropic_errors(error: AnthropicError, provider: str | None = None) -> LLMError:
+    provider = provider or ModelProvider.ANTHROPIC.value
     context_window_phrases = (
         "exceeded model token limit",
         "context window",
@@ -163,7 +229,14 @@ def map_anthropic_errors(error: AnthropicError) -> LLMError:
         "prompt is too long",
     )
 
-    if type(error) == AnthropicAPIStatusError:
+    if (
+        _is_billing_status(error)
+        or _is_billing_message(_anthropic_body_error_message(error))
+        or _is_billing_message(str(error))
+    ):
+        return LLMBillingError(message=f"AnthropicError: {str(error)}", provider=provider)
+
+    if type(error) is AnthropicAPIStatusError:
         try:
             error_data = error.body
             if isinstance(error_data, dict) and "error" in error_data:
@@ -175,12 +248,12 @@ def map_anthropic_errors(error: AnthropicError) -> LLMError:
                 # Keep internal/server overload handling by type
                 if error_type in ["overloaded_error", "api_error"]:
                     return LLMInternalServerError(
-                        message=f"AnthropicError: {str(error)}", provider=ModelProvider.ANTHROPIC.value
+                        message=f"AnthropicError: {str(error)}", provider=provider
                     )
 
                 if any(phrase in error_message_lower for phrase in context_window_phrases):
                     return LLMContextWindowExceededError(
-                        message=f"AnthropicError: {str(error)}", provider=ModelProvider.ANTHROPIC.value
+                        message=f"AnthropicError: {str(error)}", provider=provider
                     )
 
                 # Special case: content filtering block should be mapped to content policy violation
@@ -189,52 +262,51 @@ def map_anthropic_errors(error: AnthropicError) -> LLMError:
                     and error_message == "Output blocked by content filtering policy"
                 ):
                     return LLMContentPolicyViolationError(
-                        message=f"AnthropicError: {str(error)}", provider=ModelProvider.ANTHROPIC.value
+                        message=f"AnthropicError: {str(error)}", provider=provider
                     )
 
         except Exception:
             pass
 
-    if type(error) == AnthropicInternalServerError:
-        return LLMInternalServerError(message=f"AnthropicError: {str(error)}", provider=ModelProvider.ANTHROPIC.value)
+    if type(error) is AnthropicInternalServerError:
+        return LLMInternalServerError(message=f"AnthropicError: {str(error)}", provider=provider)
 
-    print("continuing Anthropic error mapping...")
     if hasattr(error, "status_code"):
         if error.status_code == 400:
             error_text = str(error).lower()
             if any(phrase in error_text for phrase in context_window_phrases):
                 return LLMContextWindowExceededError(
-                    message=f"AnthropicError: {str(error)}", provider=ModelProvider.ANTHROPIC.value
+                    message=f"AnthropicError: {str(error)}", provider=provider
                 )
             return LLMInvalidRequestError(
-                message=f"AnthropicError: {str(error)}", provider=ModelProvider.ANTHROPIC.value
+                message=f"AnthropicError: {str(error)}", provider=provider
             )
         elif error.status_code == 401:
             return LLMAuthenticationError(
-                message=f"AnthropicError: {str(error)}", provider=ModelProvider.ANTHROPIC.value
+                message=f"AnthropicError: {str(error)}", provider=provider
             )
         elif error.status_code == 403:
             return LLMPermissionDeniedError(
-                message=f"AnthropicError: {str(error)}", provider=ModelProvider.ANTHROPIC.value
+                message=f"AnthropicError: {str(error)}", provider=provider
             )
         elif error.status_code == 404:
-            return LLMNotFoundError(message=f"AnthropicError: {str(error)}", provider=ModelProvider.ANTHROPIC.value)
+            return LLMNotFoundError(message=f"AnthropicError: {str(error)}", provider=provider)
         elif error.status_code == 413:
             return LLMContextWindowExceededError(
-                message=f"AnthropicError: {str(error)}", provider=ModelProvider.ANTHROPIC.value
+                message=f"AnthropicError: {str(error)}", provider=provider
             )
         if error.status_code == 429:
-            return LLMRateLimitError(message=f"AnthropicError: {str(error)}", provider=ModelProvider.ANTHROPIC.value)
+            return LLMRateLimitError(message=f"AnthropicError: {str(error)}", provider=provider)
         if error.status_code == 500:
             return LLMInternalServerError(
-                message=f"AnthropicError: {str(error)}", provider=ModelProvider.ANTHROPIC.value
+                message=f"AnthropicError: {str(error)}", provider=provider
             )
         if error.status_code == 529:
             return LLMInternalServerError(
-                message=f"AnthropicError: {str(error)}", provider=ModelProvider.ANTHROPIC.value
+                message=f"AnthropicError: {str(error)}", provider=provider
             )
 
-    return LLMError(message=f"AnthropicError: {str(error)}", provider=ModelProvider.ANTHROPIC.value)
+    return LLMError(message=f"AnthropicError: {str(error)}", provider=provider)
 
 
 def map_to_llm_error(error: Exception, provider: str = None) -> LLMError:
@@ -261,7 +333,7 @@ def map_to_llm_error(error: Exception, provider: str = None) -> LLMError:
     elif isinstance(error, GoogleAPIError):
         return map_google_errors(error)
     elif isinstance(error, AnthropicError):
-        return map_anthropic_errors(error)
+        return map_anthropic_errors(error, provider=provider)
 
     # Map common Python exceptions
     if isinstance(error, ValueError):

@@ -4,6 +4,28 @@ Tests for the LLM exception classes and mapping functions.
 
 import pytest
 
+from kolega_code.config import ModelProvider
+from kolega_code.llm.exceptions import (
+    LLMBillingError,
+    LLMAuthenticationError,
+    LLMBadRequestError,
+    LLMContentPolicyViolationError,
+    LLMContextWindowExceededError,
+    LLMError,
+    LLMInternalServerError,
+    LLMInvalidRequestError,
+    LLMNotFoundError,
+    LLMPermissionDeniedError,
+    LLMRateLimitError,
+    LLMTimeout,
+    LLMUnprocessableEntityError,
+    LLMUnsupportedParamsError,
+    map_to_llm_error,
+    map_anthropic_errors,
+    map_google_errors,
+    map_openai_errors,
+)
+
 
 # Assuming OpenAIError, GoogleAPIError, AnthropicError can be imported or mocked
 # For simplicity, we'll mock them here.
@@ -25,27 +47,6 @@ class MockAnthropicError(Exception):
         self.status_code = status_code
 
 
-from kolega_code.config import ModelProvider
-from kolega_code.llm.exceptions import (
-    LLMAuthenticationError,
-    LLMBadRequestError,
-    LLMContentPolicyViolationError,
-    LLMContextWindowExceededError,
-    LLMError,
-    LLMInternalServerError,
-    LLMInvalidRequestError,
-    LLMNotFoundError,
-    LLMPermissionDeniedError,
-    LLMRateLimitError,
-    LLMTimeout,
-    LLMUnprocessableEntityError,
-    LLMUnsupportedParamsError,
-    map_anthropic_errors,
-    map_google_errors,
-    map_openai_errors,
-)
-
-
 # Test basic exception instantiation
 @pytest.mark.parametrize(
     "exception_class",
@@ -55,6 +56,7 @@ from kolega_code.llm.exceptions import (
         LLMUnsupportedParamsError,
         LLMContextWindowExceededError,
         LLMContentPolicyViolationError,
+        LLMBillingError,
         LLMInvalidRequestError,
         LLMAuthenticationError,
         LLMPermissionDeniedError,
@@ -164,6 +166,7 @@ def test_map_google_errors_no_status():
     [
         (400, LLMInvalidRequestError),
         (401, LLMAuthenticationError),
+        (402, LLMBillingError),
         (403, LLMPermissionDeniedError),
         (404, LLMNotFoundError),
         (413, LLMContextWindowExceededError),
@@ -192,6 +195,7 @@ def test_map_anthropic_errors_no_status_code():
         (
             LLMInvalidRequestError,
             LLMAuthenticationError,
+            LLMBillingError,
             LLMPermissionDeniedError,
             LLMNotFoundError,
             LLMContextWindowExceededError,
@@ -247,3 +251,28 @@ def test_map_anthropic_api_status_error_token_limit():
     mapped = map_anthropic_errors(err)
     assert isinstance(mapped, LLMContextWindowExceededError)
     assert mapped.provider == ModelProvider.ANTHROPIC.value
+
+
+def test_map_deepseek_anthropic_api_status_error_insufficient_balance():
+    import httpx
+    from anthropic import APIStatusError
+
+    response = httpx.Response(
+        status_code=402,
+        request=httpx.Request("POST", "https://api.deepseek.com/anthropic/v1/messages"),
+    )
+    body = {
+        "error": {
+            "message": "Insufficient Balance",
+            "type": "unknown_error",
+            "param": None,
+            "code": "invalid_request_error",
+        },
+    }
+
+    err = APIStatusError("payment required", response=response, body=body)
+
+    mapped = map_to_llm_error(err, provider=ModelProvider.DEEPSEEK.value)
+    assert isinstance(mapped, LLMBillingError)
+    assert mapped.provider == ModelProvider.DEEPSEEK.value
+    assert "AnthropicError:" in str(mapped)

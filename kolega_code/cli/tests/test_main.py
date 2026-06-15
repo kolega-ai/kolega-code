@@ -5,10 +5,12 @@ from pathlib import Path
 import pytest
 
 from kolega_code import __version__
+from kolega_code.config import ModelProvider
 from kolega_code.cli.main import CLI_AGENT_MODE, RESUME_LATEST, _resolve_tui_session, main, parse_args
-from kolega_code.cli.provider_registry import UI_DEFAULT_MODEL, UI_DEFAULT_PROVIDER
+from kolega_code.cli.provider_registry import DEEPSEEK_DEFAULT_MODEL, UI_DEFAULT_MODEL, UI_DEFAULT_PROVIDER
 from kolega_code.cli.session_store import SessionStore, SessionStoreError
 from kolega_code.cli.settings import CliSettings, SettingsStore
+from kolega_code.llm.exceptions import LLMBillingError
 from kolega_code.llm.models import Message
 
 
@@ -173,6 +175,109 @@ def test_ask_skill_with_prompt_activates_before_dispatch(
     assert agent.messages == ["do the task"]
     assert '<skill_content name="demo-skill">' in agent.history[0].get_text_content()
     assert any(extension.name == "cli-agent-skills" for extension in agent.kwargs["tool_extensions"])
+
+
+def test_ask_plain_handles_billing_error_without_traceback(
+    tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
+) -> None:
+    from kolega_code.cli import main as main_module
+
+    class FakeCoderAgent:
+        instances = []
+
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.cleaned = False
+            self.__class__.instances.append(self)
+
+        def restore_message_history(self, history):
+            return None
+
+        def dump_message_history(self):
+            return []
+
+        async def process_message_stream(self, message):
+            raise LLMBillingError("DeepSeek APIError: Insufficient Balance", provider=ModelProvider.DEEPSEEK.value)
+            yield {"type": "response", "content": "unreachable"}
+
+        async def cleanup(self):
+            self.cleaned = True
+
+    project = tmp_path / "project"
+    project.mkdir()
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "deepseek-key")
+    monkeypatch.setattr(main_module, "CoderAgent", FakeCoderAgent)
+
+    exit_code = main_module.main(
+        [
+            "ask",
+            "test",
+            "--project",
+            str(project),
+            "--provider",
+            ModelProvider.DEEPSEEK.value,
+            "--model",
+            DEEPSEEK_DEFAULT_MODEL,
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert captured.out == ""
+    assert "DeepSeek/deepseek-v4-pro could not run this request" in captured.err
+    assert "Add credits to your DeepSeek account" in captured.err
+    assert FakeCoderAgent.instances[0].cleaned is True
+
+
+def test_ask_json_handles_billing_error_without_traceback(
+    tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
+) -> None:
+    from kolega_code.cli import main as main_module
+
+    class FakeCoderAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def restore_message_history(self, history):
+            return None
+
+        def dump_message_history(self):
+            return []
+
+        async def process_message_stream(self, message):
+            raise LLMBillingError("DeepSeek APIError: Insufficient Balance", provider=ModelProvider.DEEPSEEK.value)
+            yield {"type": "response", "content": "unreachable"}
+
+        async def cleanup(self):
+            return None
+
+    project = tmp_path / "project"
+    project.mkdir()
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "deepseek-key")
+    monkeypatch.setattr(main_module, "CoderAgent", FakeCoderAgent)
+
+    exit_code = main_module.main(
+        [
+            "ask",
+            "test",
+            "--project",
+            str(project),
+            "--provider",
+            ModelProvider.DEEPSEEK.value,
+            "--model",
+            DEEPSEEK_DEFAULT_MODEL,
+            "--json",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    lines = [json.loads(line) for line in captured.out.splitlines() if line.strip()]
+    assert exit_code == 1
+    assert lines[-1]["kind"] == "error"
+    assert lines[-1]["data"]["type"] == "billing_error"
+    assert lines[-1]["data"]["provider"] == ModelProvider.DEEPSEEK.value
+    assert "DeepSeek/deepseek-v4-pro could not run this request" in lines[-1]["data"]["message"]
+    assert "Traceback" not in captured.err
 
 
 def test_doctor_uses_stored_kimi_settings(tmp_path: Path, capsys, isolated_cli_env: None) -> None:

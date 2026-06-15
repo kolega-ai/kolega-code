@@ -16,10 +16,12 @@ from .context import AgentContext, AgentServices, Telemetry, WorkspaceInfo
 from .conversation import Conversation
 from kolega_code.events import AgentEventEmitter
 from kolega_code.llm.exceptions import (
+    LLMBillingError,
     LLMContextWindowExceededError,
     LLMError,
     LLMInternalServerError,
     LLMRateLimitError,
+    billing_error_message,
     map_to_llm_error,
 )
 from kolega_code.llm.models import ImageBlock, Message, MessageHistory, TextBlock, ToolCall, ToolResult
@@ -778,6 +780,13 @@ class BaseAgent(LogMixin):
                 ),
             )
             raise
+
+        elif isinstance(error, LLMBillingError):
+            await self.emitter.llm_status(
+                "error",
+                billing_error_message(error, model=self.config.long_context_config.model),
+            )
+            raise error
 
         elif isinstance(error, LLMError):
             await self.log_error(f"LLM error occurred: {error}", sender=self.agent_name)
