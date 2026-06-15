@@ -1,0 +1,78 @@
+---
+title: Settings & API Keys
+description: How Kolega Code stores provider selection, API keys, and session state.
+---
+
+import { Aside, FileTree } from '@astrojs/starlight/components';
+
+Kolega Code keeps a small amount of state on your machine: your provider/model
+selection, API keys, and saved sessions.
+
+## The Settings tab
+
+The fastest way to configure the CLI is the **Settings** tab in the side panel of
+the TUI:
+
+1. **Provider** — choose your AI provider.
+2. **Model** — choose a model for that provider.
+3. **API Key** — paste your key (entered as a password field).
+4. **Save Settings** — persists everything locally.
+
+A saved selection is used for **all** agent model roles. Existing environment
+variables and `--provider` / `--model` flags continue to override it — see
+[Providers & Models](../providers-and-models/) for resolution order.
+
+## Where settings live
+
+Settings are stored as JSON in your platform's state directory, in a file named
+`settings.json`:
+
+| Platform | Default location |
+| --- | --- |
+| macOS | `~/Library/Application Support/kolega-code/` |
+| Linux | `$XDG_STATE_HOME/kolega-code/` (falls back to `~/.local/state/kolega-code/`) |
+| Windows | `%LOCALAPPDATA%\kolega-code\` |
+
+Override the location entirely with the `KOLEGA_CODE_STATE_DIR` environment
+variable, or per-command with `--state-dir`.
+
+The file looks like this:
+
+```json
+{
+  "schema_version": 1,
+  "active_provider": "moonshot",
+  "active_model": "kimi-k2.6",
+  "api_keys": {
+    "moonshot": "sk-..."
+  }
+}
+```
+
+<Aside type="caution" title="Keys are stored in plaintext">
+API keys are written to `settings.json` in plaintext, but the file is created with
+`0600` permissions (readable and writable only by your user). If you'd rather not
+store keys on disk at all, supply them via
+[environment variables](../environment-variables/) instead.
+</Aside>
+
+## State directory layout
+
+<FileTree>
+- kolega-code/
+  - settings.json   Provider, model, and API keys (0600)
+  - sessions/
+    - &lt;session-id&gt;.json   One file per saved session
+</FileTree>
+
+## Inspecting your configuration
+
+Use `doctor` to see, without exposing your key, where each value comes from:
+
+```bash
+kolega-code doctor --project .
+```
+
+It reports the state directory, whether Textual is installed, your stored active
+model, and — for the API key — whether it's `present via <ENV_VAR>`,
+`present in local settings`, or `missing`. See [`doctor`](../../cli/doctor/).

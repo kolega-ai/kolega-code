@@ -1,0 +1,92 @@
+---
+title: Providers & Models
+description: Supported LLM providers and how Kolega Code assigns models to roles.
+---
+
+import { Aside, Steps } from '@astrojs/starlight/components';
+
+Kolega Code is provider-agnostic. You choose which LLM provider to use and which
+model to use for each of several **roles**.
+
+## Supported providers
+
+The agent runtime recognizes these providers:
+
+| Provider | Identifier | API key variable |
+| --- | --- | --- |
+| Anthropic | `anthropic` | `ANTHROPIC_API_KEY` |
+| OpenAI | `openai` | `OPENAI_API_KEY` |
+| Google | `google` | `GOOGLE_API_KEY` |
+| Groq | `groq` | `GROQ_API_KEY` |
+| Together.ai | `together` | `TOGETHER_API_KEY` |
+| Fireworks.ai | `fireworks` | `FIREWORKS_API_KEY` |
+| x.ai (Grok) | `xai` | `XAI_API_KEY` |
+| DashScope (Alibaba) | `dashscope` | `DASHSCOPE_API_KEY` |
+| Moonshot (Kimi) | `moonshot` | `MOONSHOT_API_KEY` |
+| DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` |
+| Llama (local) | `llama` | _none — local model_ |
+
+<Aside type="note">
+The **Settings tab** in the TUI currently offers a curated shortlist —
+**Moonshot (Kimi K2.6)** and **DeepSeek (DeepSeek V4 Pro)**. The full provider
+list above is available through environment variables and CLI flags. See
+[Settings & API Keys](../settings-and-api-keys/).
+</Aside>
+
+## Model roles
+
+Rather than one model for everything, Kolega Code uses **four model slots**, so you
+can match cost and capability to the job:
+
+| Role | Purpose | Default |
+| --- | --- | --- |
+| **Long context** | The main coding model — drives the conversation and most work | `anthropic` / `claude-opus-4-7` |
+| **Fast** | Quick, cheap utility calls | `anthropic` / `claude-haiku-4-5-20251001` |
+| **Edit** | Applying file edits | `anthropic` / `claude-sonnet-4-6` |
+| **Thinking** | Extended-reasoning ("think hard") operations | `anthropic` / `claude-opus-4-7` (1024 thinking tokens) |
+
+When you pick a single provider/model in the Settings UI, that selection is applied
+to **all** roles. To assign roles individually, use environment variables or CLI
+flags.
+
+## How a model gets chosen
+
+For each role, Kolega Code resolves the provider and model in this order (first
+match wins):
+
+<Steps>
+1. **CLI flags** — e.g. `--provider`, `--model`, `--fast-model`, …
+2. **Environment variables** — e.g. `KOLEGA_CODE_PROVIDER`, `KOLEGA_CODE_MODEL`, the
+   per-role variants, and a project-local `.env` file.
+3. **Saved Settings** — the active provider/model from the Settings tab.
+4. **Built-in defaults** — the Anthropic models listed above.
+</Steps>
+
+A configuration is only valid if every role's provider has an API key available
+(the local `llama` provider needs none). If a key is missing, the CLI reports
+exactly which environment variable is required.
+
+## Set models per role
+
+Override any role from the command line:
+
+```bash
+kolega-code . \
+  --provider anthropic --model claude-opus-4-7 \
+  --fast-provider anthropic --fast-model claude-haiku-4-5-20251001 \
+  --edit-provider anthropic --edit-model claude-sonnet-4-6 \
+  --thinking-provider anthropic --thinking-model claude-opus-4-7 \
+  --thinking-tokens 2048
+```
+
+Or with environment variables — see
+[Environment Variables](../environment-variables/) for the complete list.
+
+## Check what's active
+
+```bash
+kolega-code doctor --project .
+```
+
+`doctor` prints the resolved provider/model for each role (long, fast, edit,
+thinking) and whether the necessary API keys are present.

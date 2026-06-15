@@ -1,0 +1,90 @@
+---
+title: Quick Start
+description: Launch Kolega Code, pick a model, and run your first session.
+---
+
+import { Steps, Aside } from '@astrojs/starlight/components';
+
+This walks you from a fresh install to a working session in a few minutes.
+
+<Steps>
+
+1. **Open your project in the TUI.**
+
+   From inside your project directory:
+
+   ```bash
+   kolega-code .
+   ```
+
+   `.` is the project path — you can also pass an explicit path, e.g.
+   `kolega-code ~/code/my-app`.
+
+2. **Choose a model and add your API key.**
+
+   Open the **Settings** tab in the side panel, pick a provider and model
+   (for example **Moonshot — Kimi K2.6** or **DeepSeek — DeepSeek V4 Pro**),
+   paste your API key, and press **Save Settings**.
+
+   The saved selection is used for every agent role, and your key is written to
+   the local settings file with restrictive permissions. See
+   [Settings & API Keys](../../configuration/settings-and-api-keys/).
+
+   <Aside type="tip">
+   Prefer environment variables? Set e.g. `MOONSHOT_API_KEY` (or
+   `ANTHROPIC_API_KEY`, `DEEPSEEK_API_KEY`, …) before launching and skip the
+   Settings tab. See [Environment Variables](../../configuration/environment-variables/).
+   </Aside>
+
+3. **Ask the agent something.**
+
+   Type a prompt in the composer at the bottom and press `Enter`:
+
+   ```text
+   Give me an overview of this repository and how it's structured.
+   ```
+
+   - Mention files with `@` — start typing `@src/` and pick from the dropdown.
+   - Run a command with `/` — e.g. `/help`, `/model`, `/context`.
+   - Insert a newline without sending with `Shift+Enter`.
+
+4. **Plan before a bigger change.**
+
+   Press `Shift+Tab` to switch to **Plan mode**. The agent works read-only and
+   proposes a plan in the **Planning** tab. When it submits a complete plan,
+   choose whether to implement it or keep discussing.
+
+5. **Build it.**
+
+   Press `Shift+Tab` again to return to **Build mode** and let the agent
+   implement the plan, updating the shared task list as it goes.
+
+6. **Save and exit.**
+
+   Press `Ctrl+Q` (or run `/quit`) to save the session and exit. Resume later
+   with:
+
+   ```bash
+   kolega-code . --resume
+   ```
+
+</Steps>
+
+## Prefer a one-liner?
+
+You don't have to open the UI. Run a single prompt non-interactively:
+
+```bash
+kolega-code ask "summarize this repository" --project .
+```
+
+Add `--save` to keep the session, or `--json` for machine-readable output. See
+[`kolega-code ask`](../../cli/ask/).
+
+## Where to go next
+
+- [Build & Plan Modes](../../tui/modes/) — how the two modes differ.
+- [Chat Composer](../../tui/composer/) — `@` mentions, `/` commands, and keys.
+- [Slash Commands](../../tui/slash-commands/) — the full command reference.
+- [Providers & Models](../../configuration/providers-and-models/) — pick the right
+  model for each role.
