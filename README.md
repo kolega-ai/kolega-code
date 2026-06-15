@@ -10,7 +10,7 @@ The package owns the `kolega_code` import namespace and provides the
 Install with the public installer:
 
 ```bash
-curl -fsSL https://kolega.dev/install-kolega-code | sh
+curl -fsSL https://kolega.dev/install-kolega-code.sh | sh
 ```
 
 Or install directly from PyPI with uv:
