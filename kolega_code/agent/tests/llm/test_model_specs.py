@@ -7,6 +7,8 @@ def test_kimi_k26_model_specs():
     assert specs["context_length"] == 262144
     assert specs["max_completion_tokens"] == 32768
     assert specs["default_temperature"] == 1.0
+    assert specs["thinking_effort"].options == ("auto", "none")
+    assert specs["thinking_effort"].default == "auto"
 
 
 def test_deepseek_v4_pro_model_specs():
@@ -15,3 +17,5 @@ def test_deepseek_v4_pro_model_specs():
     assert specs["context_length"] == 1000000
     assert specs["max_completion_tokens"] == 384000
     assert specs["default_temperature"] == 1.0
+    assert specs["thinking_effort"].options == ("none", "high", "max")
+    assert specs["thinking_effort"].default == "high"

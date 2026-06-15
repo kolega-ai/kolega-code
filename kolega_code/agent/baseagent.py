@@ -471,7 +471,7 @@ class BaseAgent(LogMixin):
             model=self.config.long_context_config.model,
             max_completion_tokens=self.model_completion_tokens,
             temperature=self.model_default_temperature,
-            thinking=self.config.long_context_config.thinking_tokens,
+            thinking=self.config.long_context_config.thinking_effort,
             on_info=on_info,
             on_error=on_error,
         )
@@ -898,7 +898,7 @@ class BaseAgent(LogMixin):
                     messages=fixed_history,
                     model=self.config.long_context_config.model,
                     tools=self.tool_collection.get_tool_list(),
-                    thinking=self.config.long_context_config.thinking_tokens,
+                    thinking=self.config.long_context_config.thinking_effort,
                 ) as stream:
                     async for event in stream:
                         if event.type == "text":

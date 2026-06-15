@@ -7,6 +7,7 @@ import tiktoken
 from openai import AsyncOpenAI, OpenAI
 
 from ..models import ImageBlock, Message, MessageChunk, MessageHistory, ToolCall, ToolDefinition, ToolResult
+from ..specs import build_thinking_request_params
 from ..tool_execution_ids import ToolExecutionIdRegistry
 from .base import BaseLLMProvider
 from .models import GenerationParams, TokenCount
@@ -154,10 +155,19 @@ class OpenAIProvider(BaseLLMProvider):
                 generation_params["max_tokens"] = params.max_completion_tokens
             if params.tools:
                 generation_params["tools"] = [t.to_openai() for t in params.tools]
-            if params.thinking:
-                generation_params.update(self._prepare_thinking_params(params.thinking))
 
         return generation_params
+
+    def _apply_thinking_params(self, generation_params: Dict[str, Any], params: Optional[GenerationParams]) -> None:
+        if not params or not params.thinking:
+            return
+        generation_params.update(
+            build_thinking_request_params(
+                "openai",
+                str(generation_params["model"]),
+                params.thinking,
+            )
+        )
 
     async def count_tokens(
         self,
@@ -284,6 +294,7 @@ class OpenAIProvider(BaseLLMProvider):
         """
         generation_params = self._prepare_generation_params(params)
         generation_params.update(kwargs)
+        self._apply_thinking_params(generation_params, params)
         generation_params["stream"] = True
         # Ask provider to include usage in the final stream chunk when supported
         try:
@@ -320,6 +331,7 @@ class OpenAIProvider(BaseLLMProvider):
     ) -> Message:
         generation_params = self._prepare_generation_params(params)
         generation_params.update(kwargs)
+        self._apply_thinking_params(generation_params, params)
 
         # Swap max_tokens for max_completion_tokens for o3-mini, etc.
         if generation_params["model"] in self.models_max_completion_tokens:

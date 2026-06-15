@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Any, AsyncContextManager, Dict, List, Optional, Union
+from typing import Any, AsyncContextManager, Dict, List, Optional
 
 from anthropic import APIError as AnthropicAPIError
 from google.genai.errors import APIError as GeminiAPIError
@@ -8,7 +8,7 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ex
 
 from ..models import Message, MessageHistory, ToolDefinition
 from ..ratelimit import RateLimiter
-from .models import GenerationParams, ReasoningEffort, ThinkingConfig, TokenCount
+from .models import GenerationParams, TokenCount
 
 
 class BaseLLMProvider(ABC):
@@ -56,10 +56,6 @@ class BaseLLMProvider(ABC):
 
     def _prepare_generation_params(self, params: Optional[GenerationParams] = None) -> Dict[str, Any]:
         """Convert common parameters to provider-specific format"""
-        return {}
-
-    def _prepare_thinking_params(self, thinking: Optional[Union[ThinkingConfig, ReasoningEffort]]) -> Dict[str, Any]:
-        """Convert thinking parameters to provider-specific format"""
         return {}
 
     def get_retry_decorator(self):

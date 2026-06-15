@@ -39,9 +39,9 @@ class ModelConfig(BaseModel):
 
     rate_limits: RateLimitConfig = Field(default_factory=RateLimitConfig, description="Rate limits for this model")
 
-    # Only used for thinking config
-    thinking_tokens: Optional[int] = Field(
-        default=None, description="Number of tokens to reserve for thinking operations", gt=0
+    thinking_effort: Optional[str] = Field(
+        default=None,
+        description="Model-specific thinking or reasoning effort level",
     )
 
 
@@ -99,7 +99,9 @@ class AgentConfig(BaseModel):
 
     # Model configurations
     long_context_config: ModelConfig = Field(
-        default_factory=lambda: ModelConfig(provider=ModelProvider.ANTHROPIC, model="claude-opus-4-7"),
+        default_factory=lambda: ModelConfig(
+            provider=ModelProvider.ANTHROPIC, model="claude-opus-4-7", thinking_effort="medium"
+        ),
         description="Configuration for long context operations",
     )
 
@@ -115,7 +117,7 @@ class AgentConfig(BaseModel):
 
     thinking_config: ModelConfig = Field(
         default_factory=lambda: ModelConfig(
-            provider=ModelProvider.ANTHROPIC, model="claude-opus-4-7", thinking_tokens=1024
+            provider=ModelProvider.ANTHROPIC, model="claude-opus-4-7", thinking_effort="medium"
         ),
         description="Configuration for thinking operations",
     )

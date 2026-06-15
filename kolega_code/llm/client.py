@@ -37,7 +37,8 @@ from .exceptions import map_to_llm_error
 from .models import Message, MessageHistory, ToolDefinition
 from .providers.anthropic import AnthropicProvider
 from .providers.google import GoogleProvider
-from .providers.models import GeminiThinkingConfig, GenerationParams, ReasoningEffort, ThinkingConfig, TokenCount
+from .providers.models import GenerationParams, TokenCount
+from .specs import validate_thinking_effort
 from .providers.openai import OpenAIProvider
 
 
@@ -175,39 +176,16 @@ class LLMClient:
         except Exception as e:
             raise map_to_llm_error(e, self.provider_name) from e
 
-    def _prepare_thinking_param(
-        self, thinking: Optional[Union[int, str]] = None
-    ) -> Optional[Union[ThinkingConfig, ReasoningEffort, GeminiThinkingConfig]]:
-        """Convert thinking parameter to appropriate provider-specific thinking configuration.
-
-        Args:
-            thinking (Optional[Union[int, str]]): The thinking parameter to convert. Can be:
-                - For Anthropic: An integer specifying budget_tokens or None for default
-                - For Google: An integer to enable thoughts, or None/other to disable
-                - For OpenAI: A string matching ReasoningEffort enum values, or None for MEDIUM
-
-        Returns:
-            Optional[Union[ThinkingConfig, ReasoningEffort, GeminiThinkingConfig]]: The provider-specific
-            thinking configuration, or None if thinking parameter is None. Returns:
-                - ThinkingConfig for Anthropic with specified budget_tokens
-                - GeminiThinkingConfig for Google with include_thoughts flag
-                - ReasoningEffort enum for OpenAI providers
-        """
+    def _prepare_thinking_param(self, thinking: Optional[Union[int, str]] = None, model: Optional[str] = None) -> Optional[str]:
+        """Validate a model-specific thinking effort value."""
         if thinking is None:
             return None
 
-        if self.provider_name in ["anthropic", "moonshot", "deepseek"]:
-            if isinstance(thinking, int):
-                return ThinkingConfig(budget_tokens=thinking)
-            return ThinkingConfig()  # Use default budget_tokens
-        elif self.provider_name == "google":
-            if isinstance(thinking, int):
-                return GeminiThinkingConfig(include_thoughts=True)
-            return GeminiThinkingConfig(include_thoughts=False)
-        else:  # OpenAI
-            if isinstance(thinking, str) and thinking.lower() in [e.value for e in ReasoningEffort]:
-                return ReasoningEffort(thinking.lower())
-            return ReasoningEffort.MEDIUM  # Default to medium
+        if isinstance(thinking, int):
+            raise ValueError("Numeric thinking token budgets have been replaced by named thinking effort levels.")
+        if not model:
+            raise ValueError("A model is required when setting thinking effort.")
+        return validate_thinking_effort(self.provider_name, model, thinking)
 
     async def generate(
         self,
@@ -228,10 +206,7 @@ class LLMClient:
             temperature (float): Sampling temperature, higher is more random (default: 1.0)
             max_completion_tokens (Optional[int]): Maximum tokens to generate in response
             tools (Optional[List[Dict[str, Any]]]): List of tool definitions for function calling
-            thinking (Optional[Union[int, str]]): Provider-specific thinking configuration:
-                - Anthropic: Integer budget_tokens or None for default
-                - Google: Integer to enable thoughts, None/other to disable
-                - OpenAI: String matching ReasoningEffort enum or None for MEDIUM
+            thinking (Optional[Union[int, str]]): Model-specific thinking effort string.
             params (Optional[GenerationParams]): Override all parameters with a GenerationParams object
             **kwargs: Additional provider-specific parameters
 
@@ -247,7 +222,7 @@ class LLMClient:
                     temperature=temperature,
                     max_completion_tokens=max_completion_tokens,
                     tools=tools,
-                    thinking=self._prepare_thinking_param(thinking),
+                    thinking=self._prepare_thinking_param(thinking, str(kwargs.get("model")) if kwargs.get("model") else None),
                 )
             return await self.provider.generate(messages, system, params, **kwargs)
         except Exception as e:
@@ -272,10 +247,7 @@ class LLMClient:
             temperature (float): Sampling temperature, higher is more random (default: 1.0)
             max_completion_tokens (Optional[int]): Maximum tokens to generate in response
             tools (Optional[List[Dict[str, Any]]]): List of tool definitions for function calling
-            thinking (Optional[Union[int, str]]): Provider-specific thinking configuration:
-                - Anthropic: Integer budget_tokens or None for default
-                - Google: Integer to enable thoughts, None/other to disable
-                - OpenAI: String matching ReasoningEffort enum or None for MEDIUM
+            thinking (Optional[Union[int, str]]): Model-specific thinking effort string.
             params (Optional[GenerationParams]): Override all parameters with a GenerationParams object
             **kwargs: Additional provider-specific parameters
 
@@ -291,7 +263,7 @@ class LLMClient:
                     temperature=temperature,
                     max_completion_tokens=max_completion_tokens,
                     tools=tools,
-                    thinking=self._prepare_thinking_param(thinking),
+                    thinking=self._prepare_thinking_param(thinking, str(kwargs.get("model")) if kwargs.get("model") else None),
                 )
 
             # Return the appropriate stream type for the provider

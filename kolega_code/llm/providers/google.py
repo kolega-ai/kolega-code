@@ -4,6 +4,7 @@ from google.genai import Client as genai_client
 from google.genai import types as genai_types
 
 from ..models import Message, MessageChunk, MessageHistory, ToolDefinition
+from ..specs import build_thinking_request_params
 from ..tool_execution_ids import ToolExecutionIdRegistry
 from .base import BaseLLMProvider
 from .models import GenerationParams, TokenCount
@@ -81,6 +82,15 @@ class GoogleProvider(BaseLLMProvider):
         """Get retry decorator with configured max retries"""
         return self.get_retry_decorator()
 
+    def _prepare_thinking_config(self, model: str, params: Optional[GenerationParams]):
+        if not params or not params.thinking:
+            return None
+        request_params = build_thinking_request_params("google", model, params.thinking)
+        thinking_config = request_params.get("thinking_config")
+        if not thinking_config:
+            return None
+        return genai_types.ThinkingConfig(**thinking_config)
+
     async def count_tokens(
         self,
         messages: MessageHistory,
@@ -117,19 +127,20 @@ class GoogleProvider(BaseLLMProvider):
 
         Returns a coroutine that resolves to an async iterator.
         """
+        model = kwargs["model"]
         config = genai_types.GenerateContentConfig(
             system_instruction=system.content[0].text,
             temperature=params.temperature,
             max_output_tokens=params.max_completion_tokens,
             tools=[t.to_google() for t in params.tools] if params.tools else None,
-            thinking_config=params.thinking,
+            thinking_config=self._prepare_thinking_config(model, params),
         )
 
         await self.rate_limiter.acquire()
 
         return GoogleStreamWrapper(
             await self.async_client.aio.models.generate_content_stream(
-                model=kwargs["model"], contents=messages.to_google(), config=config
+                model=model, contents=messages.to_google(), config=config
             )
         )
 
@@ -140,18 +151,19 @@ class GoogleProvider(BaseLLMProvider):
         params: Optional[GenerationParams] = None,
         **kwargs,
     ) -> Message:
+        model = kwargs["model"]
         config = genai_types.GenerateContentConfig(
             system_instruction=system.content[0].text,
             temperature=params.temperature,
             max_output_tokens=params.max_completion_tokens,
             tools=[t.to_google() for t in params.tools] if params.tools else None,
-            thinking_config=params.thinking,
+            thinking_config=self._prepare_thinking_config(model, params),
         )
 
         await self.rate_limiter.acquire()
 
         response = await self.async_client.aio.models.generate_content(
-            model=kwargs["model"], contents=messages.to_google(), config=config
+            model=model, contents=messages.to_google(), config=config
         )
 
         return Message.from_google(response)

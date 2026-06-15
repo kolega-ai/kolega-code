@@ -47,6 +47,7 @@ def test_all_command_entries_include_each_scope():
     by_name = {entry.name: entry for entry in entries}
     assert by_name["help"].scope is CommandScope.AGENT
     assert by_name["plan"].scope is CommandScope.TUI
+    assert by_name["effort"].scope is CommandScope.TUI
     assert by_name["demo-skill"].scope is CommandScope.SKILL
 
 

@@ -19,7 +19,7 @@ def mock_config():
             provider=ModelProvider.ANTHROPIC,
             model="claude-3-7-sonnet-20250131",
             rate_limits=RateLimitConfig(requests_per_minute=10, tokens_per_minute=100000, max_retries=3),
-            thinking_tokens=5000,
+            thinking_effort="high",
         ),
     )
 
@@ -60,7 +60,7 @@ async def test_think_hard_tool_initialization(think_hard_tool):
     assert think_hard_tool.project_path == Path("/test/path")
     assert think_hard_tool.workspace_id == "test_workspace"
     assert think_hard_tool.thread_id == "test_thread"
-    assert think_hard_tool.config.thinking_config.thinking_tokens == 5000
+    assert think_hard_tool.config.thinking_config.thinking_effort == "high"
     assert think_hard_tool.config.thinking_config.provider == ModelProvider.ANTHROPIC
 
 

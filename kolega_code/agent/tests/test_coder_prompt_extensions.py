@@ -23,7 +23,7 @@ def test_coder_agent_includes_matching_prompt_extensions(tmp_path):
             provider=ModelProvider.ANTHROPIC,
             model="claude-3-7-sonnet-20250219",
             rate_limits=RateLimitConfig(),
-            thinking_tokens=1024,
+            thinking_effort="medium",
         ),
     )
 

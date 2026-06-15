@@ -58,7 +58,7 @@ for the run.
 | `--edit-model` | Model for edit-file operations |
 | `--thinking-provider` | Provider for think-hard operations |
 | `--thinking-model` | Model for think-hard operations |
-| `--thinking-tokens` | Thinking token budget (integer) |
+| `--thinking-effort` | Model-specific thinking effort, such as `auto`, `medium`, `high`, or `max` |
 | `--environment` | Environment label for tracing/metadata |
 
 ## Session-state options

@@ -15,8 +15,11 @@ the TUI:
 
 1. **Provider** — choose your AI provider.
 2. **Model** — choose a model for that provider.
-3. **API Key** — paste your key (entered as a password field).
-4. **Save Settings** — persists everything locally.
+3. **Thinking effort** — choose one of the effort values supported by that model.
+4. **API Key** — paste your key (entered as a password field).
+5. **Save Settings** — persists everything locally.
+
+When you switch models, the thinking effort resets to the new model's default.
 
 A saved selection is used for **all** agent model roles. Existing environment
 variables and `--provider` / `--model` flags continue to override it — see
@@ -40,9 +43,10 @@ The file looks like this:
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "active_provider": "moonshot",
   "active_model": "kimi-k2.6",
+  "active_thinking_effort": "auto",
   "api_keys": {
     "moonshot": "sk-..."
   }
@@ -60,7 +64,7 @@ store keys on disk at all, supply them via
 
 <FileTree>
 - kolega-code/
-  - settings.json   Provider, model, and API keys (0600)
+  - settings.json   Provider, model, thinking effort, and API keys (0600)
   - sessions/
     - &lt;session-id&gt;.json   One file per saved session
 </FileTree>

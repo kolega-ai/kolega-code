@@ -10,7 +10,7 @@ from typing import Optional
 
 from .session_store import default_state_dir
 
-SETTINGS_SCHEMA_VERSION = 1
+SETTINGS_SCHEMA_VERSION = 2
 
 
 class SettingsStoreError(RuntimeError):
@@ -21,18 +21,21 @@ class SettingsStoreError(RuntimeError):
 class CliSettings:
     active_provider: Optional[str] = None
     active_model: Optional[str] = None
+    active_thinking_effort: Optional[str] = None
     api_keys: dict[str, str] = field(default_factory=dict)
     schema_version: int = SETTINGS_SCHEMA_VERSION
 
     @classmethod
     def from_dict(cls, data: dict) -> "CliSettings":
-        if data.get("schema_version") != SETTINGS_SCHEMA_VERSION:
+        schema_version = data.get("schema_version")
+        if schema_version not in {1, SETTINGS_SCHEMA_VERSION}:
             raise SettingsStoreError(f"Unsupported settings schema version: {data.get('schema_version')}")
         api_keys = data.get("api_keys") or {}
         return cls(
-            schema_version=data["schema_version"],
+            schema_version=SETTINGS_SCHEMA_VERSION,
             active_provider=data.get("active_provider"),
             active_model=data.get("active_model"),
+            active_thinking_effort=data.get("active_thinking_effort") if schema_version == SETTINGS_SCHEMA_VERSION else None,
             api_keys={str(provider): str(key) for provider, key in api_keys.items() if key},
         )
 
@@ -41,6 +44,7 @@ class CliSettings:
             "schema_version": self.schema_version,
             "active_provider": self.active_provider,
             "active_model": self.active_model,
+            "active_thinking_effort": self.active_thinking_effort,
             "api_keys": self.api_keys,
         }
 

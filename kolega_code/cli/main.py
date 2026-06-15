@@ -16,7 +16,14 @@ from kolega_code.llm.models import TextBlock
 from kolega_code.agent.prompt_provider import AgentMode
 from kolega_code.services.browser import PlaywrightBrowserManager
 
-from .config import CliConfigError, CliConfigOverrides, build_agent_config, config_summary, key_status
+from .config import (
+    DEPRECATED_THINKING_TOKENS_MESSAGE,
+    CliConfigError,
+    CliConfigOverrides,
+    build_agent_config,
+    config_summary,
+    key_status,
+)
 from .connection import CliConnectionManager
 from .mentions import build_file_attachments
 from .session_store import SessionRecord, SessionStore, SessionStoreError
@@ -91,7 +98,8 @@ def _add_common_model_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--edit-model", help="Model for edit-file operations.")
     parser.add_argument("--thinking-provider", help="Provider for think-hard operations.")
     parser.add_argument("--thinking-model", help="Model for think-hard operations.")
-    parser.add_argument("--thinking-tokens", type=int, help="Thinking token budget for think-hard operations.")
+    parser.add_argument("--thinking-effort", help="Model-specific thinking effort for the active model.")
+    parser.add_argument("--thinking-tokens", dest="deprecated_thinking_tokens", type=int, help=argparse.SUPPRESS)
     parser.add_argument("--environment", help="Environment label for tracing/metadata.")
 
 
@@ -156,6 +164,8 @@ def _build_subcommand_parser() -> argparse.ArgumentParser:
 
 
 def _overrides_from_args(args: argparse.Namespace) -> CliConfigOverrides:
+    if getattr(args, "deprecated_thinking_tokens", None) is not None:
+        raise CliConfigError(DEPRECATED_THINKING_TOKENS_MESSAGE)
     return CliConfigOverrides(
         provider=getattr(args, "provider", None),
         model=getattr(args, "model", None),
@@ -165,7 +175,7 @@ def _overrides_from_args(args: argparse.Namespace) -> CliConfigOverrides:
         edit_model=getattr(args, "edit_model", None),
         thinking_provider=getattr(args, "thinking_provider", None),
         thinking_model=getattr(args, "thinking_model", None),
-        thinking_tokens=getattr(args, "thinking_tokens", None),
+        thinking_effort=getattr(args, "thinking_effort", None),
         environment=getattr(args, "environment", None),
     )
 
@@ -266,7 +276,9 @@ def _run_tui(args: argparse.Namespace) -> int:
     try:
         config = build_agent_config(project_path, _overrides_from_args(args), settings=settings)
         summary = config_summary(config)
-    except CliConfigError:
+    except CliConfigError as exc:
+        if str(exc) == DEPRECATED_THINKING_TOKENS_MESSAGE:
+            raise
         config = None
     session = _resolve_tui_session(
         store,
@@ -541,6 +553,7 @@ def _run_doctor(args: argparse.Namespace) -> int:
     line("Textual installed", textual_installed, "success" if textual_installed else "warning")
     if settings.active_provider and settings.active_model:
         line("Stored active model", f"{settings.active_provider}/{settings.active_model}")
+        line("Stored thinking effort", settings.active_thinking_effort or "model default")
         line("Stored API key", key_status(settings.active_provider, project_path, settings))
     else:
         line("Stored active model", "not configured", "warning")
@@ -557,6 +570,7 @@ def _run_doctor(args: argparse.Namespace) -> int:
     line("Fast model", f"{summary['fast_provider']}/{summary['fast_model']}")
     line("Edit model", f"{summary['edit_provider']}/{summary['edit_model']}")
     line("Thinking model", f"{summary['thinking_provider']}/{summary['thinking_model']}")
+    line("Thinking effort", summary["thinking_effort"])
     return 0
 
 

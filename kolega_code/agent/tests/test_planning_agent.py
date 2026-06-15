@@ -69,7 +69,7 @@ def agent_config():
     config.long_context_config = Mock()
     config.long_context_config.provider = "anthropic"
     config.long_context_config.model = "claude-sonnet-4-5-20250929"
-    config.long_context_config.thinking_tokens = None
+    config.long_context_config.thinking_effort = None
     config.openai_api_key = "test_key"
     config.anthropic_api_key = "test_key"
     config.browser_use_headless = True
