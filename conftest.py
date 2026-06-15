@@ -28,7 +28,8 @@ def pytest_configure() -> None:
 
 
 @pytest.fixture
-def isolated_cli_env(monkeypatch: pytest.MonkeyPatch) -> None:
+def isolated_cli_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Remove process CLI config so unit tests don't depend on a developer .env."""
     for key in {*API_KEY_ENV.values(), *CLI_CONFIG_ENV_KEYS}:
         monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("KOLEGA_CODE_STATE_DIR", str(tmp_path / "state"))
