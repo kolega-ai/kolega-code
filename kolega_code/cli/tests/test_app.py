@@ -3639,6 +3639,8 @@ async def test_status_dashboard_context_note_uses_alert_level(
 async def test_save_settings_toasts_on_success(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
 
+    from textual.widgets import Input
+
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
 
     async with app.run_test():
@@ -3649,6 +3651,7 @@ async def test_save_settings_toasts_on_success(tmp_path: Path, monkeypatch: pyte
 
         monkeypatch.setattr(app, "notify", fake_notify)
 
+        app.query_one("#api_key_input", Input).value = "moonshot-key"
         await app._save_settings_from_ui()
 
         assert ("Settings saved.", "information") in notifications
