@@ -7,9 +7,15 @@ name = "kolega-code"
 version = "0.1.0"
 description = "Shared Kolega agent runtime and local execution tools"
 readme = "README.md"
+license = {file = "LICENSE"}
 requires-python = ">=3.11"
 authors = [
     {name = "Kolega Team"}
+]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
 ]
 dependencies = [
     "anthropic>=0.18.1",
