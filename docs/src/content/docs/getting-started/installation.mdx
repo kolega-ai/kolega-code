@@ -1,0 +1,90 @@
+---
+title: Installation
+description: How to install the Kolega Code CLI.
+---
+
+import { Aside, Tabs, TabItem, Steps } from '@astrojs/starlight/components';
+
+<Aside type="caution" title="Work in progress">
+Full installation instructions are coming soon. The commands below show the
+intended install flow; package availability, prerequisites, and platform-specific
+notes will be finalized here. Treat anything marked **TODO** as a placeholder.
+</Aside>
+
+## Requirements
+
+- **Python 3.11 or newer**
+- An API key for at least one [supported provider](../../configuration/providers-and-models/)
+
+## Install the CLI
+
+The interactive terminal UI ships in the optional `cli` extra, which pulls in
+[Textual](https://textual.textualize.io/).
+
+<Tabs>
+  <TabItem label="pip">
+    ```bash
+    pip install "kolega-code[cli]"
+    ```
+  </TabItem>
+  <TabItem label="uv">
+    ```bash
+    # TODO: confirm the published package name / index
+    uv pip install "kolega-code[cli]"
+    ```
+  </TabItem>
+  <TabItem label="From source">
+    ```bash
+    git clone https://github.com/kolega-ai/kolega-code.git
+    cd kolega-code
+    # TODO: confirm the supported editable-install command
+    uv sync   # or: pip install -e ".[cli]"
+    ```
+  </TabItem>
+</Tabs>
+
+<Aside type="note">
+Without the `[cli]` extra, Textual is not installed and the interactive UI will
+not launch. Running `kolega-code .` in that case prints:
+
+```text
+Textual is not installed. Install the CLI extra with: pip install 'kolega-code[cli]'
+```
+</Aside>
+
+## Verify the install
+
+Once installed, confirm the CLI is on your `PATH` and your environment looks
+healthy:
+
+```bash
+kolega-code doctor --project .
+```
+
+`doctor` reports your project path, where session state is stored, whether Textual
+is installed, your stored model selection, and whether the required API keys are
+present. See [`doctor`](../../cli/doctor/) for details.
+
+## Next steps
+
+<Steps>
+
+1. **Install** the CLI (above).
+
+2. **Add a provider and API key** — either in the in-app
+   [Settings tab](../../configuration/settings-and-api-keys/) or via
+   [environment variables](../../configuration/environment-variables/).
+
+3. **Run your first session** — follow the [Quick Start](../quick-start/).
+
+</Steps>
+
+---
+
+**TODO for maintainers**
+
+- [ ] Confirm the published package name and index (PyPI / private registry).
+- [ ] Document supported Python versions and any OS-specific prerequisites.
+- [ ] Note whether `playwright install` (browser binaries) is required for the
+      browser tools.
+- [ ] Add upgrade / uninstall instructions.
