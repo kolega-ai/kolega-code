@@ -24,6 +24,7 @@ from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.css.query import NoMatches
 from textual.message import Message as TextualMessage
 from textual.selection import Selection
 from textual.strip import Strip
@@ -1116,19 +1117,25 @@ class KolegaCodeApp(App):
     def on_select_changed(self, event: Select.Changed) -> None:
         if event.select.id == "provider_select":
             provider = str(event.value)
-            model_select = self.query_one("#model_select", Select)
+            try:
+                model_select = self.query_one("#model_select", Select)
+                api_key_input = self.query_one("#api_key_input", Input)
+            except NoMatches:
+                return
             model_options = ui_model_options(provider)
             model_select.set_options(model_options)
             model = model_options[0][1] if model_options else UI_DEFAULT_MODEL
             if model_options:
                 model_select.value = model
             self._set_effort_select_default(provider, model)
-            api_key_input = self.query_one("#api_key_input", Input)
             api_key_input.placeholder = self._api_key_placeholder(provider)
             return
 
         if event.select.id == "model_select":
-            provider = str(self.query_one("#provider_select", Select).value)
+            try:
+                provider = str(self.query_one("#provider_select", Select).value)
+            except NoMatches:
+                return
             self._set_effort_select_default(provider, str(event.value))
 
     async def _consume_events(self) -> None:
