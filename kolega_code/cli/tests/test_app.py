@@ -4229,6 +4229,8 @@ async def test_textual_app_model_slash_command_shows_and_switches_model(
     async with app.run_test():
         from textual.widgets import Input
 
+        from kolega_code.cli.app import ActionList
+
         app.query_one("#api_key_input", Input).value = "moonshot-key"
         await app._save_settings_from_ui()
         assert isinstance(app.agent, FakeCoderAgent)
@@ -4241,10 +4243,15 @@ async def test_textual_app_model_slash_command_shows_and_switches_model(
         assert "Available thinking efforts:" in effort_entry.content
         assert "`auto`" in effort_entry.content
         assert "`none`" not in effort_entry.content
+        effort_actions = app.query_one("#effort_actions", ActionList)
+        assert effort_actions.display is True
+        assert app.focused is effort_actions
+        assert effort_actions.get_option("effort_option_0").prompt.startswith("1. Auto (auto)")
 
         composer.load_text("/effort auto")
         await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
         assert settings_store.load().active_thinking_effort == "auto"
+        assert effort_actions.display is False
         first_agent = app.agent
         assert isinstance(first_agent, FakeCoderAgent)
 
@@ -4270,6 +4277,204 @@ async def test_textual_app_model_slash_command_shows_and_switches_model(
         composer.load_text("/model does-not-exist")
         await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
         assert settings_store.load().active_model == "kimi-k3"
+
+
+@pytest.mark.asyncio
+async def test_textual_app_effort_slash_command_selects_from_action_list(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli import app as app_module
+    from kolega_code.cli.app import ActionList, ChatComposer, KolegaCodeApp
+
+    class FakeCoderAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def restore_message_history(self, history):
+            return None
+
+        def dump_message_history(self):
+            return []
+
+        async def cleanup(self):
+            return None
+
+    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    state_dir = tmp_path / "state"
+    store = SessionStore(state_dir)
+    settings_store = SettingsStore(state_dir)
+    settings = CliSettings(
+        active_provider=ModelProvider.DEEPSEEK.value,
+        active_model=DEEPSEEK_DEFAULT_MODEL,
+        active_thinking_effort="high",
+    )
+    settings.set_api_key(ModelProvider.DEEPSEEK.value, "deepseek-key")
+    settings_store.save(settings)
+    session = store.create(project, "code", {})
+    app = KolegaCodeApp(
+        project_path=project,
+        mode="code",
+        store=store,
+        settings_store=settings_store,
+        session=session,
+    )
+
+    async with app.run_test() as pilot:
+        composer = app.query_one("#composer", ChatComposer)
+        composer.load_text("/effort")
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+
+        effort_actions = app.query_one("#effort_actions", ActionList)
+        assert effort_actions.display is True
+        assert app.focused is effort_actions
+        assert effort_actions.option_count == 3
+
+        await pilot.press("down", "down", "enter")
+        await pilot.pause()
+        assert settings_store.load().active_thinking_effort == "max"
+        assert effort_actions.display is False
+
+        composer.load_text("/effort")
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+        assert app.focused is effort_actions
+
+        await pilot.press("1")
+        await pilot.pause()
+        assert settings_store.load().active_thinking_effort == "none"
+        assert effort_actions.display is False
+
+
+@pytest.mark.asyncio
+async def test_textual_app_effort_slash_command_accepts_typed_selection_and_rejects_invalid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli import app as app_module
+    from kolega_code.cli.app import ActionList, ChatComposer, KolegaCodeApp
+
+    class FakeCoderAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.messages = []
+
+        def restore_message_history(self, history):
+            return None
+
+        def dump_message_history(self):
+            return []
+
+        async def cleanup(self):
+            return None
+
+        async def process_message_stream(self, message):
+            self.messages.append(message)
+            yield {"type": "response", "content": "unexpected"}
+
+    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    state_dir = tmp_path / "state"
+    store = SessionStore(state_dir)
+    settings_store = SettingsStore(state_dir)
+    settings = CliSettings(
+        active_provider=ModelProvider.DEEPSEEK.value,
+        active_model=DEEPSEEK_DEFAULT_MODEL,
+        active_thinking_effort="high",
+    )
+    settings.set_api_key(ModelProvider.DEEPSEEK.value, "deepseek-key")
+    settings_store.save(settings)
+    session = store.create(project, "code", {})
+    app = KolegaCodeApp(
+        project_path=project,
+        mode="code",
+        store=store,
+        settings_store=settings_store,
+        session=session,
+    )
+
+    async with app.run_test():
+        composer = app.query_one("#composer", ChatComposer)
+        composer.load_text("/effort")
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+
+        effort_actions = app.query_one("#effort_actions", ActionList)
+        assert effort_actions.display is True
+
+        composer.load_text("bogus")
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+        assert settings_store.load().active_thinking_effort == "high"
+        assert effort_actions.display is True
+        assert not any(entry.kind == "user" and entry.content == "bogus" for entry in app.conversation_entries)
+        assert app.agent.messages == []
+
+        composer.load_text("MAX")
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+        assert settings_store.load().active_thinking_effort == "max"
+        assert effort_actions.display is False
+
+
+@pytest.mark.asyncio
+async def test_textual_app_effort_slash_command_blocks_selector_during_active_turn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli import app as app_module
+    from kolega_code.cli.app import ActionList, ChatComposer, KolegaCodeApp
+
+    class FakeCoderAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def restore_message_history(self, history):
+            return None
+
+        def dump_message_history(self):
+            return []
+
+        async def cleanup(self):
+            return None
+
+    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    state_dir = tmp_path / "state"
+    store = SessionStore(state_dir)
+    settings_store = SettingsStore(state_dir)
+    settings = CliSettings(
+        active_provider=ModelProvider.DEEPSEEK.value,
+        active_model=DEEPSEEK_DEFAULT_MODEL,
+        active_thinking_effort="high",
+    )
+    settings.set_api_key(ModelProvider.DEEPSEEK.value, "deepseek-key")
+    settings_store.save(settings)
+    session = store.create(project, "code", {})
+    app = KolegaCodeApp(
+        project_path=project,
+        mode="code",
+        store=store,
+        settings_store=settings_store,
+        session=session,
+    )
+
+    async with app.run_test():
+        composer = app.query_one("#composer", ChatComposer)
+        app._turn_active = True
+        composer.load_text("/effort")
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+
+        assert app._pending_effort_selection is None
+        assert app.query_one("#effort_actions", ActionList).display is False
+        assert settings_store.load().active_thinking_effort == "high"
+        app._turn_active = False
 
 
 @pytest.mark.asyncio

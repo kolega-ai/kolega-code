@@ -11,6 +11,7 @@ from __future__ import annotations
 COMPOSER_PLACEHOLDER = "Ask Kolega Code..."
 PLAN_READY_PLACEHOLDER = "Plan ready. Choose Implement plan or Discuss further."
 QUESTION_PLACEHOLDER = "Choose an option below or type a custom answer..."
+EFFORT_PLACEHOLDER = "Choose a thinking effort below or type a supported value..."
 
 # Durable transcript messages
 THREAD_RESET_MESSAGE = "Thread reset. Previous messages were cleared."
@@ -59,7 +60,7 @@ MODEL_SWITCH_HINT = "Switch with /model <name>."
 EFFORT_SWITCHED = "Switched thinking effort to {effort} for {provider}/{model}."
 EFFORT_UNKNOWN = "Unknown thinking effort {effort} for {provider}/{model}."
 EFFORT_UNSUPPORTED = "{provider}/{model} does not support a thinking effort setting."
-EFFORT_SWITCH_HINT = "Switch with /effort <level>."
+EFFORT_SWITCH_HINT = "Choose below, or switch with /effort <level>."
 COPY_LAST_RESPONSE = "Copied the last response to the clipboard."
 COPY_NOTHING = "No response to copy yet."
 VERSION_INFO = "Kolega Code version {version}."
