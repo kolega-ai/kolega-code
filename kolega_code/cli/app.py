@@ -1238,19 +1238,17 @@ class KolegaCodeApp(App):
         self.exit()
 
     def _populate_settings_controls(self) -> None:
-        if not self.settings.active_provider:
-            self.settings.active_provider = UI_DEFAULT_PROVIDER
-        provider = self.settings.active_provider
+        provider_values = {value for _, value in ui_provider_options()}
+        provider = self.settings.active_provider if self.settings.active_provider in provider_values else UI_DEFAULT_PROVIDER
         model_options = ui_model_options(provider)
         valid_models = {value for _, value in model_options}
-        model_was_reset = False
-        if not self.settings.active_model or self.settings.active_model not in valid_models:
-            self.settings.active_model = model_options[0][1] if model_options else UI_DEFAULT_MODEL
-            model_was_reset = True
-        model = self.settings.active_model
+        model = self.settings.active_model if self.settings.active_model in valid_models else None
+        if model is None:
+            model = model_options[0][1] if model_options else UI_DEFAULT_MODEL
         effort_options = {value for _, value in ui_thinking_effort_options(provider, model)}
-        if model_was_reset or self.settings.active_thinking_effort not in effort_options:
-            self.settings.active_thinking_effort = default_ui_thinking_effort(provider, model)
+        effort = self.settings.active_thinking_effort if self.settings.active_thinking_effort in effort_options else None
+        if effort is None:
+            effort = default_ui_thinking_effort(provider, model)
         provider_select = self.query_one("#provider_select", Select)
         model_select = self.query_one("#model_select", Select)
         effort_select = self.query_one("#thinking_effort_select", Select)
@@ -1260,8 +1258,8 @@ class KolegaCodeApp(App):
         model_select.set_options(model_options)
         model_select.value = model
         effort_select.set_options(ui_thinking_effort_options(provider, model))
-        if self.settings.active_thinking_effort is not None:
-            effort_select.value = self.settings.active_thinking_effort
+        if effort is not None:
+            effort_select.value = effort
         api_key_input.placeholder = self._api_key_placeholder(provider)
         self._update_settings_status()
 
@@ -1543,8 +1541,13 @@ class KolegaCodeApp(App):
         if not args:
             current_provider, current_model = self._startup_model()
             current_effort = self._startup_thinking_effort()
+            active_model_line = (
+                messages.SETTINGS_ACTIVE_MODEL.format(provider=current_provider, model=current_model)
+                if current_model
+                else messages.SETTINGS_ACTIVE_MODEL_UNCONFIGURED
+            )
             lines = [
-                messages.SETTINGS_ACTIVE_MODEL.format(provider=current_provider, model=current_model),
+                active_model_line,
                 messages.SETTINGS_THINKING_EFFORT_LINE.format(effort=current_effort or "not supported"),
                 "",
                 "Available models:",
@@ -1565,6 +1568,7 @@ class KolegaCodeApp(App):
             self._notify_user(messages.MODEL_UNKNOWN.format(model=args, provider=provider), severity="warning")
             return
 
+        self.settings.active_provider = provider
         self.settings.active_model = matched
         self.settings.active_thinking_effort = default_ui_thinking_effort(provider, matched)
         self.settings_store.save(self.settings)
@@ -1590,8 +1594,13 @@ class KolegaCodeApp(App):
             return
 
         if not args:
+            active_model_line = (
+                messages.SETTINGS_ACTIVE_MODEL.format(provider=provider, model=model)
+                if model
+                else messages.SETTINGS_ACTIVE_MODEL_UNCONFIGURED
+            )
             lines = [
-                messages.SETTINGS_ACTIVE_MODEL.format(provider=provider, model=model),
+                active_model_line,
                 messages.SETTINGS_THINKING_EFFORT_LINE.format(effort=current_effort or "not supported"),
                 "",
                 "Available thinking efforts:",
@@ -1944,8 +1953,20 @@ class KolegaCodeApp(App):
             return
 
     def _update_settings_status(self) -> None:
-        provider = self.settings.active_provider or UI_DEFAULT_PROVIDER
-        model = self.settings.active_model or UI_DEFAULT_MODEL
+        if not (self.settings.active_provider and self.settings.active_model):
+            text = "\n".join(
+                [
+                    messages.SETTINGS_ACTIVE_MODEL_UNCONFIGURED,
+                    messages.SETTINGS_THINKING_EFFORT_LINE.format(effort="not configured"),
+                    messages.SETTINGS_API_KEY_LINE.format(status="not checked until a model is configured"),
+                ]
+            )
+            self._set_settings_status(text, "warning")
+            self._refresh_status_dashboard()
+            return
+
+        provider = self.settings.active_provider
+        model = self.settings.active_model
         effort = self.settings.active_thinking_effort or default_ui_thinking_effort(provider, model) or "not supported"
         status = key_status(provider, self.project_path, self.settings)
         tone = "warning" if "missing" in status.lower() else "ok"
@@ -1988,8 +2009,13 @@ class KolegaCodeApp(App):
     def _startup_content(self) -> str:
         session_id = str(self.session.session_id)[:8]
         provider, model = self._startup_model()
+        model_display = f"{provider}/{model}" if model else provider
         effort = self._startup_thinking_effort() or "not supported"
-        api_key = key_status(provider, self.project_path, self.settings)
+        api_key = (
+            key_status(provider, self.project_path, self.settings)
+            if model
+            else "not checked until a model is configured"
+        )
         return "\n".join(
             [
                 *STARTUP_WORDMARK,
@@ -1998,7 +2024,7 @@ class KolegaCodeApp(App):
                 f"Session: {session_id}",
                 f"Mode: {self.mode}",
                 f"Interaction: {self.interaction_mode}",
-                f"Model: {provider}/{model}",
+                f"Model: {model_display}",
                 f"Thinking effort: {effort}",
                 f"API key: {api_key}",
                 "",
@@ -2011,15 +2037,10 @@ class KolegaCodeApp(App):
         if self.config is not None:
             return self.config.long_context_config.provider.value, self.config.long_context_config.model
 
-        provider = self.settings.active_provider or UI_DEFAULT_PROVIDER
-        model = self.settings.active_model
-        if model:
-            return provider, model
+        if self.settings.active_provider and self.settings.active_model:
+            return self.settings.active_provider, self.settings.active_model
 
-        model_options = ui_model_options(provider)
-        if model_options:
-            return provider, model_options[0][1]
-        return provider, UI_DEFAULT_MODEL
+        return "not configured", ""
 
     def _startup_thinking_effort(self) -> Optional[str]:
         if self.config is not None:
@@ -2047,7 +2068,7 @@ class KolegaCodeApp(App):
 
     def _format_status_dashboard(self) -> str:
         state = self._status_state
-        provider_model = f"{state.provider}/{state.model}"
+        provider_model = f"{state.provider}/{state.model}" if state.model else state.provider
         effort = state.thinking_effort or "not supported"
         mode = state.mode.title()
         turn_style = TURN_STATE_STYLES.get(state.turn_state, Color.ACCENT)

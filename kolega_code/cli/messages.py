@@ -74,13 +74,14 @@ BLOCK_PLAN_DECISION = "Choose Implement plan or Discuss further before sending a
 BLOCK_PLAN_DECISION_MODE_SWITCH = "Choose Implement plan or Discuss further before switching modes."
 BLOCK_PLAN_DECISION_SKILL = "Choose Implement plan or Discuss further before activating a skill."
 BLOCK_PENDING_QUESTION_SKILL = "Answer the pending planning question before activating a skill."
-SETTINGS_REQUIRED = "Save a provider, model, and API key before chatting."
-SETTINGS_REQUIRED_SKILL = "Save a provider, model, and API key before activating a skill."
+SETTINGS_REQUIRED = "Configure a provider/model and API key before chatting."
+SETTINGS_REQUIRED_SKILL = "Configure a provider/model and API key before activating a skill."
 
 # Settings tab
 SETTINGS_SAVED = "Settings saved."
 SETTINGS_INCOMPLETE = "Configuration incomplete: {error}"
 SETTINGS_ACTIVE_MODEL = "Active model: {provider}/{model}"
+SETTINGS_ACTIVE_MODEL_UNCONFIGURED = "Active model: not configured"
 SETTINGS_API_KEY_LINE = "API key: {status}"
 SETTINGS_THINKING_EFFORT_LINE = "Thinking effort: {effort}"
 

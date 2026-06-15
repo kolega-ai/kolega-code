@@ -47,16 +47,20 @@ kolega-code . --resume
 kolega-code . --resume <thread-or-session-id>
 ```
 
-You can also set `MOONSHOT_API_KEY`, `DEEPSEEK_API_KEY`, or keep using env/flag based configuration for non-UI commands:
+You can also use env/flag based configuration for non-UI commands. API key
+variables provide credentials only; set a provider/model explicitly or save one
+in the Settings UI:
 
 ```bash
+export KOLEGA_CODE_PROVIDER=deepseek
+export DEEPSEEK_API_KEY=...
 kolega-code ask "summarize this repository" --project .
 kolega-code ask "summarize this repository" --project . --provider deepseek --model deepseek-v4-pro
 kolega-code sessions list --project .
 kolega-code doctor --project .
 ```
 
-The Settings UI supports Moonshot `kimi-k2.7-code`, Moonshot `kimi-k2.6`, and DeepSeek `deepseek-v4-pro`. A saved UI selection is used for all agent model roles, and switching models resets thinking effort to that model's default. API keys are stored in the local CLI settings file with restrictive permissions. Existing environment and model/provider flag overrides continue to work. Local session state is stored under the platform state directory unless `KOLEGA_CODE_STATE_DIR` is set.
+The Settings UI supports Moonshot `kimi-k2.7-code`, Moonshot `kimi-k2.6`, and DeepSeek `deepseek-v4-pro`. A saved UI selection is used for all agent model roles, and switching models resets thinking effort to that model's default. API keys are stored in the local CLI settings file with restrictive permissions. Existing environment and model/provider flag overrides continue to work, but API key variables alone never select a provider or model. Local session state is stored under the platform state directory unless `KOLEGA_CODE_STATE_DIR` is set.
 
 ## From source
 

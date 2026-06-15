@@ -14,7 +14,10 @@ For any given setting, the first available source wins:
 2. **Shell environment variables**
 3. **Project `.env` file** (in the project directory)
 4. **Saved Settings** (`settings.json`)
-5. **Built-in defaults**
+
+Kolega Code requires an explicit provider/model selection from flags,
+environment variables, a project `.env` file, or saved settings. API key
+variables alone are not a model selection source.
 
 :::note
 Within the env layer, your **shell environment takes priority over the `.env`
@@ -25,6 +28,9 @@ file** — values exported in your shell override the same key in `.env`.
 
 Set the variable for each provider you use. Only the providers backing your active
 model roles are required.
+
+API key variables provide credentials only. They do not select the active
+provider or model.
 
 | Variable | Provider |
 | --- | --- |

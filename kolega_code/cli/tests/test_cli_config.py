@@ -4,9 +4,7 @@ import pytest
 
 from kolega_code.config import ModelProvider
 from kolega_code.cli.config import (
-    DEFAULT_FAST_MODEL,
     DEFAULT_LONG_MODEL,
-    DEFAULT_THINKING_MODEL,
     CliConfigError,
     CliConfigOverrides,
     build_agent_config,
@@ -21,13 +19,34 @@ from kolega_code.cli.provider_registry import (
 from kolega_code.cli.settings import CliSettings
 
 
-def test_build_agent_config_defaults_to_latest_anthropic_models(tmp_path: Path) -> None:
-    config = build_agent_config(tmp_path, env={"ANTHROPIC_API_KEY": "test-key"})
+@pytest.mark.parametrize(
+    ("api_key_env", "api_key"),
+    [
+        ("ANTHROPIC_API_KEY", "anthropic-key"),
+        ("MOONSHOT_API_KEY", "moonshot-key"),
+        ("DEEPSEEK_API_KEY", "deepseek-key"),
+    ],
+)
+def test_build_agent_config_requires_model_selection_even_with_api_key(
+    tmp_path: Path, api_key_env: str, api_key: str
+) -> None:
+    with pytest.raises(CliConfigError, match="No provider/model configured"):
+        build_agent_config(tmp_path, env={api_key_env: api_key})
+
+
+def test_build_agent_config_explicit_provider_uses_provider_default_model(tmp_path: Path) -> None:
+    config = build_agent_config(
+        tmp_path,
+        env={
+            "ANTHROPIC_API_KEY": "test-key",
+            "KOLEGA_CODE_PROVIDER": "anthropic",
+        },
+    )
 
     assert config.long_context_config.provider == ModelProvider.ANTHROPIC
     assert config.long_context_config.model == DEFAULT_LONG_MODEL
-    assert config.fast_config.model == DEFAULT_FAST_MODEL
-    assert config.thinking_config.model == DEFAULT_THINKING_MODEL
+    assert config.fast_config.model == DEFAULT_LONG_MODEL
+    assert config.thinking_config.model == DEFAULT_LONG_MODEL
     assert config.long_context_config.thinking_effort == "medium"
     assert config.thinking_config.thinking_effort == "medium"
 
@@ -85,7 +104,7 @@ def test_build_agent_config_rejects_invalid_thinking_effort(tmp_path: Path) -> N
 
 def test_build_agent_config_requires_api_key(tmp_path: Path) -> None:
     with pytest.raises(CliConfigError, match="ANTHROPIC_API_KEY"):
-        build_agent_config(tmp_path, env={})
+        build_agent_config(tmp_path, CliConfigOverrides(provider="anthropic"), env={})
 
 
 def test_build_agent_config_rejects_unknown_model(tmp_path: Path) -> None:
@@ -94,7 +113,13 @@ def test_build_agent_config_rejects_unknown_model(tmp_path: Path) -> None:
 
 
 def test_config_summary_excludes_api_keys(tmp_path: Path) -> None:
-    config = build_agent_config(tmp_path, env={"ANTHROPIC_API_KEY": "secret-value"})
+    config = build_agent_config(
+        tmp_path,
+        env={
+            "ANTHROPIC_API_KEY": "secret-value",
+            "KOLEGA_CODE_PROVIDER": "anthropic",
+        },
+    )
 
     summary = config_summary(config)
 

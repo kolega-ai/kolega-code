@@ -12,7 +12,7 @@ from dotenv import dotenv_values
 from kolega_code.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
 from kolega_code.llm.specs import get_model_specs, normalize_thinking_effort
 
-from .provider_registry import UI_DEFAULT_PROVIDER, default_model_for_provider
+from .provider_registry import default_model_for_provider
 from .settings import CliSettings
 
 DEFAULT_LONG_PROVIDER = ModelProvider.ANTHROPIC
@@ -24,6 +24,10 @@ DEFAULT_THINKING_MODEL = "claude-opus-4-7"
 DEPRECATED_THINKING_TOKENS_MESSAGE = (
     "Thinking token budgets have been replaced by model-specific named effort. "
     "Use --thinking-effort or KOLEGA_CODE_THINKING_EFFORT."
+)
+MISSING_MODEL_SELECTION_MESSAGE = (
+    "No provider/model configured. Choose a provider and model in Settings, "
+    "or set --provider/--model or KOLEGA_CODE_PROVIDER/KOLEGA_CODE_MODEL."
 )
 
 API_KEY_ENV = {
@@ -69,17 +73,6 @@ def load_cli_env(project_path: Path, env: Optional[Mapping[str, str]] = None) ->
     return {**file_env, **base_env}
 
 
-def _env_or_default(
-    env: Mapping[str, str],
-    key: str,
-    override: Optional[str],
-    default: str,
-) -> str:
-    if override:
-        return override
-    return env.get(key) or default
-
-
 def _provider(value: str) -> ModelProvider:
     try:
         return ModelProvider(value.lower())
@@ -113,9 +106,9 @@ def _active_provider_model(
         provider = _provider(provider_value or DEFAULT_LONG_PROVIDER.value)
         return provider, model_value or default_model_for_provider(provider)
 
-    if settings and (settings.active_provider or settings.active_model):
-        provider = _provider(settings.active_provider or UI_DEFAULT_PROVIDER)
-        return provider, settings.active_model or default_model_for_provider(provider)
+    if settings and settings.active_provider and settings.active_model:
+        provider = _provider(settings.active_provider)
+        return provider, settings.active_model
 
     return None, None
 
@@ -192,6 +185,8 @@ def build_agent_config(
         raise CliConfigError(DEPRECATED_THINKING_TOKENS_MESSAGE)
 
     active_provider, active_model = _active_provider_model(loaded_env, overrides, settings)
+    if active_provider is None or active_model is None:
+        raise CliConfigError(MISSING_MODEL_SELECTION_MESSAGE)
 
     long_provider, long_model = _slot_provider_model(
         loaded_env,
