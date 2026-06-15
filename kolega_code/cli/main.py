@@ -12,6 +12,7 @@ from typing import Iterable, Optional
 
 from kolega_code import __version__
 from kolega_code.agent import CoderAgent
+from kolega_code.llm.exceptions import LLMBillingError, billing_error_message
 from kolega_code.llm.models import TextBlock
 from kolega_code.agent.prompt_provider import AgentMode
 from kolega_code.services.browser import PlaywrightBrowserManager
@@ -413,6 +414,7 @@ async def _run_ask(args: argparse.Namespace) -> int:
         print(f"Note: @{mention} not found, sent as plain text", file=sys.stderr)
 
     response_chunks: list[dict] = []
+    exit_code = 0
     # Pump connection-manager events concurrently so sub-agent activity is
     # reported in real time instead of all at once after streaming finishes.
     pump_task = asyncio.create_task(_pump_ask_events(manager, args.json))
@@ -429,6 +431,25 @@ async def _run_ask(args: argparse.Namespace) -> int:
             session.history = agent.dump_message_history()
             session.config = summary
             store.save(session)
+    except LLMBillingError as exc:
+        exit_code = 1
+        message = billing_error_message(exc, model=config.long_context_config.model)
+        if args.json:
+            print(
+                json.dumps(
+                    {
+                        "kind": "error",
+                        "data": {
+                            "type": "billing_error",
+                            "message": message,
+                            "provider": exc.provider,
+                        },
+                    },
+                    default=str,
+                )
+            )
+        else:
+            _print_styled(message, style="error", stderr=True)
     finally:
         pump_task.cancel()
         try:
@@ -439,6 +460,9 @@ async def _run_ask(args: argparse.Namespace) -> int:
             event = manager.events.get_nowait()
             _print_ask_event(event, args.json)
         await agent.cleanup()
+
+    if exit_code:
+        return exit_code
 
     if args.json:
         print(json.dumps({"kind": "summary", "chunks": len(response_chunks), "session_id": session.session_id}))

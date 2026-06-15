@@ -10,11 +10,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from anthropic import AnthropicError
-from google.genai.errors import APIError as GoogleAPIError
 from openai import OpenAIError
 
 from kolega_code.llm.client import LLMClient
 from kolega_code.llm.exceptions import (
+    LLMBillingError,
     LLMAuthenticationError,
     LLMContextWindowExceededError,
     LLMError,
@@ -137,6 +137,11 @@ class TestErrorMapping:
         anthropic_error = MockAnthropicError(401)
         mapped = map_to_llm_error(anthropic_error)
         assert isinstance(mapped, LLMAuthenticationError)
+
+        deepseek_error = MockAnthropicError(402)
+        mapped = map_to_llm_error(deepseek_error, provider="deepseek")
+        assert isinstance(mapped, LLMBillingError)
+        assert mapped.provider == "deepseek"
 
 
 class TestLLMClientErrorBoundary:
@@ -279,7 +284,7 @@ class TestLLMClientErrorBoundary:
                 await client.generate(messages)
             # Verify it's an LLMError subclass, not the original exception
             assert isinstance(exc_info.value, LLMError)
-            assert type(exc_info.value) != type(original_exception)
+            assert type(exc_info.value) is not type(original_exception)
 
             # Test count_tokens method
             client.provider.count_tokens = AsyncMock(side_effect=original_exception)
