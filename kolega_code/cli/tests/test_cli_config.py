@@ -4,7 +4,6 @@ import pytest
 
 from kolega_code.config import ModelProvider
 from kolega_code.cli.config import (
-    DEFAULT_EDIT_MODEL,
     DEFAULT_FAST_MODEL,
     DEFAULT_LONG_MODEL,
     DEFAULT_THINKING_MODEL,
@@ -28,7 +27,6 @@ def test_build_agent_config_defaults_to_latest_anthropic_models(tmp_path: Path) 
     assert config.long_context_config.provider == ModelProvider.ANTHROPIC
     assert config.long_context_config.model == DEFAULT_LONG_MODEL
     assert config.fast_config.model == DEFAULT_FAST_MODEL
-    assert config.edit_model_config.model == DEFAULT_EDIT_MODEL
     assert config.thinking_config.model == DEFAULT_THINKING_MODEL
     assert config.long_context_config.thinking_effort == "medium"
     assert config.thinking_config.thinking_effort == "medium"
@@ -105,7 +103,7 @@ def test_config_summary_excludes_api_keys(tmp_path: Path) -> None:
     assert "api_key" not in str(summary).lower()
 
 
-def test_build_agent_config_uses_stored_kimi_for_all_model_slots(tmp_path: Path) -> None:
+def test_build_agent_config_uses_stored_kimi_for_model_slots(tmp_path: Path) -> None:
     settings = CliSettings(active_provider=UI_DEFAULT_PROVIDER, active_model=UI_DEFAULT_MODEL)
     settings.set_api_key(UI_DEFAULT_PROVIDER, "moonshot-key")
 
@@ -115,8 +113,6 @@ def test_build_agent_config_uses_stored_kimi_for_all_model_slots(tmp_path: Path)
     assert config.long_context_config.model == UI_DEFAULT_MODEL
     assert config.fast_config.provider == ModelProvider.MOONSHOT
     assert config.fast_config.model == UI_DEFAULT_MODEL
-    assert config.edit_model_config.provider == ModelProvider.MOONSHOT
-    assert config.edit_model_config.model == UI_DEFAULT_MODEL
     assert config.thinking_config.provider == ModelProvider.MOONSHOT
     assert config.thinking_config.model == UI_DEFAULT_MODEL
     assert config.long_context_config.thinking_effort == "auto"
@@ -124,7 +120,7 @@ def test_build_agent_config_uses_stored_kimi_for_all_model_slots(tmp_path: Path)
     assert config.moonshot_api_key == "moonshot-key"
 
 
-def test_build_agent_config_uses_stored_deepseek_for_all_model_slots(tmp_path: Path) -> None:
+def test_build_agent_config_uses_stored_deepseek_for_model_slots(tmp_path: Path) -> None:
     settings = CliSettings(active_provider=ModelProvider.DEEPSEEK.value, active_model=DEEPSEEK_DEFAULT_MODEL)
     settings.set_api_key(ModelProvider.DEEPSEEK.value, "deepseek-key")
 
@@ -134,8 +130,6 @@ def test_build_agent_config_uses_stored_deepseek_for_all_model_slots(tmp_path: P
     assert config.long_context_config.model == DEEPSEEK_DEFAULT_MODEL
     assert config.fast_config.provider == ModelProvider.DEEPSEEK
     assert config.fast_config.model == DEEPSEEK_DEFAULT_MODEL
-    assert config.edit_model_config.provider == ModelProvider.DEEPSEEK
-    assert config.edit_model_config.model == DEEPSEEK_DEFAULT_MODEL
     assert config.thinking_config.provider == ModelProvider.DEEPSEEK
     assert config.thinking_config.model == DEEPSEEK_DEFAULT_MODEL
     assert config.long_context_config.thinking_effort == "high"
@@ -152,7 +146,6 @@ def test_build_agent_config_accepts_moonshot_cli_active_model(tmp_path: Path) ->
 
     assert config.long_context_config.provider == ModelProvider.MOONSHOT
     assert config.fast_config.provider == ModelProvider.MOONSHOT
-    assert config.edit_model_config.provider == ModelProvider.MOONSHOT
     assert config.thinking_config.provider == ModelProvider.MOONSHOT
 
 
@@ -177,7 +170,6 @@ def test_build_agent_config_accepts_deepseek_cli_active_model(tmp_path: Path) ->
 
     assert config.long_context_config.provider == ModelProvider.DEEPSEEK
     assert config.fast_config.provider == ModelProvider.DEEPSEEK
-    assert config.edit_model_config.provider == ModelProvider.DEEPSEEK
     assert config.thinking_config.provider == ModelProvider.DEEPSEEK
 
 

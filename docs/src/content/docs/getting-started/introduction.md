@@ -44,8 +44,8 @@ There are also helper commands for managing
 Kolega Code talks to a range of LLM providers — including Anthropic, OpenAI,
 Google, Moonshot, and DeepSeek — and lets you assign **different models to
 different roles** (a strong long-context model for coding, a fast cheap model for
-small utility calls, a dedicated model for applying edits, and one for extended
-"thinking"). See [Providers & Models](../../configuration/providers-and-models/).
+small utility calls, and one for extended "thinking"). See
+[Providers & Models](../../configuration/providers-and-models/).
 
 ## What you need
 

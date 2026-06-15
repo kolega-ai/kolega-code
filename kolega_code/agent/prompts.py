@@ -100,44 +100,6 @@ Be thorough and include actual code snippets from the conversation.
 """
 
 
-APPLY_EDIT_SYSTEM_PROMPT = """
-You are an expert code editor. Your task is to precisely apply edits to a file by integrating new code into the existing codebase.
-
-Follow these rules exactly:
-1. Carefully analyze both the original code and the update snippet
-2. Determine where and how the update should be integrated
-3. Preserve all indentation, formatting, and style from the original code
-4. Return the complete updated code, not just the changed portions
-5. Make only the changes necessary to implement the update
-6. If the update contains markers like '// ... existing code ...', use them to understand where code should be preserved
-"""
-
-
-APPLY_EDIT_USER_PROMPT = """
-I need you to apply an edit to a code file. Below you'll find the original code and an update snippet.
-
-The update snippet contains markers like '// ... existing code ...' to indicate unchanged portions of the file.
-Your task is to integrate the changes from the update snippet into the original code.
-
-You have been given the following instructions:
-<instructions>
-{instructions}
-</instructions>
-
-<original-code>
-{original_code}
-</original-code>
-
-<code-edit>
-{code_edit}
-</update-snippet>
-
-Please return the complete updated code within <updated-code> tags.
-
-IMPORTANT: Do not make unnecessary changes. Only update what is necessary. In general, you should not change any code that is not included in the update snippet.
-"""
-
-
 SHELL_SAFETY_SYSTEM_PROMPT = """
 You are a security expert evaluating shell commands for safety. Your task is to determine if a command is safe to execute.
 

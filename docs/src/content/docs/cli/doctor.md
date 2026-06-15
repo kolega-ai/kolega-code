@@ -32,7 +32,7 @@ you can validate a specific provider/model combination before using it.
   `present via <ENV_VAR>`, `present in local settings`, or `missing` (the key
   itself is never printed).
 - **Configuration** — whether a valid `AgentConfig` can be built. If valid, it
-  prints the resolved **long**, **fast**, **edit**, and **thinking** models.
+  prints the resolved **long**, **fast**, and **thinking** models.
 
 ## Example output
 
@@ -46,7 +46,6 @@ Stored API key: present in local settings
 ✓ Configuration: valid
 Long model: moonshot/kimi-k2.7-code
 Fast model: moonshot/kimi-k2.7-code
-Edit model: moonshot/kimi-k2.7-code
 Thinking model: moonshot/kimi-k2.7-code
 Thinking effort: auto
 ```

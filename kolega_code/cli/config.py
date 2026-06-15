@@ -19,8 +19,6 @@ DEFAULT_LONG_PROVIDER = ModelProvider.ANTHROPIC
 DEFAULT_LONG_MODEL = "claude-opus-4-7"
 DEFAULT_FAST_PROVIDER = ModelProvider.ANTHROPIC
 DEFAULT_FAST_MODEL = "claude-haiku-4-5-20251001"
-DEFAULT_EDIT_PROVIDER = ModelProvider.ANTHROPIC
-DEFAULT_EDIT_MODEL = "claude-sonnet-4-6"
 DEFAULT_THINKING_PROVIDER = ModelProvider.ANTHROPIC
 DEFAULT_THINKING_MODEL = "claude-opus-4-7"
 DEPRECATED_THINKING_TOKENS_MESSAGE = (
@@ -54,8 +52,6 @@ class CliConfigOverrides:
     model: Optional[str] = None
     fast_provider: Optional[str] = None
     fast_model: Optional[str] = None
-    edit_provider: Optional[str] = None
-    edit_model: Optional[str] = None
     thinking_provider: Optional[str] = None
     thinking_model: Optional[str] = None
     thinking_effort: Optional[str] = None
@@ -219,17 +215,6 @@ def build_agent_config(
         active_provider,
         active_model,
     )
-    edit_provider, edit_model = _slot_provider_model(
-        loaded_env,
-        "KOLEGA_CODE_EDIT_PROVIDER",
-        "KOLEGA_CODE_EDIT_MODEL",
-        overrides.edit_provider,
-        overrides.edit_model,
-        DEFAULT_EDIT_PROVIDER,
-        DEFAULT_EDIT_MODEL,
-        active_provider,
-        active_model,
-    )
     thinking_provider, thinking_model = _slot_provider_model(
         loaded_env,
         "KOLEGA_CODE_THINKING_PROVIDER",
@@ -254,7 +239,7 @@ def build_agent_config(
         else None
     )
 
-    required_providers = {long_provider, fast_provider, edit_provider, thinking_provider}
+    required_providers = {long_provider, fast_provider, thinking_provider}
     missing_keys = [
         API_KEY_ENV[provider]
         for provider in sorted(required_providers, key=lambda item: item.value)
@@ -278,7 +263,6 @@ def build_agent_config(
             environment=overrides.environment or loaded_env.get("KOLEGA_CODE_ENVIRONMENT", "development"),
             long_context_config=_model_config(long_provider, long_model, thinking_effort=active_thinking_effort),
             fast_config=_model_config(fast_provider, fast_model),
-            edit_model_config=_model_config(edit_provider, edit_model),
             thinking_config=_model_config(thinking_provider, thinking_model, thinking_effort=think_hard_effort),
         )
     except ValueError as exc:
@@ -305,8 +289,6 @@ def config_summary(config: AgentConfig) -> dict[str, str | int | None]:
         "long_model": config.long_context_config.model,
         "fast_provider": config.fast_config.provider.value,
         "fast_model": config.fast_config.model,
-        "edit_provider": config.edit_model_config.provider.value,
-        "edit_model": config.edit_model_config.model,
         "thinking_provider": config.thinking_config.provider.value,
         "thinking_model": config.thinking_config.model,
         "thinking_effort": config.long_context_config.thinking_effort,
