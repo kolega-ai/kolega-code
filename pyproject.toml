@@ -5,17 +5,25 @@ build-backend = "hatchling.build"
 [project]
 name = "kolega-code"
 version = "0.1.0"
-description = "Shared Kolega agent runtime and local execution tools"
+description = "Local-first AI coding agent for the terminal"
 readme = "README.md"
 license = {file = "LICENSE"}
 requires-python = ">=3.11"
 authors = [
     {name = "Kolega Team"}
 ]
+keywords = ["ai", "agent", "cli", "coding-agent", "developer-tools"]
 classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
     "License :: OSI Approved :: MIT License",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development",
+    "Topic :: Utilities",
 ]
 dependencies = [
     "anthropic>=0.18.1",
@@ -33,14 +41,19 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "pyyaml>=6.0.0",
     "tenacity>=8.2.0",
+    "textual>=8.2.5",
     "tiktoken>=0.9.0",
     "trafilatura>=1.6.3",
 ]
 
+[project.urls]
+Homepage = "https://kolega-ai.github.io/kolega-code/"
+Documentation = "https://kolega-ai.github.io/kolega-code/"
+Repository = "https://github.com/kolega-ai/kolega-code"
+Issues = "https://github.com/kolega-ai/kolega-code/issues"
+
 [project.optional-dependencies]
-cli = [
-    "textual>=8.2.5",
-]
+cli = []
 dev = [
     "pytest>=7.4.0",
     "pytest-asyncio>=0.26.0",

@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from kolega_code import __version__
 from kolega_code.cli.main import CLI_AGENT_MODE, RESUME_LATEST, _resolve_tui_session, main, parse_args
 from kolega_code.cli.provider_registry import UI_DEFAULT_MODEL, UI_DEFAULT_PROVIDER
 from kolega_code.cli.session_store import SessionStore, SessionStoreError
@@ -28,6 +29,14 @@ def test_parse_default_command_as_tui() -> None:
     assert args.new is True
     assert args.resume is None
     assert args.mode == CLI_AGENT_MODE
+
+
+def test_version_flag_prints_package_version(capsys) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        parse_args(["--version"])
+
+    assert exc_info.value.code == 0
+    assert f"kolega-code {__version__}" in capsys.readouterr().out
 
 
 def test_parse_tui_resume_latest() -> None:

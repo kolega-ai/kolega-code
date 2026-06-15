@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 from typing import Iterable, Optional
 
+from kolega_code import __version__
 from kolega_code.agent import CoderAgent
 from kolega_code.llm.models import TextBlock
 from kolega_code.agent.prompt_provider import AgentMode
@@ -102,6 +103,7 @@ def _add_session_args(parser: argparse.ArgumentParser, session_help: str = "Sess
 def _build_tui_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="kolega-code", description="Run the Kolega Code Textual CLI.")
     parser.set_defaults(command="tui")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument("project_path", nargs="?", default=".", type=Path, help="Project directory to work in.")
     parser.add_argument("--mode", choices=[mode.value for mode in AgentMode], default=CLI_AGENT_MODE, help=argparse.SUPPRESS)
     parser.add_argument("--new", action="store_true", help="Start a new session. This is now the default.")
@@ -253,7 +255,7 @@ def _resolve_tui_session(
 
 def _run_tui(args: argparse.Namespace) -> int:
     if importlib.util.find_spec("textual") is None:
-        print("Textual is not installed. Install the CLI extra with: pip install 'kolega-code[cli]'", file=sys.stderr)
+        print("Textual is not installed. Reinstall the CLI with: uv tool install --force kolega-code", file=sys.stderr)
         return 2
 
     project_path = _validate_project(args.project_path)

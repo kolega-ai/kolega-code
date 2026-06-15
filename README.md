@@ -1,15 +1,35 @@
 # kolega-code
 
-Shared Python package for Kolega agent runtime code.
+Kolega Code is a local-first AI coding agent for the terminal.
 
-The package owns the `kolega_code` import namespace and is intended to stay local-filesystem first. Provider-specific sandbox integrations such as E2B live outside this package.
+The package owns the `kolega_code` import namespace and provides the
+`kolega-code` command.
 
-## CLI
+## Install
 
-Install the optional CLI extra to use the Textual terminal interface:
+Install with the public installer:
 
 ```bash
-pip install "kolega-code[cli]"
+curl -fsSL https://kolega.dev/install-kolega-code | sh
+```
+
+Or install directly from PyPI with uv:
+
+```bash
+uv tool install kolega-code
+```
+
+Verify the command is available:
+
+```bash
+kolega-code --version
+```
+
+Upgrade or uninstall:
+
+```bash
+uv tool upgrade kolega-code
+uv tool uninstall kolega-code
 ```
 
 Run the Textual UI and open the Settings tab to select Moonshot Kimi K2.6 or DeepSeek V4 Pro and save your API key:
@@ -37,6 +57,15 @@ kolega-code doctor --project .
 ```
 
 The Settings UI supports Moonshot `kimi-k2.6` and DeepSeek `deepseek-v4-pro`. A saved UI selection is used for all agent model roles and API keys are stored in the local CLI settings file with restrictive permissions. Existing environment and model/provider flag overrides continue to work. Local session state is stored under the platform state directory unless `KOLEGA_CODE_STATE_DIR` is set.
+
+## From source
+
+```bash
+git clone https://github.com/kolega-ai/kolega-code.git
+cd kolega-code
+uv sync --extra dev
+uv run kolega-code --version
+```
 
 ## Tests
 
