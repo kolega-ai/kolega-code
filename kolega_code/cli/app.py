@@ -58,7 +58,15 @@ from .connection import CliConnectionManager
 from .file_index import IndexEntry, WorkspaceFileIndex
 from .mentions import build_file_attachments
 from .theme import Color, Glyph
-from .provider_registry import UI_DEFAULT_MODEL, UI_DEFAULT_PROVIDER, get_ui_model, ui_model_options, ui_provider_options
+from .provider_registry import (
+    UI_DEFAULT_MODEL,
+    UI_DEFAULT_PROVIDER,
+    default_ui_thinking_effort,
+    get_ui_model,
+    ui_model_options,
+    ui_provider_options,
+    ui_thinking_effort_options,
+)
 from .session_store import SessionRecord, SessionStore
 from .settings import CliSettings, SettingsStore
 from .slash_commands import (
@@ -199,6 +207,7 @@ class PendingQuestion:
 class StatusDashboardState:
     provider: str = UI_DEFAULT_PROVIDER
     model: str = UI_DEFAULT_MODEL
+    thinking_effort: Optional[str] = None
     mode: str = BUILD_INTERACTION_MODE
     turn_state: TurnState = TurnState.IDLE
     activity: str = "Ready"
@@ -784,6 +793,13 @@ class KolegaCodeApp(App):
                                 allow_blank=False,
                                 value=UI_DEFAULT_MODEL,
                             )
+                            yield Label("Thinking effort")
+                            yield Select(
+                                ui_thinking_effort_options(UI_DEFAULT_PROVIDER, UI_DEFAULT_MODEL),
+                                id="thinking_effort_select",
+                                allow_blank=True,
+                                value=default_ui_thinking_effort(UI_DEFAULT_PROVIDER, UI_DEFAULT_MODEL),
+                            )
                             yield Label("API key")
                             yield Input(password=True, id="api_key_input")
                             yield Button("Save Settings", variant="primary", id="save_settings")
@@ -1098,16 +1114,22 @@ class KolegaCodeApp(App):
             await self._save_settings_from_ui()
 
     def on_select_changed(self, event: Select.Changed) -> None:
-        if event.select.id != "provider_select":
+        if event.select.id == "provider_select":
+            provider = str(event.value)
+            model_select = self.query_one("#model_select", Select)
+            model_options = ui_model_options(provider)
+            model_select.set_options(model_options)
+            model = model_options[0][1] if model_options else UI_DEFAULT_MODEL
+            if model_options:
+                model_select.value = model
+            self._set_effort_select_default(provider, model)
+            api_key_input = self.query_one("#api_key_input", Input)
+            api_key_input.placeholder = self._api_key_placeholder(provider)
             return
-        provider = str(event.value)
-        model_select = self.query_one("#model_select", Select)
-        model_options = ui_model_options(provider)
-        model_select.set_options(model_options)
-        if model_options:
-            model_select.value = model_options[0][1]
-        api_key_input = self.query_one("#api_key_input", Input)
-        api_key_input.placeholder = self._api_key_placeholder(provider)
+
+        if event.select.id == "model_select":
+            provider = str(self.query_one("#provider_select", Select).value)
+            self._set_effort_select_default(provider, str(event.value))
 
     async def _consume_events(self) -> None:
         while True:
@@ -1214,27 +1236,52 @@ class KolegaCodeApp(App):
         provider = self.settings.active_provider
         model_options = ui_model_options(provider)
         valid_models = {value for _, value in model_options}
+        model_was_reset = False
         if not self.settings.active_model or self.settings.active_model not in valid_models:
             self.settings.active_model = model_options[0][1] if model_options else UI_DEFAULT_MODEL
+            model_was_reset = True
         model = self.settings.active_model
+        effort_options = {value for _, value in ui_thinking_effort_options(provider, model)}
+        if model_was_reset or self.settings.active_thinking_effort not in effort_options:
+            self.settings.active_thinking_effort = default_ui_thinking_effort(provider, model)
         provider_select = self.query_one("#provider_select", Select)
         model_select = self.query_one("#model_select", Select)
+        effort_select = self.query_one("#thinking_effort_select", Select)
         api_key_input = self.query_one("#api_key_input", Input)
 
         provider_select.value = provider
         model_select.set_options(model_options)
         model_select.value = model
+        effort_select.set_options(ui_thinking_effort_options(provider, model))
+        if self.settings.active_thinking_effort is not None:
+            effort_select.value = self.settings.active_thinking_effort
         api_key_input.placeholder = self._api_key_placeholder(provider)
         self._update_settings_status()
+
+    def _set_effort_select_default(self, provider: str, model: str) -> None:
+        try:
+            effort_select = self.query_one("#thinking_effort_select", Select)
+        except Exception:
+            return
+        effort_options = ui_thinking_effort_options(provider, model)
+        effort_select.set_options(effort_options)
+        default_effort = default_ui_thinking_effort(provider, model)
+        if default_effort is not None:
+            effort_select.value = default_effort
 
     async def _save_settings_from_ui(self) -> None:
         provider = str(self.query_one("#provider_select", Select).value)
         model = str(self.query_one("#model_select", Select).value)
+        effort = str(self.query_one("#thinking_effort_select", Select).value)
+        valid_efforts = {value for _, value in ui_thinking_effort_options(provider, model)}
+        if effort not in valid_efforts:
+            effort = default_ui_thinking_effort(provider, model) or ""
         api_key_input = self.query_one("#api_key_input", Input)
         api_key = api_key_input.value.strip()
 
         self.settings.active_provider = provider
         self.settings.active_model = model
+        self.settings.active_thinking_effort = effort or default_ui_thinking_effort(provider, model)
         if api_key:
             self.settings.set_api_key(provider, api_key)
         self.settings_store.save(self.settings)
@@ -1456,6 +1503,7 @@ class KolegaCodeApp(App):
             "/plan": self._command_plan,
             "/build": self._command_build,
             "/model": self._command_model,
+            "/effort": self._command_effort,
             "/copy": self._command_copy,
             "/version": self._command_version,
             "/quit": self._command_quit,
@@ -1487,8 +1535,10 @@ class KolegaCodeApp(App):
         model_options = ui_model_options(provider)
         if not args:
             current_provider, current_model = self._startup_model()
+            current_effort = self._startup_thinking_effort()
             lines = [
                 messages.SETTINGS_ACTIVE_MODEL.format(provider=current_provider, model=current_model),
+                messages.SETTINGS_THINKING_EFFORT_LINE.format(effort=current_effort or "not supported"),
                 "",
                 "Available models:",
                 *(f"- `{value}` ({label})" for label, value in model_options),
@@ -1509,13 +1559,62 @@ class KolegaCodeApp(App):
             return
 
         self.settings.active_model = matched
+        self.settings.active_thinking_effort = default_ui_thinking_effort(provider, matched)
         self.settings_store.save(self.settings)
         await self._ensure_agent_from_settings(rebuild=True)
         try:
             self._populate_settings_controls()
         except Exception:
             pass
-        self._notify_user(messages.MODEL_SWITCHED.format(provider=provider, model=matched))
+        self._notify_user(
+            messages.MODEL_SWITCHED.format(
+                provider=provider,
+                model=matched,
+                effort=self.settings.active_thinking_effort or "not supported",
+            )
+        )
+
+    async def _command_effort(self, args: str) -> None:
+        provider, model = self._startup_model()
+        effort_options = ui_thinking_effort_options(provider, model)
+        current_effort = self._startup_thinking_effort()
+        if not effort_options:
+            self._notify_user(messages.EFFORT_UNSUPPORTED.format(provider=provider, model=model), severity="warning")
+            return
+
+        if not args:
+            lines = [
+                messages.SETTINGS_ACTIVE_MODEL.format(provider=provider, model=model),
+                messages.SETTINGS_THINKING_EFFORT_LINE.format(effort=current_effort or "not supported"),
+                "",
+                "Available thinking efforts:",
+                *(f"- `{value}` ({label})" for label, value in effort_options),
+                "",
+                messages.EFFORT_SWITCH_HINT,
+            ]
+            self._add_conversation_entry(ConversationEntry(kind="system", content="\n".join(lines)))
+            return
+
+        if self._turn_active or self.agent_worker is not None:
+            self._show_composer_hint(messages.BLOCK_STOP_BEFORE_EFFORT_SWITCH)
+            self._notify_user(messages.BLOCK_STOP_BEFORE_EFFORT_SWITCH, severity="warning")
+            return
+
+        matched = next((value for _, value in effort_options if value.lower() == args.lower()), None)
+        if matched is None:
+            self._notify_user(messages.EFFORT_UNKNOWN.format(effort=args, provider=provider, model=model), severity="warning")
+            return
+
+        self.settings.active_provider = provider
+        self.settings.active_model = model
+        self.settings.active_thinking_effort = matched
+        self.settings_store.save(self.settings)
+        await self._ensure_agent_from_settings(rebuild=True)
+        try:
+            self._populate_settings_controls()
+        except Exception:
+            pass
+        self._notify_user(messages.EFFORT_SWITCHED.format(effort=matched, provider=provider, model=model))
 
     async def _command_copy(self, args: str) -> None:
         entry = next(
@@ -1840,11 +1939,13 @@ class KolegaCodeApp(App):
     def _update_settings_status(self) -> None:
         provider = self.settings.active_provider or UI_DEFAULT_PROVIDER
         model = self.settings.active_model or UI_DEFAULT_MODEL
+        effort = self.settings.active_thinking_effort or default_ui_thinking_effort(provider, model) or "not supported"
         status = key_status(provider, self.project_path, self.settings)
         tone = "warning" if "missing" in status.lower() else "ok"
         text = "\n".join(
             [
                 messages.SETTINGS_ACTIVE_MODEL.format(provider=provider, model=model),
+                messages.SETTINGS_THINKING_EFFORT_LINE.format(effort=effort),
                 messages.SETTINGS_API_KEY_LINE.format(status=status),
             ]
         )
@@ -1880,6 +1981,7 @@ class KolegaCodeApp(App):
     def _startup_content(self) -> str:
         session_id = str(self.session.session_id)[:8]
         provider, model = self._startup_model()
+        effort = self._startup_thinking_effort() or "not supported"
         api_key = key_status(provider, self.project_path, self.settings)
         return "\n".join(
             [
@@ -1890,6 +1992,7 @@ class KolegaCodeApp(App):
                 f"Mode: {self.mode}",
                 f"Interaction: {self.interaction_mode}",
                 f"Model: {provider}/{model}",
+                f"Thinking effort: {effort}",
                 f"API key: {api_key}",
                 "",
                 f"Enter send {theme.g(Glyph.BULLET_SEP)} Shift+Enter newline {theme.g(Glyph.BULLET_SEP)} Shift+Tab plan/build",
@@ -1911,10 +2014,24 @@ class KolegaCodeApp(App):
             return provider, model_options[0][1]
         return provider, UI_DEFAULT_MODEL
 
+    def _startup_thinking_effort(self) -> Optional[str]:
+        if self.config is not None:
+            return self.config.long_context_config.thinking_effort
+
+        provider, model = self._startup_model()
+        if (
+            self.settings.active_provider == provider
+            and self.settings.active_model == model
+            and self.settings.active_thinking_effort
+        ):
+            return self.settings.active_thinking_effort
+        return default_ui_thinking_effort(provider, model)
+
     def _refresh_status_dashboard(self) -> None:
         provider, model = self._startup_model()
         self._status_state.provider = provider
         self._status_state.model = model
+        self._status_state.thinking_effort = self._startup_thinking_effort()
         self._status_state.mode = self.interaction_mode
         try:
             self._status_dashboard.update(self._format_status_dashboard())
@@ -1924,6 +2041,7 @@ class KolegaCodeApp(App):
     def _format_status_dashboard(self) -> str:
         state = self._status_state
         provider_model = f"{state.provider}/{state.model}"
+        effort = state.thinking_effort or "not supported"
         mode = state.mode.title()
         turn_style = TURN_STATE_STYLES.get(state.turn_state, Color.ACCENT)
         context_style = self._context_style(state.usage_percentage, state.compression_threshold)
@@ -1955,6 +2073,7 @@ class KolegaCodeApp(App):
         return (
             f"{title}\n\n"
             f"{label('Model')}\n[bold]{escape(provider_model)}[/bold]\n\n"
+            f"{label('Thinking effort')} [bold]{escape(effort)}[/bold]\n"
             f"{label('Mode')} [bold]{mode}[/bold]\n"
             f"{turn_line}\n\n"
             f"{label('Context')}\n"

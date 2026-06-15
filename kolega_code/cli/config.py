@@ -10,7 +10,7 @@ from typing import Mapping, Optional
 from dotenv import dotenv_values
 
 from kolega_code.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
-from kolega_code.llm.specs import get_model_specs
+from kolega_code.llm.specs import get_model_specs, normalize_thinking_effort
 
 from .provider_registry import UI_DEFAULT_PROVIDER, default_model_for_provider
 from .settings import CliSettings
@@ -23,7 +23,10 @@ DEFAULT_EDIT_PROVIDER = ModelProvider.ANTHROPIC
 DEFAULT_EDIT_MODEL = "claude-sonnet-4-6"
 DEFAULT_THINKING_PROVIDER = ModelProvider.ANTHROPIC
 DEFAULT_THINKING_MODEL = "claude-opus-4-7"
-DEFAULT_THINKING_TOKENS = 1024
+DEPRECATED_THINKING_TOKENS_MESSAGE = (
+    "Thinking token budgets have been replaced by model-specific named effort. "
+    "Use --thinking-effort or KOLEGA_CODE_THINKING_EFFORT."
+)
 
 API_KEY_ENV = {
     ModelProvider.ANTHROPIC: "ANTHROPIC_API_KEY",
@@ -55,7 +58,7 @@ class CliConfigOverrides:
     edit_model: Optional[str] = None
     thinking_provider: Optional[str] = None
     thinking_model: Optional[str] = None
-    thinking_tokens: Optional[int] = None
+    thinking_effort: Optional[str] = None
     environment: Optional[str] = None
 
 
@@ -147,9 +150,10 @@ def _slot_provider_model(
     return default_provider, default_model
 
 
-def _model_config(provider: ModelProvider, model: str, thinking_tokens: Optional[int] = None) -> ModelConfig:
+def _model_config(provider: ModelProvider, model: str, thinking_effort: Optional[str] = None) -> ModelConfig:
     try:
         get_model_specs(provider, model)
+        resolved_thinking_effort = normalize_thinking_effort(provider, model, thinking_effort)
     except ValueError as exc:
         raise CliConfigError(str(exc)) from exc
 
@@ -157,8 +161,26 @@ def _model_config(provider: ModelProvider, model: str, thinking_tokens: Optional
         provider=provider,
         model=model,
         rate_limits=RateLimitConfig(),
-        thinking_tokens=thinking_tokens,
+        thinking_effort=resolved_thinking_effort,
     )
+
+
+def _resolve_active_thinking_effort(
+    provider: ModelProvider,
+    model: str,
+    env: Mapping[str, str],
+    overrides: CliConfigOverrides,
+    settings: Optional[CliSettings],
+) -> Optional[str]:
+    explicit_effort = overrides.thinking_effort or env.get("KOLEGA_CODE_THINKING_EFFORT")
+    if explicit_effort is None and settings:
+        settings_model_matches = settings.active_provider == provider.value and settings.active_model == model
+        if settings_model_matches:
+            explicit_effort = settings.active_thinking_effort
+    try:
+        return normalize_thinking_effort(provider, model, explicit_effort)
+    except ValueError as exc:
+        raise CliConfigError(str(exc)) from exc
 
 
 def build_agent_config(
@@ -170,6 +192,8 @@ def build_agent_config(
     """Build an AgentConfig for CLI-hosted agents."""
     overrides = overrides or CliConfigOverrides()
     loaded_env = load_cli_env(project_path, env)
+    if "KOLEGA_CODE_THINKING_TOKENS" in loaded_env:
+        raise CliConfigError(DEPRECATED_THINKING_TOKENS_MESSAGE)
 
     active_provider, active_model = _active_provider_model(loaded_env, overrides, settings)
 
@@ -217,8 +241,17 @@ def build_agent_config(
         active_provider,
         active_model,
     )
-    thinking_tokens = overrides.thinking_tokens or int(
-        loaded_env.get("KOLEGA_CODE_THINKING_TOKENS", str(DEFAULT_THINKING_TOKENS))
+    active_thinking_effort = _resolve_active_thinking_effort(
+        long_provider,
+        long_model,
+        loaded_env,
+        overrides,
+        settings,
+    )
+    think_hard_effort = (
+        active_thinking_effort
+        if thinking_provider == long_provider and thinking_model == long_model
+        else None
     )
 
     required_providers = {long_provider, fast_provider, edit_provider, thinking_provider}
@@ -243,10 +276,10 @@ def build_agent_config(
             moonshot_api_key=_api_key_for_provider(ModelProvider.MOONSHOT, loaded_env, settings),
             deepseek_api_key=_api_key_for_provider(ModelProvider.DEEPSEEK, loaded_env, settings),
             environment=overrides.environment or loaded_env.get("KOLEGA_CODE_ENVIRONMENT", "development"),
-            long_context_config=_model_config(long_provider, long_model),
+            long_context_config=_model_config(long_provider, long_model, thinking_effort=active_thinking_effort),
             fast_config=_model_config(fast_provider, fast_model),
             edit_model_config=_model_config(edit_provider, edit_model),
-            thinking_config=_model_config(thinking_provider, thinking_model, thinking_tokens=thinking_tokens),
+            thinking_config=_model_config(thinking_provider, thinking_model, thinking_effort=think_hard_effort),
         )
     except ValueError as exc:
         raise CliConfigError(str(exc)) from exc
@@ -276,5 +309,5 @@ def config_summary(config: AgentConfig) -> dict[str, str | int | None]:
         "edit_model": config.edit_model_config.model,
         "thinking_provider": config.thinking_config.provider.value,
         "thinking_model": config.thinking_config.model,
-        "thinking_tokens": config.thinking_config.thinking_tokens,
+        "thinking_effort": config.long_context_config.thinking_effort,
     }

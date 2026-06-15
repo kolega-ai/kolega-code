@@ -61,7 +61,9 @@ def test_parse_tui_legacy_session_alias() -> None:
 
 
 def test_parse_ask_subcommand() -> None:
-    args = parse_args(["ask", "hello", "--project", "/tmp/project", "--save", "--json"])
+    args = parse_args(
+        ["ask", "hello", "--project", "/tmp/project", "--save", "--json", "--thinking-effort", "high"]
+    )
 
     assert args.command == "ask"
     assert args.prompt == "hello"
@@ -69,6 +71,7 @@ def test_parse_ask_subcommand() -> None:
     assert args.save is True
     assert args.json is True
     assert args.mode == CLI_AGENT_MODE
+    assert args.thinking_effort == "high"
 
 
 def test_parse_sessions_list_subcommand() -> None:
@@ -170,8 +173,28 @@ def test_doctor_uses_stored_kimi_settings(tmp_path: Path, capsys, isolated_cli_e
     assert exit_code == 0
     output = capsys.readouterr().out
     assert f"Stored active model: {UI_DEFAULT_PROVIDER}/{UI_DEFAULT_MODEL}" in output
+    assert "Thinking effort: auto" in output
     assert "present in local settings" in output
     assert "moonshot-key" not in output
+
+
+def test_deprecated_thinking_tokens_flag_fails(tmp_path: Path, capsys, isolated_cli_env: None) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+
+    exit_code = main(
+        [
+            "doctor",
+            "--project",
+            str(project),
+            "--thinking-tokens",
+            "1024",
+        ]
+    )
+
+    assert exit_code == 2
+    captured = capsys.readouterr()
+    assert "--thinking-effort" in captured.out or "--thinking-effort" in captured.err
 
 
 def test_tui_default_creates_new_session_even_when_latest_exists(tmp_path: Path) -> None:

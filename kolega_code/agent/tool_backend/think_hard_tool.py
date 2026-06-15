@@ -56,8 +56,8 @@ class ThinkHardTool(StreamingTool):
 
         try:
             model_specs = get_model_specs(self.config.thinking_config.provider, self.config.thinking_config.model)
-            # Call LLM with extended thinking enabled
-            thinking_param = self.config.thinking_config.thinking_tokens
+            # Call LLM with the model-specific thinking effort configured for this session.
+            thinking_param = self.config.thinking_config.thinking_effort
 
             system_message = Message(role="system", content=[TextBlock(text=prompts.THINK_HARD_PROMPT)])
 
@@ -85,17 +85,7 @@ class ThinkHardTool(StreamingTool):
             has_sent_thinking_header = False
             has_sent_analysis_header = False
 
-            # Ensure max_completion_tokens is greater than thinking_tokens
-            # According to Anthropic docs: max_tokens must be greater than thinking.budget_tokens
             max_completion = model_specs["max_completion_tokens"]
-            if thinking_param and max_completion <= thinking_param:
-                # Add some buffer to ensure we have room for the actual response
-                max_completion = thinking_param + 2000
-                await self.log_info(
-                    f"Adjusted max_completion_tokens from {model_specs['max_completion_tokens']} to {max_completion} "
-                    f"to accommodate thinking_tokens of {thinking_param}",
-                    sender=self.caller.agent_name,
-                )
 
             # Use the stream and process chunks for streaming updates
             async with await client.stream(

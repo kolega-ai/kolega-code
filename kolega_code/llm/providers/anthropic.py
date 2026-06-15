@@ -1,15 +1,15 @@
 import json
 import os
-from typing import Any, AsyncContextManager, Dict, List, Optional, Union
+from typing import Any, AsyncContextManager, Dict, List, Optional
 
 import tiktoken
 from anthropic import Anthropic, AsyncAnthropic
 
 from ..models import Message, MessageChunk, MessageHistory, ToolDefinition
-from ..specs import get_model_specs
+from ..specs import build_thinking_request_params, get_model_specs
 from ..tool_execution_ids import ToolExecutionIdRegistry
 from .base import BaseLLMProvider
-from .models import GenerationParams, ReasoningEffort, ThinkingConfig, TokenCount
+from .models import GenerationParams, TokenCount
 
 
 class AnthropicStreamWrapper:
@@ -123,10 +123,6 @@ class AnthropicProvider(BaseLLMProvider):
         """Get retry decorator with configured max retries"""
         return self.get_retry_decorator()
 
-    def _prepare_thinking_params(self, thinking: Optional[Union[ThinkingConfig, ReasoningEffort]]) -> Dict[str, Any]:
-        """Convert thinking parameters to provider-specific format"""
-        return {"type": "enabled", "budget_tokens": thinking.budget_tokens}
-
     def _prepare_generation_params(self, params: Optional[GenerationParams] = None) -> Dict[str, Any]:
         """Convert common parameters to provider-specific format"""
         generation_params = {
@@ -142,10 +138,19 @@ class AnthropicProvider(BaseLLMProvider):
             if params.tools:
                 generation_params["tools"] = [t.to_anthropic() for t in params.tools]
                 generation_params["tool_choice"] = {"type": "auto"}
-            if params.thinking:
-                generation_params["thinking"] = self._prepare_thinking_params(params.thinking)
 
         return generation_params
+
+    def _apply_thinking_params(self, generation_params: Dict[str, Any], params: Optional[GenerationParams]) -> None:
+        if not params or not params.thinking:
+            return
+        generation_params.update(
+            build_thinking_request_params(
+                self.provider_name,
+                str(generation_params["model"]),
+                params.thinking,
+            )
+        )
 
     def _sanitize_generation_params(self, generation_params: Dict[str, Any]) -> Dict[str, Any]:
         """Remove parameters unsupported by the selected Anthropic model."""
@@ -344,6 +349,7 @@ class AnthropicProvider(BaseLLMProvider):
         """
         generation_params = self._prepare_generation_params(params)
         generation_params.update(kwargs)
+        self._apply_thinking_params(generation_params, params)
         generation_params = self._sanitize_generation_params(generation_params)
 
         if generation_params["model"].startswith("claude-3-7"):
@@ -370,6 +376,7 @@ class AnthropicProvider(BaseLLMProvider):
     ) -> Message:
         generation_params = self._prepare_generation_params(params)
         generation_params.update(kwargs)
+        self._apply_thinking_params(generation_params, params)
         generation_params = self._sanitize_generation_params(generation_params)
 
         if generation_params["model"].startswith("claude-3-7"):

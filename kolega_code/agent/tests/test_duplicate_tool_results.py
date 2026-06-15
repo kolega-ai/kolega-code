@@ -30,7 +30,7 @@ class TestDuplicateToolResultPrevention:
                 provider=ModelProvider.ANTHROPIC,
                 model="test-model",
                 rate_limits=RateLimitConfig(),
-                thinking_tokens=1024,
+                thinking_effort="medium",
             ),
         )
 

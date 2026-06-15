@@ -61,7 +61,7 @@ def mock_config():
             provider=ModelProvider.ANTHROPIC,
             model="claude-3-7-sonnet-20250131",
             rate_limits=RateLimitConfig(requests_per_minute=10, tokens_per_minute=100000, max_retries=3),
-            thinking_tokens=5000,
+            thinking_effort="high",
         ),
     )
 

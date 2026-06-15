@@ -52,7 +52,7 @@ provider's default model, or set both provider and model.
 | `KOLEGA_CODE_FAST_PROVIDER` / `KOLEGA_CODE_FAST_MODEL` | Fast utility model |
 | `KOLEGA_CODE_EDIT_PROVIDER` / `KOLEGA_CODE_EDIT_MODEL` | Edit-file model |
 | `KOLEGA_CODE_THINKING_PROVIDER` / `KOLEGA_CODE_THINKING_MODEL` | Thinking model |
-| `KOLEGA_CODE_THINKING_TOKENS` | Thinking-token budget (integer) |
+| `KOLEGA_CODE_THINKING_EFFORT` | Model-specific thinking effort |
 
 See [Providers & Models](../providers-and-models/) for what each role does.
 
@@ -87,6 +87,7 @@ ANTHROPIC_API_KEY=
 # Optional: choose models per role
 KOLEGA_CODE_PROVIDER=moonshot
 KOLEGA_CODE_MODEL=kimi-k2.6
+KOLEGA_CODE_THINKING_EFFORT=auto
 
 # Optional: Langfuse tracing
 LANGFUSE_HOST=https://us.cloud.langfuse.com

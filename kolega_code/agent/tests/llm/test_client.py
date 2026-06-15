@@ -39,7 +39,6 @@ if os.path.exists(backend_env_path):
 from kolega_code.llm.client import (
     GenerationParams,
     LLMClient,
-    ThinkingConfig,
     TokenCount,
 )
 from kolega_code.llm.models import (
@@ -514,7 +513,7 @@ async def test_moonshot_kimi_thinking_round_trip_real_api(moonshot_client):
         model="kimi-k2.6",
         temperature=1.0,
         max_completion_tokens=2048,
-        thinking=1024,
+        thinking="auto",
     )
 
     assert isinstance(first_response, Message)
@@ -532,7 +531,7 @@ async def test_moonshot_kimi_thinking_round_trip_real_api(moonshot_client):
         model="kimi-k2.6",
         temperature=1.0,
         max_completion_tokens=2048,
-        thinking=1024,
+        thinking="auto",
     )
 
     assert isinstance(second_response, Message)
@@ -624,8 +623,6 @@ async def test_retry_on_error():
 @pytest.mark.asyncio
 async def test_generation_params(anthropic_client):
     """Test generation parameters handling"""
-    params = GenerationParams(temperature=0.5, max_completion_tokens=100, thinking=ThinkingConfig(budget_tokens=2048))
-
     response = await anthropic_client.generate(
         messages=TEST_MESSAGES, system=TEST_SYSTEM, temperature=0.5, max_completion_tokens=100
     )
@@ -649,7 +646,7 @@ async def test_reasoning_effort(openai_client):
 
     try:
         response = await openai_client.generate(
-            messages=TEST_MESSAGES, system=TEST_SYSTEM, temperature=0.5, thinking="high"
+            messages=TEST_MESSAGES, system=TEST_SYSTEM, temperature=0.5, thinking="high", model="o3"
         )
         # Test that we got a response
         assert isinstance(response, Message)

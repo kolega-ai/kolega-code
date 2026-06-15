@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from kolega_code.config import ModelProvider
-from kolega_code.llm.specs import get_model_specs
+from kolega_code.llm.specs import default_thinking_effort, get_model_specs, thinking_effort_options
 
 UI_DEFAULT_PROVIDER = ModelProvider.MOONSHOT.value
 UI_DEFAULT_MODEL = "kimi-k2.6"
@@ -21,6 +21,8 @@ class ModelOption:
     api_key_env: str
     context_length: int
     max_completion_tokens: int
+    thinking_efforts: tuple[str, ...]
+    default_thinking_effort: str | None
 
 
 def _model_option(
@@ -39,6 +41,8 @@ def _model_option(
         api_key_env=api_key_env,
         context_length=int(specs["context_length"]),
         max_completion_tokens=int(specs["max_completion_tokens"]),
+        thinking_efforts=thinking_effort_options(provider, model),
+        default_thinking_effort=default_thinking_effort(provider, model),
     )
 
 
@@ -77,12 +81,38 @@ def ui_model_options(provider: str) -> list[tuple[str, str]]:
     return [(option.model_label, option.model) for option in UI_MODEL_OPTIONS if option.provider == provider]
 
 
+def ui_thinking_effort_options(provider: str, model: str) -> list[tuple[str, str]]:
+    """Return Textual Select options for supported model thinking efforts."""
+    option = get_ui_model(provider, model)
+    if option is None:
+        return []
+    return [(_thinking_effort_label(effort), effort) for effort in option.thinking_efforts]
+
+
+def default_ui_thinking_effort(provider: str, model: str) -> str | None:
+    """Return the default thinking effort for a supported UI model."""
+    option = get_ui_model(provider, model)
+    return option.default_thinking_effort if option is not None else None
+
+
 def get_ui_model(provider: str, model: str) -> ModelOption | None:
     """Return a supported UI model option."""
     for option in UI_MODEL_OPTIONS:
         if option.provider == provider and option.model == model:
             return option
     return None
+
+
+def _thinking_effort_label(effort: str) -> str:
+    return {
+        "auto": "Auto",
+        "none": "None",
+        "low": "Low",
+        "medium": "Medium",
+        "high": "High",
+        "xhigh": "Extra high",
+        "max": "Max",
+    }.get(effort, effort)
 
 
 def default_model_for_provider(provider: ModelProvider) -> str:

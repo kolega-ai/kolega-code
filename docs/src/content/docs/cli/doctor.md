@@ -27,6 +27,7 @@ you can validate a specific provider/model combination before using it.
   available.
 - **Stored active model** — the provider/model saved in Settings, or
   `not configured`.
+- **Stored thinking effort** — the saved effort value, or `model default`.
 - **Stored API key** — for the active provider, whether the key is
   `present via <ENV_VAR>`, `present in local settings`, or `missing` (the key
   itself is never printed).
@@ -40,12 +41,14 @@ Project: /Users/you/code/my-app
 State dir: /Users/you/Library/Application Support/kolega-code
 Textual installed: True
 Stored active model: moonshot/kimi-k2.6
+Stored thinking effort: auto
 Stored API key: present in local settings
 ✓ Configuration: valid
 Long model: moonshot/kimi-k2.6
 Fast model: moonshot/kimi-k2.6
 Edit model: moonshot/kimi-k2.6
 Thinking model: moonshot/kimi-k2.6
+Thinking effort: auto
 ```
 
 ## Exit codes

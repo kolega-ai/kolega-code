@@ -17,8 +17,8 @@ def test_llm_client_maps_moonshot_to_anthropic_provider():
     assert client.provider.provider_name == 'moonshot'
     assert client.provider.use_local_token_counting is True
 
-    thinking = client._prepare_thinking_param(8192)
-    assert thinking.budget_tokens == 8192
+    thinking = client._prepare_thinking_param("auto", model="kimi-k2.6")
+    assert thinking == "auto"
 
 
 def test_llm_client_maps_deepseek_to_anthropic_provider():
@@ -28,5 +28,5 @@ def test_llm_client_maps_deepseek_to_anthropic_provider():
     assert client.provider.provider_name == 'deepseek'
     assert client.provider.use_local_token_counting is True
 
-    thinking = client._prepare_thinking_param(8192)
-    assert thinking.budget_tokens == 8192
+    thinking = client._prepare_thinking_param("max", model="deepseek-v4-pro")
+    assert thinking == "max"

@@ -25,7 +25,8 @@ def test_build_agent_config_defaults_to_latest_anthropic_models(tmp_path: Path) 
     assert config.fast_config.model == DEFAULT_FAST_MODEL
     assert config.edit_model_config.model == DEFAULT_EDIT_MODEL
     assert config.thinking_config.model == DEFAULT_THINKING_MODEL
-    assert config.thinking_config.thinking_tokens == 1024
+    assert config.long_context_config.thinking_effort == "medium"
+    assert config.thinking_config.thinking_effort == "medium"
 
 
 def test_build_agent_config_env_overrides(tmp_path: Path) -> None:
@@ -34,27 +35,49 @@ def test_build_agent_config_env_overrides(tmp_path: Path) -> None:
         env={
             "ANTHROPIC_API_KEY": "test-key",
             "KOLEGA_CODE_MODEL": "claude-sonnet-4-6",
-            "KOLEGA_CODE_THINKING_TOKENS": "2048",
+            "KOLEGA_CODE_THINKING_EFFORT": "high",
         },
     )
 
     assert config.long_context_config.model == "claude-sonnet-4-6"
-    assert config.thinking_config.thinking_tokens == 2048
+    assert config.long_context_config.thinking_effort == "high"
+    assert config.thinking_config.thinking_effort == "high"
 
 
 def test_build_agent_config_flags_override_env(tmp_path: Path) -> None:
     config = build_agent_config(
         tmp_path,
-        CliConfigOverrides(model="claude-opus-4-7", thinking_tokens=4096),
+        CliConfigOverrides(model="claude-opus-4-7", thinking_effort="xhigh"),
         env={
             "ANTHROPIC_API_KEY": "test-key",
             "KOLEGA_CODE_MODEL": "claude-sonnet-4-6",
-            "KOLEGA_CODE_THINKING_TOKENS": "2048",
+            "KOLEGA_CODE_THINKING_EFFORT": "high",
         },
     )
 
     assert config.long_context_config.model == "claude-opus-4-7"
-    assert config.thinking_config.thinking_tokens == 4096
+    assert config.long_context_config.thinking_effort == "xhigh"
+    assert config.thinking_config.thinking_effort == "xhigh"
+
+
+def test_build_agent_config_rejects_deprecated_thinking_tokens_env(tmp_path: Path) -> None:
+    with pytest.raises(CliConfigError, match="named effort"):
+        build_agent_config(
+            tmp_path,
+            env={
+                "ANTHROPIC_API_KEY": "test-key",
+                "KOLEGA_CODE_THINKING_TOKENS": "2048",
+            },
+        )
+
+
+def test_build_agent_config_rejects_invalid_thinking_effort(tmp_path: Path) -> None:
+    with pytest.raises(CliConfigError, match="Unsupported thinking effort"):
+        build_agent_config(
+            tmp_path,
+            CliConfigOverrides(model="claude-opus-4-7", thinking_effort="auto"),
+            env={"ANTHROPIC_API_KEY": "test-key"},
+        )
 
 
 def test_build_agent_config_requires_api_key(tmp_path: Path) -> None:
@@ -91,6 +114,8 @@ def test_build_agent_config_uses_stored_kimi_for_all_model_slots(tmp_path: Path)
     assert config.edit_model_config.model == UI_DEFAULT_MODEL
     assert config.thinking_config.provider == ModelProvider.MOONSHOT
     assert config.thinking_config.model == UI_DEFAULT_MODEL
+    assert config.long_context_config.thinking_effort == "auto"
+    assert config.thinking_config.thinking_effort == "auto"
     assert config.moonshot_api_key == "moonshot-key"
 
 
@@ -108,6 +133,8 @@ def test_build_agent_config_uses_stored_deepseek_for_all_model_slots(tmp_path: P
     assert config.edit_model_config.model == DEEPSEEK_DEFAULT_MODEL
     assert config.thinking_config.provider == ModelProvider.DEEPSEEK
     assert config.thinking_config.model == DEEPSEEK_DEFAULT_MODEL
+    assert config.long_context_config.thinking_effort == "high"
+    assert config.thinking_config.thinking_effort == "high"
     assert config.deepseek_api_key == "deepseek-key"
 
 

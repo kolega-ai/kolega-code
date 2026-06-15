@@ -352,8 +352,6 @@ async def test_textual_app_keeps_command_c_for_screen_copy(
 ) -> None:
     pytest.importorskip("textual")
 
-    from textual.widgets import Markdown
-
     from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
 
@@ -1766,6 +1764,7 @@ async def test_textual_app_mounts_with_stored_kimi_settings(
         assert isinstance(app.agent, FakeCoderAgent)
         assert app.agent.kwargs["config"].long_context_config.provider == ModelProvider.MOONSHOT
         assert app.agent.kwargs["config"].long_context_config.model == UI_DEFAULT_MODEL
+        assert app.agent.kwargs["config"].long_context_config.thinking_effort == "auto"
         assert app.query_one("#composer", ChatComposer).disabled is False
 
 
@@ -1815,6 +1814,7 @@ async def test_textual_app_mounts_with_stored_deepseek_settings(
         assert isinstance(app.agent, FakeCoderAgent)
         assert app.agent.kwargs["config"].long_context_config.provider == ModelProvider.DEEPSEEK
         assert app.agent.kwargs["config"].long_context_config.model == DEEPSEEK_DEFAULT_MODEL
+        assert app.agent.kwargs["config"].long_context_config.thinking_effort == "high"
         assert app.query_one("#composer", ChatComposer).disabled is False
 
 
@@ -1866,10 +1866,12 @@ async def test_textual_app_saves_settings_and_builds_agent(
         assert isinstance(app.agent, FakeCoderAgent)
         assert app.agent.kwargs["config"].long_context_config.provider == ModelProvider.MOONSHOT
         assert settings_store.load().get_api_key(UI_DEFAULT_PROVIDER) == "moonshot-key"
+        assert settings_store.load().active_thinking_effort == "auto"
         assert app.query_one("#composer", ChatComposer).disabled is False
         assert [entry.kind for entry in app.conversation_entries].count("startup") == 1
         startup = app.conversation_entries[0].content
         assert f"Model: {UI_DEFAULT_PROVIDER}/{UI_DEFAULT_MODEL}" in startup
+        assert "Thinking effort: auto" in startup
         assert "API key: present in local settings" in startup
 
 
@@ -1925,7 +1927,9 @@ async def test_textual_app_saves_deepseek_settings_and_builds_agent(
         assert isinstance(app.agent, FakeCoderAgent)
         assert app.agent.kwargs["config"].long_context_config.provider == ModelProvider.DEEPSEEK
         assert app.agent.kwargs["config"].long_context_config.model == DEEPSEEK_DEFAULT_MODEL
+        assert app.agent.kwargs["config"].long_context_config.thinking_effort == "high"
         assert settings_store.load().get_api_key(ModelProvider.DEEPSEEK.value) == "deepseek-key"
+        assert settings_store.load().active_thinking_effort == "high"
         assert app.query_one("#composer", ChatComposer).disabled is False
 
 
@@ -4138,6 +4142,16 @@ async def test_textual_app_model_slash_command_shows_and_switches_model(
         "ui_model_options",
         lambda provider: [("Kimi K2.6", "kimi-k2.6"), ("Kimi K3", "kimi-k3")],
     )
+    monkeypatch.setattr(
+        app_module,
+        "ui_thinking_effort_options",
+        lambda provider, model: [("Auto", "auto"), ("None", "none")] if model == "kimi-k2.6" else [("High", "high")],
+    )
+    monkeypatch.setattr(
+        app_module,
+        "default_ui_thinking_effort",
+        lambda provider, model: "auto" if model == "kimi-k2.6" else "high",
+    )
 
     project = tmp_path / "project"
     project.mkdir()
@@ -4158,15 +4172,28 @@ async def test_textual_app_model_slash_command_shows_and_switches_model(
 
         app.query_one("#api_key_input", Input).value = "moonshot-key"
         await app._save_settings_from_ui()
+        assert isinstance(app.agent, FakeCoderAgent)
+
+        composer = app.query_one("#composer", ChatComposer)
+        composer.load_text("/effort")
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+        effort_entry = app.conversation_entries[-1]
+        assert effort_entry.kind == "system"
+        assert "Available thinking efforts:" in effort_entry.content
+        assert "`none`" in effort_entry.content
+
+        composer.load_text("/effort none")
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+        assert settings_store.load().active_thinking_effort == "none"
         first_agent = app.agent
         assert isinstance(first_agent, FakeCoderAgent)
 
-        composer = app.query_one("#composer", ChatComposer)
         composer.load_text("/model")
         await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
         entry = app.conversation_entries[-1]
         assert entry.kind == "system"
         assert "kimi-k2.6" in entry.content and "kimi-k3" in entry.content
+        assert "Thinking effort: none" in entry.content
 
         # kimi-k3 is a fake model the real config builder rejects, so stub it for the rebuild step.
         saved_config = app.config
@@ -4174,7 +4201,9 @@ async def test_textual_app_model_slash_command_shows_and_switches_model(
 
         composer.load_text("/model kimi-k3")
         await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
-        assert settings_store.load().active_model == "kimi-k3"
+        switched_settings = settings_store.load()
+        assert switched_settings.active_model == "kimi-k3"
+        assert switched_settings.active_thinking_effort == "high"
         assert isinstance(app.agent, FakeCoderAgent)
         assert app.agent is not first_agent
 

@@ -24,11 +24,11 @@ At the bottom sits the **composer** — the text box where you type prompts. See
 
 | Tab | What it shows |
 | --- | --- |
-| **Status** | The active provider and model, the current interaction mode (Build/Plan), the agent's turn state (idle, generating, thinking, running a tool, running sub-agents, waiting for input, …), token usage, and context warnings. |
+| **Status** | The active provider/model and thinking effort, the current interaction mode (Build/Plan), the agent's turn state (idle, generating, thinking, running a tool, running sub-agents, waiting for input, …), token usage, and context warnings. |
 | **Logs** | A timestamped, color-coded activity log: sub-agent lifecycle, tool calls, configuration changes. An indicator flags new entries when you're on another tab. |
 | **Terminal** | Live output from commands the agent runs. |
 | **Planning** | The current **Plan** (markdown from the planning agent) and the shared **Task List** that both modes can edit. |
-| **Settings** | Provider, model, and API-key configuration. See [Settings & API Keys](../../configuration/settings-and-api-keys/). |
+| **Settings** | Provider, model, thinking effort, and API-key configuration. See [Settings & API Keys](../../configuration/settings-and-api-keys/). |
 
 ## Conversation details
 
