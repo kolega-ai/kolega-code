@@ -86,7 +86,7 @@ ANTHROPIC_API_KEY=
 
 # Optional: choose models per role
 KOLEGA_CODE_PROVIDER=moonshot
-KOLEGA_CODE_MODEL=kimi-k2.6
+KOLEGA_CODE_MODEL=kimi-k2.7-code
 KOLEGA_CODE_THINKING_EFFORT=auto
 
 # Optional: Langfuse tracing

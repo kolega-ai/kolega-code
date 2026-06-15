@@ -32,7 +32,7 @@ uv tool upgrade kolega-code
 uv tool uninstall kolega-code
 ```
 
-Run the Textual UI and open the Settings tab to select Moonshot Kimi K2.6 or DeepSeek V4 Pro, choose the model's thinking effort, and save your API key:
+Run the Textual UI and open the Settings tab to select Moonshot Kimi K2.7 Code, Moonshot Kimi K2.6, or DeepSeek V4 Pro, choose the model's thinking effort, and save your API key:
 
 ```bash
 kolega-code .
@@ -56,7 +56,7 @@ kolega-code sessions list --project .
 kolega-code doctor --project .
 ```
 
-The Settings UI supports Moonshot `kimi-k2.6` and DeepSeek `deepseek-v4-pro`. A saved UI selection is used for all agent model roles, and switching models resets thinking effort to that model's default. API keys are stored in the local CLI settings file with restrictive permissions. Existing environment and model/provider flag overrides continue to work. Local session state is stored under the platform state directory unless `KOLEGA_CODE_STATE_DIR` is set.
+The Settings UI supports Moonshot `kimi-k2.7-code`, Moonshot `kimi-k2.6`, and DeepSeek `deepseek-v4-pro`. A saved UI selection is used for all agent model roles, and switching models resets thinking effort to that model's default. API keys are stored in the local CLI settings file with restrictive permissions. Existing environment and model/provider flag overrides continue to work. Local session state is stored under the platform state directory unless `KOLEGA_CODE_STATE_DIR` is set.
 
 ## From source
 

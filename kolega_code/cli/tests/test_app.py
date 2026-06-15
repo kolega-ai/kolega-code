@@ -4140,17 +4140,21 @@ async def test_textual_app_model_slash_command_shows_and_switches_model(
     monkeypatch.setattr(
         app_module,
         "ui_model_options",
-        lambda provider: [("Kimi K2.6", "kimi-k2.6"), ("Kimi K3", "kimi-k3")],
+        lambda provider: [
+            ("Kimi K2.7 Code", UI_DEFAULT_MODEL),
+            ("Kimi K2.6", "kimi-k2.6"),
+            ("Kimi K3", "kimi-k3"),
+        ],
     )
     monkeypatch.setattr(
         app_module,
         "ui_thinking_effort_options",
-        lambda provider, model: [("Auto", "auto"), ("None", "none")] if model == "kimi-k2.6" else [("High", "high")],
+        lambda provider, model: [("High", "high")] if model == "kimi-k3" else [("Auto", "auto")],
     )
     monkeypatch.setattr(
         app_module,
         "default_ui_thinking_effort",
-        lambda provider, model: "auto" if model == "kimi-k2.6" else "high",
+        lambda provider, model: "high" if model == "kimi-k3" else "auto",
     )
 
     project = tmp_path / "project"
@@ -4180,11 +4184,12 @@ async def test_textual_app_model_slash_command_shows_and_switches_model(
         effort_entry = app.conversation_entries[-1]
         assert effort_entry.kind == "system"
         assert "Available thinking efforts:" in effort_entry.content
-        assert "`none`" in effort_entry.content
+        assert "`auto`" in effort_entry.content
+        assert "`none`" not in effort_entry.content
 
-        composer.load_text("/effort none")
+        composer.load_text("/effort auto")
         await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
-        assert settings_store.load().active_thinking_effort == "none"
+        assert settings_store.load().active_thinking_effort == "auto"
         first_agent = app.agent
         assert isinstance(first_agent, FakeCoderAgent)
 
@@ -4192,8 +4197,8 @@ async def test_textual_app_model_slash_command_shows_and_switches_model(
         await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
         entry = app.conversation_entries[-1]
         assert entry.kind == "system"
-        assert "kimi-k2.6" in entry.content and "kimi-k3" in entry.content
-        assert "Thinking effort: none" in entry.content
+        assert UI_DEFAULT_MODEL in entry.content and "kimi-k2.6" in entry.content and "kimi-k3" in entry.content
+        assert "Thinking effort: auto" in entry.content
 
         # kimi-k3 is a fake model the real config builder rejects, so stub it for the rebuild step.
         saved_config = app.config

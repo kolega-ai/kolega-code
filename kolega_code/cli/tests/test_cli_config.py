@@ -13,7 +13,12 @@ from kolega_code.cli.config import (
     build_agent_config,
     config_summary,
 )
-from kolega_code.cli.provider_registry import DEEPSEEK_DEFAULT_MODEL, UI_DEFAULT_MODEL, UI_DEFAULT_PROVIDER
+from kolega_code.cli.provider_registry import (
+    DEEPSEEK_DEFAULT_MODEL,
+    MOONSHOT_K26_MODEL,
+    UI_DEFAULT_MODEL,
+    UI_DEFAULT_PROVIDER,
+)
 from kolega_code.cli.settings import CliSettings
 
 
@@ -149,6 +154,18 @@ def test_build_agent_config_accepts_moonshot_cli_active_model(tmp_path: Path) ->
     assert config.fast_config.provider == ModelProvider.MOONSHOT
     assert config.edit_model_config.provider == ModelProvider.MOONSHOT
     assert config.thinking_config.provider == ModelProvider.MOONSHOT
+
+
+def test_build_agent_config_accepts_moonshot_k26_model(tmp_path: Path) -> None:
+    config = build_agent_config(
+        tmp_path,
+        CliConfigOverrides(provider=UI_DEFAULT_PROVIDER, model=MOONSHOT_K26_MODEL),
+        env={"MOONSHOT_API_KEY": "moonshot-key"},
+    )
+
+    assert config.long_context_config.provider == ModelProvider.MOONSHOT
+    assert config.long_context_config.model == MOONSHOT_K26_MODEL
+    assert config.long_context_config.thinking_effort == "auto"
 
 
 def test_build_agent_config_accepts_deepseek_cli_active_model(tmp_path: Path) -> None:

@@ -8,7 +8,8 @@ from kolega_code.config import ModelProvider
 from kolega_code.llm.specs import default_thinking_effort, get_model_specs, thinking_effort_options
 
 UI_DEFAULT_PROVIDER = ModelProvider.MOONSHOT.value
-UI_DEFAULT_MODEL = "kimi-k2.6"
+UI_DEFAULT_MODEL = "kimi-k2.7-code"
+MOONSHOT_K26_MODEL = "kimi-k2.6"
 DEEPSEEK_DEFAULT_MODEL = "deepseek-v4-pro"
 
 
@@ -51,6 +52,13 @@ UI_MODEL_OPTIONS = [
         ModelProvider.MOONSHOT,
         "Moonshot AI",
         UI_DEFAULT_MODEL,
+        "Kimi K2.7 Code",
+        "MOONSHOT_API_KEY",
+    ),
+    _model_option(
+        ModelProvider.MOONSHOT,
+        "Moonshot AI",
+        MOONSHOT_K26_MODEL,
         "Kimi K2.6",
         "MOONSHOT_API_KEY",
     ),
