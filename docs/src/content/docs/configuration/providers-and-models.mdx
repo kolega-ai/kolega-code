@@ -44,6 +44,10 @@ can match cost and capability to the job:
 | **Fast** | Quick, cheap utility calls | `anthropic` / `claude-haiku-4-5-20251001` |
 | **Thinking** | Extended-reasoning ("think hard") operations | `anthropic` / `claude-opus-4-7` (`medium` effort) |
 
+These built-in role defaults are used only when the corresponding provider or
+role is explicitly selected without a model. API key variables alone do not make
+these defaults active.
+
 When you pick a single provider/model in the Settings UI, that selection is applied
 to **all** roles. To assign roles individually, use environment variables or CLI
 flags.
@@ -58,12 +62,12 @@ match wins):
 2. **Environment variables** — e.g. `KOLEGA_CODE_PROVIDER`, `KOLEGA_CODE_MODEL`, the
    per-role variants, and a project-local `.env` file.
 3. **Saved Settings** — the active provider/model from the Settings tab.
-4. **Built-in defaults** — the Anthropic models listed above.
 </Steps>
 
-A configuration is only valid if every role's provider has an API key available
-(the local `llama` provider needs none). If a key is missing, the CLI reports
-exactly which environment variable is required.
+A configuration is only valid if a provider/model has been selected and every
+role's provider has an API key available (the local `llama` provider needs none).
+If a key is missing, the CLI reports exactly which environment variable is
+required.
 
 ## Set models per role
 

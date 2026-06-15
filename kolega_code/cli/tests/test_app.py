@@ -21,6 +21,16 @@ def extension_by_name(extensions, name: str):
     )
 
 
+def build_test_config(project: Path):
+    return build_agent_config(
+        project,
+        env={
+            "ANTHROPIC_API_KEY": "test-key",
+            "KOLEGA_CODE_PROVIDER": "anthropic",
+        },
+    )
+
+
 @pytest.mark.asyncio
 async def test_textual_app_mounts_with_fake_agent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
@@ -49,7 +59,7 @@ async def test_textual_app_mounts_with_fake_agent(tmp_path: Path, monkeypatch: p
 
     project = tmp_path / "project"
     project.mkdir()
-    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    config = build_test_config(project)
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
 
@@ -115,7 +125,7 @@ async def test_textual_app_status_tab_is_default_dashboard(
 
     project = tmp_path / "project"
     project.mkdir()
-    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    config = build_test_config(project)
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
@@ -162,7 +172,7 @@ async def test_textual_app_context_usage_updates_status_without_raw_json(
 
     project = tmp_path / "project"
     project.mkdir()
-    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    config = build_test_config(project)
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
@@ -225,7 +235,7 @@ async def test_textual_app_status_dashboard_tracks_interaction_mode(
 
     project = tmp_path / "project"
     project.mkdir()
-    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    config = build_test_config(project)
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
@@ -268,7 +278,7 @@ async def test_textual_app_turn_status_formats_error_duration(
 
     project = tmp_path / "project"
     project.mkdir()
-    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    config = build_test_config(project)
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
@@ -321,7 +331,7 @@ async def test_progress_entry_tone_drives_styling_not_prose(
 
     project = tmp_path / "project"
     project.mkdir()
-    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    config = build_test_config(project)
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
@@ -372,7 +382,7 @@ async def test_textual_app_keeps_command_c_for_screen_copy(
 
     project = tmp_path / "project"
     project.mkdir()
-    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    config = build_test_config(project)
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
@@ -420,7 +430,7 @@ async def test_textual_app_shift_tab_toggles_between_build_and_plan_agents(
 
     project = tmp_path / "project"
     project.mkdir()
-    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    config = build_test_config(project)
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
@@ -506,7 +516,7 @@ async def test_textual_app_restores_saved_plan_and_interaction_mode(
     saved_history = [Message(role="assistant", content=[TextBlock("saved response")]).to_dict()]
     project = tmp_path / "project"
     project.mkdir()
-    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    config = build_test_config(project)
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
     session.history = saved_history
@@ -557,7 +567,7 @@ async def test_textual_app_restores_saved_plan_in_build_mode_without_plan_action
     saved_plan = "# Saved plan\n\nKeep this visible."
     project = tmp_path / "project"
     project.mkdir()
-    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    config = build_test_config(project)
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
     session.latest_plan_markdown = saved_plan
@@ -600,7 +610,7 @@ async def test_textual_app_invalid_saved_interaction_mode_falls_back_to_build(
 
     project = tmp_path / "project"
     project.mkdir()
-    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    config = build_test_config(project)
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
     session.interaction_mode = "invalid"
@@ -649,7 +659,7 @@ async def test_textual_app_passes_shared_task_list_tools_to_build_and_plan_agent
 
     project = tmp_path / "project"
     project.mkdir()
-    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    config = build_test_config(project)
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
@@ -725,7 +735,7 @@ async def test_textual_app_passes_skill_extensions_to_build_and_plan_agents(
         "---\nname: demo-skill\ndescription: Use this demo skill.\n---\n\nFollow demo instructions.\n",
         encoding="utf-8",
     )
-    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    config = build_test_config(project)
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
@@ -779,7 +789,7 @@ async def test_textual_app_skill_slash_commands_list_and_activate(
         "---\nname: demo-skill\ndescription: Use this demo skill.\n---\n\nFollow demo instructions.\n",
         encoding="utf-8",
     )
-    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    config = build_test_config(project)
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
@@ -840,7 +850,7 @@ async def test_textual_app_skill_slash_command_with_prompt_starts_turn(
         "---\nname: demo-skill\ndescription: Use this demo skill.\n---\n\nFollow demo instructions.\n",
         encoding="utf-8",
     )
-    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    config = build_test_config(project)
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
@@ -892,7 +902,7 @@ async def test_textual_app_planning_question_tool_accepts_option_list_answer(
 
     project = tmp_path / "project"
     project.mkdir()
-    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    config = build_test_config(project)
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
@@ -965,7 +975,7 @@ async def test_textual_app_planning_question_supports_arrow_and_digit_selection(
 
     project = tmp_path / "project"
     project.mkdir()
-    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    config = build_test_config(project)
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
@@ -1030,7 +1040,7 @@ async def test_textual_app_planning_question_tool_accepts_custom_text_answer(
 
     project = tmp_path / "project"
     project.mkdir()
-    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    config = build_test_config(project)
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
@@ -1089,7 +1099,7 @@ async def test_textual_app_blocks_mode_toggle_during_active_turn(
 
     project = tmp_path / "project"
     project.mkdir()
-    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    config = build_test_config(project)
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
@@ -1151,7 +1161,7 @@ async def test_textual_app_shows_plan_decision_when_planning_agent_writes_plan(
 
     project = tmp_path / "project"
     project.mkdir()
-    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    config = build_test_config(project)
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
@@ -1239,7 +1249,7 @@ async def test_textual_app_implement_plan_switches_to_build_and_sends_plan(
 
     project = tmp_path / "project"
     project.mkdir()
-    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    config = build_test_config(project)
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
@@ -1304,7 +1314,7 @@ async def test_textual_app_discuss_plan_clears_old_plan_until_new_plan_is_writte
 
     project = tmp_path / "project"
     project.mkdir()
-    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    config = build_test_config(project)
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
@@ -1371,7 +1381,7 @@ async def test_textual_app_does_not_save_startup_entry_to_history(
 
     project = tmp_path / "project"
     project.mkdir()
-    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    config = build_test_config(project)
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
@@ -1415,7 +1425,7 @@ async def test_textual_app_composer_shift_enter_inserts_line_break_and_enter_sub
 
     project = tmp_path / "project"
     project.mkdir()
-    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    config = build_test_config(project)
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
@@ -1465,7 +1475,7 @@ async def test_textual_app_composer_ctrl_enter_still_inserts_line_break(
 
     project = tmp_path / "project"
     project.mkdir()
-    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    config = build_test_config(project)
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
@@ -1515,7 +1525,7 @@ async def test_textual_app_composer_preserves_multiline_paste(
     pasted = "line one\n    line two\nline three"
     project = tmp_path / "project"
     project.mkdir()
-    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    config = build_test_config(project)
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
@@ -1574,7 +1584,7 @@ async def test_textual_app_reset_command_clears_current_thread(
     ]
     project = tmp_path / "project"
     project.mkdir()
-    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    config = build_test_config(project)
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
     session.history = saved_history
@@ -1654,7 +1664,7 @@ async def test_textual_app_reset_command_waits_for_active_turn(
     saved_history = [Message(role="user", content=[TextBlock("old request")]).to_dict()]
     project = tmp_path / "project"
     project.mkdir()
-    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    config = build_test_config(project)
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
     session.history = saved_history
@@ -1711,11 +1721,56 @@ async def test_textual_app_mounts_settings_without_api_key(
         assert app.agent is None
         assert app.query_one("#composer", ChatComposer).disabled is True
         startup = app.conversation_entries[0].content
-        assert f"Model: {UI_DEFAULT_PROVIDER}/{UI_DEFAULT_MODEL}" in startup
-        assert "API key: missing" in startup
+        assert "Model: not configured" in startup
+        assert "API key: not checked until a model is configured" in startup
+        stored_settings = settings_store.load()
+        assert stored_settings.active_provider is None
+        assert stored_settings.active_model is None
         status = str(app.query_one("#settings_status").render())
         assert "Configuration incomplete" in status
-        assert "MOONSHOT_API_KEY" in status
+        assert "No provider/model configured" in status
+
+
+@pytest.mark.asyncio
+async def test_textual_app_does_not_select_model_from_api_key_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli import app as app_module
+    from kolega_code.cli.app import ChatComposer, KolegaCodeApp
+
+    class FakeCoderAgent:
+        def __init__(self, **kwargs):
+            raise AssertionError("agent should not be built from an API key alone")
+
+    monkeypatch.setenv("MOONSHOT_API_KEY", "moonshot-key")
+    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    state_dir = tmp_path / "state"
+    store = SessionStore(state_dir)
+    settings_store = SettingsStore(state_dir)
+    session = store.create(project, "code", {})
+
+    app = KolegaCodeApp(
+        project_path=project,
+        mode="code",
+        store=store,
+        settings_store=settings_store,
+        session=session,
+    )
+
+    async with app.run_test():
+        assert app.agent is None
+        assert app.query_one("#composer", ChatComposer).disabled is True
+        startup = app.conversation_entries[0].content
+        assert "Model: not configured" in startup
+        assert f"Model: {UI_DEFAULT_PROVIDER}/{UI_DEFAULT_MODEL}" not in startup
+        stored_settings = settings_store.load()
+        assert stored_settings.active_provider is None
+        assert stored_settings.active_model is None
 
 
 @pytest.mark.asyncio
@@ -1969,7 +2024,7 @@ async def test_textual_app_merges_streamed_response_chunks(
 
     project = tmp_path / "project"
     project.mkdir()
-    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    config = build_test_config(project)
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
@@ -2022,7 +2077,7 @@ async def test_textual_app_merges_streamed_thinking_chunks(
 
     project = tmp_path / "project"
     project.mkdir()
-    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    config = build_test_config(project)
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
@@ -2062,7 +2117,7 @@ async def test_textual_app_formats_thinking_as_italic_chat_entry(
 
     project = tmp_path / "project"
     project.mkdir()
-    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    config = build_test_config(project)
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
@@ -2104,7 +2159,7 @@ async def test_textual_app_renders_one_widget_per_chat_entry(
 
     project = tmp_path / "project"
     project.mkdir()
-    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    config = build_test_config(project)
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
@@ -2164,7 +2219,7 @@ async def test_conversation_entry_widget_extracts_plain_selected_text(
 
     project = tmp_path / "project"
     project.mkdir()
-    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    config = build_test_config(project)
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
@@ -2214,7 +2269,7 @@ async def test_conversation_entry_supports_mouse_drag_selection(
 
     project = tmp_path / "project"
     project.mkdir()
-    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    config = build_test_config(project)
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
@@ -2270,7 +2325,7 @@ async def test_command_c_copies_selected_chat_text_to_macos_clipboard(
 
     project = tmp_path / "project"
     project.mkdir()
-    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    config = build_test_config(project)
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
@@ -2318,7 +2373,7 @@ async def test_textual_app_formats_agent_and_tool_chat_entries(
 
     project = tmp_path / "project"
     project.mkdir()
-    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    config = build_test_config(project)
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
@@ -2383,7 +2438,7 @@ async def test_textual_app_ignores_empty_final_response_without_existing_entry(
 
     project = tmp_path / "project"
     project.mkdir()
-    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    config = build_test_config(project)
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
@@ -2432,7 +2487,7 @@ async def test_textual_app_shows_working_progress_during_active_turn(
 
     project = tmp_path / "project"
     project.mkdir()
-    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    config = build_test_config(project)
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
@@ -2497,7 +2552,7 @@ async def test_textual_app_renders_tool_events_in_chat(tmp_path: Path, monkeypat
 
     project = tmp_path / "project"
     project.mkdir()
-    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    config = build_test_config(project)
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
@@ -2575,7 +2630,7 @@ async def test_textual_app_appends_append_mode_tool_streaming_events_in_chat(
 
     project = tmp_path / "project"
     project.mkdir()
-    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    config = build_test_config(project)
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
@@ -2673,7 +2728,7 @@ async def test_textual_app_replaces_default_tool_streaming_events_in_chat(
 
     project = tmp_path / "project"
     project.mkdir()
-    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    config = build_test_config(project)
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
@@ -2736,7 +2791,7 @@ async def test_textual_app_caps_long_append_mode_tool_streaming_events(
 
     project = tmp_path / "project"
     project.mkdir()
-    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    config = build_test_config(project)
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
@@ -2836,7 +2891,7 @@ async def test_textual_app_renders_queued_tool_events_during_active_turn(
 
     project = tmp_path / "project"
     project.mkdir()
-    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    config = build_test_config(project)
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
@@ -2900,7 +2955,7 @@ async def test_textual_app_late_tool_result_updates_existing_tool_row(
 
     project = tmp_path / "project"
     project.mkdir()
-    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    config = build_test_config(project)
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
@@ -2976,7 +3031,7 @@ async def test_textual_app_cancellation_is_visible_in_chat(
 
     project = tmp_path / "project"
     project.mkdir()
-    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    config = build_test_config(project)
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
@@ -3035,7 +3090,7 @@ async def test_textual_app_renders_resumed_history_in_chat(
 
     project = tmp_path / "project"
     project.mkdir()
-    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    config = build_test_config(project)
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
     session.history = [
@@ -3105,7 +3160,7 @@ def _build_sub_agent_test_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
     project = tmp_path / "project"
     project.mkdir()
-    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    config = build_test_config(project)
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
     return KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
@@ -3750,7 +3805,7 @@ def _build_mention_test_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     (project / "src" / "alpha.py").write_text("print('alpha')\n", encoding="utf-8")
     (project / "src" / "alpine.txt").write_text("mountains\n", encoding="utf-8")
     (project / "README.md").write_text("# Readme\n", encoding="utf-8")
-    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    config = build_test_config(project)
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
     return KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
@@ -4093,7 +4148,7 @@ async def test_textual_app_plan_and_build_slash_commands_switch_mode(
 
     project = tmp_path / "project"
     project.mkdir()
-    config = build_agent_config(project, env={"ANTHROPIC_API_KEY": "test-key"})
+    config = build_test_config(project)
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)

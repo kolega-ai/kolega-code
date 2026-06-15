@@ -25,6 +25,8 @@ kolega-code ask "<prompt>" [options]
 
 All the [global model options](../overview/#global-model-options)
 (`--provider`, `--model`, `--fast-model`, …) are also accepted.
+`ask` requires a provider/model from those options, environment variables, or
+saved Settings. API key variables alone are not enough.
 
 ## Examples
 

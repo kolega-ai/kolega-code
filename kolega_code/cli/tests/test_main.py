@@ -112,6 +112,20 @@ def test_ask_skill_only_prints_activation_without_model_call(
     assert "Follow demo instructions." in output
 
 
+def test_ask_requires_model_selection_even_with_api_key(
+    tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+
+    exit_code = main(["ask", "hello", "--project", str(project)])
+
+    assert exit_code == 2
+    captured = capsys.readouterr()
+    assert "No provider/model configured" in captured.out or "No provider/model configured" in captured.err
+
+
 def test_ask_skill_with_prompt_activates_before_dispatch(
     tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
 ) -> None:
@@ -147,6 +161,7 @@ def test_ask_skill_with_prompt_activates_before_dispatch(
     project.mkdir()
     write_skill(project)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setenv("KOLEGA_CODE_PROVIDER", "anthropic")
     monkeypatch.setattr(main_module, "CoderAgent", FakeCoderAgent)
 
     exit_code = main_module.main(["ask", "/demo-skill do the task", "--project", str(project)])
@@ -176,6 +191,21 @@ def test_doctor_uses_stored_kimi_settings(tmp_path: Path, capsys, isolated_cli_e
     assert "Thinking effort: auto" in output
     assert "present in local settings" in output
     assert "moonshot-key" not in output
+
+
+def test_doctor_requires_model_selection_even_with_api_key(
+    tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+
+    exit_code = main(["doctor", "--project", str(project)])
+
+    assert exit_code == 2
+    output = capsys.readouterr().out
+    assert "Stored active model: not configured" in output
+    assert "No provider/model configured" in output
 
 
 def test_deprecated_thinking_tokens_flag_fails(tmp_path: Path, capsys, isolated_cli_env: None) -> None:
@@ -347,6 +377,7 @@ def test_ask_json_interleaves_sub_agent_events(
     project = tmp_path / "project"
     project.mkdir()
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setenv("KOLEGA_CODE_PROVIDER", "anthropic")
     monkeypatch.setattr(main_module, "CoderAgent", _SubAgentEventCoderAgent)
 
     exit_code = main_module.main(["ask", "do the task", "--project", str(project), "--json"])
@@ -370,6 +401,7 @@ def test_ask_plain_writes_sub_agent_lifecycle_to_stderr(
     project = tmp_path / "project"
     project.mkdir()
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setenv("KOLEGA_CODE_PROVIDER", "anthropic")
     monkeypatch.setattr(main_module, "CoderAgent", _SubAgentEventCoderAgent)
 
     exit_code = main_module.main(["ask", "do the task", "--project", str(project)])
@@ -420,6 +452,7 @@ def test_ask_prompt_with_file_mention_attaches_content(
     project.mkdir()
     (project / "notes.md").write_text("remember the milk\n", encoding="utf-8")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setenv("KOLEGA_CODE_PROVIDER", "anthropic")
     monkeypatch.setattr(main_module, "CoderAgent", FakeCoderAgent)
 
     exit_code = main_module.main(["ask", "summarize @notes.md", "--project", str(project)])
@@ -468,6 +501,7 @@ def test_ask_prompt_with_unresolved_mention_warns_on_stderr(
     project = tmp_path / "project"
     project.mkdir()
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setenv("KOLEGA_CODE_PROVIDER", "anthropic")
     monkeypatch.setattr(main_module, "CoderAgent", FakeCoderAgent)
 
     exit_code = main_module.main(["ask", "summarize @missing.md", "--project", str(project)])
