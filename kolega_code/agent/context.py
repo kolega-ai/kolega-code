@@ -15,7 +15,7 @@ from kolega_code.config import AgentConfig
 from kolega_code.events import AgentConnectionManager
 from kolega_code.llm.client import LLMClient
 from kolega_code.llm.instrumented_client import InstrumentedLLMClient
-from .prompt_provider import AgentMode, PromptExtension
+from .prompt_provider import AgentMode, PromptExtension, PromptProvider
 from kolega_code.services.base import BrowserManager, TerminalManager
 from kolega_code.services.browser import PlaywrightBrowserManager
 from kolega_code.services.file_system import FileSystem, LocalFileSystem
@@ -78,6 +78,7 @@ class AgentContext:
     services: AgentServices
     telemetry: Telemetry = field(default_factory=Telemetry)
     agent_mode: Optional[AgentMode] = None
+    prompt_provider: Optional[PromptProvider] = None
     prompt_extensions: List[PromptExtension] = field(default_factory=list)
     tool_extensions: List[Any] = field(default_factory=list)
 

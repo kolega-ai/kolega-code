@@ -81,6 +81,7 @@ class BaseAgent(LogMixin):
         agent_mode: Optional[AgentMode] = None,
         workspace_env_var_descriptions: Optional[Dict[str, str]] = None,
         workspace_memories: Optional[List[str]] = None,
+        prompt_provider: Optional[PromptProvider] = None,
         prompt_extensions: Optional[List[PromptExtension]] = None,
         tool_extensions: Optional[List[Any]] = None,
         usage_recorder: Optional[Any] = None,
@@ -111,6 +112,7 @@ class BaseAgent(LogMixin):
             agent_mode: Optional agent mode (e.g., AgentMode.VIBE or AgentMode.CODE for CoderAgent)
             workspace_env_var_descriptions: Optional mapping of workspace env var names to descriptions
             workspace_memories: Optional list of workspace memories to inject into prompts
+            prompt_provider: Optional host-configured prompt provider
             prompt_extensions: Host-provided prompt sections for app-specific context
             tool_extensions: Host-provided tool providers for app-specific tools
             usage_recorder: Optional callback for recording normalized LLM usage
@@ -153,9 +155,12 @@ class BaseAgent(LogMixin):
                     sub_agent_recorder=sub_agent_recorder,
                 ),
                 agent_mode=agent_mode,
+                prompt_provider=prompt_provider,
                 prompt_extensions=prompt_extensions or [],
                 tool_extensions=tool_extensions or [],
             )
+        elif prompt_provider is not None:
+            context.prompt_provider = prompt_provider
 
         self.context = context
 
@@ -189,8 +194,7 @@ class BaseAgent(LogMixin):
         if not self.filesystem.is_dir("."):
             raise ValueError(f"Project path is not a directory: {self.project_path}")
 
-        # Initialize PromptProvider
-        self.prompt_provider = PromptProvider()
+        self.prompt_provider = context.prompt_provider or PromptProvider()
 
         self.conversation = Conversation(max_tool_result_chars=self.max_tool_result_chars_in_history)
         self.conversation.skill_content_pattern = self.skill_content_pattern

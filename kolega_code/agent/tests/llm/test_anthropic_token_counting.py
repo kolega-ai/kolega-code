@@ -87,7 +87,7 @@ def real_system_prompt():
 
     prompt_text = prompt_provider.get_system_prompt(
         agent_type=AgentType.CODER,
-        mode=AgentMode.CODE,
+        mode=AgentMode.CLI,
         template_slug=None,
         context=context,
     )

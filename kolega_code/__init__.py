@@ -46,6 +46,7 @@ from .llm.models import (
 from .agent.prompt_provider import (
     AgentMode,
     AgentType,
+    MissingPromptTemplateError,
     PromptContext,
     PromptExtension,
     PromptProvider,
@@ -113,6 +114,7 @@ __all__ = [
     # Prompts
     "AgentMode",
     "AgentType",
+    "MissingPromptTemplateError",
     "PromptContext",
     "PromptExtension",
     "PromptProvider",
