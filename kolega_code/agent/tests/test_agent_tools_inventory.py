@@ -1,6 +1,7 @@
 """Tool inventory checks for shared agent classes."""
 
 import uuid
+from pathlib import Path
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -12,7 +13,7 @@ from kolega_code.events import AgentConnectionManager
 from kolega_code.agent.generalagent import GeneralAgent
 from kolega_code.agent.investigationagent import InvestigationAgent
 from kolega_code.agent.planningagent import PlanningAgent
-from kolega_code.agent.prompt_provider import AgentMode
+from kolega_code.agent.prompt_provider import AgentMode, PromptProvider
 
 
 @pytest.fixture
@@ -41,6 +42,14 @@ def agent_config():
 def project_path(tmp_path):
     """Create a temporary project path."""
     return str(tmp_path)
+
+
+def hosted_prompt_provider(project_path):
+    template_dir = Path(project_path) / "prompt_templates"
+    agents_dir = template_dir / "agents"
+    agents_dir.mkdir(parents=True, exist_ok=True)
+    (agents_dir / "coder_code_mode.j2").write_text("Private hosted test prompt.", encoding="utf-8")
+    return PromptProvider(template_dirs=[template_dir])
 
 
 def test_browser_agent_tools(project_path, mock_connection_manager, agent_config):
@@ -125,6 +134,7 @@ def test_non_cli_coder_agent_keeps_manifest_build_tools(project_path, mock_conne
         connection_manager=mock_connection_manager,
         config=agent_config,
         agent_mode=AgentMode.CODE,
+        prompt_provider=hosted_prompt_provider(project_path),
     )
 
     tool_names = {tool.name for tool in agent.tool_collection.get_tool_list()}

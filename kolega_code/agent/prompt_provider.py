@@ -1,4 +1,4 @@
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -7,12 +7,11 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# Set up directory paths and Jinja2 environment at module level
-# This ensures the environment is created only once, improving performance
 _base_dir = Path(__file__).parent / "prompt_templates"
-_jinja_env = jinja2.Environment(
-    loader=jinja2.FileSystemLoader(str(_base_dir)), trim_blocks=True, lstrip_blocks=True
-)
+
+
+class MissingPromptTemplateError(RuntimeError):
+    """Raised when a host-only agent mode has no bundled or host-provided prompt template."""
 
 
 class AgentType(Enum):
@@ -65,8 +64,20 @@ class PromptProvider:
     Generates system prompts based on agent type, mode, template, and host-provided extensions.
     """
 
-    def __init__(self):
-        pass
+    def __init__(
+        self,
+        template_dirs: Optional[Sequence[str | Path]] = None,
+        *,
+        include_builtin_templates: bool = True,
+    ):
+        loaders = [jinja2.FileSystemLoader(str(Path(template_dir))) for template_dir in template_dirs or []]
+        if include_builtin_templates:
+            loaders.append(jinja2.FileSystemLoader(str(_base_dir)))
+        self._jinja_env = jinja2.Environment(
+            loader=jinja2.ChoiceLoader(loaders),
+            trim_blocks=True,
+            lstrip_blocks=True,
+        )
 
     def get_system_prompt(
         self,
@@ -97,10 +108,11 @@ class PromptProvider:
         logger.debug(f"Using prompt template: {template_name}")
 
         try:
-            jinja_template = _jinja_env.get_template(template_name)
+            jinja_template = self._jinja_env.get_template(template_name)
         except jinja2.TemplateNotFound:
-            logger.error(f"Template not found: {template_name}")
-            raise
+            message = self._missing_template_message(agent_type, mode, template_name)
+            logger.error(message)
+            raise MissingPromptTemplateError(message)
 
         # Prepare template variables
         template_vars = {
@@ -163,3 +175,22 @@ class PromptProvider:
                 )
 
         return f"agents/{agent_type.value}.j2"
+
+    def _missing_template_message(
+        self,
+        agent_type: AgentType,
+        mode: Optional[AgentMode],
+        template_name: str,
+    ) -> str:
+        mode_value = mode.value if isinstance(mode, AgentMode) else mode
+        if agent_type == AgentType.CODER and mode_value in {
+            AgentMode.CODE.value,
+            AgentMode.VIBE.value,
+            AgentMode.FIX.value,
+        }:
+            return (
+                f"Prompt template '{template_name}' is required for coder {mode_value!r} mode, "
+                "but kolega-code does not ship hosted-mode prompts. Pass a PromptProvider "
+                "configured with host-owned template_dirs."
+            )
+        return f"Prompt template not found: {template_name}"

@@ -15,7 +15,7 @@ from kolega_code.events import AgentStatus, AgentEvent
 from kolega_code.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
 from kolega_code.events import AgentConnectionManager
 from kolega_code.services.base import TerminalManager
-from .prompt_provider import PromptExtension
+from .prompt_provider import MissingPromptTemplateError, PromptExtension, PromptProvider
 from .tools import ToolExtension
 
 __all__ = [
@@ -33,7 +33,9 @@ __all__ = [
     "ModelProvider",
     "AgentConnectionManager",
     "TerminalManager",
+    "MissingPromptTemplateError",
     "PromptExtension",
+    "PromptProvider",
     "ToolExtension",
 ]
 
