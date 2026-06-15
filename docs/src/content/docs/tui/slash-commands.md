@@ -36,10 +36,13 @@ These control the app and your session.
 | `/plan` | Switch to [Plan mode](../modes/) |
 | `/build` | Switch to [Build mode](../modes/) |
 | `/model` | Show or switch the active model |
-| `/effort` | Show or set the active model's thinking effort |
+| `/effort` | Choose the active model's thinking effort |
 | `/copy` | Copy the last response to the clipboard |
 | `/version` | Show the Kolega Code version |
 | `/quit` | Save the session and exit |
+
+Run `/effort` to open a selectable list of supported effort values for the
+active model. You can also switch directly with `/effort <level>`.
 
 ## Skills
 
