@@ -35,11 +35,14 @@ These control the app and your session.
 | `/skills` | List available Agent Skills |
 | `/plan` | Switch to [Plan mode](../modes/) |
 | `/build` | Switch to [Build mode](../modes/) |
-| `/model` | Show or switch the active model |
+| `/model` | Choose the active model |
 | `/effort` | Choose the active model's thinking effort |
 | `/copy` | Copy the last response to the clipboard |
 | `/version` | Show the Kolega Code version |
 | `/quit` | Save the session and exit |
+
+Run `/model` to open a selectable list of supported models for the current
+provider. You can also switch directly with `/model <name>`.
 
 Run `/effort` to open a selectable list of supported effort values for the
 active model. You can also switch directly with `/effort <level>`.

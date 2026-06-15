@@ -115,8 +115,10 @@ IMPLEMENT_PLAN_PROMPT = """Implement the approved plan below. Follow it as the s
 """
 QUESTION_TOOL_NAME = "ask_user_choice"
 QUESTION_OPTION_ID_PREFIX = "question_option_"
+MODEL_OPTION_ID_PREFIX = "model_option_"
 EFFORT_OPTION_ID_PREFIX = "effort_option_"
 QUESTION_PLACEHOLDER = messages.QUESTION_PLACEHOLDER
+MODEL_PLACEHOLDER = messages.MODEL_PLACEHOLDER
 EFFORT_PLACEHOLDER = messages.EFFORT_PLACEHOLDER
 STARTUP_WORDMARK = (
     " _  __     _                    ____          _",
@@ -204,6 +206,12 @@ class PendingQuestion:
     question: str
     options: list[str]
     future: asyncio.Future[str]
+
+
+@dataclass
+class PendingModelSelection:
+    provider: str
+    options: list[tuple[str, str]]
 
 
 @dataclass
@@ -677,7 +685,7 @@ class KolegaCodeApp(App):
         opacity: 0.6;
     }
 
-    #plan_actions, #question_actions, #effort_actions {
+    #plan_actions, #question_actions, #model_actions, #effort_actions {
         display: none;
         height: auto;
         max-height: 12;
@@ -741,6 +749,7 @@ class KolegaCodeApp(App):
         self._latest_plan: Optional[str] = self.session.latest_plan_markdown or None
         self._plan_decision_active = False
         self._pending_question: Optional[PendingQuestion] = None
+        self._pending_model_selection: Optional[PendingModelSelection] = None
         self._pending_effort_selection: Optional[PendingEffortSelection] = None
         provider, model = self._startup_model()
         self._status_state = StatusDashboardState(provider=provider, model=model, mode=self.interaction_mode)
@@ -769,6 +778,7 @@ class KolegaCodeApp(App):
                 )
                 yield ActionList(id="plan_actions")
                 yield ActionList(id="question_actions")
+                yield ActionList(id="model_actions")
                 yield ActionList(id="effort_actions")
                 yield Static("", id="turn_status", markup=True)
                 yield Static("", id="composer_hint", markup=False)
@@ -824,6 +834,7 @@ class KolegaCodeApp(App):
         self._refresh_status_dashboard()
         self._restore_plan_action_visibility()
         self._set_question_actions_visible(False)
+        self._set_model_actions_visible(False)
         self._set_effort_actions_visible(False)
         self._refresh_planning_sidebar()
         self._ensure_startup_entry()
@@ -973,6 +984,14 @@ class KolegaCodeApp(App):
         if await self._handle_tui_slash_command(stripped_text, event.composer):
             return
 
+        if self._pending_model_selection is not None:
+            if not stripped_text:
+                self._set_composer_status(MODEL_PLACEHOLDER)
+                return
+            event.composer.load_text("")
+            await self._answer_model_selection(stripped_text)
+            return
+
         if self._pending_effort_selection is not None:
             if not stripped_text:
                 self._set_composer_status(EFFORT_PLACEHOLDER)
@@ -1040,6 +1059,10 @@ class KolegaCodeApp(App):
         if event.option_list.id == "question_actions":
             event.stop()
             await self._answer_question_option(event.option_index)
+            return
+        if event.option_list.id == "model_actions":
+            event.stop()
+            await self._answer_model_option(event.option_index)
             return
         if event.option_list.id == "effort_actions":
             event.stop()
@@ -1397,6 +1420,7 @@ class KolegaCodeApp(App):
         self._save_session()
         self._restore_plan_action_visibility()
         self._cancel_pending_question()
+        self._cancel_pending_model_selection()
         self._cancel_pending_effort_selection()
 
         if self.config is not None:
@@ -1489,6 +1513,29 @@ class KolegaCodeApp(App):
         except Exception:
             return
 
+    def _set_model_actions_visible(self, visible: bool) -> None:
+        try:
+            model_actions = self.query_one("#model_actions", ActionList)
+            if visible and self._pending_model_selection is not None:
+                model_actions.show_options(
+                    [
+                        Option(
+                            self._model_option_label(
+                                index,
+                                label,
+                                value,
+                                self._pending_model_selection.provider,
+                            ),
+                            id=f"{MODEL_OPTION_ID_PREFIX}{index}",
+                        )
+                        for index, (label, value) in enumerate(self._pending_model_selection.options)
+                    ]
+                )
+            else:
+                model_actions.hide()
+        except Exception:
+            return
+
     def _meta_content(self) -> str:
         return (
             f"{self.project_path} | session {self.session.session_id} | "
@@ -1564,6 +1611,8 @@ class KolegaCodeApp(App):
         handler = self._tui_command_handlers().get(command_text.lower())
         if handler is None:
             return False
+        if command_text.lower() != "/model":
+            self._cancel_pending_model_selection()
         if command_text.lower() != "/effort":
             self._cancel_pending_effort_selection()
         composer.load_text("")
@@ -1584,6 +1633,11 @@ class KolegaCodeApp(App):
         provider = self.settings.active_provider or UI_DEFAULT_PROVIDER
         model_options = ui_model_options(provider)
         if not args:
+            if self._turn_active or self.agent_worker is not None:
+                self._show_composer_hint(messages.BLOCK_STOP_BEFORE_MODEL_SWITCH)
+                self._notify_user(messages.BLOCK_STOP_BEFORE_MODEL_SWITCH, severity="warning")
+                return
+
             current_provider, current_model = self._startup_model()
             current_effort = self._startup_thinking_effort()
             active_model_line = (
@@ -1601,6 +1655,10 @@ class KolegaCodeApp(App):
                 messages.MODEL_SWITCH_HINT,
             ]
             self._add_conversation_entry(ConversationEntry(kind="system", content="\n".join(lines)))
+            self._pending_model_selection = PendingModelSelection(provider=provider, options=model_options)
+            self._cancel_pending_effort_selection()
+            self._show_model_options()
+            self._set_composer_status(MODEL_PLACEHOLDER)
             return
 
         if self._turn_active or self.agent_worker is not None:
@@ -1608,27 +1666,66 @@ class KolegaCodeApp(App):
             self._notify_user(messages.BLOCK_STOP_BEFORE_MODEL_SWITCH, severity="warning")
             return
 
-        matched = next((value for _, value in model_options if value.lower() == args.lower()), None)
+        matched = self._match_model_value(model_options, args)
         if matched is None:
             self._notify_user(messages.MODEL_UNKNOWN.format(model=args, provider=provider), severity="warning")
             return
 
+        await self._switch_model(provider, matched)
+
+    async def _answer_model_option(self, option_index: int) -> None:
+        pending = self._pending_model_selection
+        if pending is None:
+            return
+        if option_index < 0 or option_index >= len(pending.options):
+            return
+        await self._switch_model(pending.provider, pending.options[option_index][1])
+
+    async def _answer_model_selection(self, answer: str) -> None:
+        pending = self._pending_model_selection
+        if pending is None:
+            return
+
+        clean_answer = answer.strip()
+        if not clean_answer:
+            self._set_composer_status(MODEL_PLACEHOLDER)
+            return
+
+        matched = self._match_model_value(pending.options, clean_answer)
+        if matched is None:
+            self._set_composer_status(MODEL_PLACEHOLDER)
+            self._notify_user(
+                messages.MODEL_UNKNOWN.format(model=clean_answer, provider=pending.provider),
+                severity="warning",
+            )
+            return
+
+        await self._switch_model(pending.provider, matched)
+
+    async def _switch_model(self, provider: str, model: str) -> None:
+        self._cancel_pending_model_selection()
+        self._cancel_pending_effort_selection()
         self.settings.active_provider = provider
-        self.settings.active_model = matched
-        self.settings.active_thinking_effort = default_ui_thinking_effort(provider, matched)
+        self.settings.active_model = model
+        self.settings.active_thinking_effort = default_ui_thinking_effort(provider, model)
         self.settings_store.save(self.settings)
         await self._ensure_agent_from_settings(rebuild=True)
         try:
             self._populate_settings_controls()
         except Exception:
             pass
+        self._restore_composer_placeholder()
         self._notify_user(
             messages.MODEL_SWITCHED.format(
                 provider=provider,
-                model=matched,
+                model=model,
                 effort=self.settings.active_thinking_effort or "not supported",
             )
         )
+
+    def _match_model_value(self, model_options: list[tuple[str, str]], value: str) -> Optional[str]:
+        clean_value = value.strip().lower()
+        return next((model for _, model in model_options if model.lower() == clean_value), None)
 
     async def _command_effort(self, args: str) -> None:
         provider, model = self._startup_model()
@@ -1997,6 +2094,14 @@ class KolegaCodeApp(App):
         except Exception:
             return
 
+    def _show_model_options(self) -> None:
+        self._set_model_actions_visible(True)
+        try:
+            model_actions = self.query_one("#model_actions", ActionList)
+            self.screen.set_focus(model_actions)
+        except Exception:
+            return
+
     def _set_question_actions_visible(self, visible: bool) -> None:
         try:
             question_actions = self.query_one("#question_actions", ActionList)
@@ -2020,6 +2125,15 @@ class KolegaCodeApp(App):
 
     def _question_option_label(self, index: int, option: str) -> str:
         return f"{index + 1}. {option}"
+
+    def _cancel_pending_model_selection(self) -> None:
+        self._pending_model_selection = None
+        self._set_model_actions_visible(False)
+
+    def _model_option_label(self, index: int, label: str, value: str, provider: str) -> str:
+        current_provider, current_model = self._startup_model()
+        current_suffix = " current" if provider == current_provider and value == current_model else ""
+        return f"{index + 1}. {label} ({value}){current_suffix}"
 
     def _cancel_pending_effort_selection(self) -> None:
         self._pending_effort_selection = None
@@ -2047,6 +2161,7 @@ class KolegaCodeApp(App):
         self._save_session()
         self._set_plan_actions_visible(False)
         self._cancel_pending_question()
+        self._cancel_pending_model_selection()
         self._cancel_pending_effort_selection()
         self._refresh_planning_sidebar()
         self._clear_turn_status_strip()
@@ -2394,6 +2509,7 @@ class KolegaCodeApp(App):
         self._plan_decision_active = False
         self._restore_plan_action_visibility()
         self._cancel_pending_question()
+        self._cancel_pending_model_selection()
         self._cancel_pending_effort_selection()
         self._refresh_planning_sidebar()
         self._ensure_startup_entry(render=False)

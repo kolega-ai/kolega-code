@@ -8,7 +8,12 @@ from kolega_code.llm.models import Message, TextBlock, ToolCall, ToolResult
 from kolega_code.events import AgentEvent
 from kolega_code.agent.prompt_provider import AgentMode
 from kolega_code.cli.config import build_agent_config, config_summary
-from kolega_code.cli.provider_registry import DEEPSEEK_DEFAULT_MODEL, UI_DEFAULT_MODEL, UI_DEFAULT_PROVIDER
+from kolega_code.cli.provider_registry import (
+    DEEPSEEK_DEFAULT_MODEL,
+    MOONSHOT_K26_MODEL,
+    UI_DEFAULT_MODEL,
+    UI_DEFAULT_PROVIDER,
+)
 from kolega_code.cli.session_store import SessionStore
 from kolega_code.cli.settings import CliSettings, SettingsStore
 
@@ -4261,6 +4266,11 @@ async def test_textual_app_model_slash_command_shows_and_switches_model(
         assert entry.kind == "system"
         assert UI_DEFAULT_MODEL in entry.content and "kimi-k2.6" in entry.content and "kimi-k3" in entry.content
         assert "Thinking effort: auto" in entry.content
+        model_actions = app.query_one("#model_actions", ActionList)
+        assert model_actions.display is True
+        assert app.focused is model_actions
+        assert model_actions.option_count == 3
+        assert model_actions.get_option("model_option_0").prompt.startswith(f"1. Kimi K2.7 Code ({UI_DEFAULT_MODEL})")
 
         # kimi-k3 is a fake model the real config builder rejects, so stub it for the rebuild step.
         saved_config = app.config
@@ -4271,12 +4281,213 @@ async def test_textual_app_model_slash_command_shows_and_switches_model(
         switched_settings = settings_store.load()
         assert switched_settings.active_model == "kimi-k3"
         assert switched_settings.active_thinking_effort == "high"
+        assert model_actions.display is False
         assert isinstance(app.agent, FakeCoderAgent)
         assert app.agent is not first_agent
 
         composer.load_text("/model does-not-exist")
         await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
         assert settings_store.load().active_model == "kimi-k3"
+
+
+@pytest.mark.asyncio
+async def test_textual_app_model_slash_command_selects_from_action_list(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli import app as app_module
+    from kolega_code.cli.app import ActionList, ChatComposer, KolegaCodeApp
+
+    class FakeCoderAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def restore_message_history(self, history):
+            return None
+
+        def dump_message_history(self):
+            return []
+
+        async def cleanup(self):
+            return None
+
+    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    state_dir = tmp_path / "state"
+    store = SessionStore(state_dir)
+    settings_store = SettingsStore(state_dir)
+    settings = CliSettings(
+        active_provider=ModelProvider.MOONSHOT.value,
+        active_model=UI_DEFAULT_MODEL,
+        active_thinking_effort="auto",
+    )
+    settings.set_api_key(ModelProvider.MOONSHOT.value, "moonshot-key")
+    settings_store.save(settings)
+    session = store.create(project, "code", {})
+    app = KolegaCodeApp(
+        project_path=project,
+        mode="code",
+        store=store,
+        settings_store=settings_store,
+        session=session,
+    )
+
+    async with app.run_test() as pilot:
+        composer = app.query_one("#composer", ChatComposer)
+        composer.load_text("/model")
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+
+        model_actions = app.query_one("#model_actions", ActionList)
+        assert model_actions.display is True
+        assert app.focused is model_actions
+        assert model_actions.option_count == 2
+
+        await pilot.press("down", "enter")
+        await pilot.pause()
+        assert settings_store.load().active_model == MOONSHOT_K26_MODEL
+        assert model_actions.display is False
+
+        composer.load_text("/model")
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+        assert app.focused is model_actions
+
+        await pilot.press("1")
+        await pilot.pause()
+        assert settings_store.load().active_model == UI_DEFAULT_MODEL
+        assert model_actions.display is False
+
+
+@pytest.mark.asyncio
+async def test_textual_app_model_slash_command_accepts_typed_selection_and_rejects_invalid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli import app as app_module
+    from kolega_code.cli.app import ActionList, ChatComposer, KolegaCodeApp
+
+    class FakeCoderAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.messages = []
+
+        def restore_message_history(self, history):
+            return None
+
+        def dump_message_history(self):
+            return []
+
+        async def cleanup(self):
+            return None
+
+        async def process_message_stream(self, message):
+            self.messages.append(message)
+            yield {"type": "response", "content": "unexpected"}
+
+    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    state_dir = tmp_path / "state"
+    store = SessionStore(state_dir)
+    settings_store = SettingsStore(state_dir)
+    settings = CliSettings(
+        active_provider=ModelProvider.MOONSHOT.value,
+        active_model=UI_DEFAULT_MODEL,
+        active_thinking_effort="auto",
+    )
+    settings.set_api_key(ModelProvider.MOONSHOT.value, "moonshot-key")
+    settings_store.save(settings)
+    session = store.create(project, "code", {})
+    app = KolegaCodeApp(
+        project_path=project,
+        mode="code",
+        store=store,
+        settings_store=settings_store,
+        session=session,
+    )
+
+    async with app.run_test():
+        composer = app.query_one("#composer", ChatComposer)
+        composer.load_text("/model")
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+
+        model_actions = app.query_one("#model_actions", ActionList)
+        assert model_actions.display is True
+
+        composer.load_text("bogus-model")
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+        assert settings_store.load().active_model == UI_DEFAULT_MODEL
+        assert model_actions.display is True
+        assert not any(entry.kind == "user" and entry.content == "bogus-model" for entry in app.conversation_entries)
+        assert app.agent.messages == []
+
+        composer.load_text(MOONSHOT_K26_MODEL.upper())
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+        switched_settings = settings_store.load()
+        assert switched_settings.active_model == MOONSHOT_K26_MODEL
+        assert switched_settings.active_thinking_effort == "auto"
+        assert model_actions.display is False
+
+
+@pytest.mark.asyncio
+async def test_textual_app_model_slash_command_blocks_selector_during_active_turn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli import app as app_module
+    from kolega_code.cli.app import ActionList, ChatComposer, KolegaCodeApp
+
+    class FakeCoderAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def restore_message_history(self, history):
+            return None
+
+        def dump_message_history(self):
+            return []
+
+        async def cleanup(self):
+            return None
+
+    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    state_dir = tmp_path / "state"
+    store = SessionStore(state_dir)
+    settings_store = SettingsStore(state_dir)
+    settings = CliSettings(
+        active_provider=ModelProvider.MOONSHOT.value,
+        active_model=UI_DEFAULT_MODEL,
+        active_thinking_effort="auto",
+    )
+    settings.set_api_key(ModelProvider.MOONSHOT.value, "moonshot-key")
+    settings_store.save(settings)
+    session = store.create(project, "code", {})
+    app = KolegaCodeApp(
+        project_path=project,
+        mode="code",
+        store=store,
+        settings_store=settings_store,
+        session=session,
+    )
+
+    async with app.run_test():
+        composer = app.query_one("#composer", ChatComposer)
+        app._turn_active = True
+        composer.load_text("/model")
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+
+        assert app._pending_model_selection is None
+        assert app.query_one("#model_actions", ActionList).display is False
+        assert settings_store.load().active_model == UI_DEFAULT_MODEL
+        app._turn_active = False
 
 
 @pytest.mark.asyncio

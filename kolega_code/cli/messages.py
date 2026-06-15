@@ -11,6 +11,7 @@ from __future__ import annotations
 COMPOSER_PLACEHOLDER = "Ask Kolega Code..."
 PLAN_READY_PLACEHOLDER = "Plan ready. Choose Implement plan or Discuss further."
 QUESTION_PLACEHOLDER = "Choose an option below or type a custom answer..."
+MODEL_PLACEHOLDER = "Choose a model below or type a supported model name..."
 EFFORT_PLACEHOLDER = "Choose a thinking effort below or type a supported value..."
 
 # Durable transcript messages
@@ -56,7 +57,7 @@ MENTIONS_NOT_FOUND = "Not found, sent as plain text: {mentions}"
 # Slash commands
 MODEL_SWITCHED = "Switched model to {provider}/{model} with thinking effort {effort}."
 MODEL_UNKNOWN = "Unknown model {model} for provider {provider}."
-MODEL_SWITCH_HINT = "Switch with /model <name>."
+MODEL_SWITCH_HINT = "Choose below, or switch with /model <name>."
 EFFORT_SWITCHED = "Switched thinking effort to {effort} for {provider}/{model}."
 EFFORT_UNKNOWN = "Unknown thinking effort {effort} for {provider}/{model}."
 EFFORT_UNSUPPORTED = "{provider}/{model} does not support a thinking effort setting."
