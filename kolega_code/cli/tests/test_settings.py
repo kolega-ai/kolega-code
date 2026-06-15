@@ -6,6 +6,7 @@ import pytest
 
 from kolega_code.cli.provider_registry import (
     DEEPSEEK_DEFAULT_MODEL,
+    MOONSHOT_K26_MODEL,
     UI_DEFAULT_MODEL,
     UI_DEFAULT_PROVIDER,
     get_ui_model,
@@ -21,7 +22,7 @@ def test_settings_store_round_trip_and_file_permissions(tmp_path: Path) -> None:
     settings = CliSettings(
         active_provider=UI_DEFAULT_PROVIDER,
         active_model=UI_DEFAULT_MODEL,
-        active_thinking_effort="none",
+        active_thinking_effort="auto",
     )
     settings.set_api_key(UI_DEFAULT_PROVIDER, "secret-key")
 
@@ -30,7 +31,7 @@ def test_settings_store_round_trip_and_file_permissions(tmp_path: Path) -> None:
     loaded = store.load()
     assert loaded.active_provider == UI_DEFAULT_PROVIDER
     assert loaded.active_model == UI_DEFAULT_MODEL
-    assert loaded.active_thinking_effort == "none"
+    assert loaded.active_thinking_effort == "auto"
     assert loaded.get_api_key(UI_DEFAULT_PROVIDER) == "secret-key"
 
     if os.name != "nt":
@@ -58,7 +59,7 @@ def test_settings_store_migrates_v1_settings(tmp_path: Path) -> None:
 
     assert settings.schema_version == 2
     assert settings.active_provider == UI_DEFAULT_PROVIDER
-    assert settings.active_model == UI_DEFAULT_MODEL
+    assert settings.active_model == MOONSHOT_K26_MODEL
     assert settings.active_thinking_effort is None
 
 
@@ -73,9 +74,16 @@ def test_settings_store_rejects_corrupt_json(tmp_path: Path) -> None:
 
 def test_ui_provider_registry_supports_kimi_and_deepseek() -> None:
     assert ui_provider_options() == [("Moonshot AI", UI_DEFAULT_PROVIDER), ("DeepSeek AI", "deepseek")]
-    assert ui_model_options(UI_DEFAULT_PROVIDER) == [("Kimi K2.6", UI_DEFAULT_MODEL)]
+    assert ui_model_options(UI_DEFAULT_PROVIDER) == [
+        ("Kimi K2.7 Code", UI_DEFAULT_MODEL),
+        ("Kimi K2.6", MOONSHOT_K26_MODEL),
+    ]
     assert ui_model_options("deepseek") == [("DeepSeek V4 Pro", DEEPSEEK_DEFAULT_MODEL)]
-    assert ui_thinking_effort_options(UI_DEFAULT_PROVIDER, UI_DEFAULT_MODEL) == [("Auto", "auto"), ("None", "none")]
+    assert ui_thinking_effort_options(UI_DEFAULT_PROVIDER, UI_DEFAULT_MODEL) == [("Auto", "auto")]
+    assert ui_thinking_effort_options(UI_DEFAULT_PROVIDER, MOONSHOT_K26_MODEL) == [
+        ("Auto", "auto"),
+        ("None", "none"),
+    ]
     assert ui_thinking_effort_options("deepseek", DEEPSEEK_DEFAULT_MODEL) == [
         ("None", "none"),
         ("High", "high"),
@@ -86,6 +94,11 @@ def test_ui_provider_registry_supports_kimi_and_deepseek() -> None:
     assert model is not None
     assert model.api_key_env == "MOONSHOT_API_KEY"
     assert model.default_thinking_effort == "auto"
+
+    kimi26_model = get_ui_model(UI_DEFAULT_PROVIDER, MOONSHOT_K26_MODEL)
+    assert kimi26_model is not None
+    assert kimi26_model.api_key_env == "MOONSHOT_API_KEY"
+    assert kimi26_model.default_thinking_effort == "auto"
 
     deepseek_model = get_ui_model("deepseek", DEEPSEEK_DEFAULT_MODEL)
     assert deepseek_model is not None

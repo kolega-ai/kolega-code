@@ -40,14 +40,14 @@ you can validate a specific provider/model combination before using it.
 Project: /Users/you/code/my-app
 State dir: /Users/you/Library/Application Support/kolega-code
 Textual installed: True
-Stored active model: moonshot/kimi-k2.6
+Stored active model: moonshot/kimi-k2.7-code
 Stored thinking effort: auto
 Stored API key: present in local settings
 ✓ Configuration: valid
-Long model: moonshot/kimi-k2.6
-Fast model: moonshot/kimi-k2.6
-Edit model: moonshot/kimi-k2.6
-Thinking model: moonshot/kimi-k2.6
+Long model: moonshot/kimi-k2.7-code
+Fast model: moonshot/kimi-k2.7-code
+Edit model: moonshot/kimi-k2.7-code
+Thinking model: moonshot/kimi-k2.7-code
 Thinking effort: auto
 ```
 

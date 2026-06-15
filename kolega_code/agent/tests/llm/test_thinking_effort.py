@@ -9,6 +9,8 @@ from kolega_code.llm.specs import default_thinking_effort, thinking_effort_optio
 
 
 def test_model_specs_expose_provider_specific_thinking_efforts() -> None:
+    assert thinking_effort_options("moonshot", "kimi-k2.7-code") == ("auto",)
+    assert default_thinking_effort("moonshot", "kimi-k2.7-code") == "auto"
     assert thinking_effort_options("moonshot", "kimi-k2.6") == ("auto", "none")
     assert default_thinking_effort("moonshot", "kimi-k2.6") == "auto"
     assert thinking_effort_options("deepseek", "deepseek-v4-pro") == ("none", "high", "max")
@@ -49,6 +51,10 @@ def test_deepseek_thinking_effort_serialization() -> None:
 def test_moonshot_kimi_thinking_toggle_serialization() -> None:
     provider = AnthropicProvider(api_key="test-key", provider_name="moonshot")
 
+    k27_params = {"model": "kimi-k2.7-code"}
+    provider._apply_thinking_params(k27_params, GenerationParams(thinking="auto"))
+    assert k27_params == {"model": "kimi-k2.7-code", "thinking": {"type": "enabled"}}
+
     auto_params = {"model": "kimi-k2.6"}
     provider._apply_thinking_params(auto_params, GenerationParams(thinking="auto"))
     assert auto_params == {"model": "kimi-k2.6", "thinking": {"type": "enabled"}}
@@ -85,3 +91,10 @@ def test_numeric_thinking_budget_is_rejected() -> None:
 
     with pytest.raises(ValueError, match="named thinking effort"):
         client._prepare_thinking_param(1024, model="kimi-k2.6")
+
+
+def test_kimi_k27_rejects_disabled_thinking_effort() -> None:
+    client = LLMClient(provider="moonshot", api_key="test-key")
+
+    with pytest.raises(ValueError, match="Unsupported thinking effort"):
+        client._prepare_thinking_param("none", model="kimi-k2.7-code")
