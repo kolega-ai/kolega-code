@@ -1,14 +1,14 @@
 ---
 title: Kolega Code
-description: A local-first, terminal AI coding agent. Plan, build, and ship from your CLI.
+description: What Kolega Code is and how to install it.
 template: splash
 hero:
-  tagline: A local-first AI coding agent that lives in your terminal. Plan, build, and ship — without leaving the keyboard.
+  tagline: A terminal AI coding agent for local development.
   actions:
-    - text: Get Started
+    - text: Install
       # Splash hero links are used verbatim by Starlight (no base prefixing),
       # so they must include the site `base` from astro.config.mjs.
-      link: /kolega-code/getting-started/introduction/
+      link: /kolega-code/#install
       icon: right-arrow
       variant: primary
     - text: View on GitHub
@@ -17,54 +17,36 @@ hero:
       variant: minimal
 ---
 
-import { Card, CardGrid } from '@astrojs/starlight/components';
-
 ## What is Kolega Code?
 
-**Kolega Code** is an AI coding agent you run in your terminal. It opens an
-interactive [Textual](https://textual.textualize.io/) UI in your project, reads
-and edits your files, runs commands, browses the web, and works through tasks the
-way a pair-programmer would — all on your local machine, against the LLM provider
-of your choice.
+**Kolega Code** is an AI coding agent that runs in your terminal. Point it at a
+project directory and use it to inspect code, edit files, run commands, plan
+changes, and work through development tasks on your local machine.
 
-It also has a scriptable side: a one-shot `ask` command, JSON output for piping
-into other tools, and resumable sessions.
+## Install
 
-<CardGrid stagger>
-  <Card title="Interactive TUI" icon="laptop">
-    A full terminal interface with a streaming conversation, tool output, logs,
-    a built-in terminal, and a settings panel. Mention files with `@`, run
-    commands with `/`.
-  </Card>
-  <Card title="Plan, then build" icon="pencil">
-    Switch to **Plan mode** for a read-only planning pass, review the proposed
-    plan, then drop into **Build mode** to implement it. Press `Shift+Tab` to
-    toggle.
-  </Card>
-  <Card title="Bring your own model" icon="setting">
-    Anthropic, OpenAI, Google, Moonshot, DeepSeek, and more. Assign different
-    models to different roles — a long-context model for coding, a fast model
-    for quick utility calls.
-  </Card>
-  <Card title="Scriptable" icon="seti:powershell">
-    Run a single prompt with `kolega-code ask "…"`, emit structured `--json`
-    events, and save or resume sessions for repeatable workflows.
-  </Card>
-  <Card title="Skills" icon="puzzle">
-    Drop reusable workflows into `.agents/skills/` and invoke them as
-    `/skill-name`. The agent loads the skill's instructions and bundled
-    resources on demand.
-  </Card>
-  <Card title="Local-first" icon="approve-check">
-    Runs against your real filesystem and terminal. Sessions and settings are
-    stored locally, with API keys written using restrictive file permissions.
-  </Card>
-</CardGrid>
+```bash
+curl -fsSL https://kolega.dev/install-kolega-code | sh
+```
 
-## Where to next?
+## Direct install
 
-- New here? Start with the [Introduction](/kolega-code/getting-started/introduction/).
-- Ready to run it? See [Installation](/kolega-code/getting-started/installation/) and the
-  [Quick Start](/kolega-code/getting-started/quick-start/).
-- Looking for a specific command or flag? Jump to the
-  [CLI Reference](/kolega-code/cli/overview/).
+```bash
+uv tool install kolega-code
+```
+
+## Verify
+
+```bash
+kolega-code --version
+```
+
+## Start
+
+```bash
+kolega-code .
+```
+
+See [Installation](/kolega-code/getting-started/installation/) for requirements,
+upgrade commands, and uninstall commands. See the
+[Quick Start](/kolega-code/getting-started/quick-start/) for the first run.
