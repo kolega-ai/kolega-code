@@ -16,5 +16,8 @@
     "@fontsource-variable/geist-mono": "^5.2.8",
     "astro": "^5.16.0",
     "sharp": "^0.34.0"
+  },
+  "overrides": {
+    "esbuild": "0.28.1"
   }
 }
