@@ -6,7 +6,7 @@ from .common import LogMixin
 from kolega_code.config import AgentConfig
 from kolega_code.events import AgentConnectionManager
 from kolega_code.llm.models import Message, TextBlock
-from .prompt_provider import AgentType, AgentMode, PromptExtension
+from .prompt_provider import AgentType, AgentMode, PromptExtension, PromptProvider
 from .tools import ToolCollection, ToolCollectionConfig
 from .utils.commands import CommandProcessor
 
@@ -41,6 +41,7 @@ class CoderAgent(BaseAgent, LogMixin):
         agent_mode: Optional[AgentMode] = None,
         workspace_env_var_descriptions: Optional[Dict[str, str]] = None,
         workspace_memories: Optional[List[str]] = None,
+        prompt_provider: Optional[PromptProvider] = None,
         prompt_extensions: Optional[List[PromptExtension]] = None,
         tool_extensions: Optional[List[Any]] = None,
         usage_recorder: Optional[Any] = None,
@@ -67,6 +68,7 @@ class CoderAgent(BaseAgent, LogMixin):
             agent_mode: Optional agent mode (CLI, VIBE, CODE, or FIX)
             workspace_env_var_descriptions: Optional mapping of workspace environment variable descriptions
             workspace_memories: Optional list of workspace memories to inject into prompts
+            prompt_provider: Optional host-configured prompt provider
             prompt_extensions: Host-provided prompt sections for app-specific context
             tool_extensions: Host-provided tool providers for app-specific tools
             usage_recorder: Optional callback for recording normalized LLM usage
@@ -91,6 +93,7 @@ class CoderAgent(BaseAgent, LogMixin):
             agent_mode=agent_mode,
             workspace_env_var_descriptions=workspace_env_var_descriptions,
             workspace_memories=workspace_memories,
+            prompt_provider=prompt_provider,
             prompt_extensions=prompt_extensions,
             tool_extensions=tool_extensions,
             usage_recorder=usage_recorder,
