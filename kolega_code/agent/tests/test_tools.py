@@ -1,5 +1,5 @@
 from pathlib import Path
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, Mock
 import uuid
 
 import pytest
@@ -7,6 +7,7 @@ import pytest
 from kolega_code.agent.baseagent import BaseAgent
 from kolega_code.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
 from kolega_code.events import AgentConnectionManager
+from kolega_code.agent.tool_backend.memory_tool import MemoryTool
 from kolega_code.agent.tools import ToolCollection, ToolDefinition, ToolCollectionConfig
 
 
@@ -303,6 +304,99 @@ class TestToolCollection:
         result = await tool_collection.write_memory(memory_content)
         assert result == expected_response
         tool_collection.memory_tool.write_memory.assert_called_once_with(memory_content)
+
+    async def test_memory_tool_reads_agent_memory_file(
+        self,
+        project_path: Path,
+        mock_connection_manager: AgentConnectionManager,
+        agent_config: AgentConfig,
+        mock_base_agent: BaseAgent,
+    ) -> None:
+        (project_path / "AGENT_MEMORY.md").write_text("Memory content", encoding="utf-8")
+        memory_tool = MemoryTool(
+            project_path,
+            "test_workspace",
+            str(uuid.uuid4()),
+            mock_connection_manager,
+            agent_config,
+            mock_base_agent,
+        )
+        memory_tool.log_info = AsyncMock()
+
+        result = await memory_tool.read_memory()
+
+        assert result == "Memory content"
+        memory_tool.log_info.assert_called_once_with(
+            "Successfully read memory file AGENT_MEMORY.md", sender="test_agent"
+        )
+
+    async def test_memory_tool_write_creates_agent_memory_file(
+        self,
+        project_path: Path,
+        mock_connection_manager: AgentConnectionManager,
+        agent_config: AgentConfig,
+        mock_base_agent: BaseAgent,
+    ) -> None:
+        memory_tool = MemoryTool(
+            project_path,
+            "test_workspace",
+            str(uuid.uuid4()),
+            mock_connection_manager,
+            agent_config,
+            mock_base_agent,
+        )
+        memory_tool.log_info = AsyncMock()
+
+        result = await memory_tool.write_memory("New memory")
+
+        assert result == "Created memory file AGENT_MEMORY.md and added new memory"
+        assert (project_path / "AGENT_MEMORY.md").read_text(encoding="utf-8") == "# Agent Memory\n\n- New memory\n"
+
+    async def test_memory_tool_write_appends_to_agent_memory_file(
+        self,
+        project_path: Path,
+        mock_connection_manager: AgentConnectionManager,
+        agent_config: AgentConfig,
+        mock_base_agent: BaseAgent,
+    ) -> None:
+        (project_path / "AGENT_MEMORY.md").write_text("# Agent Memory\n\n- Existing memory\n", encoding="utf-8")
+        memory_tool = MemoryTool(
+            project_path,
+            "test_workspace",
+            str(uuid.uuid4()),
+            mock_connection_manager,
+            agent_config,
+            mock_base_agent,
+        )
+        memory_tool.log_info = AsyncMock()
+
+        result = await memory_tool.write_memory("New memory")
+
+        assert result == "Successfully added new memory to AGENT_MEMORY.md"
+        assert (
+            (project_path / "AGENT_MEMORY.md").read_text(encoding="utf-8")
+            == "# Agent Memory\n\n- Existing memory\n- New memory\n"
+        )
+
+    async def test_memory_tool_read_missing_agent_memory_file(
+        self,
+        project_path: Path,
+        mock_connection_manager: AgentConnectionManager,
+        agent_config: AgentConfig,
+        mock_base_agent: BaseAgent,
+    ) -> None:
+        memory_tool = MemoryTool(
+            project_path,
+            "test_workspace",
+            str(uuid.uuid4()),
+            mock_connection_manager,
+            agent_config,
+            mock_base_agent,
+        )
+        memory_tool.log_error = AsyncMock()
+
+        with pytest.raises(FileNotFoundError, match="AGENT_MEMORY.md"):
+            await memory_tool.read_memory()
 
     async def test_search_codebase(self, tool_collection: AsyncMock) -> None:
         pattern = "test"

@@ -28,13 +28,16 @@ from kolega_code.llm.specs import get_model_specs
 from .prompt_provider import PromptProvider, AgentMode, PromptContext, PromptExtension
 from kolega_code.services.base import TerminalManager, BrowserManager
 from kolega_code.services.file_system import FileSystem
-from .tools import ToolCollection
+from .tools import ToolCollection  # noqa: F401 - kept for tests and downstream monkeypatch compatibility
 from kolega_code.tools import ToolError
 from .utils.commands import CommandProcessor
 from langfuse import Langfuse
 
 
 logger = logging.getLogger(__name__)
+
+PROJECT_GUIDANCE_FILES = ("AGENTS.md", "KOLEGA.md")
+AGENT_MEMORY_FILE = "AGENT_MEMORY.md"
 
 
 class BaseAgent(LogMixin):
@@ -342,6 +345,26 @@ class BaseAgent(LogMixin):
     # Prompt context
     # ------------------------------------------------------------------
 
+    def _load_project_guidance(self) -> tuple[str, str]:
+        """Return the first project guidance file found and its content."""
+        for guidance_file in PROJECT_GUIDANCE_FILES:
+            if not self.filesystem.exists(guidance_file):
+                continue
+            try:
+                return guidance_file, self.filesystem.read_text(guidance_file)
+            except Exception:
+                return guidance_file, ""
+        return "", ""
+
+    def _load_agent_memory(self) -> tuple[str, str]:
+        """Return agent memory content when AGENT_MEMORY.md exists."""
+        if not self.filesystem.exists(AGENT_MEMORY_FILE):
+            return "", ""
+        try:
+            return AGENT_MEMORY_FILE, self.filesystem.read_text(AGENT_MEMORY_FILE)
+        except Exception:
+            return AGENT_MEMORY_FILE, ""
+
     def build_prompt_context(self) -> PromptContext:
         """Build PromptContext from agent state."""
         import platform
@@ -349,14 +372,8 @@ class BaseAgent(LogMixin):
         # Check if it's a git repository
         is_git_repo = self.filesystem.exists(".git") and self.filesystem.is_dir(".git")
 
-        # Load KOLEGA.md content if it exists
-        kolega_md_content = ""
-        if self.filesystem.exists("KOLEGA.md"):
-            try:
-                kolega_md_content = self.filesystem.read("KOLEGA.md")
-            except Exception:
-                # If there's an error reading the file, use empty string
-                kolega_md_content = ""
+        project_guidance_file, project_guidance = self._load_project_guidance()
+        agent_memory_file, agent_memory = self._load_agent_memory()
 
         return PromptContext(
             system_name=os.getenv("KOLEGA_CODE_SYSTEM_NAME", "Kolega Code"),
@@ -366,7 +383,11 @@ class BaseAgent(LogMixin):
             date_today=datetime.now().strftime("%Y-%m-%d"),
             model_name=self.config.long_context_config.model,
             available_ports=self.available_ports,
-            kolega_md=kolega_md_content,
+            project_guidance=project_guidance,
+            project_guidance_file=project_guidance_file,
+            agent_memory=agent_memory,
+            agent_memory_file=agent_memory_file,
+            kolega_md=project_guidance,
             workspace_id=self.workspace_id,
             workspace_environment_variables=self.workspace_env_var_descriptions,
             memories=self.workspace_memories,

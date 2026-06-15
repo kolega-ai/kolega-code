@@ -50,12 +50,29 @@ class PromptContext:
     date_today: str = ""
     model_name: str = ""
     available_ports: str = "9001-9999"
+    project_guidance: str = ""
+    project_guidance_file: str = ""
+    agent_memory: str = ""
+    agent_memory_file: str = ""
     kolega_md: str = ""
     workspace_id: str = ""
     workspace_environment_variables: Dict[str, str] = field(default_factory=dict)
 
     # Workspace memories
     memories: List[str] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        """Keep the legacy KOLEGA.md field usable for older callers."""
+        if self.project_guidance and not self.kolega_md:
+            self.kolega_md = self.project_guidance
+            if not self.project_guidance_file:
+                self.project_guidance_file = "AGENTS.md"
+        elif self.kolega_md and not self.project_guidance:
+            self.project_guidance = self.kolega_md
+            if not self.project_guidance_file:
+                self.project_guidance_file = "KOLEGA.md"
+        if self.agent_memory and not self.agent_memory_file:
+            self.agent_memory_file = "AGENT_MEMORY.md"
 
 
 class PromptProvider:
