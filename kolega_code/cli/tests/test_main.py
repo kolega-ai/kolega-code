@@ -10,6 +10,7 @@ from kolega_code.cli.main import CLI_AGENT_MODE, RESUME_LATEST, _resolve_tui_ses
 from kolega_code.cli.provider_registry import DEEPSEEK_DEFAULT_MODEL, UI_DEFAULT_MODEL, UI_DEFAULT_PROVIDER
 from kolega_code.cli.session_store import SessionStore, SessionStoreError
 from kolega_code.cli.settings import CliSettings, SettingsStore
+from kolega_code.cli.updater import UpdateCheckResult, UpdateRunResult
 from kolega_code.llm.exceptions import LLMBillingError
 from kolega_code.llm.models import Message
 
@@ -23,6 +24,10 @@ def write_skill(root: Path, name: str = "demo-skill") -> None:
     )
 
 
+def no_update_result() -> UpdateCheckResult:
+    return UpdateCheckResult(current_version=__version__, latest_version=__version__, update_available=False)
+
+
 def test_parse_default_command_as_tui() -> None:
     args = parse_args(["/tmp/project", "--new"])
 
@@ -33,12 +38,32 @@ def test_parse_default_command_as_tui() -> None:
     assert args.mode == CLI_AGENT_MODE
 
 
-def test_version_flag_prints_package_version(capsys) -> None:
-    with pytest.raises(SystemExit) as exc_info:
-        parse_args(["--version"])
+def test_version_flag_prints_package_version(capsys, monkeypatch: pytest.MonkeyPatch) -> None:
+    from kolega_code.cli import main as main_module
 
-    assert exc_info.value.code == 0
+    monkeypatch.setattr(main_module, "check_for_update", no_update_result)
+
+    exit_code = main_module.main(["--version"])
+
+    assert exit_code == 0
     assert f"kolega-code {__version__}" in capsys.readouterr().out
+
+
+def test_version_flag_prints_available_update(capsys, monkeypatch: pytest.MonkeyPatch) -> None:
+    from kolega_code.cli import main as main_module
+
+    monkeypatch.setattr(
+        main_module,
+        "check_for_update",
+        lambda: UpdateCheckResult(current_version="0.2.0", latest_version="0.3.0", update_available=True),
+    )
+
+    exit_code = main_module.main(["--version"])
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "kolega-code" in output
+    assert "Update available: 0.2.0 -> 0.3.0" in output
 
 
 def test_parse_tui_resume_latest() -> None:
@@ -82,6 +107,46 @@ def test_parse_sessions_list_subcommand() -> None:
     assert args.command == "sessions"
     assert args.sessions_command == "list"
     assert args.project == Path("/tmp/project")
+
+
+def test_parse_update_subcommand() -> None:
+    args = parse_args(["update"])
+
+    assert args.command == "update"
+
+
+def test_update_subcommand_runs_self_update(capsys, monkeypatch: pytest.MonkeyPatch) -> None:
+    from kolega_code.cli import main as main_module
+
+    monkeypatch.setattr(main_module, "run_self_update", lambda: UpdateRunResult(returncode=0))
+
+    exit_code = main_module.main(["update"])
+
+    assert exit_code == 0
+    assert "update completed" in capsys.readouterr().out
+
+
+def test_update_subcommand_reports_missing_uv(capsys, monkeypatch: pytest.MonkeyPatch) -> None:
+    from kolega_code.cli import main as main_module
+
+    monkeypatch.setattr(
+        main_module,
+        "run_self_update",
+        lambda: UpdateRunResult(returncode=2, error="uv is required to update Kolega Code."),
+    )
+
+    exit_code = main_module.main(["update"])
+
+    assert exit_code == 2
+    captured = capsys.readouterr()
+    assert "uv is required" in captured.err or "uv is required" in captured.out
+
+
+def test_install_script_upgrades_existing_install() -> None:
+    root = Path(__file__).resolve().parents[3]
+    installer = (root / "scripts" / "install-kolega-code.sh").read_text(encoding="utf-8")
+
+    assert 'uv tool install --force --upgrade "$PACKAGE_SPEC"' in installer
 
 
 def test_ask_skills_lists_discovered_skills_without_api_key(
@@ -280,18 +345,24 @@ def test_ask_json_handles_billing_error_without_traceback(
     assert "Traceback" not in captured.err
 
 
-def test_doctor_uses_stored_kimi_settings(tmp_path: Path, capsys, isolated_cli_env: None) -> None:
+def test_doctor_uses_stored_kimi_settings(
+    tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
+) -> None:
+    from kolega_code.cli import main as main_module
+
     project = tmp_path / "project"
     project.mkdir()
     state_dir = tmp_path / "state"
     settings = CliSettings(active_provider=UI_DEFAULT_PROVIDER, active_model=UI_DEFAULT_MODEL)
     settings.set_api_key(UI_DEFAULT_PROVIDER, "moonshot-key")
     SettingsStore(state_dir).save(settings)
+    monkeypatch.setattr(main_module, "check_for_update", no_update_result)
 
-    exit_code = main(["doctor", "--project", str(project), "--state-dir", str(state_dir)])
+    exit_code = main_module.main(["doctor", "--project", str(project), "--state-dir", str(state_dir)])
 
     assert exit_code == 0
     output = capsys.readouterr().out
+    assert f"Update: Kolega Code is up to date ({__version__})." in output
     assert f"Stored active model: {UI_DEFAULT_PROVIDER}/{UI_DEFAULT_MODEL}" in output
     assert "Thinking effort: auto" in output
     assert "present in local settings" in output
@@ -301,11 +372,14 @@ def test_doctor_uses_stored_kimi_settings(tmp_path: Path, capsys, isolated_cli_e
 def test_doctor_requires_model_selection_even_with_api_key(
     tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
 ) -> None:
+    from kolega_code.cli import main as main_module
+
     project = tmp_path / "project"
     project.mkdir()
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setattr(main_module, "check_for_update", no_update_result)
 
-    exit_code = main(["doctor", "--project", str(project)])
+    exit_code = main_module.main(["doctor", "--project", str(project)])
 
     assert exit_code == 2
     output = capsys.readouterr().out
@@ -313,11 +387,16 @@ def test_doctor_requires_model_selection_even_with_api_key(
     assert "No provider/model configured" in output
 
 
-def test_deprecated_thinking_tokens_flag_fails(tmp_path: Path, capsys, isolated_cli_env: None) -> None:
+def test_deprecated_thinking_tokens_flag_fails(
+    tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
+) -> None:
+    from kolega_code.cli import main as main_module
+
     project = tmp_path / "project"
     project.mkdir()
+    monkeypatch.setattr(main_module, "check_for_update", no_update_result)
 
-    exit_code = main(
+    exit_code = main_module.main(
         [
             "doctor",
             "--project",

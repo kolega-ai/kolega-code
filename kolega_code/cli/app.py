@@ -47,7 +47,6 @@ from textual.widgets import (
 )
 from textual.widgets.option_list import Option
 
-from kolega_code import __version__ as kolega_code_version
 from kolega_code.agent import AgentConfig, AgentEvent, CoderAgent, PlanningAgent, PromptExtension, ToolExtension
 from kolega_code.llm.exceptions import LLMError, llm_error_message
 from kolega_code.llm.models import Message, MessageHistory, TextBlock, ToolCall, ToolResult
@@ -81,6 +80,7 @@ from .slash_commands import (
     agent_command_names,
     search_commands,
 )
+from .updater import check_for_update, run_self_update, update_status_message
 from .skills import (
     SkillCatalog,
     activated_skill_names,
@@ -719,6 +719,7 @@ class KolegaCodeApp(App):
         settings_store: Optional[SettingsStore] = None,
         overrides: Optional[CliConfigOverrides] = None,
         browser_visible: bool = False,
+        check_for_updates: bool = False,
     ) -> None:
         super().__init__()
         self.project_path = project_path
@@ -735,6 +736,7 @@ class KolegaCodeApp(App):
         self.skill_catalog: SkillCatalog = discover_skills(self.project_path)
         self.file_index = WorkspaceFileIndex(self.project_path)
         self.browser_visible = browser_visible
+        self.check_for_updates = check_for_updates
         self.connection_manager = CliConnectionManager()
         self.agent: Optional[CoderAgent | PlanningAgent] = None
         self.agent_worker = None
@@ -842,6 +844,8 @@ class KolegaCodeApp(App):
         self._set_effort_actions_visible(False)
         self._refresh_planning_sidebar()
         self._ensure_startup_entry()
+        if self.check_for_updates:
+            self.run_worker(self._check_for_update_on_startup(), name="kolega-update-check", group="updates")
         self._conversation.anchor()
         self.run_worker(self._consume_events(), name="kolega-events", group="events")
         if self.config is not None:
@@ -941,6 +945,14 @@ class KolegaCodeApp(App):
             self.notify(message, severity=severity, title=title)
         except Exception:
             pass
+
+    async def _check_for_update_on_startup(self) -> None:
+        result = await asyncio.to_thread(check_for_update)
+        message = update_status_message(result)
+        if not message:
+            return
+        self._add_conversation_entry(ConversationEntry(kind="system", content=message))
+        self._notify_user(message)
 
     @property
     def _status_dashboard(self) -> Static:
@@ -1614,6 +1626,7 @@ class KolegaCodeApp(App):
             "/effort": self._command_effort,
             "/copy": self._command_copy,
             "/version": self._command_version,
+            "/update": self._command_update,
             "/quit": self._command_quit,
         }
 
@@ -1857,9 +1870,40 @@ class KolegaCodeApp(App):
         self._notify_user(messages.COPY_LAST_RESPONSE)
 
     async def _command_version(self, args: str) -> None:
+        result = await asyncio.to_thread(check_for_update)
+        lines = [messages.VERSION_INFO.format(version=result.current_version)]
+        update_message = update_status_message(result, include_up_to_date=True, include_errors=True)
+        if update_message:
+            lines.append(update_message)
         self._add_conversation_entry(
-            ConversationEntry(kind="system", content=messages.VERSION_INFO.format(version=kolega_code_version))
+            ConversationEntry(kind="system", content="\n".join(lines))
         )
+
+    async def _command_update(self, args: str) -> None:
+        if self._turn_active or self.agent_worker is not None:
+            self._show_composer_hint(messages.BLOCK_STOP_BEFORE_UPDATE)
+            self._notify_user(messages.BLOCK_STOP_BEFORE_UPDATE, severity="warning")
+            return
+
+        self._notify_user(messages.UPDATE_STARTED)
+        result = await asyncio.to_thread(run_self_update, capture_output=True)
+        severity = "information" if result.returncode == 0 else "error"
+        if result.returncode == 0:
+            lines = [messages.UPDATE_COMPLETED]
+        else:
+            lines = [messages.UPDATE_FAILED.format(code=result.returncode)]
+            if result.error:
+                lines.append(result.error)
+
+        output = "\n".join(part for part in (result.stdout.strip(), result.stderr.strip()) if part)
+        if output:
+            if len(output) > 4000:
+                output = "[output truncated]\n" + output[-4000:]
+            lines.extend(["", "Output:", "```text", output, "```"])
+
+        content = "\n".join(lines)
+        self._add_conversation_entry(ConversationEntry(kind="system", content=content))
+        self._notify_user(lines[0], severity=severity)
 
     async def _command_quit(self, args: str) -> None:
         await self.action_quit()

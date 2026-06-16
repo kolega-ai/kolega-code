@@ -46,6 +46,7 @@ TUI_COMMAND_ENTRIES: tuple[SlashCommandEntry, ...] = (
     SlashCommandEntry("effort", "Show or set the active thinking effort", CommandScope.TUI),
     SlashCommandEntry("copy", "Copy the last response to the clipboard", CommandScope.TUI),
     SlashCommandEntry("version", "Show the Kolega Code version", CommandScope.TUI),
+    SlashCommandEntry("update", "Update Kolega Code to the latest version", CommandScope.TUI),
     SlashCommandEntry("quit", "Save the session and exit", CommandScope.TUI),
 )
 

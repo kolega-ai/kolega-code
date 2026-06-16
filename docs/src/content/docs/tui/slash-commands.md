@@ -39,6 +39,7 @@ These control the app and your session.
 | `/effort` | Choose the active model's thinking effort |
 | `/copy` | Copy the last response to the clipboard |
 | `/version` | Show the Kolega Code version |
+| `/update` | Update Kolega Code to the latest version |
 | `/quit` | Save the session and exit |
 
 Run `/model` to open a selectable list of supported models for the current
