@@ -8,7 +8,7 @@ and Langfuse tracing.
 
 import asyncio
 import os
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 import pytest
 from dotenv import load_dotenv
@@ -17,7 +17,6 @@ from opentelemetry.sdk.trace import TracerProvider as _OtelTracerProvider
 
 from kolega_code.llm.instrumented_client import InstrumentedLLMClient
 from kolega_code.llm.models import Message, MessageHistory, TextBlock, ToolCall
-from kolega_code.llm.providers.models import GenerationParams
 
 # Load environment variables
 # Navigate up to backend directory: tests/llm -> tests -> agent -> kolega_code -> backend
@@ -41,6 +40,7 @@ TEST_MESSAGES = MessageHistory(
     [Message(role="user", content=[TextBlock(text="What is 2+2? Reply with just the number.")])]
 )
 TEST_SYSTEM = Message(role="system", content=[TextBlock(text="You are a helpful math assistant. Be concise.")])
+ANTHROPIC_CACHE_TEST_MODEL = "claude-sonnet-4-6"
 
 # Check if running in CI environment
 SKIP_IN_CI = bool(os.getenv("CI")) or bool(os.getenv("GITLAB_CI"))
@@ -290,7 +290,7 @@ class TestInstrumentedClientWithRealAPIs:
         )
 
         # Attempt API call with invalid key
-        with pytest.raises(Exception) as exc_info:
+        with pytest.raises(Exception):
             await client.generate(
                 messages=TEST_MESSAGES,
                 system=TEST_SYSTEM,
@@ -331,7 +331,7 @@ class TestInstrumentedClientWithRealAPIs:
         await client.generate(
             messages=long_messages,
             system=TEST_SYSTEM,
-            model="claude-sonnet-4-20250514",
+            model=ANTHROPIC_CACHE_TEST_MODEL,
             max_completion_tokens=100,
         )
 
@@ -339,23 +339,20 @@ class TestInstrumentedClientWithRealAPIs:
         await client.generate(
             messages=long_messages,
             system=TEST_SYSTEM,
-            model="claude-sonnet-4-5-20250929",
+            model=ANTHROPIC_CACHE_TEST_MODEL,
             max_completion_tokens=100,
         )
 
-        # Check if any call reported cache usage
+        # Cache usage is not guaranteed, but usage details should be captured for each call.
         trace = mock_langfuse_client.start_span.return_value
         generation = trace.start_generation.return_value
-        any_cache_usage = False
-        for call in generation.update.call_args_list:
-            if "usage_details" in call.kwargs and call.kwargs["usage_details"]:
-                usage = call.kwargs["usage_details"]
-                if usage.get("cache_read_input_tokens", 0) > 0:
-                    any_cache_usage = True
-                    break
-
-        # Note: Cache usage is not guaranteed, so we'll just verify the calls were made
         assert generation.update.call_count >= 2, "Should have made at least 2 calls"
+        usage_updates = [
+            call.kwargs["usage_details"]
+            for call in generation.update.call_args_list
+            if call.kwargs.get("usage_details")
+        ]
+        assert len(usage_updates) >= 2, "Should have captured usage details for both calls"
 
 
 @pytest.mark.slow
@@ -403,10 +400,10 @@ class TestRealLangfuseIntegration:
         await asyncio.sleep(1)
 
         print("✅ Real Langfuse trace sent successfully")
-        print(f"Check Langfuse dashboard for trace with:")
-        print(f"  - Workspace: integration-test")
-        print(f"  - Thread: test-thread-123")
-        print(f"  - Agent: integration-test-agent")
+        print("Check Langfuse dashboard for trace with:")
+        print("  - Workspace: integration-test")
+        print("  - Thread: test-thread-123")
+        print("  - Agent: integration-test-agent")
 
 
 @pytest.mark.slow

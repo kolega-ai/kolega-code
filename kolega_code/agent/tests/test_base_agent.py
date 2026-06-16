@@ -9,7 +9,12 @@ from dotenv import load_dotenv
 from kolega_code.agent.baseagent import BaseAgent
 from kolega_code.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
 from kolega_code.events import AgentConnectionManager
-from kolega_code.llm.exceptions import LLMBillingError
+from kolega_code.llm.exceptions import (
+    LLMBillingError,
+    LLMAuthenticationError,
+    LLMContextWindowExceededError,
+    LLMInternalServerError,
+)
 from kolega_code.llm.models import (
     Message,
     MessageHistory,
@@ -66,20 +71,54 @@ def base_agent(tmp_path, mock_connection_manager, agent_config):
 
 class TestBaseAgent:
     @pytest.mark.asyncio
-    async def test_handle_llm_error_emits_billing_status_and_reraises(self, base_agent, mock_connection_manager):
-        base_agent.config.long_context_config.provider = ModelProvider.DEEPSEEK
-        base_agent.config.long_context_config.model = "deepseek-v4-pro"
+    @pytest.mark.parametrize(
+        "error,provider,model,expected_message",
+        [
+            (
+                LLMBillingError("DeepSeek APIError: Insufficient Balance", provider=ModelProvider.DEEPSEEK.value),
+                ModelProvider.DEEPSEEK,
+                "deepseek-v4-pro",
+                "DeepSeek/deepseek-v4-pro could not run this request",
+            ),
+            (
+                LLMContextWindowExceededError("context too large", provider=ModelProvider.ANTHROPIC.value),
+                ModelProvider.ANTHROPIC,
+                "claude-haiku-4-5-20251001",
+                "The conversation context became too large for the model",
+            ),
+            (
+                LLMInternalServerError("provider overloaded", provider=ModelProvider.ANTHROPIC.value),
+                ModelProvider.ANTHROPIC,
+                "claude-haiku-4-5-20251001",
+                "There is high traffic on our LLM provider",
+            ),
+            (
+                LLMAuthenticationError("invalid key", provider=ModelProvider.ANTHROPIC.value),
+                ModelProvider.ANTHROPIC,
+                "claude-haiku-4-5-20251001",
+                "Anthropic/claude-haiku-4-5-20251001 could not authenticate",
+            ),
+        ],
+    )
+    async def test_handle_llm_error_emits_status_and_reraises(
+        self,
+        base_agent,
+        mock_connection_manager,
+        error,
+        provider,
+        model,
+        expected_message,
+    ):
+        base_agent.config.long_context_config.provider = provider
+        base_agent.config.long_context_config.model = model
 
-        with pytest.raises(LLMBillingError):
-            await base_agent.handle_llm_error(
-                LLMBillingError("DeepSeek APIError: Insufficient Balance", provider=ModelProvider.DEEPSEEK.value)
-            )
+        with pytest.raises(type(error)):
+            await base_agent.handle_llm_error(error)
 
         event = mock_connection_manager.broadcast_event.await_args.args[0]
         assert event.event_type == "llm_status_update"
         assert event.content["status"] == "error"
-        assert "DeepSeek/deepseek-v4-pro could not run this request" in event.content["message"]
-        assert "Add credits to your DeepSeek account" in event.content["message"]
+        assert expected_message in event.content["message"]
 
     def test_build_prompt_context_loads_agents_md(self, base_agent, tmp_path):
         (tmp_path / "AGENTS.md").write_text("Use AGENTS guidance", encoding="utf-8")
