@@ -44,8 +44,10 @@ provider or model.
 | `DASHSCOPE_API_KEY` | DashScope (Alibaba) |
 | `MOONSHOT_API_KEY` | Moonshot |
 | `DEEPSEEK_API_KEY` | DeepSeek |
+| `ZAI_API_KEY` | Z.AI (GLM Coding Plan) |
 
-The local `llama` provider needs no key.
+The local `llama` provider needs no key. The `zai` key authenticates against Z.AI's
+Anthropic-compatible endpoint (it is the key Z.AI also documents as `ANTHROPIC_AUTH_TOKEN`).
 
 ## Model selection
 

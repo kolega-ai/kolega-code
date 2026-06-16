@@ -41,6 +41,7 @@ API_KEY_ENV = {
     ModelProvider.DASHSCOPE: "DASHSCOPE_API_KEY",
     ModelProvider.MOONSHOT: "MOONSHOT_API_KEY",
     ModelProvider.DEEPSEEK: "DEEPSEEK_API_KEY",
+    ModelProvider.ZAI: "ZAI_API_KEY",
 }
 
 
@@ -255,6 +256,7 @@ def build_agent_config(
             dashscope_api_key=_api_key_for_provider(ModelProvider.DASHSCOPE, loaded_env, settings),
             moonshot_api_key=_api_key_for_provider(ModelProvider.MOONSHOT, loaded_env, settings),
             deepseek_api_key=_api_key_for_provider(ModelProvider.DEEPSEEK, loaded_env, settings),
+            zai_api_key=_api_key_for_provider(ModelProvider.ZAI, loaded_env, settings),
             environment=overrides.environment or loaded_env.get("KOLEGA_CODE_ENVIRONMENT", "development"),
             long_context_config=_model_config(long_provider, long_model, thinking_effort=active_thinking_effort),
             fast_config=_model_config(fast_provider, fast_model),

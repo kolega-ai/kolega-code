@@ -17,6 +17,10 @@ def test_model_specs_expose_provider_specific_thinking_efforts() -> None:
     assert default_thinking_effort("deepseek", "deepseek-v4-pro") == "high"
     assert thinking_effort_options("google", "gemini-3.1-pro-preview") == ("low", "medium", "high")
     assert default_thinking_effort("google", "gemini-3.1-pro-preview") == "high"
+    assert thinking_effort_options("zai", "glm-5.2") == ("high", "max")
+    assert default_thinking_effort("zai", "glm-5.2") == "max"
+    assert thinking_effort_options("zai", "glm-5.1") == ("auto", "none")
+    assert default_thinking_effort("zai", "glm-5.1") == "auto"
 
 
 def test_anthropic_opus_effort_uses_adaptive_thinking_without_budget_tokens() -> None:
@@ -46,6 +50,32 @@ def test_deepseek_thinking_effort_serialization() -> None:
     max_params = {"model": "deepseek-v4-pro"}
     provider._apply_thinking_params(max_params, GenerationParams(thinking="max"))
     assert max_params["output_config"] == {"effort": "max"}
+
+
+def test_zai_glm52_thinking_effort_serialization() -> None:
+    provider = AnthropicProvider(api_key="test-key", provider_name="zai")
+
+    max_params = {"model": "glm-5.2"}
+    provider._apply_thinking_params(max_params, GenerationParams(thinking="max"))
+    assert max_params["thinking"] == {"type": "enabled"}
+    assert max_params["output_config"] == {"effort": "max"}
+
+    high_params = {"model": "glm-5.2"}
+    provider._apply_thinking_params(high_params, GenerationParams(thinking="high"))
+    assert high_params["output_config"] == {"effort": "high"}
+
+
+def test_zai_glm51_thinking_toggle_serialization() -> None:
+    provider = AnthropicProvider(api_key="test-key", provider_name="zai")
+
+    auto_params = {"model": "glm-5.1"}
+    provider._apply_thinking_params(auto_params, GenerationParams(thinking="auto"))
+    # GLM-5.1 is a plain toggle — no output_config.effort field.
+    assert auto_params == {"model": "glm-5.1", "thinking": {"type": "enabled"}}
+
+    disabled_params = {"model": "glm-5.1"}
+    provider._apply_thinking_params(disabled_params, GenerationParams(thinking="none"))
+    assert disabled_params == {"model": "glm-5.1", "thinking": {"type": "disabled"}}
 
 
 def test_moonshot_kimi_thinking_toggle_serialization() -> None:
