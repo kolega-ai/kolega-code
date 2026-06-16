@@ -1,7 +1,7 @@
 # Releasing Kolega Code
 
 This project publishes the `kolega-code` package to PyPI and serves the public
-installer from `https://kolega.dev/install-kolega-code`.
+installer from `https://kolega.dev/install-kolega-code.sh`.
 
 ## First PyPI release
 
@@ -29,8 +29,8 @@ the organization request.
 4. Create and push a matching tag:
 
    ```bash
-   git tag v0.1.0
-   git push origin v0.1.0
+   git tag v0.2.0
+   git push origin v0.2.0
    ```
 
 5. Approve the `pypi` environment deployment in GitHub Actions.
@@ -47,19 +47,19 @@ the organization request.
 The canonical installer source is tracked at:
 
 ```text
-scripts/install-kolega-code
+scripts/install-kolega-code.sh
 ```
 
 The `kolega.dev` site repo should publish that file verbatim at:
 
 ```text
-https://kolega.dev/install-kolega-code
+https://kolega.dev/install-kolega-code.sh
 ```
 
 After updating the site, verify:
 
 ```bash
-curl -fsSL https://kolega.dev/install-kolega-code | sh
+curl -fsSL https://kolega.dev/install-kolega-code.sh | sh
 ```
 
 ## Transfer to the PyPI organization
