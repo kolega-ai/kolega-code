@@ -559,6 +559,47 @@ class TestToolCollection:
 
         assert tool_names == ["custom_status"]
 
+    async def test_tool_extension_explicit_schema_injected(
+        self,
+        project_path: Path,
+        mock_connection_manager: AgentConnectionManager,
+        agent_config: AgentConfig,
+        mock_base_agent: BaseAgent,
+    ) -> None:
+        """An explicit tool_schemas entry overrides the introspected schema on the built tool."""
+        from kolega_code.agent.tools import ToolExtension
+
+        async def ask_things(questions: list) -> str:
+            """Ask things."""
+            return "{}"
+
+        schema = {
+            "type": "object",
+            "properties": {"questions": {"type": "array", "items": {"type": "object"}}},
+            "required": ["questions"],
+        }
+        extension = ToolExtension(
+            name="schema-extension",
+            tools={"ask_things": ask_things},
+            tool_schemas={"ask_things": schema},
+            tool_groups={"host_tools": ["ask_things"]},
+        )
+        config = ToolCollectionConfig(custom_tool_groups=["host_tools"], restrict_to_tool_groups=True)
+        tool_collection = ToolCollection(
+            project_path,
+            "test_workspace",
+            str(uuid.uuid4()),
+            mock_connection_manager,
+            agent_config,
+            mock_base_agent,
+            tool_config=config,
+            tool_extensions=[extension],
+        )
+
+        definition = next(d for d in tool_collection.get_tool_list() if d.name == "ask_things")
+        assert definition.input_schema == schema
+        assert definition.to_anthropic()["input_schema"] == schema
+
     async def test_tool_collection_config_mixed_options(
         self,
         project_path: Path,

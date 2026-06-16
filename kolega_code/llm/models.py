@@ -359,11 +359,52 @@ class ToolParameter:
 class ToolDefinition(ContentBlock):
     """Unified representation of a tool definition across providers"""
 
-    def __init__(self, name: str, description: str, parameters: List[ToolParameter], cache_checkpoint: bool = False):
+    def __init__(
+        self,
+        name: str,
+        description: str,
+        parameters: List[ToolParameter],
+        cache_checkpoint: bool = False,
+        input_schema: Optional[Dict[str, Any]] = None,
+    ):
         super().__init__(type="tool_definition", cache_checkpoint=cache_checkpoint)
         self.name = name
         self.description = description
         self.parameters = parameters
+        # When set, this explicit JSON schema (an "object" schema dict) is used
+        # verbatim instead of the flat per-parameter schema. This lets a tool
+        # declare nested shapes (arrays of objects, etc.) that the callable
+        # introspection in tool_definition_from_callable cannot express.
+        self.input_schema = input_schema
+
+    def _object_schema(self) -> Dict[str, Any]:
+        """The JSON-schema object describing this tool's input."""
+        if self.input_schema is not None:
+            return self.input_schema
+
+        properties = {}
+        required = []
+        for param in self.parameters:
+            properties[param.name] = {"type": param.type, "description": param.description}
+            if param.required:
+                required.append(param.name)
+        return {"type": "object", "properties": properties, "required": required}
+
+    @classmethod
+    def _dict_to_google_schema(cls, schema: Dict[str, Any]) -> genai_types.Schema:
+        """Recursively convert a JSON-schema dict to a google.genai Schema."""
+        kwargs: Dict[str, Any] = {"type": str(schema.get("type", "string")).upper()}
+        if schema.get("description"):
+            kwargs["description"] = schema["description"]
+        if "properties" in schema:
+            kwargs["properties"] = {
+                key: cls._dict_to_google_schema(value) for key, value in schema["properties"].items()
+            }
+        if "items" in schema:
+            kwargs["items"] = cls._dict_to_google_schema(schema["items"])
+        if schema.get("required"):
+            kwargs["required"] = schema["required"]
+        return genai_types.Schema(**kwargs)
 
     def to_anthropic(self) -> Dict[str, Any]:
         """
@@ -372,19 +413,10 @@ class ToolDefinition(ContentBlock):
         Returns:
             Dict[str, Any]: A dictionary with the structure expected by Anthropic API
         """
-        properties = {}
-        required = []
-
-        for param in self.parameters:
-            properties[param.name] = {"type": param.type, "description": param.description}
-
-            if param.required:
-                required.append(param.name)
-
         result = {
             "name": self.name,
             "description": self.description,
-            "input_schema": {"type": "object", "properties": properties, "required": required},
+            "input_schema": self._object_schema(),
         }
 
         if self.cache_checkpoint:
@@ -399,40 +431,33 @@ class ToolDefinition(ContentBlock):
         Returns:
             Dict[str, Any]: A dictionary with the structure expected by OpenAI API
         """
-        properties = {}
-        required = []
-
-        for param in self.parameters:
-            properties[param.name] = {"type": param.type, "description": param.description}
-
-            if param.required:
-                required.append(param.name)
-
         return {
             "type": "function",
             "function": {
                 "name": self.name,
                 "description": self.description,
-                "parameters": {"type": "object", "properties": properties, "required": required},
+                "parameters": self._object_schema(),
             },
         }
 
     def to_google(self) -> genai_types.Tool:
-        parameters = {}
-        required = []
-
-        for parameter in self.parameters:
-            parameters[parameter.name] = genai_types.Schema(
-                type=parameter.type.upper(), description=parameter.description
-            )
-
-            if parameter.required:
-                required.append(parameter.name)
+        if self.input_schema is not None:
+            parameters = self._dict_to_google_schema(self.input_schema)
+        else:
+            properties = {}
+            required = []
+            for parameter in self.parameters:
+                properties[parameter.name] = genai_types.Schema(
+                    type=parameter.type.upper(), description=parameter.description
+                )
+                if parameter.required:
+                    required.append(parameter.name)
+            parameters = genai_types.Schema(type="OBJECT", properties=properties, required=required)
 
         function_declaration = genai_types.FunctionDeclaration(
             name=self.name,
             description=self.description,
-            parameters=genai_types.Schema(type="OBJECT", properties=parameters, required=required),
+            parameters=parameters,
         )
 
         return genai_types.Tool(function_declarations=[function_declaration])

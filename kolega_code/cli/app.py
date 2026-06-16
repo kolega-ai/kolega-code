@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import itertools
+import json
 import re
 import subprocess
 import sys
@@ -50,6 +51,7 @@ from kolega_code import __version__ as kolega_code_version
 from kolega_code.agent import AgentConfig, AgentEvent, CoderAgent, PlanningAgent, PromptExtension, ToolExtension
 from kolega_code.llm.exceptions import LLMError, llm_error_message
 from kolega_code.llm.models import Message, MessageHistory, TextBlock, ToolCall, ToolResult
+from kolega_code.tools import ASK_USER_CHOICE_INPUT_SCHEMA, ASK_USER_CHOICE_SHAPE_HINT, ToolError
 from kolega_code.agent.prompt_provider import AgentMode
 from kolega_code.services.browser import PlaywrightBrowserManager
 
@@ -109,7 +111,7 @@ In build mode, call `get_task_list` when a shared task list exists or when imple
 After each meaningful task is completed, call `update_task_list` to check off that item by rewriting the full Markdown list.
 Do not wait until every TODO is complete to update the shared task list."""
 PLANNING_QUESTION_PROMPT = """The CLI provides `ask_user_choice` for important multiple-choice planning decisions.
-Use it only when a decision materially changes the plan. Provide concise options; the user can also type a custom answer."""
+Use it only when a decision materially changes the plan. Pass a `questions` array; each question has a short `header`, the `question` text, a `multiSelect` flag, and an `options` array of `{label, description}` choices. The user picks one option per question or types a custom answer."""
 IMPLEMENT_PLAN_PROMPT = """Implement the approved plan below. Follow it as the source of truth, but still inspect the code before editing and run appropriate checks.
 
 {plan}
@@ -205,8 +207,9 @@ class SubAgentActivity:
 @dataclass
 class PendingQuestion:
     question: str
-    options: list[str]
+    options: list[str]  # selectable option labels; the selected label is the answer
     future: asyncio.Future[str]
+    descriptions: Optional[list[str]] = None  # per-option descriptions, parallel to options
 
 
 @dataclass
@@ -1997,50 +2000,104 @@ class KolegaCodeApp(App):
         )
 
     def _planning_question_tool_extension(self) -> ToolExtension:
-        async def ask_user_choice(question: str, options: list[str]) -> str:
+        async def ask_user_choice(questions: list[dict]) -> str:
             """
-            Ask the user a multiple-choice planning question and wait for their answer.
+            Ask the user one or more multiple-choice planning questions and wait for their answers.
 
-            Use this only for planning decisions that materially affect the final plan. The user may either select
-            one of the provided options or type a custom free-text answer.
-
-            Args:
-                question: The concise question to ask the user.
-                options: Two or more concise answer options.
+            Use this only for planning decisions that materially affect the final plan. Each question has a
+            short `header`, the `question` text, a `multiSelect` flag, and an `options` array of
+            `{label, description}` choices. The user selects one option per question or types a custom
+            free-text answer. Questions are asked one at a time, in order.
 
             Returns:
-                The selected option text, or the user's custom answer text.
+                A JSON object mapping each question's header (or its text) to the chosen option label
+                or the user's custom answer.
             """
             if self.interaction_mode != PLAN_INTERACTION_MODE:
-                raise RuntimeError("ask_user_choice is only available in planning mode.")
-            if isinstance(options, str) or not isinstance(options, list):
-                raise ValueError("options must be a list of answer strings.")
+                raise ToolError("ask_user_choice is only available in planning mode.")
 
-            clean_question = str(question).strip()
-            clean_options = [str(option).strip() for option in options if str(option).strip()]
-            if not clean_question:
-                raise ValueError("question must not be empty.")
-            if len(clean_options) < 2:
-                raise ValueError("ask_user_choice requires at least two non-empty options.")
+            normalized = self._normalize_choice_questions(questions)
             if self._pending_question is not None:
-                raise RuntimeError("A planning question is already waiting for an answer.")
+                raise ToolError("A planning question is already waiting for an answer.")
 
-            return await self._ask_user_choice(clean_question, clean_options)
+            answers: dict[str, str] = {}
+            for clean_question, header, labels, descriptions in normalized:
+                answer = await self._ask_user_choice(clean_question, labels, descriptions)
+                answers[header or clean_question] = answer
+            return json.dumps(answers)
 
         return ToolExtension(
             name="cli-planning-questions",
             tools={QUESTION_TOOL_NAME: ask_user_choice},
+            tool_schemas={QUESTION_TOOL_NAME: ASK_USER_CHOICE_INPUT_SCHEMA},
             tool_groups={"planning_tools": [QUESTION_TOOL_NAME]},
         )
 
-    async def _ask_user_choice(self, question: str, options: list[str]) -> str:
+    def _normalize_choice_questions(
+        self, questions: object
+    ) -> list[tuple[str, str, list[str], list[str]]]:
+        """Validate the structured questions input and return normalized questions.
+
+        Strict: rejects malformed input with an instructive ToolError instead of coercing.
+        Each result is (question_text, header, option_labels, option_descriptions).
+        """
+        if not isinstance(questions, list) or not questions:
+            raise ToolError("'questions' must be a non-empty array of question objects. " + ASK_USER_CHOICE_SHAPE_HINT)
+
+        normalized: list[tuple[str, str, list[str], list[str]]] = []
+        for question in questions:
+            if not isinstance(question, dict):
+                raise ToolError("each item in 'questions' must be an object. " + ASK_USER_CHOICE_SHAPE_HINT)
+
+            clean_question = str(question.get("question", "")).strip()
+            if not clean_question:
+                raise ToolError("each question must include non-empty 'question' text. " + ASK_USER_CHOICE_SHAPE_HINT)
+
+            header = str(question.get("header", "")).strip()
+
+            raw_options = question.get("options")
+            if not isinstance(raw_options, list):
+                raise ToolError(
+                    "each question's 'options' must be an array of {label, description} objects. "
+                    + ASK_USER_CHOICE_SHAPE_HINT
+                )
+
+            labels: list[str] = []
+            descriptions: list[str] = []
+            for option in raw_options:
+                if not isinstance(option, dict):
+                    raise ToolError(
+                        "each option must be an object with a 'label' (and ideally a 'description'). "
+                        + ASK_USER_CHOICE_SHAPE_HINT
+                    )
+                label = str(option.get("label", "")).strip()
+                if not label:
+                    continue
+                labels.append(label)
+                descriptions.append(str(option.get("description", "")).strip())
+
+            if len(labels) < 2:
+                raise ToolError(
+                    "each question needs at least two options, each with a non-empty 'label'. "
+                    + ASK_USER_CHOICE_SHAPE_HINT
+                )
+
+            normalized.append((clean_question, header, labels, descriptions))
+
+        return normalized
+
+    async def _ask_user_choice(
+        self, question: str, options: list[str], descriptions: Optional[list[str]] = None
+    ) -> str:
         loop = asyncio.get_running_loop()
         future: asyncio.Future[str] = loop.create_future()
-        self._pending_question = PendingQuestion(question=question, options=options, future=future)
-        self._add_conversation_entry(
-            ConversationEntry(kind="question", content=self._format_question_content(question, options))
+        self._pending_question = PendingQuestion(
+            question=question, options=options, future=future, descriptions=descriptions
         )
-        self._show_question_options(options)
+        self._add_conversation_entry(
+            ConversationEntry(kind="question", content=self._format_question_content(question, options, descriptions))
+        )
+        self._show_question_options(options, descriptions)
         self._set_composer_status(QUESTION_PLACEHOLDER)
         self._set_chat_enabled(True)
         self._update_activity_progress(messages.WAITING_FOR_ANSWER, state=TurnState.WAITING_FOR_USER)
@@ -2083,12 +2140,15 @@ class KolegaCodeApp(App):
             self._restore_composer_placeholder()
             self._set_chat_enabled(self.agent is not None)
 
-    def _show_question_options(self, options: list[str]) -> None:
+    def _show_question_options(self, options: list[str], descriptions: Optional[list[str]] = None) -> None:
         try:
             question_actions = self.query_one("#question_actions", ActionList)
             question_actions.show_options(
                 [
-                    Option(self._question_option_label(index, option), id=f"{QUESTION_OPTION_ID_PREFIX}{index}")
+                    Option(
+                        self._question_option_label(index, option, self._option_description(descriptions, index)),
+                        id=f"{QUESTION_OPTION_ID_PREFIX}{index}",
+                    )
                     for index, option in enumerate(options)
                 ]
             )
@@ -2129,12 +2189,25 @@ class KolegaCodeApp(App):
         self._pending_question = None
         self._set_question_actions_visible(False)
 
-    def _format_question_content(self, question: str, options: list[str]) -> str:
-        option_lines = [f"{index + 1}. {option}" for index, option in enumerate(options)]
+    def _format_question_content(
+        self, question: str, options: list[str], descriptions: Optional[list[str]] = None
+    ) -> str:
+        option_lines = [
+            self._question_option_label(index, option, self._option_description(descriptions, index))
+            for index, option in enumerate(options)
+        ]
         return "\n".join([question, "", *option_lines])
 
-    def _question_option_label(self, index: int, option: str) -> str:
+    def _question_option_label(self, index: int, option: str, description: str = "") -> str:
+        if description:
+            return f"{index + 1}. {option} — {description}"
         return f"{index + 1}. {option}"
+
+    @staticmethod
+    def _option_description(descriptions: Optional[list[str]], index: int) -> str:
+        if descriptions is not None and 0 <= index < len(descriptions):
+            return descriptions[index]
+        return ""
 
     def _cancel_pending_model_selection(self) -> None:
         self._pending_model_selection = None

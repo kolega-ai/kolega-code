@@ -1,5 +1,6 @@
 from pathlib import Path
 import asyncio
+import json
 
 import pytest
 
@@ -31,6 +32,18 @@ def extension_by_name(extensions, name: str):
         for extension in extensions
         if getattr(extension, "name", None) == name or getattr(extension, "id", None) == name
     )
+
+
+def question_payload(question, options, *, header="Choice", multi_select=False):
+    """Build a structured `questions` list for a single question.
+
+    options: a list of labels, or (label, description) tuples.
+    """
+    built = []
+    for option in options:
+        label, description = option if isinstance(option, tuple) else (option, "details")
+        built.append({"label": label, "description": description})
+    return [{"question": question, "header": header, "multiSelect": multi_select, "options": built}]
 
 
 def build_test_config(project: Path):
@@ -927,7 +940,13 @@ async def test_textual_app_planning_question_tool_accepts_option_list_answer(
 
         app._turn_active = True
         answer_task = asyncio.create_task(
-            ask_user_choice("Which approach should we use?", ["Keep state local", "Persist it"])
+            ask_user_choice(
+                questions=question_payload(
+                    "Which approach should we use?",
+                    [("Keep state local", "Store in memory"), ("Persist it", "Write to disk")],
+                    header="Approach",
+                )
+            )
         )
         await pilot.pause()
 
@@ -937,13 +956,13 @@ async def test_textual_app_planning_question_tool_accepts_option_list_answer(
         assert question_actions.display is True
         assert app.focused is question_actions
         assert question_actions.highlighted == 0
-        assert question_actions.get_option("question_option_0").prompt == "1. Keep state local"
+        assert question_actions.get_option("question_option_0").prompt == "1. Keep state local — Store in memory"
         assert app.conversation_entries[-1].kind == "question"
 
         selected = question_actions.get_option("question_option_1")
         await app.on_option_list_option_selected(OptionList.OptionSelected(question_actions, selected, 1))
 
-        assert await answer_task == "Persist it"
+        assert json.loads(await answer_task) == {"Approach": "Persist it"}
         assert app._pending_question is None
         assert app.query_one("#question_actions").display is False
         assert app.query_one("#composer", ChatComposer).disabled is True
@@ -999,7 +1018,9 @@ async def test_textual_app_planning_question_supports_arrow_and_digit_selection(
         ).tools["ask_user_choice"]
 
         options = ["Alpha", "Beta", "Gamma", "Delta"]
-        answer_task = asyncio.create_task(ask_user_choice("Pick one of four?", options))
+        answer_task = asyncio.create_task(
+            ask_user_choice(questions=question_payload("Pick one of four?", options, header="Pick"))
+        )
         await pilot.pause()
 
         question_actions = app.query_one("#question_actions", ActionList)
@@ -1007,15 +1028,17 @@ async def test_textual_app_planning_question_supports_arrow_and_digit_selection(
         assert app.focused is question_actions
 
         await pilot.press("down", "down", "enter")
-        assert await answer_task == "Gamma"
+        assert json.loads(await answer_task) == {"Pick": "Gamma"}
         assert question_actions.display is False
 
-        answer_task = asyncio.create_task(ask_user_choice("Pick again?", options))
+        answer_task = asyncio.create_task(
+            ask_user_choice(questions=question_payload("Pick again?", options, header="Pick"))
+        )
         await pilot.pause()
 
         assert app.focused is app.query_one("#question_actions", ActionList)
         await pilot.press("4")
-        assert await answer_task == "Delta"
+        assert json.loads(await answer_task) == {"Pick": "Delta"}
 
 
 @pytest.mark.asyncio
@@ -1064,23 +1087,174 @@ async def test_textual_app_planning_question_tool_accepts_custom_text_answer(
         ).tools["ask_user_choice"]
 
         answer_task = asyncio.create_task(
-            ask_user_choice("Which scope?", ["Small fix", "Full workflow"])
+            ask_user_choice(
+                questions=question_payload("Which scope?", ["Small fix", "Full workflow"], header="Scope")
+            )
         )
         await pilot.pause()
 
         question_actions = app.query_one("#question_actions", ActionList)
-        assert question_actions.get_option("question_option_0").prompt == "1. Small fix"
+        assert question_actions.get_option("question_option_0").prompt == "1. Small fix — details"
 
         composer = app.query_one("#composer", ChatComposer)
         composer.load_text("Start with the small fix, but keep the API extensible.")
         await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
 
-        assert await answer_task == "Start with the small fix, but keep the API extensible."
+        assert json.loads(await answer_task) == {"Scope": "Start with the small fix, but keep the API extensible."}
         assert composer.text == ""
         assert app._pending_question is None
         assert question_actions.display is False
         assert question_actions.option_count == 0
         assert app.conversation_entries[-1].content == "Start with the small fix, but keep the API extensible."
+
+
+@pytest.mark.asyncio
+async def test_textual_app_planning_question_tool_asks_multiple_questions_sequentially(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli import app as app_module
+    from kolega_code.cli.app import ActionList, KolegaCodeApp
+    from textual.widgets import OptionList
+
+    class FakeBaseAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.history = []
+
+        def restore_message_history(self, history):
+            self.history = list(history)
+
+        def dump_message_history(self):
+            return self.history
+
+        async def cleanup(self):
+            return None
+
+    class FakeCoderAgent(FakeBaseAgent):
+        pass
+
+    class FakePlanningAgent(FakeBaseAgent):
+        pass
+
+    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(app_module, "PlanningAgent", FakePlanningAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test() as pilot:
+        await app.action_toggle_interaction_mode()
+        ask_user_choice = extension_by_name(
+            app.agent.kwargs["tool_extensions"], "cli-planning-questions"
+        ).tools["ask_user_choice"]
+
+        questions = question_payload("First?", ["A1", "B1"], header="First") + question_payload(
+            "Second?", ["A2", "B2"], header="Second"
+        )
+        answer_task = asyncio.create_task(ask_user_choice(questions=questions))
+        await pilot.pause()
+
+        # First question is presented; answer it, then the second appears.
+        question_actions = app.query_one("#question_actions", ActionList)
+        assert question_actions.option_count == 2
+        selected = question_actions.get_option("question_option_0")
+        await app.on_option_list_option_selected(OptionList.OptionSelected(question_actions, selected, 0))
+        await pilot.pause()
+
+        assert app._pending_question is not None
+        question_actions = app.query_one("#question_actions", ActionList)
+        selected = question_actions.get_option("question_option_1")
+        await app.on_option_list_option_selected(OptionList.OptionSelected(question_actions, selected, 1))
+
+        assert json.loads(await answer_task) == {"First": "A1", "Second": "B2"}
+        assert app._pending_question is None
+
+
+@pytest.mark.asyncio
+async def test_textual_app_planning_question_tool_rejects_malformed_input(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli import app as app_module
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.tools import ToolError
+
+    class FakeBaseAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.history = []
+
+        def restore_message_history(self, history):
+            self.history = list(history)
+
+        def dump_message_history(self):
+            return self.history
+
+        async def cleanup(self):
+            return None
+
+    class FakeCoderAgent(FakeBaseAgent):
+        pass
+
+    class FakePlanningAgent(FakeBaseAgent):
+        pass
+
+    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(app_module, "PlanningAgent", FakePlanningAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test():
+        await app.action_toggle_interaction_mode()
+        ask_user_choice = extension_by_name(
+            app.agent.kwargs["tool_extensions"], "cli-planning-questions"
+        ).tools["ask_user_choice"]
+
+        # Empty / non-list questions.
+        with pytest.raises(ToolError):
+            await ask_user_choice(questions=[])
+        with pytest.raises(ToolError):
+            await ask_user_choice(questions="Which approach?")
+
+        # Fewer than two valid options.
+        with pytest.raises(ToolError):
+            await ask_user_choice(questions=question_payload("Q?", ["only one"]))
+
+        # Options that are bare strings rather than {label, description} objects.
+        with pytest.raises(ToolError):
+            await ask_user_choice(
+                questions=[{"question": "Q?", "header": "H", "multiSelect": False, "options": ["A", "B"]}]
+            )
+
+        # Missing question text.
+        with pytest.raises(ToolError):
+            await ask_user_choice(
+                questions=[
+                    {
+                        "question": "  ",
+                        "header": "H",
+                        "multiSelect": False,
+                        "options": [
+                            {"label": "A", "description": "d"},
+                            {"label": "B", "description": "d"},
+                        ],
+                    }
+                ]
+            )
+
+        assert app._pending_question is None
 
 
 @pytest.mark.asyncio
