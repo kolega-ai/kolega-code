@@ -32,6 +32,7 @@ def test_agent_command_names_match_command_processor():
     assert agent_command_names() == {spec.name for spec in CommandProcessor.SPECS}
     assert THREAD_RESET_COMMANDS <= agent_command_names()
     assert SKILLS_LIST_COMMAND in TUI_COMMAND_NAMES
+    assert "/exit" in TUI_COMMAND_NAMES
 
 
 def test_all_command_entries_unique_with_descriptions():
@@ -48,6 +49,7 @@ def test_all_command_entries_include_each_scope():
     assert by_name["help"].scope is CommandScope.AGENT
     assert by_name["plan"].scope is CommandScope.TUI
     assert by_name["effort"].scope is CommandScope.TUI
+    assert by_name["exit"].scope is CommandScope.TUI
     assert by_name["demo-skill"].scope is CommandScope.SKILL
 
 

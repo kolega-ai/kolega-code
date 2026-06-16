@@ -41,6 +41,7 @@ These control the app and your session.
 | `/version` | Show the Kolega Code version |
 | `/update` | Update Kolega Code to the latest version |
 | `/quit` | Save the session and exit |
+| `/exit` | Save the session and exit |
 
 Run `/model` to open a selectable list of supported models for the current
 provider. You can also switch directly with `/model <name>`.

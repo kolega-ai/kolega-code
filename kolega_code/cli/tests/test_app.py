@@ -5125,7 +5125,10 @@ async def test_textual_app_startup_update_check_notifies_when_newer(
 
 
 @pytest.mark.asyncio
-async def test_textual_app_quit_slash_command_exits(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("command", ["/quit", "/exit"])
+async def test_textual_app_quit_slash_command_exits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command: str
+) -> None:
     pytest.importorskip("textual")
 
     from kolega_code.cli.app import ChatComposer
@@ -5134,7 +5137,7 @@ async def test_textual_app_quit_slash_command_exits(tmp_path: Path, monkeypatch:
 
     async with app.run_test():
         composer = app.query_one("#composer", ChatComposer)
-        composer.load_text("/quit")
+        composer.load_text(command)
         await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
 
     assert app.return_value is None

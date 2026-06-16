@@ -10,7 +10,7 @@ task list. Sessions let you stop and resume work later.
 ## How sessions are created
 
 - **In the TUI**, launching `kolega-code .` starts a **fresh session by default**.
-  Your work is saved when you quit (`Ctrl+Q` or `/quit`).
+  Your work is saved when you quit (`Ctrl+Q`, `/quit`, or `/exit`).
 - **With `ask`**, a session is only persisted if you pass `--save` or `--session`.
   See [`kolega-code ask`](../../cli/ask/).
 
