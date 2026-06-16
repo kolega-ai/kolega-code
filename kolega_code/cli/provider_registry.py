@@ -1,11 +1,89 @@
-"""Provider and model registry for the CLI settings UI."""
+"""Provider and model registry for the CLI settings UI.
+
+The list of models the UI exposes is derived directly from ``MODEL_SPECS`` (the
+single source of truth in ``kolega_code/llm/specs.py``). Adding or removing a
+model there automatically updates the Settings UI and the ``/model`` picker — no
+separate whitelist to maintain.
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
 from kolega_code.config import ModelProvider
-from kolega_code.llm.specs import default_thinking_effort, get_model_specs, thinking_effort_options
+from kolega_code.llm.specs import (
+    MODEL_SPECS,
+    default_thinking_effort,
+    get_model_specs,
+    thinking_effort_options,
+)
+
+# Human-readable provider labels. Also defines the display order of providers in
+# the UI. Providers with no MODEL_SPECS entries (e.g. llama, groq) simply don't
+# appear.
+PROVIDER_LABELS: dict[ModelProvider, str] = {
+    ModelProvider.MOONSHOT: "Moonshot AI",
+    ModelProvider.DEEPSEEK: "DeepSeek AI",
+    ModelProvider.ANTHROPIC: "Anthropic",
+    ModelProvider.OPENAI: "OpenAI",
+    ModelProvider.GOOGLE: "Google",
+    ModelProvider.XAI: "xAI",
+    ModelProvider.FIREWORKS: "Fireworks",
+    ModelProvider.TOGETHER: "Together AI",
+    ModelProvider.DASHSCOPE: "DashScope / Qwen",
+}
+
+# Friendly display names for models. Anything not listed falls back to its raw
+# model ID, so newly added models stay visible with zero extra maintenance.
+MODEL_LABELS: dict[str, str] = {
+    # Moonshot
+    "kimi-k2.7-code": "Kimi K2.7 Code",
+    "kimi-k2.7-code-highspeed": "Kimi K2.7 Code (High-Speed)",
+    "kimi-k2.6": "Kimi K2.6",
+    # DeepSeek
+    "deepseek-v4-pro": "DeepSeek V4 Pro",
+    "deepseek-v4-flash": "DeepSeek V4 Flash",
+    # Anthropic
+    "claude-opus-4-8": "Claude Opus 4.8",
+    "claude-opus-4-7": "Claude Opus 4.7",
+    "claude-opus-4-6": "Claude Opus 4.6",
+    "claude-sonnet-4-6": "Claude Sonnet 4.6",
+    "claude-sonnet-4-5-20250929": "Claude Sonnet 4.5",
+    "claude-opus-4-5-20251101": "Claude Opus 4.5",
+    "claude-haiku-4-5-20251001": "Claude Haiku 4.5",
+    # OpenAI
+    "gpt-5.5": "GPT-5.5",
+    "gpt-5.4-mini": "GPT-5.4 Mini",
+    # Google
+    "gemini-3.1-pro-preview": "Gemini 3.1 Pro",
+    "gemini-3.5-flash": "Gemini 3.5 Flash",
+    # xAI
+    "grok-4.3": "Grok 4.3",
+    "grok-build-0.1": "Grok Build 0.1",
+    # Fireworks
+    "accounts/fireworks/models/glm-5p1": "GLM-5.1",
+    "accounts/fireworks/models/kimi-k2p7-code": "Kimi K2.7 Code",
+    # Together
+    "moonshotai/Kimi-K2.7-Code": "Kimi K2.7 Code",
+    "zai-org/GLM-5.1": "GLM-5.1",
+    # DashScope / Qwen
+    "qwen3-coder-plus": "Qwen3 Coder Plus",
+    "qwen3-coder-flash": "Qwen3 Coder Flash",
+}
+
+# Per-provider default model used when only a provider is selected. Covers the
+# "available set is everything, default pick is curated" split.
+PROVIDER_DEFAULT_MODEL: dict[ModelProvider, str] = {
+    ModelProvider.MOONSHOT: "kimi-k2.7-code",
+    ModelProvider.DEEPSEEK: "deepseek-v4-pro",
+    ModelProvider.ANTHROPIC: "claude-opus-4-8",
+    ModelProvider.OPENAI: "gpt-5.5",
+    ModelProvider.GOOGLE: "gemini-3.1-pro-preview",
+    ModelProvider.XAI: "grok-4.3",
+    ModelProvider.FIREWORKS: "accounts/fireworks/models/glm-5p1",
+    ModelProvider.TOGETHER: "moonshotai/Kimi-K2.7-Code",
+    ModelProvider.DASHSCOPE: "qwen3-coder-plus",
+}
 
 UI_DEFAULT_PROVIDER = ModelProvider.MOONSHOT.value
 UI_DEFAULT_MODEL = "kimi-k2.7-code"
@@ -26,20 +104,23 @@ class ModelOption:
     default_thinking_effort: str | None
 
 
-def _model_option(
-    provider: ModelProvider,
-    provider_label: str,
-    model: str,
-    model_label: str,
-    api_key_env: str,
-) -> ModelOption:
+def _api_key_env(provider: ModelProvider) -> str:
+    """Env var name holding the provider's API key (matches cli/config.API_KEY_ENV)."""
+    return f"{provider.value.upper()}_API_KEY"
+
+
+def _model_label(model: str) -> str:
+    return MODEL_LABELS.get(model, model)
+
+
+def _model_option(provider: ModelProvider, model: str) -> ModelOption:
     specs = get_model_specs(provider, model)
     return ModelOption(
         provider=provider.value,
-        provider_label=provider_label,
+        provider_label=PROVIDER_LABELS[provider],
         model=model,
-        model_label=model_label,
-        api_key_env=api_key_env,
+        model_label=_model_label(model),
+        api_key_env=_api_key_env(provider),
         context_length=int(specs["context_length"]),
         max_completion_tokens=int(specs["max_completion_tokens"]),
         thinking_efforts=thinking_effort_options(provider, model),
@@ -47,29 +128,21 @@ def _model_option(
     )
 
 
-UI_MODEL_OPTIONS = [
-    _model_option(
-        ModelProvider.MOONSHOT,
-        "Moonshot AI",
-        UI_DEFAULT_MODEL,
-        "Kimi K2.7 Code",
-        "MOONSHOT_API_KEY",
-    ),
-    _model_option(
-        ModelProvider.MOONSHOT,
-        "Moonshot AI",
-        MOONSHOT_K26_MODEL,
-        "Kimi K2.6",
-        "MOONSHOT_API_KEY",
-    ),
-    _model_option(
-        ModelProvider.DEEPSEEK,
-        "DeepSeek AI",
-        DEEPSEEK_DEFAULT_MODEL,
-        "DeepSeek V4 Pro",
-        "DEEPSEEK_API_KEY",
-    ),
-]
+def _build_ui_model_options() -> list[ModelOption]:
+    """Generate the UI model list from MODEL_SPECS, grouped by PROVIDER_LABELS order."""
+    # Models per provider, preserving MODEL_SPECS insertion order.
+    models_by_provider: dict[str, list[str]] = {}
+    for provider_value, model in MODEL_SPECS:
+        models_by_provider.setdefault(provider_value, []).append(model)
+
+    options: list[ModelOption] = []
+    for provider in PROVIDER_LABELS:
+        for model in models_by_provider.get(provider.value, []):
+            options.append(_model_option(provider, model))
+    return options
+
+
+UI_MODEL_OPTIONS = _build_ui_model_options()
 
 
 def ui_provider_options() -> list[tuple[str, str]]:
@@ -115,6 +188,7 @@ def _thinking_effort_label(effort: str) -> str:
     return {
         "auto": "Auto",
         "none": "None",
+        "minimal": "Minimal",
         "low": "Low",
         "medium": "Medium",
         "high": "High",
@@ -125,10 +199,11 @@ def _thinking_effort_label(effort: str) -> str:
 
 def default_model_for_provider(provider: ModelProvider) -> str:
     """Return a usable default model for a provider when only the provider is selected."""
-    if provider == ModelProvider.MOONSHOT:
-        return UI_DEFAULT_MODEL
-    if provider == ModelProvider.DEEPSEEK:
-        return DEEPSEEK_DEFAULT_MODEL
-    if provider == ModelProvider.ANTHROPIC:
-        return "claude-opus-4-7"
+    default = PROVIDER_DEFAULT_MODEL.get(provider)
+    if default is not None:
+        return default
+    # Fall back to the first model the catalog exposes for this provider.
+    for option in UI_MODEL_OPTIONS:
+        if option.provider == provider.value:
+            return option.model
     raise ValueError(f"No default CLI model is registered for provider '{provider.value}'.")

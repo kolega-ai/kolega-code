@@ -11,17 +11,17 @@ def test_coder_agent_includes_matching_prompt_extensions(tmp_path):
         openai_api_key="test-key",
         long_context_config=ModelConfig(
             provider=ModelProvider.ANTHROPIC,
-            model="claude-sonnet-4-20250514",
+            model="claude-opus-4-8",
             rate_limits=RateLimitConfig(),
         ),
         fast_config=ModelConfig(
             provider=ModelProvider.ANTHROPIC,
-            model="claude-3-haiku-20240307",
+            model="claude-haiku-4-5-20251001",
             rate_limits=RateLimitConfig(),
         ),
         thinking_config=ModelConfig(
             provider=ModelProvider.ANTHROPIC,
-            model="claude-3-7-sonnet-20250219",
+            model="claude-opus-4-8",
             rate_limits=RateLimitConfig(),
             thinking_effort="medium",
         ),

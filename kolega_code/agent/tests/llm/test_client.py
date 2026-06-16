@@ -646,7 +646,7 @@ async def test_reasoning_effort(openai_client):
 
     try:
         response = await openai_client.generate(
-            messages=TEST_MESSAGES, system=TEST_SYSTEM, temperature=0.5, thinking="high", model="o3"
+            messages=TEST_MESSAGES, system=TEST_SYSTEM, temperature=0.5, thinking="high", model="gpt-5.5"
         )
         # Test that we got a response
         assert isinstance(response, Message)
@@ -704,7 +704,7 @@ async def test_streaming_cancellation(anthropic_client):
 @pytest.mark.asyncio
 async def test_google_count_tokens(google_client):
     """Test token counting with Google"""
-    result = await google_client.count_tokens(TEST_MESSAGES, TEST_SYSTEM, tools=[], model="gemini-2.5-pro")
+    result = await google_client.count_tokens(TEST_MESSAGES, TEST_SYSTEM, tools=[], model="gemini-3.1-pro-preview")
     assert isinstance(result, TokenCount)
     assert result.input_tokens > 0
     assert result.output_tokens is None  # Google doesn't provide output tokens in count
@@ -715,7 +715,7 @@ async def test_google_count_tokens(google_client):
 async def test_google_generate(google_client):
     """Test text generation with Google"""
     response = await google_client.generate(
-        messages=TEST_MESSAGES, system=TEST_SYSTEM, temperature=0.7, model="gemini-2.5-pro"
+        messages=TEST_MESSAGES, system=TEST_SYSTEM, temperature=0.7, model="gemini-3.1-pro-preview"
     )
     # Test that the response has the expected attributes
     assert hasattr(response, "content")
@@ -730,7 +730,7 @@ async def test_google_generate_stream(google_client):
     """Test streaming generation with Google"""
     chunks = []
     stream = await google_client.stream(
-        messages=TEST_MESSAGES, system=TEST_SYSTEM, temperature=0.7, model="gemini-2.5-pro"
+        messages=TEST_MESSAGES, system=TEST_SYSTEM, temperature=0.7, model="gemini-3.1-pro-preview"
     )
     async with stream as stream_ctx:
         async for chunk in stream_ctx:
@@ -762,7 +762,7 @@ async def test_google_with_tools(google_client):
     messages = MessageHistory([Message("user", [TextBlock("What's the weather like in San Francisco?")])])
 
     response = await google_client.generate(
-        messages=messages, system=TEST_SYSTEM, params=params, model="gemini-2.5-pro"
+        messages=messages, system=TEST_SYSTEM, params=params, model="gemini-3.1-pro-preview"
     )
 
     # We're not testing actual tool execution, just that we get a response

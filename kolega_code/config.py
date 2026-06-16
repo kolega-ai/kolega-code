@@ -61,7 +61,7 @@ class AgentConfig(BaseModel):
             anthropic_api_key="your_anthropic_key",
             long_context_config=ModelConfig(
                 provider=ModelProvider.ANTHROPIC,
-                model="claude-3-7-sonnet-20250219"
+                model="claude-opus-4-8"
             )
         )
 
@@ -100,7 +100,7 @@ class AgentConfig(BaseModel):
     # Model configurations
     long_context_config: ModelConfig = Field(
         default_factory=lambda: ModelConfig(
-            provider=ModelProvider.ANTHROPIC, model="claude-opus-4-7", thinking_effort="medium"
+            provider=ModelProvider.ANTHROPIC, model="claude-opus-4-8", thinking_effort="medium"
         ),
         description="Configuration for long context operations",
     )
@@ -112,7 +112,7 @@ class AgentConfig(BaseModel):
 
     thinking_config: ModelConfig = Field(
         default_factory=lambda: ModelConfig(
-            provider=ModelProvider.ANTHROPIC, model="claude-opus-4-7", thinking_effort="medium"
+            provider=ModelProvider.ANTHROPIC, model="claude-opus-4-8", thinking_effort="medium"
         ),
         description="Configuration for thinking operations",
     )

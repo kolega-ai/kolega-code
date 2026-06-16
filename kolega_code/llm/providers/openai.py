@@ -123,7 +123,7 @@ class OpenAIStreamWrapper:
 
 class OpenAIProvider(BaseLLMProvider):
 
-    models_max_completion_tokens = ["o3-mini", "o3", "o3-2025-04-16", "o4-mini"]
+    models_max_completion_tokens = ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.2"]
 
     def __init__(
         self,
@@ -132,8 +132,12 @@ class OpenAIProvider(BaseLLMProvider):
         requests_per_minute: Optional[int] = None,
         tokens_per_minute: Optional[int] = None,
         base_url: Optional[str] = None,
+        provider_name: str = "openai",
     ):
         super().__init__(api_key, max_retries, requests_per_minute, tokens_per_minute, base_url)
+        # OpenAI-compatible providers (xai, together, fireworks, dashscope, ...) reuse this
+        # provider; provider_name is used to look up the model's thinking-effort spec.
+        self.provider_name = provider_name
         self.async_client = AsyncOpenAI(api_key=api_key, base_url=base_url)
         self.sync_client = OpenAI(api_key=api_key, base_url=base_url)
 
@@ -145,7 +149,7 @@ class OpenAIProvider(BaseLLMProvider):
     def _prepare_generation_params(self, params: Optional[GenerationParams] = None) -> Dict[str, Any]:
         """Convert common parameters to provider-specific format"""
         generation_params = {
-            "model": "gpt-4o",  # Default model
+            "model": "gpt-5.5",  # Default model
         }
 
         if params:
@@ -163,7 +167,7 @@ class OpenAIProvider(BaseLLMProvider):
             return
         generation_params.update(
             build_thinking_request_params(
-                "openai",
+                self.provider_name,
                 str(generation_params["model"]),
                 params.thinking,
             )
@@ -305,11 +309,13 @@ class OpenAIProvider(BaseLLMProvider):
             # Best-effort; some providers may not support stream_options
             pass
 
-        # Swap max_tokens for max_completion_tokens for o3-mini, etc.
+        # Reasoning models (gpt-5.x, etc.) use max_completion_tokens and only accept the
+        # default temperature (1); sending any other value is a 400, so drop it.
         if generation_params["model"] in self.models_max_completion_tokens:
             if "max_tokens" in generation_params:
                 generation_params["max_completion_tokens"] = generation_params["max_tokens"]
                 del generation_params["max_tokens"]
+            generation_params.pop("temperature", None)
 
         # Combine system message with messages if provided
         if system:
@@ -333,11 +339,13 @@ class OpenAIProvider(BaseLLMProvider):
         generation_params.update(kwargs)
         self._apply_thinking_params(generation_params, params)
 
-        # Swap max_tokens for max_completion_tokens for o3-mini, etc.
+        # Reasoning models (gpt-5.x, etc.) use max_completion_tokens and only accept the
+        # default temperature (1); sending any other value is a 400, so drop it.
         if generation_params["model"] in self.models_max_completion_tokens:
             if "max_tokens" in generation_params:
                 generation_params["max_completion_tokens"] = generation_params["max_tokens"]
                 del generation_params["max_tokens"]
+            generation_params.pop("temperature", None)
 
         # Combine system message with messages if provided
         if system:

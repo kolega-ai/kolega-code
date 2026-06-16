@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from kolega_code.cli.config import API_KEY_ENV
 from kolega_code.cli.provider_registry import (
     DEEPSEEK_DEFAULT_MODEL,
     MOONSHOT_K26_MODEL,
@@ -15,6 +16,8 @@ from kolega_code.cli.provider_registry import (
     ui_thinking_effort_options,
 )
 from kolega_code.cli.settings import CliSettings, SettingsStore, SettingsStoreError
+from kolega_code.config import ModelProvider
+from kolega_code.llm.specs import MODEL_SPECS
 
 
 def test_settings_store_round_trip_and_file_permissions(tmp_path: Path) -> None:
@@ -72,13 +75,25 @@ def test_settings_store_rejects_corrupt_json(tmp_path: Path) -> None:
         store.load()
 
 
-def test_ui_provider_registry_supports_kimi_and_deepseek() -> None:
-    assert ui_provider_options() == [("Moonshot AI", UI_DEFAULT_PROVIDER), ("DeepSeek AI", "deepseek")]
-    assert ui_model_options(UI_DEFAULT_PROVIDER) == [
-        ("Kimi K2.7 Code", UI_DEFAULT_MODEL),
-        ("Kimi K2.6", MOONSHOT_K26_MODEL),
-    ]
-    assert ui_model_options("deepseek") == [("DeepSeek V4 Pro", DEEPSEEK_DEFAULT_MODEL)]
+def test_ui_provider_registry_is_derived_from_model_specs() -> None:
+    # Every model in the central catalog is exposed by the UI registry, with the
+    # right API-key env var derived for each one.
+    for provider_value, model in MODEL_SPECS:
+        option = get_ui_model(provider_value, model)
+        assert option is not None, (provider_value, model)
+        assert option.api_key_env == API_KEY_ENV[ModelProvider(provider_value)]
+
+    # Every provider that has specs appears in the provider dropdown.
+    spec_providers = {provider_value for provider_value, _ in MODEL_SPECS}
+    assert {value for _, value in ui_provider_options()} == spec_providers
+
+    # The Moonshot default and its models are present with friendly labels.
+    assert ("Moonshot AI", UI_DEFAULT_PROVIDER) in ui_provider_options()
+    moonshot_models = dict(ui_model_options(UI_DEFAULT_PROVIDER))
+    assert moonshot_models["Kimi K2.7 Code"] == UI_DEFAULT_MODEL
+    assert moonshot_models["Kimi K2.6"] == MOONSHOT_K26_MODEL
+
+    # Thinking-effort options still come through from the specs unchanged.
     assert ui_thinking_effort_options(UI_DEFAULT_PROVIDER, UI_DEFAULT_MODEL) == [("Auto", "auto")]
     assert ui_thinking_effort_options(UI_DEFAULT_PROVIDER, MOONSHOT_K26_MODEL) == [
         ("Auto", "auto"),
@@ -90,15 +105,10 @@ def test_ui_provider_registry_supports_kimi_and_deepseek() -> None:
         ("Max", "max"),
     ]
 
-    model = get_ui_model(UI_DEFAULT_PROVIDER, UI_DEFAULT_MODEL)
-    assert model is not None
-    assert model.api_key_env == "MOONSHOT_API_KEY"
-    assert model.default_thinking_effort == "auto"
-
-    kimi26_model = get_ui_model(UI_DEFAULT_PROVIDER, MOONSHOT_K26_MODEL)
-    assert kimi26_model is not None
-    assert kimi26_model.api_key_env == "MOONSHOT_API_KEY"
-    assert kimi26_model.default_thinking_effort == "auto"
+    default = get_ui_model(UI_DEFAULT_PROVIDER, UI_DEFAULT_MODEL)
+    assert default is not None
+    assert default.api_key_env == "MOONSHOT_API_KEY"
+    assert default.default_thinking_effort == "auto"
 
     deepseek_model = get_ui_model("deepseek", DEEPSEEK_DEFAULT_MODEL)
     assert deepseek_model is not None

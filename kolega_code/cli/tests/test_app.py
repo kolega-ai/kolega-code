@@ -4511,7 +4511,7 @@ async def test_textual_app_model_slash_command_selects_from_action_list(
         model_actions = app.query_one("#model_actions", ActionList)
         assert model_actions.display is True
         assert app.focused is model_actions
-        assert model_actions.option_count == 2
+        assert model_actions.option_count == 3
 
         await pilot.press("down", "enter")
         await pilot.pause()
