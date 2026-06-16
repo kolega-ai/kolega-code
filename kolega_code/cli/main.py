@@ -10,7 +10,6 @@ import sys
 from pathlib import Path
 from typing import Iterable, Optional
 
-from kolega_code import __version__
 from kolega_code.agent import CoderAgent
 from kolega_code.llm.exceptions import LLMBillingError, billing_error_message
 from kolega_code.llm.models import TextBlock
@@ -37,8 +36,9 @@ from .skills import (
     build_skill_tool_extension,
     discover_skills,
 )
+from .updater import check_for_update, run_self_update, update_status_message
 
-SUBCOMMANDS = {"ask", "sessions", "doctor"}
+SUBCOMMANDS = {"ask", "sessions", "doctor", "update"}
 RESUME_LATEST = "__latest__"
 CLI_AGENT_MODE = AgentMode.CLI.value
 
@@ -46,12 +46,16 @@ CLI_AGENT_MODE = AgentMode.CLI.value
 def main(argv: Optional[Iterable[str]] = None) -> int:
     args = parse_args(list(argv) if argv is not None else sys.argv[1:])
     try:
+        if getattr(args, "version", False):
+            return _run_version()
         if args.command == "ask":
             return asyncio.run(_run_ask(args))
         if args.command == "sessions":
             return _run_sessions(args)
         if args.command == "doctor":
             return _run_doctor(args)
+        if args.command == "update":
+            return _run_update()
         return _run_tui(args)
     except (CliConfigError, SessionStoreError, SettingsStoreError, ValueError) as exc:
         _print_styled(f"kolega-code: {exc}", style="error", stderr=True)
@@ -110,7 +114,7 @@ def _add_session_args(parser: argparse.ArgumentParser, session_help: str = "Sess
 def _build_tui_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="kolega-code", description="Run the Kolega Code Textual CLI.")
     parser.set_defaults(command="tui")
-    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+    parser.add_argument("--version", action="store_true", help="Show the Kolega Code version.")
     parser.add_argument("project_path", nargs="?", default=".", type=Path, help="Project directory to work in.")
     parser.add_argument("--mode", choices=[mode.value for mode in AgentMode], default=CLI_AGENT_MODE, help=argparse.SUPPRESS)
     parser.add_argument("--new", action="store_true", help="Start a new session. This is now the default.")
@@ -158,6 +162,8 @@ def _build_subcommand_parser() -> argparse.ArgumentParser:
     doctor.add_argument("--project", default=".", type=Path, help="Project directory to check.")
     doctor.add_argument("--state-dir", type=Path, help="Directory for CLI session state.")
     _add_common_model_args(doctor)
+
+    subparsers.add_parser("update", help="Update Kolega Code to the latest version.")
 
     return parser
 
@@ -260,6 +266,26 @@ def _resolve_tui_session(
     return store.create(project_path, CLI_AGENT_MODE, summary)
 
 
+def _run_version() -> int:
+    result = check_for_update()
+    print(f"kolega-code {result.current_version}")
+    message = update_status_message(result)
+    if message:
+        print(message)
+    return 0
+
+
+def _run_update() -> int:
+    result = run_self_update()
+    if result.error:
+        _print_styled(result.error, style="error", stderr=True)
+    if result.returncode == 0:
+        print("Kolega Code update completed. Run `kolega-code --version` to confirm.")
+    elif not result.error:
+        _print_styled("Kolega Code update failed.", style="error", stderr=True)
+    return result.returncode
+
+
 def _run_tui(args: argparse.Namespace) -> int:
     if importlib.util.find_spec("textual") is None:
         print("Textual is not installed. Reinstall the CLI with: uv tool install --force kolega-code", file=sys.stderr)
@@ -296,6 +322,7 @@ def _run_tui(args: argparse.Namespace) -> int:
         overrides=_overrides_from_args(args),
         session=session,
         browser_visible=args.browser_visible,
+        check_for_updates=True,
     )
     app.run()
     return 0
@@ -571,6 +598,9 @@ def _run_doctor(args: argparse.Namespace) -> int:
     line("State dir", store.root)
     textual_installed = importlib.util.find_spec("textual") is not None
     line("Textual installed", textual_installed, "success" if textual_installed else "warning")
+    update_message = update_status_message(check_for_update(), include_up_to_date=True, include_errors=True)
+    if update_message:
+        line("Update", update_message)
     if settings.active_provider and settings.active_model:
         line("Stored active model", f"{settings.active_provider}/{settings.active_model}")
         line("Stored thinking effort", settings.active_thinking_effort or "model default")

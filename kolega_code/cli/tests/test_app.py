@@ -5037,10 +5037,17 @@ async def test_textual_app_copy_and_version_slash_commands(
     pytest.importorskip("textual")
 
     import kolega_code
+    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import ChatComposer, ConversationEntry
+    from kolega_code.cli.updater import UpdateCheckResult
 
     app = _build_mention_test_app(tmp_path, monkeypatch)
     copied: list[str] = []
+    monkeypatch.setattr(
+        app_module,
+        "check_for_update",
+        lambda: UpdateCheckResult(current_version=kolega_code.__version__, latest_version=kolega_code.__version__),
+    )
 
     async with app.run_test():
         monkeypatch.setattr(app, "copy_to_clipboard", copied.append)
@@ -5060,6 +5067,61 @@ async def test_textual_app_copy_and_version_slash_commands(
         entry = app.conversation_entries[-1]
         assert entry.kind == "system"
         assert kolega_code.__version__ in entry.content
+        assert "up to date" in entry.content
+
+
+@pytest.mark.asyncio
+async def test_textual_app_update_slash_command_runs_self_update(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli import app as app_module
+    from kolega_code.cli.app import ChatComposer
+    from kolega_code.cli.updater import UpdateRunResult
+
+    app = _build_mention_test_app(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        app_module,
+        "run_self_update",
+        lambda *, capture_output=False: UpdateRunResult(returncode=0, stdout="installed\n"),
+    )
+
+    async with app.run_test():
+        composer = app.query_one("#composer", ChatComposer)
+        composer.load_text("/update")
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+
+        entry = app.conversation_entries[-1]
+        assert entry.kind == "system"
+        assert "Kolega Code update completed" in entry.content
+        assert "installed" in entry.content
+
+
+@pytest.mark.asyncio
+async def test_textual_app_startup_update_check_notifies_when_newer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli import app as app_module
+    from kolega_code.cli.updater import UpdateCheckResult
+
+    app = _build_mention_test_app(tmp_path, monkeypatch)
+    app.check_for_updates = True
+    monkeypatch.setattr(
+        app_module,
+        "check_for_update",
+        lambda: UpdateCheckResult(current_version="0.2.0", latest_version="0.3.0", update_available=True),
+    )
+
+    async with app.run_test():
+        for _ in range(20):
+            if any("Update available: 0.2.0 -> 0.3.0" in entry.content for entry in app.conversation_entries):
+                break
+            await asyncio.sleep(0.05)
+
+        assert any("Update available: 0.2.0 -> 0.3.0" in entry.content for entry in app.conversation_entries)
 
 
 @pytest.mark.asyncio

@@ -28,9 +28,12 @@ kolega-code --version
 Upgrade or uninstall:
 
 ```bash
-uv tool upgrade kolega-code
+kolega-code update
 uv tool uninstall kolega-code
 ```
+
+Running the installer again also updates an existing install to the latest
+released version.
 
 Run the Textual UI and open the Settings tab to pick any provider and model from the catalog, choose the model's thinking effort, and save your API key:
 

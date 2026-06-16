@@ -58,10 +58,17 @@ present. See [`doctor`](../../cli/doctor/) for details.
 
 ## Upgrade or uninstall
 
-If you installed with the script or `uv tool install`, manage the CLI with uv:
+If you installed with the script or `uv tool install`, update the CLI with the
+built-in command:
 
 ```bash
-uv tool upgrade kolega-code
+kolega-code update
+```
+
+Running the installer again also updates an existing install to the latest
+released version. To uninstall, use uv:
+
+```bash
 uv tool uninstall kolega-code
 ```
 

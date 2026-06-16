@@ -54,7 +54,7 @@ if [ "${KOLEGA_CODE_VERSION:-}" ]; then
     PACKAGE_SPEC="$PACKAGE_NAME==$KOLEGA_CODE_VERSION"
 fi
 
-info "Installing $PACKAGE_SPEC..."
+info "Installing or updating $PACKAGE_SPEC..."
 uv tool install --force --upgrade "$PACKAGE_SPEC"
 
 if ! have "$PACKAGE_NAME"; then

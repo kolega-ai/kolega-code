@@ -33,6 +33,8 @@ you can validate a specific provider/model combination before using it.
   itself is never printed).
 - **Configuration** — whether a valid `AgentConfig` can be built. If valid, it
   prints the resolved **long**, **fast**, and **thinking** models.
+- **Update** — whether the installed CLI is current or a newer PyPI release is
+  available.
 
 ## Example output
 
@@ -40,6 +42,7 @@ you can validate a specific provider/model combination before using it.
 Project: /Users/you/code/my-app
 State dir: /Users/you/Library/Application Support/kolega-code
 Textual installed: True
+Update: Kolega Code is up to date (0.2.0).
 Stored active model: moonshot/kimi-k2.7-code
 Stored thinking effort: auto
 Stored API key: present in local settings
