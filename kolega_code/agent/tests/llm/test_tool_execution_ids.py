@@ -106,20 +106,26 @@ def test_message_from_openai_uses_supplied_execution_id_registry():
 
 
 def test_message_from_google_uses_supplied_execution_id_registry():
-    class Content:
-        parts = []
-
-    class Candidate:
-        content = Content()
-
     class FunctionCall:
         id = "provider_tool_call_id"
         name = "read_file"
         args = {"path": "README.md"}
 
+    # Real Gemini responses carry the function call (and its thought_signature) on a part.
+    class Part:
+        function_call = FunctionCall()
+        thought_signature = b"sig"
+        thought = None
+        text = None
+
+    class Content:
+        parts = [Part()]
+
+    class Candidate:
+        content = Content()
+
     class GoogleMessage:
         candidates = [Candidate()]
-        function_calls = [FunctionCall()]
         finish_reason = "STOP"
 
     registry = ToolExecutionIdRegistry()
@@ -129,7 +135,9 @@ def test_message_from_google_uses_supplied_execution_id_registry():
 
     assert message.tool_calls[0].id == "provider_tool_call_id"
     assert message.tool_calls[0].execution_id == execution_id
-    assert message.content == []
+    assert message.tool_calls[0].thought_signature == b"sig"
+    # The tool call is part of content now (consistent with the other providers).
+    assert message.content[0] is message.tool_calls[0]
 
 
 def test_message_from_openai_stream_uses_supplied_execution_id_registry():
@@ -166,16 +174,18 @@ def test_message_from_google_stream_uses_supplied_execution_id_registry():
     registry = ToolExecutionIdRegistry()
     execution_id = registry.get_or_create("provider_tool_call_id")
 
+    # GoogleStreamWrapper supplies (function_call, thought_signature) pairs.
     message = Message.from_google_stream(
         role="assistant",
         content="",
-        tool_calls={0: ToolCall()},
+        tool_calls={0: (ToolCall(), b"sig")},
         stop_reason="STOP",
         tool_execution_ids=registry,
     )
 
     assert message.tool_calls[0].id == "provider_tool_call_id"
     assert message.tool_calls[0].execution_id == execution_id
+    assert message.tool_calls[0].thought_signature == b"sig"
     assert message.content[0].execution_id == execution_id
 
 
