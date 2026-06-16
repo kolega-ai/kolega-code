@@ -41,6 +41,10 @@ class ToolExtension:
     name: str
     tools: dict[str, Callable[..., Any]]
     tool_groups: dict[str, List[str]] = field(default_factory=dict)
+    # Optional explicit JSON schemas keyed by tool name. When provided, the
+    # schema is used verbatim instead of introspecting the callable signature,
+    # allowing nested input shapes the introspector cannot express.
+    tool_schemas: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 class ToolCollectionConfig:
@@ -207,6 +211,7 @@ class ToolCollection(LogMixin):
         self.langfuse_client = langfuse_client
         self.tool_extensions = tool_extensions or []
         self.extension_callbacks = {}
+        self.extension_schemas = {}
         self._extension_group_names = set()
 
         # Set legacy attributes for backward compatibility
@@ -240,6 +245,9 @@ class ToolCollection(LogMixin):
                     raise ValueError(f"Tool extension '{extension.name}' conflicts with existing tool '{tool_name}'")
                 setattr(self, tool_name, callback)
                 self.extension_callbacks[tool_name] = callback
+
+            for tool_name, schema in extension.tool_schemas.items():
+                self.extension_schemas[tool_name] = schema
 
             for group_name, tool_names in extension.tool_groups.items():
                 existing_group = list(getattr(self, group_name, []))
@@ -1534,9 +1542,13 @@ class ToolCollection(LogMixin):
         return registry
 
     def _build_tool(self, method_name: str, method: Callable[..., Any]) -> Tool:
+        definition = self._tool_definition_from_callable(method_name, method)
+        explicit_schema = self.extension_schemas.get(method_name)
+        if explicit_schema is not None:
+            definition.input_schema = explicit_schema
         return Tool(
             name=method_name,
-            definition=self._tool_definition_from_callable(method_name, method),
+            definition=definition,
             handler=method,
             groups=self._groups_for(method_name),
             # Read-only tools have no side effects and agent dispatches operate
@@ -1651,3 +1663,4 @@ class ToolCollection(LogMixin):
             await self.log_error(f"Error during tool cleanup: {str(e)}", sender="ToolCollection")
 
         self.extension_callbacks = {}
+        self.extension_schemas = {}

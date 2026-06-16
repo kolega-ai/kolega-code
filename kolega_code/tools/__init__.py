@@ -10,10 +10,16 @@ assemble an agent's tools; internally it builds a ToolRegistry.
 """
 
 from .core import Tool, ToolError
-from .definitions import tool_definition_from_callable
+from .definitions import (
+    ASK_USER_CHOICE_INPUT_SCHEMA,
+    ASK_USER_CHOICE_SHAPE_HINT,
+    tool_definition_from_callable,
+)
 from .registry import ToolPolicy, ToolRegistry
 
 __all__ = [
+    "ASK_USER_CHOICE_INPUT_SCHEMA",
+    "ASK_USER_CHOICE_SHAPE_HINT",
     "Tool",
     "ToolError",
     "ToolPolicy",
