@@ -16,6 +16,17 @@ class ThinkingEffortSpec:
 # and optional model capability flags.
 MODEL_SPECS: Dict[Tuple[str, str], Dict[str, Any]] = {
     # Anthropic models
+    ("anthropic", "claude-opus-4-8"): {
+        "context_length": 1000000,
+        "max_completion_tokens": 128000,
+        "default_temperature": 1.0,
+        "supports_temperature": False,
+        "thinking_effort": ThinkingEffortSpec(
+            options=("low", "medium", "high", "xhigh", "max"),
+            default="medium",
+            mode="anthropic_adaptive_effort",
+        ),
+    },
     ("anthropic", "claude-opus-4-7"): {
         "context_length": 1000000,
         "max_completion_tokens": 128000,
@@ -23,6 +34,16 @@ MODEL_SPECS: Dict[Tuple[str, str], Dict[str, Any]] = {
         "supports_temperature": False,
         "thinking_effort": ThinkingEffortSpec(
             options=("low", "medium", "high", "xhigh", "max"),
+            default="medium",
+            mode="anthropic_adaptive_effort",
+        ),
+    },
+    ("anthropic", "claude-opus-4-6"): {
+        "context_length": 1000000,
+        "max_completion_tokens": 128000,
+        "default_temperature": 1.0,
+        "thinking_effort": ThinkingEffortSpec(
+            options=("low", "medium", "high", "max"),
             default="medium",
             mode="anthropic_adaptive_effort",
         ),
@@ -37,15 +58,20 @@ MODEL_SPECS: Dict[Tuple[str, str], Dict[str, Any]] = {
             mode="anthropic_adaptive_effort",
         ),
     },
-    ("anthropic", "claude-3-7-sonnet-20250219"): {"context_length": 200000, "max_completion_tokens": 16384, "default_temperature": 1.0},
-    ("anthropic", "claude-3-haiku-20240307"): {"context_length": 200000, "max_completion_tokens": 4096, "default_temperature": 1.0},
-    ("anthropic", "claude-3-5-sonnet-20241022"): {"context_length": 200000, "max_completion_tokens": 8192, "default_temperature": 1.0},
-    ("anthropic", "claude-opus-4-20250514"): {"context_length": 200000, "max_completion_tokens": 16384, "default_temperature": 1.0},
-    ("anthropic", "claude-sonnet-4-20250514"): {"context_length": 200000, "max_completion_tokens": 16384, "default_temperature": 1.0},
     ("anthropic", "claude-sonnet-4-5-20250929"): {"context_length": 200000, "max_completion_tokens": 16384, "default_temperature": 1.0},
     ("anthropic", "claude-opus-4-5-20251101"): {"context_length": 200000, "max_completion_tokens": 16384, "default_temperature": 1.0},
     ("anthropic", "claude-haiku-4-5-20251001"): {"context_length": 200000, "max_completion_tokens": 16384, "default_temperature": 1.0},
-    # Moonshot models
+    # Moonshot models (recommended default first)
+    ("moonshot", "kimi-k2.7-code"): {
+        "context_length": 262144,
+        "max_completion_tokens": 32768,
+        "default_temperature": 1.0,
+        "thinking_effort": ThinkingEffortSpec(
+            options=("auto",),
+            default="auto",
+            mode="moonshot_toggle",
+        ),
+    },
     ("moonshot", "kimi-k2.6"): {
         "context_length": 262144,
         "max_completion_tokens": 32768,
@@ -56,7 +82,7 @@ MODEL_SPECS: Dict[Tuple[str, str], Dict[str, Any]] = {
             mode="moonshot_toggle",
         ),
     },
-    ("moonshot", "kimi-k2.7-code"): {
+    ("moonshot", "kimi-k2.7-code-highspeed"): {
         "context_length": 262144,
         "max_completion_tokens": 32768,
         "default_temperature": 1.0,
@@ -77,81 +103,79 @@ MODEL_SPECS: Dict[Tuple[str, str], Dict[str, Any]] = {
             mode="deepseek_effort",
         ),
     },
+    ("deepseek", "deepseek-v4-flash"): {
+        "context_length": 1000000,
+        "max_completion_tokens": 384000,
+        "default_temperature": 1.0,
+        "thinking_effort": ThinkingEffortSpec(
+            options=("none", "high", "max"),
+            default="high",
+            mode="deepseek_effort",
+        ),
+    },
     # OpenAI models
-    ("openai", "gpt-4o"): {"context_length": 128000, "max_completion_tokens": 4096, "default_temperature": 1.0},
-    ("openai", "o3-mini"): {
-        "context_length": 200000,
-        "max_completion_tokens": 16384,
+    ("openai", "gpt-5.5"): {
+        "context_length": 1050000,
+        "max_completion_tokens": 128000,
         "default_temperature": 1.0,
         "thinking_effort": ThinkingEffortSpec(
-            options=("low", "medium", "high"),
+            options=("none", "low", "medium", "high", "xhigh"),
             default="medium",
             mode="openai_reasoning_effort",
         ),
     },
-    ("openai", "gpt-4.1-2025-04-14"): {"context_length": 1000000, "max_completion_tokens": 32768, "default_temperature": 1.0},
-    ("openai", "gpt-4.1-mini"): {"context_length": 1000000, "max_completion_tokens": 32768, "default_temperature": 1.0},
-    ("openai", "o3-2025-04-16"): {
-        "context_length": 200000,
-        "max_completion_tokens": 100000,
+    ("openai", "gpt-5.4-mini"): {
+        "context_length": 400000,
+        "max_completion_tokens": 128000,
         "default_temperature": 1.0,
         "thinking_effort": ThinkingEffortSpec(
-            options=("low", "medium", "high"),
-            default="medium",
-            mode="openai_reasoning_effort",
-        ),
-    },
-    ("openai", "o3"): {
-        "context_length": 200000,
-        "max_completion_tokens": 100000,
-        "default_temperature": 1.0,
-        "thinking_effort": ThinkingEffortSpec(
-            options=("low", "medium", "high"),
-            default="medium",
-            mode="openai_reasoning_effort",
-        ),
-    },
-    ("openai", "o4-mini"): {
-        "context_length": 200000,
-        "max_completion_tokens": 100000,
-        "default_temperature": 1.0,
-        "thinking_effort": ThinkingEffortSpec(
-            options=("low", "medium", "high"),
+            options=("none", "low", "medium", "high", "xhigh"),
             default="medium",
             mode="openai_reasoning_effort",
         ),
     },
     # Together.ai models
-    ("together", "deepseek-ai/DeepSeek-R1"): {"context_length": 64000, "max_completion_tokens": 8000, "default_temperature": 1.0},
+    ("together", "moonshotai/Kimi-K2.7-Code"): {"context_length": 262144, "max_completion_tokens": 32768, "default_temperature": 1.0},
+    ("together", "zai-org/GLM-5.1"): {"context_length": 202752, "max_completion_tokens": 16384, "default_temperature": 0.6},
     # Google models
-    ("google", "gemini-2.0-flash"): {"context_length": 1000000, "max_completion_tokens": 8192, "default_temperature": 1.0},
-    ("google", "gemini-2.5-pro-exp-03-25"): {
-        "context_length": 1000000,
+    ("google", "gemini-3.1-pro-preview"): {
+        "context_length": 1048576,
         "max_completion_tokens": 65536,
         "default_temperature": 1.0,
         "thinking_effort": ThinkingEffortSpec(
-            options=("auto", "low", "medium", "high"),
-            default="medium",
-            mode="google_thinking_budget",
-            budgets={"auto": -1, "low": 1024, "medium": 8192, "high": 24576},
+            options=("low", "medium", "high"),
+            default="high",
+            mode="google_thinking_level",
         ),
     },
-    ("google", "gemini-2.5-pro"): {
-        "context_length": 1000000,
+    ("google", "gemini-3.5-flash"): {
+        "context_length": 1048576,
         "max_completion_tokens": 65536,
         "default_temperature": 1.0,
         "thinking_effort": ThinkingEffortSpec(
-            options=("auto", "low", "medium", "high"),
+            options=("minimal", "low", "medium", "high"),
             default="medium",
-            mode="google_thinking_budget",
-            budgets={"auto": -1, "low": 1024, "medium": 8192, "high": 24576},
+            mode="google_thinking_level",
         ),
     },
     # X.ai models
-    ("xai", "grok-3-beta"): {"context_length": 128000, "max_completion_tokens": 16384, "default_temperature": 1.0},
+    ("xai", "grok-4.3"): {
+        "context_length": 1000000,
+        "max_completion_tokens": 16384,
+        "default_temperature": 1.0,
+        "thinking_effort": ThinkingEffortSpec(
+            options=("none", "low", "medium", "high"),
+            default="low",
+            mode="openai_reasoning_effort",
+        ),
+    },
+    ("xai", "grok-build-0.1"): {"context_length": 256000, "max_completion_tokens": 16384, "default_temperature": 1.0},
     # Fireworks models
-    ("fireworks", "accounts/fireworks/models/glm-4p5"): {"context_length": 128000, "max_completion_tokens": 16384, "default_temperature": 0.6},
-    ("dashscope", "qwen3-coder-plus"): {"context_length": 1000000, "max_completion_tokens": 16384, "default_temperature": 0.7},
+    ("fireworks", "accounts/fireworks/models/glm-5p1"): {"context_length": 202752, "max_completion_tokens": 16384, "default_temperature": 0.6},
+    ("fireworks", "accounts/fireworks/models/kimi-k2p7-code"): {"context_length": 262144, "max_completion_tokens": 16384, "default_temperature": 1.0},
+    # DashScope / Qwen models
+    ("dashscope", "qwen3-coder-plus"): {"context_length": 1000000, "max_completion_tokens": 65536, "default_temperature": 0.7},
+    ("dashscope", "qwen3-coder-flash"): {"context_length": 1000000, "max_completion_tokens": 65536, "default_temperature": 0.7},
 }
 
 

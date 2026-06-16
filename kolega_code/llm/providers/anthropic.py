@@ -126,7 +126,7 @@ class AnthropicProvider(BaseLLMProvider):
     def _prepare_generation_params(self, params: Optional[GenerationParams] = None) -> Dict[str, Any]:
         """Convert common parameters to provider-specific format"""
         generation_params = {
-            "model": "claude-opus-4-7",  # Default model
+            "model": "claude-opus-4-8",  # Default model
             "max_tokens": 1024,  # Default max tokens
         }
 
@@ -352,9 +352,6 @@ class AnthropicProvider(BaseLLMProvider):
         self._apply_thinking_params(generation_params, params)
         generation_params = self._sanitize_generation_params(generation_params)
 
-        if generation_params["model"].startswith("claude-3-7"):
-            generation_params["extra_headers"] = {"anthropic-beta": "output-128k-2025-02-19"}
-
         await self.rate_limiter.acquire()
 
         # Return the stream context manager
@@ -378,9 +375,6 @@ class AnthropicProvider(BaseLLMProvider):
         generation_params.update(kwargs)
         self._apply_thinking_params(generation_params, params)
         generation_params = self._sanitize_generation_params(generation_params)
-
-        if generation_params["model"].startswith("claude-3-7"):
-            generation_params["extra_headers"] = {"anthropic-beta": "output-128k-2025-02-19"}
 
         await self.rate_limiter.acquire()
         response = await self.async_client.messages.create(

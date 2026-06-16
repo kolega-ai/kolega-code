@@ -160,7 +160,7 @@ class TestInstrumentedClientWithRealAPIs:
         response = await client.generate(
             messages=TEST_MESSAGES,
             system=TEST_SYSTEM,
-            model="gpt-4o-mini",
+            model="gpt-5.4-mini",
             max_completion_tokens=10,
             temperature=0,
         )
@@ -209,7 +209,7 @@ class TestInstrumentedClientWithRealAPIs:
         response = await client.generate(
             messages=TEST_MESSAGES,
             system=TEST_SYSTEM,
-            model="gemini-2.5-pro",
+            model="gemini-3.1-pro-preview",
             max_completion_tokens=128,
             temperature=0,
         )
@@ -442,8 +442,8 @@ class TestInstrumentedClientCompatibility:
         """Test instrumentation works with all supported providers."""
         providers_to_test = [
             ("anthropic", "ANTHROPIC_API_KEY", "claude-haiku-4-5-20251001"),
-            ("openai", "OPENAI_API_KEY", "gpt-4o-mini"),
-            ("google", "GOOGLE_API_KEY", "gemini-2.5-pro"),
+            ("openai", "OPENAI_API_KEY", "gpt-5.4-mini"),
+            ("google", "GOOGLE_API_KEY", "gemini-3.1-pro-preview"),
         ]
 
         for provider, env_key, model in providers_to_test:

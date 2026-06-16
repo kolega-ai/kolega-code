@@ -33,7 +33,7 @@ class TestPromptProvider:
             is_git_repo=True,
             platform="Darwin",
             date_today="2024-01-15",
-            model_name="claude-3-5-sonnet",
+            model_name="claude-opus-4-8",
             available_ports="9001-9999",
             project_guidance="Test project documentation",
             project_guidance_file="AGENTS.md",

@@ -451,15 +451,19 @@ class ToolCall(ContentBlock):
         input: Dict[str, Any],
         cache_checkpoint: bool = False,
         execution_id: Optional[str] = None,
+        thought_signature: Optional[bytes] = None,
     ):
         super().__init__(type=self.TYPE_NAME, cache_checkpoint=cache_checkpoint)
         self.id = id
         self.name = name
         self.input = input
         self.execution_id = execution_id or new_tool_execution_id()
+        # Google (Gemini 3.x) returns an encrypted thought_signature on each function-call
+        # part that must be echoed back verbatim when the history is resent, or the API 400s.
+        self.thought_signature = thought_signature
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        data = {
             "type": self.type,
             "id": self.id,
             "name": self.name,
@@ -467,15 +471,21 @@ class ToolCall(ContentBlock):
             "cache_checkpoint": self.cache_checkpoint,
             "execution_id": self.execution_id,
         }
+        if self.thought_signature is not None:
+            # bytes aren't JSON-serializable; base64-encode for the session store.
+            data["thought_signature"] = base64.b64encode(self.thought_signature).decode("ascii")
+        return data
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ToolCall":
+        encoded_signature = data.get("thought_signature")
         return cls(
             id=data["id"],
             name=data["name"],
             input=data["input"],
             cache_checkpoint=data.get("cache_checkpoint", False),
             execution_id=data.get("execution_id"),
+            thought_signature=base64.b64decode(encoded_signature) if encoded_signature else None,
         )
 
     def to_anthropic(self) -> Dict[str, Any]:
@@ -502,7 +512,10 @@ class ToolCall(ContentBlock):
         return {"id": self.id, "type": "function", "function": {"name": self.name, "arguments": json.dumps(self.input)}}
 
     def to_google(self) -> genai_types.Part:
-        return genai_types.Part(function_call=genai_types.FunctionCall(id=self.id, name=self.name, args=self.input))
+        return genai_types.Part(
+            function_call=genai_types.FunctionCall(id=self.id, name=self.name, args=self.input),
+            thought_signature=self.thought_signature,
+        )
 
     def to_markdown(self) -> str:
         """
@@ -979,21 +992,21 @@ class Message:
 
         if message.candidates[0].content and message.candidates[0].content.parts:
             for part in message.candidates[0].content.parts:
-                if part.thought:
+                if part.function_call:
+                    # Capture the part-level thought_signature (Gemini 3.x requires it echoed back).
+                    tool_call = ToolCall(
+                        id=part.function_call.id,
+                        name=part.function_call.name,
+                        input=part.function_call.args,
+                        execution_id=tool_execution_ids.get_or_create(part.function_call.id),
+                        thought_signature=part.thought_signature,
+                    )
+                    tool_use_blocks.append(tool_call)
+                    content_blocks.append(tool_call)
+                elif part.thought:
                     content_blocks.append(ThinkingBlock(thinking=part.text))
                 elif part.text:
                     content_blocks.append(TextBlock(text=part.text))
-
-        if message.function_calls:
-            for function_call in message.function_calls:
-                tool_use_blocks.append(
-                    ToolCall(
-                        id=function_call.id,
-                        name=function_call.name,
-                        input=function_call.args,
-                        execution_id=tool_execution_ids.get_or_create(function_call.id),
-                    )
-                )
 
         mapped_stop_reason = stop_reason_map[message.finish_reason] if hasattr(message, "finish_reason") else None
         if tool_use_blocks:
@@ -1096,14 +1109,16 @@ class Message:
         if content:
             content_blocks.append(TextBlock(text=content))
 
-        # Handle tool calls
+        # Handle tool calls. Values are (FunctionCall, thought_signature) pairs collected by
+        # GoogleStreamWrapper so the Gemini 3.x signature is preserved for the next turn.
         if tool_calls:
-            for tool_call in tool_calls.values():
+            for function_call, thought_signature in tool_calls.values():
                 tool_call_obj = ToolCall(
-                    id=tool_call.id,
-                    name=tool_call.name,
-                    input=tool_call.args,
-                    execution_id=tool_execution_ids.get_or_create(tool_call.id),
+                    id=function_call.id,
+                    name=function_call.name,
+                    input=function_call.args,
+                    execution_id=tool_execution_ids.get_or_create(function_call.id),
+                    thought_signature=thought_signature,
                 )
                 tool_use_blocks.append(tool_call_obj)
                 content_blocks.append(tool_call_obj)

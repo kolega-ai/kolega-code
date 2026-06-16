@@ -132,7 +132,7 @@ class LLMClient:
             base_url = base_urls.get(provider.lower())
 
             provider_kwargs = {}
-            if provider_class is AnthropicProvider:
+            if provider_class in (AnthropicProvider, OpenAIProvider):
                 provider_kwargs["provider_name"] = provider.lower()
 
             return provider_class(

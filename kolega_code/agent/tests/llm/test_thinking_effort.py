@@ -15,8 +15,8 @@ def test_model_specs_expose_provider_specific_thinking_efforts() -> None:
     assert default_thinking_effort("moonshot", "kimi-k2.6") == "auto"
     assert thinking_effort_options("deepseek", "deepseek-v4-pro") == ("none", "high", "max")
     assert default_thinking_effort("deepseek", "deepseek-v4-pro") == "high"
-    assert thinking_effort_options("google", "gemini-2.5-pro") == ("auto", "low", "medium", "high")
-    assert default_thinking_effort("google", "gemini-2.5-pro") == "medium"
+    assert thinking_effort_options("google", "gemini-3.1-pro-preview") == ("low", "medium", "high")
+    assert default_thinking_effort("google", "gemini-3.1-pro-preview") == "high"
 
 
 def test_anthropic_opus_effort_uses_adaptive_thinking_without_budget_tokens() -> None:
@@ -64,22 +64,24 @@ def test_moonshot_kimi_thinking_toggle_serialization() -> None:
     assert disabled_params == {"model": "kimi-k2.6", "thinking": {"type": "disabled"}}
 
 
-def test_google_gemini_25_pro_uses_thinking_budget_mapping() -> None:
+def test_google_gemini_3_pro_uses_thinking_level() -> None:
     provider = GoogleProvider(api_key="test-key")
 
-    auto_config = provider._prepare_thinking_config("gemini-2.5-pro", GenerationParams(thinking="auto"))
-    medium_config = provider._prepare_thinking_config("gemini-2.5-pro", GenerationParams(thinking="medium"))
-    high_config = provider._prepare_thinking_config("gemini-2.5-pro", GenerationParams(thinking="high"))
+    low_config = provider._prepare_thinking_config("gemini-3.1-pro-preview", GenerationParams(thinking="low"))
+    medium_config = provider._prepare_thinking_config("gemini-3.1-pro-preview", GenerationParams(thinking="medium"))
+    high_config = provider._prepare_thinking_config("gemini-3.1-pro-preview", GenerationParams(thinking="high"))
 
-    assert auto_config.thinking_budget == -1
-    assert medium_config.thinking_budget == 8192
-    assert high_config.thinking_budget == 24576
+    assert low_config.thinking_level.value.lower() == "low"
+    assert medium_config.thinking_level.value.lower() == "medium"
+    assert high_config.thinking_level.value.lower() == "high"
+    # thinking_level mode does not set an integer budget
+    assert high_config.thinking_budget is None
 
 
 def test_openai_reasoning_effort_is_sent_for_reasoning_models() -> None:
     provider = OpenAIProvider(api_key="test-key")
     generation_params = provider._prepare_generation_params(GenerationParams(thinking="high"))
-    generation_params["model"] = "o3"
+    generation_params["model"] = "gpt-5.5"
 
     provider._apply_thinking_params(generation_params, GenerationParams(thinking="high"))
 

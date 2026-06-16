@@ -14,7 +14,10 @@ class GoogleStreamWrapper:
     def __init__(self, gemini_stream):
         self.gemini_stream = gemini_stream
         self.final_content = ""
+        # Maps a running index -> (FunctionCall, thought_signature). The signature is a
+        # part-level field (Gemini 3.x), so we read it off the parts, not chunk.function_calls.
         self.final_tool_calls = {}
+        self._tool_call_index = 0
         self.stop_reason = None
         self.tool_execution_ids = ToolExecutionIdRegistry()
 
@@ -43,12 +46,16 @@ class GoogleStreamWrapper:
             content = chunk.text or ""
             self.final_content += content
 
-            for idx, function_call in enumerate(chunk.function_calls or []):
-                self.final_tool_calls[idx] = function_call
+            # Read function calls off the parts so we also capture each part's thought_signature
+            # (Gemini 3.x requires it echoed back). Accumulate across chunks with a running index.
+            candidate = chunk.candidates[0]
+            if candidate.content and candidate.content.parts:
+                for part in candidate.content.parts:
+                    if part.function_call:
+                        self.final_tool_calls[self._tool_call_index] = (part.function_call, part.thought_signature)
+                        self._tool_call_index += 1
 
-                # self.final_tool_calls[function_call_id].function.arguments += tool_call.function.arguments
-
-            self.stop_reason = chunk.candidates[0].finish_reason.value if chunk.candidates[0].finish_reason else None
+            self.stop_reason = candidate.finish_reason.value if candidate.finish_reason else None
 
             return MessageChunk.from_google(chunk)
 
