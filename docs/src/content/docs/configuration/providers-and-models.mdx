@@ -24,7 +24,15 @@ The agent runtime recognizes these providers:
 | DashScope (Alibaba) | `dashscope` | `DASHSCOPE_API_KEY` |
 | Moonshot (Kimi) | `moonshot` | `MOONSHOT_API_KEY` |
 | DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` |
+| Z.AI (GLM Coding Plan) | `zai` | `ZAI_API_KEY` |
 | Llama (local) | `llama` | _none — local model_ |
+
+<Aside type="tip">
+**Z.AI GLM Coding Plan.** The `zai` provider targets Z.AI's Anthropic-compatible
+endpoint (`https://api.z.ai/api/anthropic`) and exposes **GLM-5.2** (default) and
+**GLM-5.1**. Set `ZAI_API_KEY` to your GLM Coding Plan key (the key Z.AI also
+documents as `ANTHROPIC_AUTH_TOKEN`).
+</Aside>
 
 <Aside type="note">
 The **Settings tab** in the TUI currently offers a curated shortlist —
@@ -96,6 +104,8 @@ models in the TUI.
 | DeepSeek `deepseek-v4-pro` | `none`, `high`, `max` | `high` |
 | Moonshot `kimi-k2.7-code` | `auto` | `auto` |
 | Moonshot `kimi-k2.6` | `auto`, `none` | `auto` |
+| Z.AI `glm-5.2` | `high`, `max` | `max` |
+| Z.AI `glm-5.1` | `auto`, `none` | `auto` |
 | Google `gemini-2.5-pro` | `auto`, `low`, `medium`, `high` | `medium` |
 | OpenAI reasoning models | `low`, `medium`, `high` | `medium` |
 

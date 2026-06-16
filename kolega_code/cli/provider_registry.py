@@ -24,6 +24,7 @@ from kolega_code.llm.specs import (
 PROVIDER_LABELS: dict[ModelProvider, str] = {
     ModelProvider.MOONSHOT: "Moonshot AI",
     ModelProvider.DEEPSEEK: "DeepSeek AI",
+    ModelProvider.ZAI: "Z.AI (GLM Coding Plan)",
     ModelProvider.ANTHROPIC: "Anthropic",
     ModelProvider.OPENAI: "OpenAI",
     ModelProvider.GOOGLE: "Google",
@@ -43,6 +44,9 @@ MODEL_LABELS: dict[str, str] = {
     # DeepSeek
     "deepseek-v4-pro": "DeepSeek V4 Pro",
     "deepseek-v4-flash": "DeepSeek V4 Flash",
+    # Z.AI (GLM Coding Plan)
+    "glm-5.2": "GLM-5.2",
+    "glm-5.1": "GLM-5.1",
     # Anthropic
     "claude-opus-4-8": "Claude Opus 4.8",
     "claude-opus-4-7": "Claude Opus 4.7",
@@ -76,6 +80,7 @@ MODEL_LABELS: dict[str, str] = {
 PROVIDER_DEFAULT_MODEL: dict[ModelProvider, str] = {
     ModelProvider.MOONSHOT: "kimi-k2.7-code",
     ModelProvider.DEEPSEEK: "deepseek-v4-pro",
+    ModelProvider.ZAI: "glm-5.2",
     ModelProvider.ANTHROPIC: "claude-opus-4-8",
     ModelProvider.OPENAI: "gpt-5.5",
     ModelProvider.GOOGLE: "gemini-3.1-pro-preview",

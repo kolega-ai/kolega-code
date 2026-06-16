@@ -110,6 +110,7 @@ class LLMClient:
                 "dashscope": OpenAIProvider,
                 "moonshot": AnthropicProvider,
                 "deepseek": AnthropicProvider,
+                "zai": AnthropicProvider,
             }
 
             base_urls: Dict[str, str] = {
@@ -123,6 +124,7 @@ class LLMClient:
                 "dashscope": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
                 "moonshot": "https://api.moonshot.ai/anthropic",
                 "deepseek": "https://api.deepseek.com/anthropic",
+                "zai": "https://api.z.ai/api/anthropic",
             }
 
             provider_class = providers.get(provider.lower())

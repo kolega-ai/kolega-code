@@ -176,6 +176,29 @@ MODEL_SPECS: Dict[Tuple[str, str], Dict[str, Any]] = {
     # DashScope / Qwen models
     ("dashscope", "qwen3-coder-plus"): {"context_length": 1000000, "max_completion_tokens": 65536, "default_temperature": 0.7},
     ("dashscope", "qwen3-coder-flash"): {"context_length": 1000000, "max_completion_tokens": 65536, "default_temperature": 0.7},
+    # Z.AI (GLM Coding Plan) models — Anthropic-compatible endpoint (recommended default first)
+    ("zai", "glm-5.2"): {
+        "context_length": 200000,
+        "max_completion_tokens": 131072,
+        "default_temperature": 0.6,
+        "thinking_effort": ThinkingEffortSpec(
+            options=("high", "max"),
+            default="max",
+            mode="zai_effort",
+        ),
+    },
+    ("zai", "glm-5.1"): {
+        "context_length": 202752,
+        "max_completion_tokens": 16384,
+        "default_temperature": 0.6,
+        # GLM-5.1 predates GLM-5.2's named effort levels, so it's a plain
+        # enable/disable toggle (no output_config.effort).
+        "thinking_effort": ThinkingEffortSpec(
+            options=("auto", "none"),
+            default="auto",
+            mode="zai_effort",
+        ),
+    },
 }
 
 
@@ -273,6 +296,16 @@ def build_thinking_request_params(provider: str, model_name: str, effort: Option
             "thinking": {"type": "enabled"},
             "output_config": {"effort": normalized},
         }
+
+    if spec.mode == "zai_effort":
+        # Z.AI GLM toggles thinking via {"thinking": {"type": "enabled"|"disabled"}}.
+        # GLM-5.2 adds two named effort levels (High/Max) carried in output_config.effort.
+        if normalized == "none":
+            return {"thinking": {"type": "disabled"}}
+        params: Dict[str, Any] = {"thinking": {"type": "enabled"}}
+        if normalized in ("high", "max"):
+            params["output_config"] = {"effort": normalized}
+        return params
 
     if spec.mode == "moonshot_toggle":
         if normalized == "none":

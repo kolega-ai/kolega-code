@@ -18,6 +18,7 @@ class ModelProvider(str, Enum):
     DASHSCOPE = "dashscope"
     MOONSHOT = "moonshot"
     DEEPSEEK = "deepseek"
+    ZAI = "zai"
 
 
 class RateLimitConfig(BaseModel):
@@ -89,6 +90,7 @@ class AgentConfig(BaseModel):
     dashscope_api_key: Optional[str] = Field(default=None, description="API key for Dashscope (Alibaba Model Studio)")
     moonshot_api_key: Optional[str] = Field(default=None, description="API key for Moonshot.ai")
     deepseek_api_key: Optional[str] = Field(default=None, description="API key for DeepSeek")
+    zai_api_key: Optional[str] = Field(default=None, description="API key for Z.AI (GLM Coding Plan)")
 
     # Langfuse configuration
     langfuse_enabled: bool = Field(default=False, description="Enable Langfuse tracing")
@@ -130,6 +132,7 @@ class AgentConfig(BaseModel):
             ModelProvider.DASHSCOPE: self.dashscope_api_key,
             ModelProvider.MOONSHOT: self.moonshot_api_key,
             ModelProvider.DEEPSEEK: self.deepseek_api_key,
+            ModelProvider.ZAI: self.zai_api_key,
             ModelProvider.LLAMA: None,  # Local model, no API key needed
         }
         return api_key_map[provider]
