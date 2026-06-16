@@ -71,6 +71,15 @@
   --sl-color-gray-7: #f6f7f3;
   --sl-color-black: #ffffff;
 
+  /* Surfaces — these are only defined in the dark block above (via the bare
+   * `:root`), so without re-declaring them here the dark surfaces would leak
+   * into light mode (dark text on a dark background). */
+  --sl-color-bg: #ffffff;
+  --sl-color-bg-nav: rgba(255, 255, 255, 0.85);
+  --sl-color-bg-sidebar: #f6f7f3;
+  --sl-color-bg-inline-code: #eceee9;
+  --sl-color-hairline: #d9dcd5;
+  --sl-color-hairline-light: #eceee9;
   --sl-color-hairline-shade: #eceee9;
 }
 
@@ -78,62 +87,88 @@
  * Brand accents on top of Starlight defaults
  * ------------------------------------------------------------------------- */
 
-/* The primary action button: bright lime with black text, like the site CTA. */
-:root[data-theme="dark"] .sl-link-button.primary {
+/* The primary action button: bright lime with black text, like the site CTA.
+ * Lime fill with dark text reads on any page background, so apply it in both
+ * themes. */
+.sl-link-button.primary {
   background: var(--kolega-lime-bright);
   border-color: var(--kolega-lime-bright);
   color: #0a0a0a;
 }
-:root[data-theme="dark"] .sl-link-button.primary:hover {
+.sl-link-button.primary:hover {
   background: var(--kolega-lime);
   border-color: var(--kolega-lime);
   color: #0a0a0a;
 }
 
-/* Minimal/secondary button: outline that lights up lime on hover. */
+/* Minimal/secondary button: neutral outline that lights up lime on hover. The
+ * resting border is a per-theme neutral; the hover accent uses the theme-aware
+ * lime (bright on dark, darker/contrast-safe on light). */
 :root[data-theme="dark"] .sl-link-button.minimal {
   border-color: #404040;
 }
-:root[data-theme="dark"] .sl-link-button.minimal:hover {
-  border-color: var(--kolega-lime);
-  color: var(--kolega-lime);
+:root[data-theme="light"] .sl-link-button.minimal {
+  border-color: #d9dcd5;
+}
+.sl-link-button.minimal:hover {
+  border-color: var(--sl-color-text-accent);
+  color: var(--sl-color-text-accent);
+}
+/* Starlight zeroes the inline padding on `minimal` (it ships as a bare text
+ * link). We give it a visible border + the inherited pill radius, so restore
+ * the inline padding to match the primary button — otherwise the rounded
+ * corners pinch the label (e.g. the "View on GitHub" hero button). */
+.sl-link-button.minimal {
+  padding-inline: 1.125rem;
+}
+@media (min-width: 50rem) {
+  .sl-link-button.minimal {
+    padding-inline: 1.25rem;
+  }
 }
 
-/* Hero headline: subtle lime emphasis to echo the marketing site. */
+/* Hero headline: subtle lime emphasis to echo the marketing site. gray-2 is a
+ * readable mid-tone in both themes. */
 .hero .tagline {
   color: var(--sl-color-gray-2);
 }
 
-/* Active sidebar entry gets the lime treatment. */
-.dark .sidebar-content a[aria-current="page"],
-:root[data-theme="dark"] .sidebar-content a[aria-current="page"] {
+/* Active sidebar entry gets the lime treatment — lime fill + dark text works
+ * on both the dark and light sidebar surfaces. */
+.sidebar-content a[aria-current="page"] {
   color: #0a0a0a;
   background-color: var(--kolega-lime);
   font-weight: 600;
 }
 
-/* Inline code: lime text on a dark chip, matching the site's mono labels. */
-:root[data-theme="dark"] :not(pre) > code {
-  color: var(--kolega-lime);
+/* Inline code: lime text on the code chip, matching the site's mono labels.
+ * --sl-color-text-accent is the bright lime in dark mode and the darker,
+ * contrast-safe lime on light surfaces. */
+:not(pre) > code {
+  color: var(--sl-color-text-accent);
 }
 
 /* On-this-page / nav current markers use the accent automatically; nudge
- * the table-of-contents current item to the bright lime for legibility. */
-:root[data-theme="dark"] starlight-toc a[aria-current="true"] {
-  color: var(--kolega-lime);
-  border-color: var(--kolega-lime);
+ * the table-of-contents current item to the brand lime for legibility. */
+starlight-toc a[aria-current="true"] {
+  color: var(--sl-color-text-accent);
+  border-color: var(--sl-color-text-accent);
 }
 
-/* Cards (splash page) — darker surface with a lime hover edge. */
+/* Cards (splash page) — themed surface with a lime hover edge and lime icon. */
 :root[data-theme="dark"] .card {
   background: #0d0d0d;
   border-color: #1f1f1f;
 }
-:root[data-theme="dark"] .card:hover {
-  border-color: var(--kolega-lime);
+:root[data-theme="light"] .card {
+  background: #f6f7f3;
+  border-color: #d9dcd5;
 }
-:root[data-theme="dark"] .card .icon {
-  color: var(--kolega-lime);
+.card:hover {
+  border-color: var(--sl-color-text-accent);
+}
+.card .icon {
+  color: var(--sl-color-text-accent);
 }
 
 /* Mono labels: tighten tracking like the site's uppercase mono chips. */
