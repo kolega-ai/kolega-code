@@ -4,10 +4,17 @@ import asyncio
 import pytest
 
 from kolega_code.config import ModelProvider
+from kolega_code.llm.exceptions import (
+    LLMBillingError,
+    LLMAuthenticationError,
+    LLMContextWindowExceededError,
+    LLMError,
+    LLMInternalServerError,
+)
 from kolega_code.llm.models import Message, TextBlock, ToolCall, ToolResult
 from kolega_code.events import AgentEvent
 from kolega_code.agent.prompt_provider import AgentMode
-from kolega_code.cli.config import CliConfigOverrides, build_agent_config, config_summary
+from kolega_code.cli.config import build_agent_config, config_summary
 from kolega_code.cli.provider_registry import (
     DEEPSEEK_DEFAULT_MODEL,
     MOONSHOT_K26_MODEL,
@@ -3069,8 +3076,65 @@ async def test_textual_app_cancellation_is_visible_in_chat(
 
 
 @pytest.mark.asyncio
-async def test_textual_app_handles_billing_error_without_worker_traceback(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    "error,provider,model,expected_message",
+    [
+        pytest.param(
+            LLMBillingError(
+                "DeepSeek APIError: Insufficient Balance",
+                provider=ModelProvider.DEEPSEEK.value,
+            ),
+            ModelProvider.DEEPSEEK,
+            DEEPSEEK_DEFAULT_MODEL,
+            "DeepSeek/deepseek-v4-pro could not run this request",
+            id="billing",
+        ),
+        pytest.param(
+            LLMContextWindowExceededError("context too large", provider=ModelProvider.ANTHROPIC.value),
+            ModelProvider.ANTHROPIC,
+            "claude-haiku-4-5-20251001",
+            "The conversation context became too large for the model",
+            id="context-window",
+        ),
+        pytest.param(
+            LLMInternalServerError(
+                "provider overloaded",
+                provider=ModelProvider.ANTHROPIC.value,
+            ),
+            ModelProvider.ANTHROPIC,
+            "claude-haiku-4-5-20251001",
+            "There is high traffic on our LLM provider",
+            id="internal-server",
+        ),
+        pytest.param(
+            LLMAuthenticationError(
+                "invalid key",
+                provider=ModelProvider.ANTHROPIC.value,
+            ),
+            ModelProvider.ANTHROPIC,
+            "claude-haiku-4-5-20251001",
+            "Anthropic/claude-haiku-4-5-20251001 could not authenticate",
+            id="authentication",
+        ),
+        pytest.param(
+            LLMError(
+                "unexpected provider error",
+                provider=ModelProvider.ANTHROPIC.value,
+            ),
+            ModelProvider.ANTHROPIC,
+            "claude-haiku-4-5-20251001",
+            "Anthropic/claude-haiku-4-5-20251001 returned an error",
+            id="generic-llm",
+        ),
+    ],
+)
+async def test_textual_app_handles_llm_error_without_worker_traceback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    error,
+    provider,
+    model,
+    expected_message,
 ) -> None:
     pytest.importorskip("textual")
 
@@ -3078,7 +3142,6 @@ async def test_textual_app_handles_billing_error_without_worker_traceback(
 
     from kolega_code.cli import app as app_module
     from kolega_code.cli.app import COMPOSER_PLACEHOLDER, ChatComposer, KolegaCodeApp, TurnState
-    from kolega_code.llm.exceptions import LLMBillingError
 
     class FakeCoderAgent:
         def __init__(self, **kwargs):
@@ -3094,18 +3157,16 @@ async def test_textual_app_handles_billing_error_without_worker_traceback(
             return None
 
         async def process_message_stream(self, message):
-            raise LLMBillingError("DeepSeek APIError: Insufficient Balance", provider=ModelProvider.DEEPSEEK.value)
+            raise error
             yield {"type": "response", "content": "unreachable"}
 
     monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
-    config = build_agent_config(
-        project,
-        CliConfigOverrides(provider=ModelProvider.DEEPSEEK.value, model=DEEPSEEK_DEFAULT_MODEL),
-        env={"DEEPSEEK_API_KEY": "deepseek-key"},
-    )
+    config = build_test_config(project)
+    config.long_context_config.provider = provider
+    config.long_context_config.model = model
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
@@ -3119,14 +3180,60 @@ async def test_textual_app_handles_billing_error_without_worker_traceback(
 
         progress_entries = [entry for entry in app.conversation_entries if entry.kind == "progress"]
         assert len(progress_entries) == 1
-        assert "DeepSeek/deepseek-v4-pro could not run this request" in progress_entries[0].content
-        assert "Add credits to your DeepSeek account" in progress_entries[0].content
+        assert expected_message in progress_entries[0].content
         assert progress_entries[0].tone == "error"
         assert composer.placeholder == COMPOSER_PLACEHOLDER
         assert composer.disabled is False
         assert app.agent_worker is None
         assert app._status_state.turn_state is TurnState.ERROR
         assert "Errored after" in str(turn_status.render())
+
+
+@pytest.mark.asyncio
+async def test_textual_app_reraises_non_llm_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli import app as app_module
+    from kolega_code.cli.app import ChatComposer, KolegaCodeApp, TurnState
+
+    class FakeCoderAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def restore_message_history(self, history):
+            return None
+
+        def dump_message_history(self):
+            return []
+
+        async def cleanup(self):
+            return None
+
+        async def process_message_stream(self, message):
+            raise RuntimeError("tool host exploded")
+            yield {"type": "response", "content": "unreachable"}
+
+    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test():
+        composer = app.query_one("#composer", ChatComposer)
+
+        with pytest.raises(RuntimeError, match="tool host exploded"):
+            await app._process_message("hi")
+
+        progress_entries = [entry for entry in app.conversation_entries if entry.kind == "progress"]
+        assert len(progress_entries) == 1
+        assert progress_entries[0].content == "Stopped due to an error: tool host exploded"
+        assert progress_entries[0].tone == "error"
+        assert composer.disabled is False
+        assert app._status_state.turn_state is TurnState.ERROR
 
 
 @pytest.mark.asyncio

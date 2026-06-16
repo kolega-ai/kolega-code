@@ -48,7 +48,7 @@ from textual.widgets.option_list import Option
 
 from kolega_code import __version__ as kolega_code_version
 from kolega_code.agent import AgentConfig, AgentEvent, CoderAgent, PlanningAgent, PromptExtension, ToolExtension
-from kolega_code.llm.exceptions import LLMBillingError, billing_error_message
+from kolega_code.llm.exceptions import LLMError, llm_error_message
 from kolega_code.llm.models import Message, MessageHistory, TextBlock, ToolCall, ToolResult
 from kolega_code.agent.prompt_provider import AgentMode
 from kolega_code.services.browser import PlaywrightBrowserManager
@@ -1139,13 +1139,13 @@ class KolegaCodeApp(App):
             self._save_session_history()
             self._finish_turn_progress(messages.STOPPED_BY_USER, TurnState.STOPPED)
             self._log_status(messages.STOPPED_BY_USER, "warn")
-        except LLMBillingError as exc:
+        except LLMError as exc:
             self._cancel_pending_question()
             await self._drain_pending_events()
             self._finalize_sub_agent_activities()
             self._save_session_history()
             model = self.config.long_context_config.model if self.config is not None else None
-            message_text = billing_error_message(exc, model=model)
+            message_text = llm_error_message(exc, model=model)
             self._finish_turn_progress(message_text, TurnState.ERROR)
             self._log_status(message_text, "error")
         except Exception as exc:

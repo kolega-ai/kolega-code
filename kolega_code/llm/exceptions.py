@@ -160,6 +160,53 @@ def billing_error_message(error: LLMBillingError, model: str | None = None) -> s
     )
 
 
+def llm_error_message(error: LLMError, model: str | None = None) -> str:
+    """Return concise user-facing copy for terminal LLM failures."""
+    if isinstance(error, LLMBillingError):
+        return billing_error_message(error, model=model)
+
+    provider_name = _provider_display_name(error.provider)
+    model_label = f"/{model}" if model else ""
+    provider_model = f"{provider_name}{model_label}"
+
+    if isinstance(error, LLMContextWindowExceededError):
+        return (
+            "The conversation context became too large for the model. "
+            "Oversized tool output is trimmed automatically; please retry the message."
+        )
+
+    if isinstance(error, LLMInternalServerError):
+        return "There is high traffic on our LLM provider right now. Please try again in a few seconds."
+
+    if isinstance(error, LLMAuthenticationError):
+        return f"{provider_model} could not authenticate. Check the API key in Settings or your environment."
+
+    if isinstance(error, LLMPermissionDeniedError):
+        return f"{provider_model} rejected this request because the API key does not have access."
+
+    if isinstance(error, LLMNotFoundError):
+        return f"{provider_model} was not found. Check the selected provider/model in Settings or with /model."
+
+    if isinstance(error, LLMTimeout):
+        return f"{provider_model} timed out while processing this request. Please try again."
+
+    if isinstance(error, LLMContentPolicyViolationError):
+        return f"{provider_model} blocked this request due to the provider's content policy."
+
+    if isinstance(
+        error,
+        (
+            LLMBadRequestError,
+            LLMUnsupportedParamsError,
+            LLMInvalidRequestError,
+            LLMUnprocessableEntityError,
+        ),
+    ):
+        return f"{provider_model} could not process this request. Check the selected provider/model and try again."
+
+    return f"{provider_model} returned an error: {error}"
+
+
 def _is_billing_status(error: Exception) -> bool:
     return getattr(error, "status_code", None) == 402 or getattr(error, "status", None) == 402
 

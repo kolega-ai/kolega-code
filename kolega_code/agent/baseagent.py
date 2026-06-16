@@ -16,12 +16,9 @@ from .context import AgentContext, AgentServices, Telemetry, WorkspaceInfo
 from .conversation import Conversation
 from kolega_code.events import AgentEventEmitter
 from kolega_code.llm.exceptions import (
-    LLMBillingError,
-    LLMContextWindowExceededError,
     LLMError,
-    LLMInternalServerError,
     LLMRateLimitError,
-    billing_error_message,
+    llm_error_message,
     map_to_llm_error,
 )
 from kolega_code.llm.models import ImageBlock, Message, MessageHistory, TextBlock, ToolCall, ToolResult
@@ -744,7 +741,7 @@ class BaseAgent(LogMixin):
 
         This method provides centralized error handling for all LLM operations:
         - Rate limit errors: Log warning, wait 60 seconds, and allow retry
-        - Other LLM errors: Log error and re-raise
+        - Other LLM errors: Emit a user-facing status and re-raise
         - Non-LLM errors: Re-raise as-is
 
         Args:
@@ -764,33 +761,12 @@ class BaseAgent(LogMixin):
             await self.log_info("Resuming after rate limit wait period.", sender=self.agent_name)
             # Don't re-raise - allow retry
 
-        elif isinstance(error, LLMInternalServerError):
+        elif isinstance(error, LLMError):
             await self.emitter.llm_status(
                 "error",
-                "There is high traffic on our LLM provider right now. Please try again in a few seconds.",
-            )
-            raise
-
-        elif isinstance(error, LLMContextWindowExceededError):
-            await self.emitter.llm_status(
-                "error",
-                (
-                    "The conversation context became too large for the model. "
-                    "Oversized tool output is trimmed automatically; please retry the message."
-                ),
-            )
-            raise
-
-        elif isinstance(error, LLMBillingError):
-            await self.emitter.llm_status(
-                "error",
-                billing_error_message(error, model=self.config.long_context_config.model),
+                llm_error_message(error, model=self.config.long_context_config.model),
             )
             raise error
-
-        elif isinstance(error, LLMError):
-            await self.log_error(f"LLM error occurred: {error}", sender=self.agent_name)
-            raise  # Re-raise to maintain current behavior
         else:
             # Non-LLM error - just re-raise
             raise
