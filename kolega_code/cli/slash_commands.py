@@ -48,6 +48,7 @@ TUI_COMMAND_ENTRIES: tuple[SlashCommandEntry, ...] = (
     SlashCommandEntry("version", "Show the Kolega Code version", CommandScope.TUI),
     SlashCommandEntry("update", "Update Kolega Code to the latest version", CommandScope.TUI),
     SlashCommandEntry("quit", "Save the session and exit", CommandScope.TUI),
+    SlashCommandEntry("exit", "Save the session and exit", CommandScope.TUI),
 )
 
 TUI_COMMAND_NAMES: frozenset[str] = frozenset(entry.token for entry in TUI_COMMAND_ENTRIES)

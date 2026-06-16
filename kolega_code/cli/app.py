@@ -1628,6 +1628,7 @@ class KolegaCodeApp(App):
             "/version": self._command_version,
             "/update": self._command_update,
             "/quit": self._command_quit,
+            "/exit": self._command_quit,
         }
 
     async def _handle_tui_slash_command(self, stripped_text: str, composer: ChatComposer) -> bool:
