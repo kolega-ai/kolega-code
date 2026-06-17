@@ -114,7 +114,7 @@ class AnthropicProvider(BaseLLMProvider):
         # so local counting is only a preflight context-size estimate for those models.
         # Billing/accounting must use provider response usage metadata instead.
         self.use_local_token_counting = (
-            provider_name in {"moonshot", "deepseek"}
+            provider_name in {"moonshot", "deepseek", "kimi_coding"}
             or os.getenv('ANTHROPIC_USE_LOCAL_TOKEN_COUNTING', 'false').lower() == 'true'
         )
 

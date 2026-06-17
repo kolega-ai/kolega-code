@@ -21,6 +21,8 @@ def test_model_specs_expose_provider_specific_thinking_efforts() -> None:
     assert default_thinking_effort("zai", "glm-5.2") == "max"
     assert thinking_effort_options("zai", "glm-5.1") == ("auto", "none")
     assert default_thinking_effort("zai", "glm-5.1") == "auto"
+    assert thinking_effort_options("kimi_coding", "kimi-for-coding") == ("auto", "none")
+    assert default_thinking_effort("kimi_coding", "kimi-for-coding") == "auto"
 
 
 def test_anthropic_opus_effort_uses_adaptive_thinking_without_budget_tokens() -> None:
@@ -92,6 +94,18 @@ def test_moonshot_kimi_thinking_toggle_serialization() -> None:
     disabled_params = {"model": "kimi-k2.6"}
     provider._apply_thinking_params(disabled_params, GenerationParams(thinking="none"))
     assert disabled_params == {"model": "kimi-k2.6", "thinking": {"type": "disabled"}}
+
+
+def test_kimi_coding_thinking_toggle_serialization() -> None:
+    provider = AnthropicProvider(api_key="test-key", provider_name="kimi_coding")
+
+    enabled = {"model": "kimi-for-coding"}
+    provider._apply_thinking_params(enabled, GenerationParams(thinking="auto"))
+    assert enabled == {"model": "kimi-for-coding", "thinking": {"type": "enabled"}}
+
+    disabled = {"model": "kimi-for-coding"}
+    provider._apply_thinking_params(disabled, GenerationParams(thinking="none"))
+    assert disabled == {"model": "kimi-for-coding", "thinking": {"type": "disabled"}}
 
 
 def test_google_gemini_3_pro_uses_thinking_level() -> None:
