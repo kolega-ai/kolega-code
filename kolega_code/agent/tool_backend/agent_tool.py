@@ -192,6 +192,8 @@ class AgentTool(BaseTool):
                 workspace_memories=getattr(self.caller, "workspace_memories", None) if self.caller else None,
                 prompt_extensions=getattr(self.caller, "prompt_extensions", None) if self.caller else None,
                 tool_extensions=getattr(self.caller, "tool_extensions", None) if self.caller else None,
+                permission_mode=getattr(self.caller, "permission_mode", None) if self.caller else None,
+                permission_callback=getattr(self.caller, "permission_callback", None) if self.caller else None,
                 usage_recorder=getattr(self.caller, "usage_recorder", None) if self.caller else None,
                 sub_agent_recorder=getattr(self.caller, "sub_agent_recorder", None) if self.caller else None,
             )

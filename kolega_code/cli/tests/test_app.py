@@ -504,6 +504,62 @@ async def test_textual_app_shift_tab_toggles_between_build_and_plan_agents(
 
 
 @pytest.mark.asyncio
+async def test_textual_app_ctrl_p_toggles_permission_mode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from textual.widgets import Static
+
+    from kolega_code.cli import app as app_module
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.permissions import PermissionMode
+
+    class FakeCoderAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.permission_mode = kwargs["permission_mode"]
+
+        def restore_message_history(self, history):
+            return None
+
+        def dump_message_history(self):
+            return []
+
+        def set_permission_mode(self, permission_mode):
+            self.permission_mode = permission_mode
+
+        def set_permission_callback(self, permission_callback):
+            self.permission_callback = permission_callback
+
+        async def cleanup(self):
+            return None
+
+    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test() as pilot:
+        toggle_binding = next(binding for binding in app.BINDINGS if binding.action == "toggle_permission_mode")
+        assert toggle_binding.key == "ctrl+p"
+        assert app.permission_mode == PermissionMode.ASK
+        assert app.agent.kwargs["permission_mode"] == PermissionMode.ASK
+
+        await pilot.press("ctrl+p")
+
+        assert app.permission_mode == PermissionMode.AUTO
+        assert app.agent.permission_mode == PermissionMode.AUTO
+        assert store.load(session.session_id).permission_mode == "auto"
+        assert "Permissions: auto" in app.conversation_entries[0].content
+        assert "Auto" in str(app.query_one("#status_dashboard", Static).render())
+
+
+@pytest.mark.asyncio
 async def test_textual_app_restores_saved_plan_and_interaction_mode(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

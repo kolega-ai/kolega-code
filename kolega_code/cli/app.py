@@ -50,6 +50,16 @@ from textual.widgets.option_list import Option
 from kolega_code.agent import AgentConfig, AgentEvent, CoderAgent, PlanningAgent, PromptExtension, ToolExtension
 from kolega_code.llm.exceptions import LLMError, llm_error_message
 from kolega_code.llm.models import Message, MessageHistory, TextBlock, ToolCall, ToolResult
+from kolega_code.permissions import (
+    PermissionDecision,
+    PermissionMode,
+    PermissionRequest,
+    PermissionRuleOption,
+    PermissionStoreError,
+    ProjectPermissionStore,
+    allow_rule_options,
+    normalize_permission_mode,
+)
 from kolega_code.tools import ASK_USER_CHOICE_INPUT_SCHEMA, ASK_USER_CHOICE_SHAPE_HINT, ToolError
 from kolega_code.agent.prompt_provider import AgentMode
 from kolega_code.services.browser import PlaywrightBrowserManager
@@ -118,9 +128,11 @@ IMPLEMENT_PLAN_PROMPT = """Implement the approved plan below. Follow it as the s
 """
 QUESTION_TOOL_NAME = "ask_user_choice"
 QUESTION_OPTION_ID_PREFIX = "question_option_"
+APPROVAL_OPTION_ID_PREFIX = "approval_option_"
 MODEL_OPTION_ID_PREFIX = "model_option_"
 EFFORT_OPTION_ID_PREFIX = "effort_option_"
 QUESTION_PLACEHOLDER = messages.QUESTION_PLACEHOLDER
+APPROVAL_PLACEHOLDER = messages.APPROVAL_PLACEHOLDER
 MODEL_PLACEHOLDER = messages.MODEL_PLACEHOLDER
 EFFORT_PLACEHOLDER = messages.EFFORT_PLACEHOLDER
 STARTUP_WORDMARK = (
@@ -213,6 +225,13 @@ class PendingQuestion:
 
 
 @dataclass
+class PendingApproval:
+    request: PermissionRequest
+    future: asyncio.Future[PermissionDecision]
+    rule_options: list[PermissionRuleOption]
+
+
+@dataclass
 class PendingModelSelection:
     provider: str
     options: list[tuple[str, str]]
@@ -231,6 +250,7 @@ class StatusDashboardState:
     model: str = UI_DEFAULT_MODEL
     thinking_effort: Optional[str] = None
     mode: str = BUILD_INTERACTION_MODE
+    permission_mode: str = PermissionMode.ASK.value
     turn_state: TurnState = TurnState.IDLE
     activity: str = "Ready"
     input_tokens: Optional[int] = None
@@ -704,6 +724,7 @@ class KolegaCodeApp(App):
 
     BINDINGS = [
         Binding("shift+tab", "toggle_interaction_mode", "Plan/Build", show=True, key_display="Shift+Tab", priority=True),
+        Binding("ctrl+p", "toggle_permission_mode", "Permissions", show=True, key_display="Ctrl+P", priority=True),
         Binding("ctrl+c", "cancel_generation", "Cancel", show=True),
         Binding("escape", "cancel_generation", "Cancel", show=False),
         Binding("ctrl+q", "quit", "Quit", show=True),
@@ -718,6 +739,7 @@ class KolegaCodeApp(App):
         config: Optional[AgentConfig] = None,
         settings_store: Optional[SettingsStore] = None,
         overrides: Optional[CliConfigOverrides] = None,
+        permission_mode: Optional[str] = None,
         browser_visible: bool = False,
         check_for_updates: bool = False,
     ) -> None:
@@ -730,6 +752,11 @@ class KolegaCodeApp(App):
         self.session.mode = CLI_AGENT_MODE
         self.interaction_mode = self._validated_interaction_mode(self.session.interaction_mode)
         self.session.interaction_mode = self.interaction_mode
+        self.permission_mode = normalize_permission_mode(
+            permission_mode or self.session.permission_mode,
+            default=PermissionMode.ASK,
+        )
+        self.session.permission_mode = self.permission_mode.value
         self.settings_store = settings_store or SettingsStore(store.root)
         self.overrides = overrides or CliConfigOverrides()
         self.settings: CliSettings = CliSettings()
@@ -755,10 +782,17 @@ class KolegaCodeApp(App):
         self._latest_plan: Optional[str] = self.session.latest_plan_markdown or None
         self._plan_decision_active = False
         self._pending_question: Optional[PendingQuestion] = None
+        self._pending_approval: Optional[PendingApproval] = None
+        self._permission_lock = asyncio.Lock()
         self._pending_model_selection: Optional[PendingModelSelection] = None
         self._pending_effort_selection: Optional[PendingEffortSelection] = None
         provider, model = self._startup_model()
-        self._status_state = StatusDashboardState(provider=provider, model=model, mode=self.interaction_mode)
+        self._status_state = StatusDashboardState(
+            provider=provider,
+            model=model,
+            mode=self.interaction_mode,
+            permission_mode=self.permission_mode.value,
+        )
         self._turn_started_at: Optional[float] = None
         self._turn_finished_duration: Optional[float] = None
         self._turn_timer: Optional[Timer] = None
@@ -784,6 +818,7 @@ class KolegaCodeApp(App):
                 )
                 yield ActionList(id="plan_actions")
                 yield ActionList(id="question_actions")
+                yield ActionList(id="approval_actions")
                 yield ActionList(id="model_actions")
                 yield ActionList(id="effort_actions")
                 yield Static("", id="turn_status", markup=True)
@@ -840,6 +875,7 @@ class KolegaCodeApp(App):
         self._refresh_status_dashboard()
         self._restore_plan_action_visibility()
         self._set_question_actions_visible(False)
+        self._set_approval_actions_visible(False)
         self._set_model_actions_visible(False)
         self._set_effort_actions_visible(False)
         self._refresh_planning_sidebar()
@@ -973,6 +1009,7 @@ class KolegaCodeApp(App):
 
     def _sync_planning_state_to_session(self) -> None:
         self.session.interaction_mode = self.interaction_mode
+        self.session.permission_mode = self.permission_mode.value
         self.session.latest_plan_markdown = self._latest_plan or ""
 
     def _save_session(self) -> None:
@@ -1027,6 +1064,11 @@ class KolegaCodeApp(App):
             await self._answer_pending_question(stripped_text)
             return
 
+        if self._pending_approval is not None:
+            self._set_composer_status(APPROVAL_PLACEHOLDER)
+            self._notify_user(messages.BLOCK_PENDING_APPROVAL, severity="warning")
+            return
+
         if self._plan_decision_active:
             self._set_composer_status(PLAN_READY_PLACEHOLDER)
             self._notify_user(messages.BLOCK_PLAN_DECISION, severity="warning")
@@ -1075,6 +1117,10 @@ class KolegaCodeApp(App):
         if event.option_list.id == "question_actions":
             event.stop()
             await self._answer_question_option(event.option_index)
+            return
+        if event.option_list.id == "approval_actions":
+            event.stop()
+            await self._answer_approval_option(event.option_index)
             return
         if event.option_list.id == "model_actions":
             event.stop()
@@ -1149,6 +1195,7 @@ class KolegaCodeApp(App):
             self._log_status(messages.FINISHED, "ok")
         except asyncio.CancelledError:
             self._cancel_pending_question()
+            self._cancel_pending_approval()
             await self._drain_pending_events()
             self._finalize_sub_agent_activities()
             self._save_session_history()
@@ -1156,6 +1203,7 @@ class KolegaCodeApp(App):
             self._log_status(messages.STOPPED_BY_USER, "warn")
         except LLMError as exc:
             self._cancel_pending_question()
+            self._cancel_pending_approval()
             await self._drain_pending_events()
             self._finalize_sub_agent_activities()
             self._save_session_history()
@@ -1165,6 +1213,7 @@ class KolegaCodeApp(App):
             self._log_status(message_text, "error")
         except Exception as exc:
             self._cancel_pending_question()
+            self._cancel_pending_approval()
             await self._drain_pending_events()
             self._finalize_sub_agent_activities()
             self._save_session_history()
@@ -1281,10 +1330,15 @@ class KolegaCodeApp(App):
         if self.agent_worker is not None:
             self._update_progress(messages.STOP_REQUESTED, complete=False, state=TurnState.STOPPING)
             self._cancel_pending_question()
+            self._cancel_pending_approval()
             self.agent_worker.cancel()
             self._notify_user(messages.CANCEL_REQUESTED, severity="warning")
 
     def _mode_switch_blocked(self) -> bool:
+        if self._pending_approval is not None:
+            self._set_composer_status(APPROVAL_PLACEHOLDER)
+            self._notify_user(messages.BLOCK_PENDING_APPROVAL, severity="warning")
+            return True
         if self._turn_active or self.agent_worker is not None:
             self._show_composer_hint(messages.BLOCK_STOP_BEFORE_MODE_SWITCH)
             self._notify_user(messages.BLOCK_STOP_BEFORE_MODE_SWITCH, severity="warning")
@@ -1295,12 +1349,25 @@ class KolegaCodeApp(App):
             return True
         return False
 
+    def _permission_mode_switch_blocked(self) -> bool:
+        if self._pending_approval is not None:
+            self._set_composer_status(APPROVAL_PLACEHOLDER)
+            self._notify_user(messages.BLOCK_PENDING_APPROVAL_MODE_SWITCH, severity="warning")
+            return True
+        return False
+
     async def action_toggle_interaction_mode(self) -> None:
         if self._mode_switch_blocked():
             return
 
         target = PLAN_INTERACTION_MODE if self.interaction_mode == BUILD_INTERACTION_MODE else BUILD_INTERACTION_MODE
         await self._set_interaction_mode(target)
+
+    async def action_toggle_permission_mode(self) -> None:
+        if self._permission_mode_switch_blocked():
+            return
+        target = PermissionMode.AUTO if self.permission_mode == PermissionMode.ASK else PermissionMode.ASK
+        await self._set_permission_mode(target)
 
     async def action_quit(self) -> None:
         if self.agent is not None:
@@ -1428,6 +1495,8 @@ class KolegaCodeApp(App):
             agent_mode=AgentMode(self.mode),
             prompt_extensions=prompt_extensions,
             tool_extensions=tool_extensions,
+            permission_mode=self.permission_mode,
+            permission_callback=self._permission_callback,
         )
         if history:
             self.agent.restore_message_history(history)
@@ -1445,6 +1514,7 @@ class KolegaCodeApp(App):
         self._save_session()
         self._restore_plan_action_visibility()
         self._cancel_pending_question()
+        self._cancel_pending_approval()
         self._cancel_pending_model_selection()
         self._cancel_pending_effort_selection()
 
@@ -1455,6 +1525,20 @@ class KolegaCodeApp(App):
         self._restore_composer_placeholder()
         self._set_chat_enabled(self.agent is not None)
         self._notify_user(messages.SWITCHED_MODE.format(mode=self.interaction_mode))
+
+    async def _set_permission_mode(self, permission_mode: PermissionMode | str) -> None:
+        mode = normalize_permission_mode(permission_mode, default=self.permission_mode)
+        if self.permission_mode == mode:
+            return
+
+        self.permission_mode = mode
+        self.session.permission_mode = mode.value
+        self._save_session()
+        if self.agent is not None:
+            self.agent.set_permission_mode(mode)
+            self.agent.set_permission_callback(self._permission_callback)
+        self._update_mode_chrome()
+        self._notify_user(messages.SWITCHED_PERMISSION_MODE.format(mode=mode.value))
 
     def _capture_completed_plan(self) -> None:
         if self.interaction_mode != PLAN_INTERACTION_MODE or not isinstance(self.agent, PlanningAgent):
@@ -1564,7 +1648,7 @@ class KolegaCodeApp(App):
     def _meta_content(self) -> str:
         return (
             f"{self.project_path} | session {self.session.session_id} | "
-            f"agent {self.mode} | {self.interaction_mode}"
+            f"agent {self.mode} | {self.interaction_mode} | permissions {self.permission_mode.value}"
         )
 
     def _update_mode_chrome(self) -> None:
@@ -1591,7 +1675,7 @@ class KolegaCodeApp(App):
 
     def _set_chat_enabled(self, enabled: bool) -> None:
         composer = self.query_one("#composer", ChatComposer)
-        composer.disabled = not enabled or self._plan_decision_active
+        composer.disabled = not enabled or self._plan_decision_active or self._pending_approval is not None
 
     def _set_composer_status(self, status: str) -> None:
         self.query_one("#composer", ChatComposer).placeholder = status
@@ -1622,6 +1706,7 @@ class KolegaCodeApp(App):
         return {
             "/plan": self._command_plan,
             "/build": self._command_build,
+            "/permissions": self._command_permissions,
             "/model": self._command_model,
             "/effort": self._command_effort,
             "/copy": self._command_copy,
@@ -1655,6 +1740,31 @@ class KolegaCodeApp(App):
         if self._mode_switch_blocked():
             return
         await self._set_interaction_mode(BUILD_INTERACTION_MODE)
+
+    async def _command_permissions(self, args: str) -> None:
+        if self._permission_mode_switch_blocked():
+            return
+
+        clean_args = args.strip().lower()
+        if not clean_args:
+            lines = [
+                messages.PERMISSIONS_STATUS.format(mode=self.permission_mode.value),
+                messages.PERMISSIONS_SWITCH_HINT,
+            ]
+            self._add_conversation_entry(ConversationEntry(kind="system", content="\n".join(lines)))
+            return
+
+        if clean_args == "toggle":
+            await self.action_toggle_permission_mode()
+            return
+
+        try:
+            mode = normalize_permission_mode(clean_args, default=self.permission_mode)
+        except ValueError as exc:
+            self._notify_user(str(exc), severity="warning")
+            return
+
+        await self._set_permission_mode(mode)
 
     async def _command_model(self, args: str) -> None:
         provider = self.settings.active_provider or UI_DEFAULT_PROVIDER
@@ -1925,6 +2035,11 @@ class KolegaCodeApp(App):
         if self._pending_question is not None:
             self._set_composer_status(QUESTION_PLACEHOLDER)
             self._notify_user(messages.BLOCK_PENDING_QUESTION_SKILL, severity="warning")
+            return True
+
+        if self._pending_approval is not None:
+            self._set_composer_status(APPROVAL_PLACEHOLDER)
+            self._notify_user(messages.BLOCK_PENDING_APPROVAL, severity="warning")
             return True
 
         if self._plan_decision_active:
@@ -2201,6 +2316,108 @@ class KolegaCodeApp(App):
         except Exception:
             return
 
+    async def _permission_callback(self, request: PermissionRequest) -> PermissionDecision:
+        if self.permission_mode != PermissionMode.ASK:
+            return PermissionDecision(allowed=True)
+
+        async with self._permission_lock:
+            store = ProjectPermissionStore(self.project_path)
+            try:
+                matched_rule = store.first_match(request)
+            except PermissionStoreError as exc:
+                matched_rule = None
+                self._notify_user(str(exc), severity="warning")
+
+            if matched_rule is not None:
+                return PermissionDecision(allowed=True, reason=f"Allowed by saved rule {matched_rule.id}.")
+
+            return await self._ask_permission(request)
+
+    async def _ask_permission(self, request: PermissionRequest) -> PermissionDecision:
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[PermissionDecision] = loop.create_future()
+        rule_options = allow_rule_options(request)
+        self._pending_approval = PendingApproval(request=request, future=future, rule_options=rule_options)
+        self._add_conversation_entry(
+            ConversationEntry(kind="question", content=self._format_permission_content(request, rule_options))
+        )
+        self._show_approval_options(rule_options)
+        self._set_composer_status(APPROVAL_PLACEHOLDER)
+        self._set_chat_enabled(False)
+        self._update_activity_progress(messages.WAITING_FOR_PERMISSION, state=TurnState.WAITING_FOR_USER)
+
+        try:
+            return await future
+        finally:
+            if self._pending_approval is not None and self._pending_approval.future is future:
+                self._pending_approval = None
+                self._set_approval_actions_visible(False)
+
+    def _show_approval_options(self, rule_options: list[PermissionRuleOption]) -> None:
+        self._set_approval_actions_visible(True)
+        try:
+            approval_actions = self.query_one("#approval_actions", ActionList)
+            self.screen.set_focus(approval_actions)
+        except Exception:
+            return
+
+    async def _answer_approval_option(self, option_index: int) -> None:
+        pending = self._pending_approval
+        if pending is None:
+            return
+
+        decision: PermissionDecision
+        if option_index == 0:
+            decision = PermissionDecision(allowed=True, reason="Allowed once by the user.")
+        elif option_index == 1:
+            decision = PermissionDecision(allowed=False, reason="Denied by the user.")
+        else:
+            rule_index = option_index - 2
+            if rule_index < 0 or rule_index >= len(pending.rule_options):
+                return
+            rule = pending.rule_options[rule_index].rule
+            try:
+                ProjectPermissionStore(self.project_path).add_rule(rule)
+            except PermissionStoreError as exc:
+                self._notify_user(str(exc), severity="warning")
+                decision = PermissionDecision(allowed=True, reason="Allowed once because the rule could not be saved.")
+            else:
+                decision = PermissionDecision(allowed=True, reason="Allowed by a saved rule.", rule=rule)
+
+        self._pending_approval = None
+        self._set_approval_actions_visible(False)
+        if not pending.future.done():
+            pending.future.set_result(decision)
+
+        if self._turn_active:
+            self._restore_composer_placeholder()
+            self._set_chat_enabled(False)
+            self._update_progress(messages.WORKING, complete=False, state=TurnState.GENERATING)
+        else:
+            self._restore_composer_placeholder()
+            self._set_chat_enabled(self.agent is not None)
+
+    def _format_permission_content(
+        self, request: PermissionRequest, rule_options: list[PermissionRuleOption]
+    ) -> str:
+        if request.kind.value == "command":
+            lines = [
+                "Allow the agent to run this command?",
+                "",
+                "```bash",
+                request.command,
+                "```",
+            ]
+        else:
+            target = f" on `{request.path}`" if request.path else ""
+            lines = [
+                f"Allow the agent to run `{request.tool_name}`{target}?",
+            ]
+
+        options = ["Allow once", "Deny", *(option.label for option in rule_options)]
+        option_lines = [self._question_option_label(index, option) for index, option in enumerate(options)]
+        return "\n".join([*lines, "", *option_lines])
+
     def _show_effort_options(self) -> None:
         self._set_effort_actions_visible(True)
         try:
@@ -2227,12 +2444,42 @@ class KolegaCodeApp(App):
         except Exception:
             return
 
+    def _set_approval_actions_visible(self, visible: bool) -> None:
+        try:
+            approval_actions = self.query_one("#approval_actions", ActionList)
+            if visible and self._pending_approval is not None:
+                labels = [
+                    "1. Allow once",
+                    "2. Deny",
+                    *[
+                        self._question_option_label(index + 2, option.label, option.description)
+                        for index, option in enumerate(self._pending_approval.rule_options)
+                    ],
+                ]
+                approval_actions.show_options(
+                    [
+                        Option(label, id=f"{APPROVAL_OPTION_ID_PREFIX}{index}")
+                        for index, label in enumerate(labels)
+                    ]
+                )
+            else:
+                approval_actions.hide()
+        except Exception:
+            return
+
     def _cancel_pending_question(self) -> None:
         pending_question = self._pending_question
         if pending_question is not None and not pending_question.future.done():
             pending_question.future.cancel()
         self._pending_question = None
         self._set_question_actions_visible(False)
+
+    def _cancel_pending_approval(self) -> None:
+        pending_approval = self._pending_approval
+        if pending_approval is not None and not pending_approval.future.done():
+            pending_approval.future.cancel()
+        self._pending_approval = None
+        self._set_approval_actions_visible(False)
 
     def _format_question_content(
         self, question: str, options: list[str], descriptions: Optional[list[str]] = None
@@ -2289,6 +2536,7 @@ class KolegaCodeApp(App):
         self._save_session()
         self._set_plan_actions_visible(False)
         self._cancel_pending_question()
+        self._cancel_pending_approval()
         self._cancel_pending_model_selection()
         self._cancel_pending_effort_selection()
         self._refresh_planning_sidebar()
@@ -2387,11 +2635,12 @@ class KolegaCodeApp(App):
                 f"Session: {session_id}",
                 f"Mode: {self.mode}",
                 f"Interaction: {self.interaction_mode}",
+                f"Permissions: {self.permission_mode.value}",
                 f"Model: {model_display}",
                 f"Thinking effort: {effort}",
                 f"API key: {api_key}",
                 "",
-                f"Enter send {theme.g(Glyph.BULLET_SEP)} Shift+Enter newline {theme.g(Glyph.BULLET_SEP)} Shift+Tab plan/build",
+                f"Enter send {theme.g(Glyph.BULLET_SEP)} Shift+Enter newline {theme.g(Glyph.BULLET_SEP)} Shift+Tab plan/build {theme.g(Glyph.BULLET_SEP)} Ctrl+P permissions",
                 f"Ctrl+C stop turn {theme.g(Glyph.BULLET_SEP)} Cmd+C copy selection {theme.g(Glyph.BULLET_SEP)} / commands",
             ]
         )
@@ -2424,6 +2673,7 @@ class KolegaCodeApp(App):
         self._status_state.model = model
         self._status_state.thinking_effort = self._startup_thinking_effort()
         self._status_state.mode = self.interaction_mode
+        self._status_state.permission_mode = self.permission_mode.value
         try:
             self._status_dashboard.update(self._format_status_dashboard())
         except Exception:
@@ -2434,6 +2684,7 @@ class KolegaCodeApp(App):
         provider_model = f"{state.provider}/{state.model}" if state.model else state.provider
         effort = state.thinking_effort or "not supported"
         mode = state.mode.title()
+        permission_mode = state.permission_mode.title()
         turn_style = TURN_STATE_STYLES.get(state.turn_state, Color.ACCENT)
         context_style = self._context_style(state.usage_percentage, state.compression_threshold)
 
@@ -2466,6 +2717,7 @@ class KolegaCodeApp(App):
             f"{label('Model')}\n[bold]{escape(provider_model)}[/bold]\n\n"
             f"{label('Thinking effort')} [bold]{escape(effort)}[/bold]\n"
             f"{label('Mode')} [bold]{mode}[/bold]\n"
+            f"{label('Permissions')} [bold]{permission_mode}[/bold]\n"
             f"{turn_line}\n\n"
             f"{label('Context')}\n"
             f"{context_lines}\n\n"

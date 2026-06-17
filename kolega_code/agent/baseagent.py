@@ -24,6 +24,13 @@ from kolega_code.llm.exceptions import (
 from kolega_code.llm.models import ImageBlock, Message, MessageHistory, TextBlock, ToolCall, ToolResult
 from kolega_code.llm.providers.models import TokenCount
 from kolega_code.llm.specs import get_model_specs
+from kolega_code.permissions import (
+    PermissionDecision,
+    PermissionMode,
+    auto_allow_permission_callback,
+    normalize_permission_mode,
+    permission_request_for_tool,
+)
 from .prompt_provider import PromptProvider, AgentMode, PromptContext, PromptExtension
 from kolega_code.services.base import TerminalManager, BrowserManager
 from kolega_code.services.file_system import FileSystem
@@ -86,6 +93,8 @@ class BaseAgent(LogMixin):
         prompt_provider: Optional[PromptProvider] = None,
         prompt_extensions: Optional[List[PromptExtension]] = None,
         tool_extensions: Optional[List[Any]] = None,
+        permission_mode: Optional[PermissionMode | str] = None,
+        permission_callback: Optional[Any] = None,
         usage_recorder: Optional[Any] = None,
         sub_agent_recorder: Optional[Any] = None,
         context: Optional[AgentContext] = None,
@@ -160,9 +169,15 @@ class BaseAgent(LogMixin):
                 prompt_provider=prompt_provider,
                 prompt_extensions=prompt_extensions or [],
                 tool_extensions=tool_extensions or [],
+                permission_mode=normalize_permission_mode(permission_mode, default=PermissionMode.AUTO),
+                permission_callback=permission_callback or auto_allow_permission_callback,
             )
         elif prompt_provider is not None:
             context.prompt_provider = prompt_provider
+            if permission_mode is not None:
+                context.permission_mode = normalize_permission_mode(permission_mode, default=context.permission_mode)
+            if permission_callback is not None:
+                context.permission_callback = permission_callback
 
         self.context = context
 
@@ -185,6 +200,8 @@ class BaseAgent(LogMixin):
         self.workspace_memories = context.workspace.memories
         self.prompt_extensions = context.prompt_extensions
         self.tool_extensions = context.tool_extensions
+        self.permission_mode = context.permission_mode
+        self.permission_callback = context.permission_callback or auto_allow_permission_callback
         self.usage_recorder = context.telemetry.usage_recorder
         self.sub_agent_recorder = context.telemetry.sub_agent_recorder
 
@@ -500,6 +517,16 @@ class BaseAgent(LogMixin):
     # Tool execution
     # ------------------------------------------------------------------
 
+    def set_permission_mode(self, permission_mode: PermissionMode | str) -> None:
+        """Update the active permission mode without rebuilding the agent."""
+        self.permission_mode = normalize_permission_mode(permission_mode, default=self.permission_mode)
+        self.context.permission_mode = self.permission_mode
+
+    def set_permission_callback(self, permission_callback: Any) -> None:
+        """Update the host callback used when permission mode is ask."""
+        self.permission_callback = permission_callback or auto_allow_permission_callback
+        self.context.permission_callback = self.permission_callback
+
     @property
     def current_tool_call_id(self):
         """Internal execution ID for UI and sub-agent records (task-local)."""
@@ -561,6 +588,49 @@ class BaseAgent(LogMixin):
 
             # Log the tool being called
             await self.log_info(f"Executing tool: {tool_name}", sender=self.agent_name)
+
+            permission_request = permission_request_for_tool(tool_name, inputs)
+            if permission_request is not None and self.permission_mode == PermissionMode.ASK:
+                try:
+                    decision = await self.permission_callback(permission_request)
+                    if not isinstance(decision, PermissionDecision):
+                        raise TypeError("permission callback must return PermissionDecision")
+                except Exception as ex:
+                    error_message = f"Permission check failed for {tool_name}: {ex}"
+                    await self.log_error(error_message, sender=self.agent_name)
+                    await self.send_chat_message(
+                        message_type="tool_error",
+                        content=error_message,
+                        is_streaming=False,
+                        tool_description=tool_name,
+                        tool_call_id=tool_execution_id,
+                    )
+                    return ToolResult(
+                        tool_use_id=provider_tool_call_id,
+                        content=error_message,
+                        name=tool_name,
+                        is_error=True,
+                        execution_id=tool_execution_id,
+                    )
+
+                if not decision.allowed:
+                    reason = decision.reason or "The user denied permission for this action."
+                    error_message = f"Permission denied for {tool_name}: {reason}"
+                    await self.log_warning(error_message, sender=self.agent_name)
+                    await self.send_chat_message(
+                        message_type="tool_error",
+                        content=error_message,
+                        is_streaming=False,
+                        tool_description=tool_name,
+                        tool_call_id=tool_execution_id,
+                    )
+                    return ToolResult(
+                        tool_use_id=provider_tool_call_id,
+                        content=error_message,
+                        name=tool_name,
+                        is_error=True,
+                        execution_id=tool_execution_id,
+                    )
 
             # Send tool_call message to indicate we're starting execution
             if not all(
