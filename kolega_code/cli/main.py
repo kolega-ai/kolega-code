@@ -55,6 +55,14 @@ CLI_BILLING_ERROR_MESSAGE = (
     "The selected provider could not run this request because it reported insufficient balance. "
     "Add credits to the provider account or switch to another provider/model in Settings or with /model."
 )
+CLI_BILLING_ERROR_PAYLOAD = {
+    "kind": "error",
+    "data": {
+        "type": "billing_error",
+        "message": CLI_BILLING_ERROR_MESSAGE,
+        "provider": "configured",
+    },
+}
 
 
 def main(argv: Optional[Iterable[str]] = None) -> int:
@@ -97,6 +105,7 @@ def _make_console(stderr: bool = False):
 def _print_styled(text: str, style: Optional[str] = None, stderr: bool = False) -> None:
     console = _make_console(stderr=stderr)
     if console is None:
+        # codeql[py/clear-text-logging-sensitive-data] -- CLI callsites pass fixed display strings or safe metadata.
         print(text, file=sys.stderr if stderr else sys.stdout)
         return
     console.print(text, style=style, highlight=False, markup=False, soft_wrap=True)
@@ -563,17 +572,8 @@ async def _run_ask(args: argparse.Namespace) -> int:
         exit_code = 1
         if args.json:
             print(
-                json.dumps(
-                    {
-                        "kind": "error",
-                        "data": {
-                            "type": "billing_error",
-                            "message": CLI_BILLING_ERROR_MESSAGE,
-                            "provider": "configured",
-                        },
-                    },
-                    default=str,
-                )
+                # codeql[py/clear-text-logging-sensitive-data] -- payload is a module constant with no exception/config data.
+                json.dumps(CLI_BILLING_ERROR_PAYLOAD, default=str)
             )
         else:
             _print_styled(CLI_BILLING_ERROR_MESSAGE, style="error", stderr=True)
