@@ -969,13 +969,9 @@ class KolegaCodeApp(App):
         self._write_log(text, level)
 
     def _notify_user(self, message: str, *, severity: str = "information", title: Optional[str] = None) -> None:
-        """Show a transient toast and keep a copy in the Logs tab."""
+        """Record a user-facing notice in the Logs tab without showing a transient popup."""
         level = {"information": "ok", "warning": "warn", "error": "error"}.get(severity, "info")
         self._log_status(message, level)
-        try:
-            self.notify(message, severity=severity, title=title)
-        except Exception:
-            pass
 
     async def _check_for_update_on_startup(self) -> None:
         result = await asyncio.to_thread(check_for_update)
