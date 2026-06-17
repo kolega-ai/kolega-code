@@ -29,8 +29,8 @@ the organization request.
 4. Create and push a matching tag:
 
    ```bash
-   git tag v0.2.0
-   git push origin v0.2.0
+   git tag v0.3.0
+   git push origin v0.3.0
    ```
 
 5. Approve the `pypi` environment deployment in GitHub Actions.

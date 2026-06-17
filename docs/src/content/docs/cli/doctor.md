@@ -42,7 +42,7 @@ you can validate a specific provider/model combination before using it.
 Project: /Users/you/code/my-app
 State dir: /Users/you/Library/Application Support/kolega-code
 Textual installed: True
-Update: Kolega Code is up to date (0.2.0).
+Update: Kolega Code is up to date (0.3.0).
 Stored active model: moonshot/kimi-k2.7-code
 Stored thinking effort: auto
 Stored API key: present in local settings
