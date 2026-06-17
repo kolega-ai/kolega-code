@@ -24,7 +24,7 @@ At the bottom sits the **composer** — the text box where you type prompts. See
 
 | Tab | What it shows |
 | --- | --- |
-| **Status** | The active provider/model and thinking effort, the current interaction mode (Build/Plan), the agent's turn state (idle, generating, thinking, running a tool, running sub-agents, waiting for input, …), token usage, and context warnings. |
+| **Status** | The active provider/model and thinking effort, the current interaction mode (Build/Plan), permission mode, the agent's turn state (idle, generating, thinking, running a tool, running sub-agents, waiting for input, …), token usage, and context warnings. |
 | **Logs** | A timestamped, color-coded activity log: sub-agent lifecycle, tool calls, configuration changes. An indicator flags new entries when you're on another tab. |
 | **Terminal** | Live output from commands the agent runs. |
 | **Planning** | The current **Plan** (markdown from the planning agent) and the shared **Task List** that both modes can edit. |
@@ -40,7 +40,8 @@ At the bottom sits the **composer** — the text box where you type prompts. See
 - **Sub-agents** — when the main agent dispatches a sub-agent, its activity is
   tracked live with status updates.
 - **Option lists** — when the agent asks you to choose between options (including
-  plan decisions), they render as a **vertical, arrow-key-selectable list**.
+  plan decisions and tool approvals), they render as a **vertical,
+  arrow-key-selectable list**.
   Use the arrow keys to highlight, number keys (`1`–`9`) to jump, and `Enter` to
   confirm.
 
@@ -49,6 +50,7 @@ At the bottom sits the **composer** — the text box where you type prompts. See
 | Keys | Action |
 | --- | --- |
 | `Shift+Tab` | Toggle Build ⇄ Plan mode |
+| `Ctrl+P` | Toggle shell/edit permissions between Ask ⇄ Auto |
 | `Enter` | Send the prompt |
 | `Shift+Enter` / `Ctrl+J` | Insert a newline |
 | `Ctrl+C` / `Escape` | Cancel the current generation |

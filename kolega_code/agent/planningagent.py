@@ -80,6 +80,8 @@ class PlanningAgent(BaseAgent):
         workspace_memories: Optional[List[str]] = None,
         prompt_extensions: Optional[List[PromptExtension]] = None,
         tool_extensions: Optional[List[Any]] = None,
+        permission_mode: Optional[Any] = None,
+        permission_callback: Optional[Any] = None,
         usage_recorder: Optional[Any] = None,
         sub_agent_recorder: Optional[Any] = None,
     ) -> None:
@@ -103,6 +105,8 @@ class PlanningAgent(BaseAgent):
             workspace_memories=workspace_memories,
             prompt_extensions=prompt_extensions,
             tool_extensions=tool_extensions,
+            permission_mode=permission_mode,
+            permission_callback=permission_callback,
             usage_recorder=usage_recorder,
             sub_agent_recorder=sub_agent_recorder,
         )

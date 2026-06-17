@@ -14,6 +14,14 @@ implementing whatever you ask.
 
 Use Build mode for hands-on work: making changes, running tests, fixing bugs.
 
+Build mode is still subject to the current **permission mode**. TUI sessions
+default to `ask`, so shell commands and file edits prompt before they run. Press
+`Ctrl+P` to toggle between `ask` and `auto`, or use `/permissions ask`,
+`/permissions auto`, and `/permissions toggle`.
+
+When you choose an “always allow” approval, Kolega Code stores the local rule in
+`.kolega/permissions.json` for that project.
+
 ## Plan mode
 
 A **read-only** planning pass. Plan mode uses a standalone planning agent that does

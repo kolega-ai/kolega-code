@@ -1,0 +1,138 @@
+import os
+import uuid
+from unittest.mock import AsyncMock
+
+import pytest
+
+from kolega_code.agent.baseagent import BaseAgent
+from kolega_code.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
+from kolega_code.events import AgentConnectionManager
+from kolega_code.llm.models import ToolCall
+from kolega_code.llm.models import ToolDefinition
+from kolega_code.permissions import (
+    PermissionDecision,
+    PermissionKind,
+    PermissionMode,
+    PermissionRule,
+    ProjectPermissionStore,
+    allow_rule_options,
+    permission_request_for_tool,
+)
+from kolega_code.tools import Tool, ToolRegistry
+
+
+@pytest.fixture
+def agent_config():
+    return AgentConfig(
+        anthropic_api_key=os.getenv("ANTHROPIC_API_KEY", "test_key"),
+        long_context_config=ModelConfig(
+            provider=ModelProvider.ANTHROPIC,
+            model="claude-haiku-4-5-20251001",
+            rate_limits=RateLimitConfig(),
+        ),
+        fast_config=ModelConfig(
+            provider=ModelProvider.ANTHROPIC,
+            model="claude-haiku-4-5-20251001",
+            rate_limits=RateLimitConfig(),
+        ),
+        thinking_config=ModelConfig(
+            provider=ModelProvider.ANTHROPIC,
+            model="claude-haiku-4-5-20251001",
+            rate_limits=RateLimitConfig(),
+            thinking_effort="medium",
+        ),
+    )
+
+
+def test_permission_store_matches_command_rules(tmp_path):
+    request = permission_request_for_tool(
+        "run_command_tracked",
+        {"command": "npm run test -- --watch=false"},
+    )
+    assert request is not None
+    store = ProjectPermissionStore(tmp_path)
+    store.save(
+        [
+            PermissionRule.create(
+                kind=PermissionKind.COMMAND,
+                tool="*",
+                match_type="prefix",
+                pattern="npm run",
+            )
+        ]
+    )
+
+    assert store.first_match(request) is not None
+    assert (tmp_path / ".kolega" / "permissions.json").exists()
+
+
+def test_allow_rule_options_for_command_include_exact_prefix_and_executable():
+    request = permission_request_for_tool("run_command_tracked", {"command": "npm run test"})
+    assert request is not None
+
+    options = allow_rule_options(request)
+    rules = {(option.rule.match_type, option.rule.pattern) for option in options}
+
+    assert ("exact", "npm run test") in rules
+    assert ("prefix", "npm run") in rules
+    assert ("executable", "npm") in rules
+
+
+def test_edit_permission_rule_can_scope_to_path():
+    request = permission_request_for_tool("create_file", {"relative_path": "src/new.py", "content": ""})
+    assert request is not None
+    rule = PermissionRule.create(
+        kind=PermissionKind.EDIT,
+        tool="create_file",
+        match_type="path",
+        pattern="src/new.py",
+    )
+
+    assert rule.matches(request)
+
+
+@pytest.mark.asyncio
+async def test_execute_single_tool_denies_gated_tool_before_dispatch(tmp_path, agent_config):
+    handler = AsyncMock(return_value="command ran")
+
+    class TestTools:
+        def registry(self):
+            return ToolRegistry(
+                [
+                    Tool(
+                        name="run_command_tracked",
+                        definition=ToolDefinition(name="run_command_tracked", description="", parameters=[]),
+                        handler=handler,
+                    )
+                ]
+            )
+
+    async def deny(_request):
+        return PermissionDecision(allowed=False, reason="No.")
+
+    agent = BaseAgent(
+        project_path=tmp_path,
+        workspace_id="test_workspace",
+        thread_id=str(uuid.uuid4()),
+        connection_manager=AsyncMock(spec=AgentConnectionManager),
+        config=agent_config,
+        permission_mode=PermissionMode.ASK,
+        permission_callback=deny,
+    )
+    agent.tool_collection = TestTools()
+    agent.send_chat_message = AsyncMock()
+    agent.log_info = AsyncMock()
+    agent.log_warning = AsyncMock()
+
+    result = await agent.execute_single_tool(
+        ToolCall(
+            id="tool_1",
+            name="run_command_tracked",
+            input={"terminal_id": "term", "command": "npm run test", "purpose": "test"},
+            execution_id="exec_1",
+        )
+    )
+
+    assert result.is_error is True
+    assert "Permission denied" in result.content
+    handler.assert_not_awaited()

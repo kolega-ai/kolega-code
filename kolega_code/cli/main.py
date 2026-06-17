@@ -14,6 +14,14 @@ from kolega_code.agent import CoderAgent
 from kolega_code.llm.exceptions import LLMBillingError, billing_error_message
 from kolega_code.llm.models import TextBlock
 from kolega_code.agent.prompt_provider import AgentMode
+from kolega_code.permissions import (
+    PermissionDecision,
+    PermissionMode,
+    PermissionStoreError,
+    ProjectPermissionStore,
+    allow_rule_options,
+    normalize_permission_mode,
+)
 from kolega_code.services.browser import PlaywrightBrowserManager
 
 from .config import (
@@ -41,6 +49,7 @@ from .updater import check_for_update, run_self_update, update_status_message
 SUBCOMMANDS = {"ask", "sessions", "doctor", "update"}
 RESUME_LATEST = "__latest__"
 CLI_AGENT_MODE = AgentMode.CLI.value
+ASK_DEFAULT_PERMISSION_MODE = PermissionMode.AUTO.value
 
 
 def main(argv: Optional[Iterable[str]] = None) -> int:
@@ -126,6 +135,11 @@ def _build_tui_parser() -> argparse.ArgumentParser:
         help="Resume the latest saved thread, or resume the given thread/session ID.",
     )
     parser.add_argument("--browser-visible", action="store_true", help="Launch visible Playwright browser windows.")
+    parser.add_argument(
+        "--permission-mode",
+        choices=[mode.value for mode in PermissionMode],
+        help="How to handle shell command and file edit permissions.",
+    )
     _add_session_args(parser, session_help="Legacy alias for --resume THREAD_ID.")
     _add_common_model_args(parser)
     return parser
@@ -142,6 +156,12 @@ def _build_subcommand_parser() -> argparse.ArgumentParser:
     ask.add_argument("--save", action="store_true", help="Persist the session after the prompt completes.")
     ask.add_argument("--json", action="store_true", help="Emit response chunks and events as JSON.")
     ask.add_argument("--browser-visible", action="store_true", help="Launch visible Playwright browser windows.")
+    ask.add_argument(
+        "--permission-mode",
+        choices=[mode.value for mode in PermissionMode],
+        default=ASK_DEFAULT_PERMISSION_MODE,
+        help="How to handle shell command and file edit permissions.",
+    )
     _add_session_args(ask)
     _add_common_model_args(ask)
 
@@ -310,6 +330,12 @@ def _run_tui(args: argparse.Namespace) -> int:
         args.resume,
         args.session,
     )
+    if args.permission_mode:
+        session.permission_mode = normalize_permission_mode(
+            args.permission_mode,
+            default=PermissionMode.ASK,
+        ).value
+        store.save(session)
 
     from .app import KolegaCodeApp
 
@@ -321,11 +347,73 @@ def _run_tui(args: argparse.Namespace) -> int:
         settings_store=settings_store,
         overrides=_overrides_from_args(args),
         session=session,
+        permission_mode=args.permission_mode,
         browser_visible=args.browser_visible,
         check_for_updates=True,
     )
     app.run()
     return 0
+
+
+def _permission_callback_for_ask(project_path: Path):
+    async def permission_callback(request) -> PermissionDecision:
+        store = ProjectPermissionStore(project_path)
+        try:
+            matched_rule = store.first_match(request)
+        except PermissionStoreError as exc:
+            print(f"Warning: {exc}", file=sys.stderr)
+            matched_rule = None
+
+        if matched_rule is not None:
+            return PermissionDecision(allowed=True, reason=f"Allowed by saved rule {matched_rule.id}.")
+
+        if not sys.stdin.isatty():
+            return PermissionDecision(
+                allowed=False,
+                reason="Permission required, but stdin is not interactive.",
+            )
+
+        rule_options = allow_rule_options(request)
+        print("", file=sys.stderr)
+        if request.kind.value == "command":
+            print("Allow the agent to run this command?", file=sys.stderr)
+            print(f"  {request.command}", file=sys.stderr)
+        else:
+            target = f" on {request.path}" if request.path else ""
+            print(f"Allow the agent to run {request.tool_name}{target}?", file=sys.stderr)
+
+        labels = ["Allow once", "Deny", *(option.label for option in rule_options)]
+        for index, label in enumerate(labels, start=1):
+            print(f"  {index}. {label}", file=sys.stderr)
+
+        while True:
+            print("Choose an option: ", end="", file=sys.stderr, flush=True)
+            choice = (await asyncio.to_thread(sys.stdin.readline)).strip()
+            if not choice:
+                continue
+            if not choice.isdigit():
+                print("Enter a number from the list.", file=sys.stderr)
+                continue
+            option_index = int(choice) - 1
+            if option_index < 0 or option_index >= len(labels):
+                print("Enter a number from the list.", file=sys.stderr)
+                continue
+            break
+
+        if option_index == 0:
+            return PermissionDecision(allowed=True, reason="Allowed once by the user.")
+        if option_index == 1:
+            return PermissionDecision(allowed=False, reason="Denied by the user.")
+
+        rule = rule_options[option_index - 2].rule
+        try:
+            store.add_rule(rule)
+        except PermissionStoreError as exc:
+            print(f"Warning: {exc}", file=sys.stderr)
+            return PermissionDecision(allowed=True, reason="Allowed once because the rule could not be saved.")
+        return PermissionDecision(allowed=True, reason="Allowed by a saved rule.", rule=rule)
+
+    return permission_callback
 
 
 async def _run_ask(args: argparse.Namespace) -> int:
@@ -388,6 +476,10 @@ async def _run_ask(args: argparse.Namespace) -> int:
         prompt_extensions.append(skill_prompt_extension)
     if skill_tool_extension is not None:
         tool_extensions.append(skill_tool_extension)
+    permission_mode = normalize_permission_mode(
+        getattr(args, "permission_mode", ASK_DEFAULT_PERMISSION_MODE),
+        default=PermissionMode.AUTO,
+    )
     agent = CoderAgent(
         project_path=project_path,
         workspace_id=session.workspace_id,
@@ -398,6 +490,10 @@ async def _run_ask(args: argparse.Namespace) -> int:
         agent_mode=AgentMode.CLI,
         prompt_extensions=prompt_extensions,
         tool_extensions=tool_extensions,
+        permission_mode=permission_mode,
+        permission_callback=_permission_callback_for_ask(project_path)
+        if permission_mode == PermissionMode.ASK
+        else None,
     )
     agent_ref["agent"] = agent
     if session.history:

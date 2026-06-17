@@ -36,6 +36,7 @@ def test_parse_default_command_as_tui() -> None:
     assert args.new is True
     assert args.resume is None
     assert args.mode == CLI_AGENT_MODE
+    assert args.permission_mode is None
 
 
 def test_version_flag_prints_package_version(capsys, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -99,6 +100,15 @@ def test_parse_ask_subcommand() -> None:
     assert args.json is True
     assert args.mode == CLI_AGENT_MODE
     assert args.thinking_effort == "high"
+    assert args.permission_mode == "auto"
+
+
+def test_parse_permission_mode_flags() -> None:
+    tui_args = parse_args(["/tmp/project", "--permission-mode", "ask"])
+    ask_args = parse_args(["ask", "hello", "--project", "/tmp/project", "--permission-mode", "ask"])
+
+    assert tui_args.permission_mode == "ask"
+    assert ask_args.permission_mode == "ask"
 
 
 def test_parse_sessions_list_subcommand() -> None:

@@ -42,6 +42,7 @@ TUI_COMMAND_ENTRIES: tuple[SlashCommandEntry, ...] = (
     SlashCommandEntry("skills", "List available Agent Skills", CommandScope.TUI),
     SlashCommandEntry("plan", "Switch to plan mode", CommandScope.TUI),
     SlashCommandEntry("build", "Switch to build mode", CommandScope.TUI),
+    SlashCommandEntry("permissions", "Show or switch shell/edit permission mode", CommandScope.TUI),
     SlashCommandEntry("model", "Show or switch the active model", CommandScope.TUI),
     SlashCommandEntry("effort", "Show or set the active thinking effort", CommandScope.TUI),
     SlashCommandEntry("copy", "Copy the last response to the clipboard", CommandScope.TUI),

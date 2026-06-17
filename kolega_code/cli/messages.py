@@ -11,6 +11,7 @@ from __future__ import annotations
 COMPOSER_PLACEHOLDER = "Ask Kolega Code..."
 PLAN_READY_PLACEHOLDER = "Plan ready. Choose Implement plan or Discuss further."
 QUESTION_PLACEHOLDER = "Choose an option below or type a custom answer..."
+APPROVAL_PLACEHOLDER = "Choose whether to allow this action..."
 MODEL_PLACEHOLDER = "Choose a model below or type a supported model name..."
 EFFORT_PLACEHOLDER = "Choose a thinking effort below or type a supported value..."
 
@@ -30,6 +31,7 @@ STOPPED_BY_USER = "Stopped by user."
 STOPPED_WITH_ERROR = "Stopped due to an error: {error}"
 CANCEL_REQUESTED = "Cancellation requested."
 WAITING_FOR_ANSWER = "Waiting for your answer…"
+WAITING_FOR_PERMISSION = "Waiting for permission…"
 
 # Turn status strip finals
 DONE_IN = "Done in {duration}"
@@ -46,6 +48,7 @@ RUNNING_SUB_AGENTS = "Running {count} sub-agents…"
 
 # Confirmations
 SWITCHED_MODE = "Switched to {mode} mode."
+SWITCHED_PERMISSION_MODE = "Switched permissions to {mode} mode."
 PLAN_CAPTURED = "Plan captured. Choose Implement plan or Discuss further."
 PLAN_DISCUSSION_RESUMED = "Planning discussion resumed."
 SKILL_ACTIVATED = "Activated skill {name}."
@@ -62,6 +65,8 @@ EFFORT_SWITCHED = "Switched thinking effort to {effort} for {provider}/{model}."
 EFFORT_UNKNOWN = "Unknown thinking effort {effort} for {provider}/{model}."
 EFFORT_UNSUPPORTED = "{provider}/{model} does not support a thinking effort setting."
 EFFORT_SWITCH_HINT = "Choose below, or switch with /effort <level>."
+PERMISSIONS_STATUS = "Permissions are in {mode} mode."
+PERMISSIONS_SWITCH_HINT = "Switch with /permissions auto, /permissions ask, /permissions toggle, or Ctrl+P."
 COPY_LAST_RESPONSE = "Copied the last response to the clipboard."
 COPY_NOTHING = "No response to copy yet."
 VERSION_INFO = "Kolega Code version {version}."
@@ -80,6 +85,8 @@ BLOCK_PLAN_DECISION = "Choose Implement plan or Discuss further before sending a
 BLOCK_PLAN_DECISION_MODE_SWITCH = "Choose Implement plan or Discuss further before switching modes."
 BLOCK_PLAN_DECISION_SKILL = "Choose Implement plan or Discuss further before activating a skill."
 BLOCK_PENDING_QUESTION_SKILL = "Answer the pending planning question before activating a skill."
+BLOCK_PENDING_APPROVAL = "Choose whether to allow the pending action before continuing."
+BLOCK_PENDING_APPROVAL_MODE_SWITCH = "Choose whether to allow the pending action before switching permission modes."
 SETTINGS_REQUIRED = "Configure a provider/model and API key before chatting."
 SETTINGS_REQUIRED_SKILL = "Configure a provider/model and API key before activating a skill."
 

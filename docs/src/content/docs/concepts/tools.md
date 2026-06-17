@@ -62,3 +62,7 @@ files and running commands require Build mode's full toolset.
 
 This separation is what makes Plan mode safe to run against any codebase: the
 planning agent can look but not touch.
+
+In the Textual TUI, Build mode defaults to `ask` permission mode. Shell commands
+and file edits must be approved before they run unless you switch to `auto` or
+save a matching allow rule in `.kolega/permissions.json`.

@@ -33,6 +33,7 @@ class SessionRecord:
     task_list_markdown: str = ""
     latest_plan_markdown: str = ""
     interaction_mode: str = "build"
+    permission_mode: str = "ask"
     schema_version: int = SCHEMA_VERSION
 
     @classmethod
@@ -80,6 +81,7 @@ class SessionRecord:
             task_list_markdown=data.get("task_list_markdown") or "",
             latest_plan_markdown=data.get("latest_plan_markdown") or "",
             interaction_mode=data.get("interaction_mode") or "build",
+            permission_mode=data.get("permission_mode") or "ask",
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -98,6 +100,7 @@ class SessionRecord:
             "task_list_markdown": self.task_list_markdown,
             "latest_plan_markdown": self.latest_plan_markdown,
             "interaction_mode": self.interaction_mode,
+            "permission_mode": self.permission_mode,
         }
 
 

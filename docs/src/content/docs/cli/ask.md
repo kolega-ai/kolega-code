@@ -20,6 +20,7 @@ kolega-code ask "<prompt>" [options]
 | `--save` | Persist the session after the prompt completes |
 | `--json` | Emit response chunks and events as JSON |
 | `--browser-visible` | Launch visible Playwright browser windows |
+| `--permission-mode <auto\|ask>` | Shell/edit permission mode (default `auto`) |
 | `--session <ID>` | Resume or create a specific session |
 | `--state-dir <PATH>` | Directory for CLI session state |
 
@@ -97,3 +98,10 @@ The stream includes:
 In plain (non-JSON) mode, the answer is written to **stdout** while sub-agent and
 tool activity is reported on **stderr** — so piping stdout gives you just the
 answer.
+
+## Permissions
+
+`ask` defaults to `--permission-mode auto` so scripts do not stop for
+confirmations. If you pass `--permission-mode ask`, shell commands and file edits
+prompt on stderr when stdin is interactive. Persisted allow rules are stored in
+the project at `.kolega/permissions.json`.

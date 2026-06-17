@@ -39,6 +39,7 @@ kolega-code [PROJECT_PATH]
 | `--new` | Start a new session (this is the default) |
 | `--resume [THREAD_ID]` | Resume the latest saved thread, or a specific thread/session ID |
 | `--browser-visible` | Launch visible Playwright browser windows instead of headless |
+| `--permission-mode <auto\|ask>` | Shell/edit permission mode. TUI sessions default to `ask` |
 | `--session <ID>` | Legacy alias for `--resume THREAD_ID` |
 
 See [Sessions & Resuming](../../tui/sessions-and-resume/) for the full session
