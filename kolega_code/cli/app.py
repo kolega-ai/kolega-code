@@ -665,6 +665,7 @@ class KolegaCodeApp(App):
     #composer {
         dock: bottom;
         height: 5;
+        border: round $surface;
     }
 
     #turn_status {
@@ -712,6 +713,30 @@ class KolegaCodeApp(App):
 
     .meta {
         color: $text-muted;
+    }
+
+    Footer {
+        background: $surface;
+    }
+
+    Input {
+        border: round $surface;
+    }
+
+    Input:focus {
+        border: round $surface-lighten-2;
+    }
+
+    Select > SelectCurrent {
+        border: round $surface;
+    }
+
+    Select:focus > SelectCurrent {
+        border: round $surface-lighten-2;
+    }
+
+    Select > SelectOverlay {
+        border: round $surface;
     }
     """
 
