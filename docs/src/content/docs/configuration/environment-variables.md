@@ -45,9 +45,13 @@ provider or model.
 | `MOONSHOT_API_KEY` | Moonshot |
 | `DEEPSEEK_API_KEY` | DeepSeek |
 | `ZAI_API_KEY` | Z.AI (GLM Coding Plan) |
+| `KIMI_CODING_API_KEY` | Kimi Coding Plan |
 
 The local `llama` provider needs no key. The `zai` key authenticates against Z.AI's
 Anthropic-compatible endpoint (it is the key Z.AI also documents as `ANTHROPIC_AUTH_TOKEN`).
+The `kimi_coding` key authenticates against the Kimi Coding Plan's separate
+Anthropic-compatible endpoint (`https://api.kimi.com/coding/`), which is distinct from the
+standard Moonshot API used by the `moonshot` provider.
 
 ## Model selection
 

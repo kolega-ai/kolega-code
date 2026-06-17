@@ -25,6 +25,7 @@ PROVIDER_LABELS: dict[ModelProvider, str] = {
     ModelProvider.MOONSHOT: "Moonshot AI",
     ModelProvider.DEEPSEEK: "DeepSeek AI",
     ModelProvider.ZAI: "Z.AI (GLM Coding Plan)",
+    ModelProvider.KIMI_CODING: "Kimi Coding Plan",
     ModelProvider.ANTHROPIC: "Anthropic",
     ModelProvider.OPENAI: "OpenAI",
     ModelProvider.GOOGLE: "Google",
@@ -41,6 +42,8 @@ MODEL_LABELS: dict[str, str] = {
     "kimi-k2.7-code": "Kimi K2.7 Code",
     "kimi-k2.7-code-highspeed": "Kimi K2.7 Code (High-Speed)",
     "kimi-k2.6": "Kimi K2.6",
+    # Kimi Coding Plan
+    "kimi-for-coding": "Kimi for Coding",
     # DeepSeek
     "deepseek-v4-pro": "DeepSeek V4 Pro",
     "deepseek-v4-flash": "DeepSeek V4 Flash",
@@ -81,6 +84,7 @@ PROVIDER_DEFAULT_MODEL: dict[ModelProvider, str] = {
     ModelProvider.MOONSHOT: "kimi-k2.7-code",
     ModelProvider.DEEPSEEK: "deepseek-v4-pro",
     ModelProvider.ZAI: "glm-5.2",
+    ModelProvider.KIMI_CODING: "kimi-for-coding",
     ModelProvider.ANTHROPIC: "claude-opus-4-8",
     ModelProvider.OPENAI: "gpt-5.5",
     ModelProvider.GOOGLE: "gemini-3.1-pro-preview",

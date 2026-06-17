@@ -19,6 +19,7 @@ class ModelProvider(str, Enum):
     MOONSHOT = "moonshot"
     DEEPSEEK = "deepseek"
     ZAI = "zai"
+    KIMI_CODING = "kimi_coding"
 
 
 class RateLimitConfig(BaseModel):
@@ -91,6 +92,7 @@ class AgentConfig(BaseModel):
     moonshot_api_key: Optional[str] = Field(default=None, description="API key for Moonshot.ai")
     deepseek_api_key: Optional[str] = Field(default=None, description="API key for DeepSeek")
     zai_api_key: Optional[str] = Field(default=None, description="API key for Z.AI (GLM Coding Plan)")
+    kimi_coding_api_key: Optional[str] = Field(default=None, description="API key for Kimi Coding Plan")
 
     # Langfuse configuration
     langfuse_enabled: bool = Field(default=False, description="Enable Langfuse tracing")
@@ -133,6 +135,7 @@ class AgentConfig(BaseModel):
             ModelProvider.MOONSHOT: self.moonshot_api_key,
             ModelProvider.DEEPSEEK: self.deepseek_api_key,
             ModelProvider.ZAI: self.zai_api_key,
+            ModelProvider.KIMI_CODING: self.kimi_coding_api_key,
             ModelProvider.LLAMA: None,  # Local model, no API key needed
         }
         return api_key_map[provider]

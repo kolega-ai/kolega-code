@@ -111,6 +111,7 @@ class LLMClient:
                 "moonshot": AnthropicProvider,
                 "deepseek": AnthropicProvider,
                 "zai": AnthropicProvider,
+                "kimi_coding": AnthropicProvider,
             }
 
             base_urls: Dict[str, str] = {
@@ -125,6 +126,7 @@ class LLMClient:
                 "moonshot": "https://api.moonshot.ai/anthropic",
                 "deepseek": "https://api.deepseek.com/anthropic",
                 "zai": "https://api.z.ai/api/anthropic",
+                "kimi_coding": "https://api.kimi.com/coding",
             }
 
             provider_class = providers.get(provider.lower())

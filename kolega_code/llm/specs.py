@@ -92,6 +92,18 @@ MODEL_SPECS: Dict[Tuple[str, str], Dict[str, Any]] = {
             mode="moonshot_toggle",
         ),
     },
+    # Kimi Coding Plan — separate Anthropic-compatible endpoint, single stable model ID.
+    # thinking "auto" (enabled) -> K2.7 Code; "none" (disabled) -> K2.6.
+    ("kimi_coding", "kimi-for-coding"): {
+        "context_length": 262144,
+        "max_completion_tokens": 32768,
+        "default_temperature": 1.0,
+        "thinking_effort": ThinkingEffortSpec(
+            options=("auto", "none"),
+            default="auto",
+            mode="moonshot_toggle",
+        ),
+    },
     # DeepSeek models
     ("deepseek", "deepseek-v4-pro"): {
         "context_length": 1000000,

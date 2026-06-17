@@ -25,6 +25,7 @@ The agent runtime recognizes these providers:
 | Moonshot (Kimi) | `moonshot` | `MOONSHOT_API_KEY` |
 | DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` |
 | Z.AI (GLM Coding Plan) | `zai` | `ZAI_API_KEY` |
+| Kimi Coding Plan | `kimi_coding` | `KIMI_CODING_API_KEY` |
 | Llama (local) | `llama` | _none — local model_ |
 
 <Aside type="tip">
@@ -32,6 +33,15 @@ The agent runtime recognizes these providers:
 endpoint (`https://api.z.ai/api/anthropic`) and exposes **GLM-5.2** (default) and
 **GLM-5.1**. Set `ZAI_API_KEY` to your GLM Coding Plan key (the key Z.AI also
 documents as `ANTHROPIC_AUTH_TOKEN`).
+</Aside>
+
+<Aside type="tip">
+**Kimi Coding Plan.** The `kimi_coding` provider targets Kimi's Anthropic-compatible
+coding endpoint (`https://api.kimi.com/coding/`), which is separate from the standard
+Moonshot API used by the `moonshot` provider. It exposes a single stable model ID,
+**`kimi-for-coding`**, that the backend auto-routes to the latest underlying model:
+with thinking effort `auto` (enabled) requests route to **K2.7 Code**, and with `none`
+(disabled) they route to **K2.6**. Set `KIMI_CODING_API_KEY` to your Kimi Coding Plan key.
 </Aside>
 
 <Aside type="note">

@@ -88,7 +88,7 @@ class InstrumentedLLMClient(LLMClient):
 
         provider = usage_metadata.get("provider", self.provider_name)
 
-        if provider in ["anthropic", "moonshot", "deepseek"]:
+        if provider in ["anthropic", "moonshot", "deepseek", "kimi_coding"]:
             input_tokens = usage_metadata.get("input_tokens", 0)
             output_tokens = usage_metadata.get("output_tokens", 0)
             cache_read_tokens = usage_metadata.get("cache_read_input_tokens", 0)
@@ -245,7 +245,7 @@ class InstrumentedLLMClient(LLMClient):
             normalized_usage = None
             if usage_details:
                 provider = usage_details.get("provider", self.provider_name)
-                if provider in ["anthropic", "moonshot", "deepseek"]:
+                if provider in ["anthropic", "moonshot", "deepseek", "kimi_coding"]:
                     normalized_usage = {
                         "input": usage_details.get("input_tokens", 0),
                         "output": usage_details.get("output_tokens", 0),
@@ -494,7 +494,7 @@ class MinimalLangfuseStreamWrapper:
         usage_metadata = message.usage_metadata
         provider = usage_metadata.get("provider", "")
 
-        if provider in ["anthropic", "moonshot", "deepseek"]:
+        if provider in ["anthropic", "moonshot", "deepseek", "kimi_coding"]:
             return {
                 "input": usage_metadata.get("input_tokens", 0),
                 "output": usage_metadata.get("output_tokens", 0),
