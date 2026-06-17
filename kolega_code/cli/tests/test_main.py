@@ -302,8 +302,9 @@ def test_ask_plain_handles_billing_error_without_traceback(
     captured = capsys.readouterr()
     assert exit_code == 1
     assert captured.out == ""
-    assert "DeepSeek/deepseek-v4-pro could not run this request" in captured.err
-    assert "Add credits to your DeepSeek account" in captured.err
+    assert "The selected provider could not run this request" in captured.err
+    assert "Add credits to the provider account" in captured.err
+    assert "DeepSeek/deepseek-v4-pro" not in captured.err
     assert "raw-secret-token" not in captured.err
     assert "raw-exception-provider" not in captured.err
     assert FakeCoderAgent.instances[0].cleaned is True
@@ -358,8 +359,9 @@ def test_ask_json_handles_billing_error_without_traceback(
     assert exit_code == 1
     assert lines[-1]["kind"] == "error"
     assert lines[-1]["data"]["type"] == "billing_error"
-    assert lines[-1]["data"]["provider"] == ModelProvider.DEEPSEEK.value
-    assert "DeepSeek/deepseek-v4-pro could not run this request" in lines[-1]["data"]["message"]
+    assert lines[-1]["data"]["provider"] == "configured"
+    assert "The selected provider could not run this request" in lines[-1]["data"]["message"]
+    assert "DeepSeek/deepseek-v4-pro" not in captured.out
     assert "raw-secret-token" not in captured.out
     assert "raw-exception-provider" not in captured.out
     assert "Traceback" not in captured.err

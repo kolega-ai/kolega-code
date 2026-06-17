@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Iterable, Optional
 
 from kolega_code.agent import CoderAgent
-from kolega_code.llm.exceptions import LLMBillingError, billing_error_message_for_provider
+from kolega_code.llm.exceptions import LLMBillingError
 from kolega_code.llm.models import TextBlock
 from kolega_code.agent.prompt_provider import AgentMode
 from kolega_code.permissions import (
@@ -51,6 +51,10 @@ SUBCOMMANDS = {"ask", "sessions", "doctor", "update"}
 RESUME_LATEST = "__latest__"
 CLI_AGENT_MODE = AgentMode.CLI.value
 ASK_DEFAULT_PERMISSION_MODE = PermissionMode.AUTO.value
+CLI_BILLING_ERROR_MESSAGE = (
+    "The selected provider could not run this request because it reported insufficient balance. "
+    "Add credits to the provider account or switch to another provider/model in Settings or with /model."
+)
 
 
 def main(argv: Optional[Iterable[str]] = None) -> int:
@@ -557,9 +561,6 @@ async def _run_ask(args: argparse.Namespace) -> int:
             store.save(session)
     except LLMBillingError:
         exit_code = 1
-        provider = config.long_context_config.provider.value
-        model = config.long_context_config.model
-        message = billing_error_message_for_provider(provider, model=model)
         if args.json:
             print(
                 json.dumps(
@@ -567,15 +568,15 @@ async def _run_ask(args: argparse.Namespace) -> int:
                         "kind": "error",
                         "data": {
                             "type": "billing_error",
-                            "message": message,
-                            "provider": provider,
+                            "message": CLI_BILLING_ERROR_MESSAGE,
+                            "provider": "configured",
                         },
                     },
                     default=str,
                 )
             )
         else:
-            _print_styled(message, style="error", stderr=True)
+            _print_styled(CLI_BILLING_ERROR_MESSAGE, style="error", stderr=True)
     finally:
         pump_task.cancel()
         try:
