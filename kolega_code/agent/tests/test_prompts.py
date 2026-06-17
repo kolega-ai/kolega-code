@@ -1,0 +1,59 @@
+from kolega_code.agent import prompts
+
+
+def test_static_prompt_templates_load() -> None:
+    assert "software architect" in prompts.THINK_HARD_PROMPT
+    assert "summarizing technical coding conversations" in prompts.COMPRESSION_SUMMARY_SYSTEM_PROMPT
+    assert "evaluating shell commands for safety" in prompts.SHELL_SAFETY_SYSTEM_PROMPT
+    assert "analyzing shell command output" in prompts.SHELL_COMPRESSION_SYSTEM_PROMPT
+    assert "get_task_list" in prompts.SHARED_TASK_LIST_PROMPT
+    assert "ask_user_choice" in prompts.PLANNING_QUESTION_PROMPT
+
+
+def test_compression_summary_user_prompt_renders_history() -> None:
+    rendered = prompts.build_compression_summary_user_prompt("User: hello")
+
+    assert "User: hello" in rendered
+    assert "{{ history }}" not in rendered
+    assert "{HISTORY}" in prompts.COMPRESSION_SUMMARY_USER_PROMPT_TEMPLATE
+
+
+def test_implement_plan_prompt_renders_plan() -> None:
+    rendered = prompts.build_implement_plan_prompt("- [ ] update docs")
+
+    assert "Implement the approved plan below." in rendered
+    assert "- [ ] update docs" in rendered
+    assert "{plan}" in prompts.IMPLEMENT_PLAN_PROMPT_TEMPLATE
+
+
+def test_init_agents_prompt_renders_arguments() -> None:
+    rendered = prompts.build_init_agents_prompt("focus on Python packaging")
+
+    assert "Create or update `AGENTS.md` for this repository." in rendered
+    assert "`focus on Python packaging`" in rendered
+    assert "$ARGUMENTS" not in rendered
+    assert "{{ arguments }}" not in rendered
+
+
+def test_skill_catalog_prompt_renders_catalog() -> None:
+    rendered = prompts.build_skill_catalog_prompt("- `demo-skill`: Use demo workflow")
+
+    assert "Agent Skills discovered" in rendered
+    assert "- `demo-skill`: Use demo workflow" in rendered
+    assert "{catalog}" in prompts.SKILL_CATALOG_PROMPT_TEMPLATE
+
+
+def test_planning_agent_prompt_renders_environment() -> None:
+    rendered = prompts.build_planning_agent_system_prompt(
+        system_name="Kolega Code",
+        project_path="/repo",
+        is_git_repo=True,
+        platform="darwin",
+        date_today="2026-06-17",
+        model_name="test-model",
+    )
+
+    assert "Kolega Code's planning agent" in rendered
+    assert "Working directory: /repo" in rendered
+    assert "Is directory a git repo: True" in rendered
+    assert "Model: test-model" in rendered

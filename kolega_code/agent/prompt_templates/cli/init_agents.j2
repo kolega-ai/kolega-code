@@ -1,0 +1,144 @@
+Create or update `AGENTS.md` for this repository.
+
+The goal is to produce a compact, accurate instruction file that helps future Kolega Code sessions understand the repository quickly, avoid common mistakes, and make safe, correct changes. Every section should answer: "What would an agent likely get wrong, miss, or waste time rediscovering without this?"
+
+User-provided focus or constraints, if any:
+`{{ arguments }}`
+
+## Core Requirements
+
+- Write the file in Markdown.
+- Title the document `Repository Guidelines`.
+- Keep it concise and specific. Aim for 200-500 words unless the repository is unusually complex.
+- Prefer short sections and bullets over long prose.
+- Include only verified, repository-specific guidance.
+- Provide examples where they reduce ambiguity: commands, paths, naming patterns, package names, or test invocations.
+- Maintain a professional, instructional tone.
+- Do not include generic software engineering advice.
+
+## Before Writing
+
+First check whether `AGENTS.md` already exists in the repository root.
+
+If it exists:
+- Improve it in place rather than replacing it blindly.
+- Preserve verified useful guidance.
+- Remove stale, generic, speculative, or redundant content.
+- Reconcile it with the current repository state.
+- Keep any important constraints from existing agent instruction files.
+
+If it does not exist:
+- Create a new `AGENTS.md` using the structure below, adapted to the repository.
+
+## How to Investigate
+
+Read the highest-value sources first:
+
+- `README*`, documentation indexes, onboarding docs
+- root manifests and workspace config: `package.json`, `pnpm-workspace.yaml`, `pyproject.toml`, `Cargo.toml`, `go.mod`, etc.
+- lockfiles and package manager hints
+- build, test, lint, formatter, typecheck, codegen, migration, and deployment config
+- CI workflows, pre-commit hooks, task runners, Makefiles, Dockerfiles, compose files
+- existing instruction files: `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `.cursor/rules/`, `.cursorrules`, `.github/copilot-instructions.md`, `.windsurfrules`, `.clinerules`
+- Kolega/OpenCode/Codex-style local config files, if present
+
+Prefer executable sources of truth over prose. If documentation conflicts with scripts, config, or CI, trust the executable source and note only what can be verified.
+
+If architecture remains unclear, inspect a small number of representative source files to identify real entrypoints, package boundaries, and execution flow. Prefer files that wire the system together over random leaf modules.
+
+## What to Extract
+
+Look for the highest-signal facts an agent needs when working in this repository:
+
+- project structure and ownership of major directories
+- real application, library, service, worker, CLI, or package entrypoints
+- exact commands for setup, development, build, lint, typecheck, test, and codegen
+- how to run a single test, a focused test file, or a single package
+- required command order when it matters, such as `format -> typecheck -> test`
+- monorepo boundaries and package-specific workflows
+- generated code, migrations, schemas, snapshots, fixtures, or build artifacts that must not be edited directly
+- environment setup, required services, secrets, local databases, ports, or dev server quirks
+- framework, runtime, package-manager, or deployment gotchas
+- repo-specific coding style and naming conventions that differ from defaults
+- testing conventions, flaky/slow suites, integration prerequisites, snapshot update workflows
+- commit, branch, and pull request conventions that can be inferred from Git history or docs
+- security, privacy, dependency, or configuration constraints that affect code changes
+
+Good `AGENTS.md` content is usually context that took reading multiple files to infer.
+
+## Recommended Document Structure
+
+Use this outline, but adapt it. Omit sections that do not apply. Add sections only when they contain verified, high-signal information.
+
+```markdown
+# Repository Guidelines
+
+## Project Structure & Module Organization
+Describe the important directories, packages, services, and entrypoints. Mention where tests, assets, migrations, generated code, or config live.
+
+## Build, Test, and Development Commands
+List exact commands an agent should use. Explain briefly what each does. Include focused commands for single tests, single packages, or fast verification where available.
+
+## Coding Style & Naming Conventions
+Record repo-specific conventions only: formatting tools, lint rules, naming patterns, import rules, typing rules, architectural boundaries, error-handling patterns, or framework-specific expectations.
+
+## Testing Guidelines
+Identify test frameworks, test locations, naming conventions, fixtures, required services, snapshot/update workflows, and any expensive or flaky test suites.
+
+## Commit & Pull Request Guidelines
+Summarize branch, commit, and PR conventions that are documented or clearly visible in recent history. Include required checks, linked issues, screenshots, changelog entries, or review expectations where relevant.
+```
+
+Optional sections, only if useful:
+
+```markdown
+## Architecture Overview
+## Security & Configuration Notes
+## Generated Code & Migrations
+## Deployment or Release Process
+## Agent-Specific Instructions
+```
+
+## Writing Rules
+
+Include:
+- exact commands and shortcuts the agent would otherwise guess wrong
+- verified architecture facts that are not obvious from filenames
+- constraints that prevent broken builds, failed tests, unsafe changes, or wasted time
+- repository-specific conventions that differ from language/framework defaults
+- references to existing instruction files or configs when they matter
+
+Exclude:
+- generic advice such as "write clean code" or "add tests"
+- exhaustive file trees
+- long tutorials
+- obvious language conventions
+- speculation or unverifiable claims
+- stale instructions contradicted by current config or CI
+- content better stored in another referenced instruction/config file
+
+When uncertain, omit the claim or phrase it narrowly with the evidence available.
+
+## Questions
+
+Only ask the user questions if the repository cannot answer something important and the missing information would materially change the file.
+
+Ask at most one short batch of questions.
+
+Good questions include:
+- undocumented team conventions
+- missing setup or test prerequisites
+- release, branch, PR, or deployment expectations not present in the repo
+- ambiguous safety or security constraints
+
+Do not ask about anything the repository already makes clear.
+
+## Final Check
+
+Before finishing:
+
+- Ensure `AGENTS.md` is accurate against the files inspected.
+- Ensure commands are copied exactly from scripts, docs, config, or CI.
+- Ensure existing useful guidance was preserved if updating.
+- Ensure the file is concise, scannable, and free of generic filler.
+- Ensure no secrets, private tokens, or sensitive local details were included.

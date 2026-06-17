@@ -10,6 +10,7 @@ from typing import Callable, Iterable, Optional
 import yaml
 
 from kolega_code.agent import PromptExtension, ToolExtension
+from kolega_code.agent.prompts import build_skill_catalog_prompt
 from kolega_code.llm.models import Message
 from kolega_code.agent.prompt_provider import AgentMode
 
@@ -20,14 +21,6 @@ MAX_RESOURCE_FILES = 100
 MAX_RESOURCE_READ_CHARS = 100_000
 SKILL_NAME_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$")
 SKILL_CONTENT_RE = re.compile(r'<skill_content name="([^"]+)">')
-SKILL_CATALOG_PROMPT = """The CLI provides Agent Skills discovered from the project and user skill directories.
-Use `list_skills` to inspect available skills and `activate_skill` before applying a skill's workflow.
-Users can also activate skills explicitly with `/skill-name`.
-
-Available skills:
-
-{catalog}
-"""
 
 
 @dataclass(frozen=True)
@@ -82,7 +75,7 @@ class SkillCatalog:
         catalog_lines = [
             f"- `{record.name}` ({record.scope}): {record.description}" for record in self.skills.values()
         ]
-        return SKILL_CATALOG_PROMPT.format(catalog="\n".join(catalog_lines))
+        return build_skill_catalog_prompt("\n".join(catalog_lines))
 
     def activation_content(self, name: str, *, active_names: Optional[set[str]] = None) -> str:
         record = self._require_skill(name)

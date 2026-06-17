@@ -33,8 +33,10 @@ These control the app and your session.
 | Command | Description |
 | --- | --- |
 | `/skills` | List available Agent Skills |
+| `/init` | Create or update `AGENTS.md` for this repository |
 | `/plan` | Switch to [Plan mode](../modes/) |
 | `/build` | Switch to [Build mode](../modes/) |
+| `/permissions` | Show or switch the shell/edit permission mode |
 | `/model` | Choose the active model |
 | `/effort` | Choose the active model's thinking effort |
 | `/copy` | Copy the last response to the clipboard |
@@ -48,6 +50,14 @@ provider. You can also switch directly with `/model <name>`.
 
 Run `/effort` to open a selectable list of supported effort values for the
 active model. You can also switch directly with `/effort <level>`.
+
+Run `/init` to have the agent inspect the repository and create or update a
+concise root `AGENTS.md`. Extra text after the command is passed as focus or
+constraints:
+
+```text
+/init focus on Python packaging and test commands
+```
 
 ## Skills
 

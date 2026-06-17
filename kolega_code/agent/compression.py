@@ -6,8 +6,8 @@ from typing import Awaitable, Callable, Optional
 from .conversation import Conversation
 from kolega_code.llm.models import Message, MessageHistory, TextBlock
 from .prompts import (
+    build_compression_summary_user_prompt,
     COMPRESSION_SUMMARY_SYSTEM_PROMPT,
-    COMPRESSION_SUMMARY_USER_PROMPT_TEMPLATE,
 )
 
 logger = logging.getLogger(__name__)
@@ -52,7 +52,7 @@ class HistoryCompressor:
 
         try:
             conversation_markdown = conversation.history.get_markdown_conversation()
-            user_prompt_filled = COMPRESSION_SUMMARY_USER_PROMPT_TEMPLATE.replace("{HISTORY}", conversation_markdown)
+            user_prompt_filled = build_compression_summary_user_prompt(conversation_markdown)
 
             messages = MessageHistory([Message(role="user", content=[TextBlock(text=user_prompt_filled)])])
             system_message = Message(role="system", content=[TextBlock(text=COMPRESSION_SUMMARY_SYSTEM_PROMPT)])
