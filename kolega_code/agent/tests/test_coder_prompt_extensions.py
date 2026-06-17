@@ -30,9 +30,9 @@ def test_coder_agent_includes_matching_prompt_extensions(tmp_path):
     connection_manager = Mock()
     connection_manager.broadcast_event = AsyncMock()
     template_dir = tmp_path / "prompt_templates"
-    agents_dir = template_dir / "agents"
+    agents_dir = template_dir / "system" / "agents"
     agents_dir.mkdir(parents=True)
-    (agents_dir / "coder_code_mode.j2").write_text(
+    (agents_dir / "coder_code.md.j2").write_text(
         "{% for extension in prompt_extensions %}{{ extension.title }}\n{{ extension.markdown }}{% endfor %}",
         encoding="utf-8",
     )

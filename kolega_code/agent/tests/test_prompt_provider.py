@@ -170,9 +170,9 @@ class TestPromptProvider:
 
     def test_host_template_dir_supplies_hosted_mode_prompt(self, tmp_path, prompt_context):
         """Host template dirs can provide private hosted-mode prompts."""
-        agents_dir = tmp_path / "agents"
-        agents_dir.mkdir()
-        (agents_dir / "coder_code_mode.j2").write_text(
+        agents_dir = tmp_path / "system" / "agents"
+        agents_dir.mkdir(parents=True)
+        (agents_dir / "coder_code.md.j2").write_text(
             "Private {{ context.system_name }} prompt for {{ mode }} at {{ context.project_path }}",
             encoding="utf-8",
         )
@@ -187,10 +187,10 @@ class TestPromptProvider:
 
     def test_host_template_dir_can_use_builtin_includes(self, tmp_path, prompt_context):
         """Private templates can still include bundled generic snippets."""
-        agents_dir = tmp_path / "agents"
-        agents_dir.mkdir()
-        (agents_dir / "coder_vibe_mode.j2").write_text(
-            "{% include 'environment_variables/workspace_env_vars.md' %}",
+        agents_dir = tmp_path / "system" / "agents"
+        agents_dir.mkdir(parents=True)
+        (agents_dir / "coder_vibe.md.j2").write_text(
+            "{% include 'system/includes/environment_variables/workspace_env_vars.md' %}",
             encoding="utf-8",
         )
         prompt_context.workspace_environment_variables = {"PAYMENTS_REGION": "Region for payment processor"}
@@ -206,9 +206,9 @@ class TestPromptProvider:
 
     def test_hosted_prompt_with_matching_prompt_extension(self, tmp_path, prompt_context):
         """Private hosted prompts still receive filtered prompt extensions."""
-        agents_dir = tmp_path / "agents"
-        agents_dir.mkdir()
-        (agents_dir / "coder_fix_mode.j2").write_text(
+        agents_dir = tmp_path / "system" / "agents"
+        agents_dir.mkdir(parents=True)
+        (agents_dir / "coder_fix.md.j2").write_text(
             "{% for extension in prompt_extensions %}{{ extension.title }}: {{ extension.markdown }}{% endfor %}",
             encoding="utf-8",
         )

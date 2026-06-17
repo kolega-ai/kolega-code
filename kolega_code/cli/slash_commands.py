@@ -40,6 +40,7 @@ SKILLS_LIST_COMMAND = "/skills"
 
 TUI_COMMAND_ENTRIES: tuple[SlashCommandEntry, ...] = (
     SlashCommandEntry("skills", "List available Agent Skills", CommandScope.TUI),
+    SlashCommandEntry("init", "Create or update AGENTS.md for this repository", CommandScope.TUI),
     SlashCommandEntry("plan", "Switch to plan mode", CommandScope.TUI),
     SlashCommandEntry("build", "Switch to build mode", CommandScope.TUI),
     SlashCommandEntry("permissions", "Show or switch shell/edit permission mode", CommandScope.TUI),

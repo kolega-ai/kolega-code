@@ -48,6 +48,12 @@ from textual.widgets import (
 from textual.widgets.option_list import Option
 
 from kolega_code.agent import AgentConfig, AgentEvent, CoderAgent, PlanningAgent, PromptExtension, ToolExtension
+from kolega_code.agent.prompts import (
+    PLANNING_QUESTION_PROMPT,
+    SHARED_TASK_LIST_PROMPT,
+    build_implement_plan_prompt,
+    build_init_agents_prompt,
+)
 from kolega_code.llm.exceptions import LLMError, llm_error_message
 from kolega_code.llm.models import Message, MessageHistory, TextBlock, ToolCall, ToolResult
 from kolega_code.permissions import (
@@ -113,19 +119,6 @@ PLAN_EMPTY_MESSAGE = messages.PLAN_EMPTY_MESSAGE
 CLI_AGENT_MODE = AgentMode.CLI.value
 BUILD_INTERACTION_MODE = "build"
 PLAN_INTERACTION_MODE = "plan"
-SHARED_TASK_LIST_PROMPT = """The CLI provides a shared Markdown task list through `get_task_list` and `update_task_list`.
-Use it to coordinate planning and implementation.
-
-In planning mode, create or update the task list before calling `write_plan`.
-In build mode, call `get_task_list` when a shared task list exists or when implementing an approved plan.
-After each meaningful task is completed, call `update_task_list` to check off that item by rewriting the full Markdown list.
-Do not wait until every TODO is complete to update the shared task list."""
-PLANNING_QUESTION_PROMPT = """The CLI provides `ask_user_choice` for important multiple-choice planning decisions.
-Use it only when a decision materially changes the plan. Pass a `questions` array; each question has a short `header`, the `question` text, a `multiSelect` flag, and an `options` array of `{label, description}` choices. The user picks one option per question or types a custom answer."""
-IMPLEMENT_PLAN_PROMPT = """Implement the approved plan below. Follow it as the source of truth, but still inspect the code before editing and run appropriate checks.
-
-{plan}
-"""
 QUESTION_TOOL_NAME = "ask_user_choice"
 QUESTION_OPTION_ID_PREFIX = "question_option_"
 APPROVAL_OPTION_ID_PREFIX = "approval_option_"
@@ -1573,7 +1566,7 @@ class KolegaCodeApp(App):
         self._refresh_planning_sidebar()
         self._set_plan_actions_visible(False)
 
-        prompt = IMPLEMENT_PLAN_PROMPT.format(plan=plan)
+        prompt = build_implement_plan_prompt(plan)
         self._add_conversation_entry(ConversationEntry(kind="user", content="Implement the approved plan."))
         self.agent_worker = self.run_worker(self._process_message(prompt), name="kolega-turn", group="turns", exclusive=True)
 
@@ -1704,6 +1697,7 @@ class KolegaCodeApp(App):
 
     def _tui_command_handlers(self) -> dict[str, Callable[[str], Awaitable[None]]]:
         return {
+            "/init": self._command_init,
             "/plan": self._command_plan,
             "/build": self._command_build,
             "/permissions": self._command_permissions,
@@ -1740,6 +1734,45 @@ class KolegaCodeApp(App):
         if self._mode_switch_blocked():
             return
         await self._set_interaction_mode(BUILD_INTERACTION_MODE)
+
+    async def _command_init(self, args: str) -> None:
+        if self._pending_question is not None:
+            self._set_composer_status(QUESTION_PLACEHOLDER)
+            self._notify_user(messages.BLOCK_PENDING_QUESTION_INIT, severity="warning")
+            return
+
+        if self._pending_approval is not None:
+            self._set_composer_status(APPROVAL_PLACEHOLDER)
+            self._notify_user(messages.BLOCK_PENDING_APPROVAL, severity="warning")
+            return
+
+        if self._turn_active or self.agent_worker is not None:
+            self._show_composer_hint(messages.BLOCK_STOP_BEFORE_INIT)
+            self._notify_user(messages.BLOCK_STOP_BEFORE_INIT, severity="warning")
+            return
+
+        if self._plan_decision_active:
+            self._set_composer_status(PLAN_READY_PLACEHOLDER)
+            self._notify_user(messages.BLOCK_PLAN_DECISION_INIT, severity="warning")
+            return
+
+        if self.agent is None:
+            self._set_settings_status(messages.SETTINGS_REQUIRED, tone="warning")
+            return
+
+        if self.interaction_mode != BUILD_INTERACTION_MODE:
+            await self._set_interaction_mode(BUILD_INTERACTION_MODE)
+
+        if self.agent is None:
+            self._set_settings_status(messages.SETTINGS_REQUIRED, tone="warning")
+            return
+
+        prompt = build_init_agents_prompt(args)
+        transcript = "/init" if not args else f"/init {args}"
+        self._add_conversation_entry(ConversationEntry(kind="user", content=transcript))
+        self.agent_worker = self.run_worker(
+            self._process_message(prompt), name="kolega-turn", group="turns", exclusive=True
+        )
 
     async def _command_permissions(self, args: str) -> None:
         if self._permission_mode_switch_blocked():

@@ -179,19 +179,19 @@ class PromptProvider:
         mode_value = mode.value if isinstance(mode, AgentMode) else mode
         if agent_type == AgentType.CODER:
             if mode_value == AgentMode.CLI.value:
-                return f"agents/{agent_type.value}_cli_mode.j2"
+                return "system/agents/coder_cli.md.j2"
             elif mode_value == AgentMode.VIBE.value:
-                return f"agents/{agent_type.value}_vibe_mode.j2"
+                return "system/agents/coder_vibe.md.j2"
             elif mode_value == AgentMode.CODE.value:
-                return f"agents/{agent_type.value}_code_mode.j2"
+                return "system/agents/coder_code.md.j2"
             elif mode_value == AgentMode.FIX.value:
-                return f"agents/{agent_type.value}_fix_mode.j2"
+                return "system/agents/coder_fix.md.j2"
             else:
                 raise ValueError(
                     f"CODER agent requires a valid mode ('cli', 'vibe', 'code', or 'fix'), got: {mode_value}"
                 )
 
-        return f"agents/{agent_type.value}.j2"
+        return f"system/agents/{agent_type.value}.md.j2"
 
     def _missing_template_message(
         self,

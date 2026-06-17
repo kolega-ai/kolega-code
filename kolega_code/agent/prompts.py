@@ -1,154 +1,92 @@
-THINK_HARD_PROMPT = """
-You are a brilliant software architect and problem solver with expertise in system design and debugging. When presented with a problem:
+"""Reusable prompt text loaded from bundled prompt templates."""
 
-1. First, clearly restate the problem to ensure complete understanding
-2. Break the problem down into its fundamental components and identify core challenges
-3. Consider multiple architectural approaches, weighing their tradeoffs (performance, maintainability, scalability, etc.)
-4. Analyze potential edge cases and failure modes
-5. Draw from relevant design patterns and best practices
-6. Think about both immediate solutions and long-term implications
-7. Consider how the solution integrates with existing systems
-8. Evaluate technical debt implications of different approaches
-9. Propose concrete implementation steps with code examples where helpful
+from __future__ import annotations
 
-Show your complete thinking process, including paths you considered but rejected and why. Be methodical, thorough, and detailed in your analysis. Prioritize clarity and depth over brevity.
-"""
+from functools import lru_cache
+from pathlib import Path
+from typing import Any
 
+import jinja2
 
-COMPRESSION_SUMMARY_SYSTEM_PROMPT = """
-You are an expert at analyzing and summarizing technical coding conversations. Your task is to create comprehensive, structured summaries of conversations between users and coding assistants.
-
-Your summaries must follow this exact structure:
-
-## Analysis Section
-Provide a chronological, detailed walkthrough of the entire conversation. Number each major interaction and describe:
-- What the user requested
-- How the assistant approached the problem
-- What files were read/modified/created
-- Key decisions and discoveries made
-- Any iterations or corrections
-
-## Summary Section
-Create a detailed summary with these exact subsections:
-
-### 1. Primary Request and Intent
-List all explicit user requests in order. Be clear and specific about what the user wanted to accomplish.
-
-### 2. Key Technical Concepts
-List all relevant technologies, frameworks, libraries, architectural patterns, and technical concepts used or discussed.
-
-### 3. Files and Code Sections
-For EACH file that was modified or created:
-- **Full file path** (in bold)
-- **(Created)** or **(Modified)** indicator
-- **Why**: Brief explanation of why this file was changed
-- **Changes**: Detailed description with actual code snippets showing the key changes
-- Include line numbers when relevant
-- Show enough code context to understand the change
-
-### 4. Errors and Fixes
-Document any errors encountered, incorrect approaches, or debugging that occurred. If none, explicitly state "No explicit errors occurred."
-
-### 5. Problem Solving
-Describe:
-- **Problems Solved**: What issues were addressed and how
-- **Key Architectural Decisions**: Important technical choices and their rationale
-
-### 6. All User Messages
-List every user message verbatim (excluding the current summary request).
-
-### 7. Pending Tasks
-List any incomplete work, explicitly mentioned future tasks, or known issues. If none, state "No pending tasks."
-
-### 8. Current Work
-Describe the most recent work completed in detail, including the specific file(s) and changes made.
-
-### 9. Optional Next Step
-Suggest a logical next step if appropriate, or state that no next step is needed.
-
-## Formatting Requirements
-- Use markdown headers (##, ###)
-- Use **bold** for file paths and important labels
-- Use `code blocks` for all code snippets
-- Use bullet points and numbered lists for clarity
-- Be precise with technical terminology
-- Include actual code snippets, not just descriptions
-- Maintain chronological order in the Analysis section
-- Be comprehensive but concise
-"""
+_BASE_DIR = Path(__file__).parent / "prompt_templates"
+_LOADER = jinja2.FileSystemLoader(str(_BASE_DIR))
+_ENV = jinja2.Environment(
+    loader=_LOADER,
+    trim_blocks=True,
+    lstrip_blocks=True,
+    keep_trailing_newline=True,
+)
 
 
-COMPRESSION_SUMMARY_USER_PROMPT_TEMPLATE = """
-Please create a comprehensive summary of the following coding conversation. Follow the structured format exactly as specified in your instructions.
-
-<conversation_history>
-{HISTORY}
-</conversation_history>
-
-Create a detailed summary that captures:
-1. The complete chronological flow of the conversation
-2. All technical decisions and implementations
-3. Every file that was modified or created with code snippets
-4. Any problems encountered and how they were solved
-5. The current state and any pending work
-
-Format your response as:
-- An Analysis section with chronological walkthrough
-- A Summary section with all 9 required subsections
-
-Be thorough and include actual code snippets from the conversation.
-"""
+@lru_cache(maxsize=None)
+def prompt_template_source(template_name: str) -> str:
+    """Return the raw source for a bundled prompt template."""
+    source, _, _ = _LOADER.get_source(_ENV, template_name)
+    return source.strip()
 
 
-SHELL_SAFETY_SYSTEM_PROMPT = """
-You are a security expert evaluating shell commands for safety. Your task is to determine if a command is safe to execute.
-
-Rules for safe commands:
-- Commands that modify files within the project's working directory (e.g. git, npm, pip, file operations)
-- Commands to delete files within the project's working directory
-- Basic directory navigation (cd, ls, pwd)
-- Reading file contents (cat, less, head, tail)
-- Package management within the project scope
-- Build and test commands
-- Starting and stopping development servers running on arbitrary ports
-- In general, anything that is valid in the context of working on a software project
-
-Unsafe commands include:
-- Accessing files outside project directory
-- Network/firewall modifications
-- System configuration changes
-- User/permission modifications
-- Operations that are destruction to the system (rm -rf /, format)
-- Running arbitrary downloaded code
-- Opening security vulnerabilities
-
-If the command is safe, respond only with: safe
-If unsafe, provide a brief reason why in under 20 words.
-"""
+@lru_cache(maxsize=None)
+def _prompt_template(template_name: str) -> jinja2.Template:
+    return _ENV.get_template(template_name)
 
 
-SHELL_COMPRESSION_SYSTEM_PROMPT = """
-You are an expert at analyzing shell command output. Your task is to extract and
-summarize the most relevant information from command output.
+def render_prompt_template(template_name: str, **variables: Any) -> str:
+    """Render a bundled prompt template with Jinja variables."""
+    return _prompt_template(template_name).render(**variables).strip()
 
-Given:
-1. The original command that was run
-2. The purpose/intent of running that command
-3. The raw command output
 
-Rules:
-- Focus on information that helps achieve the stated purpose
-- Extract error messages and warnings if present
-- For build/install commands, report success/failure and any key issues
-- For file operations, confirm if they completed successfully
-- For test output, summarize pass/fail counts and key failures
-- Remove unnecessary formatting, timestamps, and verbose logs
-- Keep version numbers, file paths, and other specific details when relevant
+THINK_HARD_PROMPT = render_prompt_template("auxiliary/tools/think_hard.system.md")
+COMPRESSION_SUMMARY_SYSTEM_PROMPT = render_prompt_template("auxiliary/compression/summary.system.md")
+SHELL_SAFETY_SYSTEM_PROMPT = render_prompt_template("auxiliary/terminal/safety.system.md")
+SHELL_COMPRESSION_SYSTEM_PROMPT = render_prompt_template("auxiliary/terminal/output_summary.system.md")
+SHARED_TASK_LIST_PROMPT = render_prompt_template("extensions/cli/shared_task_list.md")
+PLANNING_QUESTION_PROMPT = render_prompt_template("extensions/cli/planning_questions.md")
 
-Respond with a clear, concise summary that helps the agent understand:
-1. What were the key results/findings?
-2. Are there any issues that need to be addressed?
+# Compatibility templates for callers/tests that still use ``str.format`` or
+# ``replace`` style placeholders.
+COMPRESSION_SUMMARY_USER_PROMPT_TEMPLATE = prompt_template_source("auxiliary/compression/summary.user.md.j2").replace(
+    "{{ history }}", "{HISTORY}"
+)
+IMPLEMENT_PLAN_PROMPT_TEMPLATE = prompt_template_source("user_tasks/cli/implement_plan.md.j2").replace(
+    "{{ plan }}", "{plan}"
+)
+SKILL_CATALOG_PROMPT_TEMPLATE = prompt_template_source("extensions/skills/catalog.md.j2").replace(
+    "{{ catalog }}", "{catalog}"
+)
+PLANNING_AGENT_SYSTEM_PROMPT_TEMPLATE = prompt_template_source("system/agents/planning.md.j2")
 
-Keep summaries brief but include all critical information. Format in clear sections if needed.
-If there are specific error messages or tracebacks, include them as Markdown code blocks.
-"""
+
+def build_compression_summary_user_prompt(history: str) -> str:
+    return render_prompt_template("auxiliary/compression/summary.user.md.j2", history=history)
+
+
+def build_implement_plan_prompt(plan: str) -> str:
+    return render_prompt_template("user_tasks/cli/implement_plan.md.j2", plan=plan)
+
+
+def build_init_agents_prompt(arguments: str) -> str:
+    return render_prompt_template("user_tasks/cli/init_agents.md.j2", arguments=arguments.strip())
+
+
+def build_skill_catalog_prompt(catalog: str) -> str:
+    return render_prompt_template("extensions/skills/catalog.md.j2", catalog=catalog)
+
+
+def build_planning_agent_system_prompt(
+    *,
+    system_name: str,
+    project_path: str,
+    is_git_repo: bool,
+    platform: str,
+    date_today: str,
+    model_name: str,
+) -> str:
+    return render_prompt_template(
+        "system/agents/planning.md.j2",
+        system_name=system_name,
+        project_path=project_path,
+        is_git_repo=is_git_repo,
+        platform=platform,
+        date_today=date_today,
+        model_name=model_name,
+    )

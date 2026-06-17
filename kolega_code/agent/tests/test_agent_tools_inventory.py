@@ -46,9 +46,9 @@ def project_path(tmp_path):
 
 def hosted_prompt_provider(project_path):
     template_dir = Path(project_path) / "prompt_templates"
-    agents_dir = template_dir / "agents"
+    agents_dir = template_dir / "system" / "agents"
     agents_dir.mkdir(parents=True, exist_ok=True)
-    (agents_dir / "coder_code_mode.j2").write_text("Private hosted test prompt.", encoding="utf-8")
+    (agents_dir / "coder_code.md.j2").write_text("Private hosted test prompt.", encoding="utf-8")
     return PromptProvider(template_dirs=[template_dir])
 
 
