@@ -560,6 +560,70 @@ async def test_textual_app_ctrl_p_toggles_permission_mode(
 
 
 @pytest.mark.asyncio
+async def test_textual_app_permission_approval_actions_show_rule_labels_without_descriptions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli import app as app_module
+    from kolega_code.cli.app import ActionList, KolegaCodeApp, PendingApproval
+    from kolega_code.permissions import PermissionDecision, allow_rule_options, permission_request_for_tool
+
+    class FakeCoderAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def restore_message_history(self, history):
+            return None
+
+        def dump_message_history(self):
+            return []
+
+        async def cleanup(self):
+            return None
+
+    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test():
+        request = permission_request_for_tool("run_command_tracked", {"command": "npm run test"})
+        assert request is not None
+        future: asyncio.Future[PermissionDecision] = asyncio.get_running_loop().create_future()
+        app._pending_approval = PendingApproval(
+            request=request,
+            future=future,
+            rule_options=allow_rule_options(request),
+        )
+
+        app._set_approval_actions_visible(True)
+
+        approval_actions = app.query_one("#approval_actions", ActionList)
+        prompts = [
+            approval_actions.get_option(f"approval_option_{index}").prompt
+            for index in range(approval_actions.option_count)
+        ]
+
+        assert prompts == [
+            "1. Allow once",
+            "2. Deny",
+            "3. Always allow this exact command",
+            "4. Always allow commands starting with `npm run`",
+            "5. Always allow `npm` commands",
+        ]
+        assert all(" — " not in str(prompt) for prompt in prompts)
+        assert all("Allow commands whose" not in str(prompt) for prompt in prompts)
+
+        app._pending_approval = None
+        app._set_approval_actions_visible(False)
+
+
+@pytest.mark.asyncio
 async def test_textual_app_restores_saved_plan_and_interaction_mode(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
