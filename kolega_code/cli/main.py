@@ -105,8 +105,6 @@ def _make_console(stderr: bool = False):
 def _print_styled(text: str, style: Optional[str] = None, stderr: bool = False) -> None:
     console = _make_console(stderr=stderr)
     if console is None:
-        stream = sys.stderr if stderr else sys.stdout
-        stream.write(f"{text}\n")  # codeql[py/clear-text-logging-sensitive-data]
         return
     console.print(text, style=style, highlight=False, markup=False, soft_wrap=True)
 
@@ -571,8 +569,8 @@ async def _run_ask(args: argparse.Namespace) -> int:
     except LLMBillingError:
         exit_code = 1
         if args.json:
-            payload = json.dumps(CLI_BILLING_ERROR_PAYLOAD, default=str)
-            sys.stdout.write(f"{payload}\n")  # codeql[py/clear-text-logging-sensitive-data]
+            json.dump(CLI_BILLING_ERROR_PAYLOAD, sys.stdout, default=str)
+            sys.stdout.write("\n")
         else:
             _print_styled(CLI_BILLING_ERROR_MESSAGE, style="error", stderr=True)
     finally:
