@@ -4034,7 +4034,7 @@ async def test_assistant_entries_render_markdown_when_complete(
 
 
 @pytest.mark.asyncio
-async def test_confirmations_surface_as_toasts_and_logs(
+async def test_confirmations_surface_as_logs_without_toasts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     pytest.importorskip("textual")
@@ -4042,11 +4042,10 @@ async def test_confirmations_surface_as_toasts_and_logs(
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
 
     async with app.run_test():
-        notifications: list[tuple[str, str]] = []
         logged: list[tuple[str, str]] = []
 
         def fake_notify(message, *, severity="information", title=None, **kwargs):
-            notifications.append((message, severity))
+            raise AssertionError("TUI notices should not show transient popups")
 
         original_log_status = app._log_status
 
@@ -4059,13 +4058,12 @@ async def test_confirmations_surface_as_toasts_and_logs(
 
         await app._set_interaction_mode("plan")
 
-        assert ("Switched to plan mode.", "information") in notifications
         assert ("Switched to plan mode.", "ok") in logged  # diagnostic record kept
 
-        # Blockers surface as warning toasts
+        # Blockers are logged as warnings without transient popups.
         app._turn_active = True
         await app.action_toggle_interaction_mode()
-        assert ("Stop the current turn before switching modes.", "warning") in notifications
+        assert ("Stop the current turn before switching modes.", "warn") in logged
 
 
 @pytest.mark.asyncio
@@ -4222,7 +4220,7 @@ async def test_status_dashboard_context_note_uses_alert_level(
 
 
 @pytest.mark.asyncio
-async def test_save_settings_toasts_on_success(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_save_settings_logs_on_success_without_toast(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
 
     from textual.widgets import Input
@@ -4230,17 +4228,24 @@ async def test_save_settings_toasts_on_success(tmp_path: Path, monkeypatch: pyte
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
 
     async with app.run_test():
-        notifications: list[tuple[str, str]] = []
+        logged: list[tuple[str, str]] = []
 
         def fake_notify(message, *, severity="information", title=None, **kwargs):
-            notifications.append((message, severity))
+            raise AssertionError("TUI notices should not show transient popups")
+
+        original_log_status = app._log_status
+
+        def spy_log_status(text, level="info"):
+            logged.append((text, level))
+            original_log_status(text, level)
 
         monkeypatch.setattr(app, "notify", fake_notify)
+        monkeypatch.setattr(app, "_log_status", spy_log_status)
 
         app.query_one("#api_key_input", Input).value = "moonshot-key"
         await app._save_settings_from_ui()
 
-        assert ("Settings saved.", "information") in notifications
+        assert ("Settings saved.", "ok") in logged
         status_text = str(app.query_one("#settings_status").render())
         assert "Active model:" in status_text
 
