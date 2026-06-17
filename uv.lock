@@ -4,7 +4,7 @@ requires-python = ">=3.11"
 
 [options]
 prerelease-mode = "allow"
-exclude-newer = "2026-06-10T05:46:32.763695Z"
+exclude-newer = "2026-06-10T06:04:37.785255Z"
 exclude-newer-span = "P1W"
 
 [[package]]
@@ -666,7 +666,7 @@ wheels = [
 
 [[package]]
 name = "kolega-code"
-version = "0.3.0"
+version = "0.3.1"
 source = { editable = "." }
 dependencies = [
     { name = "anthropic" },
