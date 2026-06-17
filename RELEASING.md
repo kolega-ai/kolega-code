@@ -6,38 +6,54 @@ version should also have a GitHub Release for its matching tag.
 
 ## Release process
 
-1. Confirm `pyproject.toml`, `uv.lock`, and package `__version__` values have
-   the release version.
+Release version bumps must happen in a pull request. Do not tag an unmerged
+release branch.
 
-2. Run the fast test suite:
+1. Create a release branch from the latest `main`:
+
+   ```bash
+   git checkout main
+   git pull origin main
+   git checkout -b chore/release-v0.3.2
+   ```
+
+2. Update `pyproject.toml`, `uv.lock`, and package `__version__` values to the
+   release version.
+
+3. Run the fast test suite:
 
    ```bash
    uv run pytest -ra --durations=50 --import-mode=importlib -m "not slow"
    ```
 
-3. Commit the release bump:
+4. Commit the release bump and open a pull request against `main`:
 
    ```bash
-   git commit -m "chore: release v0.3.0"
+   git commit -m "chore: release v0.3.2"
+   git push -u origin chore/release-v0.3.2
    ```
 
-4. Create and push a matching tag:
+   The PR must be reviewed, pass CI, and be merged before tagging.
+
+5. After the PR is merged, update local `main`, then create and push a matching
+   tag from the merge commit:
 
    ```bash
-   git tag v0.3.0
-   git push origin main
-   git push origin v0.3.0
+   git checkout main
+   git pull origin main
+   git tag v0.3.2
+   git push origin v0.3.2
    ```
 
-5. Confirm the `Release` GitHub Actions workflow completes. It builds and tests
+6. Confirm the `Release` GitHub Actions workflow completes. It builds and tests
    the package, publishes to PyPI, then creates the GitHub Release.
 
-6. Verify the release:
+7. Verify the release:
 
    ```bash
    uv tool install --force kolega-code
    kolega-code --version
-   gh release view v0.3.0 --repo kolega-ai/kolega-code
+   gh release view v0.3.2 --repo kolega-ai/kolega-code
    ```
 
 The GitHub Release uses PyPI as the canonical package distribution and keeps

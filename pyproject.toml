@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "kolega-code"
-version = "0.3.1"
+version = "0.3.2"
 description = "Local-first AI coding agent for the terminal"
 readme = "README.md"
 license = {file = "LICENSE"}
