@@ -1,7 +1,7 @@
-## Project Guidance
+## AGENTS.md Project Guidance
 
-If the project directory contains a file called AGENTS.md, it will be included below. If AGENTS.md is absent,
-KOLEGA.md will be used as a legacy fallback. This file serves multiple purposes:
+If the project directory contains a file called AGENTS.md, it will be included below as canonical project guidance.
+If AGENTS.md is absent, KOLEGA.md will be used as a legacy fallback. This guidance serves multiple purposes:
 
 1. Storing frequently used bash commands
 2. Recording code style preferences

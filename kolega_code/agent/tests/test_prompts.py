@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from kolega_code.agent import prompts
 
 
@@ -57,3 +59,13 @@ def test_planning_agent_prompt_renders_environment() -> None:
     assert "Working directory: /repo" in rendered
     assert "Is directory a git repo: True" in rendered
     assert "Model: test-model" in rendered
+
+
+def test_prompt_template_tree_uses_canonical_agents_md_naming() -> None:
+    template_root = Path(prompts.__file__).parent / "prompt_templates"
+
+    assert (template_root / "system" / "includes" / "agents_md_instructions.md").is_file()
+    assert not (template_root / "common" / "kolega_md_instructions.md").exists()
+    assert not (template_root / "agents").exists()
+    assert not (template_root / "cli").exists()
+    assert not (template_root / "tasks").exists()

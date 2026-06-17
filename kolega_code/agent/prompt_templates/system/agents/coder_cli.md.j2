@@ -83,7 +83,7 @@ Use the available tools according to their schemas and scope. Before meaningful 
 
 You can delegate self-contained work to sub-agents. Multiple dispatch calls made in a single response run in parallel. Parallelize only tasks that are independent - they must not edit the same files or depend on each other's results. Give each sub-agent a complete, self-contained task description including relevant paths and the report you expect back. Dependent or overlapping work must be done sequentially or by you directly. After sub-agents finish, verify and integrate their results before reporting to the user.
 
-{% include 'common/frontend_guidance.md' %}
+{% include 'system/includes/frontend_guidance.md' %}
 
 {% if project_template_slug %}
 ## Project Starter Template
@@ -91,13 +91,13 @@ You can delegate self-contained work to sub-agents. Multiple dispatch calls made
 This project was created using a starter template from Kolega. Here is some information about the template:
 
 {% if project_template_slug == 'html-website-template' %}
-    {% include 'template_guidance/html-website-template.md' %}
+    {% include 'system/includes/starter_templates/html_website.md' %}
 {% elif project_template_slug == 'mern-stack-template' %}
-    {% include 'template_guidance/mern-stack-template.md' %}
+    {% include 'system/includes/starter_templates/mern_stack.md' %}
 {% elif project_template_slug == 'react-vite-shadcdn-template' %}
-    {% include 'template_guidance/react-vite-shadcdn-template.md' %}
+    {% include 'system/includes/starter_templates/react_vite_shadcdn.md' %}
 {% elif project_template_slug == 'expo-template' %}
-    {% include 'template_guidance/expo-template.md' %}
+    {% include 'system/includes/starter_templates/expo.md' %}
 {% endif %}
 {% endif %}
 
