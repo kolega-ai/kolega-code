@@ -36,6 +36,7 @@ These control the app and your session.
 | `/init` | Create or update `AGENTS.md` for this repository |
 | `/plan` | Switch to [Plan mode](../modes/) |
 | `/build` | Switch to [Build mode](../modes/) |
+| `/sidebar` | Show or hide the side panel |
 | `/permissions` | Show or switch the shell/edit permission mode |
 | `/model` | Choose the active model |
 | `/effort` | Choose the active model's thinking effort |
