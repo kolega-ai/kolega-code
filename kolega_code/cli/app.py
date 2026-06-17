@@ -2485,7 +2485,7 @@ class KolegaCodeApp(App):
                     "1. Allow once",
                     "2. Deny",
                     *[
-                        self._question_option_label(index + 2, option.label, option.description)
+                        self._question_option_label(index + 2, option.label)
                         for index, option in enumerate(self._pending_approval.rule_options)
                     ],
                 ]
