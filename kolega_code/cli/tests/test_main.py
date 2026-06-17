@@ -320,7 +320,10 @@ def test_ask_json_handles_billing_error_without_traceback(
             return []
 
         async def process_message_stream(self, message):
-            raise LLMBillingError("DeepSeek APIError: Insufficient Balance", provider=ModelProvider.DEEPSEEK.value)
+            raise LLMBillingError(
+                "DeepSeek APIError: Insufficient Balance raw-secret-token",
+                provider="raw-exception-provider",
+            )
             yield {"type": "response", "content": "unreachable"}
 
         async def cleanup(self):
@@ -350,8 +353,11 @@ def test_ask_json_handles_billing_error_without_traceback(
     assert exit_code == 1
     assert lines[-1]["kind"] == "error"
     assert lines[-1]["data"]["type"] == "billing_error"
-    assert lines[-1]["data"]["provider"] == ModelProvider.DEEPSEEK.value
-    assert "DeepSeek/deepseek-v4-pro could not run this request" in lines[-1]["data"]["message"]
+    assert lines[-1]["data"]["provider"] == "configured"
+    assert "The selected provider could not run this request" in lines[-1]["data"]["message"]
+    assert "DeepSeek/deepseek-v4-pro" not in captured.out
+    assert "raw-secret-token" not in captured.out
+    assert "raw-exception-provider" not in captured.out
     assert "Traceback" not in captured.err
 
 
@@ -375,7 +381,7 @@ def test_doctor_uses_stored_kimi_settings(
     assert f"Update: Kolega Code is up to date ({__version__})." in output
     assert f"Stored active model: {UI_DEFAULT_PROVIDER}/{UI_DEFAULT_MODEL}" in output
     assert "Thinking effort: auto" in output
-    assert "present in local settings" in output
+    assert "Stored API key" not in output
     assert "moonshot-key" not in output
 
 

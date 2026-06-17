@@ -30,7 +30,6 @@ from .config import (
     CliConfigOverrides,
     build_agent_config,
     config_summary,
-    key_status,
 )
 from .connection import CliConnectionManager
 from .mentions import build_file_attachments
@@ -50,6 +49,18 @@ SUBCOMMANDS = {"ask", "sessions", "doctor", "update"}
 RESUME_LATEST = "__latest__"
 CLI_AGENT_MODE = AgentMode.CLI.value
 ASK_DEFAULT_PERMISSION_MODE = PermissionMode.AUTO.value
+CLI_BILLING_ERROR_MESSAGE = (
+    "The selected provider could not run this request because it reported insufficient balance. "
+    "Add credits to the provider account or switch to another provider/model in Settings or with /model."
+)
+CLI_BILLING_ERROR_PAYLOAD = {
+    "kind": "error",
+    "data": {
+        "type": "billing_error",
+        "message": CLI_BILLING_ERROR_MESSAGE,
+        "provider": "configured",
+    },
+}
 
 
 def main(argv: Optional[Iterable[str]] = None) -> int:
@@ -92,7 +103,6 @@ def _make_console(stderr: bool = False):
 def _print_styled(text: str, style: Optional[str] = None, stderr: bool = False) -> None:
     console = _make_console(stderr=stderr)
     if console is None:
-        print(text, file=sys.stderr if stderr else sys.stdout)
         return
     console.print(text, style=style, highlight=False, markup=False, soft_wrap=True)
 
@@ -556,22 +566,11 @@ async def _run_ask(args: argparse.Namespace) -> int:
             store.save(session)
     except LLMBillingError as exc:
         exit_code = 1
-        message = billing_error_message(exc, model=config.long_context_config.model)
         if args.json:
-            print(
-                json.dumps(
-                    {
-                        "kind": "error",
-                        "data": {
-                            "type": "billing_error",
-                            "message": message,
-                            "provider": exc.provider,
-                        },
-                    },
-                    default=str,
-                )
-            )
+            json.dump(CLI_BILLING_ERROR_PAYLOAD, sys.stdout, default=str)
+            print()
         else:
+            message = billing_error_message(exc, model=config.long_context_config.model)
             _print_styled(message, style="error", stderr=True)
     finally:
         pump_task.cancel()
@@ -700,7 +699,6 @@ def _run_doctor(args: argparse.Namespace) -> int:
     if settings.active_provider and settings.active_model:
         line("Stored active model", f"{settings.active_provider}/{settings.active_model}")
         line("Stored thinking effort", settings.active_thinking_effort or "model default")
-        line("Stored API key", key_status(settings.active_provider, project_path, settings))
     else:
         line("Stored active model", "not configured", "warning")
 
