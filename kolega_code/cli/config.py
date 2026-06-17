@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Mapping, Optional
+from typing import Mapping, Optional
 
 from dotenv import dotenv_values
 
@@ -62,14 +62,6 @@ class CliConfigOverrides:
     thinking_model: Optional[str] = None
     thinking_effort: Optional[str] = None
     environment: Optional[str] = None
-
-
-@dataclass(frozen=True)
-class KeyStatus:
-    """API-key presence metadata safe for CLI display."""
-
-    source: Literal["env", "settings", "missing"]
-    env_name: Optional[str] = None
 
 
 def load_cli_env(project_path: Path, env: Optional[Mapping[str, str]] = None) -> dict[str, str]:
@@ -276,23 +268,14 @@ def build_agent_config(
         raise CliConfigError(str(exc)) from exc
 
 
-def key_status(provider: str, project_path: Path, settings: Optional[CliSettings] = None) -> KeyStatus:
-    """Return API-key presence metadata without exposing the key."""
+def key_status(provider: str, project_path: Path, settings: Optional[CliSettings] = None) -> str:
+    """Return the API-key source for display without exposing the key."""
     provider_value = _provider(provider)
     env = load_cli_env(project_path)
     env_name = API_KEY_ENV.get(provider_value)
     if env_name and env.get(env_name):
-        return KeyStatus("env", env_name=env_name)
+        return f"present via {env_name}"
     if settings and settings.get_api_key(provider_value.value):
-        return KeyStatus("settings")
-    return KeyStatus("missing")
-
-
-def format_key_status(status: KeyStatus) -> str:
-    """Return the fixed display label for API-key presence metadata."""
-    if status.source == "env" and status.env_name:
-        return f"present via {status.env_name}"
-    if status.source == "settings":
         return "present in local settings"
     return "missing"
 

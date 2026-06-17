@@ -72,7 +72,7 @@ from kolega_code.services.browser import PlaywrightBrowserManager
 
 from . import messages
 from . import theme
-from .config import CliConfigError, CliConfigOverrides, build_agent_config, config_summary, format_key_status, key_status
+from .config import CliConfigError, CliConfigOverrides, build_agent_config, config_summary, key_status
 from .connection import CliConnectionManager
 from .file_index import IndexEntry, WorkspaceFileIndex
 from .mentions import build_file_attachments
@@ -2634,8 +2634,8 @@ class KolegaCodeApp(App):
         provider = self.settings.active_provider
         model = self.settings.active_model
         effort = self.settings.active_thinking_effort or default_ui_thinking_effort(provider, model) or "not supported"
-        status = format_key_status(key_status(provider, self.project_path, self.settings))
-        tone = "warning" if "missing" in status else "ok"
+        status = key_status(provider, self.project_path, self.settings)
+        tone = "warning" if "missing" in status.lower() else "ok"
         text = "\n".join(
             [
                 messages.SETTINGS_ACTIVE_MODEL.format(provider=provider, model=model),
@@ -2678,7 +2678,7 @@ class KolegaCodeApp(App):
         model_display = f"{provider}/{model}" if model else provider
         effort = self._startup_thinking_effort() or "not supported"
         api_key = (
-            format_key_status(key_status(provider, self.project_path, self.settings))
+            key_status(provider, self.project_path, self.settings)
             if model
             else "not checked until a model is configured"
         )

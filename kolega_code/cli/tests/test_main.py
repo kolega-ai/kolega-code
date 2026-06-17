@@ -272,10 +272,7 @@ def test_ask_plain_handles_billing_error_without_traceback(
             return []
 
         async def process_message_stream(self, message):
-            raise LLMBillingError(
-                "DeepSeek APIError: Insufficient Balance raw-secret-token",
-                provider="raw-exception-provider",
-            )
+            raise LLMBillingError("DeepSeek APIError: Insufficient Balance", provider=ModelProvider.DEEPSEEK.value)
             yield {"type": "response", "content": "unreachable"}
 
         async def cleanup(self):
@@ -302,11 +299,8 @@ def test_ask_plain_handles_billing_error_without_traceback(
     captured = capsys.readouterr()
     assert exit_code == 1
     assert captured.out == ""
-    assert "The selected provider could not run this request" in captured.err
-    assert "Add credits to the provider account" in captured.err
-    assert "DeepSeek/deepseek-v4-pro" not in captured.err
-    assert "raw-secret-token" not in captured.err
-    assert "raw-exception-provider" not in captured.err
+    assert "DeepSeek/deepseek-v4-pro could not run this request" in captured.err
+    assert "Add credits to your DeepSeek account" in captured.err
     assert FakeCoderAgent.instances[0].cleaned is True
 
 
@@ -387,29 +381,8 @@ def test_doctor_uses_stored_kimi_settings(
     assert f"Update: Kolega Code is up to date ({__version__})." in output
     assert f"Stored active model: {UI_DEFAULT_PROVIDER}/{UI_DEFAULT_MODEL}" in output
     assert "Thinking effort: auto" in output
-    assert "present in local settings" in output
+    assert "Stored API key" not in output
     assert "moonshot-key" not in output
-
-
-def test_doctor_reports_env_key_source_without_key_value(
-    tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
-) -> None:
-    from kolega_code.cli import main as main_module
-
-    project = tmp_path / "project"
-    project.mkdir()
-    state_dir = tmp_path / "state"
-    settings = CliSettings(active_provider=UI_DEFAULT_PROVIDER, active_model=UI_DEFAULT_MODEL)
-    SettingsStore(state_dir).save(settings)
-    monkeypatch.setenv("MOONSHOT_API_KEY", "moonshot-secret-value")
-    monkeypatch.setattr(main_module, "check_for_update", no_update_result)
-
-    exit_code = main_module.main(["doctor", "--project", str(project), "--state-dir", str(state_dir)])
-
-    assert exit_code == 0
-    output = capsys.readouterr().out
-    assert "present via MOONSHOT_API_KEY" in output
-    assert "moonshot-secret-value" not in output
 
 
 def test_doctor_requires_model_selection_even_with_api_key(

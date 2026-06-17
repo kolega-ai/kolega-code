@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Iterable, Optional
 
 from kolega_code.agent import CoderAgent
-from kolega_code.llm.exceptions import LLMBillingError
+from kolega_code.llm.exceptions import LLMBillingError, billing_error_message
 from kolega_code.llm.models import TextBlock
 from kolega_code.agent.prompt_provider import AgentMode
 from kolega_code.permissions import (
@@ -30,8 +30,6 @@ from .config import (
     CliConfigOverrides,
     build_agent_config,
     config_summary,
-    format_key_status,
-    key_status,
 )
 from .connection import CliConnectionManager
 from .mentions import build_file_attachments
@@ -566,13 +564,14 @@ async def _run_ask(args: argparse.Namespace) -> int:
             session.history = agent.dump_message_history()
             session.config = summary
             store.save(session)
-    except LLMBillingError:
+    except LLMBillingError as exc:
         exit_code = 1
         if args.json:
             json.dump(CLI_BILLING_ERROR_PAYLOAD, sys.stdout, default=str)
-            sys.stdout.write("\n")
+            print()
         else:
-            _print_styled(CLI_BILLING_ERROR_MESSAGE, style="error", stderr=True)
+            message = billing_error_message(exc, model=config.long_context_config.model)
+            _print_styled(message, style="error", stderr=True)
     finally:
         pump_task.cancel()
         try:
@@ -700,7 +699,6 @@ def _run_doctor(args: argparse.Namespace) -> int:
     if settings.active_provider and settings.active_model:
         line("Stored active model", f"{settings.active_provider}/{settings.active_model}")
         line("Stored thinking effort", settings.active_thinking_effort or "model default")
-        line("Stored API key", format_key_status(key_status(settings.active_provider, project_path, settings)))
     else:
         line("Stored active model", "not configured", "warning")
 
