@@ -15,7 +15,7 @@ The screen is split into two columns:
   stream in live, tool calls and sub-agent activity appear inline, and detailed
   tool results are collapsed by default so you can expand only what you need.
 - **Side panel** (right) — a set of tabs for status, logs, the terminal, planning,
-  and settings.
+  and settings. Toggle it with `Ctrl+O` or `/sidebar`.
 
 At the bottom sits the **composer** — the text box where you type prompts. See
 [Chat Composer](../composer/) for everything it can do.
@@ -51,6 +51,7 @@ At the bottom sits the **composer** — the text box where you type prompts. See
 | --- | --- |
 | `Shift+Tab` | Toggle Build ⇄ Plan mode |
 | `Ctrl+P` | Toggle shell/edit permissions between Ask ⇄ Auto |
+| `Ctrl+O` | Show or hide the side panel |
 | `Enter` | Send the prompt |
 | `Shift+Enter` / `Ctrl+J` | Insert a newline |
 | `Ctrl+C` / `Escape` | Cancel the current generation |

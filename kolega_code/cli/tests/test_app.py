@@ -560,6 +560,66 @@ async def test_textual_app_ctrl_p_toggles_permission_mode(
 
 
 @pytest.mark.asyncio
+async def test_textual_app_ctrl_o_toggles_sidebar_and_keeps_active_tab(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from textual.widgets import TabbedContent
+
+    from kolega_code.cli import app as app_module
+    from kolega_code.cli.app import KolegaCodeApp
+
+    class FakeCoderAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def restore_message_history(self, history):
+            return None
+
+        def dump_message_history(self):
+            return []
+
+        async def cleanup(self):
+            return None
+
+    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test() as pilot:
+        toggle_binding = next(binding for binding in app.BINDINGS if binding.action == "toggle_sidebar")
+        assert toggle_binding.key == "ctrl+o"
+        assert toggle_binding.key_display == "Ctrl+O"
+        assert toggle_binding.priority is True
+
+        side_panel = app.query_one("#side_panel")
+        tabs = app.query_one("#events", TabbedContent)
+        tabs.active = "logs_pane"
+        await pilot.pause()
+
+        assert app.sidebar_visible is True
+        assert side_panel.display is True
+
+        await pilot.press("ctrl+o")
+
+        assert app.sidebar_visible is False
+        assert side_panel.display is False
+        assert tabs.active == "logs_pane"
+
+        await pilot.press("ctrl+o")
+
+        assert app.sidebar_visible is True
+        assert side_panel.display is True
+        assert tabs.active == "logs_pane"
+
+
+@pytest.mark.asyncio
 async def test_textual_app_permission_approval_actions_show_rule_labels_without_descriptions(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -4634,6 +4694,35 @@ async def test_textual_app_plan_and_build_slash_commands_switch_mode(
         await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
         assert app.interaction_mode == "build"
         assert isinstance(app.agent, FakeCoderAgent)
+
+
+@pytest.mark.asyncio
+async def test_textual_app_sidebar_slash_command_toggles_sidebar(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.app import ChatComposer
+
+    app = _build_mention_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        composer = app.query_one("#composer", ChatComposer)
+        side_panel = app.query_one("#side_panel")
+
+        composer.load_text("/sidebar")
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+
+        assert composer.text == ""
+        assert app.sidebar_visible is False
+        assert side_panel.display is False
+
+        composer.load_text("/sidebar")
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+
+        assert composer.text == ""
+        assert app.sidebar_visible is True
+        assert side_panel.display is True
 
 
 @pytest.mark.asyncio

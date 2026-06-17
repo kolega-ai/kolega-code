@@ -49,6 +49,8 @@ RUNNING_SUB_AGENTS = "Running {count} sub-agents…"
 # Confirmations
 SWITCHED_MODE = "Switched to {mode} mode."
 SWITCHED_PERMISSION_MODE = "Switched permissions to {mode} mode."
+SIDEBAR_HIDDEN = "Sidebar hidden."
+SIDEBAR_SHOWN = "Sidebar shown."
 PLAN_CAPTURED = "Plan captured. Choose Implement plan or Discuss further."
 PLAN_DISCUSSION_RESUMED = "Planning discussion resumed."
 SKILL_ACTIVATED = "Activated skill {name}."

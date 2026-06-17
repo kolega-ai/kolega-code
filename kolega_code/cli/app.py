@@ -718,6 +718,7 @@ class KolegaCodeApp(App):
     BINDINGS = [
         Binding("shift+tab", "toggle_interaction_mode", "Plan/Build", show=True, key_display="Shift+Tab", priority=True),
         Binding("ctrl+p", "toggle_permission_mode", "Permissions", show=True, key_display="Ctrl+P", priority=True),
+        Binding("ctrl+o", "toggle_sidebar", "Sidebar", show=True, key_display="Ctrl+O", priority=True),
         Binding("ctrl+c", "cancel_generation", "Cancel", show=True),
         Binding("escape", "cancel_generation", "Cancel", show=False),
         Binding("ctrl+q", "quit", "Quit", show=True),
@@ -756,6 +757,7 @@ class KolegaCodeApp(App):
         self.skill_catalog: SkillCatalog = discover_skills(self.project_path)
         self.file_index = WorkspaceFileIndex(self.project_path)
         self.browser_visible = browser_visible
+        self.sidebar_visible = True
         self.check_for_updates = check_for_updates
         self.connection_manager = CliConnectionManager()
         self.agent: Optional[CoderAgent | PlanningAgent] = None
@@ -1362,12 +1364,32 @@ class KolegaCodeApp(App):
         target = PermissionMode.AUTO if self.permission_mode == PermissionMode.ASK else PermissionMode.ASK
         await self._set_permission_mode(target)
 
+    async def action_toggle_sidebar(self) -> None:
+        self._set_sidebar_visible(not self.sidebar_visible)
+        message = messages.SIDEBAR_SHOWN if self.sidebar_visible else messages.SIDEBAR_HIDDEN
+        self._notify_user(message)
+
     async def action_quit(self) -> None:
         if self.agent is not None:
             self.session.history = self.agent.dump_message_history()
             self._save_session()
             await self.agent.cleanup()
         self.exit()
+
+    def _set_sidebar_visible(self, visible: bool) -> None:
+        self.sidebar_visible = visible
+        try:
+            side_panel = self.query_one("#side_panel")
+            side_panel.display = visible
+        except Exception:
+            return
+        if not visible:
+            try:
+                composer = self.query_one("#composer", ChatComposer)
+                if not composer.disabled:
+                    composer.focus()
+            except Exception:
+                return
 
     def _populate_settings_controls(self) -> None:
         provider_values = {value for _, value in ui_provider_options()}
@@ -1700,6 +1722,7 @@ class KolegaCodeApp(App):
             "/init": self._command_init,
             "/plan": self._command_plan,
             "/build": self._command_build,
+            "/sidebar": self._command_sidebar,
             "/permissions": self._command_permissions,
             "/model": self._command_model,
             "/effort": self._command_effort,
@@ -1734,6 +1757,9 @@ class KolegaCodeApp(App):
         if self._mode_switch_blocked():
             return
         await self._set_interaction_mode(BUILD_INTERACTION_MODE)
+
+    async def _command_sidebar(self, args: str) -> None:
+        await self.action_toggle_sidebar()
 
     async def _command_init(self, args: str) -> None:
         if self._pending_question is not None:
@@ -2673,7 +2699,7 @@ class KolegaCodeApp(App):
                 f"Thinking effort: {effort}",
                 f"API key: {api_key}",
                 "",
-                f"Enter send {theme.g(Glyph.BULLET_SEP)} Shift+Enter newline {theme.g(Glyph.BULLET_SEP)} Shift+Tab plan/build {theme.g(Glyph.BULLET_SEP)} Ctrl+P permissions",
+                f"Enter send {theme.g(Glyph.BULLET_SEP)} Shift+Enter newline {theme.g(Glyph.BULLET_SEP)} Shift+Tab plan/build {theme.g(Glyph.BULLET_SEP)} Ctrl+P permissions {theme.g(Glyph.BULLET_SEP)} Ctrl+O sidebar",
                 f"Ctrl+C stop turn {theme.g(Glyph.BULLET_SEP)} Cmd+C copy selection {theme.g(Glyph.BULLET_SEP)} / commands",
             ]
         )
