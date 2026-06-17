@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Iterable, Optional
 
 from kolega_code.agent import CoderAgent
+from kolega_code.hooks import HookDispatcher, HookEvent, load_hook_config
 from kolega_code.llm.exceptions import LLMBillingError, billing_error_message
 from kolega_code.llm.models import TextBlock
 from kolega_code.agent.prompt_provider import AgentMode
@@ -135,7 +136,9 @@ def _build_tui_parser() -> argparse.ArgumentParser:
     parser.set_defaults(command="tui")
     parser.add_argument("--version", action="store_true", help="Show the Kolega Code version.")
     parser.add_argument("project_path", nargs="?", default=".", type=Path, help="Project directory to work in.")
-    parser.add_argument("--mode", choices=[mode.value for mode in AgentMode], default=CLI_AGENT_MODE, help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--mode", choices=[mode.value for mode in AgentMode], default=CLI_AGENT_MODE, help=argparse.SUPPRESS
+    )
     parser.add_argument("--new", action="store_true", help="Start a new session. This is now the default.")
     parser.add_argument(
         "--resume",
@@ -150,6 +153,11 @@ def _build_tui_parser() -> argparse.ArgumentParser:
         choices=[mode.value for mode in PermissionMode],
         help="How to handle shell command and file edit permissions.",
     )
+    parser.add_argument(
+        "--trust-hooks",
+        action="store_true",
+        help="Trust and enable this project's .kolega/hooks.json (persisted for future runs).",
+    )
     _add_session_args(parser, session_help="Legacy alias for --resume THREAD_ID.")
     _add_common_model_args(parser)
     return parser
@@ -162,7 +170,9 @@ def _build_subcommand_parser() -> argparse.ArgumentParser:
     ask = subparsers.add_parser("ask", help="Run a single prompt and print the answer.")
     ask.add_argument("prompt", help="Prompt to send to Kolega Code.")
     ask.add_argument("--project", default=".", type=Path, help="Project directory to work in.")
-    ask.add_argument("--mode", choices=[mode.value for mode in AgentMode], default=CLI_AGENT_MODE, help=argparse.SUPPRESS)
+    ask.add_argument(
+        "--mode", choices=[mode.value for mode in AgentMode], default=CLI_AGENT_MODE, help=argparse.SUPPRESS
+    )
     ask.add_argument("--save", action="store_true", help="Persist the session after the prompt completes.")
     ask.add_argument("--json", action="store_true", help="Emit response chunks and events as JSON.")
     ask.add_argument("--browser-visible", action="store_true", help="Launch visible Playwright browser windows.")
@@ -171,6 +181,11 @@ def _build_subcommand_parser() -> argparse.ArgumentParser:
         choices=[mode.value for mode in PermissionMode],
         default=ASK_DEFAULT_PERMISSION_MODE,
         help="How to handle shell command and file edit permissions.",
+    )
+    ask.add_argument(
+        "--trust-hooks",
+        action="store_true",
+        help="Trust and enable this project's .kolega/hooks.json (persisted for future runs).",
     )
     _add_session_args(ask)
     _add_common_model_args(ask)
@@ -325,6 +340,9 @@ def _run_tui(args: argparse.Namespace) -> int:
     store = _store_from_args(args)
     settings_store = _settings_store_from_args(args)
     settings = settings_store.load()
+    if getattr(args, "trust_hooks", False):
+        settings.trust_hook_project(project_path)
+        settings_store.save(settings)
     summary = {}
     try:
         config = build_agent_config(project_path, _overrides_from_args(args), settings=settings)
@@ -460,8 +478,19 @@ async def _run_ask(args: argparse.Namespace) -> int:
     store = _store_from_args(args)
     settings_store = _settings_store_from_args(args)
     settings = settings_store.load()
+    if getattr(args, "trust_hooks", False):
+        settings.trust_hook_project(project_path)
+        settings_store.save(settings)
     config = build_agent_config(project_path, _overrides_from_args(args), settings=settings)
     summary = config_summary(config)
+
+    hook_config = load_hook_config(
+        project_path, settings_store.root, project_trusted=settings.is_hook_project_trusted(project_path)
+    )
+    hook_dispatcher = HookDispatcher(hook_config)
+    if not args.json:
+        for diagnostic in hook_config.diagnostics:
+            print(f"hooks: {diagnostic}", file=sys.stderr)
 
     if args.session:
         session = _get_or_create_session(store, project_path, CLI_AGENT_MODE, summary, args.session, force_new=False)
@@ -504,10 +533,17 @@ async def _run_ask(args: argparse.Namespace) -> int:
         permission_callback=_permission_callback_for_ask(project_path)
         if permission_mode == PermissionMode.ASK
         else None,
+        hook_dispatcher=hook_dispatcher,
     )
     agent_ref["agent"] = agent
     if session.history:
         agent.restore_message_history(session.history)
+
+    fire_hook = getattr(agent, "fire_hook", None)
+    if fire_hook is not None:
+        session_start = await fire_hook(HookEvent.SESSION_START, {"source": "startup"})
+        if session_start.additional_context:
+            agent.append_user_message([TextBlock(text=session_start.additional_context)])
 
     prompt = args.prompt
     if skill_command:
@@ -552,7 +588,9 @@ async def _run_ask(args: argparse.Namespace) -> int:
     # reported in real time instead of all at once after streaming finishes.
     pump_task = asyncio.create_task(_pump_ask_events(manager, args.json))
     try:
-        stream = agent.process_message_stream(prompt, attachments) if attachments else agent.process_message_stream(prompt)
+        stream = (
+            agent.process_message_stream(prompt, attachments) if attachments else agent.process_message_stream(prompt)
+        )
         async for chunk in stream:
             response_chunks.append(chunk)
             if args.json:
@@ -581,6 +619,12 @@ async def _run_ask(args: argparse.Namespace) -> int:
         while not manager.events.empty():
             event = manager.events.get_nowait()
             _print_ask_event(event, args.json)
+        end_fire_hook = getattr(agent, "fire_hook", None)
+        if end_fire_hook is not None:
+            try:
+                await end_fire_hook(HookEvent.SESSION_END, {"reason": "ask_complete"})
+            except Exception:
+                pass
         await agent.cleanup()
 
     if exit_code:

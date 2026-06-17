@@ -15,6 +15,14 @@ from kolega_code.events import AgentConnectionManager
 from .context import AgentContext, AgentServices, Telemetry, WorkspaceInfo
 from .conversation import Conversation
 from kolega_code.events import AgentEventEmitter
+from kolega_code.hooks import (
+    NO_OP_DISPATCHER,
+    HookCapabilities,
+    HookDispatcher,
+    HookEvent,
+    HookOutcome,
+    LifecycleEvent,
+)
 from kolega_code.llm.exceptions import (
     LLMError,
     LLMRateLimitError,
@@ -45,6 +53,16 @@ logger = logging.getLogger(__name__)
 PROJECT_GUIDANCE_FILES = ("AGENTS.md", "KOLEGA.md")
 AGENT_MEMORY_FILE = "AGENT_MEMORY.md"
 
+# System prompt for `prompt`/`agent` lifecycle hooks: the model's only job is a
+# yes/no decision returned as a compact JSON object.
+HOOK_DECISION_SYSTEM_PROMPT = (
+    "You are a lifecycle hook that makes a single yes/no decision about an AI coding "
+    "agent's action. You are given the event data and a question or condition to evaluate. "
+    'Respond with ONLY a JSON object: {"ok": true} to allow the action to proceed, or '
+    '{"ok": false, "reason": "<short explanation>"} to block it. The reason is shown to the '
+    "agent. Output nothing other than the JSON object."
+)
+
 
 class BaseAgent(LogMixin):
     """
@@ -63,6 +81,9 @@ class BaseAgent(LogMixin):
     # sub-agent runs its own multi-turn LLM loop, so an unbounded fan-out would
     # multiply token spend and shared-resource pressure).
     PARALLEL_TOOL_LIMIT = 8
+    # Cap on how many times a Stop hook may force the agent to keep working in one
+    # turn, so a misbehaving "don't stop until X" hook cannot loop forever.
+    MAX_STOP_HOOK_OVERRIDES = 5
     long_content_tool_calls = ["create_file", "replace_entire_file"]
     max_tool_result_chars_in_history = 100_000
     skill_content_pattern = re.compile(r'<skill_content name="[^"]+">')
@@ -97,6 +118,7 @@ class BaseAgent(LogMixin):
         permission_callback: Optional[Any] = None,
         usage_recorder: Optional[Any] = None,
         sub_agent_recorder: Optional[Any] = None,
+        hook_dispatcher: Optional[HookDispatcher] = None,
         context: Optional[AgentContext] = None,
     ) -> None:
         """
@@ -132,9 +154,7 @@ class BaseAgent(LogMixin):
         """
         if context is None:
             if project_path is None or workspace_id is None or thread_id is None:
-                raise TypeError(
-                    "BaseAgent requires either an AgentContext or project_path/workspace_id/thread_id"
-                )
+                raise TypeError("BaseAgent requires either an AgentContext or project_path/workspace_id/thread_id")
 
             workspace = WorkspaceInfo(
                 project_path=Path(project_path) if isinstance(project_path, str) else project_path,
@@ -179,6 +199,11 @@ class BaseAgent(LogMixin):
             if permission_callback is not None:
                 context.permission_callback = permission_callback
 
+        # Apply an explicitly-passed hook dispatcher regardless of how the context
+        # was built; otherwise the context's default (NO_OP_DISPATCHER) is used.
+        if hook_dispatcher is not None:
+            context.hook_dispatcher = hook_dispatcher
+
         self.context = context
 
         # Flat attributes kept for compatibility with subclasses, tools, and hosts.
@@ -202,6 +227,7 @@ class BaseAgent(LogMixin):
         self.tool_extensions = context.tool_extensions
         self.permission_mode = context.permission_mode
         self.permission_callback = context.permission_callback or auto_allow_permission_callback
+        self.hook_dispatcher = context.hook_dispatcher or NO_OP_DISPATCHER
         self.usage_recorder = context.telemetry.usage_recorder
         self.sub_agent_recorder = context.telemetry.sub_agent_recorder
 
@@ -251,6 +277,8 @@ class BaseAgent(LogMixin):
         self.parent_tool_call_id = None  # Parent tool call ID when running as sub-agent
         self.conversation_id = None  # Sub-agent conversation ID
         self.sub_agent_context = None  # Dispatch metadata (agent_id, task) set by AgentTool
+        # Set by a blocking PostToolUse hook to end the turn after the current tool batch.
+        self._hook_end_turn = False
 
     # ------------------------------------------------------------------
     # Conversation delegation
@@ -480,7 +508,7 @@ class BaseAgent(LogMixin):
             message = (
                 "Longer threads consume more credits. "
                 f"Contents will be compressed automatically at {self.history_compression_threshold * 100:.0f}%. "
-                "You can start fresh by clicking \"New Thread\" in the sidebar."
+                'You can start fresh by clicking "New Thread" in the sidebar.'
             )
 
         await self.emitter.context_update(
@@ -591,6 +619,15 @@ class BaseAgent(LogMixin):
 
             permission_request = permission_request_for_tool(tool_name, inputs)
             if permission_request is not None and self.permission_mode == PermissionMode.ASK:
+                await self.fire_hook(
+                    HookEvent.NOTIFICATION,
+                    {
+                        "notification_type": "permission_prompt",
+                        "message": f"Permission requested for {tool_name}",
+                        "tool_name": tool_name,
+                    },
+                    target="permission_prompt",
+                )
                 try:
                     decision = await self.permission_callback(permission_request)
                     if not isinstance(decision, PermissionDecision):
@@ -632,6 +669,18 @@ class BaseAgent(LogMixin):
                         execution_id=tool_execution_id,
                     )
 
+            # PreToolUse hooks: may deny the call (returned to the model as a tool
+            # error, like a permission denial) or rewrite the tool inputs.
+            pre = await self.fire_hook(
+                HookEvent.PRE_TOOL_USE,
+                {"tool_name": tool_name, "tool_input": inputs, "tool_use_id": tool_execution_id},
+                target=tool_name,
+            )
+            if pre.blocked:
+                return await self._blocked_tool_result(tool_name, provider_tool_call_id, tool_execution_id, pre.reason)
+            if pre.updated_input is not None:
+                inputs = pre.updated_input
+
             # Send tool_call message to indicate we're starting execution
             if not all(
                 [
@@ -648,6 +697,19 @@ class BaseAgent(LogMixin):
                 )
 
             output = await registry.call(tool_name, **inputs)
+
+            # PostToolUse hooks: may replace the output or append context the model sees.
+            post = await self.fire_hook(
+                HookEvent.POST_TOOL_USE,
+                {
+                    "tool_name": tool_name,
+                    "tool_input": inputs,
+                    "tool_output": self._hook_text(output),
+                    "is_error": False,
+                },
+                target=tool_name,
+            )
+            output = self._apply_post_tool_hook(output, post)
 
             # Handle the case where the output is a list of ContentBlock objects
             chat_message_content = output
@@ -678,6 +740,7 @@ class BaseAgent(LogMixin):
             # internal-error log.
             error_message = str(ex)
             await self.log_warning(f"Tool {tool_name} failed: {error_message}", sender=self.agent_name)
+            error_message = await self._post_tool_error_hook(tool_name, inputs, error_message)
 
             await self.send_chat_message(
                 message_type="tool_error",
@@ -697,6 +760,7 @@ class BaseAgent(LogMixin):
         except Exception as ex:
             error_message = str(ex)
             await self.log_error(f"Error executing tool {tool_name}: {error_message}", sender=self.agent_name)
+            error_message = await self._post_tool_error_hook(tool_name, inputs, error_message)
 
             # Send tool_error message for failed execution
             await self.send_chat_message(
@@ -785,6 +849,158 @@ class BaseAgent(LogMixin):
                 "parent_tool_call_id": self.parent_tool_call_id,
                 "depth": 1,  # Can be enhanced to track nested depth
             }
+        return None
+
+    # ------------------------------------------------------------------
+    # Lifecycle hooks
+    # ------------------------------------------------------------------
+
+    async def fire_hook(self, name: HookEvent, payload: Dict[str, Any], *, target: str = "") -> HookOutcome:
+        """Build a LifecycleEvent and dispatch it. Returns an empty outcome when no
+        hooks are configured (the common case) or when already inside a hook."""
+        # Hot path: skip building the event/capabilities when no hooks exist.
+        if not self.hook_dispatcher.is_active:
+            return HookOutcome.empty()
+        event = LifecycleEvent(
+            name=name,
+            payload=payload,
+            session_id=self.thread_id,
+            cwd=str(self.project_path),
+            permission_mode=self.permission_mode.value if self.permission_mode else None,
+        )
+        return await self.hook_dispatcher.dispatch(event, target=target, caps=self._hook_capabilities())
+
+    def _hook_capabilities(self) -> HookCapabilities:
+        """Capabilities passed to hook backends: project cwd, an LLM prompt runner,
+        a sub-agent runner (for `agent` hooks), and a log sink."""
+        return HookCapabilities(
+            project_path=self.project_path,
+            prompt_runner=self._run_hook_prompt,
+            agent_runner=self._run_hook_agent,
+            log=self._log_hook_message,
+        )
+
+    async def _log_hook_message(self, message: str) -> None:
+        await self.log_warning(message, sender=self.agent_name)
+
+    async def _run_hook_prompt(self, prompt_text: str, model_hint: Optional[str]) -> str:
+        """Run a `prompt` hook: a single completion on a chosen model slot.
+
+        ``model_hint`` selects a configured slot ("fast" (default), "long", or
+        "thinking"); arbitrary model ids are not used here to keep provider/API-key
+        pairing correct across kolega's multi-provider setup.
+        """
+        slot = (model_hint or "fast").lower()
+        if slot in ("long", "main", "long_context"):
+            model_config = self.config.long_context_config
+        elif slot == "thinking":
+            model_config = self.config.thinking_config
+        else:
+            model_config = self.config.fast_config
+
+        from kolega_code.llm.client import LLMClient
+
+        client = LLMClient(
+            provider=model_config.provider.value,
+            api_key=self.config.get_api_key(model_config.provider),
+            max_retries=model_config.rate_limits.max_retries,
+            requests_per_minute=model_config.rate_limits.requests_per_minute,
+            tokens_per_minute=model_config.rate_limits.tokens_per_minute,
+        )
+        response = await client.generate(
+            model=model_config.model,
+            max_completion_tokens=512,
+            system=Message(role="system", content=[TextBlock(text=HOOK_DECISION_SYSTEM_PROMPT)]),
+            messages=MessageHistory([Message(role="user", content=[TextBlock(text=prompt_text)])]),
+            temperature=0.0,
+        )
+        return response.get_text_content() or ""
+
+    async def _run_hook_agent(self, task: str) -> str:
+        """Run an `agent` hook: dispatch a full-tool sub-agent to verify a condition.
+
+        Runs under the dispatcher's re-entrancy guard, so the sub-agent's own tool
+        calls do not re-fire tool hooks.
+        """
+        if self.tool_collection is None or not hasattr(self.tool_collection, "agent_tool"):
+            raise RuntimeError("agent hooks require a tool collection with sub-agent dispatch")
+        instruction = (
+            f"{task}\n\nWhen finished, end your reply with a single JSON object on its own line: "
+            '{"ok": true} if the condition holds, or {"ok": false, "reason": "<why>"} if it does not.'
+        )
+        return await self.tool_collection.agent_tool.dispatch_general_agent(instruction)
+
+    @staticmethod
+    def _hook_text(output: Any) -> str:
+        """Stringify a tool output (which may be a list of content blocks) for hook input."""
+        if isinstance(output, list):
+            return "\n\n".join(getattr(item, "to_markdown", lambda: str(item))() for item in output)
+        return output if isinstance(output, str) else str(output)
+
+    async def _blocked_tool_result(
+        self, tool_name: str, provider_tool_call_id: str, tool_execution_id: str, reason: str
+    ) -> ToolResult:
+        """Build the is_error ToolResult a blocked tool produces — identical to the
+        permission-deny path so the model and UI handle a hook block the same way."""
+        error_message = (
+            f"Permission denied for {tool_name}: {reason}" if reason else f"Permission denied for {tool_name}."
+        )
+        await self.log_warning(error_message, sender=self.agent_name)
+        await self.send_chat_message(
+            message_type="tool_error",
+            content=error_message,
+            is_streaming=False,
+            tool_description=tool_name,
+            tool_call_id=tool_execution_id,
+        )
+        return ToolResult(
+            tool_use_id=provider_tool_call_id,
+            content=error_message,
+            name=tool_name,
+            is_error=True,
+            execution_id=tool_execution_id,
+        )
+
+    def _apply_post_tool_hook(self, output: Any, outcome: HookOutcome) -> Any:
+        """Fold a PostToolUse outcome into the tool output the model will see."""
+        if outcome.is_empty:
+            return output
+        if outcome.updated_output is not None:
+            output = outcome.updated_output
+        if outcome.additional_context:
+            output = f"{self._hook_text(output)}\n\n{outcome.additional_context}"
+        if outcome.blocked or outcome.end_turn:
+            # End the turn after this tool batch; surface the reason as a warning line.
+            self._hook_end_turn = True
+            if outcome.reason:
+                output = f"{self._hook_text(output)}\n\n[hook] {outcome.reason}"
+        return output
+
+    async def _post_tool_error_hook(self, tool_name: str, inputs: dict, error_message: str) -> str:
+        """Fire PostToolUse for a failed tool. On error the hook may only append
+        context (it must not mask or rewrite a genuine tool failure)."""
+        post = await self.fire_hook(
+            HookEvent.POST_TOOL_USE,
+            {"tool_name": tool_name, "tool_input": inputs, "tool_output": error_message, "is_error": True},
+            target=tool_name,
+        )
+        if post.additional_context:
+            return f"{error_message}\n\n{post.additional_context}"
+        return error_message
+
+    async def _fire_stop_hook(self, stop_reason: Optional[str]) -> Optional[str]:
+        """Fire the Stop event. Returns a 'keep working' instruction when a hook
+        blocks the stop (ok:false), otherwise None."""
+        try:
+            last_message = await self.recap_agent_outcome()
+        except Exception:  # noqa: BLE001 - recap is best-effort context for the hook
+            last_message = ""
+        outcome = await self.fire_hook(
+            HookEvent.STOP,
+            {"stop_reason": stop_reason, "last_message": last_message},
+        )
+        if outcome.blocked:
+            return outcome.reason or "Continue working; the stop condition is not yet satisfied."
         return None
 
     async def send_chat_message(
@@ -937,9 +1153,23 @@ class BaseAgent(LogMixin):
             }
             return
 
-        self.append_user_message(await self.build_user_content(message, attachments))
+        content_blocks = await self.build_user_content(message, attachments)
+
+        # UserPromptSubmit hooks (skipped for sub-agents, whose task is machine-
+        # generated, not a user prompt). May end the turn or inject extra context.
+        if not self.sub_agent:
+            submit = await self.fire_hook(HookEvent.USER_PROMPT_SUBMIT, {"user_message": message})
+            if submit.blocked or submit.end_turn:
+                reason = submit.reason or "A hook blocked this prompt."
+                yield {"type": "response", "content": reason, "complete": True, "uuid": str(uuid.uuid4())}
+                return
+            if submit.additional_context:
+                content_blocks.append(TextBlock(text=submit.additional_context))
+
+        self.append_user_message(content_blocks)
 
         stop_reason = None
+        stop_overrides = 0
         while stop_reason not in ["end_turn", "max_tokens", "stop_sequence"]:
             self.mark_cache_checkpoint()
 
@@ -948,6 +1178,15 @@ class BaseAgent(LogMixin):
                 logger.debug("Input token count: %s", token_count)
 
                 if self.compressor.over_budget(token_count.input_tokens, self.model_context_length):
+                    # PreCompact hooks (advisory): observe before history is compacted.
+                    await self.fire_hook(
+                        HookEvent.PRE_COMPACT,
+                        {
+                            "trigger": "auto",
+                            "input_tokens": token_count.input_tokens,
+                            "model_context_length": self.model_context_length,
+                        },
+                    )
                     await self.compress_history()
                     token_count = await self.count_current_context()
 
@@ -1037,6 +1276,10 @@ class BaseAgent(LogMixin):
 
                         if self.should_stop_after_tools():
                             break
+                        if self._hook_end_turn:
+                            # A blocking PostToolUse hook asked to end the turn.
+                            self._hook_end_turn = False
+                            break
                     except Exception as ex:
                         error_message = f"Error processing tool calls: {str(ex)}"
                         await self.log_error(error_message, sender=self.agent_name)
@@ -1051,6 +1294,15 @@ class BaseAgent(LogMixin):
                             for tool_call in assistant_message.tool_calls
                         ]
                         self.append_user_message(error_responses)
+
+                # Stop hooks (main agent only). On a natural turn end, a hook may
+                # keep the agent working by blocking the stop and returning a reason.
+                if stop_reason in ["end_turn", "max_tokens", "stop_sequence"] and not self.sub_agent:
+                    keep_working = await self._fire_stop_hook(stop_reason)
+                    if keep_working is not None and stop_overrides < self.MAX_STOP_HOOK_OVERRIDES:
+                        stop_overrides += 1
+                        self.append_user_message([TextBlock(text=keep_working)])
+                        stop_reason = None
 
             except Exception as ex:
                 await self.handle_llm_error(ex)

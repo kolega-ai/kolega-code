@@ -86,6 +86,7 @@ from .provider_registry import (
     ui_provider_options,
     ui_thinking_effort_options,
 )
+from kolega_code.hooks import HookDispatcher, HookEvent, load_hook_config, project_hooks_present
 from .session_store import SessionRecord, SessionStore
 from .settings import CliSettings, SettingsStore
 from .slash_commands import (
@@ -448,7 +449,9 @@ class ChatComposer(TextArea):
     BINDINGS = [
         *TextArea.BINDINGS,
         Binding("enter", "submit", "Send", priority=True),
-        Binding("shift+enter,ctrl+enter,ctrl+j", "insert_newline", "New line", key_display="Shift+Enter", priority=True),
+        Binding(
+            "shift+enter,ctrl+enter,ctrl+j", "insert_newline", "New line", key_display="Shift+Enter", priority=True
+        ),
         Binding("up", "mention_prev", "Previous match", show=False, priority=True),
         Binding("down", "mention_next", "Next match", show=False, priority=True),
         Binding("tab", "mention_accept", "Complete path", show=False, priority=True),
@@ -741,7 +744,9 @@ class KolegaCodeApp(App):
     """
 
     BINDINGS = [
-        Binding("shift+tab", "toggle_interaction_mode", "Plan/Build", show=True, key_display="Shift+Tab", priority=True),
+        Binding(
+            "shift+tab", "toggle_interaction_mode", "Plan/Build", show=True, key_display="Shift+Tab", priority=True
+        ),
         Binding("ctrl+p", "toggle_permission_mode", "Permissions", show=True, key_display="Ctrl+P", priority=True),
         Binding("ctrl+o", "toggle_sidebar", "Sidebar", show=True, key_display="Ctrl+O", priority=True),
         Binding("ctrl+c", "cancel_generation", "Cancel", show=True),
@@ -785,6 +790,8 @@ class KolegaCodeApp(App):
         self.sidebar_visible = True
         self.check_for_updates = check_for_updates
         self.connection_manager = CliConnectionManager()
+        self._hook_dispatcher: Optional[HookDispatcher] = None
+        self._session_started = False
         self.agent: Optional[CoderAgent | PlanningAgent] = None
         self.agent_worker = None
         self.conversation_entries: list[ConversationEntry] = []
@@ -1392,6 +1399,12 @@ class KolegaCodeApp(App):
 
     async def action_quit(self) -> None:
         if self.agent is not None:
+            fire = getattr(self.agent, "fire_hook", None)
+            if fire is not None:
+                try:
+                    await fire(HookEvent.SESSION_END, {"reason": "quit"})
+                except Exception:
+                    pass
             self.session.history = self.agent.dump_message_history()
             self._save_session()
             await self.agent.cleanup()
@@ -1414,14 +1427,18 @@ class KolegaCodeApp(App):
 
     def _populate_settings_controls(self) -> None:
         provider_values = {value for _, value in ui_provider_options()}
-        provider = self.settings.active_provider if self.settings.active_provider in provider_values else UI_DEFAULT_PROVIDER
+        provider = (
+            self.settings.active_provider if self.settings.active_provider in provider_values else UI_DEFAULT_PROVIDER
+        )
         model_options = ui_model_options(provider)
         valid_models = {value for _, value in model_options}
         model = self.settings.active_model if self.settings.active_model in valid_models else None
         if model is None:
             model = model_options[0][1] if model_options else UI_DEFAULT_MODEL
         effort_options = {value for _, value in ui_thinking_effort_options(provider, model)}
-        effort = self.settings.active_thinking_effort if self.settings.active_thinking_effort in effort_options else None
+        effort = (
+            self.settings.active_thinking_effort if self.settings.active_thinking_effort in effort_options else None
+        )
         if effort is None:
             effort = default_ui_thinking_effort(provider, model)
         provider_select = self.query_one("#provider_select", Select)
@@ -1533,11 +1550,45 @@ class KolegaCodeApp(App):
             tool_extensions=tool_extensions,
             permission_mode=self.permission_mode,
             permission_callback=self._permission_callback,
+            hook_dispatcher=self._session_hook_dispatcher(),
         )
         if history:
             self.agent.restore_message_history(history)
             self._restore_conversation_history(history)
         self._update_mode_chrome()
+        await self._fire_session_start_once()
+
+    def _session_hook_dispatcher(self) -> HookDispatcher:
+        """Build (once) the hook dispatcher for this session from global + project config."""
+        if self._hook_dispatcher is None:
+            trusted = self.settings.is_hook_project_trusted(self.project_path)
+            config = load_hook_config(self.project_path, self.settings_store.root, project_trusted=trusted)
+            self._hook_dispatcher = HookDispatcher(config)
+            self._announce_hook_status(config)
+        return self._hook_dispatcher
+
+    def _announce_hook_status(self, config) -> None:
+        """Surface hook diagnostics and an untrusted-project notice once at startup."""
+        for diagnostic in config.diagnostics:
+            self._log_status(f"hooks: {diagnostic}", level="warn")
+        if project_hooks_present(self.project_path) and not self.settings.is_hook_project_trusted(self.project_path):
+            self._notify_user(
+                "This project defines hooks in .kolega/hooks.json, but they are not trusted, so they "
+                "are disabled. Global hooks still run. Re-launch with `--trust-hooks` to enable them.",
+                severity="warning",
+                title="Untrusted project hooks",
+            )
+
+    async def _fire_session_start_once(self) -> None:
+        if self._session_started or self.agent is None:
+            return
+        fire = getattr(self.agent, "fire_hook", None)
+        if fire is None:
+            return
+        self._session_started = True
+        outcome = await fire(HookEvent.SESSION_START, {"source": "startup"})
+        if outcome.additional_context:
+            self._add_conversation_entry(ConversationEntry(kind="system", content=outcome.additional_context))
 
     async def _set_interaction_mode(self, interaction_mode: str) -> None:
         if interaction_mode not in {BUILD_INTERACTION_MODE, PLAN_INTERACTION_MODE}:
@@ -1611,7 +1662,9 @@ class KolegaCodeApp(App):
 
         prompt = build_implement_plan_prompt(plan)
         self._add_conversation_entry(ConversationEntry(kind="user", content="Implement the approved plan."))
-        self.agent_worker = self.run_worker(self._process_message(prompt), name="kolega-turn", group="turns", exclusive=True)
+        self.agent_worker = self.run_worker(
+            self._process_message(prompt), name="kolega-turn", group="turns", exclusive=True
+        )
 
     def _discuss_pending_plan(self) -> None:
         if not self._latest_plan:
@@ -2066,9 +2119,7 @@ class KolegaCodeApp(App):
         update_message = update_status_message(result, include_up_to_date=True, include_errors=True)
         if update_message:
             lines.append(update_message)
-        self._add_conversation_entry(
-            ConversationEntry(kind="system", content="\n".join(lines))
-        )
+        self._add_conversation_entry(ConversationEntry(kind="system", content="\n".join(lines)))
 
     async def _command_update(self, args: str) -> None:
         if self._turn_active or self.agent_worker is not None:
@@ -2273,9 +2324,7 @@ class KolegaCodeApp(App):
             tool_groups={"planning_tools": [QUESTION_TOOL_NAME]},
         )
 
-    def _normalize_choice_questions(
-        self, questions: object
-    ) -> list[tuple[str, str, list[str], list[str]]]:
+    def _normalize_choice_questions(self, questions: object) -> list[tuple[str, str, list[str], list[str]]]:
         """Validate the structured questions input and return normalized questions.
 
         Strict: rejects malformed input with an instructive ToolError instead of coercing.
@@ -2477,9 +2526,7 @@ class KolegaCodeApp(App):
             self._restore_composer_placeholder()
             self._set_chat_enabled(self.agent is not None)
 
-    def _format_permission_content(
-        self, request: PermissionRequest, rule_options: list[PermissionRuleOption]
-    ) -> str:
+    def _format_permission_content(self, request: PermissionRequest, rule_options: list[PermissionRuleOption]) -> str:
         if request.kind.value == "command":
             lines = [
                 "Allow the agent to run this command?",
@@ -2537,10 +2584,7 @@ class KolegaCodeApp(App):
                     ],
                 ]
                 approval_actions.show_options(
-                    [
-                        Option(label, id=f"{APPROVAL_OPTION_ID_PREFIX}{index}")
-                        for index, label in enumerate(labels)
-                    ]
+                    [Option(label, id=f"{APPROVAL_OPTION_ID_PREFIX}{index}") for index, label in enumerate(labels)]
                 )
             else:
                 approval_actions.hide()
@@ -2880,7 +2924,9 @@ class KolegaCodeApp(App):
         self._turn_final_text = ""
         self._turn_final_state = TurnState.IDLE
         self._spinner_frame = 0
-        self._turn_timer = self.set_interval(theme.SPINNER_INTERVAL, self._refresh_turn_status_strip, name="turn-status")
+        self._turn_timer = self.set_interval(
+            theme.SPINNER_INTERVAL, self._refresh_turn_status_strip, name="turn-status"
+        )
         self._refresh_turn_status_strip()
 
     def _complete_turn_timer(self, content: str, state: TurnState = TurnState.IDLE) -> None:
@@ -3046,9 +3092,7 @@ class KolegaCodeApp(App):
         if isinstance(content, str):
             return content
         if isinstance(content, list):
-            return "\n\n".join(
-                item.to_markdown() if hasattr(item, "to_markdown") else str(item) for item in content
-            )
+            return "\n\n".join(item.to_markdown() if hasattr(item, "to_markdown") else str(item) for item in content)
         return str(content)
 
     def _apply_stream_chunk(self, chunk: dict, *, kind: str) -> None:
@@ -3234,12 +3278,7 @@ class KolegaCodeApp(App):
 
     def _sub_agent_key(self, event: AgentEvent) -> str:
         info = event.sub_agent_info or {}
-        return str(
-            info.get("agent_id")
-            or info.get("parent_tool_call_id")
-            or info.get("agent_name")
-            or event.sender
-        )
+        return str(info.get("agent_id") or info.get("parent_tool_call_id") or info.get("agent_name") or event.sender)
 
     def _ensure_sub_agent_activity(self, event: AgentEvent) -> SubAgentActivity:
         key = self._sub_agent_key(event)
@@ -3404,7 +3443,7 @@ class KolegaCodeApp(App):
     def _capped_tool_text(self, text: str) -> str:
         if len(text) <= theme.TOOL_FULL_CONTENT_CAP_CHARS:
             return text
-        return f"{text[:theme.TOOL_FULL_CONTENT_CAP_CHARS]}{theme.g(Glyph.ELLIPSIS)}"
+        return f"{text[: theme.TOOL_FULL_CONTENT_CAP_CHARS]}{theme.g(Glyph.ELLIPSIS)}"
 
     def _tool_stream_preview(self, text: str) -> str:
         if len(text) <= TOOL_STREAM_PREVIEW_CHARS:
@@ -3459,7 +3498,7 @@ class KolegaCodeApp(App):
                 widget.refresh_content()
         self._dirty_entry_ids.clear()
 
-        new_entries = self.conversation_entries[len(rendered_ids):]
+        new_entries = self.conversation_entries[len(rendered_ids) :]
         if new_entries:
             widgets = []
             for entry in new_entries:
@@ -3525,7 +3564,9 @@ class KolegaCodeApp(App):
                 return self._markdown_entry(header, entry.content)
             return f"{header}\n{self._format_inset_content(entry.content)}"
         if entry.kind == "thinking":
-            header = theme.role_header(Glyph.STATUS, "Thinking", Color.THINKING, label_style="dim italic", state=streaming)
+            header = theme.role_header(
+                Glyph.STATUS, "Thinking", Color.THINKING, label_style="dim italic", state=streaming
+            )
             return f"{header}\n{self._format_inset_content(entry.content, style='italic dim')}"
         if entry.kind == "progress":
             color = Color.ERROR if entry.tone == "error" else Color.WARNING

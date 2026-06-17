@@ -46,6 +46,7 @@ class GeneralAgent(BaseAgent):
         permission_callback: Optional[Any] = None,
         usage_recorder: Optional[Any] = None,
         sub_agent_recorder: Optional[Any] = None,
+        hook_dispatcher: Optional[Any] = None,
     ) -> None:
         """
         Initialize a new GeneralAgent instance.
@@ -97,6 +98,7 @@ class GeneralAgent(BaseAgent):
             permission_callback=permission_callback,
             usage_recorder=usage_recorder,
             sub_agent_recorder=sub_agent_recorder,
+            hook_dispatcher=hook_dispatcher,
         )
 
         # Full coder-style toolset, minus sub-agent dispatch (a dispatched agent
