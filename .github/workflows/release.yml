@@ -85,3 +85,37 @@ jobs:
 
       - name: Publish distributions to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+
+  github-release:
+    name: Create GitHub Release
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Create release
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "GitHub Release $GITHUB_REF_NAME already exists."
+            exit 0
+          fi
+
+          version="${GITHUB_REF_NAME#v}"
+          prelude=$(printf '%s\n\n%s\n\n%s\n%s\n%s\n\n%s\n' \
+            "PyPI: https://pypi.org/project/kolega-code/${version}/" \
+            "Update with:" \
+            '```bash' \
+            'uv tool install --force kolega-code' \
+            '```' \
+            "PyPI is the canonical package distribution. GitHub provides source archives for this release."
+          )
+
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --title "$GITHUB_REF_NAME" \
+            --latest \
+            --generate-notes \
+            --notes "$prelude"

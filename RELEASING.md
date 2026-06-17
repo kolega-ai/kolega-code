@@ -1,9 +1,49 @@
 # Releasing Kolega Code
 
 This project publishes the `kolega-code` package to PyPI and serves the public
-installer from `https://kolega.dev/install-kolega-code.sh`.
+installer from `https://kolega.dev/install-kolega-code.sh`. Each published
+version should also have a GitHub Release for its matching tag.
 
-## First PyPI release
+## Release process
+
+1. Confirm `pyproject.toml`, `uv.lock`, and package `__version__` values have
+   the release version.
+
+2. Run the fast test suite:
+
+   ```bash
+   uv run pytest -ra --durations=50 --import-mode=importlib -m "not slow"
+   ```
+
+3. Commit the release bump:
+
+   ```bash
+   git commit -m "chore: release v0.3.0"
+   ```
+
+4. Create and push a matching tag:
+
+   ```bash
+   git tag v0.3.0
+   git push origin main
+   git push origin v0.3.0
+   ```
+
+5. Confirm the `Release` GitHub Actions workflow completes. It builds and tests
+   the package, publishes to PyPI, then creates the GitHub Release.
+
+6. Verify the release:
+
+   ```bash
+   uv tool install --force kolega-code
+   kolega-code --version
+   gh release view v0.3.0 --repo kolega-ai/kolega-code
+   ```
+
+The GitHub Release uses PyPI as the canonical package distribution and keeps
+GitHub's automatic source archives as the only release assets.
+
+## First PyPI release setup
 
 The first release can be published from the existing maintainer PyPI user
 account, then transferred to the Kolega PyPI organization after PyPI approves
@@ -23,24 +63,6 @@ the organization request.
 
    Require approval from trusted maintainers before deployment. The release
    workflow will pause before publishing to PyPI.
-
-3. Confirm `pyproject.toml` has the release version.
-
-4. Create and push a matching tag:
-
-   ```bash
-   git tag v0.3.0
-   git push origin v0.3.0
-   ```
-
-5. Approve the `pypi` environment deployment in GitHub Actions.
-
-6. Verify the release:
-
-   ```bash
-   uv tool install --force kolega-code
-   kolega-code --version
-   ```
 
 ## Installer handoff
 
