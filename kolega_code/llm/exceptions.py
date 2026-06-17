@@ -147,9 +147,8 @@ def _provider_display_name(provider: str | None) -> str:
     return provider_names.get(provider, provider.replace("_", " ").replace("-", " ").title())
 
 
-def billing_error_message(error: LLMBillingError, model: str | None = None) -> str:
+def billing_error_message_for_provider(provider: str | None, model: str | None = None) -> str:
     """Return a concise user-facing message for provider billing failures."""
-    provider = error.provider
     provider_name = _provider_display_name(provider)
     model_label = f"/{model}" if model else ""
     provider_model = f"{provider_name}{model_label}"
@@ -158,6 +157,11 @@ def billing_error_message(error: LLMBillingError, model: str | None = None) -> s
         f"{provider_model} could not run this request because {provider_name} reported insufficient balance. "
         f"Add credits to your {provider_name} account or switch to another provider/model in Settings or with /model."
     )
+
+
+def billing_error_message(error: LLMBillingError, model: str | None = None) -> str:
+    """Return a concise user-facing message for provider billing failures."""
+    return billing_error_message_for_provider(error.provider, model=model)
 
 
 def llm_error_message(error: LLMError, model: str | None = None) -> str:
