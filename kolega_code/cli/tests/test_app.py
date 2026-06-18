@@ -679,6 +679,10 @@ async def test_textual_app_permission_approval_actions_show_rule_labels_without_
         app._set_approval_actions_visible(True)
 
         approval_actions = app.query_one("#approval_actions", ActionList)
+        # The options must be focused synchronously (no pilot.pause() above) so arrow
+        # keys + Enter work without a click. A deferred Widget.focus() would not have run
+        # yet here, and in a real terminal it races the refresh loop and loses focus.
+        assert app.focused is approval_actions
         prompts = [
             approval_actions.get_option(f"approval_option_{index}").prompt
             for index in range(approval_actions.option_count)
