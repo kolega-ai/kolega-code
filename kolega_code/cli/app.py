@@ -41,19 +41,21 @@ from textual.widgets import (
     RichLog,
     Select,
     Static,
-    TabPane,
     TabbedContent,
+    TabPane,
     TextArea,
 )
 from textual.widgets.option_list import Option
 
 from kolega_code.agent import AgentConfig, AgentEvent, CoderAgent, PlanningAgent, PromptExtension, ToolExtension
+from kolega_code.agent.prompt_provider import AgentMode
 from kolega_code.agent.prompts import (
     PLANNING_QUESTION_PROMPT,
     SHARED_TASK_LIST_PROMPT,
     build_implement_plan_prompt,
     build_init_agents_prompt,
 )
+from kolega_code.hooks import HookDispatcher, HookEvent, load_hook_config, project_hooks_present
 from kolega_code.llm.exceptions import LLMError, llm_error_message
 from kolega_code.llm.models import Message, MessageHistory, TextBlock, ToolCall, ToolResult
 from kolega_code.permissions import (
@@ -66,17 +68,14 @@ from kolega_code.permissions import (
     allow_rule_options,
     normalize_permission_mode,
 )
-from kolega_code.tools import ASK_USER_CHOICE_INPUT_SCHEMA, ASK_USER_CHOICE_SHAPE_HINT, ToolError
-from kolega_code.agent.prompt_provider import AgentMode
 from kolega_code.services.browser import PlaywrightBrowserManager
+from kolega_code.tools import ASK_USER_CHOICE_INPUT_SCHEMA, ASK_USER_CHOICE_SHAPE_HINT, ToolError
 
-from . import messages
-from . import theme
+from . import messages, theme
 from .config import CliConfigError, CliConfigOverrides, build_agent_config, config_summary, key_status
 from .connection import CliConnectionManager
 from .file_index import IndexEntry, WorkspaceFileIndex
 from .mentions import build_file_attachments
-from .theme import Color, Glyph
 from .provider_registry import (
     UI_DEFAULT_MODEL,
     UI_DEFAULT_PROVIDER,
@@ -86,18 +85,8 @@ from .provider_registry import (
     ui_provider_options,
     ui_thinking_effort_options,
 )
-from kolega_code.hooks import HookDispatcher, HookEvent, load_hook_config, project_hooks_present
 from .session_store import SessionRecord, SessionStore
 from .settings import CliSettings, SettingsStore
-from .slash_commands import (
-    SKILLS_LIST_COMMAND,
-    THREAD_RESET_COMMANDS,
-    TUI_COMMAND_NAMES,
-    SlashCommandEntry,
-    agent_command_names,
-    search_commands,
-)
-from .updater import check_for_update, run_self_update, update_status_message
 from .skills import (
     SkillCatalog,
     activated_skill_names,
@@ -106,6 +95,16 @@ from .skills import (
     discover_skills,
     skill_names_in_text,
 )
+from .slash_commands import (
+    SKILLS_LIST_COMMAND,
+    THREAD_RESET_COMMANDS,
+    TUI_COMMAND_NAMES,
+    SlashCommandEntry,
+    agent_command_names,
+    search_commands,
+)
+from .theme import Color, Glyph
+from .updater import check_for_update, run_self_update, update_status_message
 
 # Re-exported from theme/messages so existing importers (including tests) keep working.
 TOOL_RESULT_PREVIEW_CHARS = theme.TOOL_RESULT_PREVIEW_CHARS
@@ -125,12 +124,14 @@ QUESTION_OPTION_ID_PREFIX = "question_option_"
 APPROVAL_OPTION_ID_PREFIX = "approval_option_"
 MODEL_OPTION_ID_PREFIX = "model_option_"
 EFFORT_OPTION_ID_PREFIX = "effort_option_"
+THEME_OPTION_ID_PREFIX = "theme_option_"
 QUESTION_PLACEHOLDER = messages.QUESTION_PLACEHOLDER
 APPROVAL_PLACEHOLDER = messages.APPROVAL_PLACEHOLDER
 MODEL_PLACEHOLDER = messages.MODEL_PLACEHOLDER
 EFFORT_PLACEHOLDER = messages.EFFORT_PLACEHOLDER
+THEME_PLACEHOLDER = messages.THEME_PLACEHOLDER
 STARTUP_WORDMARK = (
-    " _  __     _                    ____          _",
+    " _  __     _                   ____          _",
     "| |/ /___ | | ___  __ _  __ _ / ___|___   __| | ___",
     "| ' // _ \\| |/ _ \\/ _` |/ _` | |   / _ \\ / _` |/ _ \\",
     "| . \\ (_) | |  __/ (_| | (_| | |__| (_) | (_| |  __/",
@@ -153,18 +154,33 @@ class TurnState(str, Enum):
     ERROR = "Error"
 
 
+# Role colors are stored as Color attribute NAMES (not values) so they resolve
+# against the active theme at render time instead of snapshotting it at import;
+# see theme.apply_theme(), which reassigns the Color attributes on theme switch.
 TURN_STATE_STYLES = {
-    TurnState.IDLE: Color.SUCCESS,
-    TurnState.STOPPING: Color.WARNING,
-    TurnState.STOPPED: Color.WARNING,
-    TurnState.ERROR: Color.ERROR,
+    TurnState.IDLE: "SUCCESS",
+    TurnState.STOPPING: "WARNING",
+    TurnState.STOPPED: "WARNING",
+    TurnState.ERROR: "ERROR",
 }
 
 TOOL_STATE_PRESENTATION = {
-    "tool_call": ("running", Color.ACCENT),
-    "tool_result": ("done", Color.SUCCESS),
-    "tool_error": ("failed", Color.ERROR),
+    "tool_call": ("running", "ACCENT"),
+    "tool_result": ("done", "SUCCESS"),
+    "tool_error": ("failed", "ERROR"),
 }
+
+
+def turn_state_color(state: TurnState) -> str:
+    """Live role color for a turn state (resolves against the active theme)."""
+    return getattr(Color, TURN_STATE_STYLES.get(state, "ACCENT"))
+
+
+def tool_state_presentation(kind: str) -> tuple[str, str]:
+    """(state label, live role color) for a tool-entry kind."""
+    label, attr = TOOL_STATE_PRESENTATION.get(kind, ("running", "ACCENT"))
+    return label, getattr(Color, attr)
+
 
 TAB_BASE_LABELS = {
     "logs_pane": "Logs",
@@ -235,6 +251,12 @@ class PendingModelSelection:
 class PendingEffortSelection:
     provider: str
     model: str
+    options: list[tuple[str, str]]
+
+
+@dataclass
+class PendingThemeSelection:
+    # (display name, value); value == display name for themes.
     options: list[tuple[str, str]]
 
 
@@ -743,7 +765,7 @@ class KolegaCodeApp(App):
         opacity: 0.6;
     }
 
-    #plan_actions, #model_actions, #effort_actions {
+    #plan_actions, #model_actions, #effort_actions, #theme_actions {
         display: none;
         height: auto;
         max-height: 12;
@@ -779,10 +801,14 @@ class KolegaCodeApp(App):
     }
 
     /* Neutralize the selected-row highlight on every choice list. Textual paints
-       it with $block-cursor-background (= $primary = #0178D4, a saturated blue),
+       it with $block-cursor-background (= $primary, a saturated brand color),
        which clashes with the otherwise-neutral chrome and looks wrong in 256-color
-       Terminal.app. The OptionList type selector also covers its subclasses:
-       ActionList, CompletionDropdown, and the Select's SelectOverlay dropdown. */
+       Terminal.app. Each theme pins $surface-lighten-2 to a near-neutral gray
+       (see theme.build_textual_theme) so the highlight stays subtle across all
+       themes — incl. Solarized, whose auto-derived $surface-lighten-2 would
+       otherwise quantize to a saturated teal. The OptionList type selector also
+       covers its subclasses: ActionList, CompletionDropdown, and the Select's
+       SelectOverlay dropdown. */
     OptionList > .option-list--option-highlighted {
         background: $surface-lighten-2;
         color: $text;
@@ -887,6 +913,7 @@ class KolegaCodeApp(App):
         self._permission_lock = asyncio.Lock()
         self._pending_model_selection: Optional[PendingModelSelection] = None
         self._pending_effort_selection: Optional[PendingEffortSelection] = None
+        self._pending_theme_selection: Optional[PendingThemeSelection] = None
         provider, model = self._startup_model()
         self._status_state = StatusDashboardState(
             provider=provider,
@@ -930,6 +957,7 @@ class KolegaCodeApp(App):
                 )
                 yield ActionList(id="model_actions")
                 yield ActionList(id="effort_actions")
+                yield ActionList(id="theme_actions")
                 yield Static("", id="turn_status", markup=True)
                 yield Static("", id="composer_hint", markup=False)
                 yield CompletionDropdown(id="completion_dropdown")
@@ -972,6 +1000,13 @@ class KolegaCodeApp(App):
                                 allow_blank=True,
                                 value=default_ui_thinking_effort(UI_DEFAULT_PROVIDER, UI_DEFAULT_MODEL),
                             )
+                            yield Label("Theme")
+                            yield Select(
+                                [(name, name) for name in theme.available_themes()],
+                                id="theme_select",
+                                allow_blank=False,
+                                value=theme.DEFAULT_THEME_NAME,
+                            )
                             yield Label("API key")
                             yield Input(password=True, id="api_key_input")
                             yield Button("Save Settings", variant="primary", id="save_settings")
@@ -980,6 +1015,15 @@ class KolegaCodeApp(App):
 
     async def on_mount(self) -> None:
         self.settings = self.settings_store.load()
+        # Register all themes and apply the persisted one before the first paint,
+        # so the splash and settings controls render already themed.
+        for textual_theme in theme.build_textual_themes():
+            self.register_theme(textual_theme)
+        theme.apply_theme(self.settings.active_theme)
+        try:
+            self.theme = theme.textual_theme_name(self.settings.active_theme)
+        except Exception:
+            pass
         self._populate_settings_controls()
         self._refresh_status_dashboard()
         self._restore_plan_action_visibility()
@@ -1158,6 +1202,14 @@ class KolegaCodeApp(App):
             await self._answer_effort_selection(stripped_text)
             return
 
+        if self._pending_theme_selection is not None:
+            if not stripped_text:
+                self._set_composer_status(THEME_PLACEHOLDER)
+                return
+            event.composer.load_text("")
+            await self._answer_theme_selection(stripped_text)
+            return
+
         if await self._handle_skill_slash_command(stripped_text, event.composer):
             return
 
@@ -1234,6 +1286,10 @@ class KolegaCodeApp(App):
         if event.option_list.id == "effort_actions":
             event.stop()
             await self._answer_effort_option(event.option_index)
+            return
+        if event.option_list.id == "theme_actions":
+            event.stop()
+            await self._answer_theme_option(event.option_index)
             return
         if event.option_list.id == "plan_actions":
             event.stop()
@@ -1363,6 +1419,14 @@ class KolegaCodeApp(App):
             except NoMatches:
                 return
             self._set_effort_select_default(provider, str(event.value))
+            return
+
+        if event.select.id == "theme_select":
+            name = str(event.value)
+            if name != (self.settings.active_theme or theme.DEFAULT_THEME_NAME):
+                self.settings.active_theme = name
+                self.settings_store.save(self.settings)
+                self._apply_theme(name)
 
     async def _consume_events(self) -> None:
         while True:
@@ -1534,6 +1598,12 @@ class KolegaCodeApp(App):
         effort_select.set_options(ui_thinking_effort_options(provider, model))
         if effort is not None:
             effort_select.value = effort
+        theme_select = self.query_one("#theme_select", Select)
+        theme_select.value = (
+            self.settings.active_theme
+            if self.settings.active_theme in theme.available_themes()
+            else theme.DEFAULT_THEME_NAME
+        )
         api_key_input.placeholder = self._api_key_placeholder(provider)
         self._update_settings_status()
 
@@ -1561,6 +1631,7 @@ class KolegaCodeApp(App):
         self.settings.active_provider = provider
         self.settings.active_model = model
         self.settings.active_thinking_effort = effort or default_ui_thinking_effort(provider, model)
+        self.settings.active_theme = str(self.query_one("#theme_select", Select).value)
         if api_key:
             self.settings.set_api_key(provider, api_key)
         self.settings_store.save(self.settings)
@@ -1686,6 +1757,7 @@ class KolegaCodeApp(App):
         self._cancel_pending_approval()
         self._cancel_pending_model_selection()
         self._cancel_pending_effort_selection()
+        self._cancel_pending_theme_selection()
 
         if self.config is not None:
             await self._build_agent(self.config, rebuild=True)
@@ -1816,6 +1888,24 @@ class KolegaCodeApp(App):
         except Exception:
             return
 
+    def _set_theme_actions_visible(self, visible: bool) -> None:
+        try:
+            theme_actions = self.query_one("#theme_actions", ActionList)
+            if visible and self._pending_theme_selection is not None:
+                theme_actions.show_options(
+                    [
+                        Option(
+                            self._theme_option_label(index, name),
+                            id=f"{THEME_OPTION_ID_PREFIX}{index}",
+                        )
+                        for index, (name, _value) in enumerate(self._pending_theme_selection.options)
+                    ]
+                )
+            else:
+                theme_actions.hide()
+        except Exception:
+            return
+
     def _meta_content(self) -> str:
         return (
             f"{self.project_path} | session {self.session.session_id} | "
@@ -1882,6 +1972,7 @@ class KolegaCodeApp(App):
             "/permissions": self._command_permissions,
             "/model": self._command_model,
             "/effort": self._command_effort,
+            "/theme": self._command_theme,
             "/copy": self._command_copy,
             "/version": self._command_version,
             "/update": self._command_update,
@@ -1900,6 +1991,8 @@ class KolegaCodeApp(App):
             self._cancel_pending_model_selection()
         if command_text.lower() != "/effort":
             self._cancel_pending_effort_selection()
+        if command_text.lower() != "/theme":
+            self._cancel_pending_theme_selection()
         composer.load_text("")
         await handler(args.strip())
         return True
@@ -2183,6 +2276,82 @@ class KolegaCodeApp(App):
     def _match_effort_value(self, effort_options: list[tuple[str, str]], value: str) -> Optional[str]:
         clean_value = value.strip().lower()
         return next((effort for _, effort in effort_options if effort.lower() == clean_value), None)
+
+    async def _command_theme(self, args: str) -> None:
+        if not args:
+            current = self.settings.active_theme or theme.DEFAULT_THEME_NAME
+            lines = [
+                messages.SETTINGS_ACTIVE_THEME.format(theme=current),
+                "",
+                "Available themes:",
+                *(f"- `{name}`" for name in theme.available_themes()),
+                "",
+                messages.THEME_SWITCH_HINT,
+            ]
+            self._add_conversation_entry(ConversationEntry(kind="system", content="\n".join(lines)))
+            self._pending_theme_selection = PendingThemeSelection(
+                options=[(name, name) for name in theme.available_themes()]
+            )
+            self._show_theme_options()
+            self._set_composer_status(THEME_PLACEHOLDER)
+            return
+
+        matched = self._match_theme_value(args)
+        if matched is None:
+            self._notify_user(messages.THEME_UNKNOWN.format(theme=args), severity="warning")
+            return
+        await self._switch_theme(matched)
+
+    async def _answer_theme_option(self, option_index: int) -> None:
+        pending = self._pending_theme_selection
+        if pending is None:
+            return
+        if option_index < 0 or option_index >= len(pending.options):
+            return
+        await self._switch_theme(pending.options[option_index][1])
+
+    async def _answer_theme_selection(self, answer: str) -> None:
+        pending = self._pending_theme_selection
+        if pending is None:
+            return
+        clean_answer = answer.strip()
+        if not clean_answer:
+            self._set_composer_status(THEME_PLACEHOLDER)
+            return
+        matched = self._match_theme_value(clean_answer)
+        if matched is None:
+            self._set_composer_status(THEME_PLACEHOLDER)
+            self._notify_user(messages.THEME_UNKNOWN.format(theme=clean_answer), severity="warning")
+            return
+        await self._switch_theme(matched)
+
+    async def _switch_theme(self, name: str) -> None:
+        self._cancel_pending_theme_selection()
+        self.settings.active_theme = name
+        self.settings_store.save(self.settings)
+        self._apply_theme(name)
+        try:
+            self._populate_settings_controls()
+        except Exception:
+            pass
+        self._restore_composer_placeholder()
+        self._notify_user(messages.THEME_SWITCHED.format(theme=name))
+
+    def _match_theme_value(self, value: str) -> Optional[str]:
+        clean_value = value.strip().lower()
+        return next((name for name in theme.available_themes() if name.lower() == clean_value), None)
+
+    def _apply_theme(self, name: Optional[str]) -> None:
+        """Apply a theme live: swap Rich roles + Textual CSS, then re-skin the UI."""
+        theme.apply_theme(name)
+        try:
+            self.theme = theme.textual_theme_name(name)
+        except Exception:
+            pass
+        # Already-mounted Rich renderables baked in the old Color strings; rebuild
+        # the conversation and dashboard so they pick up the new palette.
+        self._render_conversation()
+        self._refresh_status_dashboard()
 
     async def _command_copy(self, args: str) -> None:
         entry = next(
@@ -2627,6 +2796,14 @@ class KolegaCodeApp(App):
         except Exception:
             return
 
+    def _show_theme_options(self) -> None:
+        self._set_theme_actions_visible(True)
+        try:
+            theme_actions = self.query_one("#theme_actions", ActionList)
+            self.screen.set_focus(theme_actions)
+        except Exception:
+            return
+
     def _set_question_actions_visible(self, visible: bool) -> None:
         try:
             panel = self.query_one("#question_prompt", PromptPanel)
@@ -2695,6 +2872,15 @@ class KolegaCodeApp(App):
         current_suffix = " current" if value == self._startup_thinking_effort() else ""
         return f"{index + 1}. {label} ({value}){current_suffix}"
 
+    def _cancel_pending_theme_selection(self) -> None:
+        self._pending_theme_selection = None
+        self._set_theme_actions_visible(False)
+
+    def _theme_option_label(self, index: int, name: str) -> str:
+        current = self.settings.active_theme or theme.DEFAULT_THEME_NAME
+        current_suffix = " current" if name == current else ""
+        return f"{index + 1}. {name}{current_suffix}"
+
     def _reset_current_thread(self) -> None:
         if self.agent is not None:
             self.agent.history = MessageHistory()
@@ -2716,6 +2902,7 @@ class KolegaCodeApp(App):
         self._cancel_pending_approval()
         self._cancel_pending_model_selection()
         self._cancel_pending_effort_selection()
+        self._cancel_pending_theme_selection()
         self._refresh_planning_sidebar()
         self._clear_turn_status_strip()
         self._turn_active = False
@@ -2862,7 +3049,7 @@ class KolegaCodeApp(App):
         effort = state.thinking_effort or "not supported"
         mode = state.mode.title()
         permission_mode = state.permission_mode.title()
-        turn_style = TURN_STATE_STYLES.get(state.turn_state, Color.ACCENT)
+        turn_style = turn_state_color(state.turn_state)
         context_style = self._context_style(state.usage_percentage, state.compression_threshold)
 
         def label(text: str) -> str:
@@ -3070,6 +3257,7 @@ class KolegaCodeApp(App):
         self._cancel_pending_question()
         self._cancel_pending_model_selection()
         self._cancel_pending_effort_selection()
+        self._cancel_pending_theme_selection()
         self._refresh_planning_sidebar()
         self._ensure_startup_entry(render=False)
         for item in history:
@@ -3659,7 +3847,7 @@ class KolegaCodeApp(App):
                 return self._format_sub_agent_renderable(activity)
             return Text(entry.content)
         if entry.kind in TOOL_STATE_PRESENTATION:
-            state, color = TOOL_STATE_PRESENTATION[entry.kind]
+            state, color = tool_state_presentation(entry.kind)
             return self._format_tool_entry(entry, state=state, color=color)
         if entry.kind == "system":
             return Text(entry.content, style="dim")
@@ -3681,7 +3869,7 @@ class KolegaCodeApp(App):
         return Group(
             Text.from_markup(header),
             Padding(
-                RichMarkdown(content, code_theme=theme.MARKDOWN_CODE_THEME),
+                RichMarkdown(content, code_theme=theme.markdown_code_theme()),
                 (0, 0, 0, theme.INSET_WIDTH),
             ),
         )
@@ -3693,9 +3881,21 @@ class KolegaCodeApp(App):
         except ValueError:
             separator = len(STARTUP_WORDMARK)
         rendered = Text()
-        logo = "\n".join(lines[:separator])
-        if logo:
-            rendered.append(logo, style=f"bold {Color.ACCENT}")
+        logo_lines = lines[:separator]
+        if logo_lines:
+            top, bottom = theme.splash_colors()
+            gradient = (
+                theme.gradient_hex(top, bottom, len(logo_lines)) if theme.supports_truecolor(self.console) else []
+            )
+            if gradient:
+                # Two-tone vertical gradient: accent at top -> secondary at bottom.
+                for index, line in enumerate(logo_lines):
+                    if index:
+                        rendered.append("\n")
+                    rendered.append(line, style=f"bold {gradient[index]}")
+            else:
+                # 256-color terminal (or ANSI endpoints): flat bold accent.
+                rendered.append("\n".join(logo_lines), style=f"bold {Color.ACCENT}")
         for line in lines[separator + 1 :]:
             rendered.append("\n")
             label, sep, value = line.partition(": ")
@@ -3715,7 +3915,7 @@ class KolegaCodeApp(App):
         return self._entry_renderable(header, entry.content)
 
     def _tool_entry_title(self, entry: ConversationEntry) -> str:
-        state, color = TOOL_STATE_PRESENTATION.get(entry.kind, ("running", Color.ACCENT))
+        state, color = tool_state_presentation(entry.kind)
         return theme.role_header(Glyph.TOOL, escape(entry.tool_name or "tool"), color, state=state)
 
     def _format_inset_text(self, content: str, style: Optional[str] = None) -> Text:

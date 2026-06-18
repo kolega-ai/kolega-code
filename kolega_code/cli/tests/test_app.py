@@ -336,13 +336,15 @@ async def test_textual_app_turn_status_formats_error_duration(
 def test_turn_state_styles_do_not_depend_on_content_text() -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli.app import TURN_STATE_STYLES, TurnState
+    from kolega_code.cli import theme
+    from kolega_code.cli.app import TurnState, turn_state_color
 
-    assert TURN_STATE_STYLES[TurnState.ERROR] == "red"
-    assert TURN_STATE_STYLES[TurnState.STOPPED] == "yellow"
-    assert TURN_STATE_STYLES[TurnState.STOPPING] == "yellow"
-    assert TURN_STATE_STYLES[TurnState.IDLE] == "green"
-    assert TURN_STATE_STYLES.get(TurnState.GENERATING) is None  # falls back to accent
+    # Resolves role names against the active theme's live Color attributes.
+    assert turn_state_color(TurnState.ERROR) == theme.Color.ERROR
+    assert turn_state_color(TurnState.STOPPED) == theme.Color.WARNING
+    assert turn_state_color(TurnState.STOPPING) == theme.Color.WARNING
+    assert turn_state_color(TurnState.IDLE) == theme.Color.SUCCESS
+    assert turn_state_color(TurnState.GENERATING) == theme.Color.ACCENT  # falls back to accent
 
 
 @pytest.mark.asyncio
@@ -352,6 +354,7 @@ async def test_progress_entry_tone_drives_styling_not_prose(
     pytest.importorskip("textual")
 
     from kolega_code.cli import app as app_module
+    from kolega_code.cli import theme
     from kolega_code.cli.app import ConversationEntry, KolegaCodeApp, TurnState
 
     class FakeCoderAgent:
@@ -382,12 +385,12 @@ async def test_progress_entry_tone_drives_styling_not_prose(
             kind="progress", content="Stopped before the error handler ran", complete=True, tone="warning"
         )
         rendered = app._format_conversation_entry(warning_entry)
-        assert "yellow" in first_text_styles(rendered)
-        assert "red" not in first_text_styles(rendered)
+        assert theme.Color.WARNING in first_text_styles(rendered)
+        assert theme.Color.ERROR not in first_text_styles(rendered)
 
         error_entry = ConversationEntry(kind="progress", content="All good otherwise", complete=True, tone="error")
         rendered = app._format_conversation_entry(error_entry)
-        assert "red" in first_text_styles(rendered)
+        assert theme.Color.ERROR in first_text_styles(rendered)
 
         # Explicit state drives the dashboard, not content keywords
         app._turn_active = True
@@ -4287,6 +4290,7 @@ async def test_status_dashboard_context_note_uses_alert_level(
     pytest.importorskip("textual")
 
     from kolega_code.agent import AgentEvent
+    from kolega_code.cli import theme
 
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
 
@@ -4307,11 +4311,13 @@ async def test_status_dashboard_context_note_uses_alert_level(
 
         app._render_event(context_event("info"))
         dashboard = app._format_status_dashboard()
-        assert "[yellow]Context is getting large.[/yellow]" in dashboard
+        warn = theme.Color.WARNING
+        assert f"[{warn}]Context is getting large.[/{warn}]" in dashboard
 
         app._render_event(context_event("critical"))
         dashboard = app._format_status_dashboard()
-        assert "[red]Context is getting large.[/red]" in dashboard
+        err = theme.Color.ERROR
+        assert f"[{err}]Context is getting large.[/{err}]" in dashboard
 
 
 @pytest.mark.asyncio

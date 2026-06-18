@@ -22,6 +22,7 @@ class CliSettings:
     active_provider: Optional[str] = None
     active_model: Optional[str] = None
     active_thinking_effort: Optional[str] = None
+    active_theme: Optional[str] = None
     api_keys: dict[str, str] = field(default_factory=dict)
     # Resolved project paths whose .kolega/hooks.json the user has opted to trust.
     trusted_hook_projects: list[str] = field(default_factory=list)
@@ -41,6 +42,9 @@ class CliSettings:
             active_thinking_effort=data.get("active_thinking_effort")
             if schema_version == SETTINGS_SCHEMA_VERSION
             else None,
+            # Additive optional field; safe to read from any schema version
+            # (absent in older files -> None -> default theme is applied).
+            active_theme=data.get("active_theme"),
             api_keys={str(provider): str(key) for provider, key in api_keys.items() if key},
             trusted_hook_projects=[str(path) for path in trusted if path],
         )
@@ -51,6 +55,7 @@ class CliSettings:
             "active_provider": self.active_provider,
             "active_model": self.active_model,
             "active_thinking_effort": self.active_thinking_effort,
+            "active_theme": self.active_theme,
             "api_keys": self.api_keys,
             "trusted_hook_projects": self.trusted_hook_projects,
         }
