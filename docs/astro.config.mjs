@@ -94,6 +94,10 @@ export default defineConfig({
           items: [{ label: "Lifecycle Hooks", slug: "hooks" }],
         },
         {
+          label: "Gigacode",
+          items: [{ label: "Workflow Orchestration", slug: "gigacode" }],
+        },
+        {
           label: "How It Works",
           items: [
             { label: "Architecture", slug: "concepts/how-it-works" },
