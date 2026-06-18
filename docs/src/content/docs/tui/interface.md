@@ -37,13 +37,40 @@ At the bottom sits the **composer** — the text box where you type prompts. See
   can return to the live edge.
 - **Tool results** — shown as collapsible blocks with a state indicator
   (running / done / failed). Expand to see the full result.
-- **Sub-agents** — when the main agent dispatches a sub-agent, its activity is
-  tracked live with status updates.
+- **Sub-agents** — when the main agent dispatches a sub-agent, a live card tracks
+  it inline: the agent name, elapsed time, tool count, token usage, what it's doing
+  right now, and a tail of its latest output. Press `Ctrl+G` (or click the card) to
+  open the full [sub-agent inspector](#sub-agent-inspector).
 - **Option lists** — when the agent asks you to choose between options (including
   plan decisions and tool approvals), they render as a **vertical,
   arrow-key-selectable list**.
   Use the arrow keys to highlight, number keys (`1`–`9`) to jump, and `Enter` to
   confirm.
+
+## Sub-agent inspector
+
+The inline cards summarize sub-agent activity; the **inspector** shows the whole
+story. Press `Ctrl+G` (or click any sub-agent card) to open a full-screen
+"mission control" view:
+
+- **Roster** (left) — every sub-agent dispatched this turn, running or finished,
+  each with a live spinner, status, elapsed time, tool count, and token usage.
+  Nested sub-agents are indented by depth.
+- **Trajectory** (right) — the selected agent's full run: its thinking, each tool
+  call, the tool results (expandable, just like the main transcript), and its
+  responses, streaming live as it works.
+
+| Keys | Action |
+| --- | --- |
+| `Ctrl+G` | Open the inspector (on the most recently active sub-agent) |
+| `↑` / `↓` | Switch between sub-agents |
+| `Tab` then `Enter` | Focus a tool call and expand it (or click it) |
+| `o` | Toggle follow — auto-scroll to the newest activity |
+| `y` | Copy the selected agent's trajectory to the clipboard |
+| `Esc` / `q` | Close the inspector |
+
+The inspector is read-only: opening or closing it never interrupts the agent, so
+the turn keeps running while you look around.
 
 ## Key bindings at a glance
 
@@ -52,6 +79,7 @@ At the bottom sits the **composer** — the text box where you type prompts. See
 | `Shift+Tab` | Toggle Build ⇄ Plan mode |
 | `Ctrl+P` | Toggle shell/edit permissions between Ask ⇄ Auto |
 | `Ctrl+O` | Show or hide the side panel |
+| `Ctrl+G` | Open the sub-agent inspector |
 | `Enter` | Send the prompt |
 | `Shift+Enter` / `Ctrl+J` | Insert a newline |
 | `Ctrl+C` / `Escape` | Cancel the current generation |
