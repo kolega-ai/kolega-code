@@ -469,7 +469,11 @@ class PromptPanel(Vertical):
         self.query_one(".prompt-header", Static).update(Text.from_markup(header))
         self.actions.show_options(options)
         self.display = True
-        self.actions.focus()
+        # Focus the options synchronously (not via Widget.focus(), which defers to a
+        # later event-loop tick): in a real terminal that deferred focus races with the
+        # refresh loop and the composer being disabled, so the options never get focus
+        # and arrow/Enter keys do nothing. Matches the other selection lists in this file.
+        self.screen.set_focus(self.actions)
 
     def hide(self) -> None:
         self.display = False
