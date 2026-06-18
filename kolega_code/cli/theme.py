@@ -220,8 +220,8 @@ class ThemeSpec:
     tt_error: str
     row_highlight: str  # neutral choice-list highlight; overrides $surface-lighten-2
     markdown_code_theme: str  # Pygments style for fenced code blocks
-    splash_accent: str  # splash gradient top (== accent)
-    splash_secondary: str  # splash gradient bottom
+    # NOTE: the splash wordmark uses tt_primary -> tt_secondary (the button color),
+    # so it always matches the primary buttons; there are no separate splash fields.
 
 
 _KOLEGA_DARK = ThemeSpec(
@@ -251,8 +251,6 @@ _KOLEGA_DARK = ThemeSpec(
     tt_error="#cc5555",
     row_highlight="#3a4047",
     markdown_code_theme="monokai",
-    splash_accent="cyan",
-    splash_secondary="magenta",
 )
 
 _NORD = ThemeSpec(
@@ -280,8 +278,6 @@ _NORD = ThemeSpec(
     tt_error="#bf616a",
     row_highlight="#4c566a",
     markdown_code_theme="nord",
-    splash_accent="#88c0d0",
-    splash_secondary="#b48ead",
 )
 
 _DRACULA = ThemeSpec(
@@ -309,8 +305,6 @@ _DRACULA = ThemeSpec(
     tt_error="#ff5555",
     row_highlight="#44475a",
     markdown_code_theme="dracula",
-    splash_accent="#8be9fd",
-    splash_secondary="#ff79c6",
 )
 
 _GRUVBOX = ThemeSpec(
@@ -338,8 +332,6 @@ _GRUVBOX = ThemeSpec(
     tt_error="#fb4934",
     row_highlight="#504945",
     markdown_code_theme="gruvbox-dark",
-    splash_accent="#83a598",
-    splash_secondary="#d3869b",
 )
 
 _SOLARIZED = ThemeSpec(
@@ -367,8 +359,6 @@ _SOLARIZED = ThemeSpec(
     tt_error="#dc322f",
     row_highlight="#2b3a40",
     markdown_code_theme="solarized-dark",
-    splash_accent="#2aa198",
-    splash_secondary="#d33682",
 )
 
 # Insertion order == menu order. First entry is the default.
@@ -394,10 +384,14 @@ def textual_theme_name(name: Optional[str] = None) -> str:
 
 
 def splash_colors(name: Optional[str] = None) -> tuple[str, str]:
-    """(top, bottom) gradient endpoints for the splash wordmark."""
+    """(top, bottom) splash endpoints: the theme's primary -> secondary.
+
+    The top/flat color is the primary (== the $primary button color), so the
+    wordmark always matches the primary buttons.
+    """
     spec = THEMES.get(name) if name else None
     spec = spec or active_theme()
-    return spec.splash_accent, spec.splash_secondary
+    return spec.tt_primary, spec.tt_secondary
 
 
 def apply_theme(name: Optional[str]) -> ThemeSpec:
@@ -483,36 +477,62 @@ def gradient_hex(top: str, bottom: str, steps: int) -> list[str]:
     return out
 
 
-def build_textual_theme(spec: ThemeSpec):
-    """Construct a textual.theme.Theme for ``spec`` (lazy textual import)."""
+def _luminance_gray(value: str) -> str:
+    """Exact-neutral gray (#vvvvvv) at the perceptual luminance of ``value``.
+
+    Rich's 8-bit downgrade maps near-neutral *tinted* darks onto the saturated
+    6x6x6 color cube (e.g. #2e3440 -> teal), but exact grays (R==G==B) land on
+    the gray ramp. Converting chrome colors to their luminance gray keeps each
+    theme's relative lightness while guaranteeing neutral chrome in 256-color
+    terminals (macOS Terminal.app). No-op if ``value`` is not a hex color.
+    """
+    rgb = _parse_hex(value)
+    if rgb is None:
+        return value
+    v = round(0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2])
+    return f"#{v:02x}{v:02x}{v:02x}"
+
+
+def build_textual_theme(spec: ThemeSpec, truecolor: bool = True):
+    """Construct a textual.theme.Theme for ``spec`` (lazy textual import).
+
+    When ``truecolor`` is False (256-color terminals), the structural chrome is
+    neutralized to exact grays so it doesn't quantize to a saturated cube color;
+    the colorful role/semantic colors (primary/secondary/accent/success/warning/
+    error) are left intact since they downsample correctly and carry the theme.
+    """
     from textual.theme import Theme as TextualTheme
 
+    gray = (lambda c: c) if truecolor else _luminance_gray
     return TextualTheme(
         name=spec.slug,
         primary=spec.tt_primary,
         secondary=spec.tt_secondary,
         accent=spec.tt_accent,
-        foreground=spec.tt_foreground,
-        background=spec.tt_background,
-        surface=spec.tt_surface,
-        panel=spec.tt_panel,
+        foreground=gray(spec.tt_foreground),
+        background=gray(spec.tt_background),
+        surface=gray(spec.tt_surface),
+        panel=gray(spec.tt_panel),
         success=spec.tt_success,
         warning=spec.tt_warning,
         error=spec.tt_error,
         dark=True,
         variables={
-            "text-muted": spec.tt_text_muted,
+            "text-muted": gray(spec.tt_text_muted),
             # Pin the choice-list highlight ($surface-lighten-2) to a near-neutral
             # gray per theme, overriding Textual's auto-derived value so it never
             # quantizes to a saturated cell in 256-color terminals (Solarized).
-            "surface-lighten-2": spec.row_highlight,
+            "surface-lighten-2": gray(spec.row_highlight),
         },
     )
 
 
-def build_textual_themes() -> list:
-    """All five themes as textual.theme.Theme objects, in menu order."""
-    return [build_textual_theme(spec) for spec in THEMES.values()]
+def build_textual_themes(truecolor: bool = True) -> list:
+    """All five themes as textual.theme.Theme objects, in menu order.
+
+    Pass ``truecolor=False`` for 256-color terminals to get neutral-gray chrome.
+    """
+    return [build_textual_theme(spec, truecolor=truecolor) for spec in THEMES.values()]
 
 
 # Populate Color / LOG_LEVEL_COLORS at import so consumers see a ready palette.

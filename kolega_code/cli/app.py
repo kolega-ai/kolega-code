@@ -1016,8 +1016,11 @@ class KolegaCodeApp(App):
     async def on_mount(self) -> None:
         self.settings = self.settings_store.load()
         # Register all themes and apply the persisted one before the first paint,
-        # so the splash and settings controls render already themed.
-        for textual_theme in theme.build_textual_themes():
+        # so the splash and settings controls render already themed. In non-truecolor
+        # terminals (e.g. macOS Terminal.app) the chrome is neutralized to gray so it
+        # doesn't quantize to a saturated cube color.
+        truecolor = theme.supports_truecolor(self.console)
+        for textual_theme in theme.build_textual_themes(truecolor=truecolor):
             self.register_theme(textual_theme)
         theme.apply_theme(self.settings.active_theme)
         try:
@@ -3894,8 +3897,8 @@ class KolegaCodeApp(App):
                         rendered.append("\n")
                     rendered.append(line, style=f"bold {gradient[index]}")
             else:
-                # 256-color terminal (or ANSI endpoints): flat bold accent.
-                rendered.append("\n".join(logo_lines), style=f"bold {Color.ACCENT}")
+                # 256-color terminal: flat bold primary (matches the primary buttons).
+                rendered.append("\n".join(logo_lines), style=f"bold {top}")
         for line in lines[separator + 1 :]:
             rendered.append("\n")
             label, sep, value = line.partition(": ")

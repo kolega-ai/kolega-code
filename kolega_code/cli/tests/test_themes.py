@@ -77,6 +77,49 @@ def test_build_textual_themes_returns_five_named_by_slug_with_row_highlight():
     assert all("text-muted" in t.variables for t in themes)
 
 
+def _is_gray(hexv: str) -> bool:
+    return hexv.startswith("#") and len(hexv) == 7 and hexv[1:3] == hexv[3:5] == hexv[5:7]
+
+
+def test_non_truecolor_chrome_is_neutral_gray_but_truecolor_keeps_tint():
+    pytest.importorskip("textual")
+    tinted = {t.name: t.to_color_system().generate() for t in theme.build_textual_themes(truecolor=True)}
+    gray = {t.name: t.to_color_system().generate() for t in theme.build_textual_themes(truecolor=False)}
+    for slug in ("nord", "solarized", "dracula", "gruvbox", "kolega-dark"):
+        g, t = gray[slug], tinted[slug]
+        # 256-color: structural chrome is exact gray (R==G==B), so it lands on the gray ramp.
+        for key in ("background", "surface", "panel", "foreground", "text-muted", "surface-lighten-2"):
+            assert _is_gray(g[key]), f"{slug}.{key} not neutral in 256-color: {g[key]}"
+        # truecolor keeps Nord/Solarized's signature tinted backgrounds.
+        # Role/semantic colors stay colorful in BOTH (carry the theme + match buttons).
+        assert g["primary"] == t["primary"]
+        assert g["accent"] == t["accent"]
+    # Nord's tinted background is genuinely tinted (not already gray) in truecolor.
+    assert not _is_gray(tinted["nord"]["background"])
+
+
+def test_tinted_chrome_downsamples_to_cube_but_gray_to_ramp():
+    """Regression guard for the macOS Terminal.app teal/blue-background bug."""
+    from rich.color import Color as RichColor
+    from rich.color import ColorSystem
+
+    def to256(hexv: str) -> int:
+        return RichColor.parse(hexv).downgrade(ColorSystem.EIGHT_BIT).number
+
+    for tinted in ("#2e3440", "#002b36"):  # Nord bg, Solarized bg
+        assert to256(tinted) < 232, "tinted dark unexpectedly mapped to the gray ramp"
+        assert to256(theme._luminance_gray(tinted)) >= 232, "neutral gray must map to the gray ramp"
+
+
+def test_splash_endpoints_are_primary_then_secondary():
+    # The wordmark's top/flat color is the primary == the $primary button color.
+    for name in theme.available_themes():
+        spec = theme.THEMES[name]
+        assert theme.splash_colors(name) == (spec.tt_primary, spec.tt_secondary)
+        # Every theme now has hex endpoints, so a gradient is available in truecolor.
+        assert theme.gradient_hex(*theme.splash_colors(name), 6)
+
+
 def test_markdown_code_theme_resolves_to_valid_pygments_style():
     styles = pytest.importorskip("pygments.styles")
     for name in theme.available_themes():
