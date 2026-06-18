@@ -714,6 +714,16 @@ class KolegaCodeApp(App):
         background: $surface;
     }
 
+    /* Neutralize the selected-row highlight on every choice list. Textual paints
+       it with $block-cursor-background (= $primary = #0178D4, a saturated blue),
+       which clashes with the otherwise-neutral chrome and looks wrong in 256-color
+       Terminal.app. The OptionList type selector also covers its subclasses:
+       ActionList, CompletionDropdown, and the Select's SelectOverlay dropdown. */
+    OptionList > .option-list--option-highlighted {
+        background: $surface-lighten-2;
+        color: $text;
+    }
+
     .meta {
         color: $text-muted;
     }
