@@ -95,9 +95,16 @@ def _make_console(stderr: bool = False):
     try:
         from rich.console import Console
 
-        from .theme import build_rich_theme
+        from .theme import apply_theme, build_rich_theme
     except ImportError:
         return None
+    # Apply the persisted theme so plain-CLI output matches the TUI palette.
+    try:
+        from .settings import SettingsStore
+
+        apply_theme(SettingsStore().load().active_theme)
+    except Exception:
+        pass
     return Console(theme=build_rich_theme(), stderr=stderr)
 
 
