@@ -185,6 +185,59 @@ async def test_textual_app_status_tab_is_default_dashboard(
 
 
 @pytest.mark.asyncio
+async def test_settings_tab_grouped_into_model_and_appearance_sections(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli import app as app_module
+    from kolega_code.cli.app import KolegaCodeApp
+
+    class FakeCoderAgent:
+        def __init__(self, **kwargs):
+            self.history = []
+
+        def restore_message_history(self, history):
+            return None
+
+        def dump_message_history(self):
+            return []
+
+        async def cleanup(self):
+            return None
+
+    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test():
+        # Two bordered, titled sections.
+        assert app.query_one("#settings_model").border_title == "Model"
+        assert app.query_one("#settings_appearance").border_title == "Appearance"
+        # Every control still resolves by id (wiring is unchanged).
+        for control_id in (
+            "#provider_select",
+            "#model_select",
+            "#thinking_effort_select",
+            "#api_key_input",
+            "#save_settings",
+            "#settings_status",
+            "#theme_select",
+        ):
+            app.query_one(control_id)
+        # Grouping: model controls in the Model card, theme in the Appearance card.
+        assert app.query_one("#settings_model #provider_select")
+        assert app.query_one("#settings_model #save_settings")
+        assert app.query_one("#settings_appearance #theme_select")
+        assert not list(app.query("#settings_model #theme_select"))
+
+
+@pytest.mark.asyncio
 async def test_textual_app_context_usage_updates_status_without_raw_json(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

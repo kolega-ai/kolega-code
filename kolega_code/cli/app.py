@@ -708,6 +708,15 @@ class KolegaCodeApp(App):
         padding: 1;
     }
 
+    .settings-section {
+        height: auto;
+        border: round $surface;
+        border-title-color: $text;
+        border-title-style: bold;
+        padding: 0 1;
+        margin-bottom: 1;
+    }
+
     #settings_status {
         margin-top: 1;
     }
@@ -978,39 +987,43 @@ class KolegaCodeApp(App):
                             with Collapsible(title="Task List", collapsed=False, id="planning_task_list"):
                                 yield Markdown(TASK_LIST_EMPTY_MESSAGE, id="planning_task_list_markdown")
                     with TabPane("Settings", id="settings_pane"):
-                        with Vertical(id="settings_form"):
-                            yield Label("Provider")
-                            yield Select(
-                                ui_provider_options(),
-                                id="provider_select",
-                                allow_blank=False,
-                                value=UI_DEFAULT_PROVIDER,
-                            )
-                            yield Label("Model")
-                            yield Select(
-                                ui_model_options(UI_DEFAULT_PROVIDER),
-                                id="model_select",
-                                allow_blank=False,
-                                value=UI_DEFAULT_MODEL,
-                            )
-                            yield Label("Thinking effort")
-                            yield Select(
-                                ui_thinking_effort_options(UI_DEFAULT_PROVIDER, UI_DEFAULT_MODEL),
-                                id="thinking_effort_select",
-                                allow_blank=True,
-                                value=default_ui_thinking_effort(UI_DEFAULT_PROVIDER, UI_DEFAULT_MODEL),
-                            )
-                            yield Label("Theme")
-                            yield Select(
-                                [(name, name) for name in theme.available_themes()],
-                                id="theme_select",
-                                allow_blank=False,
-                                value=theme.DEFAULT_THEME_NAME,
-                            )
-                            yield Label("API key")
-                            yield Input(password=True, id="api_key_input")
-                            yield Button("Save Settings", variant="primary", id="save_settings")
-                            yield Static("", id="settings_status")
+                        with VerticalScroll(id="settings_form"):
+                            with Vertical(classes="settings-section", id="settings_model") as model_section:
+                                model_section.border_title = "Model"
+                                yield Label("Provider")
+                                yield Select(
+                                    ui_provider_options(),
+                                    id="provider_select",
+                                    allow_blank=False,
+                                    value=UI_DEFAULT_PROVIDER,
+                                )
+                                yield Label("Model")
+                                yield Select(
+                                    ui_model_options(UI_DEFAULT_PROVIDER),
+                                    id="model_select",
+                                    allow_blank=False,
+                                    value=UI_DEFAULT_MODEL,
+                                )
+                                yield Label("Thinking effort")
+                                yield Select(
+                                    ui_thinking_effort_options(UI_DEFAULT_PROVIDER, UI_DEFAULT_MODEL),
+                                    id="thinking_effort_select",
+                                    allow_blank=True,
+                                    value=default_ui_thinking_effort(UI_DEFAULT_PROVIDER, UI_DEFAULT_MODEL),
+                                )
+                                yield Label("API key")
+                                yield Input(password=True, id="api_key_input")
+                                yield Button("Save Settings", variant="primary", id="save_settings")
+                                yield Static("", id="settings_status")
+                            with Vertical(classes="settings-section", id="settings_appearance") as appearance_section:
+                                appearance_section.border_title = "Appearance"
+                                yield Label("Theme")
+                                yield Select(
+                                    [(name, name) for name in theme.available_themes()],
+                                    id="theme_select",
+                                    allow_blank=False,
+                                    value=theme.DEFAULT_THEME_NAME,
+                                )
         yield Footer()
 
     async def on_mount(self) -> None:
