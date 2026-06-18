@@ -259,7 +259,7 @@ class ConversationEntryWidget(Static):
     """Displays one ConversationEntry and is updated in place as the entry changes."""
 
     def __init__(self, entry: ConversationEntry, format_entry: Callable[[ConversationEntry], object]) -> None:
-        super().__init__("")
+        super().__init__("", markup=False)
         self.entry = entry
         self._format_entry = format_entry
         self._kind_class = ""
@@ -3401,6 +3401,17 @@ class KolegaCodeApp(App):
             self._flush_conversation_render()
 
     def _format_sub_agent_content(self, activity: SubAgentActivity) -> str:
+        header = Text.from_markup(self._sub_agent_header(activity)).plain
+        body = "\n".join(self._sub_agent_body_lines(activity))
+        return f"{header}\n{body}" if body else header
+
+    def _format_sub_agent_renderable(self, activity: SubAgentActivity) -> Text | Group:
+        return self._entry_renderable(
+            self._sub_agent_header(activity),
+            "\n".join(self._sub_agent_body_lines(activity)),
+        )
+
+    def _sub_agent_header(self, activity: SubAgentActivity) -> str:
         if activity.finished_at is not None:
             elapsed = max(0.0, activity.finished_at - activity.started_at)
         else:
@@ -3416,13 +3427,14 @@ class KolegaCodeApp(App):
         else:
             color, state = Color.WARNING, f"stopped after {duration}"
 
-        header = theme.role_header(
+        return theme.role_header(
             Glyph.SUB_AGENT,
             escape(activity.agent_name),
             color,
             state=f"#{activity.index} {theme.g(Glyph.BULLET_SEP)} {state}",
         )
 
+    def _sub_agent_body_lines(self, activity: SubAgentActivity) -> list[str]:
         body_lines: list[str] = []
         if activity.task:
             task = activity.task
@@ -3441,8 +3453,13 @@ class KolegaCodeApp(App):
                     tail = f"…{tail[-SUB_AGENT_TAIL_CHARS:]}"
                 body_lines.append(tail)
 
-        body = self._format_inset_content("\n".join(body_lines))
-        return f"{header}\n{body}"
+        return body_lines
+
+    def _sub_agent_activity_for_entry(self, entry: ConversationEntry) -> Optional[SubAgentActivity]:
+        for activity in self._sub_agent_activities.values():
+            if activity.entry is entry:
+                return activity
+        return None
 
     def _running_sub_agents(self) -> list[SubAgentActivity]:
         return [a for a in self._sub_agent_activities.values() if a.status == "running"]
@@ -3596,7 +3613,7 @@ class KolegaCodeApp(App):
         view.anchor()
         self._update_jump_button()
 
-    def _format_conversation_entry(self, entry: ConversationEntry) -> str | Text | Group:
+    def _format_conversation_entry(self, entry: ConversationEntry) -> Text | Group:
         """Render an entry using the shared header grammar.
 
         GRAMMAR: <colored glyph> <bold label> [ · state] — body inset beneath.
@@ -3606,40 +3623,55 @@ class KolegaCodeApp(App):
         streaming = None if entry.complete else theme.g(Glyph.ELLIPSIS)
         if entry.kind == "user":
             header = theme.role_header(Glyph.USER, "You", Color.USER)
-            return f"{header}\n{self._format_inset_content(entry.content)}"
+            return self._entry_renderable(header, entry.content)
         if entry.kind == "assistant":
             header = theme.role_header(Glyph.AGENT, "Agent", Color.AGENT, state=streaming)
             if entry.complete and entry.content.strip():
                 return self._markdown_entry(header, entry.content)
-            return f"{header}\n{self._format_inset_content(entry.content)}"
+            return self._entry_renderable(header, entry.content)
         if entry.kind == "thinking":
             header = theme.role_header(
                 Glyph.STATUS, "Thinking", Color.THINKING, label_style="dim italic", state=streaming
             )
-            return f"{header}\n{self._format_inset_content(entry.content, style='italic dim')}"
+            return self._entry_renderable(header, entry.content, body_style="italic dim")
         if entry.kind == "progress":
             color = Color.ERROR if entry.tone == "error" else Color.WARNING
             header = theme.role_header(Glyph.STATUS, "Status", color, state=streaming)
-            return f"{header}\n{self._format_inset_content(entry.content)}"
+            return self._entry_renderable(header, entry.content)
         if entry.kind == "plan":
             header = theme.role_header(Glyph.PLAN, "Plan", Color.SUCCESS)
             if entry.content.strip():
                 return self._markdown_entry(header, entry.content)
-            return header
+            return Text.from_markup(header)
         if entry.kind == "question":
             header = theme.role_header(Glyph.QUESTION, "Question", Color.ACCENT)
-            return f"{header}\n{self._format_inset_content(entry.content)}"
+            return self._entry_renderable(header, entry.content)
         if entry.kind == "skill":
             header = theme.role_header(Glyph.PLAN, "Skill", Color.SUCCESS)
-            return f"{header}\n{self._format_inset_content(entry.content)}"
+            return self._entry_renderable(header, entry.content)
         if entry.kind == "sub_agent":
-            return entry.content  # pre-formatted markup, see _format_sub_agent_content
+            activity = self._sub_agent_activity_for_entry(entry)
+            if activity is not None:
+                return self._format_sub_agent_renderable(activity)
+            return Text(entry.content)
         if entry.kind in TOOL_STATE_PRESENTATION:
             state, color = TOOL_STATE_PRESENTATION[entry.kind]
             return self._format_tool_entry(entry, state=state, color=color)
         if entry.kind == "system":
-            return f"[dim]{escape(entry.content)}[/dim]"
-        return escape(entry.content)
+            return Text(entry.content, style="dim")
+        return Text(entry.content)
+
+    def _entry_renderable(
+        self,
+        header: str,
+        body: Optional[str] = None,
+        *,
+        body_style: Optional[str] = None,
+    ) -> Text | Group:
+        header_text = Text.from_markup(header)
+        if body is None:
+            return header_text
+        return Group(header_text, self._format_inset_text(body, style=body_style))
 
     def _markdown_entry(self, header: str, content: str) -> Group:
         return Group(
@@ -3671,20 +3703,26 @@ class KolegaCodeApp(App):
                 rendered.append(line, style="dim")
         return rendered
 
-    def _format_tool_entry(self, entry: ConversationEntry, *, state: str, color: str) -> str:
+    def _format_tool_entry(self, entry: ConversationEntry, *, state: str, color: str) -> Text | Group:
         tool_name = escape(entry.tool_name or "tool")
         header = theme.role_header(Glyph.TOOL, tool_name, color, state=state)
         if not entry.content:
-            return header
-        return f"{header}\n{self._format_inset_content(entry.content)}"
+            return Text.from_markup(header)
+        return self._entry_renderable(header, entry.content)
 
     def _tool_entry_title(self, entry: ConversationEntry) -> str:
         state, color = TOOL_STATE_PRESENTATION.get(entry.kind, ("running", Color.ACCENT))
         return theme.role_header(Glyph.TOOL, escape(entry.tool_name or "tool"), color, state=state)
 
-    def _format_inset_content(self, content: str, style: Optional[str] = None) -> str:
-        bar = f"[dim]  {theme.g(Glyph.INSET_BAR)}[/dim]"
+    def _format_inset_text(self, content: str, style: Optional[str] = None) -> Text:
+        bar = f"  {theme.g(Glyph.INSET_BAR)}"
         lines = content.splitlines() or [""]
-        if style:
-            return "\n".join(f"{bar} [{style}]{escape(line)}[/{style}]" if line else bar for line in lines)
-        return "\n".join(f"{bar} {escape(line)}" if line else bar for line in lines)
+        rendered = Text()
+        for index, line in enumerate(lines):
+            if index:
+                rendered.append("\n")
+            rendered.append(bar, style="dim")
+            if line:
+                rendered.append(" ")
+                rendered.append(line, style=style)
+        return rendered
