@@ -1137,7 +1137,8 @@ async def test_textual_app_planning_question_tool_accepts_option_list_answer(
         assert app.focused is question_actions
         assert question_actions.highlighted == 0
         assert question_actions.get_option("question_option_0").prompt == "1. Keep state local — Store in memory"
-        assert app.conversation_entries[-1].kind == "question"
+        # While pending, the prompt lives only in the combined panel — no chat bubble.
+        assert all(entry.kind != "question" for entry in app.conversation_entries)
 
         selected = question_actions.get_option("question_option_1")
         await app.on_option_list_option_selected(OptionList.OptionSelected(question_actions, selected, 1))
@@ -1147,6 +1148,9 @@ async def test_textual_app_planning_question_tool_accepts_option_list_answer(
         assert app.query_one("#question_actions").display is False
         assert app.query_one("#composer", ChatComposer).disabled is True
         assert app.query_one("#composer", ChatComposer).placeholder == COMPOSER_PLACEHOLDER
+        # After answering, the question is recorded followed by the chosen answer.
+        assert app.conversation_entries[-2].kind == "question"
+        assert app.conversation_entries[-2].content == "Which approach should we use?"
         assert app.conversation_entries[-1].kind == "user"
         assert app.conversation_entries[-1].content == "Persist it"
         app._turn_active = False
