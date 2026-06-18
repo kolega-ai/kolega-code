@@ -46,6 +46,11 @@ TOOL_FAILED = "{tool} failed."
 RUNNING_TERMINAL_COMMAND = "Running terminal command…"
 RUNNING_SUB_AGENT = "Running sub-agent {name} #{index}…"
 RUNNING_SUB_AGENTS = "Running {count} sub-agents…"
+SUB_AGENT_INSPECT_HINT = "Ctrl+G to inspect"
+SUB_AGENT_INSPECTOR_EMPTY = "No sub-agents have run in this turn yet."
+SUB_AGENT_INSPECTOR_NO_SELECTION = "No sub-agent selected."
+SUB_AGENT_INSPECTOR_NO_STEPS = "No trajectory captured yet…"
+SUB_AGENT_TRAJECTORY_COPIED = "Copied the sub-agent trajectory to the clipboard."
 
 # Confirmations
 SWITCHED_MODE = "Switched to {mode} mode."

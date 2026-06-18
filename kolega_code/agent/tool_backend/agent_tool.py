@@ -96,11 +96,20 @@ class AgentTool(BaseTool):
     async def _interrupt_conversation(self, conversation_id: str, update_data: dict) -> None:
         await self._call_recorder("interrupt_conversation", conversation_id, update_data)
 
-    async def _send_status_event(self, status: str, message: str, sub_agent_info: Optional[dict] = None) -> None:
+    async def _send_status_event(
+        self,
+        status: str,
+        message: str,
+        sub_agent_info: Optional[dict] = None,
+        extra: Optional[dict] = None,
+    ) -> None:
         """Helper method to send status events."""
+        content = {"status": status, "message": message}
+        if extra:
+            content.update(extra)
         event = AgentEvent(
             event_type="chat_message",
-            content={"status": status, "message": message},
+            content=content,
             sender=self.caller.agent_name if self.caller else "agent-tool",
             sub_agent_info=sub_agent_info,
         )
@@ -335,8 +344,13 @@ class AgentTool(BaseTool):
                 await self._complete_conversation(conversation_id, update_data)
                 conversation_finished = True
 
-            # Send completion status
-            await self._send_status_event("STOPPED", f"Completed {agent_name} task", sub_agent_info=sub_agent_info)
+            # Send completion status, including the sub-agent's token total when available
+            # so the host UI can show per-agent usage on the finished card/roster.
+            total_tokens = getattr(agent, "total_tokens_used", None)
+            extra = {"total_tokens": total_tokens} if isinstance(total_tokens, int) else None
+            await self._send_status_event(
+                "STOPPED", f"Completed {agent_name} task", sub_agent_info=sub_agent_info, extra=extra
+            )
 
             return result
 

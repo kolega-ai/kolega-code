@@ -27,6 +27,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
 from textual.message import Message as TextualMessage
+from textual.screen import ModalScreen
 from textual.selection import Selection
 from textual.strip import Strip
 from textual.timer import Timer
@@ -224,6 +225,15 @@ class SubAgentActivity:
     finished_at: Optional[float] = None
     stream_buffers: dict[str, str] = field(default_factory=dict)  # chunk uuid -> accumulated text
     active_stream_uuid: Optional[str] = None
+    # Full captured trajectory for the inspector. Steps are ConversationEntry objects so
+    # the existing entry widgets/renderers display them verbatim. They live on the activity
+    # (not in the top-level conversation) so the main transcript stays an append-only summary.
+    steps: list[ConversationEntry] = field(default_factory=list)
+    tool_steps: dict[str, ConversationEntry] = field(default_factory=dict)  # tool_call_id/name -> step
+    stream_steps: dict[str, ConversationEntry] = field(default_factory=dict)  # chunk uuid -> step
+    tokens: Optional[int] = None
+    depth: int = 1
+    current_action: str = ""  # live "now:" action while running
 
 
 @dataclass
@@ -634,6 +644,339 @@ class ChatComposer(TextArea):
             dropdown.close()
 
 
+class SubAgentEntryWidget(ConversationEntryWidget):
+    """A sub-agent summary card that opens the inspector when clicked."""
+
+    @dataclass
+    class Pressed(TextualMessage):
+        entry: ConversationEntry
+
+    def on_click(self) -> None:
+        self.post_message(self.Pressed(self.entry))
+
+
+class SubAgentRosterRow(Static):
+    """One selectable row in the inspector's fleet roster."""
+
+    @dataclass
+    class Selected(TextualMessage):
+        key: str
+
+    def __init__(self, key: str) -> None:
+        super().__init__("", markup=False)
+        self.key = key
+
+    def on_click(self) -> None:
+        self.post_message(self.Selected(self.key))
+
+
+class SubAgentInspectorScreen(ModalScreen):
+    """Full-screen mission-control view of dispatched sub-agents.
+
+    Left: a roster of every sub-agent in the turn (running + finished). Right: the
+    selected agent's full trajectory, rendered with the same entry widgets as the main
+    transcript (collapsible tool calls, thinking, responses). Switch agents with the
+    arrow keys or by clicking a roster row; the view updates live while agents run.
+    """
+
+    BINDINGS = [
+        Binding("escape", "close", "Close", show=True, priority=True),
+        Binding("q", "close", "Close", show=False, priority=True),
+        Binding("down", "next_agent", "Next agent", show=True, priority=True),
+        Binding("up", "prev_agent", "Prev agent", show=False, priority=True),
+        Binding("o", "toggle_follow", "Follow", show=True, priority=True),
+        Binding("y", "copy_trajectory", "Copy", show=True, priority=True),
+    ]
+
+    def __init__(self, owner: "KolegaCodeApp", selected_key: str) -> None:
+        super().__init__()
+        self._owner = owner
+        self._selected_key = selected_key
+        self._follow = True
+        self._rows: dict[str, SubAgentRosterRow] = {}
+        self._step_widgets: dict[str, ConversationEntryWidget | ToolEntryWidget] = {}
+        self._rendered_key: Optional[str] = None
+        self._empty_shown = False
+        self._spinner_frame = 0
+        self._flush_pending = False
+
+    def compose(self) -> ComposeResult:
+        with Horizontal(id="inspector_body"):
+            yield VerticalScroll(id="inspector_roster")
+            with Vertical(id="inspector_main"):
+                yield Static("", id="inspector_header", markup=True)
+                yield VerticalScroll(id="inspector_trajectory")
+        yield Static("", id="inspector_footer", markup=False)
+
+    def on_mount(self) -> None:
+        self.border_title = f"{theme.g(Glyph.SUB_AGENT)} Sub-agents"
+        self._sync_roster()
+        self._refresh_header()
+        self._sync_trajectory()
+        self._refresh_footer()
+        self.set_interval(theme.SPINNER_INTERVAL, self._on_tick)
+
+    def on_unmount(self) -> None:
+        # Defensive: the owner clears this on close, but guarantee no dangling reference.
+        if self._owner._sub_agent_inspector is self:
+            self._owner._sub_agent_inspector = None
+
+    # ---- live updates ---------------------------------------------------------
+
+    def note_activity_updated(self, activity: SubAgentActivity) -> None:
+        """Called by the owner when any sub-agent emits an event (coalesced)."""
+        self._schedule_flush()
+
+    def _schedule_flush(self) -> None:
+        if self._flush_pending:
+            return
+        self._flush_pending = True
+        try:
+            self.set_timer(theme.RENDER_COALESCE_INTERVAL, self._flush)
+        except Exception:
+            self._flush()
+
+    def _flush(self) -> None:
+        self._flush_pending = False
+        self._sync_roster()
+        self._refresh_header()
+        self._sync_trajectory()
+
+    def _on_tick(self) -> None:
+        self._spinner_frame += 1
+        self._sync_roster()
+        self._refresh_header()
+
+    # ---- selection ------------------------------------------------------------
+
+    def _ordered_activities(self) -> list[SubAgentActivity]:
+        return sorted(self._owner._sub_agent_activities.values(), key=lambda a: a.index)
+
+    def action_next_agent(self) -> None:
+        self._move_selection(1)
+
+    def action_prev_agent(self) -> None:
+        self._move_selection(-1)
+
+    def _move_selection(self, delta: int) -> None:
+        keys = [a.agent_id for a in self._ordered_activities()]
+        if not keys:
+            return
+        if self._selected_key in keys:
+            index = (keys.index(self._selected_key) + delta) % len(keys)
+        else:
+            index = 0
+        self._selected_key = keys[index]
+        self._select_changed()
+
+    def on_sub_agent_roster_row_selected(self, message: SubAgentRosterRow.Selected) -> None:
+        if message.key != self._selected_key:
+            self._selected_key = message.key
+            self._select_changed()
+
+    def _select_changed(self) -> None:
+        self._sync_roster()
+        self._refresh_header()
+        self._sync_trajectory()
+        row = self._rows.get(self._selected_key)
+        if row is not None:
+            try:
+                row.scroll_visible()
+            except Exception:
+                pass
+
+    # ---- rendering ------------------------------------------------------------
+
+    def _sync_roster(self) -> None:
+        try:
+            roster = self.query_one("#inspector_roster", VerticalScroll)
+        except Exception:
+            return
+        activities = self._ordered_activities()
+        keys = [a.agent_id for a in activities]
+        if keys != list(self._rows):
+            roster.remove_children()
+            self._rows = {}
+            rows = []
+            for activity in activities:
+                row = SubAgentRosterRow(activity.agent_id)
+                self._rows[activity.agent_id] = row
+                rows.append(row)
+            if rows:
+                roster.mount(*rows)
+        for activity in activities:
+            row = self._rows.get(activity.agent_id)
+            if row is not None:
+                row.update(self._roster_row(activity, selected=activity.agent_id == self._selected_key))
+
+    def _status_glyph(self, activity: SubAgentActivity) -> tuple[str, str]:
+        if activity.status == "running":
+            frames = theme.spinner_frames()
+            return frames[self._spinner_frame % len(frames)], Color.ACCENT
+        if activity.status == "completed":
+            return theme.g(Glyph.CHECK), Color.SUCCESS
+        if activity.status == "failed":
+            return theme.g(Glyph.CROSS), Color.ERROR
+        return theme.g(Glyph.BULLET_SEP), Color.WARNING
+
+    def _elapsed(self, activity: SubAgentActivity) -> str:
+        if activity.finished_at is not None:
+            seconds = max(0.0, activity.finished_at - activity.started_at)
+        else:
+            seconds = max(0.0, self._owner._now() - activity.started_at)
+        return self._owner._format_turn_duration(seconds)
+
+    def _roster_row(self, activity: SubAgentActivity, *, selected: bool) -> Text:
+        sep = theme.g(Glyph.BULLET_SEP)
+        glyph, color = self._status_glyph(activity)
+        indent = "  " * max(0, activity.depth - 1)
+        row_style = "bold" if selected else ""
+        line = Text()
+        line.append("> " if selected else "  ", style=row_style)
+        line.append(f"{indent}{glyph} ", style=color)
+        parts = [f"#{activity.index}", activity.agent_name, self._elapsed(activity), f"{activity.tool_calls}t"]
+        if activity.tokens:
+            parts.append(f"{self._owner._format_token_count(activity.tokens)}tok")
+        line.append(f"  {sep}  ".join(parts), style=row_style)
+        tail = activity.current_action if activity.status == "running" else activity.last_activity
+        if tail:
+            line.append(f"\n    {theme.g(Glyph.INSET_ELBOW)} ", style="dim")
+            line.append(tail[:48], style="dim")
+        return line
+
+    def _refresh_header(self) -> None:
+        try:
+            header = self.query_one("#inspector_header", Static)
+        except Exception:
+            return
+        activity = self._owner._sub_agent_activities.get(self._selected_key)
+        if activity is None:
+            header.update(messages.SUB_AGENT_INSPECTOR_NO_SELECTION)
+            return
+        header.update(Text.from_markup(self._header_markup(activity)))
+
+    def _header_markup(self, activity: SubAgentActivity) -> str:
+        sep = theme.g(Glyph.BULLET_SEP)
+        owner = self._owner
+        base = owner._sub_agent_header(activity)
+        extras = [f"{activity.tool_calls} tool{'' if activity.tool_calls == 1 else 's'}"]
+        if activity.tokens:
+            extras.append(f"{owner._format_token_count(activity.tokens)} tok")
+        line = base + theme.styled(f" {sep} " + f" {sep} ".join(extras), "dim")
+        if activity.task:
+            line += "\n" + theme.styled(escape(f"Task: {activity.task}"), "dim")
+        return line
+
+    def _sync_trajectory(self) -> None:
+        try:
+            view = self.query_one("#inspector_trajectory", VerticalScroll)
+        except Exception:
+            return
+        activity = self._owner._sub_agent_activities.get(self._selected_key)
+        if activity is None:
+            view.remove_children()
+            self._step_widgets = {}
+            self._rendered_key = None
+            self._empty_shown = False
+            return
+        if self._rendered_key != self._selected_key:
+            view.remove_children()
+            self._step_widgets = {}
+            self._empty_shown = False
+            self._rendered_key = self._selected_key
+        if not activity.steps:
+            if not self._empty_shown:
+                view.remove_children()
+                self._step_widgets = {}
+                view.mount(Static(messages.SUB_AGENT_INSPECTOR_NO_STEPS, classes="inspector-empty"))
+                self._empty_shown = True
+            return
+        if self._empty_shown:
+            view.remove_children()
+            self._step_widgets = {}
+            self._empty_shown = False
+        rendered_ids = list(self._step_widgets)
+        current_ids = [step.entry_id for step in activity.steps]
+        if current_ids[: len(rendered_ids)] != rendered_ids:
+            view.remove_children()
+            self._step_widgets = {}
+            rendered_ids = []
+        for widget in self._step_widgets.values():
+            widget.refresh_content()
+        new_steps = activity.steps[len(rendered_ids) :]
+        if new_steps:
+            widgets = []
+            for step in new_steps:
+                widget = self._owner._make_entry_widget(step)
+                self._step_widgets[step.entry_id] = widget
+                widgets.append(widget)
+            view.mount(*widgets)
+        if self._follow:
+            self._scroll_trajectory_end()
+
+    def _scroll_trajectory_end(self) -> None:
+        """Scroll to the newest step after layout settles (heights are auto)."""
+
+        def _do() -> None:
+            try:
+                self.query_one("#inspector_trajectory", VerticalScroll).scroll_end(animate=False)
+            except Exception:
+                pass
+
+        try:
+            self.call_after_refresh(_do)
+        except Exception:
+            _do()
+
+    def _refresh_footer(self) -> None:
+        try:
+            footer = self.query_one("#inspector_footer", Static)
+        except Exception:
+            return
+        sep = theme.g(Glyph.BULLET_SEP)
+        follow = "on" if self._follow else "off"
+        footer.update(
+            f"Esc close  {sep}  Up/Down switch agent  {sep}  Tab+Enter expand tool"
+            f"  {sep}  o follow:{follow}  {sep}  y copy"
+        )
+
+    # ---- actions --------------------------------------------------------------
+
+    def action_close(self) -> None:
+        self._owner._sub_agent_inspector = None
+        self.dismiss()
+
+    def action_toggle_follow(self) -> None:
+        self._follow = not self._follow
+        self._refresh_footer()
+        if self._follow:
+            self._sync_trajectory()
+
+    def action_copy_trajectory(self) -> None:
+        activity = self._owner._sub_agent_activities.get(self._selected_key)
+        if activity is None:
+            return
+        self._owner.copy_to_clipboard(self._trajectory_text(activity))
+        try:
+            self._owner._notify_user(messages.SUB_AGENT_TRAJECTORY_COPIED, severity="information")
+        except Exception:
+            pass
+
+    def _trajectory_text(self, activity: SubAgentActivity) -> str:
+        lines = [f"{activity.agent_name} #{activity.index} ({activity.status})"]
+        if activity.task:
+            lines.append(f"Task: {activity.task}")
+        lines.append("")
+        for step in activity.steps:
+            label = step.tool_name or step.kind
+            lines.append(f"[{step.kind}] {label}")
+            body = step.full_content or step.content
+            if body:
+                lines.append(body)
+            lines.append("")
+        return "\n".join(lines).rstrip() + "\n"
+
+
 class KolegaCodeApp(App):
     """Interactive terminal UI for Kolega Code."""
 
@@ -850,6 +1193,56 @@ class KolegaCodeApp(App):
     Select > SelectOverlay {
         border: round $surface;
     }
+
+    SubAgentInspectorScreen {
+        align: center middle;
+    }
+
+    SubAgentInspectorScreen #inspector_body {
+        width: 100%;
+        height: 1fr;
+    }
+
+    SubAgentInspectorScreen #inspector_roster {
+        width: 40;
+        height: 100%;
+        border: round $surface;
+        padding: 0 1;
+    }
+
+    SubAgentInspectorScreen #inspector_main {
+        width: 1fr;
+        height: 100%;
+    }
+
+    SubAgentInspectorScreen #inspector_header {
+        height: auto;
+        border: round $surface;
+        padding: 0 1;
+    }
+
+    SubAgentInspectorScreen #inspector_trajectory {
+        height: 1fr;
+        border: round $surface;
+        padding: 0 1;
+    }
+
+    SubAgentRosterRow {
+        height: auto;
+        padding: 0 0 1 0;
+    }
+
+    SubAgentInspectorScreen .inspector-empty {
+        color: $text-muted;
+        padding: 1;
+    }
+
+    SubAgentInspectorScreen #inspector_footer {
+        height: 1;
+        padding: 0 1;
+        background: $surface;
+        color: $text-muted;
+    }
     """
 
     BINDINGS = [
@@ -858,6 +1251,7 @@ class KolegaCodeApp(App):
         ),
         Binding("ctrl+p", "toggle_permission_mode", "Permissions", show=True, key_display="Ctrl+P", priority=True),
         Binding("ctrl+o", "toggle_sidebar", "Sidebar", show=True, key_display="Ctrl+O", priority=True),
+        Binding("ctrl+g", "open_sub_agent", "Agents", show=True, key_display="Ctrl+G", priority=True),
         Binding("ctrl+c", "cancel_generation", "Cancel", show=True),
         Binding("escape", "cancel_generation", "Cancel", show=False),
         Binding("ctrl+q", "quit", "Quit", show=True),
@@ -938,6 +1332,7 @@ class KolegaCodeApp(App):
         self._turn_final_state = TurnState.IDLE
         self._spinner_frame = 0
         self._last_sub_agent_tick = 0.0
+        self._sub_agent_inspector: Optional[SubAgentInspectorScreen] = None
         self._terminal_has_content = False
 
     def compose(self) -> ComposeResult:
@@ -1558,6 +1953,43 @@ class KolegaCodeApp(App):
         self._set_sidebar_visible(not self.sidebar_visible)
         message = messages.SIDEBAR_SHOWN if self.sidebar_visible else messages.SIDEBAR_HIDDEN
         self._notify_user(message)
+
+    def action_open_sub_agent(self, key: Optional[str] = None) -> None:
+        """Open the full-screen sub-agent inspector (mission control)."""
+        if self._sub_agent_inspector is not None:
+            return
+        if not self._sub_agent_activities:
+            self._notify_user(messages.SUB_AGENT_INSPECTOR_EMPTY, severity="information")
+            return
+        if key is None or key not in self._sub_agent_activities:
+            key = self._default_sub_agent_key()
+        if key is None:
+            return
+        screen = SubAgentInspectorScreen(self, key)
+        self._sub_agent_inspector = screen
+        self.push_screen(screen)
+
+    def _default_sub_agent_key(self) -> Optional[str]:
+        """Most-recently-started running agent, else the most recent overall."""
+        pool = self._running_sub_agents() or list(self._sub_agent_activities.values())
+        if not pool:
+            return None
+        return max(pool, key=lambda a: a.index).agent_id
+
+    def _close_sub_agent_inspector(self) -> None:
+        screen = self._sub_agent_inspector
+        if screen is None:
+            return
+        self._sub_agent_inspector = None
+        try:
+            screen.dismiss()
+        except Exception:
+            pass
+
+    def on_sub_agent_entry_widget_pressed(self, message: SubAgentEntryWidget.Pressed) -> None:
+        activity = self._sub_agent_activity_for_entry(message.entry)
+        if activity is not None:
+            self.action_open_sub_agent(activity.agent_id)
 
     async def action_quit(self) -> None:
         if self.agent is not None:
@@ -2898,6 +3330,7 @@ class KolegaCodeApp(App):
         return f"{index + 1}. {name}{current_suffix}"
 
     def _reset_current_thread(self) -> None:
+        self._close_sub_agent_inspector()
         if self.agent is not None:
             self.agent.history = MessageHistory()
         self.session.history = []
@@ -3371,6 +3804,7 @@ class KolegaCodeApp(App):
         self._invalidate_conversation(entry)
 
     def _begin_turn_progress(self) -> None:
+        self._close_sub_agent_inspector()
         self._tool_entries = {}
         self._tool_stream_buffers = {}
         self._sub_agent_activities = {}
@@ -3564,36 +3998,136 @@ class KolegaCodeApp(App):
     def _render_sub_agent_event(self, event: AgentEvent) -> None:
         activity = self._ensure_sub_agent_activity(event)
         content = event.content
+        info = event.sub_agent_info or {}
+        depth = info.get("depth")
+        if isinstance(depth, int):
+            activity.depth = depth
         status = content.get("status")
         if status:  # lifecycle event from AgentTool
+            tokens = content.get("total_tokens", content.get("tokens"))
+            if isinstance(tokens, int):
+                activity.tokens = tokens
             if status != "GENERATING":
                 message = str(content.get("message") or "")
                 failed = status == "ERROR" or message.startswith("Error")
                 activity.status = "failed" if failed else "completed"
                 activity.finished_at = self._now()
                 activity.entry.complete = True
+                activity.current_action = ""
                 activity.last_activity = message if failed else ""
                 self._refresh_sub_agent_activity_status()
             self._refresh_sub_agent_entry(activity, force=True)
+            self._invalidate_sub_agent_detail(activity)
             return
 
-        message_type = content.get("message_type", "message")
+        message_type = content.get("message_type", "response")
         text = str(content.get("text") or "")
         if message_type == "tool_call":
             activity.tool_calls += 1
-            activity.last_activity = str(content.get("tool_description") or content.get("tool_name") or "tool")
+            tool = str(content.get("tool_description") or content.get("tool_name") or "tool")
+            activity.last_activity = tool
+            activity.current_action = tool
+            self._record_sub_agent_tool_step(activity, "tool_call", content)
         elif message_type in {"tool_result", "tool_error"}:
             suffix = "failed" if message_type == "tool_error" else "done"
             tool = str(content.get("tool_description") or content.get("tool_name") or "tool")
             activity.last_activity = f"{tool} {suffix}"
+            activity.current_action = f"{tool} {suffix}"
+            self._record_sub_agent_tool_step(activity, message_type, content)
         elif message_type == "thinking":
             activity.last_activity = "thinking"
+            activity.current_action = "thinking"
+            self._accumulate_sub_agent_stream(activity, "thinking", event, text)
         else:  # streamed response text - accumulate by chunk uuid
+            activity.current_action = "responding"
             if event.uuid and text:
                 buffer = activity.stream_buffers.get(event.uuid, "") + text
                 activity.stream_buffers[event.uuid] = buffer
                 activity.active_stream_uuid = event.uuid
+            self._accumulate_sub_agent_stream(activity, "assistant", event, text)
         self._refresh_sub_agent_entry(activity)
+        self._invalidate_sub_agent_detail(activity)
+
+    def _record_sub_agent_tool_step(self, activity: SubAgentActivity, message_type: str, content: dict) -> None:
+        """Capture a sub-agent tool_call/result/error as a ConversationEntry step,
+        pairing call->result by tool_call_id exactly like _add_tool_message.
+
+        Sub-agent tool events always carry a stable tool_call_id (the emitter sets it from
+        tool_execution_id). The no-id branch is a defensive fallback: a call always gets its
+        own step, and a result/error attaches to the most recent unpaired same-name call so
+        distinct executions of the same tool can never collide onto one shared step.
+        """
+        tool_name = str(content.get("tool_description") or content.get("tool_name") or "tool")
+        tool_call_id = str(content.get("tool_call_id") or "").strip()
+        text = str(content.get("text") or "")
+        if message_type == "tool_call":
+            entry_content = text or f"Calling {tool_name}"
+            full_content = ""
+            complete = False
+        elif message_type == "tool_error":
+            entry_content = self._truncate_tool_text(text)
+            full_content = self._capped_tool_text(text)
+            complete = True
+        else:  # tool_result
+            entry_content = self._tool_result_preview(text)
+            full_content = self._capped_tool_text(text)
+            complete = True
+
+        step = None
+        if tool_call_id:
+            step = activity.tool_steps.get(tool_call_id)
+        elif message_type != "tool_call":
+            step = self._last_unpaired_sub_agent_tool_step(activity, tool_name)
+        if step is None:
+            step = ConversationEntry(
+                kind=message_type,
+                content=entry_content,
+                complete=complete,
+                tool_name=tool_name,
+                tool_call_id=tool_call_id or None,
+                full_content=full_content,
+            )
+            activity.steps.append(step)
+            if tool_call_id:
+                activity.tool_steps[tool_call_id] = step
+            return
+        step.kind = message_type
+        step.content = entry_content
+        step.complete = complete
+        step.tool_name = tool_name
+        step.full_content = full_content or step.full_content
+
+    def _last_unpaired_sub_agent_tool_step(
+        self, activity: SubAgentActivity, tool_name: str
+    ) -> Optional[ConversationEntry]:
+        """Most recent still-running tool step for a tool name (name-based result pairing)."""
+        for step in reversed(activity.steps):
+            if step.kind == "tool_call" and not step.complete and step.tool_name == tool_name:
+                return step
+        return None
+
+    def _accumulate_sub_agent_stream(
+        self, activity: SubAgentActivity, kind: str, event: AgentEvent, text: str
+    ) -> None:
+        """Accumulate streamed thinking/response chunks into one step per chunk uuid,
+        mirroring the main transcript's _apply_stream_chunk.
+
+        Events normally carry a uuid; the kind-qualified sentinel for the no-uuid case keeps
+        consecutive uuid-less chunks of the same kind merged into one step (rather than
+        fragmenting) while never merging thinking into response.
+        """
+        complete = not event.is_streaming
+        chunk_uuid = str(event.uuid or "")
+        cache_key = chunk_uuid or f"__nouuid__:{kind}"
+        step = activity.stream_steps.get(cache_key)
+        if step is None:
+            if not text and not complete:
+                return
+            step = ConversationEntry(kind=kind, content="", complete=complete, uuid=chunk_uuid or None)
+            activity.steps.append(step)
+            activity.stream_steps[cache_key] = step
+        step.content += text
+        step.complete = complete
 
     def _note_sub_agent_tool_stream(self, event: AgentEvent) -> None:
         activity = self._ensure_sub_agent_activity(event)
@@ -3643,6 +4177,7 @@ class KolegaCodeApp(App):
         )
 
     def _sub_agent_body_lines(self, activity: SubAgentActivity) -> list[str]:
+        sep = theme.g(Glyph.BULLET_SEP)
         body_lines: list[str] = []
         if activity.task:
             task = activity.task
@@ -3650,18 +4185,38 @@ class KolegaCodeApp(App):
                 task = f"{task[:SUB_AGENT_TASK_PREVIEW_CHARS]}{theme.g(Glyph.ELLIPSIS)}"
             body_lines.append(f"Task: {task}")
         tools_line = f"{activity.tool_calls} tool{'' if activity.tool_calls == 1 else 's'}"
+        if activity.tokens:
+            tools_line += f" {sep} {self._format_token_count(activity.tokens)} tok"
         if activity.last_activity:
-            tools_line += f" · last: {activity.last_activity}"
+            tools_line += f" {sep} last: {activity.last_activity}"
         body_lines.append(tools_line)
+        if activity.status == "running" and activity.current_action:
+            body_lines.append(f"{theme.g(Glyph.TOOL)} now: {activity.current_action}")
         if activity.status == "running" and activity.active_stream_uuid:
             tail = activity.stream_buffers.get(activity.active_stream_uuid, "")
             tail = " ".join(tail.split())
             if tail:
                 if len(tail) > SUB_AGENT_TAIL_CHARS:
-                    tail = f"…{tail[-SUB_AGENT_TAIL_CHARS:]}"
+                    tail = f"{theme.g(Glyph.ELLIPSIS)}{tail[-SUB_AGENT_TAIL_CHARS:]}"
                 body_lines.append(tail)
+        if activity.steps:
+            body_lines.append(messages.SUB_AGENT_INSPECT_HINT)
 
         return body_lines
+
+    def _format_token_count(self, tokens: int) -> str:
+        """Compact token count for cards/roster: 980, 3.1k, 1.2M."""
+        if tokens < 1000:
+            return str(tokens)
+        if tokens < 1_000_000:
+            return f"{tokens / 1000:.1f}k".replace(".0k", "k")
+        return f"{tokens / 1_000_000:.1f}M".replace(".0M", "M")
+
+    def _invalidate_sub_agent_detail(self, activity: SubAgentActivity) -> None:
+        """Refresh the open inspector if it is showing this agent (no-op when closed)."""
+        screen = self._sub_agent_inspector
+        if screen is not None:
+            screen.note_activity_updated(activity)
 
     def _sub_agent_activity_for_entry(self, entry: ConversationEntry) -> Optional[SubAgentActivity]:
         for activity in self._sub_agent_activities.values():
@@ -3805,6 +4360,8 @@ class KolegaCodeApp(App):
     def _make_entry_widget(self, entry: ConversationEntry) -> ConversationEntryWidget | ToolEntryWidget:
         if entry.kind in {"tool_call", "tool_result", "tool_error"}:
             return ToolEntryWidget(entry, self._tool_entry_title)
+        if entry.kind == "sub_agent":
+            return SubAgentEntryWidget(entry, self._format_conversation_entry)
         return ConversationEntryWidget(entry, self._format_conversation_entry)
 
     def _update_jump_button(self) -> None:
