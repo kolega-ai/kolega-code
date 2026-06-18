@@ -792,6 +792,8 @@ class SubAgentInspectorScreen(ModalScreen):
             roster = self.query_one("#inspector_roster", VerticalScroll)
         except Exception:
             return
+        if not roster.is_attached:
+            return
         activities = self._ordered_activities()
         keys = [a.agent_id for a in activities]
         if keys != list(self._rows):
@@ -871,6 +873,8 @@ class SubAgentInspectorScreen(ModalScreen):
         try:
             view = self.query_one("#inspector_trajectory", VerticalScroll)
         except Exception:
+            return
+        if not view.is_attached:
             return
         activity = self._owner._sub_agent_activities.get(self._selected_key)
         if activity is None:
@@ -4313,6 +4317,11 @@ class KolegaCodeApp(App):
             # A coalesced flush can fire after the widget is unmounted (e.g. on exit).
             self._dirty_entry_ids.clear()
             return
+        if not view.is_attached:
+            # During teardown the view detaches before it is flagged closing, so query_one
+            # still resolves it but mounting into it raises MountError.
+            self._dirty_entry_ids.clear()
+            return
 
         rendered_ids = list(self._entry_widgets)
         current_ids = [entry.entry_id for entry in self.conversation_entries]
@@ -4344,6 +4353,8 @@ class KolegaCodeApp(App):
         try:
             view = self._conversation
         except Exception:
+            return
+        if not view.is_attached:
             return
         view.remove_children()
         self._entry_widgets = {}
