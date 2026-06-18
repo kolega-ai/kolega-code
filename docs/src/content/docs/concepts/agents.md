@@ -27,9 +27,12 @@ findings. The available dispatch targets include:
 - `dispatch_coding_agent` — hand off a self-contained coding task.
 - `dispatch_general_agent` — a general-purpose helper.
 
-Sub-agent activity is reported live: in the TUI you'll see it in the conversation
-and the **Logs** tab; with `ask` it surfaces as events (on stderr in plain mode, or
-as `event` objects with `--json`).
+Sub-agent activity is reported live. In the TUI each sub-agent gets a live card in
+the conversation, and pressing `Ctrl+G` opens the
+[sub-agent inspector](../../tui/interface/#sub-agent-inspector) — a full-screen view
+of every sub-agent's complete trajectory: its thinking, tool calls, and results.
+Lifecycle events also appear in the **Logs** tab. With `ask`, sub-agent activity
+surfaces as events (on stderr in plain mode, or as `event` objects with `--json`).
 
 ## Modes vs. agents
 

@@ -4013,6 +4013,319 @@ async def test_thread_reset_clears_sub_agent_state(tmp_path: Path, monkeypatch: 
 
 
 @pytest.mark.asyncio
+async def test_sub_agent_steps_capture_full_trajectory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        # A tool call + its result pair into one step keyed by tool_call_id.
+        app._render_event(
+            _sub_agent_event(
+                message_type="tool_call", text="Reading app.py", tool_description="read_file", tool_call_id="t1"
+            )
+        )
+        app._render_event(
+            _sub_agent_event(
+                message_type="tool_result", text="file contents", tool_description="read_file", tool_call_id="t1"
+            )
+        )
+        # Thinking + streamed response accumulate into steps by uuid.
+        app._render_event(_sub_agent_event(message_type="thinking", uuid="th1", text="planning the edit"))
+        app._render_event(_sub_agent_event(uuid="r1", text="Here is "))
+        app._render_event(_sub_agent_event(uuid="r1", text="the answer"))
+
+        activity = next(iter(app._sub_agent_activities.values()))
+        # 1 paired tool step + 1 thinking + 1 response = 3 steps (not 5).
+        assert len(activity.steps) == 3
+        tool_step = activity.steps[0]
+        assert tool_step.kind == "tool_result"
+        assert tool_step.tool_call_id == "t1"
+        assert tool_step.full_content == "file contents"
+        assert activity.steps[1].kind == "thinking"
+        assert activity.steps[1].content == "planning the edit"
+        assert activity.steps[2].kind == "assistant"
+        assert activity.steps[2].content == "Here is the answer"
+        # The card advertises the inspect affordance once steps exist.
+        from kolega_code.cli import messages as cli_messages
+
+        assert cli_messages.SUB_AGENT_INSPECT_HINT in activity.entry.content
+
+
+@pytest.mark.asyncio
+async def test_sub_agent_completion_event_records_tokens(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        app._render_event(_sub_agent_event(status="GENERATING", message="Starting"))
+        app._render_event(_sub_agent_event(status="STOPPED", message="Completed", total_tokens=3100))
+
+        activity = next(iter(app._sub_agent_activities.values()))
+        assert activity.tokens == 3100
+        assert "3.1k tok" in activity.entry.content
+
+
+@pytest.mark.asyncio
+async def test_open_sub_agent_inspector_renders_trajectory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from kolega_code.cli.app import SubAgentInspectorScreen
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        app._render_event(
+            _sub_agent_event(
+                message_type="tool_call", text="Reading", tool_description="read_file", tool_call_id="t1"
+            )
+        )
+        app._render_event(_sub_agent_event(uuid="r1", text="some response"))
+
+        app.action_open_sub_agent()
+        await pilot.pause()
+
+        assert isinstance(app._sub_agent_inspector, SubAgentInspectorScreen)
+        screen = app._sub_agent_inspector
+        # One roster row per agent, and a trajectory widget per captured step.
+        assert len(screen._rows) == 1
+        assert len(screen._step_widgets) == 2
+        # The mounted widgets wrap the real step entries (not empty placeholders).
+        kinds = {w.entry.kind for w in screen._step_widgets.values()}
+        contents = {w.entry.content for w in screen._step_widgets.values()}
+        assert kinds == {"tool_call", "assistant"}
+        assert "some response" in contents
+
+
+@pytest.mark.asyncio
+async def test_sub_agent_inspector_switches_agents(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        app._render_event(_sub_agent_event(agent_id="a1", task="one", uuid="u1", text="alpha"))
+        app._render_event(
+            _sub_agent_event(agent_id="a2", task="two", parent_tool_call_id="tc-2", uuid="u2", text="beta")
+        )
+
+        app.action_open_sub_agent("a1")
+        await pilot.pause()
+        screen = app._sub_agent_inspector
+        assert screen._selected_key == "a1"
+
+        screen.action_next_agent()
+        await pilot.pause()
+        assert screen._selected_key == "a2"
+
+
+@pytest.mark.asyncio
+async def test_sub_agent_inspector_escape_closes_without_cancelling(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        cancelled = False
+
+        def fake_cancel() -> None:
+            nonlocal cancelled
+            cancelled = True
+
+        monkeypatch.setattr(app, "action_cancel_generation", fake_cancel)
+
+        app._render_event(_sub_agent_event(uuid="u1", text="output"))
+        app.action_open_sub_agent()
+        await pilot.pause()
+        assert app._sub_agent_inspector is not None
+
+        await pilot.press("escape")
+        await pilot.pause()
+
+        assert app._sub_agent_inspector is None
+        assert cancelled is False
+
+
+@pytest.mark.asyncio
+async def test_open_sub_agent_inspector_empty_notifies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        notes: list[str] = []
+        monkeypatch.setattr(app, "_notify_user", lambda message, **kw: notes.append(message))
+
+        app.action_open_sub_agent()
+
+        assert app._sub_agent_inspector is None
+        from kolega_code.cli import messages as cli_messages
+
+        assert cli_messages.SUB_AGENT_INSPECTOR_EMPTY in notes
+
+
+@pytest.mark.asyncio
+async def test_sub_agent_tool_error_step_captured(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        app._render_event(
+            _sub_agent_event(message_type="tool_call", text="Running", tool_description="run_command", tool_call_id="t1")
+        )
+        app._render_event(
+            _sub_agent_event(
+                message_type="tool_error", text="boom: exit 1", tool_description="run_command", tool_call_id="t1"
+            )
+        )
+
+        activity = next(iter(app._sub_agent_activities.values()))
+        assert len(activity.steps) == 1
+        step = activity.steps[0]
+        assert step.kind == "tool_error"
+        assert step.complete is True
+        assert "boom" in step.full_content
+        assert "last: run_command failed" in activity.entry.content
+
+
+@pytest.mark.asyncio
+async def test_sub_agent_tool_steps_without_id_do_not_collide(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Defensive: two separate executions of the same tool, neither carrying a tool_call_id,
+    # must produce two distinct paired steps rather than overwriting one shared step.
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        app._render_event(_sub_agent_event(message_type="tool_call", text="grep a", tool_description="grep"))
+        app._render_event(_sub_agent_event(message_type="tool_result", text="result a", tool_description="grep"))
+        app._render_event(_sub_agent_event(message_type="tool_call", text="grep b", tool_description="grep"))
+        app._render_event(_sub_agent_event(message_type="tool_result", text="result b", tool_description="grep"))
+
+        activity = next(iter(app._sub_agent_activities.values()))
+        assert len(activity.steps) == 2
+        assert [s.kind for s in activity.steps] == ["tool_result", "tool_result"]
+        assert activity.steps[0].full_content == "result a"
+        assert activity.steps[1].full_content == "result b"
+
+
+@pytest.mark.asyncio
+async def test_sub_agent_stream_without_uuid_merges_by_kind(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        # Empty uuid on the response chunks: they must merge into one step, not fragment.
+        app._render_event(_sub_agent_event(uuid="", text="part one "))
+        app._render_event(_sub_agent_event(uuid="", text="part two"))
+        # A thinking chunk with an empty uuid must stay a separate step (kind-qualified sentinel).
+        app._render_event(_sub_agent_event(uuid="", message_type="thinking", text="a thought"))
+
+        activity = next(iter(app._sub_agent_activities.values()))
+        kinds = [s.kind for s in activity.steps]
+        assert kinds.count("assistant") == 1
+        assert kinds.count("thinking") == 1
+        assistant = next(s for s in activity.steps if s.kind == "assistant")
+        assert assistant.content == "part one part two"
+
+
+@pytest.mark.asyncio
+async def test_sub_agent_inspector_shows_empty_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from textual.widgets import Static
+
+    from kolega_code.cli import messages as cli_messages
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        # Only a lifecycle event: the agent exists but has captured no trajectory steps yet.
+        app._render_event(_sub_agent_event(status="GENERATING", message="Starting"))
+
+        app.action_open_sub_agent()
+        await pilot.pause()
+        screen = app._sub_agent_inspector
+        assert screen is not None
+        assert screen._empty_shown is True
+        assert not screen._step_widgets
+        view = screen.query_one("#inspector_trajectory")
+        placeholder = view.query(Static).first()
+        assert cli_messages.SUB_AGENT_INSPECTOR_NO_STEPS in str(placeholder.render())
+
+        # Once a real step arrives, the placeholder is replaced by step widgets.
+        app._render_event(_sub_agent_event(uuid="r1", text="now working"))
+        screen._flush()
+        await pilot.pause()
+        assert screen._empty_shown is False
+        assert len(screen._step_widgets) == 1
+
+
+@pytest.mark.asyncio
+async def test_thread_reset_closes_open_inspector(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        app._render_event(_sub_agent_event(uuid="u1", text="output"))
+        app.action_open_sub_agent()
+        await pilot.pause()
+        assert app._sub_agent_inspector is not None
+
+        app._reset_current_thread()
+        await pilot.pause()
+
+        assert app._sub_agent_inspector is None
+
+
+@pytest.mark.asyncio
+async def test_sub_agent_inspector_tick_follow_and_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        copied: list[str] = []
+        monkeypatch.setattr(app, "copy_to_clipboard", lambda text: copied.append(text))
+        monkeypatch.setattr(app, "_notify_user", lambda *a, **k: None)
+
+        # A finished agent (exercises the completed status glyph) + a running one.
+        app._render_event(_sub_agent_event(agent_id="done", status="GENERATING", message="Starting"))
+        app._render_event(
+            _sub_agent_event(
+                agent_id="done",
+                message_type="tool_call",
+                text="Reading",
+                tool_description="read_file",
+                tool_call_id="t1",
+            )
+        )
+        app._render_event(_sub_agent_event(agent_id="done", status="STOPPED", message="Completed", total_tokens=1500))
+
+        app.action_open_sub_agent("done")
+        await pilot.pause()
+        screen = app._sub_agent_inspector
+        assert screen is not None
+
+        # Spinner/elapsed tick refresh must not raise on running or finished agents.
+        screen._on_tick()
+        await pilot.pause()
+
+        # Follow toggles.
+        assert screen._follow is True
+        screen.action_toggle_follow()
+        assert screen._follow is False
+
+        # Copy gathers the selected agent's trajectory text.
+        screen.action_copy_trajectory()
+        assert copied and "read_file" in copied[0]
+
+
+@pytest.mark.asyncio
 async def test_rapid_stream_chunks_coalesce_renders(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
 
