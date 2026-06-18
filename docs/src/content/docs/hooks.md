@@ -16,7 +16,14 @@ agent itself.
 
 Hooks are declared in JSON, in two places that are **merged** (global first, project last):
 
-- **Global / user:** `~/.kolega-state/hooks.json` — always active.
+- **Global / user:** `hooks.json` in the Kolega Code state directory — always active. The
+  state directory is platform-specific:
+  - macOS: `~/Library/Application Support/kolega-code/hooks.json`
+  - Linux: `$XDG_STATE_HOME/kolega-code/hooks.json` (defaults to `~/.local/state/kolega-code/hooks.json`)
+  - Windows: `%LOCALAPPDATA%\kolega-code\hooks.json`
+
+  Override the location with the `KOLEGA_CODE_STATE_DIR` environment variable or the
+  `--state-dir <dir>` flag (the file is then `<dir>/hooks.json`).
 - **Project:** `<project>/.kolega/hooks.json` — alongside `permissions.json`. Because a
   project file can run arbitrary commands from a cloned repo, project hooks are
   **disabled until you trust the project** (see [Trust](#trusting-project-hooks)).
