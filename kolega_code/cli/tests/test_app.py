@@ -2638,6 +2638,69 @@ async def test_textual_app_renders_one_widget_per_chat_entry(
 
 
 @pytest.mark.asyncio
+async def test_conversation_render_skips_detached_view_during_teardown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A coalesced render timer can fire while the app is tearing down. The view is
+    detached from the DOM (is_attached is False) but query_one still resolves it, so
+    mounting into it used to raise MountError and crash the CLI on exit."""
+    pytest.importorskip("textual")
+
+    from kolega_code.cli import app as app_module
+    from kolega_code.cli.app import (
+        ConversationEntry,
+        ConversationEntryWidget,
+        ConversationView,
+        KolegaCodeApp,
+    )
+
+    class FakeCoderAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def restore_message_history(self, history):
+            return None
+
+        def dump_message_history(self):
+            return []
+
+        async def cleanup(self):
+            return None
+
+    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test() as pilot:
+        app.conversation_entries = [ConversationEntry(kind="user", content="first")]
+        app._render_conversation()
+        await pilot.pause()
+        assert len(app.query(ConversationEntryWidget)) == 1
+
+        # Queue a new entry so a flush would reach view.mount(...), then simulate the
+        # exit-time race by detaching the view (is_attached False) without removing it
+        # from the DOM, so query_one still resolves it.
+        app.conversation_entries.append(
+            ConversationEntry(kind="assistant", content="late", complete=False)
+        )
+        app._render_pending = True
+        ConversationView.is_attached = property(lambda self: False)
+        try:
+            app._flush_conversation_render()  # must not raise (pre-fix: MountError)
+            app._render_conversation()  # must not raise
+        finally:
+            del ConversationView.is_attached
+
+        # The detached render was skipped, so nothing new was mounted.
+        assert len(app.query(ConversationEntryWidget)) == 1
+
+
+@pytest.mark.asyncio
 async def test_conversation_entry_widget_extracts_plain_selected_text(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
