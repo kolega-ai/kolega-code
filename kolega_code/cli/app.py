@@ -1711,6 +1711,8 @@ class KolegaCodeApp(App):
             event.stop()
             if event.option_id == "implement_plan":
                 await self._implement_pending_plan()
+            elif event.option_id == "implement_plan_clear":
+                await self._implement_pending_plan(clear_context=True)
             elif event.option_id == "discuss_plan":
                 self._discuss_pending_plan()
             return
@@ -2276,12 +2278,14 @@ class KolegaCodeApp(App):
             pass
         self._notify_user(messages.PLAN_CAPTURED)
 
-    async def _implement_pending_plan(self) -> None:
+    async def _implement_pending_plan(self, *, clear_context: bool = False) -> None:
         plan = self._latest_plan
         if not plan or self._turn_active or self.agent_worker is not None:
             return
 
         self._plan_decision_active = False
+        if clear_context:
+            self._clear_agent_context()
         self._save_session()
         await self._set_interaction_mode(BUILD_INTERACTION_MODE)
         self._refresh_planning_sidebar()
@@ -2313,6 +2317,7 @@ class KolegaCodeApp(App):
             if visible:
                 options = [Option("Implement plan", id="implement_plan")]
                 if allow_discuss:
+                    options.append(Option("Clear context and implement plan", id="implement_plan_clear"))
                     options.append(Option("Discuss further", id="discuss_plan"))
                 plan_actions.show_options(options)
             else:
@@ -3408,6 +3413,14 @@ class KolegaCodeApp(App):
         current = self.settings.active_theme or theme.DEFAULT_THEME_NAME
         current_suffix = " current" if name == current else ""
         return f"{index + 1}. {name}{current_suffix}"
+
+    def _clear_agent_context(self) -> None:
+        """Wipe the agent's LLM history so the build agent starts fresh, while leaving
+        the visible transcript and the captured plan intact."""
+        if self.agent is not None:
+            self.agent.history = MessageHistory()
+            self.agent.last_compression_index = None
+        self.session.history = []
 
     def _reset_current_thread(self) -> None:
         self._close_sub_agent_inspector()

@@ -1627,7 +1627,11 @@ async def test_textual_app_shows_plan_decision_when_planning_agent_writes_plan(
         assert app.query_one("#composer", ChatComposer).placeholder == "Plan ready. Choose Implement plan or Discuss further."
         plan_actions = app.query_one("#plan_actions", ActionList)
         assert plan_actions.display is True
-        assert [option.id for option in plan_actions.options] == ["implement_plan", "discuss_plan"]
+        assert [option.id for option in plan_actions.options] == [
+            "implement_plan",
+            "implement_plan_clear",
+            "discuss_plan",
+        ]
         assert app.focused is plan_actions
         assert app.query_one("#planning_plan_markdown", Markdown).source == initial_plan
         assert "Step 25" in app.query_one("#planning_plan_markdown", Markdown).source
@@ -1653,7 +1657,11 @@ async def test_textual_app_shows_plan_decision_when_planning_agent_writes_plan(
         assert app._latest_plan == "# Revised plan\n\nBuild planning mode carefully."
         assert app.query_one("#composer", ChatComposer).disabled is True
         assert plan_actions.display is True
-        assert [option.id for option in plan_actions.options] == ["implement_plan", "discuss_plan"]
+        assert [option.id for option in plan_actions.options] == [
+            "implement_plan",
+            "implement_plan_clear",
+            "discuss_plan",
+        ]
         assert (
             app.query_one("#planning_plan_markdown", Markdown).source
             == "# Revised plan\n\nBuild planning mode carefully."
@@ -1724,6 +1732,86 @@ async def test_textual_app_implement_plan_switches_to_build_and_sends_plan(
         loaded = store.load(session.session_id)
         assert loaded.latest_plan_markdown == "# Plan\n\nBuild it."
         assert loaded.interaction_mode == "build"
+
+
+@pytest.mark.asyncio
+async def test_textual_app_clear_context_and_implement_plan_starts_build_agent_fresh(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from textual.widgets import Markdown
+
+    from kolega_code.cli import app as app_module
+    from kolega_code.cli.app import KolegaCodeApp
+
+    class FakeCoderAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.messages: list[str] = []
+            self.history = []
+            self.last_compression_index = None
+
+        def restore_message_history(self, history):
+            self.history = list(history)
+
+        def dump_message_history(self):
+            return self.history
+
+        async def cleanup(self):
+            return None
+
+        async def process_message_stream(self, message):
+            self.messages.append(message)
+            yield {"type": "response", "content": "implemented", "complete": True, "uuid": "response-1"}
+
+    class FakePlanningAgent(FakeCoderAgent):
+        pass
+
+    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(app_module, "PlanningAgent", FakePlanningAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test():
+        await app.action_toggle_interaction_mode()
+        # Seed the planning agent with prior conversation that the normal implement flow
+        # would carry forward into the build agent.
+        app.agent.history = ["planning message 1", "planning message 2"]
+        prior_entry_count = len(app.conversation_entries)
+        app._latest_plan = "# Plan\n\nBuild it."
+        app._plan_decision_active = True
+
+        await app._implement_pending_plan(clear_context=True)
+        assert app.agent_worker is not None
+        await app.agent_worker.wait()
+
+        assert app.interaction_mode == "build"
+        assert isinstance(app.agent, FakeCoderAgent)
+        # The build agent starts fresh: the planning conversation was wiped before the
+        # mode switch, so it never reached the new agent.
+        assert app.agent.history == []
+        assert app.session.history == []
+        # The plan is still delivered to the build agent via the implement prompt.
+        assert app.agent.messages
+        assert "# Plan\n\nBuild it." in app.agent.messages[-1]
+        # The plan itself is preserved (sidebar keeps showing it).
+        assert app._plan_decision_active is False
+        assert app._latest_plan == "# Plan\n\nBuild it."
+        assert app.query_one("#planning_plan_markdown", Markdown).source == "# Plan\n\nBuild it."
+        assert app.query_one("#plan_actions").display is False
+        # LLM-context-only clear: the visible transcript is preserved, plus the new
+        # "Implement the approved plan." entry.
+        assert len(app.conversation_entries) > prior_entry_count
+        assert any(
+            entry.kind == "user" and entry.content == "Implement the approved plan."
+            for entry in app.conversation_entries
+        )
 
 
 @pytest.mark.asyncio
