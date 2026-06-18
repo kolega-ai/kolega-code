@@ -443,6 +443,39 @@ class ActionList(OptionList):
                 event.stop()
 
 
+class PromptPanel(Vertical):
+    """A bordered panel that pairs a prompt header with its ActionList of options.
+
+    The question (or permission request) is shown as the panel header above the
+    selectable options, so the prompt and its answers read as a single unit
+    instead of a chat bubble disconnected from a separate option box.
+    """
+
+    def __init__(self, *, actions_id: str, title: str, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._actions_id = actions_id
+        self._title = title
+
+    def compose(self) -> ComposeResult:
+        self.border_title = self._title
+        yield Static("", classes="prompt-header", markup=True)
+        yield ActionList(id=self._actions_id)
+
+    @property
+    def actions(self) -> ActionList:
+        return self.query_one(ActionList)
+
+    def prompt(self, header: str, options: list[Option]) -> None:
+        self.query_one(".prompt-header", Static).update(Text.from_markup(header))
+        self.actions.show_options(options)
+        self.display = True
+        self.actions.focus()
+
+    def hide(self) -> None:
+        self.display = False
+        self.actions.hide()
+
+
 class ChatComposer(TextArea):
     """Multiline chat input that submits on Enter and inserts newlines on Shift+Enter."""
 
@@ -706,11 +739,38 @@ class KolegaCodeApp(App):
         opacity: 0.6;
     }
 
-    #plan_actions, #question_actions, #model_actions, #effort_actions {
+    #plan_actions, #model_actions, #effort_actions {
         display: none;
         height: auto;
         max-height: 12;
         border: round $surface;
+        background: $surface;
+    }
+
+    /* Question / approval prompts: the question is folded into the panel header
+       (the border title) above its options, so the whole prompt reads as one
+       bordered unit. The inner ActionList drops its own border. */
+    #question_prompt, #approval_prompt {
+        display: none;
+        height: auto;
+        max-height: 14;
+        border: round $surface;
+        background: $surface;
+        border-title-color: $text;
+        border-title-style: bold;
+        padding: 0 1;
+    }
+
+    #question_prompt > ActionList, #approval_prompt > ActionList {
+        border: none;
+        background: $surface;
+        height: auto;
+        max-height: 10;
+        padding: 0;
+    }
+
+    .prompt-header {
+        padding: 0 0 1 0;
         background: $surface;
     }
 
@@ -854,8 +914,16 @@ class KolegaCodeApp(App):
                     id="jump_to_bottom",
                 )
                 yield ActionList(id="plan_actions")
-                yield ActionList(id="question_actions")
-                yield ActionList(id="approval_actions")
+                yield PromptPanel(
+                    id="question_prompt",
+                    actions_id="question_actions",
+                    title=f"{theme.g(Glyph.QUESTION)} Question",
+                )
+                yield PromptPanel(
+                    id="approval_prompt",
+                    actions_id="approval_actions",
+                    title=f"{theme.g(Glyph.QUESTION)} Permission",
+                )
                 yield ActionList(id="model_actions")
                 yield ActionList(id="effort_actions")
                 yield Static("", id="turn_status", markup=True)
@@ -2393,10 +2461,7 @@ class KolegaCodeApp(App):
         self._pending_question = PendingQuestion(
             question=question, options=options, future=future, descriptions=descriptions
         )
-        self._add_conversation_entry(
-            ConversationEntry(kind="question", content=self._format_question_content(question, options, descriptions))
-        )
-        self._show_question_options(options, descriptions)
+        self._show_question_options(question, options, descriptions)
         self._set_composer_status(QUESTION_PLACEHOLDER)
         self._set_chat_enabled(True)
         self._update_activity_progress(messages.WAITING_FOR_ANSWER, state=TurnState.WAITING_FOR_USER)
@@ -2427,6 +2492,7 @@ class KolegaCodeApp(App):
 
         self._pending_question = None
         self._set_question_actions_visible(False)
+        self._add_conversation_entry(ConversationEntry(kind="question", content=pending_question.question))
         self._add_conversation_entry(ConversationEntry(kind="user", content=clean_answer))
         if not pending_question.future.done():
             pending_question.future.set_result(clean_answer)
@@ -2439,21 +2505,21 @@ class KolegaCodeApp(App):
             self._restore_composer_placeholder()
             self._set_chat_enabled(self.agent is not None)
 
-    def _show_question_options(self, options: list[str], descriptions: Optional[list[str]] = None) -> None:
+    def _show_question_options(
+        self, question: str, options: list[str], descriptions: Optional[list[str]] = None
+    ) -> None:
         try:
-            question_actions = self.query_one("#question_actions", ActionList)
-            question_actions.show_options(
-                [
-                    Option(
-                        self._question_option_label(index, option, self._option_description(descriptions, index)),
-                        id=f"{QUESTION_OPTION_ID_PREFIX}{index}",
-                    )
-                    for index, option in enumerate(options)
-                ]
-            )
-            question_actions.focus()
+            panel = self.query_one("#question_prompt", PromptPanel)
         except Exception:
             return
+        option_widgets = [
+            Option(
+                self._question_option_label(index, option, self._option_description(descriptions, index)),
+                id=f"{QUESTION_OPTION_ID_PREFIX}{index}",
+            )
+            for index, option in enumerate(options)
+        ]
+        panel.prompt(escape(question), option_widgets)
 
     async def _permission_callback(self, request: PermissionRequest) -> PermissionDecision:
         if self.permission_mode != PermissionMode.ASK:
@@ -2477,9 +2543,6 @@ class KolegaCodeApp(App):
         future: asyncio.Future[PermissionDecision] = loop.create_future()
         rule_options = allow_rule_options(request)
         self._pending_approval = PendingApproval(request=request, future=future, rule_options=rule_options)
-        self._add_conversation_entry(
-            ConversationEntry(kind="question", content=self._format_permission_content(request, rule_options))
-        )
         self._show_approval_options(rule_options)
         self._set_composer_status(APPROVAL_PLACEHOLDER)
         self._set_chat_enabled(False)
@@ -2494,11 +2557,6 @@ class KolegaCodeApp(App):
 
     def _show_approval_options(self, rule_options: list[PermissionRuleOption]) -> None:
         self._set_approval_actions_visible(True)
-        try:
-            approval_actions = self.query_one("#approval_actions", ActionList)
-            self.screen.set_focus(approval_actions)
-        except Exception:
-            return
 
     async def _answer_approval_option(self, option_index: int) -> None:
         pending = self._pending_approval
@@ -2508,13 +2566,16 @@ class KolegaCodeApp(App):
         decision: PermissionDecision
         if option_index == 0:
             decision = PermissionDecision(allowed=True, reason="Allowed once by the user.")
+            chosen_label = "Allow once"
         elif option_index == 1:
             decision = PermissionDecision(allowed=False, reason="Denied by the user.")
+            chosen_label = "Deny"
         else:
             rule_index = option_index - 2
             if rule_index < 0 or rule_index >= len(pending.rule_options):
                 return
             rule = pending.rule_options[rule_index].rule
+            chosen_label = pending.rule_options[rule_index].label
             try:
                 ProjectPermissionStore(self.project_path).add_rule(rule)
             except PermissionStoreError as exc:
@@ -2525,6 +2586,10 @@ class KolegaCodeApp(App):
 
         self._pending_approval = None
         self._set_approval_actions_visible(False)
+        self._add_conversation_entry(
+            ConversationEntry(kind="question", content=self._format_permission_content(pending.request))
+        )
+        self._add_conversation_entry(ConversationEntry(kind="user", content=chosen_label))
         if not pending.future.done():
             pending.future.set_result(decision)
 
@@ -2536,24 +2601,11 @@ class KolegaCodeApp(App):
             self._restore_composer_placeholder()
             self._set_chat_enabled(self.agent is not None)
 
-    def _format_permission_content(self, request: PermissionRequest, rule_options: list[PermissionRuleOption]) -> str:
+    def _format_permission_content(self, request: PermissionRequest) -> str:
         if request.kind.value == "command":
-            lines = [
-                "Allow the agent to run this command?",
-                "",
-                "```bash",
-                request.command,
-                "```",
-            ]
-        else:
-            target = f" on `{request.path}`" if request.path else ""
-            lines = [
-                f"Allow the agent to run `{request.tool_name}`{target}?",
-            ]
-
-        options = ["Allow once", "Deny", *(option.label for option in rule_options)]
-        option_lines = [self._question_option_label(index, option) for index, option in enumerate(options)]
-        return "\n".join([*lines, "", *option_lines])
+            return "\n".join(["Allow the agent to run this command?", "", request.command])
+        target = f" on {request.path}" if request.path else ""
+        return f"Allow the agent to run {request.tool_name}{target}?"
 
     def _show_effort_options(self) -> None:
         self._set_effort_actions_visible(True)
@@ -2573,33 +2625,29 @@ class KolegaCodeApp(App):
 
     def _set_question_actions_visible(self, visible: bool) -> None:
         try:
-            question_actions = self.query_one("#question_actions", ActionList)
-            if visible:
-                question_actions.display = True
-            else:
-                question_actions.hide()
+            panel = self.query_one("#question_prompt", PromptPanel)
         except Exception:
             return
+        if visible:
+            panel.display = True
+            panel.actions.display = True
+        else:
+            panel.hide()
 
     def _set_approval_actions_visible(self, visible: bool) -> None:
         try:
-            approval_actions = self.query_one("#approval_actions", ActionList)
-            if visible and self._pending_approval is not None:
-                labels = [
-                    "1. Allow once",
-                    "2. Deny",
-                    *[
-                        self._question_option_label(index + 2, option.label)
-                        for index, option in enumerate(self._pending_approval.rule_options)
-                    ],
-                ]
-                approval_actions.show_options(
-                    [Option(label, id=f"{APPROVAL_OPTION_ID_PREFIX}{index}") for index, label in enumerate(labels)]
-                )
-            else:
-                approval_actions.hide()
+            panel = self.query_one("#approval_prompt", PromptPanel)
         except Exception:
             return
+        if visible and self._pending_approval is not None:
+            labels = ["Allow once", "Deny", *(option.label for option in self._pending_approval.rule_options)]
+            options = [
+                Option(self._question_option_label(index, label), id=f"{APPROVAL_OPTION_ID_PREFIX}{index}")
+                for index, label in enumerate(labels)
+            ]
+            panel.prompt(escape(self._format_permission_content(self._pending_approval.request)), options)
+        else:
+            panel.hide()
 
     def _cancel_pending_question(self) -> None:
         pending_question = self._pending_question
@@ -2614,15 +2662,6 @@ class KolegaCodeApp(App):
             pending_approval.future.cancel()
         self._pending_approval = None
         self._set_approval_actions_visible(False)
-
-    def _format_question_content(
-        self, question: str, options: list[str], descriptions: Optional[list[str]] = None
-    ) -> str:
-        option_lines = [
-            self._question_option_label(index, option, self._option_description(descriptions, index))
-            for index, option in enumerate(options)
-        ]
-        return "\n".join([question, "", *option_lines])
 
     def _question_option_label(self, index: int, option: str, description: str = "") -> str:
         if description:
