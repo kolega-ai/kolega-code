@@ -29,6 +29,7 @@ from .tool_backend.search_codebase_tool import SearchCodebaseTool
 from .tool_backend.web_fetch_tool import WebFetchTool
 from .tool_backend.terminal_tool import TerminalTool
 from .tool_backend.think_hard_tool import ThinkHardTool
+from .tool_backend.workflow_tool import RUN_WORKFLOW_INPUT_SCHEMA, WorkflowTool
 
 # Import additional tools for consolidated functionality
 from .tool_backend.build_tool import BuildTool
@@ -135,6 +136,12 @@ class ToolCollection(LogMixin):
     memory_tools = [
         "read_memory",
         "write_memory",
+    ]
+
+    # gigacode workflow orchestration. Gated in _should_include_tool: only the
+    # top-level (non-sub) agent gets it, and only when gigacode is enabled.
+    orchestration_tools = [
+        "run_workflow",
     ]
 
     def __init__(
@@ -388,6 +395,21 @@ class ToolCollection(LogMixin):
             browser_manager=self.browser_manager,
             langfuse_client=self.langfuse_client,
         )
+        self.workflow_tool = WorkflowTool(
+            self.project_path,
+            self.workspace_id,
+            self.thread_id,
+            self.connection_manager,
+            self.config,
+            self.caller,
+            self.filesystem,
+            terminal_manager=self.terminal_manager,
+            browser_manager=self.browser_manager,
+            langfuse_client=self.langfuse_client,
+        )
+        # run_workflow's `args` is free-form JSON, which the signature introspector
+        # cannot express, so register its explicit input schema.
+        self.extension_schemas["run_workflow"] = RUN_WORKFLOW_INPUT_SCHEMA
         self.browser_tool = BrowserTool(
             self.project_path,
             self.workspace_id,
@@ -836,6 +858,44 @@ class ToolCollection(LogMixin):
             The agent's final report on the completed task
         """
         return await self.agent_tool.dispatch_general_agent(task)
+
+    async def run_workflow(
+        self,
+        script: str = "",
+        args: Any = None,
+        token_budget: int = 0,
+        script_path: str = "",
+        resume_from_run_id: str = "",
+    ) -> str:
+        """Run a gigacode workflow: an authored Python script that orchestrates many
+        sub-agents with deterministic control flow (parallel fan-out, pipelines,
+        loop-until-dry, budget loops).
+
+        The script's primitives are `agent()`, `parallel()`, `pipeline()`, `phase()`,
+        and `log()`, plus the `args` and `budget` globals. See the gigacode authoring
+        guide in your system prompt for the full API and patterns. Artifacts (script,
+        journal, per-agent transcripts) are written under the CLI state directory, and
+        a run can be resumed with `resume_from_run_id`.
+
+        Args:
+            script: The Python orchestration script source (must define a top-level `meta` literal).
+            args: Free-form JSON value exposed to the script as the global `args`.
+            token_budget: Optional output-token ceiling for the whole run (0 = unbounded).
+            script_path: Path to a script file on disk; takes precedence over `script`.
+            resume_from_run_id: Resume a prior run, replaying cached agent() results for the
+                unchanged prefix and running new/changed calls live.
+
+        Returns:
+            A compact run summary: the runId, the persisted scriptPath, the token count,
+            and the workflow's return value.
+        """
+        return await self.workflow_tool.run_workflow(
+            script=script,
+            args=args,
+            token_budget=token_budget,
+            script_path=script_path,
+            resume_from_run_id=resume_from_run_id,
+        )
 
     async def think_hard(self, problem_statement: str) -> str:
         """
@@ -1510,6 +1570,7 @@ class ToolCollection(LogMixin):
             "agent_dispatch_tools",
             "coder_agent_tools",
             "memory_tools",
+            "orchestration_tools",
             *self._extension_group_names,
         }
         return frozenset(
@@ -1585,6 +1646,15 @@ class ToolCollection(LogMixin):
         Returns:
             True if the tool should be included, False otherwise
         """
+        # gigacode orchestration: only the top-level (non-sub) agent may run
+        # workflows, and only when gigacode has been enabled for the session.
+        # This both prevents sub-agents from recursively spawning workflows and
+        # keeps the expensive tool off until the user opts in.
+        if method_name in self.orchestration_tools:
+            if getattr(self.caller, "sub_agent", False):
+                return False
+            return bool(getattr(self.caller, "gigacode_enabled", False))
+
         # Check custom tool groups first
         if self.tool_config.custom_tool_groups:
             for group_name in self.tool_config.custom_tool_groups:

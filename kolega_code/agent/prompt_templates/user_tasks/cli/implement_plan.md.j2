@@ -1,3 +1,7 @@
 Implement the approved plan below. Follow it as the source of truth, but still inspect the code before editing and run appropriate checks.
+{% if gigacode_enabled %}
+
+gigacode is enabled. If this plan splits into independent, non-overlapping workstreams (parts that don't edit the same files or depend on each other's output), implement them in parallel by authoring a workflow and calling `run_workflow` — fan out one coder sub-agent per workstream, then verify. Keep tightly-coupled or ordering-dependent changes sequential and do them directly yourself. If the plan is small or its parts are coupled, just implement it directly.
+{% endif %}
 
 {{ plan }}

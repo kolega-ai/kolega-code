@@ -1311,6 +1311,7 @@ class KolegaCodeApp(App):
         self._turn_active = False
         self._latest_plan: Optional[str] = self.session.latest_plan_markdown or None
         self._plan_decision_active = False
+        self._gigacode_enabled = False
         self._pending_question: Optional[PendingQuestion] = None
         self._pending_approval: Optional[PendingApproval] = None
         self._permission_lock = asyncio.Lock()
@@ -1874,6 +1875,13 @@ class KolegaCodeApp(App):
             message_type = event.content.get("message_type", "message")
             if message_type in {"tool_call", "tool_result", "tool_error"}:
                 self._add_tool_message(message_type, event.content)
+            elif message_type == "workflow_phase":
+                if message_text:
+                    self._add_conversation_entry(ConversationEntry(kind="system", content=f"▶ {message_text}"))
+                    self._update_activity_progress(f"workflow: {message_text}", state=TurnState.RUNNING_SUB_AGENTS)
+            elif message_type == "workflow_log":
+                if message_text:
+                    self._add_conversation_entry(ConversationEntry(kind="system", content=f"· {message_text}"))
             elif message_text:
                 self._add_conversation_entry(ConversationEntry(kind="message", content=message_text))
         elif event.event_type == "tool_streaming_update":
@@ -2139,6 +2147,13 @@ class KolegaCodeApp(App):
             prompt_extensions.append(self._planning_question_prompt_extension())
             tool_extensions.append(self._planning_question_tool_extension())
 
+        # gigacode applies to any top-level agent and is carried across rebuilds.
+        # In plan mode the orchestrating agent is read-only, so its workflow
+        # sub-agents are forced read-only too (enforced in the dispatch adapter).
+        gigacode_active = self._gigacode_enabled
+        if gigacode_active:
+            prompt_extensions.append(self._gigacode_prompt_extension())
+
         self.agent = agent_class(
             project_path=self.project_path,
             workspace_id=self.session.workspace_id,
@@ -2153,6 +2168,7 @@ class KolegaCodeApp(App):
             permission_callback=self._permission_callback,
             hook_dispatcher=self._session_hook_dispatcher(),
         )
+        self.agent.gigacode_enabled = gigacode_active
         if history:
             self.agent.restore_message_history(history)
             self._restore_conversation_history(history)
@@ -2262,7 +2278,7 @@ class KolegaCodeApp(App):
         self._refresh_planning_sidebar()
         self._set_plan_actions_visible(False)
 
-        prompt = build_implement_plan_prompt(plan)
+        prompt = build_implement_plan_prompt(plan, gigacode_enabled=self._gigacode_enabled)
         self._add_conversation_entry(ConversationEntry(kind="user", content="Implement the approved plan."))
         self.agent_worker = self.run_worker(
             self._process_message(prompt), name="kolega-turn", group="turns", exclusive=True
@@ -2420,6 +2436,7 @@ class KolegaCodeApp(App):
             "/permissions": self._command_permissions,
             "/model": self._command_model,
             "/effort": self._command_effort,
+            "/gigacode": self._command_gigacode,
             "/theme": self._command_theme,
             "/copy": self._command_copy,
             "/version": self._command_version,
@@ -2454,6 +2471,48 @@ class KolegaCodeApp(App):
         if self._mode_switch_blocked():
             return
         await self._set_interaction_mode(BUILD_INTERACTION_MODE)
+
+    async def _command_gigacode(self, args: str) -> None:
+        if self.agent is None:
+            self._set_settings_status(messages.SETTINGS_REQUIRED, tone="warning")
+            return
+
+        clean = args.strip().lower()
+        if clean in ("", "toggle"):
+            new_state = not self._gigacode_enabled
+        elif clean in ("on", "enable", "enabled", "true"):
+            new_state = True
+        elif clean in ("off", "disable", "disabled", "false"):
+            new_state = False
+        else:
+            self._notify_user("Usage: /gigacode [on|off]", severity="warning")
+            return
+
+        self._gigacode_enabled = new_state
+        self.agent.apply_gigacode(new_state, self._gigacode_prompt_extension() if new_state else None)
+
+        if new_state:
+            note = (
+                "gigacode workflow orchestration enabled — I can now author multi-agent "
+                "workflows with the run_workflow tool for large fan-out tasks."
+            )
+            if self.interaction_mode == PLAN_INTERACTION_MODE:
+                note += " In plan mode, workflow sub-agents are read-only (parallel research only)."
+        else:
+            note = "gigacode workflow orchestration disabled."
+        self._add_conversation_entry(ConversationEntry(kind="system", content=note))
+        self._update_mode_chrome()
+
+    def _gigacode_prompt_extension(self) -> PromptExtension:
+        from kolega_code.agent.orchestration.guide import GIGACODE_AUTHORING_GUIDE
+
+        return PromptExtension(
+            id="gigacode",
+            title="gigacode — workflow orchestration",
+            markdown=GIGACODE_AUTHORING_GUIDE,
+            agent_types=None,
+            modes=None,
+        )
 
     async def _command_sidebar(self, args: str) -> None:
         await self.action_toggle_sidebar()

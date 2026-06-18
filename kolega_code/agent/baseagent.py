@@ -231,6 +231,11 @@ class BaseAgent(LogMixin):
         self.usage_recorder = context.telemetry.usage_recorder
         self.sub_agent_recorder = context.telemetry.sub_agent_recorder
 
+        # gigacode (workflow orchestration) opt-in. Off by default; the host toggles
+        # it via apply_gigacode(). The run_workflow tool gate reads this live, so
+        # toggling takes effect on the next turn without rebuilding the agent.
+        self.gigacode_enabled = False
+
         self.available_ports = "9001-9999"
 
         # Validate that the project path exists and is a directory using the filesystem
@@ -363,6 +368,22 @@ class BaseAgent(LogMixin):
     def dump_message_history(self) -> List[Dict[str, Any]]:
         """Serializes the message history into a list of dictionaries using custom methods."""
         return self.conversation.dump()
+
+    def apply_gigacode(self, enabled: bool, prompt_extension=None) -> None:
+        """Enable or disable gigacode workflow orchestration for this session.
+
+        Flips the ``run_workflow`` tool gate and refreshes the system prompt to
+        include or drop the authoring guide. Safe to call mid-session; the tool
+        registry and the next turn pick up the change.
+        """
+        self.gigacode_enabled = enabled
+        extensions = [ext for ext in (self.prompt_extensions or []) if getattr(ext, "id", None) != "gigacode"]
+        if enabled and prompt_extension is not None:
+            extensions.append(prompt_extension)
+        self.prompt_extensions = extensions
+        initialize = getattr(self, "_initialize_system_prompt", None)
+        if callable(initialize):
+            initialize()
 
     def restore_message_history(self, serialized_history: List[Dict[str, Any]]) -> None:
         """Restores the message history from a list of dictionaries using custom methods."""
