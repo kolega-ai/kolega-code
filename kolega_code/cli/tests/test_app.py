@@ -46,6 +46,21 @@ def question_payload(question, options, *, header="Choice", multi_select=False):
     return [{"question": question, "header": header, "multiSelect": multi_select, "options": built}]
 
 
+def renderable_text(renderable) -> str:
+    from rich.console import Console
+
+    console = Console(width=240, color_system=None, force_terminal=False)
+    with console.capture() as capture:
+        console.print(renderable, soft_wrap=True, end="")
+    return capture.get()
+
+
+def first_text_styles(renderable) -> list[str]:
+    renderables = list(getattr(renderable, "renderables", [renderable]))
+    text = renderables[0]
+    return [str(span.style) for span in getattr(text, "spans", [])]
+
+
 def build_test_config(project: Path):
     return build_agent_config(
         project,
@@ -367,12 +382,12 @@ async def test_progress_entry_tone_drives_styling_not_prose(
             kind="progress", content="Stopped before the error handler ran", complete=True, tone="warning"
         )
         rendered = app._format_conversation_entry(warning_entry)
-        assert "[yellow]" in str(rendered)
-        assert "[red]" not in str(rendered)
+        assert "yellow" in first_text_styles(rendered)
+        assert "red" not in first_text_styles(rendered)
 
         error_entry = ConversationEntry(kind="progress", content="All good otherwise", complete=True, tone="error")
         rendered = app._format_conversation_entry(error_entry)
-        assert "[red]" in str(rendered)
+        assert "red" in first_text_styles(rendered)
 
         # Explicit state drives the dashboard, not content keywords
         app._turn_active = True
@@ -2496,11 +2511,12 @@ async def test_textual_app_formats_thinking_as_italic_chat_entry(
         formatted = app._format_conversation_entry(
             ConversationEntry(kind="thinking", content="inspect [red]markup[/red]", complete=False)
         )
+        rendered = renderable_text(formatted)
 
-        assert "[dim italic]Thinking[/dim italic]" in formatted
-        assert "\\[red]" in formatted
-        assert "[italic dim]" in formatted
-        assert "…" in formatted  # streaming indicator in the header
+        assert "Thinking" in rendered
+        assert "[red]markup[/red]" in rendered
+        assert "…" in rendered  # streaming indicator in the header
+        assert any("italic" in style and "dim" in style for style in first_text_styles(formatted))
 
 
 @pytest.mark.asyncio
@@ -2558,7 +2574,7 @@ async def test_textual_app_renders_one_widget_per_chat_entry(
         same_widgets = list(app.query(ConversationEntryWidget))
         assert len(same_widgets) == 3
         assert same_widgets[1] is widgets[1]
-        assert "second updated" in str(same_widgets[1]._formatted)
+        assert "second updated" in renderable_text(same_widgets[1]._formatted)
 
 
 @pytest.mark.asyncio
@@ -2766,17 +2782,21 @@ async def test_textual_app_formats_agent_and_tool_chat_entries(
         tool_error = app._format_conversation_entry(
             ConversationEntry(kind="tool_error", content="Permission denied", tool_name="write_file")
         )
+        assistant_text = renderable_text(assistant)
+        tool_call_text = renderable_text(tool_call)
+        tool_result_text = renderable_text(tool_result)
+        tool_error_text = renderable_text(tool_error)
 
-        assert "[magenta]●[/magenta] [bold]Agent[/bold]" in assistant
-        assert "Kolega" not in assistant
-        assert "[cyan]⏺[/cyan] [bold]read_file[/bold]" in tool_call
-        assert "· running" in tool_call
-        assert "[dim]  │[/dim] inspect \\[red]markup\\[/red]" in tool_call
-        assert "[dim]  │[/dim] then continue" in tool_call
-        assert "[green]⏺[/green] [bold]read_file[/bold]" in tool_result
-        assert "· done" in tool_result
-        assert "[red]⏺[/red] [bold]write_file[/bold]" in tool_error
-        assert "· failed" in tool_error
+        assert "● Agent" in assistant_text
+        assert "Kolega" not in assistant_text
+        assert "⏺ read_file" in tool_call_text
+        assert "· running" in tool_call_text
+        assert "inspect [red]markup[/red]" in tool_call_text
+        assert "then continue" in tool_call_text
+        assert "⏺ read_file" in tool_result_text
+        assert "· done" in tool_result_text
+        assert "⏺ write_file" in tool_error_text
+        assert "· failed" in tool_error_text
 
 
 @pytest.mark.asyncio
@@ -3962,6 +3982,73 @@ async def test_rapid_stream_chunks_coalesce_renders(tmp_path: Path, monkeypatch:
 
 
 @pytest.mark.asyncio
+async def test_conversation_body_renders_rich_markup_tokens_literally(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from kolega_code.cli.app import ConversationEntry
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+    literal = "I investigated [/dim]\n[bold]not bold[/bold]\npath\\"
+
+    async with app.run_test():
+        for entry in [
+            ConversationEntry(kind="user", content=literal),
+            ConversationEntry(kind="assistant", content=literal, complete=False),
+            ConversationEntry(kind="thinking", content=literal, complete=False),
+            ConversationEntry(kind="progress", content=literal, complete=True),
+            ConversationEntry(kind="question", content=literal),
+            ConversationEntry(kind="skill", content=literal),
+            ConversationEntry(kind="system", content=literal),
+            ConversationEntry(kind="message", content=literal),
+        ]:
+            rendered = app._format_conversation_entry(entry)
+            text = renderable_text(rendered)
+            assert "[/dim]" in text
+            assert "[bold]not bold[/bold]" in text
+            assert "path\\" in text
+
+        app._render_event(
+            _sub_agent_event(
+                agent_name="agent[/dim]",
+                task="inspect [red]task[/red]",
+                uuid="u1",
+                text="tail [/dim] [bold]literal[/bold]\\",
+            )
+        )
+        sub_agent_entry = _sub_agent_entries(app)[0]
+        sub_agent_text = renderable_text(app._format_conversation_entry(sub_agent_entry))
+        assert "agent[/dim]" in sub_agent_text
+        assert "[red]task[/red]" in sub_agent_text
+        assert "[bold]literal[/bold]\\" in sub_agent_text
+
+
+@pytest.mark.asyncio
+async def test_streaming_assistant_refresh_accepts_literal_markup_tokens(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from kolega_code.cli.app import ConversationEntry, ConversationEntryWidget
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        entry = ConversationEntry(kind="assistant", content="start [/dim]", complete=False)
+        app.conversation_entries = [entry]
+        app._render_conversation()
+        await pilot.pause()
+
+        widget = app.query(ConversationEntryWidget).last()
+        entry.content += "\n[bold]literal[/bold]\\"
+        app._invalidate_conversation(entry)
+        app._flush_conversation_render()
+        await pilot.pause()
+
+        assert app.query(ConversationEntryWidget).last() is widget
+        rendered = renderable_text(widget._formatted)
+        assert "[/dim]" in rendered
+        assert "[bold]literal[/bold]\\" in rendered
+
+
+@pytest.mark.asyncio
 async def test_conversation_scroll_position_survives_streaming(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -4019,8 +4106,8 @@ async def test_assistant_entries_render_markdown_when_complete(
         streaming = app._format_conversation_entry(
             ConversationEntry(kind="assistant", content="# Title\n\nsome `code`", complete=False)
         )
-        assert isinstance(streaming, str)
-        assert "…" in streaming  # header carries the streaming indicator
+        assert not isinstance(streaming, str)
+        assert "…" in renderable_text(streaming)  # header carries the streaming indicator
 
         complete = app._format_conversation_entry(
             ConversationEntry(kind="assistant", content="# Title\n\nsome `code`", complete=True)
