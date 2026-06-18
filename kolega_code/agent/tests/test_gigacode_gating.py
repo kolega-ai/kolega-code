@@ -13,6 +13,7 @@ from kolega_code.agent.tool_backend.agent_tool import AgentTool
 from kolega_code.agent.tools import ToolExtension
 from kolega_code.config import AgentConfig
 from kolega_code.events import AgentConnectionManager
+from kolega_code.permissions import PermissionMode
 
 
 @pytest.fixture
@@ -172,6 +173,32 @@ def test_workflow_sub_agent_does_not_inherit_task_list(project_path, mock_connec
     sub_tools = {tool.name for tool in sub_agent.tool_collection.get_tool_list()}
     assert "get_task_list" not in sub_tools
     assert "update_task_list" not in sub_tools
+
+
+def test_workflow_sub_agent_runs_in_auto_permission_mode(project_path, mock_connection_manager, agent_config):
+    """Workflow sub-agents run unattended in AUTO mode even when the caller is in ASK mode."""
+    caller = CoderAgent(
+        project_path=project_path,
+        workspace_id="test_workspace",
+        thread_id=str(uuid.uuid4()),
+        connection_manager=mock_connection_manager,
+        config=agent_config,
+        agent_mode=AgentMode.CLI,
+        permission_mode=PermissionMode.ASK,
+    )
+    assert caller.permission_mode == PermissionMode.ASK
+
+    agent_tool = AgentTool(
+        project_path,
+        "test_workspace",
+        str(uuid.uuid4()),
+        mock_connection_manager,
+        agent_config,
+        caller,
+        None,
+    )
+    sub_agent = agent_tool._construct_workflow_sub_agent(GeneralAgent, None, [])
+    assert sub_agent.permission_mode == PermissionMode.AUTO
 
 
 def test_apply_gigacode_toggles_flag(project_path, mock_connection_manager, agent_config):

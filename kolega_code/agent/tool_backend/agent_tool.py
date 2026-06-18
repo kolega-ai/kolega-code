@@ -8,6 +8,7 @@ import time
 from kolega_code.config import AgentConfig
 from kolega_code.events import AgentEvent
 from kolega_code.hooks import HookDispatcher, HookEvent
+from kolega_code.permissions import PermissionMode, auto_allow_permission_callback
 from .base_tool import BaseTool
 
 
@@ -547,8 +548,11 @@ class AgentTool(BaseTool):
             workspace_memories=getattr(self.caller, "workspace_memories", None) if self.caller else None,
             prompt_extensions=self._sub_agent_extensions(getattr(self.caller, "prompt_extensions", None)),
             tool_extensions=tool_extensions,
-            permission_mode=getattr(self.caller, "permission_mode", None) if self.caller else None,
-            permission_callback=getattr(self.caller, "permission_callback", None) if self.caller else None,
+            # Workflow sub-agents run unattended in parallel, so they default to AUTO
+            # permission mode (no prompts) regardless of the session's mode — per-agent
+            # prompting would be unworkable across a fan-out.
+            permission_mode=PermissionMode.AUTO,
+            permission_callback=auto_allow_permission_callback,
             usage_recorder=getattr(self.caller, "usage_recorder", None) if self.caller else None,
             sub_agent_recorder=getattr(self.caller, "sub_agent_recorder", None) if self.caller else None,
             hook_dispatcher=getattr(self.caller, "hook_dispatcher", None) if self.caller else None,
