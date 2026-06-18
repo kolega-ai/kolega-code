@@ -28,6 +28,23 @@ def test_implement_plan_prompt_renders_plan() -> None:
     assert "{plan}" in prompts.IMPLEMENT_PLAN_PROMPT_TEMPLATE
 
 
+def test_implement_plan_prompt_omits_gigacode_nudge_by_default() -> None:
+    rendered = prompts.build_implement_plan_prompt("- [ ] update docs")
+
+    assert "run_workflow" not in rendered
+    assert "gigacode is enabled" not in rendered
+
+
+def test_implement_plan_prompt_includes_gigacode_nudge_when_enabled() -> None:
+    rendered = prompts.build_implement_plan_prompt("- [ ] update docs", gigacode_enabled=True)
+
+    assert "gigacode is enabled" in rendered
+    assert "run_workflow" in rendered
+    assert "independent" in rendered
+    # The plan still renders alongside the nudge.
+    assert "- [ ] update docs" in rendered
+
+
 def test_init_agents_prompt_renders_arguments() -> None:
     rendered = prompts.build_init_agents_prompt("focus on Python packaging")
 

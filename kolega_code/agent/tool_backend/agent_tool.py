@@ -8,6 +8,7 @@ import time
 from kolega_code.config import AgentConfig
 from kolega_code.events import AgentEvent
 from kolega_code.hooks import HookDispatcher, HookEvent
+from kolega_code.permissions import PermissionMode, auto_allow_permission_callback
 from .base_tool import BaseTool
 
 
@@ -54,6 +55,21 @@ class AgentTool(BaseTool):
         if inspect.isawaitable(value):
             return await value
         return value
+
+    @staticmethod
+    def _sub_agent_extensions(extensions):
+        """Filter a caller's prompt/tool extensions down to those that should be
+        inherited by sub-agents.
+
+        Interactive or session-shared host extensions (the task list, planning
+        questions, the gigacode authoring guide) are marked
+        ``propagate_to_sub_agents=False`` so that parallel sub-agents cannot
+        clobber shared host state and so sub-agents aren't told to use tools they
+        don't have.
+        """
+        if not extensions:
+            return extensions
+        return [ext for ext in extensions if getattr(ext, "propagate_to_sub_agents", True)]
 
     async def _call_recorder(self, method_name: str, *args, **kwargs):
         """Call an optional host-provided sub-agent recorder method."""
@@ -217,8 +233,8 @@ class AgentTool(BaseTool):
                 if self.caller
                 else None,
                 workspace_memories=getattr(self.caller, "workspace_memories", None) if self.caller else None,
-                prompt_extensions=getattr(self.caller, "prompt_extensions", None) if self.caller else None,
-                tool_extensions=getattr(self.caller, "tool_extensions", None) if self.caller else None,
+                prompt_extensions=self._sub_agent_extensions(getattr(self.caller, "prompt_extensions", None)),
+                tool_extensions=self._sub_agent_extensions(getattr(self.caller, "tool_extensions", None)),
                 permission_mode=getattr(self.caller, "permission_mode", None) if self.caller else None,
                 permission_callback=getattr(self.caller, "permission_callback", None) if self.caller else None,
                 usage_recorder=getattr(self.caller, "usage_recorder", None) if self.caller else None,
@@ -450,3 +466,278 @@ class AgentTool(BaseTool):
             agent_class_import="kolega_code.agent.generalagent.GeneralAgent",
             task=task,
         )
+
+    # ------------------------------------------------------------------
+    # gigacode workflow dispatch
+    #
+    # dispatch_workflow_agent mirrors _dispatch_agent's lifecycle (conversation
+    # recording, event streaming, SubagentStop hooks) but adds three things the
+    # orchestration runtime needs: a per-call config override (model/effort), an
+    # optional forced-structured-output tool, and extra sub_agent_info keys so the
+    # UI can group agents under their workflow run and phase. It reuses the same
+    # helper methods as _dispatch_agent; only construction and the return shape differ.
+    # ------------------------------------------------------------------
+    _STRUCTURED_OUTPUT_INSTRUCTION = (
+        "\n\nWhen you have finished, you MUST report your result by calling the "
+        "`submit_result` tool with arguments matching the requested schema. Do not "
+        "answer in prose — the `submit_result` call is the only output that is read."
+    )
+    _STRUCTURED_OUTPUT_NUDGE = (
+        "You have not called `submit_result` yet. Call it now with your result, "
+        "matching the requested schema exactly."
+    )
+
+    def _structured_output_extension(self, schema: dict, capture: dict):
+        """Build a ToolExtension exposing a `submit_result` tool whose input schema
+        is the caller-requested JSON Schema. The handler stashes the validated
+        payload into ``capture['value']``.
+        """
+        from ..tools import ToolExtension  # lazy import: tools.py imports this module
+
+        wrapped = not (isinstance(schema, dict) and schema.get("type") == "object")
+        if wrapped:
+            # Tool inputs are always a top-level object; wrap non-object schemas.
+            input_schema = {
+                "type": "object",
+                "properties": {"result": schema},
+                "required": ["result"],
+            }
+        else:
+            input_schema = schema
+
+        async def submit_result(**kwargs):
+            capture["value"] = kwargs.get("result") if wrapped else kwargs
+            return "Result recorded."
+
+        return ToolExtension(
+            name="workflow_structured_output",
+            tools={"submit_result": submit_result},
+            tool_schemas={"submit_result": input_schema},
+            # submit_result only reports a result (no side effects), so mark it
+            # read-only-safe; otherwise read-only sub-agents would have it filtered
+            # out and could never return structured output.
+            tool_groups={"read_only_tools": ["submit_result"]},
+        )
+
+    def _construct_workflow_sub_agent(self, agent_class, config, extra_tool_extensions):
+        """Construct a sub-agent the same way _dispatch_agent does, but allowing a
+        config override and additional tool extensions.
+        """
+        tool_extensions = self._sub_agent_extensions(getattr(self.caller, "tool_extensions", None))
+        if extra_tool_extensions:
+            tool_extensions = list(tool_extensions or []) + list(extra_tool_extensions)
+        return agent_class(
+            project_path=self.project_path,
+            workspace_id=self.workspace_id,
+            thread_id=self.thread_id,
+            connection_manager=self.connection_manager,
+            config=config or self.config,
+            sub_agent=True,
+            filesystem=self.filesystem,
+            terminal_manager=self.terminal_manager,
+            browser_manager=self.browser_manager,
+            langfuse_client=self.langfuse_client,
+            user_id=getattr(self.caller, "user_id", None) if self.caller else None,
+            user_email=getattr(self.caller, "user_email", None) if self.caller else None,
+            project_template_slug=getattr(self.caller, "project_template_slug", None) if self.caller else None,
+            protected_files=getattr(self.caller, "protected_files", None) if self.caller else None,
+            agent_mode=getattr(self.caller, "agent_mode", None) if self.caller else None,
+            workspace_env_var_descriptions=getattr(self.caller, "workspace_env_var_descriptions", None)
+            if self.caller
+            else None,
+            workspace_memories=getattr(self.caller, "workspace_memories", None) if self.caller else None,
+            prompt_extensions=self._sub_agent_extensions(getattr(self.caller, "prompt_extensions", None)),
+            tool_extensions=tool_extensions,
+            # Workflow sub-agents run unattended in parallel, so they default to AUTO
+            # permission mode (no prompts) regardless of the session's mode — per-agent
+            # prompting would be unworkable across a fan-out.
+            permission_mode=PermissionMode.AUTO,
+            permission_callback=auto_allow_permission_callback,
+            usage_recorder=getattr(self.caller, "usage_recorder", None) if self.caller else None,
+            sub_agent_recorder=getattr(self.caller, "sub_agent_recorder", None) if self.caller else None,
+            hook_dispatcher=getattr(self.caller, "hook_dispatcher", None) if self.caller else None,
+        )
+
+    async def dispatch_workflow_agent(
+        self,
+        agent_class,
+        task: str,
+        *,
+        config=None,
+        schema: Optional[dict] = None,
+        sub_agent_info_extra: Optional[dict] = None,
+    ):
+        """Dispatch one sub-agent for a gigacode workflow.
+
+        Returns a tuple of ``(recap_text, total_tokens, structured)`` where
+        ``structured`` is the validated ``submit_result`` payload (or ``None`` when
+        no schema was requested or the agent declined to call it).
+        """
+        agent_name = getattr(agent_class, "agent_name", agent_class.__name__)
+        agent_id = str(uuid.uuid4())
+
+        tool_call_id = getattr(self.caller, "current_tool_execution_id", None)
+        if not isinstance(tool_call_id, str):
+            tool_call_id = getattr(self.caller, "current_tool_call_id", None)
+        if not isinstance(tool_call_id, str):
+            tool_call_id = None
+
+        conversation_id = None
+        start_time = time.time()
+        if tool_call_id:
+            conversation_id = await self._start_conversation(
+                tool_call_id=tool_call_id,
+                agent_name=agent_name,
+                class_name=agent_class.__name__,
+                agent_id=agent_id,
+                task=task,
+            )
+
+        parent_depth = 1 if getattr(self.caller, "sub_agent", False) else 0
+        sub_agent_info = {
+            "agent_id": agent_id,
+            "agent_name": agent_name,
+            "task": task[:120],
+            "conversation_id": conversation_id,
+            "parent_tool_call_id": tool_call_id,
+            "depth": parent_depth + 1,
+        }
+        if sub_agent_info_extra:
+            sub_agent_info.update({k: v for k, v in sub_agent_info_extra.items() if v is not None})
+
+        capture: dict = {}
+        extra_extensions = []
+        effective_task = task
+        if schema:
+            extra_extensions.append(self._structured_output_extension(schema, capture))
+            effective_task = task + self._STRUCTURED_OUTPUT_INSTRUCTION
+
+        await self._send_status_event("GENERATING", f"Starting {agent_name} task", sub_agent_info=sub_agent_info)
+        conversation_finished = False
+
+        try:
+            agent = self._construct_workflow_sub_agent(agent_class, config, extra_extensions)
+            self.agents[agent_id] = agent
+            agent.parent_tool_call_id = tool_call_id
+            agent.conversation_id = conversation_id
+            agent.sub_agent_context = sub_agent_info
+
+            last_saved_index = await self._stream_workflow_agent(
+                agent, agent_name, sub_agent_info, conversation_id, last_saved_index=-1, task=effective_task
+            )
+
+            # Single re-prompt if a schema was requested but submit_result wasn't called.
+            if schema and "value" not in capture:
+                last_saved_index = await self._stream_workflow_agent(
+                    agent,
+                    agent_name,
+                    sub_agent_info,
+                    conversation_id,
+                    last_saved_index=last_saved_index,
+                    task=self._STRUCTURED_OUTPUT_NUDGE,
+                )
+
+            result = await agent.recap_agent_outcome()
+            result = await self._apply_subagent_stop_hooks(agent_name, result, sub_agent_info)
+
+            total_tokens = getattr(agent, "total_tokens_used", None)
+            if conversation_id:
+                await self._complete_conversation(
+                    conversation_id,
+                    {
+                        "status": "completed",
+                        "completed_at": datetime.now(timezone.utc),
+                        "recap": result,
+                        "execution_time_seconds": time.time() - start_time,
+                        "total_tokens": total_tokens if isinstance(total_tokens, int) else None,
+                    },
+                )
+                conversation_finished = True
+
+            extra = {"total_tokens": total_tokens} if isinstance(total_tokens, int) else None
+            await self._send_status_event(
+                "STOPPED", f"Completed {agent_name} task", sub_agent_info=sub_agent_info, extra=extra
+            )
+
+            structured = capture.get("value") if schema else None
+            return result, (total_tokens if isinstance(total_tokens, int) else 0), structured
+
+        except Exception as e:
+            if conversation_id:
+                await self._fail_conversation(
+                    conversation_id,
+                    {
+                        "status": "failed",
+                        "completed_at": datetime.now(timezone.utc),
+                        "error": str(e),
+                        "execution_time_seconds": time.time() - start_time,
+                    },
+                )
+                conversation_finished = True
+            await self.log_error(f"Error in workflow {agent_name}: {str(e)}", sender="AgentTool")
+            await self._send_status_event("ERROR", f"Error in {agent_name}: {str(e)}", sub_agent_info=sub_agent_info)
+            raise
+
+        finally:
+            if conversation_id and not conversation_finished:
+                await self._interrupt_conversation(
+                    conversation_id,
+                    {
+                        "status": "interrupted",
+                        "completed_at": datetime.now(timezone.utc),
+                        "execution_time_seconds": time.time() - start_time,
+                    },
+                )
+            if agent_id in self.agents:
+                del self.agents[agent_id]
+
+    async def _stream_workflow_agent(
+        self,
+        agent,
+        agent_name: str,
+        sub_agent_info: dict,
+        conversation_id: Optional[str],
+        *,
+        last_saved_index: int,
+        task: str,
+    ) -> int:
+        """Stream one process_message_stream pass, broadcasting events and recording
+        newly-completed history messages. Returns the updated last_saved_index.
+        """
+        async for msg in agent.process_message_stream(task):
+            message_type = msg.get("type", "agent")
+            content = msg.get("content", "")
+            complete = msg.get("complete", False)
+            msg_uuid = msg.get("uuid", str(uuid.uuid4()))
+
+            content_payload = {"text": content}
+            if message_type != "response":
+                content_payload["message_type"] = message_type
+
+            evt = AgentEvent(
+                event_type="chat_message",
+                content=content_payload,
+                sender=agent_name,
+                timestamp=datetime.now().isoformat(),
+                is_streaming=(message_type in ["response", "thinking"] and not complete),
+                uuid=msg_uuid,
+                sub_agent_info=sub_agent_info,
+            )
+            await self.connection_manager.broadcast_event(evt, self.workspace_id, self.thread_id)
+
+            if conversation_id and complete:
+                current_history = agent.dump_message_history()
+                for i in range(last_saved_index + 1, len(current_history)):
+                    hist_msg = current_history[i]
+                    await self._record_message(
+                        conversation_id,
+                        {
+                            "role": hist_msg.get("role", "assistant"),
+                            "content": hist_msg.get("content", []),
+                            "stream_uuid": None,
+                        },
+                        i + 1,
+                    )
+                last_saved_index = len(current_history) - 1
+
+        return last_saved_index

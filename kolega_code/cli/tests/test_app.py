@@ -904,7 +904,7 @@ async def test_textual_app_invalid_saved_interaction_mode_falls_back_to_build(
 
 
 @pytest.mark.asyncio
-async def test_textual_app_passes_shared_task_list_tools_to_build_and_plan_agents(
+async def test_textual_app_passes_shared_task_list_tools_to_build_agent_only(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     pytest.importorskip("textual")
@@ -946,8 +946,11 @@ async def test_textual_app_passes_shared_task_list_tools_to_build_and_plan_agent
 
     async with app.run_test() as pilot:
         assert isinstance(app.agent, FakeCoderAgent)
-        build_tools = extension_by_name(app.agent.kwargs["tool_extensions"], "cli-shared-task-list").tools
+        task_list_extension = extension_by_name(app.agent.kwargs["tool_extensions"], "cli-shared-task-list")
+        build_tools = task_list_extension.tools
         assert {"get_task_list", "update_task_list"} == set(build_tools)
+        # The task list is single-owner; it must not be inherited by sub-agents.
+        assert task_list_extension.propagate_to_sub_agents is False
         assert all("ask_user_choice" not in extension.tools for extension in app.agent.kwargs["tool_extensions"])
         build_task_list_prompt = app.agent.kwargs["prompt_extensions"][0].markdown
         assert "After each meaningful task is completed" in build_task_list_prompt
@@ -965,15 +968,17 @@ async def test_textual_app_passes_shared_task_list_tools_to_build_and_plan_agent
         await pilot.press("shift+tab")
 
         assert isinstance(app.agent, FakePlanningAgent)
-        plan_tools = extension_by_name(app.agent.kwargs["tool_extensions"], "cli-shared-task-list").tools
+        plan_extension_names = {getattr(ext, "name", None) for ext in app.agent.kwargs["tool_extensions"]}
+        # Plan mode no longer gets the shared task list (build-mode only)...
+        assert "cli-shared-task-list" not in plan_extension_names
+        # ...but still gets the planning-question tool.
+        assert "cli-planning-questions" in plan_extension_names
         question_tools = extension_by_name(app.agent.kwargs["tool_extensions"], "cli-planning-questions").tools
-        prompt_markdown = "\n".join(extension.markdown for extension in app.agent.kwargs["prompt_extensions"])
-        assert await plan_tools["get_task_list"]() == "- [ ] inspect\n- [x] plan"
-        assert await plan_tools["update_task_list"]("- [x] inspect\n- [x] plan") == "Task list updated."
         assert {"ask_user_choice"} == set(question_tools)
+        prompt_markdown = "\n".join(extension.markdown for extension in app.agent.kwargs["prompt_extensions"])
         assert "multiple-choice" in prompt_markdown
-        assert app.session.task_list_markdown == "- [x] inspect\n- [x] plan"
-        assert app.query_one("#planning_task_list_markdown", Markdown).source == "- [x] inspect\n- [x] plan"
+        # The task list captured in build mode persists and is untouched by plan mode.
+        assert app.session.task_list_markdown == "- [ ] inspect\n- [x] plan"
 
 
 @pytest.mark.asyncio

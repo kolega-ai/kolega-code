@@ -37,6 +37,10 @@ class PromptExtension:
     markdown: str
     agent_types: Optional[List[AgentType | str]] = None
     modes: Optional[List[AgentMode | str]] = None
+    # Whether this section is inherited by sub-agents. Guidance that only applies
+    # to the single top-level agent (task list, planning questions, the gigacode
+    # authoring guide) should not bloat or mislead sub-agent prompts.
+    propagate_to_sub_agents: bool = True
 
 
 @dataclass

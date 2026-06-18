@@ -40,6 +40,7 @@ These control the app and your session.
 | `/permissions` | Show or switch the shell/edit permission mode |
 | `/model` | Choose the active model |
 | `/effort` | Choose the active model's thinking effort |
+| `/gigacode` | Toggle [gigacode](../../gigacode/) workflow orchestration on or off |
 | `/copy` | Copy the last response to the clipboard |
 | `/version` | Show the Kolega Code version |
 | `/update` | Update Kolega Code to the latest version |

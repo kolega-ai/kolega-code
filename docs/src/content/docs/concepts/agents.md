@@ -27,6 +27,10 @@ findings. The available dispatch targets include:
 - `dispatch_coding_agent` — hand off a self-contained coding task.
 - `dispatch_general_agent` — a general-purpose helper.
 
+When [gigacode](../../gigacode/) is enabled, the main agent can also orchestrate
+**many** of these sub-agents at once through a workflow — running them in parallel
+or in pipelines and collecting the results.
+
 Sub-agent activity is reported live. In the TUI each sub-agent gets a live card in
 the conversation, and pressing `Ctrl+G` opens the
 [sub-agent inspector](../../tui/interface/#sub-agent-inspector) — a full-screen view

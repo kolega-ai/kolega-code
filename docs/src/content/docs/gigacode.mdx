@@ -1,0 +1,108 @@
+---
+title: Gigacode
+description: Dynamic multi-agent workflow orchestration — fan out many sub-agents with one command.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+**Gigacode** lets the agent take on work that's too big for a single pass by
+**orchestrating many sub-agents at once**. When it's enabled and a task calls for
+it, the agent writes a small workflow that fans sub-agents out in parallel,
+pipelines them, or loops over them — then collects the results.
+
+It's built for work that's wide rather than deep:
+
+- Broad audits and multi-file reviews.
+- Large migrations or mechanical changes spread across many files.
+- Judge panels and adversarial verification, where several agents cross-check each
+  other.
+- Implementing a plan whose parts are independent, in parallel.
+
+For a quick question or a small, focused edit, the agent just does it directly —
+gigacode is for genuine fan-out.
+
+## Turning it on
+
+Gigacode is **off by default**. Toggle it with the `/gigacode`
+[slash command](../tui/slash-commands/):
+
+| Command | Effect |
+| --- | --- |
+| `/gigacode` | Toggle gigacode on or off |
+| `/gigacode on` | Enable workflow orchestration for the session |
+| `/gigacode off` | Disable it |
+
+Once on, it stays on for the session, and the agent decides when a task is worth
+orchestrating. It works in both [Build and Plan modes](../tui/modes/) — see
+[Behavior and safety](#behavior-and-safety) for how each differs.
+
+## What you'll see
+
+When the agent runs a workflow, the transcript shows **phase headers** and short
+**progress lines** as it works. Each sub-agent it launches appears in the
+[sub-agent inspector](../tui/interface/#sub-agent-inspector) — press `Ctrl+G` to
+watch every agent's live trajectory, grouped by phase.
+
+## How it works
+
+Under the hood, the agent authors a short **Python script** and runs it with a
+single `run_workflow` tool call. The script uses a handful of primitives:
+
+| Primitive | What it does |
+| --- | --- |
+| `agent(...)` | Dispatch one sub-agent and get its result back |
+| `parallel([...])` | Run several sub-agents at once and wait for all of them |
+| `pipeline(items, ...)` | Run each item through a series of stages independently |
+| `phase(...)` / `log(...)` | Report progress to the UI |
+
+You don't write these scripts — the agent does. A sketch of what it generates:
+
+```python
+# Review three areas in parallel, then synthesize.
+phase("Review")
+findings = await parallel([
+    (lambda area=area: agent(f"Review the {area} module for bugs"))
+    for area in ["auth", "api", "cli"]
+])
+return findings
+```
+
+<Aside type="note">
+Workflows are deterministic and **resumable**. Each run is saved under Kolega
+Code's state directory (`workflows/<run-id>/`) with its script, a journal, and each
+sub-agent's transcript, so an interrupted run can pick up where it left off instead
+of redoing finished work.
+</Aside>
+
+## Behavior and safety
+
+How workflow sub-agents behave depends on the mode you're in.
+
+**Plan mode** — every workflow sub-agent is **read-only** (an investigation agent),
+no matter what the workflow asks for. Use it to fan out parallel research and
+synthesis while planning; it never edits your code.
+
+**Build mode** — sub-agents have the full toolset and can edit files and run
+commands.
+
+<Aside type="caution" title="Workflows run unattended">
+In Build mode, workflow sub-agents run in **auto permission mode** — they execute
+shell commands and file edits **without prompting**, even when your session is set
+to `ask`. A workflow is a deliberate batch operation, and pausing dozens of
+parallel agents for individual approvals isn't practical. Keep this in mind before
+running a workflow for risky changes.
+</Aside>
+
+A few more guarantees:
+
+- Workflow sub-agents don't touch your [task list](../tui/modes/) — only the main
+  agent manages it, so agents running in parallel can't clobber it.
+- Concurrency is capped, and there's a hard ceiling on the total number of agents a
+  single workflow can spawn, as a runaway-loop backstop.
+
+## See also
+
+- [Build & Plan Modes](../tui/modes/) — how modes shape what agents can do.
+- [Agents](../concepts/agents/) — the sub-agent types a workflow draws on.
+- [Slash Commands](../tui/slash-commands/) — the full command reference.
+- [Interface Tour](../tui/interface/#sub-agent-inspector) — the sub-agent inspector.

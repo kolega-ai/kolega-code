@@ -80,6 +80,9 @@ class PlanningAgent(BaseAgent):
                 "write_plan": self.write_plan,
             },
             tool_groups={"planning_tools": ["write_plan"]},
+            # write_plan belongs to the top-level planning agent only; sub-agents
+            # (e.g. gigacode investigation agents in plan mode) must not capture plans.
+            propagate_to_sub_agents=False,
         )
         self.tool_extensions = [*self.tool_extensions, planning_tools]
         self.tool_collection = ToolCollection(

@@ -22,6 +22,10 @@ default to `ask`, so shell commands and file edits prompt before they run. Press
 When you choose an “always allow” approval, Kolega Code stores the local rule in
 `.kolega/permissions.json` for that project.
 
+If [gigacode](../../gigacode/) is enabled, the sub-agents inside a workflow run in
+`auto` permission mode regardless of this setting — see
+[Behavior and safety](../../gigacode/#behavior-and-safety).
+
 ## Plan mode
 
 A **read-only** planning pass. Plan mode uses a standalone planning agent that does
@@ -39,7 +43,9 @@ happens next — typically to **implement the plan** or to **keep discussing** i
 The decision is presented as a vertical, arrow-key-selectable option list.
 
 Use Plan mode when a change is non-trivial and you want to agree on the approach
-before any files are touched.
+before any files are touched. With [gigacode](../../gigacode/) on, a planning agent
+can fan out parallel research across the codebase; those workflow sub-agents stay
+read-only too.
 
 ## A typical loop
 
