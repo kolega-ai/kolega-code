@@ -7,6 +7,7 @@ import time
 
 from kolega_code.config import AgentConfig
 from kolega_code.events import AgentEvent
+from kolega_code.hooks import HookDispatcher, HookEvent
 from .base_tool import BaseTool
 
 
@@ -105,6 +106,23 @@ class AgentTool(BaseTool):
         )
         await self.connection_manager.broadcast_event(event, self.workspace_id, self.thread_id)
 
+    async def _apply_subagent_stop_hooks(self, agent_name: str, result: str, sub_agent_info: Optional[dict]) -> str:
+        """Fire SubagentStop on the parent agent and fold any augmentation into the result."""
+        dispatcher = getattr(self.caller, "hook_dispatcher", None)
+        fire = getattr(self.caller, "fire_hook", None)
+        if not isinstance(dispatcher, HookDispatcher) or not dispatcher.is_active or not callable(fire):
+            return result
+        outcome = await fire(
+            HookEvent.SUBAGENT_STOP,
+            {"agent_name": agent_name, "result": result, "sub_agent_info": sub_agent_info},
+            target=agent_name,
+        )
+        if outcome.additional_context:
+            result = f"{result}\n\n{outcome.additional_context}"
+        if outcome.blocked and outcome.reason:
+            result = f"{result}\n\n[hook] {outcome.reason}"
+        return result
+
     async def _dispatch_agent(self, agent_class_import: str, task: str) -> str:
         """
         Generic method to dispatch any agent type.
@@ -196,6 +214,7 @@ class AgentTool(BaseTool):
                 permission_callback=getattr(self.caller, "permission_callback", None) if self.caller else None,
                 usage_recorder=getattr(self.caller, "usage_recorder", None) if self.caller else None,
                 sub_agent_recorder=getattr(self.caller, "sub_agent_recorder", None) if self.caller else None,
+                hook_dispatcher=getattr(self.caller, "hook_dispatcher", None) if self.caller else None,
             )
 
             # Store agent reference
@@ -292,6 +311,11 @@ class AgentTool(BaseTool):
             # Get agent recap
             result = await agent.recap_agent_outcome()
 
+            # SubagentStop hooks: let the parent observe completion and augment the
+            # result the parent sees. (Forcing the sub-agent to resume on a blocked
+            # SubagentStop is deferred; the per-agent Stop hook covers keep-working.)
+            result = await self._apply_subagent_stop_hooks(agent_name, result, sub_agent_info)
+
             # Update conversation with completion status
             if conversation_id:
                 execution_time = time.time() - start_time
@@ -312,9 +336,7 @@ class AgentTool(BaseTool):
                 conversation_finished = True
 
             # Send completion status
-            await self._send_status_event(
-                "STOPPED", f"Completed {agent_name} task", sub_agent_info=sub_agent_info
-            )
+            await self._send_status_event("STOPPED", f"Completed {agent_name} task", sub_agent_info=sub_agent_info)
 
             return result
 

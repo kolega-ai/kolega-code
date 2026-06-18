@@ -13,6 +13,7 @@ from langfuse import Langfuse
 
 from kolega_code.config import AgentConfig
 from kolega_code.events import AgentConnectionManager
+from kolega_code.hooks import NO_OP_DISPATCHER, HookDispatcher
 from kolega_code.llm.client import LLMClient
 from kolega_code.llm.instrumented_client import InstrumentedLLMClient
 from kolega_code.permissions import PermissionMode, auto_allow_permission_callback
@@ -84,6 +85,9 @@ class AgentContext:
     tool_extensions: List[Any] = field(default_factory=list)
     permission_mode: PermissionMode = PermissionMode.AUTO
     permission_callback: Any = auto_allow_permission_callback
+    # Lifecycle-hook dispatcher. Defaults to a stateless no-op so hosts that do
+    # not configure hooks (and every existing caller/test) are unaffected.
+    hook_dispatcher: HookDispatcher = NO_OP_DISPATCHER
 
     def create_llm_client(self, agent_name: str) -> LLMClient:
         """Create the LLM client, instrumented when a Langfuse client is available."""

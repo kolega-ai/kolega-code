@@ -44,6 +44,7 @@ class InvestigationAgent(BaseAgent):
         permission_callback: Optional[Any] = None,
         usage_recorder: Optional[Any] = None,
         sub_agent_recorder: Optional[Any] = None,
+        hook_dispatcher: Optional[Any] = None,
     ) -> None:
         """
         Initialize a new InvestigationAgent instance.
@@ -95,6 +96,7 @@ class InvestigationAgent(BaseAgent):
             permission_callback=permission_callback,
             usage_recorder=usage_recorder,
             sub_agent_recorder=sub_agent_recorder,
+            hook_dispatcher=hook_dispatcher,
         )
 
         self.tool_collection = ToolCollection(

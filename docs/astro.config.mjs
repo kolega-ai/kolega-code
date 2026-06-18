@@ -90,6 +90,10 @@ export default defineConfig({
           items: [{ label: "Agent Skills", slug: "skills" }],
         },
         {
+          label: "Hooks",
+          items: [{ label: "Lifecycle Hooks", slug: "hooks" }],
+        },
+        {
           label: "How It Works",
           items: [
             { label: "Architecture", slug: "concepts/how-it-works" },
