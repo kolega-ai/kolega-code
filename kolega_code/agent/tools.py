@@ -46,6 +46,11 @@ class ToolExtension:
     # schema is used verbatim instead of introspecting the callable signature,
     # allowing nested input shapes the introspector cannot express.
     tool_schemas: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # Whether this extension is inherited by sub-agents. Interactive or
+    # session-shared host tools (task list, planning questions) belong to the
+    # single top-level agent only; leaving them on for parallel sub-agents lets
+    # them clobber shared state. Default True preserves inheritance.
+    propagate_to_sub_agents: bool = True
 
 
 class ToolCollectionConfig:

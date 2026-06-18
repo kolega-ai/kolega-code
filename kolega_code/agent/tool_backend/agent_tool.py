@@ -55,6 +55,21 @@ class AgentTool(BaseTool):
             return await value
         return value
 
+    @staticmethod
+    def _sub_agent_extensions(extensions):
+        """Filter a caller's prompt/tool extensions down to those that should be
+        inherited by sub-agents.
+
+        Interactive or session-shared host extensions (the task list, planning
+        questions, the gigacode authoring guide) are marked
+        ``propagate_to_sub_agents=False`` so that parallel sub-agents cannot
+        clobber shared host state and so sub-agents aren't told to use tools they
+        don't have.
+        """
+        if not extensions:
+            return extensions
+        return [ext for ext in extensions if getattr(ext, "propagate_to_sub_agents", True)]
+
     async def _call_recorder(self, method_name: str, *args, **kwargs):
         """Call an optional host-provided sub-agent recorder method."""
         if not self.sub_agent_recorder:
@@ -217,8 +232,8 @@ class AgentTool(BaseTool):
                 if self.caller
                 else None,
                 workspace_memories=getattr(self.caller, "workspace_memories", None) if self.caller else None,
-                prompt_extensions=getattr(self.caller, "prompt_extensions", None) if self.caller else None,
-                tool_extensions=getattr(self.caller, "tool_extensions", None) if self.caller else None,
+                prompt_extensions=self._sub_agent_extensions(getattr(self.caller, "prompt_extensions", None)),
+                tool_extensions=self._sub_agent_extensions(getattr(self.caller, "tool_extensions", None)),
                 permission_mode=getattr(self.caller, "permission_mode", None) if self.caller else None,
                 permission_callback=getattr(self.caller, "permission_callback", None) if self.caller else None,
                 usage_recorder=getattr(self.caller, "usage_recorder", None) if self.caller else None,
@@ -507,7 +522,7 @@ class AgentTool(BaseTool):
         """Construct a sub-agent the same way _dispatch_agent does, but allowing a
         config override and additional tool extensions.
         """
-        tool_extensions = getattr(self.caller, "tool_extensions", None) if self.caller else None
+        tool_extensions = self._sub_agent_extensions(getattr(self.caller, "tool_extensions", None))
         if extra_tool_extensions:
             tool_extensions = list(tool_extensions or []) + list(extra_tool_extensions)
         return agent_class(
@@ -530,7 +545,7 @@ class AgentTool(BaseTool):
             if self.caller
             else None,
             workspace_memories=getattr(self.caller, "workspace_memories", None) if self.caller else None,
-            prompt_extensions=getattr(self.caller, "prompt_extensions", None) if self.caller else None,
+            prompt_extensions=self._sub_agent_extensions(getattr(self.caller, "prompt_extensions", None)),
             tool_extensions=tool_extensions,
             permission_mode=getattr(self.caller, "permission_mode", None) if self.caller else None,
             permission_callback=getattr(self.caller, "permission_callback", None) if self.caller else None,

@@ -2132,8 +2132,13 @@ class KolegaCodeApp(App):
         browser_manager.headless = not self.browser_visible
         agent_class = PlanningAgent if self.interaction_mode == PLAN_INTERACTION_MODE else CoderAgent
         self.skill_catalog = discover_skills(self.project_path)
-        prompt_extensions = [self._shared_task_list_prompt_extension()]
-        tool_extensions = [self._shared_task_list_tool_extension()]
+        prompt_extensions: list[PromptExtension] = []
+        tool_extensions: list[ToolExtension] = []
+        # The shared task list is build-mode execution tracking; plan mode produces
+        # a plan via write_plan and does not get the task-list tools.
+        if self.interaction_mode == BUILD_INTERACTION_MODE:
+            prompt_extensions.append(self._shared_task_list_prompt_extension())
+            tool_extensions.append(self._shared_task_list_tool_extension())
         skill_prompt_extension = build_skill_prompt_extension(self.skill_catalog)
         skill_tool_extension = build_skill_tool_extension(
             self.skill_catalog,
@@ -2512,6 +2517,9 @@ class KolegaCodeApp(App):
             markdown=GIGACODE_AUTHORING_GUIDE,
             agent_types=None,
             modes=None,
+            # Sub-agents can't run workflows (run_workflow is gated off for them),
+            # so the authoring guide is just prompt bloat for a sub-agent.
+            propagate_to_sub_agents=False,
         )
 
     async def _command_sidebar(self, args: str) -> None:
@@ -2995,6 +3003,9 @@ class KolegaCodeApp(App):
             title="Shared Task List",
             markdown=SHARED_TASK_LIST_PROMPT,
             modes=[AgentMode.CLI],
+            # The task list is owned by the single top-level build agent; sub-agents
+            # must not get it or they would race on the shared list.
+            propagate_to_sub_agents=False,
         )
 
     def _shared_task_list_tool_extension(self) -> ToolExtension:
@@ -3038,6 +3049,8 @@ class KolegaCodeApp(App):
                 "planning_tools": ["get_task_list", "update_task_list"],
                 "cli_task_list_tools": ["get_task_list", "update_task_list"],
             },
+            # Single-owner, shared mutable state: never hand it to sub-agents.
+            propagate_to_sub_agents=False,
         )
 
     def _planning_question_prompt_extension(self) -> PromptExtension:
@@ -3046,6 +3059,9 @@ class KolegaCodeApp(App):
             title="Planning Questions",
             markdown=PLANNING_QUESTION_PROMPT,
             modes=[AgentMode.CLI],
+            # ask_user_choice is a top-level, interactive planning tool; sub-agents
+            # should not prompt the user.
+            propagate_to_sub_agents=False,
         )
 
     def _planning_question_tool_extension(self) -> ToolExtension:
@@ -3080,6 +3096,7 @@ class KolegaCodeApp(App):
             tools={QUESTION_TOOL_NAME: ask_user_choice},
             tool_schemas={QUESTION_TOOL_NAME: ASK_USER_CHOICE_INPUT_SCHEMA},
             tool_groups={"planning_tools": [QUESTION_TOOL_NAME]},
+            propagate_to_sub_agents=False,
         )
 
     def _normalize_choice_questions(self, questions: object) -> list[tuple[str, str, list[str], list[str]]]:
