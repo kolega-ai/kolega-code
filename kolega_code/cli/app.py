@@ -78,8 +78,11 @@ from .connection import CliConnectionManager
 from .file_index import IndexEntry, WorkspaceFileIndex
 from .mentions import build_file_attachments
 from .provider_registry import (
+    INHERIT_SENTINEL,
     UI_DEFAULT_MODEL,
     UI_DEFAULT_PROVIDER,
+    agent_role_options,
+    agent_role_provider_options,
     default_ui_thinking_effort,
     get_ui_model,
     ui_model_options,
@@ -1076,6 +1079,42 @@ class KolegaCodeApp(App):
         margin-top: 1;
     }
 
+    .settings-hint {
+        color: $text-muted;
+        margin-top: 0;
+    }
+
+    .agent-model-group {
+        height: auto;
+        margin-top: 1;
+    }
+
+    .agent-model-role {
+        text-style: bold;
+        color: $text;
+    }
+
+    .agent-model-field {
+        height: auto;
+        margin-top: 1;
+    }
+
+    .agent-model-field-label {
+        width: 10;
+        margin-top: 1;
+        color: $text-muted;
+    }
+
+    .agent-model-field Select {
+        width: 1fr;
+    }
+
+    #settings_actions {
+        height: auto;
+        padding: 0 1;
+        margin-top: 1;
+    }
+
     #planning_form Markdown.empty-state {
         color: $text-muted;
     }
@@ -1323,6 +1362,11 @@ class KolegaCodeApp(App):
         self._pending_model_selection: Optional[PendingModelSelection] = None
         self._pending_effort_selection: Optional[PendingEffortSelection] = None
         self._pending_theme_selection: Optional[PendingThemeSelection] = None
+        # Saved per-agent model/effort awaiting the provider->model cascade that
+        # restores them (keyed by the row's model/effort select id). See
+        # _populate_agent_model_rows for why the cascade, not direct assignment, applies them.
+        self._pending_agent_models: dict[str, str] = {}
+        self._pending_agent_efforts: dict[str, str] = {}
         provider, model = self._startup_model()
         self._status_state = StatusDashboardState(
             provider=provider,
@@ -1414,8 +1458,30 @@ class KolegaCodeApp(App):
                                 )
                                 yield Label("API key")
                                 yield Input(password=True, id="api_key_input")
-                                yield Button("Save Settings", variant="primary", id="save_settings")
-                                yield Static("", id="settings_status")
+                            with Vertical(classes="settings-section", id="settings_agent_models") as agents_section:
+                                agents_section.border_title = "Agent Models"
+                                yield Static(
+                                    "Give individual agents their own model. "
+                                    "Leave a role on “Default” to use the model above.",
+                                    classes="settings-hint",
+                                )
+                                for role_label, role_value in agent_role_options():
+                                    with Vertical(classes="agent-model-group"):
+                                        yield Static(role_label, classes="agent-model-role")
+                                        with Horizontal(classes="agent-model-field"):
+                                            yield Label("Provider", classes="agent-model-field-label")
+                                            yield Select(
+                                                agent_role_provider_options(),
+                                                id=f"am_provider_{role_value}",
+                                                allow_blank=False,
+                                                value=INHERIT_SENTINEL,
+                                            )
+                                        with Horizontal(classes="agent-model-field"):
+                                            yield Label("Model", classes="agent-model-field-label")
+                                            yield Select([], id=f"am_model_{role_value}", allow_blank=True, prompt="—")
+                                        with Horizontal(classes="agent-model-field"):
+                                            yield Label("Effort", classes="agent-model-field-label")
+                                            yield Select([], id=f"am_effort_{role_value}", allow_blank=True, prompt="—")
                             with Vertical(classes="settings-section", id="settings_appearance") as appearance_section:
                                 appearance_section.border_title = "Appearance"
                                 yield Label("Theme")
@@ -1425,6 +1491,9 @@ class KolegaCodeApp(App):
                                     allow_blank=False,
                                     value=theme.DEFAULT_THEME_NAME,
                                 )
+                            with Vertical(id="settings_actions"):
+                                yield Button("Save Settings", variant="primary", id="save_settings")
+                                yield Static("", id="settings_status")
         yield Footer()
 
     async def on_mount(self) -> None:
@@ -1829,23 +1898,18 @@ class KolegaCodeApp(App):
             await self._save_settings_from_ui()
 
     def on_select_changed(self, event: Select.Changed) -> None:
-        if event.select.id == "provider_select":
+        select_id = event.select.id or ""
+
+        if select_id == "provider_select":
             provider = str(event.value)
+            self._repopulate_model_select(provider, "model_select", "thinking_effort_select")
             try:
-                model_select = self.query_one("#model_select", Select)
-                api_key_input = self.query_one("#api_key_input", Input)
+                self.query_one("#api_key_input", Input).placeholder = self._api_key_placeholder(provider)
             except NoMatches:
-                return
-            model_options = ui_model_options(provider)
-            model_select.set_options(model_options)
-            model = model_options[0][1] if model_options else UI_DEFAULT_MODEL
-            if model_options:
-                model_select.value = model
-            self._set_effort_select_default(provider, model)
-            api_key_input.placeholder = self._api_key_placeholder(provider)
+                pass
             return
 
-        if event.select.id == "model_select":
+        if select_id == "model_select":
             try:
                 provider = str(self.query_one("#provider_select", Select).value)
             except NoMatches:
@@ -1853,7 +1917,35 @@ class KolegaCodeApp(App):
             self._set_effort_select_default(provider, str(event.value))
             return
 
-        if event.select.id == "theme_select":
+        if select_id.startswith("am_provider_"):
+            role = select_id[len("am_provider_") :]
+            provider = str(event.value)
+            if provider == INHERIT_SENTINEL:
+                # Don't drop pending here: the selects post an initial inherit-valued
+                # Changed on mount, which would clear a restore before its real cascade
+                # runs. _populate_agent_model_rows clears stale pending per row instead.
+                self._clear_model_effort_selects(f"am_model_{role}", f"am_effort_{role}")
+            else:
+                model_value = self._pending_agent_models.pop(f"am_model_{role}", None)
+                self._repopulate_model_select(
+                    provider, f"am_model_{role}", f"am_effort_{role}", model_value=model_value
+                )
+            return
+
+        if select_id.startswith("am_model_"):
+            role = select_id[len("am_model_") :]
+            try:
+                provider = str(self.query_one(f"#am_provider_{role}", Select).value)
+            except NoMatches:
+                return
+            if provider != INHERIT_SENTINEL and event.value is not Select.NULL:
+                # A restored effort waits here for the model that hosts it; a manual
+                # model change has none pending and falls back to preserve/default.
+                preferred = self._pending_agent_efforts.pop(f"am_effort_{role}", None)
+                self._set_effort_select_default(provider, str(event.value), f"am_effort_{role}", preferred=preferred)
+            return
+
+        if select_id == "theme_select":
             name = str(event.value)
             if name != (self.settings.active_theme or theme.DEFAULT_THEME_NAME):
                 self.settings.active_theme = name
@@ -2081,18 +2173,103 @@ class KolegaCodeApp(App):
             else theme.DEFAULT_THEME_NAME
         )
         api_key_input.placeholder = self._api_key_placeholder(provider)
+        self._populate_agent_model_rows()
         self._update_settings_status()
 
-    def _set_effort_select_default(self, provider: str, model: str) -> None:
+    def _populate_agent_model_rows(self) -> None:
+        """Seed each per-agent row from saved settings (absent role -> inherit).
+
+        A model select that was just given its options can't accept a value until the
+        next refresh, and setting the provider value posts a Changed that re-runs the
+        cascade afterwards. So we stash the saved model/effort and let that cascade —
+        the last writer — apply them, rather than assigning here and being clobbered."""
+        provider_values = {value for _, value in ui_provider_options()}
+        for _, role in agent_role_options():
+            try:
+                provider_select = self.query_one(f"#am_provider_{role}", Select)
+            except NoMatches:
+                continue
+            entry = self.settings.get_agent_model(role) or {}
+            provider = entry.get("provider")
+            self._pending_agent_models.pop(f"am_model_{role}", None)
+            self._pending_agent_efforts.pop(f"am_effort_{role}", None)
+            if provider not in provider_values:
+                provider_select.value = INHERIT_SENTINEL
+                self._clear_model_effort_selects(f"am_model_{role}", f"am_effort_{role}")
+                continue
+            if entry.get("model"):
+                self._pending_agent_models[f"am_model_{role}"] = str(entry["model"])
+            if entry.get("thinking_effort"):
+                self._pending_agent_efforts[f"am_effort_{role}"] = str(entry["thinking_effort"])
+            # Triggers on_select_changed, which consumes the pending model/effort.
+            provider_select.value = provider
+
+    def _set_effort_select_default(
+        self, provider: str, model: str, effort_id: str = "thinking_effort_select", *, preferred: Optional[str] = None
+    ) -> None:
         try:
-            effort_select = self.query_one("#thinking_effort_select", Select)
+            effort_select = self.query_one(f"#{effort_id}", Select)
         except Exception:
             return
+        # Prefer an explicit value (a restored effort), else keep the current one if it
+        # is still valid for this model, else fall back to the model's default. This
+        # keeps a restore or a provider switch from clobbering the chosen effort.
+        current = effort_select.value
+        current = None if current is Select.NULL else str(current)
         effort_options = ui_thinking_effort_options(provider, model)
+        valid_efforts = {value for _, value in effort_options}
         effort_select.set_options(effort_options)
-        default_effort = default_ui_thinking_effort(provider, model)
-        if default_effort is not None:
-            effort_select.value = default_effort
+        if preferred in valid_efforts:
+            chosen = preferred
+        elif current in valid_efforts:
+            chosen = current
+        else:
+            chosen = default_ui_thinking_effort(provider, model)
+        if chosen is not None:
+            effort_select.value = chosen
+
+    def _repopulate_model_select(
+        self,
+        provider: str,
+        model_id: str,
+        effort_id: str,
+        *,
+        model_value: Optional[str] = None,
+        effort_value: Optional[str] = None,
+    ) -> None:
+        """Fill a provider→model→effort trio for a provider.
+
+        Used by the global Model section and each per-agent row. ``model_value`` /
+        ``effort_value`` pre-select a model/effort (used while restoring saved
+        settings). Otherwise the select's current model is kept when it is still valid
+        for ``provider`` (so a restore is not clobbered), falling back to the
+        provider's first model."""
+        try:
+            model_select = self.query_one(f"#{model_id}", Select)
+        except NoMatches:
+            return
+        if model_value is None:
+            current = model_select.value
+            model_value = None if current is Select.NULL else str(current)
+        model_options = ui_model_options(provider)
+        model_select.set_options(model_options)
+        valid_models = {value for _, value in model_options}
+        model = model_value if (model_value and model_value in valid_models) else None
+        if model is None:
+            model = model_options[0][1] if model_options else UI_DEFAULT_MODEL
+        if model_options:
+            model_select.value = model
+        self._set_effort_select_default(provider, model, effort_id, preferred=effort_value)
+
+    def _clear_model_effort_selects(self, model_id: str, effort_id: str) -> None:
+        """Blank a per-agent row's model+effort selects (the role inherits)."""
+        for select_id in (model_id, effort_id):
+            try:
+                select = self.query_one(f"#{select_id}", Select)
+            except NoMatches:
+                continue
+            select.set_options([])
+            select.value = Select.NULL
 
     async def _save_settings_from_ui(self) -> None:
         provider = str(self.query_one("#provider_select", Select).value)
@@ -2110,6 +2287,7 @@ class KolegaCodeApp(App):
         self.settings.active_theme = str(self.query_one("#theme_select", Select).value)
         if api_key:
             self.settings.set_api_key(provider, api_key)
+        self._collect_agent_models_from_ui()
         self.settings_store.save(self.settings)
         api_key_input.value = ""
         api_key_input.placeholder = self._api_key_placeholder(provider)
@@ -2117,6 +2295,25 @@ class KolegaCodeApp(App):
         await self._ensure_agent_from_settings(rebuild=True)
         if self.config is not None:
             self._notify_user(messages.SETTINGS_SAVED)
+
+    def _collect_agent_models_from_ui(self) -> None:
+        """Write each per-agent row into settings.agent_models (inherit rows removed)."""
+        for _, role in agent_role_options():
+            try:
+                provider = str(self.query_one(f"#am_provider_{role}", Select).value)
+                model_select = self.query_one(f"#am_model_{role}", Select)
+                effort_select = self.query_one(f"#am_effort_{role}", Select)
+            except NoMatches:
+                continue
+            if provider == INHERIT_SENTINEL or model_select.value is Select.NULL:
+                self.settings.clear_agent_model(role)
+                continue
+            model = str(model_select.value)
+            effort = "" if effort_select.value is Select.NULL else str(effort_select.value)
+            valid_efforts = {value for _, value in ui_thinking_effort_options(provider, model)}
+            if effort not in valid_efforts:
+                effort = default_ui_thinking_effort(provider, model) or ""
+            self.settings.set_agent_model(role, provider, model, effort or None)
 
     async def _ensure_agent_from_settings(self, rebuild: bool = False) -> None:
         try:

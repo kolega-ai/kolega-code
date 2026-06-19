@@ -102,6 +102,42 @@ kolega-code . \
 Or with environment variables — see
 [Environment Variables](../environment-variables/) for the complete list.
 
+## Per-agent models
+
+The three slots above describe *operational* roles (main, fast, thinking). Separately,
+you can give each **agent** its own model, so a cheap, fast model handles
+investigation while a stronger model does the building. This applies to top-level
+agents and to the sub-agents they dispatch.
+
+| Agent role | Key | Runs |
+| --- | --- | --- |
+| **Planning** | `planning` | The plan-mode agent |
+| **Building** | `building` | The main coder agent |
+| **Investigation** | `investigation` | Read-only research/exploration sub-agents |
+| **General** | `general` | General-purpose sub-agents |
+| **Browser** | `browser` | Browser/web sub-agents |
+
+Each role **inherits the active (long-context) model** unless you give it an override —
+so with nothing configured, behavior is unchanged.
+
+In the **Settings tab**, the **Agent Models** section (below the main Model section)
+has a provider/model/effort group per role. Leave a role on **Default** to inherit;
+pick a provider, model, and thinking effort to override it.
+
+Or use environment variables, named `KOLEGA_CODE_<ROLE>_PROVIDER` / `_MODEL` / `_EFFORT`:
+
+```bash
+# Use a fast model for investigation; everything else uses the active model.
+export KOLEGA_CODE_INVESTIGATION_PROVIDER=deepseek
+export KOLEGA_CODE_INVESTIGATION_MODEL=deepseek-v4-flash
+export KOLEGA_CODE_INVESTIGATION_EFFORT=high
+```
+
+Resolution order for a role (first match wins): **env var → saved Settings → the
+active model**. Each override's provider must have an API key, exactly like the main
+roles. (Inside a `run_workflow` script, an explicit `model=`/`effort=` on an `agent()`
+call still takes precedence over these per-role defaults.)
+
 ## Thinking effort
 
 Thinking effort is model-specific. Kolega Code validates the selected value

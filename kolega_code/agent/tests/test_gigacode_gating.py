@@ -33,6 +33,8 @@ def agent_config():
     config.openai_api_key = "test_key"
     config.anthropic_api_key = "test_key"
     config.browser_use_headless = True
+    config.agent_models = {}
+    config.model_config_for_agent.return_value = config.long_context_config
     return config
 
 

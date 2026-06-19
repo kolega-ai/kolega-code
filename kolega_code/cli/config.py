@@ -9,7 +9,7 @@ from typing import Mapping, Optional
 
 from dotenv import dotenv_values
 
-from kolega_code.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
+from kolega_code.config import AgentConfig, AgentRole, ModelConfig, ModelProvider, RateLimitConfig
 from kolega_code.llm.specs import get_model_specs, normalize_thinking_effort
 
 from .provider_registry import default_model_for_provider
@@ -174,6 +174,52 @@ def _resolve_active_thinking_effort(
         raise CliConfigError(str(exc)) from exc
 
 
+def _agent_role_env_keys(role: AgentRole) -> tuple[str, str, str]:
+    """Env var names that override a role's provider/model/effort, e.g.
+    KOLEGA_CODE_INVESTIGATION_PROVIDER / _MODEL / _EFFORT."""
+    token = role.value.upper()
+    return (
+        f"KOLEGA_CODE_{token}_PROVIDER",
+        f"KOLEGA_CODE_{token}_MODEL",
+        f"KOLEGA_CODE_{token}_EFFORT",
+    )
+
+
+def _agent_model_overrides(
+    env: Mapping[str, str],
+    settings: Optional[CliSettings],
+    active_provider: ModelProvider,
+    active_model: str,
+) -> dict[str, ModelConfig]:
+    """Resolve per-agent-role model overrides from env vars over saved settings.
+
+    A role with neither an env nor a settings provider/model is omitted, so it
+    inherits the active model. Field-level precedence is env > settings, mirroring
+    the per-slot resolution used for long/fast/thinking.
+    """
+    saved = settings.agent_models if settings else {}
+    overrides: dict[str, ModelConfig] = {}
+    for role in AgentRole:
+        provider_key, model_key, effort_key = _agent_role_env_keys(role)
+        entry = saved.get(role.value) or {}
+        provider_value = env.get(provider_key) or entry.get("provider")
+        model_value = env.get(model_key) or entry.get("model")
+        effort_value = env.get(effort_key) or entry.get("thinking_effort")
+
+        if not provider_value and not model_value:
+            continue
+
+        provider = _provider(provider_value or active_provider.value)
+        if model_value:
+            model = model_value
+        elif active_provider == provider and active_model:
+            model = active_model
+        else:
+            model = default_model_for_provider(provider)
+        overrides[role.value] = _model_config(provider, model, thinking_effort=effort_value)
+    return overrides
+
+
 def build_agent_config(
     project_path: Path,
     overrides: Optional[CliConfigOverrides] = None,
@@ -236,7 +282,10 @@ def build_agent_config(
         else None
     )
 
+    agent_model_overrides = _agent_model_overrides(loaded_env, settings, active_provider, active_model)
+
     required_providers = {long_provider, fast_provider, thinking_provider}
+    required_providers.update(override.provider for override in agent_model_overrides.values())
     missing_keys = [
         API_KEY_ENV[provider]
         for provider in sorted(required_providers, key=lambda item: item.value)
@@ -263,6 +312,7 @@ def build_agent_config(
             long_context_config=_model_config(long_provider, long_model, thinking_effort=active_thinking_effort),
             fast_config=_model_config(fast_provider, fast_model),
             thinking_config=_model_config(thinking_provider, thinking_model, thinking_effort=think_hard_effort),
+            agent_models=agent_model_overrides,
         )
     except ValueError as exc:
         raise CliConfigError(str(exc)) from exc
@@ -280,7 +330,7 @@ def key_status(provider: str, project_path: Path, settings: Optional[CliSettings
     return "missing"
 
 
-def config_summary(config: AgentConfig) -> dict[str, str | int | None]:
+def config_summary(config: AgentConfig) -> dict[str, object]:
     """Return a session-safe summary of model configuration."""
     return {
         "environment": config.environment,
@@ -291,4 +341,8 @@ def config_summary(config: AgentConfig) -> dict[str, str | int | None]:
         "thinking_provider": config.thinking_config.provider.value,
         "thinking_model": config.thinking_config.model,
         "thinking_effort": config.long_context_config.thinking_effort,
+        "agent_models": {
+            role: f"{model_config.provider.value}/{model_config.model}"
+            for role, model_config in config.agent_models.items()
+        },
     }

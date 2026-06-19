@@ -56,9 +56,7 @@ class _EmptyStream:
 
 def test_deepseek_image_attachment_is_rejected_by_provider_check():
     agent = object.__new__(BaseAgent)
-    agent.config = SimpleNamespace(
-        long_context_config=SimpleNamespace(provider=ModelProvider.DEEPSEEK.value),
-    )
+    agent.primary_model_config = SimpleNamespace(provider=ModelProvider.DEEPSEEK.value)
 
     assert (
         agent._unsupported_attachment_message([_image_attachment()])
@@ -68,13 +66,11 @@ def test_deepseek_image_attachment_is_rejected_by_provider_check():
 
 def test_deepseek_attachment_check_allows_non_images_and_other_providers():
     agent = object.__new__(BaseAgent)
-    agent.config = SimpleNamespace(
-        long_context_config=SimpleNamespace(provider=ModelProvider.DEEPSEEK),
-    )
+    agent.primary_model_config = SimpleNamespace(provider=ModelProvider.DEEPSEEK)
     assert agent._unsupported_attachment_message(None) is None
     assert agent._unsupported_attachment_message([{"type": "document", "data": "abc"}]) is None
 
-    agent.config.long_context_config.provider = ModelProvider.ANTHROPIC
+    agent.primary_model_config.provider = ModelProvider.ANTHROPIC
     assert agent._unsupported_attachment_message([_image_attachment()]) is None
 
 

@@ -230,3 +230,84 @@ def test_stored_deepseek_settings_require_deepseek_key(tmp_path: Path) -> None:
 
     with pytest.raises(CliConfigError, match="DEEPSEEK_API_KEY"):
         build_agent_config(tmp_path, settings=settings, env={})
+
+
+def _anthropic_settings_with_deepseek_key() -> CliSettings:
+    settings = CliSettings(active_provider="anthropic", active_model=DEFAULT_LONG_MODEL)
+    settings.set_api_key("anthropic", "anthropic-key")
+    settings.set_api_key("deepseek", "deepseek-key")
+    return settings
+
+
+def test_build_agent_config_applies_settings_agent_model_override(tmp_path: Path) -> None:
+    settings = _anthropic_settings_with_deepseek_key()
+    settings.set_agent_model("investigation", "deepseek", "deepseek-v4-flash", "high")
+
+    config = build_agent_config(tmp_path, settings=settings, env={})
+
+    investigation = config.model_config_for_agent("investigation-agent")
+    assert investigation.provider == ModelProvider.DEEPSEEK
+    assert investigation.model == "deepseek-v4-flash"
+    assert investigation.thinking_effort == "high"
+    # Roles with no override inherit the active (long-context) model.
+    assert config.model_config_for_agent("coder").model == DEFAULT_LONG_MODEL
+
+
+def test_env_overrides_settings_agent_model(tmp_path: Path) -> None:
+    settings = CliSettings(active_provider="anthropic", active_model=DEFAULT_LONG_MODEL)
+    settings.set_agent_model("investigation", "deepseek", "deepseek-v4-flash")
+
+    config = build_agent_config(
+        tmp_path,
+        settings=settings,
+        env={
+            "ANTHROPIC_API_KEY": "anthropic-key",
+            "DEEPSEEK_API_KEY": "deepseek-key",
+            "KOLEGA_CODE_INVESTIGATION_MODEL": "deepseek-v4-pro",
+        },
+    )
+
+    assert config.model_config_for_agent("investigation-agent").model == "deepseek-v4-pro"
+
+
+def test_env_only_agent_model_override(tmp_path: Path) -> None:
+    config = build_agent_config(
+        tmp_path,
+        env={
+            "ANTHROPIC_API_KEY": "anthropic-key",
+            "DEEPSEEK_API_KEY": "deepseek-key",
+            "KOLEGA_CODE_PROVIDER": "anthropic",
+            "KOLEGA_CODE_INVESTIGATION_PROVIDER": "deepseek",
+            "KOLEGA_CODE_INVESTIGATION_MODEL": "deepseek-v4-flash",
+        },
+    )
+
+    assert config.model_config_for_agent("investigation-agent").provider == ModelProvider.DEEPSEEK
+    assert config.model_config_for_agent("investigation-agent").model == "deepseek-v4-flash"
+    assert config.model_config_for_agent("coder").model == DEFAULT_LONG_MODEL
+
+
+def test_agent_model_override_requires_api_key(tmp_path: Path) -> None:
+    settings = CliSettings(active_provider="anthropic", active_model=DEFAULT_LONG_MODEL)
+    settings.set_api_key("anthropic", "anthropic-key")
+    settings.set_agent_model("investigation", "deepseek", "deepseek-v4-flash")
+
+    with pytest.raises(CliConfigError, match="DEEPSEEK_API_KEY"):
+        build_agent_config(tmp_path, settings=settings, env={})
+
+
+def test_config_summary_includes_agent_models(tmp_path: Path) -> None:
+    settings = _anthropic_settings_with_deepseek_key()
+    settings.set_agent_model("investigation", "deepseek", "deepseek-v4-flash")
+
+    summary = config_summary(build_agent_config(tmp_path, settings=settings, env={}))
+
+    assert summary["agent_models"] == {"investigation": "deepseek/deepseek-v4-flash"}
+
+
+def test_build_agent_config_no_agent_model_overrides_by_default(tmp_path: Path) -> None:
+    config = build_agent_config(
+        tmp_path, env={"ANTHROPIC_API_KEY": "anthropic-key", "KOLEGA_CODE_PROVIDER": "anthropic"}
+    )
+
+    assert config.agent_models == {}

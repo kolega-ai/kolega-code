@@ -274,8 +274,10 @@ class WorkflowTool(BaseTool):
             th_update["thinking_effort"] = effort
         new_long = self.config.long_context_config.model_copy(update=lc_update)
         new_thinking = self.config.thinking_config.model_copy(update=th_update)
+        # An explicit per-call model/effort is the workflow author's choice and must
+        # win over any per-agent-role override, so drop agent_models on the clone.
         return self.config.model_copy(
-            update={"long_context_config": new_long, "thinking_config": new_thinking}
+            update={"long_context_config": new_long, "thinking_config": new_thinking, "agent_models": {}}
         )
 
     def _summarize(self, meta, run_id, journal: RunJournal, budget: Budget, status, error, result) -> str:

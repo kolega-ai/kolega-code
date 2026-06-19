@@ -21,11 +21,16 @@ the TUI:
 
 When you switch models, the thinking effort resets to the new model's default.
 
-A saved selection is used for **all** agent model roles. Existing environment
+A saved selection is the default for **all** agent model roles. Existing environment
 variables and `--provider` / `--model` flags continue to override it — see
 [Providers & Models](../providers-and-models/) for resolution order.
 API key environment variables are credentials only; they do not choose the active
 provider or model.
+
+The **Agent Models** section beneath the main Model section lets you give individual
+agents (planning, building, investigation, general, browser) their own provider,
+model, and effort. Leave a role on **Default** to inherit the active model. See
+[Per-agent models](../providers-and-models/#per-agent-models).
 
 ## Where settings live
 
@@ -45,15 +50,27 @@ The file looks like this:
 
 ```json
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "active_provider": "moonshot",
   "active_model": "kimi-k2.7-code",
   "active_thinking_effort": "auto",
   "api_keys": {
-    "moonshot": "sk-..."
+    "moonshot": "sk-...",
+    "deepseek": "sk-..."
+  },
+  "agent_models": {
+    "investigation": {
+      "provider": "deepseek",
+      "model": "deepseek-v4-flash",
+      "thinking_effort": "high"
+    }
   }
 }
 ```
+
+`agent_models` holds per-agent overrides keyed by role (`planning`, `building`,
+`investigation`, `general`, `browser`); a role that is absent inherits the active
+model. The field is optional and older `schema_version` files load unchanged.
 
 <Aside type="caution" title="Keys are stored in plaintext">
 API keys are written to `settings.json` in plaintext, but the file is created with

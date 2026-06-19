@@ -212,6 +212,9 @@ class BaseAgent(LogMixin):
         self.thread_id = context.workspace.thread_id
         self.connection_manager = context.connection_manager
         self.config = context.config
+        # The model this agent runs its main loop on: the per-role override when one
+        # is configured for this agent_name, otherwise the global long-context model.
+        self.primary_model_config = self.config.model_config_for_agent(self.agent_name)
         self.filesystem = context.services.filesystem
         self.terminal_manager = context.services.terminal_manager
         self.browser_manager = context.services.browser_manager
@@ -257,7 +260,7 @@ class BaseAgent(LogMixin):
             sub_agent_info_provider=self._sub_agent_info,
         )
 
-        model_specs = get_model_specs(self.config.long_context_config.provider, self.config.long_context_config.model)
+        model_specs = get_model_specs(self.primary_model_config.provider, self.primary_model_config.model)
         self.model_context_length = model_specs["context_length"]
         self.model_completion_tokens = model_specs["max_completion_tokens"]
         self.model_default_temperature = model_specs.get("default_temperature", 1.0)
@@ -446,7 +449,7 @@ class BaseAgent(LogMixin):
             is_git_repo=is_git_repo,
             platform=platform.system(),
             date_today=datetime.now().strftime("%Y-%m-%d"),
-            model_name=self.config.long_context_config.model,
+            model_name=self.primary_model_config.model,
             available_ports=self.available_ports,
             project_guidance=project_guidance,
             project_guidance_file=project_guidance_file,
@@ -464,9 +467,9 @@ class BaseAgent(LogMixin):
 
     def _unsupported_attachment_message(self, attachments: Optional[List[Dict[str, Any]]]) -> Optional[str]:
         provider = getattr(
-            self.config.long_context_config.provider,
+            self.primary_model_config.provider,
             "value",
-            self.config.long_context_config.provider,
+            self.primary_model_config.provider,
         )
         if provider != ModelProvider.DEEPSEEK.value:
             return None
@@ -507,7 +510,7 @@ class BaseAgent(LogMixin):
         token_count = await self.llm.count_tokens(
             system=self.system_prompt,
             messages=fixed_history,
-            model=self.config.long_context_config.model,
+            model=self.primary_model_config.model,
             tools=self.tool_collection.get_tool_list(),
         )
 
@@ -554,10 +557,10 @@ class BaseAgent(LogMixin):
         await self.compressor.summarize(
             self.conversation,
             llm=self.llm,
-            model=self.config.long_context_config.model,
+            model=self.primary_model_config.model,
             max_completion_tokens=self.model_completion_tokens,
             temperature=self.model_default_temperature,
-            thinking=self.config.long_context_config.thinking_effort,
+            thinking=self.primary_model_config.thinking_effort,
             on_info=on_info,
             on_error=on_error,
         )
@@ -705,7 +708,7 @@ class BaseAgent(LogMixin):
             # Send tool_call message to indicate we're starting execution
             if not all(
                 [
-                    self.config.long_context_config.provider == ModelProvider.ANTHROPIC,
+                    self.primary_model_config.provider == ModelProvider.ANTHROPIC,
                     tool_name in self.long_content_tool_calls,
                 ]
             ):
@@ -1058,7 +1061,7 @@ class BaseAgent(LogMixin):
             LLMError: Re-raises LLM errors after logging
             Exception: Re-raises non-LLM exceptions as-is
         """
-        error = map_to_llm_error(error, provider=self.config.long_context_config.provider.value)
+        error = map_to_llm_error(error, provider=self.primary_model_config.provider.value)
 
         if isinstance(error, LLMRateLimitError):
             await self.log_warning(
@@ -1071,7 +1074,7 @@ class BaseAgent(LogMixin):
         elif isinstance(error, LLMError):
             await self.emitter.llm_status(
                 "error",
-                llm_error_message(error, model=self.config.long_context_config.model),
+                llm_error_message(error, model=self.primary_model_config.model),
             )
             raise error
         else:
@@ -1232,9 +1235,9 @@ class BaseAgent(LogMixin):
                     max_completion_tokens=self.model_completion_tokens,
                     temperature=self.model_default_temperature,
                     messages=fixed_history,
-                    model=self.config.long_context_config.model,
+                    model=self.primary_model_config.model,
                     tools=self.tool_collection.get_tool_list(),
-                    thinking=self.config.long_context_config.thinking_effort,
+                    thinking=self.primary_model_config.thinking_effort,
                 ) as stream:
                     async for event in stream:
                         if event.type == "text":
