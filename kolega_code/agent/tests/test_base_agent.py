@@ -14,6 +14,7 @@ from kolega_code.llm.exceptions import (
     LLMAuthenticationError,
     LLMContextWindowExceededError,
     LLMInternalServerError,
+    LLMRateLimitError,
 )
 from kolega_code.llm.models import (
     Message,
@@ -87,12 +88,6 @@ class TestBaseAgent:
                 "The conversation context became too large for the model",
             ),
             (
-                LLMInternalServerError("provider overloaded", provider=ModelProvider.ANTHROPIC.value),
-                ModelProvider.ANTHROPIC,
-                "claude-haiku-4-5-20251001",
-                "There is high traffic on our LLM provider",
-            ),
-            (
                 LLMAuthenticationError("invalid key", provider=ModelProvider.ANTHROPIC.value),
                 ModelProvider.ANTHROPIC,
                 "claude-haiku-4-5-20251001",
@@ -119,6 +114,62 @@ class TestBaseAgent:
         assert event.event_type == "llm_status_update"
         assert event.content["status"] == "error"
         assert expected_message in event.content["message"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "make_error",
+        [
+            lambda: LLMRateLimitError("429 rate limited", provider=ModelProvider.ANTHROPIC.value),
+            lambda: LLMInternalServerError("provider overloaded", provider=ModelProvider.ANTHROPIC.value),
+        ],
+    )
+    async def test_handle_llm_error_retries_transient_then_caps(self, base_agent, make_error):
+        """Rate-limit and overload/5xx errors back off and retry up to loop_max_retries
+        consecutive attempts, then surface cleanly."""
+        cap = base_agent.primary_model_config.rate_limits.loop_max_retries
+        assert cap >= 1
+
+        sleeps: list[float] = []
+
+        async def fake_sleep(delay):
+            sleeps.append(delay)
+
+        with patch("kolega_code.agent.baseagent.asyncio.sleep", side_effect=fake_sleep):
+            # Under the cap: returns without raising (the turn loop will re-issue).
+            for attempt in range(cap):
+                await base_agent.handle_llm_error(make_error())
+                assert base_agent._consecutive_llm_retries == attempt + 1
+            # Exceeding the cap re-raises the mapped error.
+            with pytest.raises((LLMRateLimitError, LLMInternalServerError)):
+                await base_agent.handle_llm_error(make_error())
+
+        assert len(sleeps) == cap
+        assert all(s >= 0 for s in sleeps)
+
+    @pytest.mark.asyncio
+    async def test_handle_llm_error_honors_retry_after(self, base_agent):
+        """A retry-after header on the raw exception is used (capped) for the wait."""
+        raw = SimpleNamespace(response=SimpleNamespace(headers={"retry-after": "7"}))
+        # Make it look like a rate-limit so map_to_llm_error classifies it as retryable.
+        raw.status_code = 429
+
+        sleeps: list[float] = []
+
+        async def fake_sleep(delay):
+            sleeps.append(delay)
+
+        with patch("kolega_code.agent.baseagent.asyncio.sleep", side_effect=fake_sleep), patch(
+            "kolega_code.agent.baseagent.map_to_llm_error",
+            return_value=LLMRateLimitError("429", provider=ModelProvider.ANTHROPIC.value),
+        ):
+            await base_agent.handle_llm_error(raw)
+
+        assert sleeps == [7.0]
+
+    def test_parse_retry_after_forms(self):
+        seconds = SimpleNamespace(response=SimpleNamespace(headers={"retry-after": "12"}))
+        assert BaseAgent._parse_retry_after(seconds) == 12.0
+        assert BaseAgent._parse_retry_after(Exception("no header")) is None
 
     def test_build_prompt_context_loads_agents_md(self, base_agent, tmp_path):
         (tmp_path / "AGENTS.md").write_text("Use AGENTS guidance", encoding="utf-8")
