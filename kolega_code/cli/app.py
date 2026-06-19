@@ -1688,6 +1688,18 @@ class KolegaCodeApp(App):
             return
         dropdown.open_with([file_completion_item(entry) for entry in entries])
 
+    def on_descendant_focus(self, event: events.DescendantFocus) -> None:
+        # Fires after screen.focused settles. Catches AUTO_FOCUS landing on the
+        # conversation transcript (resume/resize) and any other stray focus while a
+        # prompt is shown, pulling focus back to the active option list.
+        self._heal_prompt_focus()
+
+    def on_descendant_blur(self, event: events.DescendantBlur) -> None:
+        # A background click does set_focus(None) and emits no DescendantFocus, so
+        # the focus hook alone would miss it. Re-assert after the refresh settles, so
+        # we run after any AUTO_FOCUS/_reset_focus the same blur triggered.
+        self.call_after_refresh(self._heal_prompt_focus)
+
     async def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         if event.option_list.id == "question_actions":
             event.stop()
@@ -2275,10 +2287,6 @@ class KolegaCodeApp(App):
         self._set_plan_actions_visible(True, allow_discuss=True)
         self._set_composer_status(PLAN_READY_PLACEHOLDER)
         self._set_chat_enabled(False)
-        try:
-            self.screen.set_focus(self.query_one("#plan_actions", ActionList))
-        except Exception:
-            pass
         self._notify_user(messages.PLAN_CAPTURED)
 
     async def _implement_pending_plan(self, *, clear_context: bool = False) -> None:
@@ -2320,6 +2328,70 @@ class KolegaCodeApp(App):
         self.query_one("#composer", ChatComposer).focus()
         self._notify_user(messages.PLAN_DISCUSSION_RESUMED)
 
+    def _active_prompt_actions(self) -> Optional[ActionList]:
+        """The option list that must own keyboard focus while a prompt is shown.
+
+        Returns None when no prompt is active (free typing). Keys off the same
+        _pending_* / plan flags that gate visibility, plus a .display check, so
+        "displayed" and "should be focused" cannot drift. Only one of these is ever
+        active at a time; the order is a safety net.
+        """
+        candidates = [
+            (self._pending_approval is not None, "#approval_actions"),
+            (self._pending_question is not None, "#question_actions"),
+            (self._pending_model_selection is not None, "#model_actions"),
+            (self._pending_effort_selection is not None, "#effort_actions"),
+            (self._pending_theme_selection is not None, "#theme_actions"),
+            (
+                self.interaction_mode == PLAN_INTERACTION_MODE and self._plan_pending,
+                "#plan_actions",
+            ),
+        ]
+        for active, selector in candidates:
+            if not active:
+                continue
+            try:
+                actions = self.query_one(selector, ActionList)
+            except Exception:
+                return None
+            return actions if actions.display else None
+        return None
+
+    def _focus_active_prompt(self) -> None:
+        """Focus the active prompt list now and re-assert after the refresh settles.
+
+        The synchronous set_focus handles the common fast path; the deferred
+        re-assert defeats the documented race where compose/resume/disable churn
+        resets focus right after we set it (see PromptPanel.prompt)."""
+        actions = self._active_prompt_actions()
+        if actions is None:
+            return
+        if self.screen.focused is not actions:
+            self.screen.set_focus(actions)
+        self.call_after_refresh(self._heal_prompt_focus)
+
+    def _heal_prompt_focus(self) -> None:
+        """Re-grab focus for the active prompt list if it has drifted. Idempotent.
+
+        Restores keyboard navigation after focus is lost to nothing (background
+        click), to the conversation transcript (AUTO_FOCUS on resume/resize), or to
+        any other stray widget. No-op when no prompt is active or the list is already
+        focused."""
+        actions = self._active_prompt_actions()
+        if actions is None or self.screen.focused is actions:
+            return
+        # Legitimate exception: during a QUESTION the composer is enabled so the user
+        # can type a free-form answer; don't fight a deliberate move there. For
+        # approvals/plan the composer is disabled and thus never focusable here.
+        focused = self.screen.focused
+        if (
+            self._pending_question is not None
+            and isinstance(focused, ChatComposer)
+            and not focused.disabled
+        ):
+            return
+        self.screen.set_focus(actions)
+
     def _set_plan_actions_visible(self, visible: bool, *, allow_discuss: bool = False) -> None:
         try:
             plan_actions = self.query_one("#plan_actions", ActionList)
@@ -2329,6 +2401,7 @@ class KolegaCodeApp(App):
                     options.append(Option("Clear context and implement plan", id="implement_plan_clear"))
                     options.append(Option("Discuss further", id="discuss_plan"))
                 plan_actions.show_options(options)
+                self._focus_active_prompt()
             else:
                 plan_actions.hide()
         except Exception:
@@ -3235,6 +3308,7 @@ class KolegaCodeApp(App):
             for index, option in enumerate(options)
         ]
         panel.prompt(escape(question), option_widgets)
+        self._focus_active_prompt()
 
     async def _permission_callback(self, request: PermissionRequest) -> PermissionDecision:
         if self.permission_mode != PermissionMode.ASK:
@@ -3324,27 +3398,15 @@ class KolegaCodeApp(App):
 
     def _show_effort_options(self) -> None:
         self._set_effort_actions_visible(True)
-        try:
-            effort_actions = self.query_one("#effort_actions", ActionList)
-            self.screen.set_focus(effort_actions)
-        except Exception:
-            return
+        self._focus_active_prompt()
 
     def _show_model_options(self) -> None:
         self._set_model_actions_visible(True)
-        try:
-            model_actions = self.query_one("#model_actions", ActionList)
-            self.screen.set_focus(model_actions)
-        except Exception:
-            return
+        self._focus_active_prompt()
 
     def _show_theme_options(self) -> None:
         self._set_theme_actions_visible(True)
-        try:
-            theme_actions = self.query_one("#theme_actions", ActionList)
-            self.screen.set_focus(theme_actions)
-        except Exception:
-            return
+        self._focus_active_prompt()
 
     def _set_question_actions_visible(self, visible: bool) -> None:
         try:
@@ -3354,6 +3416,7 @@ class KolegaCodeApp(App):
         if visible:
             panel.display = True
             panel.actions.display = True
+            self._focus_active_prompt()
         else:
             panel.hide()
 
@@ -3369,6 +3432,7 @@ class KolegaCodeApp(App):
                 for index, label in enumerate(labels)
             ]
             panel.prompt(escape(self._format_permission_content(self._pending_approval.request)), options)
+            self._focus_active_prompt()
         else:
             panel.hide()
 
