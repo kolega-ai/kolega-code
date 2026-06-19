@@ -216,8 +216,9 @@ async def test_settings_tab_grouped_into_model_and_appearance_sections(
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
 
     async with app.run_test():
-        # Two bordered, titled sections.
+        # Bordered, titled sections.
         assert app.query_one("#settings_model").border_title == "Model"
+        assert app.query_one("#settings_agent_models").border_title == "Agent Models"
         assert app.query_one("#settings_appearance").border_title == "Appearance"
         # Every control still resolves by id (wiring is unchanged).
         for control_id in (
@@ -232,9 +233,11 @@ async def test_settings_tab_grouped_into_model_and_appearance_sections(
             app.query_one(control_id)
         # Grouping: model controls in the Model card, theme in the Appearance card.
         assert app.query_one("#settings_model #provider_select")
-        assert app.query_one("#settings_model #save_settings")
         assert app.query_one("#settings_appearance #theme_select")
         assert not list(app.query("#settings_model #theme_select"))
+        # Save is a form-level action, not nested inside the Model card.
+        assert app.query_one("#settings_actions #save_settings")
+        assert not list(app.query("#settings_model #save_settings"))
 
 
 @pytest.mark.asyncio

@@ -1084,19 +1084,35 @@ class KolegaCodeApp(App):
         margin-top: 0;
     }
 
-    .agent-model-row {
+    .agent-model-group {
         height: auto;
         margin-top: 1;
     }
 
-    .agent-model-label {
-        width: 18;
-        margin-top: 1;
+    .agent-model-role {
+        text-style: bold;
         color: $text;
     }
 
-    .agent-model-row Select {
+    .agent-model-field {
+        height: auto;
+        margin-top: 1;
+    }
+
+    .agent-model-field-label {
+        width: 10;
+        margin-top: 1;
+        color: $text-muted;
+    }
+
+    .agent-model-field Select {
         width: 1fr;
+    }
+
+    #settings_actions {
+        height: auto;
+        padding: 0 1;
+        margin-top: 1;
     }
 
     #planning_form Markdown.empty-state {
@@ -1442,8 +1458,6 @@ class KolegaCodeApp(App):
                                 )
                                 yield Label("API key")
                                 yield Input(password=True, id="api_key_input")
-                                yield Button("Save Settings", variant="primary", id="save_settings")
-                                yield Static("", id="settings_status")
                             with Vertical(classes="settings-section", id="settings_agent_models") as agents_section:
                                 agents_section.border_title = "Agent Models"
                                 yield Static(
@@ -1452,20 +1466,22 @@ class KolegaCodeApp(App):
                                     classes="settings-hint",
                                 )
                                 for role_label, role_value in agent_role_options():
-                                    with Horizontal(classes="agent-model-row"):
-                                        yield Label(role_label, classes="agent-model-label")
-                                        yield Select(
-                                            agent_role_provider_options(),
-                                            id=f"am_provider_{role_value}",
-                                            allow_blank=False,
-                                            value=INHERIT_SENTINEL,
-                                        )
-                                        yield Select(
-                                            [], id=f"am_model_{role_value}", allow_blank=True, prompt="—"
-                                        )
-                                        yield Select(
-                                            [], id=f"am_effort_{role_value}", allow_blank=True, prompt="—"
-                                        )
+                                    with Vertical(classes="agent-model-group"):
+                                        yield Static(role_label, classes="agent-model-role")
+                                        with Horizontal(classes="agent-model-field"):
+                                            yield Label("Provider", classes="agent-model-field-label")
+                                            yield Select(
+                                                agent_role_provider_options(),
+                                                id=f"am_provider_{role_value}",
+                                                allow_blank=False,
+                                                value=INHERIT_SENTINEL,
+                                            )
+                                        with Horizontal(classes="agent-model-field"):
+                                            yield Label("Model", classes="agent-model-field-label")
+                                            yield Select([], id=f"am_model_{role_value}", allow_blank=True, prompt="—")
+                                        with Horizontal(classes="agent-model-field"):
+                                            yield Label("Effort", classes="agent-model-field-label")
+                                            yield Select([], id=f"am_effort_{role_value}", allow_blank=True, prompt="—")
                             with Vertical(classes="settings-section", id="settings_appearance") as appearance_section:
                                 appearance_section.border_title = "Appearance"
                                 yield Label("Theme")
@@ -1475,6 +1491,9 @@ class KolegaCodeApp(App):
                                     allow_blank=False,
                                     value=theme.DEFAULT_THEME_NAME,
                                 )
+                            with Vertical(id="settings_actions"):
+                                yield Button("Save Settings", variant="primary", id="save_settings")
+                                yield Static("", id="settings_status")
         yield Footer()
 
     async def on_mount(self) -> None:
