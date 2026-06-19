@@ -195,7 +195,7 @@ def test_general_agent_tool_inventory(project_path, mock_connection_manager, age
     assert "search_codebase" in tool_names
     assert "create_file" in tool_names
     assert "replace_entire_file" in tool_names
-    assert "run_command_tracked" in tool_names
+    assert "exec_command" in tool_names
     # Recursion guard: no dispatch tools at all
     assert not any(name.startswith("dispatch_") for name in tool_names)
 
@@ -237,7 +237,7 @@ def test_planning_agent_exposes_read_only_and_planning_tools(project_path, mock_
     assert "create_file" not in tool_names
     assert "replace_entire_file" not in tool_names
     assert "apply_patch" not in tool_names
-    assert "run_command_tracked" not in tool_names
+    assert "exec_command" not in tool_names
     assert tool_names - expected_planning_tools <= set(agent.tool_collection.read_only_tools)
 
 

@@ -1,154 +1,139 @@
-import asyncio
-from unittest.mock import AsyncMock, Mock, patch
-
 import pytest
 
-from kolega_code.services.terminal import AsyncPersistentTerminal, LocalTerminalManager
+from kolega_code.services.terminal import LocalTerminalManager
 
 
-class TestAsyncPersistentTerminal:
-    """Test class for AsyncPersistentTerminal read_output with offset functionality."""
-
-    def test_read_output_with_offset(self):
-        """Test read_output method with offset parameter."""
-        terminal = AsyncPersistentTerminal(
-            workspace_id="test_workspace",
-            thread_id="test_thread",
-            terminal_id="test_terminal",
-            connection_manager=Mock(),
-            auto_activate_venv=False,
-        )
-
-        # Create test output
-        test_output = "0123456789ABCDEFGHIJ"  # 20 characters
-        terminal.persistent_output_buffer = bytearray(test_output.encode())
-
-        # Test default behavior (offset = 0)
-        result = terminal.read_output(num_chars=5, offset=0)
-        assert result == "FGHIJ"  # Last 5 characters
-
-        # Test with offset = 3 (skip last 3 characters, read 5 before that)
-        result = terminal.read_output(num_chars=5, offset=3)
-        assert result == "CDEFG"  # Characters at indices 12-16 (skipping last 3: HIJ)
-
-        # Test with offset = 10 (skip last 10 characters, read 5 before that)
-        result = terminal.read_output(num_chars=5, offset=10)
-        assert result == "56789"  # Characters at indices 5-9
-
-        # Test edge case: offset + num_chars > total length
-        result = terminal.read_output(num_chars=15, offset=5)
-        assert result == "0123456789ABCDE"  # Should read from start to (total - offset)
-
-        # Test edge case: offset >= total length
-        result = terminal.read_output(num_chars=5, offset=25)
-        assert result == ""  # Should return empty string
-
-        # Test when trying to read more than available
-        result = terminal.read_output(num_chars=10, offset=5)
-        assert result == "56789ABCDE"  # Characters at indices 5-14 (skipping last 5: FGHIJ)
-
-        # Test with empty buffer
-        terminal.persistent_output_buffer = bytearray()
-        result = terminal.read_output(num_chars=5, offset=3)
-        assert result == ""
-
-    def test_read_output_with_unicode_and_offset(self):
-        """Test read_output method with offset parameter and unicode characters."""
-        terminal = AsyncPersistentTerminal(
-            workspace_id="test_workspace",
-            thread_id="test_thread",
-            terminal_id="test_terminal",
-            connection_manager=Mock(),
-            auto_activate_venv=False,
-        )
-
-        # Create test output with unicode characters
-        test_output = "Hello 🌍 World 🚀 Test"  # Mix of ASCII and unicode
-        terminal.persistent_output_buffer = bytearray(test_output.encode())
-
-        # Test reading with offset (should handle unicode properly)
-        result = terminal.read_output(num_chars=10, offset=5)
-        expected_total_chars = len(test_output)
-        expected_start = max(0, expected_total_chars - 5 - 10)
-        expected_end = max(0, expected_total_chars - 5)
-        expected = test_output[expected_start:expected_end]
-        assert result == expected
-
-    @pytest.mark.asyncio
-    async def test_send_input_appends_newline_without_mutating_last_command(self):
-        terminal = AsyncPersistentTerminal(
-            workspace_id="test_workspace",
-            thread_id="test_thread",
-            terminal_id="test_terminal",
-            connection_manager=Mock(),
-            auto_activate_venv=False,
-        )
-        terminal.is_running = True
-        terminal.master_fd = 123
-        terminal.last_command = "python prompt.py\n"
-        terminal.last_command_purpose = "Prompt test"
-
-        with patch("kolega_code.services.terminal.os.write") as mock_write:
-            result = await terminal.send_input("Ada", submit=True)
-
-        assert result is True
-        mock_write.assert_called_once_with(123, b"Ada\n")
-        assert terminal.last_command == "python prompt.py\n"
-        assert terminal.last_command_purpose == "Prompt test"
-
-    @pytest.mark.asyncio
-    async def test_send_input_can_send_raw_text(self):
-        terminal = AsyncPersistentTerminal(
-            workspace_id="test_workspace",
-            thread_id="test_thread",
-            terminal_id="test_terminal",
-            connection_manager=Mock(),
-            auto_activate_venv=False,
-        )
-        terminal.is_running = True
-        terminal.master_fd = 123
-
-        with patch("kolega_code.services.terminal.os.write") as mock_write:
-            result = await terminal.send_input("A", submit=False)
-
-        assert result is True
-        mock_write.assert_called_once_with(123, b"A")
+@pytest.fixture
+def manager():
+    # connection_manager=None: output broadcasting is skipped in tests.
+    return LocalTerminalManager("workspace", "thread", None)
 
 
 @pytest.mark.asyncio
-async def test_local_terminal_manager_can_answer_python_prompt(tmp_path):
-    manager = LocalTerminalManager("test_workspace", "test_thread", AsyncMock())
-    terminal_id = await manager.launch_terminal(cwd=tmp_path, auto_activate_venv=False)
-    command_id = None
+async def test_exec_command_success(manager):
+    result = await manager.exec_command("echo hello world", yield_time_ms=5000)
+    assert result.status == "exited"
+    assert result.exit_code == 0
+    assert "hello world" in result.output
+    assert result.session_id is None
 
-    try:
-        command_id = await manager.send_command_tracked(
-            terminal_id,
-            'python -c "prompt = \'READY_\' + \'FOR_\' + \'INPUT>\'; name = input(prompt); print(\'hello \' + name)"',
-            "Prompt for a name and echo it",
-        )
-        assert command_id
 
-        prompt_seen = False
-        for _ in range(50):
-            if "READY_FOR_INPUT>" in manager.read_output(terminal_id, num_chars=500):
-                prompt_seen = True
-                break
-            await asyncio.sleep(0.1)
+@pytest.mark.asyncio
+async def test_exec_command_nonzero_exit_code(manager):
+    result = await manager.exec_command("exit 7", yield_time_ms=5000)
+    assert result.status == "exited"
+    assert result.exit_code == 7
 
-        assert prompt_seen
-        assert await manager.send_input(terminal_id, "Ada", command_id=command_id)
 
-        completed = False
-        for _ in range(50):
-            status = manager.get_command_status(terminal_id, command_id)
-            if status["status"] == "completed":
-                completed = True
-                break
-            await asyncio.sleep(0.1)
+@pytest.mark.asyncio
+async def test_exec_command_failing_command_is_nonzero(manager):
+    result = await manager.exec_command("ls /this_path_does_not_exist_xyz", yield_time_ms=5000)
+    assert result.status == "exited"
+    assert result.exit_code != 0
 
-        assert completed
-        assert "hello Ada" in manager.read_output(terminal_id, num_chars=1000)
-    finally:
-        if terminal_id in manager.terminals:
-            await manager.close_terminal(terminal_id)
+
+@pytest.mark.asyncio
+async def test_long_running_returns_session_then_completes(manager):
+    result = await manager.exec_command("echo start; sleep 1; echo done", yield_time_ms=250)
+    assert result.status == "running"
+    assert result.session_id is not None
+    session_id = result.session_id
+
+    for _ in range(40):
+        result = await manager.write_stdin(session_id, "", yield_time_ms=2000)
+        if result.status == "exited":
+            break
+    assert result.status == "exited"
+    assert result.exit_code == 0
+    assert "done" in result.output
+
+
+@pytest.mark.asyncio
+async def test_interactive_stdin(manager):
+    result = await manager.exec_command('printf "P> "; read x; echo got=$x', yield_time_ms=400)
+    assert result.status == "running"
+    assert "P>" in result.output
+
+    result = await manager.write_stdin(result.session_id, "ada\n", yield_time_ms=3000)
+    assert result.status == "exited"
+    assert "got=ada" in result.output
+
+
+@pytest.mark.asyncio
+async def test_kill_session_interrupt_reports_130(manager):
+    result = await manager.exec_command("sleep 30", yield_time_ms=300)
+    assert result.status == "running"
+    killed = await manager.kill_session(result.session_id, "INT")
+    assert killed.status == "exited"
+    assert killed.exit_code == 130
+
+
+@pytest.mark.asyncio
+async def test_kill_session_term(manager):
+    result = await manager.exec_command("sleep 30", yield_time_ms=300)
+    killed = await manager.kill_session(result.session_id, "TERM")
+    assert killed.status == "exited"
+    # SIGTERM -> 143, or SIGKILL fallback -> 137
+    assert killed.exit_code in (143, 137)
+
+
+@pytest.mark.asyncio
+async def test_list_sessions_tracks_running_and_clears(manager):
+    result = await manager.exec_command("sleep 5", yield_time_ms=200)
+    sessions = await manager.list_sessions()
+    assert result.session_id in sessions
+    assert sessions[result.session_id]["running"] is True
+
+    await manager.kill_session(result.session_id, "TERM")
+    assert result.session_id not in await manager.list_sessions()
+
+
+@pytest.mark.asyncio
+async def test_write_stdin_unknown_session_raises(manager):
+    with pytest.raises(KeyError):
+        await manager.write_stdin("does_not_exist")
+
+
+@pytest.mark.asyncio
+async def test_kill_unknown_session_raises(manager):
+    with pytest.raises(KeyError):
+        await manager.kill_session("does_not_exist")
+
+
+@pytest.mark.asyncio
+async def test_run_command_convenience_accumulates_output(manager):
+    output = await manager.run_command("echo a; echo b; echo c")
+    assert "a" in output and "b" in output and "c" in output
+
+
+@pytest.mark.asyncio
+async def test_workdir_is_respected(manager, tmp_path):
+    result = await manager.exec_command("pwd", workdir=str(tmp_path), yield_time_ms=3000)
+    assert result.status == "exited"
+    # macOS resolves symlinks (/var -> /private/var); the leaf dir is enough.
+    assert result.output.strip().endswith(tmp_path.name)
+
+
+@pytest.mark.asyncio
+async def test_no_cwd_persistence_between_calls(manager, tmp_path):
+    sub = tmp_path / "sub"
+    sub.mkdir()
+    # cd in one call must NOT affect the next (fresh process per exec).
+    await manager.exec_command(f"cd {sub}", workdir=str(tmp_path), yield_time_ms=3000)
+    result = await manager.exec_command("pwd", workdir=str(tmp_path), yield_time_ms=3000)
+    assert result.output.strip().endswith(tmp_path.name)
+
+
+@pytest.mark.asyncio
+async def test_clean_env_overlay(manager):
+    result = await manager.exec_command("echo $NO_COLOR-$TERM-$PAGER", yield_time_ms=3000)
+    assert "1-dumb-cat" in result.output
+
+
+@pytest.mark.asyncio
+async def test_close_all_terminates_sessions(manager):
+    await manager.exec_command("sleep 30", yield_time_ms=200)
+    await manager.exec_command("sleep 30", yield_time_ms=200)
+    assert len(manager.sessions) == 2
+    await manager.close_all()
+    assert len(manager.sessions) == 0

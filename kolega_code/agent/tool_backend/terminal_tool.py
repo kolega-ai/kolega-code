@@ -1,7 +1,7 @@
 import asyncio
+import json
 import os.path
 import re
-import time
 from pathlib import Path
 from typing import Optional, Tuple, Union
 
@@ -11,54 +11,12 @@ from kolega_code.llm.client import LLMClient
 from kolega_code.llm.models import Message, MessageHistory, TextBlock
 from kolega_code.llm.specs import get_model_specs
 from kolega_code.events import AgentEvent
+from kolega_code.services.base import ExecResult
 from kolega_code.services.terminal import LocalTerminalManager
 from .base_tool import BaseTool
 
 
-def _generate_compression_notice(terminal_id: str, full_char_count: int, threshold: int, compressed_output: str) -> str:
-    """
-    Generate a properly formatted compression notice.
-
-    Args:
-        terminal_id: ID of the terminal
-        full_char_count: Actual character count of the full output
-        threshold: The compression threshold that was exceeded
-        compressed_output: The compressed/summarized output
-
-    Returns:
-        Formatted compression notice string
-    """
-    # Recommend reading at the threshold limit to avoid re-compression
-    recommended_char_count = threshold
-
-    return f"""⚠️  **OUTPUT COMPRESSED** ⚠️
-
-The terminal output ({full_char_count:,} characters) exceeded the compression threshold ({threshold:,} characters) and has been summarized below.
-
-**To read uncompressed output (up to {threshold:,} characters), use:**
-`read_terminal({terminal_id}, num_chars={recommended_char_count})`
-
-**To read specific portions without compression, use the offset parameter:**
-`read_terminal({terminal_id}, num_chars=<chars>, offset=<chars_from_end>)`
-
-**Note:** Reading more than {threshold:,} characters without an offset will result in compression again.
-
----
-
-**Compressed Summary:**
-{compressed_output}
-
----
-
-💡 **Tip:** Use the read_terminal tool with {recommended_char_count:,} characters to get the most recent uncompressed output, or use the offset parameter to read specific portions.
-"""
-
-
 class TerminalTool(BaseTool):
-
-    output_compression_threshold = 4000
-    DEFAULT_COMMAND_WAIT_TIMEOUT_SECONDS = 120
-    MAX_COMMAND_WAIT_TIMEOUT_SECONDS = 300
 
     def __init__(
         self,
@@ -139,151 +97,136 @@ class TerminalTool(BaseTool):
             error_msg = f"Command not executed. Could not verify safety: {str(ex)}"
             return False, error_msg
 
-    async def _compress_terminal_output(
-        self, output: str, last_command: str, command_purpose: Optional[str] = None
+    # -- model-facing unified-exec tools -----------------------------------
+
+    def _format_result(self, result: ExecResult) -> str:
+        return json.dumps(
+            {
+                "status": result.status,
+                "exit_code": result.exit_code,
+                "session_id": result.session_id,
+                "output": result.output,
+                "truncated": result.truncated,
+                "original_token_count": result.original_token_count,
+                "duration_ms": result.duration_ms,
+            }
+        )
+
+    async def exec_command(
+        self,
+        command: str,
+        workdir: Optional[str] = None,
+        yield_time_ms: int = 10000,
+        max_output_tokens: int = 10000,
+        login: bool = False,
     ) -> str:
-        provider = self.config.fast_config.provider
-        api_key = self.config.get_api_key(provider)
-        rate_limits = self.config.fast_config.rate_limits
+        """Run a shell command as a fresh process and return its output.
 
-        client = LLMClient(
-            provider=provider.value,
-            api_key=api_key,
-            max_retries=rate_limits.max_retries,
-            requests_per_minute=rate_limits.requests_per_minute,
-            tokens_per_minute=rate_limits.tokens_per_minute,
-        )
+        The command runs under a pseudo-terminal so interactive programs behave
+        normally. Output is collected for up to yield_time_ms milliseconds. If
+        the process exits within that window, the full result with its real exit
+        code is returned. If it is still running, a session_id is returned that
+        you can drive with write_stdin (to send input or poll for more output)
+        and stop with kill_command.
 
-        try:
-            model_specs = get_model_specs(self.config.fast_config.provider, self.config.fast_config.model)
+        The working directory does NOT persist between calls. Pass `workdir`, or
+        chain commands in one call with `cd path && ...`. Defaults to the
+        project root.
 
-            system_message = Message(role="system", content=[TextBlock(text=prompts.SHELL_COMPRESSION_SYSTEM_PROMPT)])
+        Args:
+            command: Shell command line, executed via `bash -c`.
+            workdir: Working directory for the command. Defaults to project root.
+            yield_time_ms: How long to wait for output/exit before returning,
+                           in milliseconds (clamped to 250–30000).
+            max_output_tokens: Maximum tokens of output to return in this call.
+            login: Run the shell as a login shell (sources profile). Default false.
 
-            messages = MessageHistory(
-                [
-                    Message(
-                        role="user",
-                        content=[
-                            TextBlock(
-                                text=f"Last command:\n{str(last_command)}\nCommand purpose:\n{command_purpose}\nOutput:\n{output}"
-                            )
-                        ],
-                    )
-                ]
-            )
-
-            response = await client.generate(
-                model=self.config.fast_config.model,
-                max_completion_tokens=model_specs["max_completion_tokens"],
-                system=system_message,
-                messages=messages,
-            )
-
-            compressed = response.get_text_content()
-
-            return compressed
-        except Exception:
-            # Return full output as fallback if compression fails.
-            return output
-
-    async def launch_terminal(self, terminal_id: Optional[str] = None) -> str:
-        terminal_id = await self.terminal_manager.launch_terminal(cwd=self.project_path)
-
-        terminal_launched_event = AgentEvent(
-            event_type="terminal_launched", sender="agent", content={"terminal_id": terminal_id}
-        )
-        await self.connection_manager.broadcast_event(terminal_launched_event, self.workspace_id, self.thread_id)
-
-        return f"Launched new terminal with terminal_id {terminal_id}"
-
-    async def run_command(self, terminal_id: str, command: str, purpose: str) -> str:
+        Returns:
+            A JSON object: {"status": "exited"|"running", "exit_code",
+            "session_id", "output", "truncated", "original_token_count",
+            "duration_ms"}.
+        """
         if self.security_check_enabled:
             allowed, denied_reason = await self._run_command_security_check(command)
-
             if not allowed:
                 return denied_reason
 
-        # For sandbox environments, use timeout=0 (no timeout) to allow long-running processes
-        # LocalTerminalManager will ignore this parameter as it uses persistent shell sessions
-        success = await self.terminal_manager.send_command(terminal_id, command, purpose=purpose, timeout=0)
+        wd = workdir or str(self.project_path)
+        try:
+            result = await self.terminal_manager.exec_command(
+                command,
+                workdir=wd,
+                yield_time_ms=yield_time_ms,
+                max_output_tokens=max_output_tokens,
+                login=login,
+            )
+        except Exception as exc:
+            return json.dumps({"status": "error", "error": str(exc)})
+        return self._format_result(result)
 
-        if success:
-            return f"Ran command `{command}` in terminal {terminal_id}. Use read_terminal to read the output."
-        else:
-            return f"Failed to run command `{command}` in terminal {terminal_id}. Terminal may not be running."
+    async def write_stdin(
+        self,
+        session_id: str,
+        chars: str = "",
+        yield_time_ms: int = 10000,
+        max_output_tokens: int = 10000,
+    ) -> str:
+        """Write input to a running session's stdin and read recent output.
 
-    async def read_terminal(self, terminal_id: str, num_chars: int = 1024, offset: int = 0) -> str:
-        """
-        Read characters from a terminal's persistent output buffer.
+        Pass chars="" to poll (read new output without writing). Use this to
+        answer prompts (e.g. send "y\\n"), drive a REPL, or send control
+        characters (e.g. "\\x03" for Ctrl-C). The text is sent raw — include a
+        trailing "\\n" to submit a line. Waits up to yield_time_ms (clamped to
+        250–30000 when writing, 5000–300000 when polling) for more output or for
+        the process to exit.
 
         Args:
-            terminal_id: ID of the terminal to read output from
-            num_chars: Number of characters to read (default: 1024).
-                      If buffer is smaller than num_chars, returns entire buffer.
-            offset: Number of characters from the end to start reading from (default: 0).
-                   If offset is 0, reads the last num_chars characters.
-                   If offset is > 0, reads num_chars characters starting from that offset from the end.
-                   Note: When offset > 0, compression is bypassed to allow reading specific portions.
+            session_id: The id returned by exec_command when status == "running".
+            chars: Bytes to write to stdin. An empty string polls only.
+            yield_time_ms: Wait window in milliseconds.
+            max_output_tokens: Maximum tokens of output to return in this call.
 
         Returns:
-            The requested characters from the terminal's output buffer, formatted in markdown code blocks.
-            When offset is used, compression is skipped to preserve the exact requested content.
+            A JSON object with the same shape as exec_command.
         """
-        output = self.terminal_manager.read_output(terminal_id, num_chars=num_chars, offset=offset)
-        output_ansi_stripped = self._strip_ansi_codes(output)
-
-        # Skip compression when using offset to allow reading specific portions
-        if offset > 0:
-            return f"```\n{output_ansi_stripped}```\n"
-
-        # Apply compression logic only when reading from the end (offset = 0)
-        if len(output_ansi_stripped) > self.output_compression_threshold:
-            last_command = await self.terminal_manager.get_last_command(terminal_id)
-            command_purpose = await self.terminal_manager.get_last_command_purpose(terminal_id)
-            compressed_output = await self._compress_terminal_output(
-                output_ansi_stripped, last_command, command_purpose
+        try:
+            result = await self.terminal_manager.write_stdin(
+                session_id, chars, yield_time_ms=yield_time_ms, max_output_tokens=max_output_tokens
             )
+        except KeyError as exc:
+            return json.dumps({"status": "error", "error": str(exc)})
+        return self._format_result(result)
 
-            # Calculate the full character count
-            full_char_count = len(output_ansi_stripped)
+    async def kill_command(self, session_id: str, signal: str = "TERM") -> str:
+        """Terminate a running session and its process group.
 
-            compression_notice = _generate_compression_notice(
-                terminal_id, full_char_count, self.output_compression_threshold, compressed_output
-            )
-            return compression_notice
+        Sends SIGTERM (then SIGKILL after a short grace period). Use
+        signal="INT" to send Ctrl-C (SIGINT) instead.
 
-        return f"```\n{output_ansi_stripped}```\n"
+        Args:
+            session_id: The id of the session to stop.
+            signal: "TERM" (default, graceful) or "INT" (Ctrl-C).
 
-    async def close_terminal(self, terminal_id: str) -> str:
-        await self.terminal_manager.close_terminal(terminal_id)
+        Returns:
+            A JSON object describing the final state of the session.
+        """
+        try:
+            result = await self.terminal_manager.kill_session(session_id, signal)
+        except KeyError as exc:
+            return json.dumps({"status": "error", "error": str(exc)})
+        return self._format_result(result)
 
-        terminal_closed_event = AgentEvent(
-            event_type="terminal_closed", sender="agent", content={"terminal_id": terminal_id}
-        )
-        await self.connection_manager.broadcast_event(terminal_closed_event, self.workspace_id, self.thread_id)
+    async def list_sessions(self) -> str:
+        """List currently running exec sessions.
 
-        return f"Terminal with ID {terminal_id} closed."
+        Returns:
+            A JSON object mapping each running session id to its command,
+            working directory, and runtime in seconds.
+        """
+        sessions = await self.terminal_manager.list_sessions()
+        return json.dumps({"sessions": sessions})
 
-    async def list_terminals(self):
-        results = await self.terminal_manager.list_terminals()
-
-        formatted_results = "# Terminal Sessions\n\n"
-
-        if not results:
-            formatted_results += "No active terminals found.\n"
-        else:
-            formatted_results += "| Terminal ID | Status | Last Command |\n"
-            formatted_results += "|-------------|--------|-------------|\n"
-
-            for terminal_id, terminal_info in results.items():
-                status = "Running" if terminal_info["running"] else "Stopped"
-                last_command = terminal_info["last_command"] or "None"
-                # Truncate long commands for better display
-                if len(last_command) > 50:
-                    last_command = last_command[:47] + "..."
-                formatted_results += f"| {terminal_id} | {status} | {last_command} |\n"
-
-        return formatted_results
+    # -- internal one-shot helper (not exposed to the model) ---------------
 
     async def execute_terminal_command(self, command: str, strip_colors: bool = True) -> str:
         """
@@ -450,194 +393,3 @@ class TerminalTool(BaseTool):
 
         self.initialized = True
         await self.log_info("Terminal initialization complete", sender=self.caller.agent_name)
-
-    async def run_command_tracked(self, terminal_id: str, command: str, purpose: str) -> str:
-        """
-        Run a command with tracking and return a command ID.
-
-        This version provides reliable command completion detection by monitoring
-        the actual process status rather than interpreting output.
-
-        Args:
-            terminal_id: The terminal to run the command in
-            command: The command to execute
-            purpose: Description of what the command is meant to do
-
-        Returns:
-            Command ID that can be used to check status, or error message
-        """
-        if self.security_check_enabled:
-            allowed, denied_reason = await self._run_command_security_check(command)
-            if not allowed:
-                return denied_reason
-
-        try:
-            # For sandbox environments, use timeout=0 (no timeout) to allow long-running processes
-            command_id = await self.terminal_manager.send_command_tracked(terminal_id, command, purpose, timeout=0)
-            if command_id:
-                return command_id  # Return just the command ID, not a message
-            else:
-                return f"Failed to start command `{command}` in terminal {terminal_id}. Terminal may not be running."
-        except KeyError as e:
-            return str(e)
-
-    async def send_terminal_input(
-        self, terminal_id: str, text: str, submit: bool = True, command_id: Optional[str] = None
-    ) -> str:
-        """
-        Send input to an already-running command in a terminal.
-
-        Args:
-            terminal_id: The terminal where the command is running
-            text: Text to send to the process
-            submit: Whether to append a newline before sending
-            command_id: Optional command ID when more than one command is active
-
-        Returns:
-            Confirmation that input was sent, or a readable error
-        """
-        try:
-            success = await self.terminal_manager.send_input(
-                terminal_id, text, submit=submit, command_id=command_id
-            )
-        except (KeyError, ValueError) as e:
-            return str(e)
-
-        if not success:
-            return f"Failed to send input to terminal {terminal_id}. Terminal may not be running."
-
-        command_suffix = f" for command {command_id}" if command_id else ""
-        submit_suffix = " and submitted it" if submit else ""
-        return f"Sent input to terminal {terminal_id}{command_suffix}{submit_suffix}."
-
-    async def check_command_status(self, terminal_id: str, command_id: str) -> str:
-        """
-        Check the status of a specific command using process monitoring.
-
-        This provides reliable completion detection without LLM interpretation.
-
-        Args:
-            terminal_id: The terminal the command is running in
-            command_id: The command ID returned from run_command_tracked
-
-        Returns:
-            Formatted status information including completion state
-        """
-        try:
-            status = self.terminal_manager.get_command_status(terminal_id, command_id)
-
-            if status["status"] == "not_found":
-                return f"❌ Command ID {command_id} not found"
-
-            duration_str = f"{status['duration']:.1f}s"
-
-            if status["status"] == "running":
-                child_pids = status.get("child_pids") or []
-                child_info = f" ({len(child_pids)} child processes)" if child_pids else ""
-                return (
-                    f"🔄 Command still running in terminal {terminal_id} after {duration_str}{child_info}\n"
-                    f"Command: {status['command']}"
-                )
-            elif status["status"] == "completed":
-                return_code = status.get("return_code", "unknown")
-                return (
-                    f"✅ Command completed in {duration_str} with exit code {return_code}\nCommand: {status['command']}"
-                )
-            elif status["status"] == "terminated":
-                return f"❌ Command terminated after {duration_str}\nCommand: {status['command']}"
-            elif status["status"] == "failed":
-                return_code = status.get("return_code", 1)
-                return f"❌ Command failed in {duration_str} with exit code {return_code}\nCommand: {status['command']}"
-            elif status["status"] == "monitor_timeout":
-                return (
-                    f"⚠️ Command monitoring stopped after {duration_str}; command may still be running in "
-                    f"terminal {terminal_id}.\nCommand: {status['command']}\n"
-                    f'Use `check_command_status("{terminal_id}", "{command_id}")` to check it again.'
-                )
-            else:
-                return f"❓ Command status: {status['status']} after {duration_str}\nCommand: {status['command']}"
-
-        except KeyError as e:
-            return str(e)
-
-    async def check_terminal_status(self, terminal_id: str) -> str:
-        """
-        Get comprehensive status of a terminal including all active commands.
-
-        Args:
-            terminal_id: The terminal to check
-
-        Returns:
-            Formatted terminal status including readiness and active commands
-        """
-        try:
-            status = await self.terminal_manager.get_terminal_status(terminal_id)
-
-            result = f"# Terminal {terminal_id} Status\n\n"
-            result += f"**Running:** {'Yes' if status['running'] else 'No'}\n"
-            result += f"**Ready for new commands:** {'Yes' if status['ready_for_commands'] else 'No'}\n\n"
-
-            active_commands = status["active_commands"]
-            if active_commands:
-                result += "**Active Commands:**\n"
-                for cmd_id, cmd_status in active_commands.items():
-                    duration = f"{cmd_status['duration']:.1f}s"
-                    result += f"- `{cmd_id}`: {cmd_status['command']} (running {duration})\n"
-            else:
-                result += "**Active Commands:** None\n"
-
-            return result
-
-        except KeyError as e:
-            return str(e)
-
-    def _normalize_command_wait_timeout(self, timeout: Optional[int]) -> int:
-        try:
-            wait_timeout = int(timeout)
-        except (TypeError, ValueError):
-            return self.DEFAULT_COMMAND_WAIT_TIMEOUT_SECONDS
-
-        if wait_timeout <= 0:
-            return self.DEFAULT_COMMAND_WAIT_TIMEOUT_SECONDS
-        return min(wait_timeout, self.MAX_COMMAND_WAIT_TIMEOUT_SECONDS)
-
-    def _format_command_wait_timeout(self, terminal_id: str, command_id: str, timeout: int) -> str:
-        return (
-            f"⏰ Timeout: Command {command_id} is still running in terminal {terminal_id} after {timeout} seconds.\n"
-            f'Use `check_command_status("{terminal_id}", "{command_id}")` to check it again, '
-            f'or `close_terminal("{terminal_id}")` if you want to stop that terminal.'
-        )
-
-    async def wait_for_command_completion(
-        self, terminal_id: str, command_id: str, timeout: Optional[int] = DEFAULT_COMMAND_WAIT_TIMEOUT_SECONDS
-    ) -> str:
-        """
-        Wait for a specific command to complete with reliable process monitoring.
-
-        Args:
-            terminal_id: The terminal the command is running in
-            command_id: The command ID to wait for
-            timeout: Maximum time to wait in seconds
-
-        Returns:
-            Completion status or timeout message
-        """
-        wait_timeout = self._normalize_command_wait_timeout(timeout)
-        start_time = time.time()
-
-        while time.time() - start_time < wait_timeout:
-            try:
-                status = self.terminal_manager.get_command_status(terminal_id, command_id)
-
-                if status["status"] in ["completed", "terminated", "not_found", "failed", "monitor_timeout"]:
-                    return await self.check_command_status(terminal_id, command_id)
-
-            except KeyError as e:
-                return str(e)
-
-            remaining = wait_timeout - (time.time() - start_time)
-            if remaining <= 0:
-                break
-            await asyncio.sleep(min(1, remaining))  # Check every second
-
-        return self._format_command_wait_timeout(terminal_id, command_id, wait_timeout)

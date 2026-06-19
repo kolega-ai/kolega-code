@@ -723,7 +723,7 @@ async def test_textual_app_permission_approval_actions_show_rule_labels_without_
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
 
     async with app.run_test():
-        request = permission_request_for_tool("run_command_tracked", {"command": "npm run test"})
+        request = permission_request_for_tool("exec_command", {"command": "npm run test"})
         assert request is not None
         future: asyncio.Future[PermissionDecision] = asyncio.get_running_loop().create_future()
         app._pending_approval = PendingApproval(

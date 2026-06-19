@@ -82,7 +82,7 @@ class TestToolCollectionRegistry:
         assert registry.get("read_entire_file").parallel_safe
         assert registry.get("search_codebase").parallel_safe
         assert not registry.get("create_file").parallel_safe
-        assert not registry.get("run_command_tracked").parallel_safe
+        assert not registry.get("exec_command").parallel_safe
 
     def test_get_tool_list_matches_registry_definitions(self, tmp_path):
         from unittest.mock import Mock

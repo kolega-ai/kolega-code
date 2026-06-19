@@ -4,10 +4,12 @@ import uuid
 import asyncio
 import re
 import os
+import time
 from typing import Any, Dict, Optional, Callable, Awaitable
 from datetime import datetime, timezone
 
-from ..services.base import TerminalManager
+from ..services.base import ExecResult, TerminalManager
+from ..services.terminal_buffer import cap_tokens, clamp_yield
 from kolega_code.events import AgentEvent
 
 
@@ -51,6 +53,160 @@ class SandboxTerminalManager(TerminalManager):
         if self._default_terminal_id is None or self._default_terminal_id not in self.terminals:
             self._default_terminal_id = await self.launch_terminal()
         return self._default_terminal_id
+
+    # -- unified-exec interface (codex-style) ------------------------------
+    #
+    # These adapt the new session model onto the existing e2b machinery: a
+    # "session" is a tracked background command (send_command_tracked), stdin is
+    # written via send_input/send_stdin, and the exit code comes from the real
+    # e2b handle.wait(). The legacy terminal/command bookkeeping is preserved so
+    # state serialization keeps working.
+
+    async def _wait_for_command(self, command_id: str, yield_ms: int) -> None:
+        """Wait until a tracked command finishes or the yield window elapses."""
+        deadline = time.monotonic() + yield_ms / 1000
+        while time.monotonic() < deadline:
+            info = self.command_history.get(command_id)
+            if not info or info.get("status") in ("completed", "failed", "terminated"):
+                return
+            await asyncio.sleep(0.05)
+
+    def _render_delta(self, terminal_id: str, start_index: int, max_output_tokens: int):
+        parts = []
+        for entry in self.outputs.get(terminal_id, [])[start_index:]:
+            if entry.get("type") in ("stdout", "stderr"):
+                parts.append(entry.get("data", ""))
+        return cap_tokens("".join(parts), max_output_tokens)
+
+    def _exec_result(
+        self, command_id: str, terminal_id: str, start_index: int, max_output_tokens: int, duration_ms: int
+    ) -> ExecResult:
+        capped = self._render_delta(terminal_id, start_index, max_output_tokens)
+        info = self.command_history.get(command_id) or {}
+        status = info.get("status")
+        if status in ("completed", "failed", "terminated") or status is None:
+            return ExecResult(
+                status="exited",
+                session_id=None,
+                exit_code=info.get("return_code"),
+                output=capped.text,
+                truncated=capped.truncated,
+                original_token_count=capped.original_token_count,
+                duration_ms=duration_ms,
+            )
+        return ExecResult(
+            status="running",
+            session_id=command_id,
+            exit_code=None,
+            output=capped.text,
+            truncated=capped.truncated,
+            original_token_count=capped.original_token_count,
+            duration_ms=duration_ms,
+        )
+
+    async def exec_command(
+        self,
+        command: str,
+        *,
+        workdir: Optional[str] = None,
+        yield_time_ms: int = 10000,
+        max_output_tokens: int = 10000,
+        login: bool = False,
+        env: Optional[Dict[str, str]] = None,
+    ) -> ExecResult:
+        yield_ms = clamp_yield(yield_time_ms, poll=False)
+        terminal_id = await self._ensure_default_terminal()
+        info = self.terminals[terminal_id]
+        if workdir:
+            if hasattr(workdir, "__fspath__"):
+                workdir = str(workdir)
+            info["cwd"] = workdir
+        if env:
+            merged = dict(info.get("env") or {})
+            merged.update(env)
+            info["env"] = merged
+
+        start_index = len(self.outputs.get(terminal_id, []))
+        start = time.monotonic()
+        command_id = await self.send_command_tracked(terminal_id, command, timeout=0)
+        if command_id is None:
+            return ExecResult(status="exited", session_id=None, exit_code=1, output="Failed to start command")
+        await self._wait_for_command(command_id, yield_ms)
+        duration_ms = int((time.monotonic() - start) * 1000)
+        return self._exec_result(command_id, terminal_id, start_index, max_output_tokens, duration_ms)
+
+    async def write_stdin(
+        self,
+        session_id: str,
+        chars: str = "",
+        *,
+        yield_time_ms: int = 10000,
+        max_output_tokens: int = 10000,
+    ) -> ExecResult:
+        info = self.command_history.get(session_id)
+        if not info:
+            raise KeyError(f"No such session: {session_id}")
+        terminal_id = info["terminal_id"]
+        yield_ms = clamp_yield(yield_time_ms, poll=(chars == ""))
+        start_index = len(self.outputs.get(terminal_id, []))
+        start = time.monotonic()
+        if chars:
+            try:
+                await self.send_input(terminal_id, chars, submit=False, command_id=session_id)
+            except ValueError:
+                # The command may have just finished; report its final status.
+                pass
+        await self._wait_for_command(session_id, yield_ms)
+        duration_ms = int((time.monotonic() - start) * 1000)
+        return self._exec_result(session_id, terminal_id, start_index, max_output_tokens, duration_ms)
+
+    async def kill_session(self, session_id: str, signal: str = "TERM") -> ExecResult:
+        info = self.command_history.get(session_id)
+        if not info:
+            raise KeyError(f"No such session: {session_id}")
+        terminal_id = info["terminal_id"]
+        start_index = len(self.outputs.get(terminal_id, []))
+        pid = info.get("pid")
+        handle = info.get("handle")
+        # e2b exposes a single kill; for INT, best-effort send Ctrl-C via stdin.
+        if signal == "INT" and pid is not None:
+            try:
+                await self.sandbox.commands.send_stdin(pid, "\x03")
+            except Exception:
+                pass
+        if handle is not None:
+            try:
+                await handle.kill()
+            except Exception:
+                pass
+        if info.get("status") == "running":
+            info["status"] = "terminated"
+            if info.get("return_code") is None:
+                info["return_code"] = 130 if signal == "INT" else 143
+        active = self.terminals.get(terminal_id, {}).get("active_commands")
+        if active is not None:
+            active.pop(session_id, None)
+        capped = self._render_delta(terminal_id, start_index, 10000)
+        return ExecResult(
+            status="exited",
+            session_id=None,
+            exit_code=info.get("return_code"),
+            output=capped.text,
+            truncated=capped.truncated,
+            original_token_count=capped.original_token_count,
+        )
+
+    async def list_sessions(self) -> Dict[str, Any]:
+        result: Dict[str, Any] = {}
+        for command_id, info in self.command_history.items():
+            if info.get("status") == "running":
+                terminal_id = info.get("terminal_id")
+                result[command_id] = {
+                    "command": info.get("command", ""),
+                    "workdir": self.terminals.get(terminal_id, {}).get("cwd"),
+                    "running": True,
+                }
+        return result
 
     async def get_last_command(self, terminal_id: str) -> str:
         """Get the last command sent to a terminal."""

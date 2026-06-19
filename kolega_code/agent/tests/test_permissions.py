@@ -46,7 +46,7 @@ def agent_config():
 
 def test_permission_store_matches_command_rules(tmp_path):
     request = permission_request_for_tool(
-        "run_command_tracked",
+        "exec_command",
         {"command": "npm run test -- --watch=false"},
     )
     assert request is not None
@@ -67,7 +67,7 @@ def test_permission_store_matches_command_rules(tmp_path):
 
 
 def test_allow_rule_options_for_command_include_exact_prefix_and_executable():
-    request = permission_request_for_tool("run_command_tracked", {"command": "npm run test"})
+    request = permission_request_for_tool("exec_command", {"command": "npm run test"})
     assert request is not None
 
     options = allow_rule_options(request)
@@ -100,8 +100,8 @@ async def test_execute_single_tool_denies_gated_tool_before_dispatch(tmp_path, a
             return ToolRegistry(
                 [
                     Tool(
-                        name="run_command_tracked",
-                        definition=ToolDefinition(name="run_command_tracked", description="", parameters=[]),
+                        name="exec_command",
+                        definition=ToolDefinition(name="exec_command", description="", parameters=[]),
                         handler=handler,
                     )
                 ]
@@ -127,8 +127,8 @@ async def test_execute_single_tool_denies_gated_tool_before_dispatch(tmp_path, a
     result = await agent.execute_single_tool(
         ToolCall(
             id="tool_1",
-            name="run_command_tracked",
-            input={"terminal_id": "term", "command": "npm run test", "purpose": "test"},
+            name="exec_command",
+            input={"command": "npm run test"},
             execution_id="exec_1",
         )
     )
