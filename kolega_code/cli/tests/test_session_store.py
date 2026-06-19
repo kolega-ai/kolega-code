@@ -19,6 +19,7 @@ def test_session_store_create_load_list_export_delete(tmp_path: Path) -> None:
     record.history = [{"role": "user", "content": []}]
     record.task_list_markdown = "- [ ] inspect\n- [x] plan"
     record.latest_plan_markdown = "# Plan\n\nImplement it."
+    record.plan_pending = True
     record.interaction_mode = "plan"
     record.permission_mode = "auto"
     store.save(record)
@@ -28,6 +29,7 @@ def test_session_store_create_load_list_export_delete(tmp_path: Path) -> None:
     assert loaded.history == [{"role": "user", "content": []}]
     assert loaded.task_list_markdown == "- [ ] inspect\n- [x] plan"
     assert loaded.latest_plan_markdown == "# Plan\n\nImplement it."
+    assert loaded.plan_pending is True
     assert loaded.interaction_mode == "plan"
     assert loaded.permission_mode == "auto"
     assert store.latest_for_project(project).session_id == record.session_id
@@ -35,6 +37,7 @@ def test_session_store_create_load_list_export_delete(tmp_path: Path) -> None:
     assert record.session_id in exported
     assert "task_list_markdown" in exported
     assert "latest_plan_markdown" in exported
+    assert "plan_pending" in exported
     assert "interaction_mode" in exported
     assert "permission_mode" in exported
 
@@ -52,6 +55,7 @@ def test_session_store_loads_old_sessions_without_planning_state(tmp_path: Path)
     payload = record.to_dict()
     payload.pop("task_list_markdown")
     payload.pop("latest_plan_markdown")
+    payload.pop("plan_pending")
     payload.pop("interaction_mode")
     payload.pop("permission_mode")
     store.path_for(record.session_id).write_text(json.dumps(payload), encoding="utf-8")
@@ -60,6 +64,7 @@ def test_session_store_loads_old_sessions_without_planning_state(tmp_path: Path)
 
     assert loaded.task_list_markdown == ""
     assert loaded.latest_plan_markdown == ""
+    assert loaded.plan_pending is False
     assert loaded.interaction_mode == "build"
     assert loaded.permission_mode == "ask"
 

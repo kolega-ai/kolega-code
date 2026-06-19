@@ -801,6 +801,7 @@ async def test_textual_app_restores_saved_plan_and_interaction_mode(
     session = store.create(project, "code", config_summary(config))
     session.history = saved_history
     session.latest_plan_markdown = saved_plan
+    session.plan_pending = True
     session.interaction_mode = "plan"
     store.save(session)
 
@@ -810,6 +811,7 @@ async def test_textual_app_restores_saved_plan_and_interaction_mode(
         assert app.interaction_mode == "plan"
         assert isinstance(app.agent, FakePlanningAgent)
         assert app._latest_plan == saved_plan
+        assert app._plan_pending is True
         assert app._plan_decision_active is False
         assert app.query_one("#planning_plan_markdown", Markdown).source == saved_plan
         plan_actions = app.query_one("#plan_actions", ActionList)
@@ -851,6 +853,7 @@ async def test_textual_app_restores_saved_plan_in_build_mode_without_plan_action
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
     session.latest_plan_markdown = saved_plan
+    session.plan_pending = True
     session.interaction_mode = "build"
     store.save(session)
 
@@ -861,6 +864,7 @@ async def test_textual_app_restores_saved_plan_in_build_mode_without_plan_action
         assert isinstance(app.agent, FakeCoderAgent)
         assert app._latest_plan == saved_plan
         assert app.query_one("#planning_plan_markdown", Markdown).source == saved_plan
+        # Even with a pending plan, the action stays hidden outside plan mode.
         assert app.query_one("#plan_actions").display is False
 
 
@@ -1622,6 +1626,7 @@ async def test_textual_app_shows_plan_decision_when_planning_agent_writes_plan(
 
         initial_plan = app.agent.completed_plan or app._latest_plan
         assert app._plan_decision_active is True
+        assert app._plan_pending is True
         assert app._latest_plan == initial_plan
         assert app.query_one("#composer", ChatComposer).disabled is True
         assert app.query_one("#composer", ChatComposer).placeholder == "Plan ready. Choose Implement plan or Discuss further."
@@ -1643,6 +1648,7 @@ async def test_textual_app_shows_plan_decision_when_planning_agent_writes_plan(
         app._discuss_pending_plan()
 
         assert app._plan_decision_active is False
+        assert app._plan_pending is False
         assert app._latest_plan is None
         assert app.query_one("#composer", ChatComposer).disabled is False
         assert app.query_one("#planning_plan_markdown", Markdown).source == "No plan captured yet."
@@ -1654,6 +1660,7 @@ async def test_textual_app_shows_plan_decision_when_planning_agent_writes_plan(
         app._capture_completed_plan()
 
         assert app._plan_decision_active is True
+        assert app._plan_pending is True
         assert app._latest_plan == "# Revised plan\n\nBuild planning mode carefully."
         assert app.query_one("#composer", ChatComposer).disabled is True
         assert plan_actions.display is True
@@ -1715,6 +1722,7 @@ async def test_textual_app_implement_plan_switches_to_build_and_sends_plan(
     async with app.run_test():
         await app.action_toggle_interaction_mode()
         app._latest_plan = "# Plan\n\nBuild it."
+        app._plan_pending = True
         app._plan_decision_active = True
 
         await app._implement_pending_plan()
@@ -1726,12 +1734,85 @@ async def test_textual_app_implement_plan_switches_to_build_and_sends_plan(
         assert app.agent.messages
         assert "# Plan\n\nBuild it." in app.agent.messages[-1]
         assert app._plan_decision_active is False
+        # The plan is kept as a read-only sidebar reference, but it is no longer
+        # pending a decision so the action must not be re-offered.
+        assert app._plan_pending is False
         assert app._latest_plan == "# Plan\n\nBuild it."
         assert app.query_one("#planning_plan_markdown", Markdown).source == "# Plan\n\nBuild it."
         assert app.query_one("#plan_actions").display is False
         loaded = store.load(session.session_id)
         assert loaded.latest_plan_markdown == "# Plan\n\nBuild it."
+        assert loaded.plan_pending is False
         assert loaded.interaction_mode == "build"
+
+
+@pytest.mark.asyncio
+async def test_textual_app_implemented_plan_not_reoffered_on_reentry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from textual.widgets import Markdown
+
+    from kolega_code.cli import app as app_module
+    from kolega_code.cli.app import PLAN_INTERACTION_MODE, ActionList, KolegaCodeApp
+
+    class FakeCoderAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.history = []
+
+        def restore_message_history(self, history):
+            self.history = list(history)
+
+        def dump_message_history(self):
+            return self.history
+
+        async def cleanup(self):
+            return None
+
+        async def process_message_stream(self, message):
+            yield {"type": "response", "content": "implemented", "complete": True, "uuid": "response-1"}
+
+    class FakePlanningAgent(FakeCoderAgent):
+        pass
+
+    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(app_module, "PlanningAgent", FakePlanningAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test():
+        # Enter plan mode with a freshly captured plan awaiting a decision.
+        await app.action_toggle_interaction_mode()
+        app._latest_plan = "# Plan\n\nBuild it."
+        app._plan_pending = True
+        app._plan_decision_active = True
+
+        # Implement it: switches to build and runs the plan.
+        await app._implement_pending_plan()
+        assert app.agent_worker is not None
+        await app.agent_worker.wait()
+        assert app.interaction_mode == "build"
+
+        # Re-enter plan mode. The already-implemented plan must NOT be re-offered,
+        # but it stays visible in the sidebar as a read-only reference.
+        await app._set_interaction_mode(PLAN_INTERACTION_MODE)
+
+        assert app._plan_pending is False
+        assert app._latest_plan == "# Plan\n\nBuild it."
+        plan_actions = app.query_one("#plan_actions", ActionList)
+        assert plan_actions.display is False
+        assert plan_actions.option_count == 0
+        assert app.query_one("#planning_plan_markdown", Markdown).source == "# Plan\n\nBuild it."
+
+        # A restart (reloading from the persisted session) must also not re-offer it.
+        assert store.load(session.session_id).plan_pending is False
 
 
 @pytest.mark.asyncio
