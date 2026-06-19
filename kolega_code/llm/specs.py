@@ -190,7 +190,7 @@ MODEL_SPECS: Dict[Tuple[str, str], Dict[str, Any]] = {
     ("dashscope", "qwen3-coder-flash"): {"context_length": 1000000, "max_completion_tokens": 65536, "default_temperature": 0.7},
     # Z.AI (GLM Coding Plan) models — Anthropic-compatible endpoint (recommended default first)
     ("zai", "glm-5.2"): {
-        "context_length": 200000,
+        "context_length": 1000000,
         "max_completion_tokens": 131072,
         "default_temperature": 0.6,
         "thinking_effort": ThinkingEffortSpec(
