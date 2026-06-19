@@ -149,9 +149,22 @@ class WorkflowTool(BaseTool):
             }
         )
 
+        # Emitted (and awaited) before execute() so the workflow_start event is on
+        # the broadcast queue ahead of any phase/log the runtime fires — those go
+        # through fire-and-forget _emit_soon and can't run until we next await.
+        emit = self._make_emit(run_id)
+        await emit(
+            "workflow_start",
+            {
+                "name": meta.get("name"),
+                "description": meta.get("description"),
+                "phases": meta.get("phases") or [],
+            },
+        )
+
         runtime = WorkflowRuntime(
             dispatch=self._make_dispatch(run_id),
-            emit=self._make_emit(),
+            emit=emit,
             journal=journal,
             budget=budget,
             resume_cache=resume_cache,
@@ -176,6 +189,8 @@ class WorkflowTool(BaseTool):
             duration_seconds=round(time.time() - started, 2),
             total_tokens=budget.spent(),
         )
+
+        await emit("workflow_end", {"status": status, "error": error})
 
         return self._summarize(meta, run_id, journal, budget, status, error, result)
 
@@ -226,22 +241,38 @@ class WorkflowTool(BaseTool):
 
         return dispatch
 
-    def _make_emit(self):
+    def _make_emit(self, run_id: str):
         sender = getattr(self.caller, "agent_name", None) or "gigacode"
 
         async def emit(kind: str, content: dict) -> None:
+            # workflow_run_id keys every event to its card in the TUI so phase/log
+            # updates land on the right workflow when several run in a turn.
+            payload: dict = {"workflow_run_id": run_id, "text": ""}
             if kind == "workflow_phase":
-                message_type, text = "workflow_phase", content.get("title", "")
+                payload.update(message_type="workflow_phase", text=content.get("title", ""))
             elif kind == "workflow_log":
-                message_type, text = "workflow_log", content.get("message", "")
+                payload.update(message_type="workflow_log", text=content.get("message", ""))
             elif kind == "workflow_agent_cached":
-                message_type, text = "workflow_log", f"cached: {content.get('label', '')}"
+                payload.update(message_type="workflow_log", text=f"cached: {content.get('label', '')}")
+            elif kind == "workflow_start":
+                payload.update(
+                    message_type="workflow_start",
+                    name=content.get("name"),
+                    description=content.get("description"),
+                    phases=content.get("phases") or [],
+                )
+            elif kind == "workflow_end":
+                payload.update(
+                    message_type="workflow_end",
+                    status=content.get("status"),
+                    error=content.get("error"),
+                )
             else:
-                message_type, text = "workflow_log", str(content)
+                payload.update(message_type="workflow_log", text=str(content))
             event = AgentEvent(
                 event_type="chat_message",
                 sender=sender,
-                content={"message_type": message_type, "text": text},
+                content=payload,
             )
             await self.connection_manager.broadcast_event(event, self.workspace_id, self.thread_id)
 

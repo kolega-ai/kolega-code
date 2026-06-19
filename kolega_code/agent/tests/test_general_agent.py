@@ -127,6 +127,8 @@ class TestDispatchGeneralAgent:
         for info in infos:
             assert info["agent_name"] == "general-agent"
             assert info["task"] == "write a haiku"
+            # task_full carries the untruncated prompt for the inspector trajectory.
+            assert info["task_full"] == "write a haiku"
             assert info["agent_id"]
             assert info["parent_tool_call_id"] == "exec_123"
 

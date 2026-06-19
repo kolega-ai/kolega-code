@@ -221,6 +221,7 @@ class SubAgentActivity:
     task: str
     index: int  # display ordinal within the turn: #1, #2, ...
     entry: ConversationEntry  # kind="sub_agent", updated in place
+    task_full: str = ""  # untruncated task, shown as the first step in the inspector
     status: str = "running"  # running | completed | failed | stopped
     tool_calls: int = 0
     last_activity: str = ""
@@ -237,6 +238,43 @@ class SubAgentActivity:
     tokens: Optional[int] = None
     depth: int = 1
     current_action: str = ""  # live "now:" action while running
+    workflow_run_id: str = ""  # set when dispatched by a workflow, for card rollup
+    workflow_phase: str = ""  # the workflow phase this agent runs under
+
+
+@dataclass
+class PhaseState:
+    """One stage of a workflow, shown as a checklist row on the workflow card."""
+
+    title: str
+    detail: str = ""
+    state: str = "pending"  # pending | active | done | failed
+    agents_total: int = 0
+    agents_done: int = 0
+
+
+@dataclass
+class WorkflowActivity:
+    """Live display state for one running workflow ("gigacode"), shown inline as a card."""
+
+    run_id: str
+    name: str
+    description: str
+    entry: ConversationEntry  # kind="workflow", updated in place
+    phases: list[PhaseState] = field(default_factory=list)
+    status: str = "running"  # running | completed | failed | stopped
+    current_phase: str = ""
+    latest_log: str = ""
+    agent_count: int = 0
+    tokens: int = 0
+    started_at: float = 0.0
+    finished_at: Optional[float] = None
+
+    def phase_by_title(self, title: str) -> Optional[PhaseState]:
+        for phase in self.phases:
+            if phase.title == title:
+                return phase
+        return None
 
 
 @dataclass
@@ -971,10 +1009,14 @@ class SubAgentInspectorScreen(ModalScreen):
 
     def _trajectory_text(self, activity: SubAgentActivity) -> str:
         lines = [f"{activity.agent_name} #{activity.index} ({activity.status})"]
-        if activity.task:
-            lines.append(f"Task: {activity.task}")
+        full_task = activity.task_full or activity.task
+        if full_task:
+            lines.append(f"Task: {full_task}")
         lines.append("")
         for step in activity.steps:
+            # The full task is already printed above as the header Task line.
+            if step.kind == "sub_agent_task":
+                continue
             label = step.tool_name or step.kind
             lines.append(f"[{step.kind}] {label}")
             body = step.full_content or step.content
@@ -1347,6 +1389,7 @@ class KolegaCodeApp(App):
         self._sub_agent_activities: dict[str, SubAgentActivity] = {}
         self._sub_agent_by_tool_call: dict[str, str] = {}
         self._sub_agent_seq = 0
+        self._workflow_activities: dict[str, WorkflowActivity] = {}
         self._render_pending = False
         self._entry_widgets: dict[str, ConversationEntryWidget | ToolEntryWidget] = {}
         self._dirty_entry_ids: set[str] = set()
@@ -1851,6 +1894,7 @@ class KolegaCodeApp(App):
                         self._write_log(content, "debug")
             await self._drain_pending_events()
             self._finalize_sub_agent_activities()
+            self._finalize_workflow_activities()
             self._save_session_history()
             self._finish_turn_progress(messages.FINISHED, TurnState.IDLE)
             self._capture_completed_plan()
@@ -1860,6 +1904,7 @@ class KolegaCodeApp(App):
             self._cancel_pending_approval()
             await self._drain_pending_events()
             self._finalize_sub_agent_activities()
+            self._finalize_workflow_activities()
             self._save_session_history()
             self._finish_turn_progress(messages.STOPPED_BY_USER, TurnState.STOPPED)
             self._log_status(messages.STOPPED_BY_USER, "warn")
@@ -1868,6 +1913,7 @@ class KolegaCodeApp(App):
             self._cancel_pending_approval()
             await self._drain_pending_events()
             self._finalize_sub_agent_activities()
+            self._finalize_workflow_activities()
             self._save_session_history()
             model = self.config.long_context_config.model if self.config is not None else None
             message_text = llm_error_message(exc, model=model)
@@ -1878,6 +1924,7 @@ class KolegaCodeApp(App):
             self._cancel_pending_approval()
             await self._drain_pending_events()
             self._finalize_sub_agent_activities()
+            self._finalize_workflow_activities()
             self._save_session_history()
             self._finish_turn_progress(messages.STOPPED_WITH_ERROR.format(error=exc), TurnState.ERROR)
             self._log_status(messages.STOPPED_WITH_ERROR.format(error=exc), "error")
@@ -1987,13 +2034,14 @@ class KolegaCodeApp(App):
             message_type = event.content.get("message_type", "message")
             if message_type in {"tool_call", "tool_result", "tool_error"}:
                 self._add_tool_message(message_type, event.content)
+            elif message_type == "workflow_start":
+                self._handle_workflow_start(event.content)
             elif message_type == "workflow_phase":
-                if message_text:
-                    self._add_conversation_entry(ConversationEntry(kind="system", content=f"▶ {message_text}"))
-                    self._update_activity_progress(f"workflow: {message_text}", state=TurnState.RUNNING_SUB_AGENTS)
+                self._handle_workflow_phase(event.content)
             elif message_type == "workflow_log":
-                if message_text:
-                    self._add_conversation_entry(ConversationEntry(kind="system", content=f"· {message_text}"))
+                self._handle_workflow_log(event.content)
+            elif message_type == "workflow_end":
+                self._handle_workflow_end(event.content)
             elif message_text:
                 self._add_conversation_entry(ConversationEntry(kind="message", content=message_text))
         elif event.event_type == "tool_streaming_update":
@@ -3705,6 +3753,7 @@ class KolegaCodeApp(App):
         self._sub_agent_activities = {}
         self._sub_agent_by_tool_call = {}
         self._sub_agent_seq = 0
+        self._workflow_activities = {}
         self._active_progress_entry = None
         self._latest_plan = None
         self._plan_pending = False
@@ -4028,6 +4077,7 @@ class KolegaCodeApp(App):
         if now - self._last_sub_agent_tick >= 1.0:
             self._last_sub_agent_tick = now
             self._tick_running_sub_agents()
+            self._tick_running_workflows()
 
     def _turn_status_content(self) -> str:
         if self._turn_started_at is not None:
@@ -4064,6 +4114,7 @@ class KolegaCodeApp(App):
         self._sub_agent_activities = {}
         self._sub_agent_by_tool_call = {}
         self._sub_agent_seq = 0
+        self._workflow_activities = {}
         self._active_progress_entry = None
         self._plan_decision_active = False
         self._restore_plan_action_visibility()
@@ -4174,6 +4225,7 @@ class KolegaCodeApp(App):
         self._sub_agent_activities = {}
         self._sub_agent_by_tool_call = {}
         self._sub_agent_seq = 0
+        self._workflow_activities = {}
         self._active_progress_entry = None
         self._turn_active = True
         self._set_chat_enabled(False)
@@ -4342,21 +4394,32 @@ class KolegaCodeApp(App):
             info = event.sub_agent_info or {}
             self._sub_agent_seq += 1
             entry = ConversationEntry(kind="sub_agent", content="", complete=False)
+            task_full = str(info.get("task_full") or info.get("task") or "")
             activity = SubAgentActivity(
                 agent_id=key,
                 agent_name=str(info.get("agent_name") or event.sender or "sub-agent"),
                 task=str(info.get("task") or ""),
                 index=self._sub_agent_seq,
                 entry=entry,
+                task_full=task_full,
+                workflow_run_id=str(info.get("workflow_run_id") or ""),
+                workflow_phase=str(info.get("phase") or ""),
                 started_at=self._now(),
             )
             self._sub_agent_activities[key] = activity
             parent_id = info.get("parent_tool_call_id")
             if parent_id:
                 self._sub_agent_by_tool_call[str(parent_id)] = key
+            if task_full:
+                # The full task becomes the first entry in the inspector trajectory; the
+                # inline summary keeps showing only the truncated preview.
+                activity.steps.append(
+                    ConversationEntry(kind="sub_agent_task", content=task_full, full_content=task_full)
+                )
             entry.content = self._format_sub_agent_content(activity)
             self._add_conversation_entry(entry)
             self._refresh_sub_agent_activity_status()
+            self._note_workflow_sub_agent(activity)
         return activity
 
     def _render_sub_agent_event(self, event: AgentEvent) -> None:
@@ -4382,6 +4445,7 @@ class KolegaCodeApp(App):
                 self._refresh_sub_agent_activity_status()
             self._refresh_sub_agent_entry(activity, force=True)
             self._invalidate_sub_agent_detail(activity)
+            self._note_workflow_sub_agent(activity)
             return
 
         message_type = content.get("message_type", "response")
@@ -4563,7 +4627,7 @@ class KolegaCodeApp(App):
                 if len(tail) > SUB_AGENT_TAIL_CHARS:
                     tail = f"{theme.g(Glyph.ELLIPSIS)}{tail[-SUB_AGENT_TAIL_CHARS:]}"
                 body_lines.append(tail)
-        if activity.steps:
+        if any(step.kind != "sub_agent_task" for step in activity.steps):
             body_lines.append(messages.SUB_AGENT_INSPECT_HINT)
 
         return body_lines
@@ -4623,6 +4687,259 @@ class KolegaCodeApp(App):
         for activity in running:
             activity.entry.content = self._format_sub_agent_content(activity)
             self._invalidate_conversation(activity.entry)
+
+    # ---- workflow cards ("gigacode") ------------------------------------------
+
+    def _handle_workflow_start(self, content: dict) -> None:
+        run_id = str(content.get("workflow_run_id") or "")
+        if not run_id or run_id in self._workflow_activities:
+            return
+        phases: list[PhaseState] = []
+        for raw in content.get("phases") or []:
+            # meta.phases entries may be dicts ({title, detail}) or bare strings;
+            # extract_meta only guarantees name+description, so guard the shape.
+            if isinstance(raw, dict):
+                title = str(raw.get("title") or "").strip()
+                detail = str(raw.get("detail") or "").strip()
+            else:
+                title, detail = str(raw).strip(), ""
+            if title:
+                phases.append(PhaseState(title=title, detail=detail))
+        entry = ConversationEntry(kind="workflow", content="", complete=False)
+        activity = WorkflowActivity(
+            run_id=run_id,
+            name=str(content.get("name") or "workflow"),
+            description=str(content.get("description") or ""),
+            entry=entry,
+            phases=phases,
+            started_at=self._now(),
+        )
+        self._workflow_activities[run_id] = activity
+        entry.content = self._format_workflow_content(activity)
+        self._add_conversation_entry(entry)
+
+    def _handle_workflow_phase(self, content: dict) -> None:
+        title = str(content.get("text") or "").strip()
+        activity = self._workflow_for_run(content)
+        if title:
+            self._update_activity_progress(f"workflow: {title}", state=TurnState.RUNNING_SUB_AGENTS)
+        if activity is None or not title:
+            return
+        # phase() calls are sequential, so a new explicit phase retires the prior one.
+        if activity.current_phase and activity.current_phase != title:
+            prev = activity.phase_by_title(activity.current_phase)
+            if prev is not None and prev.state == "active":
+                prev.state = "done"
+        phase = activity.phase_by_title(title)
+        if phase is None:
+            phase = PhaseState(title=title)
+            activity.phases.append(phase)
+        if phase.state == "pending":
+            phase.state = "active"
+        activity.current_phase = title
+        self._refresh_workflow_entry(activity)
+
+    def _handle_workflow_log(self, content: dict) -> None:
+        message = str(content.get("text") or "").strip()
+        activity = self._workflow_for_run(content)
+        if activity is None or not message:
+            return
+        activity.latest_log = message
+        self._refresh_workflow_entry(activity)
+
+    def _handle_workflow_end(self, content: dict) -> None:
+        activity = self._workflow_for_run(content)
+        if activity is None:
+            return
+        status = str(content.get("status") or "completed")
+        activity.status = status
+        activity.finished_at = self._now()
+        activity.current_phase = ""
+        for phase in activity.phases:
+            if status == "failed":
+                # Only an in-flight phase failed; phases never reached stay pending.
+                if phase.state == "active":
+                    phase.state = "failed"
+            elif phase.state in {"active", "pending"}:
+                phase.state = "done"
+        activity.entry.complete = True
+        self._refresh_workflow_entry(activity, force=True)
+
+    def _workflow_for_run(self, content: dict) -> Optional[WorkflowActivity]:
+        run_id = str(content.get("workflow_run_id") or "")
+        return self._workflow_activities.get(run_id) if run_id else None
+
+    def _note_workflow_sub_agent(self, activity: SubAgentActivity) -> None:
+        """Roll a workflow sub-agent's phase/tokens into its workflow card.
+
+        sub_agent_info carries workflow_run_id + phase for every workflow-dispatched
+        agent; consuming it here drives per-phase agent counts and marks a phase active
+        even when the script used the agent(phase=...) kwarg (which emits no phase event).
+        """
+        card = self._workflow_activities.get(activity.workflow_run_id) if activity.workflow_run_id else None
+        if card is None:
+            return
+        self._recompute_workflow_rollup(card)
+        self._refresh_workflow_entry(card)
+
+    def _recompute_workflow_rollup(self, card: WorkflowActivity) -> None:
+        """Idempotently derive agent counts + tokens for a card from its sub-agents."""
+        members = [a for a in self._sub_agent_activities.values() if a.workflow_run_id == card.run_id]
+        card.agent_count = len(members)
+        card.tokens = sum(a.tokens for a in members if isinstance(a.tokens, int))
+        by_phase: dict[str, list[SubAgentActivity]] = {}
+        for member in members:
+            by_phase.setdefault(member.workflow_phase, []).append(member)
+        for phase in card.phases:
+            members_for_phase = by_phase.get(phase.title, [])
+            phase.agents_total = len(members_for_phase)
+            phase.agents_done = sum(1 for a in members_for_phase if a.status != "running")
+            if members_for_phase and phase.state == "pending":
+                phase.state = "active"
+        # Phases that exist only via the agent(phase=...) kwarg, never declared in meta.
+        for title, members_for_phase in by_phase.items():
+            if title and card.phase_by_title(title) is None:
+                card.phases.append(
+                    PhaseState(
+                        title=title,
+                        state="active",
+                        agents_total=len(members_for_phase),
+                        agents_done=sum(1 for a in members_for_phase if a.status != "running"),
+                    )
+                )
+
+    def _refresh_workflow_entry(self, activity: WorkflowActivity, *, force: bool = False) -> None:
+        activity.entry.content = self._format_workflow_content(activity)
+        self._invalidate_conversation(activity.entry)
+        if force:
+            self._flush_conversation_render()
+
+    def _workflow_activity_for_entry(self, entry: ConversationEntry) -> Optional[WorkflowActivity]:
+        for activity in self._workflow_activities.values():
+            if activity.entry is entry:
+                return activity
+        return None
+
+    def _tick_running_workflows(self) -> None:
+        for activity in self._workflow_activities.values():
+            if activity.status == "running":
+                activity.entry.content = self._format_workflow_content(activity)
+                self._invalidate_conversation(activity.entry)
+
+    def _finalize_workflow_activities(self, status: str = "stopped") -> None:
+        """Mark still-running workflow cards as finished (workflow_end never arrives on cancel)."""
+        changed = False
+        for activity in self._workflow_activities.values():
+            if activity.status == "running":
+                activity.status = status
+                activity.finished_at = self._now()
+                activity.current_phase = ""
+                if status == "completed":
+                    for phase in activity.phases:
+                        if phase.state in {"active", "pending"}:
+                            phase.state = "done"
+                # On a stop/cancel, leave phase glyphs as they were — an interrupted
+                # phase stays "active" rather than misreporting as done or pending.
+                activity.entry.complete = True
+                activity.entry.content = self._format_workflow_content(activity)
+                self._invalidate_conversation(activity.entry)
+                changed = True
+        if changed:
+            self._flush_conversation_render()
+
+    def _workflow_phase_glyph(self, phase: PhaseState) -> tuple[str, str]:
+        if phase.state == "done":
+            return Glyph.CHECK, Color.SUCCESS
+        if phase.state == "failed":
+            return Glyph.CROSS, Color.ERROR
+        if phase.state == "active":
+            return Glyph.RUNNING, Color.ACCENT
+        return Glyph.PENDING, Color.MUTED
+
+    def _workflow_header(self, activity: WorkflowActivity) -> str:
+        if activity.finished_at is not None:
+            elapsed = max(0.0, activity.finished_at - activity.started_at)
+        else:
+            elapsed = max(0.0, self._now() - activity.started_at)
+        duration = self._format_turn_duration(elapsed)
+        sep = theme.g(Glyph.BULLET_SEP)
+        if activity.status == "running":
+            color, state = Color.ACCENT, f"running {sep} {duration}"
+        elif activity.status == "completed":
+            color, state = Color.SUCCESS, f"completed in {duration}"
+        elif activity.status == "failed":
+            color, state = Color.ERROR, f"failed after {duration}"
+        else:
+            color, state = Color.WARNING, f"stopped after {duration}"
+        return theme.role_header(
+            Glyph.PLAN,
+            escape(activity.name or "workflow"),
+            color,
+            state=f"workflow {sep} {state}",
+        )
+
+    def _workflow_footer_line(self, activity: WorkflowActivity) -> str:
+        sep = theme.g(Glyph.BULLET_SEP)
+        bits: list[str] = []
+        if activity.status == "running" and activity.current_phase:
+            bits.append(f"now: {activity.current_phase}")
+        if activity.agent_count:
+            bits.append(f"{activity.agent_count} agent{'' if activity.agent_count == 1 else 's'}")
+        if activity.tokens:
+            bits.append(f"{self._format_token_count(activity.tokens)} tok")
+        if activity.latest_log:
+            log = activity.latest_log
+            if len(log) > SUB_AGENT_TASK_PREVIEW_CHARS:
+                log = f"{log[:SUB_AGENT_TASK_PREVIEW_CHARS]}{theme.g(Glyph.ELLIPSIS)}"
+            bits.append(log)
+        return f" {sep} ".join(bits)
+
+    def _workflow_phase_rows(self, activity: WorkflowActivity) -> list[Text]:
+        sep = theme.g(Glyph.BULLET_SEP)
+        bar = f"  {theme.g(Glyph.INSET_BAR)}"
+        rows: list[Text] = []
+        for phase in activity.phases:
+            glyph, color = self._workflow_phase_glyph(phase)
+            line = Text()
+            line.append(bar, style="dim")
+            line.append(" ")
+            line.append(f"{theme.g(glyph)} ", style=color)
+            title_style = "bold" if phase.state == "active" else ("dim" if phase.state == "pending" else "")
+            line.append(phase.title, style=title_style)
+            if phase.detail:
+                line.append(f"  {sep} {phase.detail}", style="dim")
+            if phase.agents_total:
+                line.append(f"  {sep} {phase.agents_done}/{phase.agents_total} agents", style="dim")
+            rows.append(line)
+        return rows
+
+    def _format_workflow_renderable(self, activity: WorkflowActivity) -> Group:
+        parts: list = [Text.from_markup(self._workflow_header(activity))]
+        if activity.description:
+            parts.append(self._format_inset_text(activity.description, style="dim"))
+        parts.extend(self._workflow_phase_rows(activity))
+        footer = self._workflow_footer_line(activity)
+        if footer:
+            parts.append(self._format_inset_text(footer, style="dim"))
+        return Group(*parts)
+
+    def _format_workflow_content(self, activity: WorkflowActivity) -> str:
+        header = Text.from_markup(self._workflow_header(activity)).plain
+        lines = [header]
+        if activity.description:
+            lines.append(activity.description)
+        for phase in activity.phases:
+            glyph, _ = self._workflow_phase_glyph(phase)
+            row = f"{theme.g(glyph)} {phase.title}"
+            if phase.detail:
+                row += f" — {phase.detail}"
+            if phase.agents_total:
+                row += f" ({phase.agents_done}/{phase.agents_total} agents)"
+            lines.append(row)
+        footer = self._workflow_footer_line(activity)
+        if footer:
+            lines.append(footer)
+        return "\n".join(lines)
 
     def _tool_result_preview(self, text: str) -> str:
         # The entry header already conveys completion; the body is just the preview.
@@ -4784,6 +5101,14 @@ class KolegaCodeApp(App):
             return self._entry_renderable(header, entry.content)
         if entry.kind == "skill":
             header = theme.role_header(Glyph.PLAN, "Skill", Color.SUCCESS)
+            return self._entry_renderable(header, entry.content)
+        if entry.kind == "workflow":
+            wf = self._workflow_activity_for_entry(entry)
+            if wf is not None:
+                return self._format_workflow_renderable(wf)
+            return Text(entry.content)
+        if entry.kind == "sub_agent_task":
+            header = theme.role_header(Glyph.USER, "Task", Color.USER)
             return self._entry_renderable(header, entry.content)
         if entry.kind == "sub_agent":
             activity = self._sub_agent_activity_for_entry(entry)

@@ -4276,16 +4276,18 @@ async def test_sub_agent_steps_capture_full_trajectory(
         app._render_event(_sub_agent_event(uuid="r1", text="the answer"))
 
         activity = next(iter(app._sub_agent_activities.values()))
-        # 1 paired tool step + 1 thinking + 1 response = 3 steps (not 5).
-        assert len(activity.steps) == 3
-        tool_step = activity.steps[0]
+        # Seeded task step + 1 paired tool step + 1 thinking + 1 response = 4 steps.
+        assert len(activity.steps) == 4
+        assert activity.steps[0].kind == "sub_agent_task"
+        assert activity.steps[0].content == "inspect sessions"
+        tool_step = activity.steps[1]
         assert tool_step.kind == "tool_result"
         assert tool_step.tool_call_id == "t1"
         assert tool_step.full_content == "file contents"
-        assert activity.steps[1].kind == "thinking"
-        assert activity.steps[1].content == "planning the edit"
-        assert activity.steps[2].kind == "assistant"
-        assert activity.steps[2].content == "Here is the answer"
+        assert activity.steps[2].kind == "thinking"
+        assert activity.steps[2].content == "planning the edit"
+        assert activity.steps[3].kind == "assistant"
+        assert activity.steps[3].content == "Here is the answer"
         # The card advertises the inspect affordance once steps exist.
         from kolega_code.cli import messages as cli_messages
 
@@ -4330,12 +4332,14 @@ async def test_open_sub_agent_inspector_renders_trajectory(
         screen = app._sub_agent_inspector
         # One roster row per agent, and a trajectory widget per captured step.
         assert len(screen._rows) == 1
-        assert len(screen._step_widgets) == 2
+        # Seeded task step + tool_call + assistant response.
+        assert len(screen._step_widgets) == 3
         # The mounted widgets wrap the real step entries (not empty placeholders).
         kinds = {w.entry.kind for w in screen._step_widgets.values()}
         contents = {w.entry.content for w in screen._step_widgets.values()}
-        assert kinds == {"tool_call", "assistant"}
+        assert kinds == {"sub_agent_task", "tool_call", "assistant"}
         assert "some response" in contents
+        assert "inspect sessions" in contents
 
 
 @pytest.mark.asyncio
@@ -4422,8 +4426,8 @@ async def test_sub_agent_tool_error_step_captured(
         )
 
         activity = next(iter(app._sub_agent_activities.values()))
-        assert len(activity.steps) == 1
-        step = activity.steps[0]
+        assert len(activity.steps) == 2  # seeded task step + the paired tool_error
+        step = activity.steps[1]
         assert step.kind == "tool_error"
         assert step.complete is True
         assert "boom" in step.full_content
@@ -4445,10 +4449,10 @@ async def test_sub_agent_tool_steps_without_id_do_not_collide(
         app._render_event(_sub_agent_event(message_type="tool_result", text="result b", tool_description="grep"))
 
         activity = next(iter(app._sub_agent_activities.values()))
-        assert len(activity.steps) == 2
-        assert [s.kind for s in activity.steps] == ["tool_result", "tool_result"]
-        assert activity.steps[0].full_content == "result a"
-        assert activity.steps[1].full_content == "result b"
+        assert len(activity.steps) == 3  # seeded task step + two distinct paired tool steps
+        assert [s.kind for s in activity.steps] == ["sub_agent_task", "tool_result", "tool_result"]
+        assert activity.steps[1].full_content == "result a"
+        assert activity.steps[2].full_content == "result b"
 
 
 @pytest.mark.asyncio
@@ -4483,8 +4487,9 @@ async def test_sub_agent_inspector_shows_empty_state(
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
 
     async with app.run_test() as pilot:
-        # Only a lifecycle event: the agent exists but has captured no trajectory steps yet.
-        app._render_event(_sub_agent_event(status="GENERATING", message="Starting"))
+        # A task-less lifecycle event: the agent exists but has captured no trajectory steps
+        # (and has no task to seed), so the empty-state placeholder still applies.
+        app._render_event(_sub_agent_event(task="", status="GENERATING", message="Starting"))
 
         app.action_open_sub_agent()
         await pilot.pause()
@@ -4502,6 +4507,105 @@ async def test_sub_agent_inspector_shows_empty_state(
         await pilot.pause()
         assert screen._empty_shown is False
         assert len(screen._step_widgets) == 1
+
+
+def _workflow_event(message_type, run_id="wf-1", **content):
+    return AgentEvent(
+        event_type="chat_message",
+        sender="gigacode",
+        content={
+            "message_type": message_type,
+            "workflow_run_id": run_id,
+            "text": content.pop("text", ""),
+            **content,
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_workflow_card_lifecycle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        app._render_event(
+            _workflow_event(
+                "workflow_start",
+                name="review-changes",
+                description="Review then verify",
+                phases=[{"title": "Review", "detail": "scan"}, {"title": "Verify"}],
+            )
+        )
+        cards = [e for e in app.conversation_entries if e.kind == "workflow"]
+        assert len(cards) == 1
+        card = next(iter(app._workflow_activities.values()))
+        assert card.name == "review-changes"
+        assert [p.title for p in card.phases] == ["Review", "Verify"]
+        assert all(p.state == "pending" for p in card.phases)
+
+        # The rich renderable used by the widget builds and prints without markup errors.
+        import io
+
+        from rich.console import Console
+
+        buf = io.StringIO()
+        Console(file=buf, width=80).print(app._format_workflow_renderable(card))
+        rendered = buf.getvalue()
+        assert "review-changes" in rendered
+        assert "Review" in rendered and "Verify" in rendered
+
+        # A phase event marks it active; a log lands in the footer.
+        app._render_event(_workflow_event("workflow_phase", text="Review"))
+        assert card.phase_by_title("Review").state == "active"
+        app._render_event(_workflow_event("workflow_log", text="grepping"))
+        assert card.latest_log == "grepping"
+
+        # Moving to the next phase retires the prior one.
+        app._render_event(_workflow_event("workflow_phase", text="Verify"))
+        assert card.phase_by_title("Review").state == "done"
+        assert card.phase_by_title("Verify").state == "active"
+
+        # End completes the card and any remaining phases.
+        app._render_event(_workflow_event("workflow_end", status="completed"))
+        assert card.status == "completed"
+        assert all(p.state == "done" for p in card.phases)
+        assert card.entry.complete is True
+
+
+@pytest.mark.asyncio
+async def test_workflow_card_counts_sub_agents_by_phase(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        app._render_event(
+            _workflow_event("workflow_start", name="wf", description="d", phases=[{"title": "Verify"}])
+        )
+        card = next(iter(app._workflow_activities.values()))
+
+        # A workflow sub-agent carrying run_id + phase rolls into the card even though no
+        # workflow_phase event was emitted (the agent(phase=...) kwarg path).
+        evt = _sub_agent_event(agent_id="wf-a1", task="do it", text="working")
+        evt.sub_agent_info["workflow_run_id"] = "wf-1"
+        evt.sub_agent_info["phase"] = "Verify"
+        app._render_event(evt)
+
+        assert card.agent_count == 1
+        verify = card.phase_by_title("Verify")
+        assert verify.state == "active"
+        assert verify.agents_total == 1
+        assert verify.agents_done == 0
+
+        # Completion bumps the done count and rolls up tokens.
+        done = _sub_agent_event(
+            agent_id="wf-a1", task="do it", status="STOPPED", message="Completed", total_tokens=500
+        )
+        done.sub_agent_info["workflow_run_id"] = "wf-1"
+        done.sub_agent_info["phase"] = "Verify"
+        app._render_event(done)
+
+        assert verify.agents_done == 1
+        assert card.tokens == 500
 
 
 @pytest.mark.asyncio
