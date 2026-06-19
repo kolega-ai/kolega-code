@@ -235,7 +235,12 @@ class SubAgentActivity:
     steps: list[ConversationEntry] = field(default_factory=list)
     tool_steps: dict[str, ConversationEntry] = field(default_factory=dict)  # tool_call_id/name -> step
     stream_steps: dict[str, ConversationEntry] = field(default_factory=dict)  # chunk uuid -> step
-    tokens: Optional[int] = None
+    tokens: Optional[int] = None  # cumulative tokens consumed, from lifecycle events
+    # Context-window occupancy (how full this sub-agent's own context is right now),
+    # from llm_context_update events. Distinct from cumulative `tokens` above.
+    context_percentage: Optional[float] = None
+    context_input_tokens: Optional[int] = None
+    context_max_tokens: Optional[int] = None
     depth: int = 1
     current_action: str = ""  # live "now:" action while running
     workflow_run_id: str = ""  # set when dispatched by a workflow, for card rollup
@@ -880,6 +885,8 @@ class SubAgentInspectorScreen(ModalScreen):
         parts = [f"#{activity.index}", activity.agent_name, self._elapsed(activity), f"{activity.tool_calls}t"]
         if activity.tokens:
             parts.append(f"{self._owner._format_token_count(activity.tokens)}tok")
+        if activity.context_percentage is not None:
+            parts.append(f"ctx {activity.context_percentage:.0f}%")
         line.append(f"  {sep}  ".join(parts), style=row_style)
         tail = activity.current_action if activity.status == "running" else activity.last_activity
         if tail:
@@ -905,6 +912,8 @@ class SubAgentInspectorScreen(ModalScreen):
         extras = [f"{activity.tool_calls} tool{'' if activity.tool_calls == 1 else 's'}"]
         if activity.tokens:
             extras.append(f"{owner._format_token_count(activity.tokens)} tok")
+        if activity.context_percentage is not None:
+            extras.append(f"ctx {activity.context_percentage:.0f}%")
         line = base + theme.styled(f" {sep} " + f" {sep} ".join(extras), "dim")
         if activity.task:
             line += "\n" + theme.styled(escape(f"Task: {activity.task}"), "dim")
@@ -2050,9 +2059,14 @@ class KolegaCodeApp(App):
             else:
                 self._apply_tool_streaming_update(event.content)
         elif event.event_type == "llm_context_update":
-            self._apply_context_status_update(event.content)
+            if event.sub_agent_info:
+                self._note_sub_agent_context(event)
+            else:
+                self._apply_context_status_update(event.content)
         elif event.event_type in {"llm_status_update", "status_update"}:
-            if text:
+            if event.sub_agent_info:
+                self._note_sub_agent_status(event)
+            elif text:
                 self._write_log(text, "info")
                 self._update_activity_progress(text)
         else:
@@ -4564,6 +4578,29 @@ class KolegaCodeApp(App):
         activity.last_activity = f"{tool_name} done" if is_complete else f"{tool_name} streaming"
         self._refresh_sub_agent_entry(activity)
 
+    def _note_sub_agent_context(self, event: AgentEvent) -> None:
+        """Record a sub-agent's context-window usage on its own card, so it never
+        overwrites the main agent's context indicator on the status dashboard."""
+        activity = self._ensure_sub_agent_activity(event)
+        content = event.content
+        activity.context_percentage = self._as_optional_float(content.get("usage_percentage"))
+        activity.context_input_tokens = self._as_optional_int(content.get("input_tokens"))
+        activity.context_max_tokens = self._as_optional_int(content.get("max_tokens"))
+        self._refresh_sub_agent_entry(activity)
+        self._invalidate_sub_agent_detail(activity)
+
+    def _note_sub_agent_status(self, event: AgentEvent) -> None:
+        """Surface a sub-agent's status notice (e.g. provider overload) on its card,
+        keeping it off the main activity line."""
+        activity = self._ensure_sub_agent_activity(event)
+        message = str(event.content.get("message") or "").strip()
+        if message:
+            activity.last_activity = message
+            if activity.status == "running":
+                activity.current_action = message
+        self._refresh_sub_agent_entry(activity)
+        self._invalidate_sub_agent_detail(activity)
+
     def _refresh_sub_agent_entry(self, activity: SubAgentActivity, *, force: bool = False) -> None:
         activity.entry.content = self._format_sub_agent_content(activity)
         self._invalidate_conversation(activity.entry)
@@ -4615,6 +4652,8 @@ class KolegaCodeApp(App):
         tools_line = f"{activity.tool_calls} tool{'' if activity.tool_calls == 1 else 's'}"
         if activity.tokens:
             tools_line += f" {sep} {self._format_token_count(activity.tokens)} tok"
+        if activity.context_percentage is not None:
+            tools_line += f" {sep} ctx {activity.context_percentage:.0f}%"
         if activity.last_activity:
             tools_line += f" {sep} last: {activity.last_activity}"
         body_lines.append(tools_line)
