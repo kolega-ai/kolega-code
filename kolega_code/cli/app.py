@@ -1314,6 +1314,7 @@ class KolegaCodeApp(App):
         self._active_progress_entry: Optional[ConversationEntry] = None
         self._turn_active = False
         self._latest_plan: Optional[str] = self.session.latest_plan_markdown or None
+        self._plan_pending: bool = bool(self.session.plan_pending)
         self._plan_decision_active = False
         self._gigacode_enabled = False
         self._pending_question: Optional[PendingQuestion] = None
@@ -1576,6 +1577,7 @@ class KolegaCodeApp(App):
         self.session.interaction_mode = self.interaction_mode
         self.session.permission_mode = self.permission_mode.value
         self.session.latest_plan_markdown = self._latest_plan or ""
+        self.session.plan_pending = self._plan_pending
 
     def _save_session(self) -> None:
         self._sync_planning_state_to_session()
@@ -1583,7 +1585,7 @@ class KolegaCodeApp(App):
 
     def _restore_plan_action_visibility(self) -> None:
         self._set_plan_actions_visible(
-            self.interaction_mode == PLAN_INTERACTION_MODE and bool(self._latest_plan),
+            self.interaction_mode == PLAN_INTERACTION_MODE and self._plan_pending,
             allow_discuss=self._plan_decision_active,
         )
 
@@ -2265,6 +2267,7 @@ class KolegaCodeApp(App):
             return
 
         self._latest_plan = plan
+        self._plan_pending = True
         self._plan_decision_active = True
         self._save_session()
         self._refresh_planning_sidebar()
@@ -2283,6 +2286,11 @@ class KolegaCodeApp(App):
         if not plan or self._turn_active or self.agent_worker is not None:
             return
 
+        # Leave self._latest_plan set so the planning sidebar keeps showing the
+        # plan as a read-only reference while it is being built; clearing
+        # _plan_pending is what hides the "Implement plan" action so it does not
+        # reappear when the user re-enters plan mode.
+        self._plan_pending = False
         self._plan_decision_active = False
         if clear_context:
             self._clear_agent_context()
@@ -2302,6 +2310,7 @@ class KolegaCodeApp(App):
             return
 
         self._latest_plan = None
+        self._plan_pending = False
         self._plan_decision_active = False
         self._save_session()
         self._refresh_planning_sidebar()
@@ -3437,6 +3446,7 @@ class KolegaCodeApp(App):
         self._sub_agent_seq = 0
         self._active_progress_entry = None
         self._latest_plan = None
+        self._plan_pending = False
         self._plan_decision_active = False
         self._save_session()
         self._set_plan_actions_visible(False)
