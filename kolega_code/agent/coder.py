@@ -116,7 +116,6 @@ class CoderAgent(BaseAgent, LogMixin):
             "get_tool_list",
             "log_error",
             "log_info",
-            "run_command",  # Disabled: unreliable completion detection, use run_command_tracked instead
             # Exclude task-specific dispatch tools since coder shouldn't call itself or other agents
             "dispatch_coding_agent",
         ]

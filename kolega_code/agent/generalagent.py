@@ -112,7 +112,6 @@ class GeneralAgent(BaseAgent):
             "get_tool_list",
             "log_error",
             "log_info",
-            "run_command",  # Disabled: unreliable completion detection, use run_command_tracked instead
             # Recursion guard: a general sub-agent may not spawn further sub-agents
             *ToolCollection.agent_dispatch_tools,
         ]

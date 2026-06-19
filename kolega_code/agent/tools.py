@@ -241,7 +241,6 @@ class ToolCollection(LogMixin):
             "log_error",
             "log_warning",
             "log_info",
-            "run_command",  # Disabled: unreliable completion detection, use run_command_tracked instead
         ]
         self.tool_exclusions.extend(tool_config.tool_exclusions)
 
@@ -940,7 +939,7 @@ class ToolCollection(LogMixin):
         3. For very long operations (>5 minutes), consider breaking into smaller check intervals
         4. The tool accepts decimal values for sub-second precision (e.g., 0.5 for half a second)
         5. Maximum recommended sleep time is 300 seconds (5 minutes) to avoid excessive delays
-        6. Use read_terminal or other status-checking tools after sleeping to verify completion
+        6. Prefer polling a running command with write_stdin (empty input) over sleeping to verify completion
         7. Consider using shorter initial sleeps and checking status rather than one long sleep
 
         Args:
@@ -1052,233 +1051,100 @@ class ToolCollection(LogMixin):
         """Execute a command and display output in terminal."""
         return await self.terminal_tool.execute_terminal_command(command)
 
-    async def launch_terminal(self, terminal_id: Optional[str] = None) -> str:
-        """
-        Launch a new terminal session.
-
-        This tool creates a new terminal instance that can be used to execute commands.
-        The terminal persists between commands, maintaining environment variables,
-        working directory, and other state.
-
-        Args:
-            terminal_id: Optional ID for the terminal. If not provided, a random UUID will be generated.
-                         Use this ID with run_command, read_terminal and close_terminal to interact with
-                         this specific terminal.
-
-        Returns:
-            The ID of the created terminal that can be used in subsequent terminal operations
-        """
-        return await self.terminal_tool.launch_terminal(terminal_id)
-
-    async def run_command(self, terminal_id: str, command: str, purpose: str) -> str:
-        """
-        Run a command in a specific terminal session and wait for output.
-
-        This tool sends a command to an existing terminal session and returns true or false
-        if the command was accepted. The tool does not return the terminal output. You must call
-        read_terminal to get the output.
-
-        This tool can be used to run long-running processes that do not exit, such as a development server.
-
-        CRITICAL WARNINGS:
-        1. **NEVER** send commands to a terminal that has a process still running (e.g., dev server, watch mode, etc.)
-        2. If a terminal is running jest --watch, npm run dev, or any other persistent process, that terminal is BLOCKED
-        3. To check if a terminal is blocked, use read_terminal first - if it shows an active process, DO NOT send commands
-        4. For new commands while something is running, you MUST launch a new terminal with launch_terminal
-
-        IMPORTANT NOTES:
-        - If you change directory using cd in a terminal, the terminal will remain in that directory
-        - Start a new terminal if you want to be sure of being in the project directory
-        - Use list_terminals to see all active terminals and their last commands
-
-        Args:
-            terminal_id: The ID of the terminal session to use (must be created with launch_terminal first)
-            command: The command to execute in the terminal
-            purpose: The reason to run the command including what information you hope to get when you read the terminal
-
-        Returns:
-            Success message if command was accepted, or error if terminal is blocked/unavailable.
-        """
-        return await self.terminal_tool.run_command(terminal_id, command, purpose=purpose)
-
-    async def read_terminal(self, terminal_id: str, num_chars: int = 1024, offset: int = 0) -> str:
-        """
-        Read the output from a specific terminal session.
-
-        This tool retrieves output from a terminal session's persistent buffer, reading
-        the most recent characters up to the specified limit. It does not wait for command
-        completion - it returns whatever output is currently available.
-
-        Args:
-            terminal_id: The ID of the terminal session to read from (must be created with launch_terminal first)
-            num_chars: Number of characters to read from the output buffer (default: 1024).
-                      If buffer is smaller than num_chars, returns entire buffer.
-            offset: Number of characters from the end to start reading from (default: 0).
-                   If offset is 0, reads the last num_chars characters.
-                   If offset is > 0, reads num_chars characters starting from that offset from the end.
-                   Note: When offset > 0, compression is bypassed to allow reading specific portions.
-
-        Returns:
-            The terminal output as a string, formatted in markdown code blocks
-        """
-        return await self.terminal_tool.read_terminal(terminal_id, num_chars=num_chars, offset=offset)
-
-    async def close_terminal(self, terminal_id: str) -> str:
-        """
-        Close a specific terminal session.
-
-        This tool terminates a terminal session that was previously created with launch_terminal.
-        It will kill any running processes in that terminal and clean up associated resources.
-        Once closed, the terminal ID cannot be used again and a new terminal must be launched
-        if needed.
-
-        Args:
-            terminal_id: The ID of the terminal session to close
-
-        Returns:
-            A confirmation message indicating the terminal was successfully closed
-        """
-        return await self.terminal_tool.close_terminal(terminal_id)
-
-    async def list_terminals(self) -> str:
-        """
-        List all active terminal sessions and their status.
-
-        This tool provides information about all currently active terminal sessions,
-        including their IDs, running status, and the last command executed in each terminal.
-        Use this to keep track of multiple terminal sessions and their state.
-
-        Returns:
-            A formatted string containing a table of all terminal sessions with their IDs,
-            status (Running/Stopped), and last executed command
-        """
-        return await self.terminal_tool.list_terminals()
-
-    async def run_command_tracked(self, terminal_id: str, command: str, purpose: str) -> str:
-        """
-        Run a command in a terminal with completion tracking.
-
-        This is the standard tool for executing commands in terminals. It provides
-        a command ID that allows you to monitor completion status and ensures
-        reliable execution for both quick and long-running commands.
-
-        The returned command ID enables you to:
-        - Check if the command has finished with check_command_status
-        - Wait for completion with wait_for_command_completion
-        - Monitor progress for long-running operations
-
-        Best practices:
-        - Provide a clear purpose describing what you expect the command to accomplish
-        - Save the returned command ID for monitoring if needed
-        - Use wait_for_command_completion for commands that subsequent steps depend on
-
-        Args:
-            terminal_id: The ID of the terminal to run the command in
-            command: The command to execute in the terminal
-            purpose: Description of what the command is meant to accomplish
-
-        Returns:
-            Command ID for tracking completion, or error message if command couldn't be started
-        """
-        return await self.terminal_tool.run_command_tracked(terminal_id, command, purpose)
-
-    async def send_terminal_input(
-        self, terminal_id: str, text: str, submit: bool = True, command_id: Optional[str] = None
+    async def exec_command(
+        self,
+        command: str,
+        workdir: Optional[str] = None,
+        yield_time_ms: int = 10000,
+        max_output_tokens: int = 10000,
+        login: bool = False,
     ) -> str:
-        """
-        Send input to an already-running terminal command.
+        """Run a shell command as a fresh process and return its output.
 
-        Use this tool when a command started with run_command_tracked is waiting for
-        interactive input, such as a confirmation prompt or a password prompt. Read
-        the terminal first to confirm it is waiting, then send the exact response.
+        The command runs under a pseudo-terminal so interactive programs behave
+        normally. Output is collected for up to yield_time_ms milliseconds. If
+        the process exits within that window, the full result with its real exit
+        code is returned. If it is still running, a session_id is returned that
+        you can drive with write_stdin (to send input or poll for more output)
+        and stop with kill_command.
 
-        This tool does not start a new command and does not echo or store the input
-        text in terminal output.
-
-        Args:
-            terminal_id: The ID of the terminal where the command is running
-            text: Text to send to the running process
-            submit: Whether to append a newline before sending (default: true)
-            command_id: Optional command ID when more than one command is active
-
-        Returns:
-            Confirmation that input was sent, or an error explaining why it could not be sent
-        """
-        return await self.terminal_tool.send_terminal_input(terminal_id, text, submit=submit, command_id=command_id)
-
-    async def check_command_status(self, terminal_id: str, command_id: str) -> str:
-        """
-        Check if a command has finished running and get its results.
-
-        Use this tool to check the status of commands started with run_command_tracked.
-        The status will show whether the command is still running, completed successfully,
-        or terminated with an error.
-
-        Typical workflow:
-        1. Start a command with run_command_tracked to get a command ID
-        2. Use this tool to check if the command has finished
-        3. Read the terminal output once the command is complete
+        The working directory does NOT persist between calls. Pass `workdir`, or
+        chain commands in one call with `cd path && ...`. Defaults to the
+        project root.
 
         Args:
-            terminal_id: The ID of the terminal where the command is running
-            command_id: The command ID returned from run_command_tracked
+            command: Shell command line, executed via `bash -c`.
+            workdir: Working directory for the command. Defaults to project root.
+            yield_time_ms: How long to wait for output/exit before returning, in
+                           milliseconds (clamped to 250–30000).
+            max_output_tokens: Maximum tokens of output to return in this call.
+            login: Run the shell as a login shell (sources profile). Default false.
 
         Returns:
-            Formatted status showing completion state, duration, and exit code
+            A JSON object: {"status": "exited"|"running", "exit_code",
+            "session_id", "output", "truncated", "original_token_count",
+            "duration_ms"}.
         """
-        return await self.terminal_tool.check_command_status(terminal_id, command_id)
+        return await self.terminal_tool.exec_command(
+            command,
+            workdir=workdir,
+            yield_time_ms=yield_time_ms,
+            max_output_tokens=max_output_tokens,
+            login=login,
+        )
 
-    async def check_terminal_status(self, terminal_id: str) -> str:
-        """
-        Get an overview of a terminal's current state and active commands.
+    async def write_stdin(
+        self,
+        session_id: str,
+        chars: str = "",
+        yield_time_ms: int = 10000,
+        max_output_tokens: int = 10000,
+    ) -> str:
+        """Write input to a running session's stdin and read recent output.
 
-        Use this tool to see what commands are currently running in a terminal
-        and whether the terminal is ready to accept new commands. This helps
-        you avoid conflicts when managing multiple concurrent operations.
-
-        When to use:
-        - Before starting new commands to ensure the terminal is available
-        - To see all active commands and their progress
-        - To troubleshoot why a terminal might not be responding
-        - To get an overview of terminal activity
+        Pass chars="" to poll (read new output without writing). Use this to
+        answer prompts (e.g. send "y\\n"), drive a REPL, or send control
+        characters (e.g. "\\x03" for Ctrl-C). The text is sent raw — include a
+        trailing "\\n" to submit a line. Waits up to yield_time_ms (clamped to
+        250–30000 when writing, 5000–300000 when polling) for more output or for
+        the process to exit.
 
         Args:
-            terminal_id: The ID of the terminal to check
+            session_id: The id returned by exec_command when status == "running".
+            chars: Bytes to write to stdin. An empty string polls only.
+            yield_time_ms: Wait window in milliseconds.
+            max_output_tokens: Maximum tokens of output to return in this call.
 
         Returns:
-            Formatted report showing terminal status and all active commands with their progress
+            A JSON object with the same shape as exec_command.
         """
-        return await self.terminal_tool.check_terminal_status(terminal_id)
+        return await self.terminal_tool.write_stdin(
+            session_id, chars, yield_time_ms=yield_time_ms, max_output_tokens=max_output_tokens
+        )
 
-    async def wait_for_command_completion(self, terminal_id: str, command_id: str, timeout: Optional[int] = 120) -> str:
-        """
-        Wait for a command to finish before continuing with other tasks.
+    async def kill_command(self, session_id: str, signal: str = "TERM") -> str:
+        """Terminate a running session and its process group.
 
-        Use this tool when you need to ensure a command completes before proceeding.
-        This is essential for workflows where subsequent steps depend on the command
-        results, such as running tests before deployment or building before serving.
-
-        The tool will block execution until the command finishes or the timeout expires.
-        Timeout defaults to 120 seconds and is capped at 300 seconds. If the timeout
-        expires, the command is left running in the terminal and the response tells you
-        how to check it again with check_command_status.
-        After completion, you can read the terminal output to see the results.
-
-        Common scenarios:
-        - Wait for test suites to complete before analyzing results
-        - Wait for build processes to finish before starting servers
-        - Ensure setup commands complete before running the main application
-        - Wait for package installations to finish before using new dependencies
+        Sends SIGTERM (then SIGKILL after a short grace period). Use
+        signal="INT" to send Ctrl-C (SIGINT) instead.
 
         Args:
-            terminal_id: The ID of the terminal where the command is running
-            command_id: The command ID returned from run_command_tracked
-            timeout: Maximum time to wait in seconds (default: 120, capped at 300)
+            session_id: The id of the session to stop.
+            signal: "TERM" (default, graceful) or "INT" (Ctrl-C).
 
         Returns:
-            Completion status message or timeout notification with follow-up status-check guidance
+            A JSON object describing the final state of the session.
         """
-        return await self.terminal_tool.wait_for_command_completion(terminal_id, command_id, timeout)
+        return await self.terminal_tool.kill_command(session_id, signal)
+
+    async def list_sessions(self) -> str:
+        """List currently running exec sessions.
+
+        Returns:
+            A JSON object mapping each running session id to its command,
+            working directory, and runtime in seconds.
+        """
+        return await self.terminal_tool.list_sessions()
 
     async def read_entire_file(self, relative_path: str) -> str:
         """

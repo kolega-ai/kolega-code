@@ -29,8 +29,7 @@ class PermissionStoreError(RuntimeError):
 COMMAND_PERMISSION_TOOLS = frozenset(
     {
         "execute_terminal_command",
-        "run_command",
-        "run_command_tracked",
+        "exec_command",
     }
 )
 EDIT_PERMISSION_TOOLS = frozenset(

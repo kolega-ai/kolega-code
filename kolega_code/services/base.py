@@ -1,121 +1,99 @@
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 
+@dataclass
+class ExecResult:
+    """Result of an exec_command / write_stdin / kill_session call.
+
+    A "session" is one running process. ``status`` is "exited" when the process
+    has finished (``exit_code`` is set) or "running" when it is still alive
+    (``session_id`` is set so it can be driven with write_stdin / kill_session).
+    ``output`` is the head-tail-truncated, token-capped delta produced since the
+    previous read for this session.
+    """
+
+    status: str
+    session_id: Optional[str] = None
+    exit_code: Optional[int] = None
+    output: str = ""
+    truncated: bool = False
+    original_token_count: int = 0
+    duration_ms: int = 0
+
+
 class TerminalManager(ABC):
+    """Abstract base class for terminal managers (codex-style unified exec).
+
+    Each command runs as its own process (a session). Implementations stream
+    output into a bounded buffer, report real exit codes, support writing stdin
+    to a running session, and signal/kill sessions. Local backends allocate a
+    PTY; sandbox backends run non-TTY background commands.
     """
-    Abstract base class for terminal managers.
-    Implementations should handle creation, management, and cleanup of terminal instances.
-    """
 
     @abstractmethod
-    async def launch_terminal(self, terminal_id: Optional[str] = None, **terminal_kwargs) -> str:
-        """
-        Create a new terminal instance with the given ID or generate a random ID.
+    async def exec_command(
+        self,
+        command: str,
+        *,
+        workdir: Optional[str] = None,
+        yield_time_ms: int = 10000,
+        max_output_tokens: int = 10000,
+        login: bool = False,
+        env: Optional[Dict[str, str]] = None,
+    ) -> "ExecResult":
+        """Run ``command`` as a fresh process and collect output for a window.
 
-        Args:
-            terminal_id: Optional identifier for the terminal (random UUID if not provided)
-            **terminal_kwargs: Arguments to pass to terminal constructor
-
-        Returns:
-            The ID of the created terminal
-        """
-
-    @abstractmethod
-    async def send_command(
-        self, term_id: str, command: str, purpose: Optional[str] = None, timeout: Optional[int] = None
-    ) -> bool:
-        """
-        Send a command to a specific terminal.
-
-        Args:
-            term_id: ID of the terminal to send command to
-            command: The command to execute
-            purpose: Optional description of command purpose
-            timeout: Optional timeout in seconds (0 or None for no timeout)
-
-        Returns:
-            True if command was sent successfully
-
-        Raises:
-            KeyError: If terminal_id doesn't exist
+        Waits up to ``yield_time_ms`` for the process to exit. If it exits, the
+        result has status "exited" and an exit code. If it is still running, the
+        result has status "running" and a ``session_id`` that can be driven with
+        ``write_stdin`` and stopped with ``kill_session``.
         """
 
     @abstractmethod
-    async def send_input(
-        self, term_id: str, text: str, submit: bool = True, command_id: Optional[str] = None
-    ) -> bool:
-        """
-        Send input to a command that is already running in a terminal.
+    async def write_stdin(
+        self,
+        session_id: str,
+        chars: str = "",
+        *,
+        yield_time_ms: int = 10000,
+        max_output_tokens: int = 10000,
+    ) -> "ExecResult":
+        """Write ``chars`` to a running session's stdin and read recent output.
 
-        Args:
-            term_id: ID of the terminal to send input to
-            text: Input text to send
-            submit: Whether to append a newline before sending
-            command_id: Optional active command ID when the backend requires disambiguation
-
-        Returns:
-            True if input was sent successfully
-
-        Raises:
-            KeyError: If terminal_id doesn't exist
-            ValueError: If no running command can receive input
+        ``chars`` is sent raw (include a trailing newline to submit a line, or
+        send ``"\\x03"`` for Ctrl-C). An empty ``chars`` polls for new output
+        without writing. Raises ``KeyError`` if the session is unknown.
         """
 
     @abstractmethod
-    async def get_output(self, terminal_id: str, **kwargs) -> str:
-        """
-        Get output from a specific terminal.
+    async def kill_session(self, session_id: str, signal: str = "TERM") -> "ExecResult":
+        """Terminate a running session and its process group.
 
-        Args:
-            terminal_id: ID of the terminal to get output from
-            **kwargs: Arguments to pass to get output method
-
-        Returns:
-            Output from the specified terminal
-
-        Raises:
-            KeyError: If terminal_id doesn't exist
+        ``signal`` is "TERM" (graceful, then SIGKILL after a grace period) or
+        "INT" (Ctrl-C / SIGINT). Raises ``KeyError`` if the session is unknown.
         """
 
     @abstractmethod
-    async def close_terminal(self, terminal_id: str) -> None:
-        """
-        Close a specific terminal.
-
-        Args:
-            terminal_id: ID of the terminal to close
-
-        Raises:
-            KeyError: If terminal_id doesn't exist
-        """
+    async def list_sessions(self) -> Dict[str, Any]:
+        """Return information about currently running sessions, keyed by id."""
 
     @abstractmethod
     async def close_all(self) -> None:
-        """Close all terminal instances."""
-
-    @abstractmethod
-    async def list_terminals(self) -> Dict[str, Any]:
-        """
-        Get information about all terminals.
-
-        Returns:
-            Dictionary mapping terminal IDs to terminal information
-        """
+        """Terminate all sessions and release resources."""
 
     @abstractmethod
     async def run_command(self, command: str, cwd: Optional[str] = None, timeout: Optional[int] = None) -> str:
-        """
-        Run a command directly (convenience method for utilities).
+        """Run a command to completion and return its output as a string.
 
-        Args:
-            command: Command to execute
-            cwd: Optional working directory
-            timeout: Optional timeout in seconds
-
-        Returns:
-            Command output as string
+        Convenience method for internal utilities (builds, sandbox setup); not
+        exposed to the model.
         """
+
+    async def cleanup_all(self) -> None:
+        """Backwards-compatible alias for ``close_all`` used during teardown."""
+        await self.close_all()
 
 
 class BrowserManager(ABC):
