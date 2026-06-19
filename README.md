@@ -15,14 +15,7 @@ web, and dispatch specialized sub-agents to get work done.
 It's **local-first**: the agent operates on your actual filesystem and terminal, and your
 sessions, settings, and API keys stay on your own machine.
 
-<!--
-TODO: replace this placeholder with a real terminal recording of a Kolega Code session.
-Record one with `vhs` (https://github.com/charmbracelet/vhs) or `asciinema`, export to GIF
-or SVG, drop it in `docs/src/assets/` (e.g. `docs/src/assets/demo.gif`), and update the path below.
--->
 ![Kolega Code in action](docs/src/assets/demo.gif)
-
-> _Demo recording coming soon._
 
 ## Why Kolega Code
 
