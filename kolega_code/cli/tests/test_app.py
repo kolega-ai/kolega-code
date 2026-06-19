@@ -4046,6 +4046,136 @@ def _sub_agent_entries(app):
     return [entry for entry in app.conversation_entries if entry.kind == "sub_agent"]
 
 
+def _sub_agent_context_event(usage_percentage, *, input_tokens=5000, agent_id="agent-1", agent_name="general-agent"):
+    return AgentEvent(
+        event_type="llm_context_update",
+        sender=agent_name,
+        content={
+            "input_tokens": input_tokens,
+            "max_tokens": 200000,
+            "usage_percentage": usage_percentage,
+            "alert_level": "normal",
+            "message": None,
+            "compression_threshold": 80.0,
+        },
+        sub_agent_info={
+            "agent_id": agent_id,
+            "agent_name": agent_name,
+            "task": "inspect sessions",
+            "parent_tool_call_id": "tc-1",
+            "conversation_id": None,
+            "depth": 1,
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_sub_agent_context_update_does_not_stomp_main_dashboard(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        # Main agent reports its context usage -> the status dashboard reflects it.
+        app._render_event(
+            AgentEvent(
+                event_type="llm_context_update",
+                sender="coder",
+                content={
+                    "input_tokens": 123456,
+                    "max_tokens": 200000,
+                    "usage_percentage": 61.7,
+                    "alert_level": "normal",
+                    "message": None,
+                    "compression_threshold": 80.0,
+                },
+            )
+        )
+        assert "61.7%" in app._format_status_dashboard()
+
+        # A sub-agent reports its much smaller context usage. It must NOT overwrite the
+        # main dashboard; it lands on the sub-agent's own card instead.
+        app._render_event(_sub_agent_context_event(3.0, input_tokens=6000))
+
+        dashboard = app._format_status_dashboard()
+        assert "61.7%" in dashboard  # main agent's value preserved
+        assert "3.0%" not in dashboard
+
+        activities = list(app._sub_agent_activities.values())
+        assert len(activities) == 1
+        assert activities[0].context_percentage == 3.0
+        assert activities[0].context_input_tokens == 6000
+        # The cumulative-token field is a different metric and stays untouched.
+        assert activities[0].tokens is None
+        # The per-agent context shows on its own card.
+        assert "ctx 3%" in activities[0].entry.content
+
+
+@pytest.mark.asyncio
+async def test_concurrent_sub_agent_context_updates_keep_main_dashboard_stable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        app._render_event(
+            AgentEvent(
+                event_type="llm_context_update",
+                sender="coder",
+                content={
+                    "input_tokens": 100000,
+                    "max_tokens": 200000,
+                    "usage_percentage": 50.0,
+                    "alert_level": "normal",
+                    "message": None,
+                    "compression_threshold": 80.0,
+                },
+            )
+        )
+
+        # Several sub-agents interleave context updates; none may move the main bar.
+        for pct, aid in [(2.0, "agent-1"), (4.0, "agent-2"), (1.5, "agent-3")]:
+            app._render_event(_sub_agent_context_event(pct, agent_id=aid, agent_name=aid))
+
+        assert "50.0%" in app._format_status_dashboard()
+        assert len(app._sub_agent_activities) == 3
+
+
+@pytest.mark.asyncio
+async def test_sub_agent_status_update_routes_to_card_not_main_activity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        # Create the sub-agent card first; this is what legitimately updates the main
+        # activity line (with the "running sub-agent" notice), before the spy is set.
+        app._render_event(_sub_agent_event(text="working"))
+
+        calls: list = []
+        monkeypatch.setattr(app, "_update_activity_progress", lambda *a, **k: calls.append(a))
+
+        app._render_event(
+            AgentEvent(
+                event_type="llm_status_update",
+                sender="general-agent",
+                content={"status": "overloaded", "message": "Provider overloaded, retrying"},
+                sub_agent_info={
+                    "agent_id": "agent-1",
+                    "agent_name": "general-agent",
+                    "task": "inspect sessions",
+                    "parent_tool_call_id": "tc-1",
+                    "conversation_id": None,
+                    "depth": 1,
+                },
+            )
+        )
+
+        assert calls == []  # the main activity line is untouched
+        activity = next(iter(app._sub_agent_activities.values()))
+        assert "Provider overloaded, retrying" in activity.last_activity
+
+
 @pytest.mark.asyncio
 async def test_sub_agent_stream_chunks_group_into_single_entry(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch

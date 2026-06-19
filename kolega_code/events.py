@@ -172,6 +172,7 @@ class AgentEventEmitter:
     ) -> None:
         """Send an llm_context_update event describing context-window usage."""
         usage_percentage = (input_tokens / model_context_length) * 100
+        sub_agent_info = self._sub_agent_info_provider() if self._sub_agent_info_provider else None
 
         await self.emit(
             AgentEvent(
@@ -186,11 +187,14 @@ class AgentEventEmitter:
                     "compression_threshold": compression_threshold * 100,  # Convert to percentage
                     "will_compress_at": int(model_context_length * compression_threshold),
                 },
+                sub_agent_info=sub_agent_info,
             )
         )
 
     async def llm_status(self, status: str, message: str) -> None:
         """Send an llm_status_update event (e.g. provider overload notices)."""
+        sub_agent_info = self._sub_agent_info_provider() if self._sub_agent_info_provider else None
+
         await self.emit(
             AgentEvent(
                 sender=self.sender,
@@ -198,5 +202,6 @@ class AgentEventEmitter:
                 content={"status": status, "message": message},
                 timestamp=datetime.now().isoformat(),
                 is_streaming=False,
+                sub_agent_info=sub_agent_info,
             )
         )
