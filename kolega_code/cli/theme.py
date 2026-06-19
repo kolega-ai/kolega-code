@@ -52,6 +52,8 @@ class Glyph:
     CHECK = "✓"  # ✓
     CROSS = "✗"  # ✗
     DOWN = "↓"  # ↓
+    PENDING = "○"  # ○ — phase not started
+    RUNNING = "▶"  # ▶ — phase in progress
 
 
 ASCII_FALLBACKS = {
@@ -68,6 +70,8 @@ ASCII_FALLBACKS = {
     Glyph.CHECK: "ok",
     Glyph.CROSS: "x",
     Glyph.DOWN: "v",
+    Glyph.PENDING: "o",
+    Glyph.RUNNING: ">",
 }
 
 SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"  # ⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏

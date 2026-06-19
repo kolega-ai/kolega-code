@@ -98,10 +98,28 @@ async def test_run_workflow_writes_artifacts_and_summary(workflow_tool):
     journal_lines = (run_dir / "journal.jsonl").read_text().splitlines()
     assert len(journal_lines) == 4
 
-    # phase + log were broadcast as chat_message events.
+    # phase + log + start/end were broadcast as chat_message events.
     event_types = [c.args[0].content.get("message_type") for c in tool.connection_manager.broadcast_event.call_args_list]
     assert "workflow_phase" in event_types
     assert "workflow_log" in event_types
+    assert "workflow_start" in event_types
+    assert "workflow_end" in event_types
+
+    # Every workflow event is keyed to its run so the TUI updates the right card.
+    workflow_events = [
+        c.args[0].content
+        for c in tool.connection_manager.broadcast_event.call_args_list
+        if str(c.args[0].content.get("message_type", "")).startswith("workflow_")
+    ]
+    assert all(e.get("workflow_run_id") == run_id for e in workflow_events)
+
+    # workflow_start carries the plan; workflow_end carries the final status.
+    start = next(e for e in workflow_events if e["message_type"] == "workflow_start")
+    assert start["name"] == "demo"
+    assert start["description"] == "demo workflow"
+    assert start["phases"] == [{"title": "Find"}]
+    end = next(e for e in workflow_events if e["message_type"] == "workflow_end")
+    assert end["status"] == "completed"
 
 
 @pytest.mark.asyncio
