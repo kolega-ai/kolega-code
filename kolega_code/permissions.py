@@ -258,7 +258,7 @@ def _matches_edit(rule: PermissionRule, request: PermissionRequest) -> bool:
 def _path_from_edit_inputs(tool_name: str, inputs: dict[str, Any]) -> str:
     if tool_name == "apply_patch":
         return ""
-    value = inputs.get("relative_path")
+    value = inputs.get("path")
     return str(value).strip() if value is not None else ""
 
 

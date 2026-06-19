@@ -68,6 +68,20 @@ class TestReplaceEntireFileTool:
         assert result == "# test.txt has been replaced."
         assert sample_file.read_text() == ""
 
+    async def test_replace_entire_file_outside_project_root(self, replace_entire_file_tool):
+        import tempfile
+        from pathlib import Path
+
+        # An existing file outside the project root can be edited via an absolute path.
+        with tempfile.TemporaryDirectory() as outside:
+            target = Path(outside) / "existing.txt"
+            target.write_text("old contents")
+
+            result = await replace_entire_file_tool.replace_entire_file(str(target), "new contents")
+
+            assert "has been replaced" in result
+            assert target.read_text() == "new contents"
+
     async def test_replace_entire_file_with_multiline_content(self, replace_entire_file_tool, sample_file):
         new_content = "Line 1\n\nLine 3\n\nLine 5"
         result = await replace_entire_file_tool.replace_entire_file("test.txt", new_content)

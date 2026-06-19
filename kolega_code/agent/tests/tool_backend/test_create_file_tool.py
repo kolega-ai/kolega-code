@@ -74,6 +74,21 @@ class TestCreateFileTool:
         assert (project_path / "test.txt").read_text() == "Original content"
 
     @pytest.mark.asyncio
+    async def test_create_file_outside_project_root(self, create_file_tool):
+        import tempfile
+        from pathlib import Path
+
+        # Absolute path outside the project root, with a missing parent dir to create.
+        with tempfile.TemporaryDirectory() as outside:
+            target = Path(outside) / "sub" / "new.py"
+
+            result = await create_file_tool.create_file(str(target), "x = 1\n")
+
+            assert "File created successfully" in result
+            assert target.exists()
+            assert target.read_text() == "x = 1\n"
+
+    @pytest.mark.asyncio
     async def test_create_file_parent_directory_does_not_exist(self, create_file_tool, project_path):
         result = await create_file_tool.create_file("nonexistent/test.txt", "Hello World")
 

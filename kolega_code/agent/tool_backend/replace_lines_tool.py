@@ -2,12 +2,12 @@ from .base_tool import BaseTool
 
 
 class ReplaceLinesTool(BaseTool):
-    async def replace_lines(self, relative_path: str, start_line: int, end_line: int, new_content: str) -> str:
+    async def replace_lines(self, path: str, start_line: int, end_line: int, new_content: str) -> str:
         """
         Replace a range of lines in a file with new content.
 
         Args:
-            relative_path: Path to the file, relative to the project root
+            path: Path to the file. Relative to the project root is preferred; an absolute path is also accepted.
             start_line: The starting line number (1-indexed)
             end_line: The ending line number (1-indexed, inclusive)
             new_content: The new content to replace the specified lines with
@@ -20,8 +20,8 @@ class ReplaceLinesTool(BaseTool):
             ValueError: If the line range is invalid
             PermissionError: If the file cannot be written to
         """
-        if not self.filesystem.exists(relative_path):
-            error_msg = f"File not found: {relative_path}"
+        if not self.filesystem.exists(path):
+            error_msg = f"File not found: {path}"
             await self.log_error(error_msg, sender=self.caller.agent_name)
             raise FileNotFoundError(error_msg)
 
@@ -39,7 +39,7 @@ class ReplaceLinesTool(BaseTool):
 
         try:
             # Read the original file content
-            file_content = self.filesystem.read_text(relative_path)
+            file_content = self.filesystem.read_text(path)
             lines = file_content.splitlines(keepends=True)
 
             # Check if the line range is valid
@@ -70,17 +70,17 @@ class ReplaceLinesTool(BaseTool):
             updated_content = "".join(lines[:start_idx]) + formatted_new_content + "".join(lines[end_idx:])
 
             # Write the updated content back to the file (with vibe policy enforcement)
-            blocked_msg = self._enforce_vibe_edit_policy(relative_path)
+            blocked_msg = self._enforce_vibe_edit_policy(path)
             if blocked_msg:
                 return blocked_msg
-            self.filesystem.write_text(relative_path, updated_content)
+            self.filesystem.write_text(path, updated_content)
 
-            success_msg = f"Successfully replaced lines {start_line}-{end_line} in file: {relative_path}"
+            success_msg = f"Successfully replaced lines {start_line}-{end_line} in file: {path}"
             await self.log_info(success_msg, sender=self.caller.agent_name)
 
             # Return the formatted message with both old and new content
             return (
-                f"Replaced lines {start_line}-{end_line} in file {relative_path}\n\n"
+                f"Replaced lines {start_line}-{end_line} in file {path}\n\n"
                 f"Replaced:\n"
                 f"```\n{old_content}```\n"
                 f"with:\n"
@@ -88,10 +88,10 @@ class ReplaceLinesTool(BaseTool):
             )
 
         except PermissionError:
-            error_msg = f"Permission denied when writing to file: {relative_path}"
+            error_msg = f"Permission denied when writing to file: {path}"
             await self.log_error(error_msg, sender=self.caller.agent_name)
             raise
         except Exception as e:
-            error_msg = f"Failed to replace lines in file {relative_path}: {str(e)}"
+            error_msg = f"Failed to replace lines in file {path}: {str(e)}"
             await self.log_error(error_msg, sender=self.caller.agent_name)
             raise

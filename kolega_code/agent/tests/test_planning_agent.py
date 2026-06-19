@@ -154,7 +154,7 @@ async def test_planning_agent_rejects_unavailable_file_edit_tool(
         ToolCall(
             id="tool-call-1",
             name="replace_entire_file",
-            input={"relative_path": "notes.txt", "content": "mutated\n"},
+            input={"path": "notes.txt", "content": "mutated\n"},
         )
     )
 

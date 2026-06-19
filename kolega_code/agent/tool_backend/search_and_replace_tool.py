@@ -4,7 +4,7 @@ from .base_tool import BaseTool
 
 
 class SearchAndReplaceTool(BaseTool):
-    async def search_and_replace(self, relative_path: str, blocks: str) -> str:
+    async def search_and_replace(self, path: str, blocks: str) -> str:
         """
         Edit a file using search and replace blocks.
 
@@ -22,7 +22,7 @@ class SearchAndReplaceTool(BaseTool):
         THE INDENTATION IN THE SEARCH BLOCK MUST BE IDENTICAL TO THE EXISTING FILE.
 
         Args:
-            relative_path: Path to the file to edit, relative to the project root
+            path: Path to the file to edit. Relative to the project root is preferred; an absolute path is also accepted.
             blocks: One or more search and replace blocks formatted as shown above
 
         Returns:
@@ -34,14 +34,14 @@ class SearchAndReplaceTool(BaseTool):
             ValueError: If the blocks are malformed or incorrectly formatted
             PermissionError: If the file cannot be written to
         """
-        if not self.filesystem.exists(relative_path):
-            error_msg = f"File not found: {relative_path}"
+        if not self.filesystem.exists(path):
+            error_msg = f"File not found: {path}"
             await self.log_error(error_msg, sender=self.caller.agent_name)
             raise FileNotFoundError(error_msg)
 
         try:
             # Read the original file content
-            file_content = self.filesystem.read_text(relative_path)
+            file_content = self.filesystem.read_text(path)
 
             original_content = file_content
             updated_content = file_content
@@ -109,16 +109,16 @@ class SearchAndReplaceTool(BaseTool):
             # Check if anything was changed
             if updated_content == original_content:
                 await self.log_warning(
-                    f"No changes made to {relative_path}. All replacements were identical to original text.",
+                    f"No changes made to {path}. All replacements were identical to original text.",
                     sender=self.caller.agent_name,
                 )
-                return f"# {relative_path} (No changes made)\n\n```\n{original_content}\n```"
+                return f"# {path} (No changes made)\n\n```\n{original_content}\n```"
 
             # Write the updated content back to the file (with vibe policy enforcement)
-            blocked_msg = self._enforce_vibe_edit_policy(relative_path)
+            blocked_msg = self._enforce_vibe_edit_policy(path)
             if blocked_msg:
                 return blocked_msg
-            self.filesystem.write_text(relative_path, updated_content)
+            self.filesystem.write_text(path, updated_content)
 
             # Extract search and replace text for output
             search_text = matches[0].group(1)
@@ -126,7 +126,7 @@ class SearchAndReplaceTool(BaseTool):
 
             # Return a message similar to replace_lines tool
             return (
-                f"Search and replace in file {relative_path}\n\n"
+                f"Search and replace in file {path}\n\n"
                 f"Replaced:\n"
                 f"```\n{search_text}\n```\n"
                 f"with:\n"
@@ -137,10 +137,10 @@ class SearchAndReplaceTool(BaseTool):
             # Re-raise ValueError exceptions which are used for validation errors
             raise
         except PermissionError as e:
-            error_msg = f"Permission denied when writing to file: {relative_path}"
+            error_msg = f"Permission denied when writing to file: {path}"
             await self.log_error(error_msg, sender=self.caller.agent_name)
             raise
         except Exception as e:
-            error_msg = f"Failed to apply search and replace to {relative_path}: {str(e)}"
+            error_msg = f"Failed to apply search and replace to {path}: {str(e)}"
             await self.log_error(error_msg, sender=self.caller.agent_name)
             raise
