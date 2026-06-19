@@ -6188,3 +6188,128 @@ async def test_textual_app_unknown_slash_command_falls_through_to_agent(
         await pilot.pause()
 
         assert app.agent.messages == ["/help"]
+
+
+@pytest.mark.asyncio
+async def test_textual_app_prompt_list_recovers_focus_after_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A shown prompt list must regain keyboard focus if focus drifts away.
+
+    Regression for: after a prompt appears, a background click or a resize could
+    leave the option list without focus and the user had no keyboard way back
+    (arrow keys / Enter dead). The composer is disabled during an approval, so the
+    list is always the only valid focus target here.
+    """
+    pytest.importorskip("textual")
+
+    from kolega_code.cli import app as app_module
+    from kolega_code.cli.app import ActionList, KolegaCodeApp, PendingApproval
+    from kolega_code.permissions import PermissionDecision, allow_rule_options, permission_request_for_tool
+
+    class FakeCoderAgent:
+        def __init__(self, **kwargs):
+            pass
+
+        def restore_message_history(self, history):
+            return None
+
+        def dump_message_history(self):
+            return []
+
+        async def cleanup(self):
+            return None
+
+    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test() as pilot:
+        request = permission_request_for_tool("exec_command", {"command": "npm run test"})
+        assert request is not None
+        future: asyncio.Future[PermissionDecision] = asyncio.get_running_loop().create_future()
+        app._pending_approval = PendingApproval(
+            request=request, future=future, rule_options=allow_rule_options(request)
+        )
+        app._set_approval_actions_visible(True)
+        app._set_chat_enabled(False)
+
+        approval_actions = app.query_one("#approval_actions", ActionList)
+        assert app.focused is approval_actions
+
+        # Focus drifts to the conversation transcript (the AUTO_FOCUS magnet that
+        # would otherwise win on resize/resume). The focus hook pulls it back.
+        app.screen.set_focus(app.query_one("#conversation"))
+        await pilot.pause()
+        assert app.focused is approval_actions
+
+        # A background (NoWidget) click does set_focus(None); the blur hook restores.
+        app.screen.set_focus(None)
+        await pilot.pause()
+        assert app.focused is approval_actions
+
+        app._pending_approval = None
+        app._set_approval_actions_visible(False)
+
+
+@pytest.mark.asyncio
+async def test_textual_app_question_recovers_focus_but_allows_free_form_answer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """During a question the option list self-heals, but a deliberate move to the
+    enabled composer (to type a free-form answer) must NOT be fought."""
+    pytest.importorskip("textual")
+
+    from kolega_code.cli import app as app_module
+    from kolega_code.cli.app import ActionList, ChatComposer, KolegaCodeApp, PendingQuestion
+
+    class FakeCoderAgent:
+        def __init__(self, **kwargs):
+            pass
+
+        def restore_message_history(self, history):
+            return None
+
+        def dump_message_history(self):
+            return []
+
+        async def cleanup(self):
+            return None
+
+    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test() as pilot:
+        future: asyncio.Future[str] = asyncio.get_running_loop().create_future()
+        app._pending_question = PendingQuestion(question="Choose?", options=["A", "B"], future=future)
+        app._show_question_options("Choose?", ["A", "B"])
+        app._set_chat_enabled(True)
+
+        question_actions = app.query_one("#question_actions", ActionList)
+        assert app.focused is question_actions
+
+        # Drift to the transcript is pulled back to the option list.
+        app.screen.set_focus(app.query_one("#conversation"))
+        await pilot.pause()
+        assert app.focused is question_actions
+
+        # A deliberate move to the ENABLED composer is preserved (free-form answer).
+        composer = app.query_one("#composer", ChatComposer)
+        assert composer.disabled is False
+        app.screen.set_focus(composer)
+        await pilot.pause()
+        assert app.focused is composer
+
+        app._pending_question = None
+        app._set_question_actions_visible(False)
