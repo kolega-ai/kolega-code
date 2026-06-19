@@ -229,6 +229,21 @@ class TestLocalFileSystem:
         assert "iter_test/file2.txt" in contents
         assert "iter_test/subdir" in contents
 
+    def test_iterdir_outside_root(self, filesystem):
+        """Listing a directory outside root_path yields absolute child paths, not a crash."""
+        # A sibling directory that is NOT under the filesystem's root_path.
+        with tempfile.TemporaryDirectory() as outside:
+            outside_dir = Path(outside)
+            (outside_dir / "child.txt").write_text("hello")
+            (outside_dir / "subdir").mkdir()
+
+            # Pre-fix this raised ValueError ("is not in the subpath of") while
+            # relativizing the out-of-root children to root_path.
+            contents = list(filesystem.iterdir(str(outside_dir)))
+
+            assert str(outside_dir / "child.txt") in contents
+            assert str(outside_dir / "subdir") in contents
+
     def test_glob(self, filesystem):
         """Test glob pattern matching."""
         # Create test files

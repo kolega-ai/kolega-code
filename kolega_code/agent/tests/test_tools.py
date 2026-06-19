@@ -187,23 +187,23 @@ class TestToolCollection:
         tool_collection.think_hard_tool.think_hard.assert_called_once_with(problem)
 
     async def test_search_and_replace(self, tool_collection: AsyncMock) -> None:
-        relative_path = "test.txt"
+        path = "test.txt"
         block = "<<<<<<< SEARCH\nold\n======\nnew\n>>>>>>> REPLACE"
         expected_response = "Updated content"
         tool_collection.search_and_replace_tool.search_and_replace.return_value = expected_response
 
-        result = await tool_collection.search_and_replace(relative_path, block)
+        result = await tool_collection.search_and_replace(path, block)
         assert result == expected_response
-        tool_collection.search_and_replace_tool.search_and_replace.assert_called_once_with(relative_path, block)
+        tool_collection.search_and_replace_tool.search_and_replace.assert_called_once_with(path, block)
 
     async def test_list_directory(self, tool_collection: AsyncMock) -> None:
-        relative_path = "test_dir"
+        path = "test_dir"
         expected_response = "Directory listing"
         tool_collection.list_directory_tool.list_directory.return_value = expected_response
 
-        result = await tool_collection.list_directory(relative_path)
+        result = await tool_collection.list_directory(path)
         assert result == expected_response
-        tool_collection.list_directory_tool.list_directory.assert_called_once_with(relative_path)
+        tool_collection.list_directory_tool.list_directory.assert_called_once_with(path)
 
     async def test_execute_terminal_command(self, tool_collection: AsyncMock) -> None:
         command = "ls -la"
@@ -226,57 +226,57 @@ class TestToolCollection:
         )
 
     async def test_read_entire_file(self, tool_collection: AsyncMock) -> None:
-        relative_path = "test.txt"
+        path = "test.txt"
         expected_response = "File content"
         tool_collection.read_file_tool.read_entire_file.return_value = expected_response
 
-        result = await tool_collection.read_entire_file(relative_path)
+        result = await tool_collection.read_entire_file(path)
         assert result == expected_response
-        tool_collection.read_file_tool.read_entire_file.assert_called_once_with(relative_path)
+        tool_collection.read_file_tool.read_entire_file.assert_called_once_with(path)
 
     async def test_read_file_section(self, tool_collection: AsyncMock) -> None:
-        relative_path = "test.txt"
+        path = "test.txt"
         start_line = 1
         end_line = 10
         expected_response = "File section"
         tool_collection.read_file_tool.read_file_section.return_value = expected_response
 
-        result = await tool_collection.read_file_section(relative_path, start_line, end_line)
+        result = await tool_collection.read_file_section(path, start_line, end_line)
         assert result == expected_response
-        tool_collection.read_file_tool.read_file_section.assert_called_once_with(relative_path, start_line, end_line)
+        tool_collection.read_file_tool.read_file_section.assert_called_once_with(path, start_line, end_line)
 
     async def test_create_file(self, tool_collection: AsyncMock) -> None:
-        relative_path = "test.txt"
+        path = "test.txt"
         content = "New file content"
         expected_response = "Created file content"
         tool_collection.create_file_tool.create_file.return_value = expected_response
 
-        result = await tool_collection.create_file(relative_path, content)
+        result = await tool_collection.create_file(path, content)
         assert result == expected_response
-        tool_collection.create_file_tool.create_file.assert_called_once_with(relative_path, content)
+        tool_collection.create_file_tool.create_file.assert_called_once_with(path, content)
 
     async def test_replace_entire_file(self, tool_collection: AsyncMock) -> None:
-        relative_path = "test.txt"
+        path = "test.txt"
         content = "New content"
         expected_response = "Updated content"
         tool_collection.replace_entire_file_tool.replace_entire_file.return_value = expected_response
 
-        result = await tool_collection.replace_entire_file(relative_path, content)
+        result = await tool_collection.replace_entire_file(path, content)
         assert result == expected_response
-        tool_collection.replace_entire_file_tool.replace_entire_file.assert_called_once_with(relative_path, content)
+        tool_collection.replace_entire_file_tool.replace_entire_file.assert_called_once_with(path, content)
 
     async def test_replace_lines(self, tool_collection: AsyncMock) -> None:
-        relative_path = "test.txt"
+        path = "test.txt"
         start_line = 1
         end_line = 5
         new_content = "New lines"
         expected_response = "Updated content"
         tool_collection.replace_lines_tool.replace_lines.return_value = expected_response
 
-        result = await tool_collection.replace_lines(relative_path, start_line, end_line, new_content)
+        result = await tool_collection.replace_lines(path, start_line, end_line, new_content)
         assert result == expected_response
         tool_collection.replace_lines_tool.replace_lines.assert_called_once_with(
-            relative_path, start_line, end_line, new_content
+            path, start_line, end_line, new_content
         )
 
     async def test_apply_patch(self, tool_collection: AsyncMock) -> None:

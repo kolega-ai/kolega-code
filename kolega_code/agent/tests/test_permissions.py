@@ -79,7 +79,7 @@ def test_allow_rule_options_for_command_include_exact_prefix_and_executable():
 
 
 def test_edit_permission_rule_can_scope_to_path():
-    request = permission_request_for_tool("create_file", {"relative_path": "src/new.py", "content": ""})
+    request = permission_request_for_tool("create_file", {"path": "src/new.py", "content": ""})
     assert request is not None
     rule = PermissionRule.create(
         kind=PermissionKind.EDIT,

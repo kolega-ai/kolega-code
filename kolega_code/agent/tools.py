@@ -964,7 +964,7 @@ class ToolCollection(LogMixin):
         else:
             return f"✅ Paused execution for {seconds} seconds"
 
-    async def search_and_replace(self, relative_path: str, block: str) -> str:
+    async def search_and_replace(self, path: str, block: str) -> str:
         """
         Edit a file using a search and replace block.
 
@@ -982,7 +982,7 @@ class ToolCollection(LogMixin):
         1. Use the read_entire_file tool to understand the file's contents and context
 
         To make a file edit, provide the following:
-        1. relative_path: The absolute path to the file to modify (must be absolute, not relative)
+        1. The path to the file to modify (relative to the project root preferred; an absolute path is also accepted)
         2. block: The search and replace block, as specified above. The text to replace (must be unique within the file, and must match the file contents exactly, including all whitespace and indentation)
 
         The tool will replace ONE occurrence of old_string with new_string in the specified file.
@@ -1017,7 +1017,7 @@ class ToolCollection(LogMixin):
         THE INDENTATION IN THE SEARCH BLOCK MUST BE IDENTICAL TO THE EXISTING FILE.
 
         Args:
-            relative_path: Path to the file to edit, relative to the project root
+            path: Path to the file to edit. Relative to the project root is preferred; an absolute path is also accepted.
             block: A single search and replace blocks formatted as shown above
 
         Returns:
@@ -1030,14 +1030,14 @@ class ToolCollection(LogMixin):
             ValueError: If the block matches more than one place in the file
             PermissionError: If the file cannot be written to
         """
-        return await self.search_and_replace_tool.search_and_replace(relative_path, block)
+        return await self.search_and_replace_tool.search_and_replace(path, block)
 
-    async def list_directory(self, relative_path: str = "") -> str:
+    async def list_directory(self, path: str = "") -> str:
         """
         List files and directories at the specified path.
 
         Args:
-            relative_path: Path to list, relative to the project root
+            path: Path to list. Relative to the project root is preferred; an absolute path is also accepted.
 
         Returns:
             Markdown formatted list of files and directories with details
@@ -1045,7 +1045,7 @@ class ToolCollection(LogMixin):
         Raises:
             NotADirectoryError: If the path is not a directory
         """
-        return await self.list_directory_tool.list_directory(relative_path)
+        return await self.list_directory_tool.list_directory(path)
 
     async def execute_terminal_command(self, command: str) -> str:
         """Execute a command and display output in terminal."""
@@ -1146,7 +1146,7 @@ class ToolCollection(LogMixin):
         """
         return await self.terminal_tool.list_sessions()
 
-    async def read_entire_file(self, relative_path: str) -> str:
+    async def read_entire_file(self, path: str) -> str:
         """
         Read the contents of a file in the project.
 
@@ -1154,7 +1154,7 @@ class ToolCollection(LogMixin):
         Use read_file_section to read specific portions of large files.
 
         Args:
-            relative_path: Path to the file, relative to the project root
+            path: Path to the file. Relative to the project root is preferred; an absolute path is also accepted.
 
         Returns:
             The contents of the file as a string formatted as markdown
@@ -1162,14 +1162,14 @@ class ToolCollection(LogMixin):
         Raises:
             FileNotFoundError: If the file doesn't exist
         """
-        return await self.read_file_tool.read_entire_file(relative_path)
+        return await self.read_file_tool.read_entire_file(path)
 
-    async def read_file_section(self, relative_path: str, start_line: int, end_line: int) -> str:
+    async def read_file_section(self, path: str, start_line: int, end_line: int) -> str:
         """
         Read a specific section of a file in the project from start_line to end_line (inclusive).
 
         Args:
-            relative_path: Path to the file, relative to the project root
+            path: Path to the file. Relative to the project root is preferred; an absolute path is also accepted.
             start_line: The line number to start reading from (1-indexed)
             end_line: The line number to stop reading at (1-indexed, inclusive)
 
@@ -1180,14 +1180,14 @@ class ToolCollection(LogMixin):
             FileNotFoundError: If the file doesn't exist
             ValueError: If start_line or end_line are invalid
         """
-        return await self.read_file_tool.read_file_section(relative_path, start_line, end_line)
+        return await self.read_file_tool.read_file_section(path, start_line, end_line)
 
-    async def create_file(self, relative_path: str, content: str) -> str:
+    async def create_file(self, path: str, content: str) -> str:
         """
         Create a new file in the project with the given content.
 
         Args:
-            relative_path: Path to the file to create, relative to the project root
+            path: Path to the file to create. Relative to the project root is preferred; an absolute path is also accepted.
             content: Content to write to the new file
 
         Returns:
@@ -1198,14 +1198,14 @@ class ToolCollection(LogMixin):
             ValueError: If the parent directory doesn't exist
             PermissionError: If the file cannot be created due to permissions
         """
-        return await self.create_file_tool.create_file(relative_path, content)
+        return await self.create_file_tool.create_file(path, content)
 
-    async def replace_entire_file(self, relative_path: str, content: str) -> str:
+    async def replace_entire_file(self, path: str, content: str) -> str:
         """
         Replace the entire contents of a file in the project.
 
         Args:
-            relative_path: Path to the file, relative to the project root
+            path: Path to the file. Relative to the project root is preferred; an absolute path is also accepted.
             content: New content to write to the file
 
         Returns:
@@ -1215,14 +1215,14 @@ class ToolCollection(LogMixin):
             FileNotFoundError: If the file doesn't exist
             PermissionError: If the file cannot be written to
         """
-        return await self.replace_entire_file_tool.replace_entire_file(relative_path, content)
+        return await self.replace_entire_file_tool.replace_entire_file(path, content)
 
-    async def replace_lines(self, relative_path: str, start_line: int, end_line: int, new_content: str) -> str:
+    async def replace_lines(self, path: str, start_line: int, end_line: int, new_content: str) -> str:
         """
         Replace a range of lines in a file with new content.
 
         Args:
-            relative_path: Path to the file, relative to the project root
+            path: Path to the file. Relative to the project root is preferred; an absolute path is also accepted.
             start_line: The starting line number (1-indexed)
             end_line: The ending line number (1-indexed, inclusive)
             new_content: The new content to replace the specified lines with
@@ -1235,7 +1235,7 @@ class ToolCollection(LogMixin):
             ValueError: If the line range is invalid
             PermissionError: If the file cannot be written to
         """
-        return await self.replace_lines_tool.replace_lines(relative_path, start_line, end_line, new_content)
+        return await self.replace_lines_tool.replace_lines(path, start_line, end_line, new_content)
 
     async def apply_patch(self, input: str) -> str:
         """

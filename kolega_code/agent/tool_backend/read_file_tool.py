@@ -7,7 +7,7 @@ class ReadFileTool(BaseTool):
 
     def _format_file_content(
         self,
-        relative_path: str,
+        path: str,
         content: str,
         *,
         line_range: str = "",
@@ -41,9 +41,9 @@ class ReadFileTool(BaseTool):
         if notice_text:
             notice_text += "\n\n"
 
-        return f"# {relative_path}{suffix}\n\n{notice_text}```\n{content}\n```"
+        return f"# {path}{suffix}\n\n{notice_text}```\n{content}\n```"
 
-    async def read_entire_file(self, relative_path: str) -> str:
+    async def read_entire_file(self, path: str) -> str:
         """
         Read the contents of a file in the project.
 
@@ -51,7 +51,7 @@ class ReadFileTool(BaseTool):
         Use read_file_section to read specific portions of large files.
 
         Args:
-            relative_path: Path to the file, relative to the project root
+            path: Path to the file. Relative to the project root is preferred; an absolute path is also accepted.
 
         Returns:
             The contents of the file as a string formatted as markdown.
@@ -60,10 +60,10 @@ class ReadFileTool(BaseTool):
         Raises:
             FileNotFoundError: If the file doesn't exist
         """
-        if not self.filesystem.exists(relative_path):
-            raise FileNotFoundError(f"File not found: {relative_path}")
+        if not self.filesystem.exists(path):
+            raise FileNotFoundError(f"File not found: {path}")
 
-        file_content = self.filesystem.read_text(relative_path)
+        file_content = self.filesystem.read_text(path)
         lines = file_content.splitlines(keepends=True)
         total_lines = len(lines)
 
@@ -73,21 +73,21 @@ class ReadFileTool(BaseTool):
             truncated_content = "".join(truncated_lines)
 
             return self._format_file_content(
-                relative_path,
+                path,
                 truncated_content,
                 line_truncation_notice=(
                     f"**⚠️ File truncated: Showing first {self.MAX_LINES_FOR_ENTIRE_FILE} of {total_lines} lines**"
                 ),
             )
 
-        return self._format_file_content(relative_path, file_content)
+        return self._format_file_content(path, file_content)
 
-    async def read_file_section(self, relative_path: str, start_line: int, end_line: int) -> str:
+    async def read_file_section(self, path: str, start_line: int, end_line: int) -> str:
         """
         Read a specific section of a file in the project from start_line to end_line (inclusive).
 
         Args:
-            relative_path: Path to the file, relative to the project root
+            path: Path to the file. Relative to the project root is preferred; an absolute path is also accepted.
             start_line: The line number to start reading from (1-indexed)
             end_line: The line number to stop reading at (1-indexed, inclusive)
 
@@ -98,8 +98,8 @@ class ReadFileTool(BaseTool):
             FileNotFoundError: If the file doesn't exist
             ValueError: If start_line or end_line are invalid
         """
-        if not self.filesystem.exists(relative_path):
-            raise FileNotFoundError(f"File not found: {relative_path}")
+        if not self.filesystem.exists(path):
+            raise FileNotFoundError(f"File not found: {path}")
 
         if start_line < 1:
             raise ValueError(f"Start line must be at least 1, got {start_line}")
@@ -107,7 +107,7 @@ class ReadFileTool(BaseTool):
         if end_line < start_line:
             raise ValueError(f"End line ({end_line}) must be greater than or equal to start line ({start_line})")
 
-        file_content = self.filesystem.read_text(relative_path)
+        file_content = self.filesystem.read_text(path)
         lines = file_content.splitlines(keepends=True)
 
         if start_line > len(lines):
@@ -116,4 +116,4 @@ class ReadFileTool(BaseTool):
         # Adjust for 0-indexed list
         section_content = "".join(lines[start_line - 1 : end_line])
         line_range = f"(lines {start_line}-{min(end_line, len(lines))})"
-        return self._format_file_content(relative_path, section_content, line_range=line_range)
+        return self._format_file_content(path, section_content, line_range=line_range)

@@ -170,7 +170,7 @@ async def test_anthropic_stream_tool_use_start_execution_id_matches_final_tool_c
         type = "tool_use"
         id = "toolu_create_file"
         name = "create_file"
-        input = {"relative_path": "hello.txt", "content": "hello"}
+        input = {"path": "hello.txt", "content": "hello"}
 
     class StartChunk:
         type = "content_block_start"

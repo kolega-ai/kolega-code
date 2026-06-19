@@ -5,12 +5,12 @@ from .base_tool import BaseTool
 
 
 class ListDirectoryTool(BaseTool):
-    async def list_directory(self, relative_path: str = "") -> str:
+    async def list_directory(self, path: str = "") -> str:
         """
         List files and directories at the specified path.
 
         Args:
-            relative_path: Path to list, relative to the project root
+            path: Path to list. Relative to the project root is preferred; an absolute path is also accepted.
 
         Returns:
             Markdown formatted list of files and directories with details
@@ -18,25 +18,25 @@ class ListDirectoryTool(BaseTool):
         Raises:
             NotADirectoryError: If the path is not a directory
         """
-        if not self.filesystem.exists(relative_path):
-            raise FileNotFoundError(f"Directory not found: {relative_path}")
+        if not self.filesystem.exists(path):
+            raise FileNotFoundError(f"Directory not found: {path}")
 
-        if not self.filesystem.is_directory(relative_path):
-            raise NotADirectoryError(f"Not a directory: {relative_path}")
+        if not self.filesystem.is_directory(path):
+            raise NotADirectoryError(f"Not a directory: {path}")
 
         # Use sandbox-specific implementation if available
         if hasattr(self.filesystem, "sandbox"):
-            return await self._list_directory_sandbox(relative_path)
+            return await self._list_directory_sandbox(path)
         else:
             # Use the original implementation for local filesystem
-            return await self._list_directory_local(relative_path)
+            return await self._list_directory_local(path)
 
-    async def _list_directory_sandbox(self, relative_path: str) -> str:
+    async def _list_directory_sandbox(self, path: str) -> str:
         """
         Sandbox-specific implementation using a single command for efficiency.
         """
         # Resolve the full path
-        full_path = self.filesystem._resolve_path(relative_path) if relative_path else self.filesystem.root_path
+        full_path = self.filesystem._resolve_path(path) if path else self.filesystem.root_path
 
         # Use ls with detailed format to get all info in one command
         # -la: list all files with details
@@ -94,8 +94,8 @@ class ListDirectoryTool(BaseTool):
             clean_name = name.rstrip("/")
 
             # Build relative path
-            if relative_path:
-                item_path = f"{relative_path}/{clean_name}"
+            if path:
+                item_path = f"{path}/{clean_name}"
             else:
                 item_path = clean_name
 
@@ -114,14 +114,14 @@ class ListDirectoryTool(BaseTool):
         lines_data.sort(key=lambda x: (not x["is_dir"], x["name"].lower()))
 
         # Build the markdown output
-        return self._format_directory_listing(relative_path, lines_data)
+        return self._format_directory_listing(path, lines_data)
 
-    async def _list_directory_local(self, relative_path: str) -> str:
+    async def _list_directory_local(self, path: str) -> str:
         """
         Original implementation for local filesystem.
         """
         # Get all items in the directory
-        items = self.filesystem.list_directory(relative_path)
+        items = self.filesystem.list_directory(path)
 
         # Sort items: directories first, then files, alphabetically within each group
         items.sort(key=lambda x: (not self.filesystem.is_directory(x), self.filesystem.get_name(x).lower()))
@@ -171,16 +171,16 @@ class ListDirectoryTool(BaseTool):
                 await self.log_error(f"Error processing item {item}: {e}", sender=self.caller.agent_name)
                 continue
 
-        return self._format_directory_listing(relative_path, lines_data)
+        return self._format_directory_listing(path, lines_data)
 
-    def _format_directory_listing(self, relative_path: str, items_data: list) -> str:
+    def _format_directory_listing(self, path: str, items_data: list) -> str:
         """
         Format the directory listing data into markdown.
         """
         # Prepare the header
-        if relative_path:
-            title = f"# Directory: {relative_path}"
-            parent_dir = str(Path(relative_path).parent)
+        if path:
+            title = f"# Directory: {path}"
+            parent_dir = str(Path(path).parent)
             if parent_dir and parent_dir != ".":
                 navigation = f"📁 Parent Directory: {parent_dir}"
             else:
@@ -204,7 +204,6 @@ class ListDirectoryTool(BaseTool):
 
         for item_data in items_data:
             name = item_data["name"]
-            path = item_data["path"]
             is_dir = item_data["is_dir"]
             size = item_data["size"]
             date = item_data["date"]

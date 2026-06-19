@@ -608,7 +608,11 @@ class LocalFileSystem(FileSystem):
         resolved_path = self._resolve_path(path)
         for item in resolved_path.iterdir():
             if self.root_path:
-                yield str(item.relative_to(self.root_path))
+                try:
+                    yield str(item.relative_to(self.root_path))
+                except ValueError:
+                    # If the child is outside root_path, yield the absolute path
+                    yield str(item)
             else:
                 yield str(item)
 

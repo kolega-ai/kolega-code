@@ -166,8 +166,11 @@ class BaseTool(LogMixin):
         if not hasattr(self, "_gitignore_spec") or self._gitignore_spec is None:
             return False
 
-        # Get the path relative to the project root
-        relative_path = str(file_path.relative_to(self.project_path))
+        # A file outside the project root is not governed by the project's .gitignore.
+        try:
+            relative_path = str(file_path.relative_to(self.project_path))
+        except ValueError:
+            return False
 
         # Check if the path matches any gitignore pattern
         return self._gitignore_spec.match_file(relative_path)
@@ -207,11 +210,11 @@ class BaseTool(LogMixin):
             return set(protected_files)
         return {"package.json", "tsconfig.json"}
 
-    def _enforce_vibe_edit_policy(self, relative_path: str) -> Optional[str]:
+    def _enforce_vibe_edit_policy(self, path: str) -> Optional[str]:
         """Return message if blocked; None if allowed."""
         if not self._is_vibe_mode():
             return None
 
-        if os.path.basename(relative_path) in self._get_vibe_blacklist_basenames():
-            return f"You are not allowed to edit this file: {relative_path}"
+        if os.path.basename(path) in self._get_vibe_blacklist_basenames():
+            return f"You are not allowed to edit this file: {path}"
         return None

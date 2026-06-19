@@ -88,6 +88,31 @@ class TestListDirectoryTool:
         assert "| 📄 | .gitignore" in result
 
     @pytest.mark.asyncio
+    async def test_list_directory_outside_root(self, test_directory, mock_agent):
+        """Listing a directory outside the project root returns a table, not a crash."""
+        filesystem = LocalFileSystem(root_path=test_directory)
+        tool = ListDirectoryTool(
+            project_path=test_directory,
+            workspace_id="test",
+            thread_id="test",
+            connection_manager=Mock(),
+            config=Mock(),
+            caller=mock_agent,
+            filesystem=filesystem,
+        )
+
+        with tempfile.TemporaryDirectory() as outside:
+            Path(os.path.join(outside, "outside_file.py")).write_text("x = 1")
+            os.makedirs(os.path.join(outside, "nested"))
+
+            # Pre-fix this raised "is not in the subpath of" from iterdir.
+            result = await tool.list_directory(outside)
+
+        assert "**Summary:**" in result
+        assert "outside_file.py" in result
+        assert "nested" in result
+
+    @pytest.mark.asyncio
     async def test_file_descriptions(self, test_directory, mock_agent):
         """Test that file descriptions are correct."""
         filesystem = LocalFileSystem(root_path=test_directory)

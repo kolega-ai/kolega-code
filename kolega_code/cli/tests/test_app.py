@@ -3950,7 +3950,7 @@ async def test_textual_app_renders_resumed_history_in_chat(
             role="assistant",
             content=[
                 TextBlock("I'll inspect it."),
-                ToolCall(id="tool-1", name="read_file", input={"relative_path": "README.md"}),
+                ToolCall(id="tool-1", name="read_file", input={"path": "README.md"}),
             ],
         ).to_dict(),
         Message(
