@@ -71,6 +71,18 @@ async def test_exec_command_runs_background_with_stdin():
 
 
 @pytest.mark.asyncio
+async def test_exec_command_forwards_env_to_sandbox():
+    sandbox = FakeSandbox()
+    manager = SandboxTerminalManager(sandbox, "workspace", "thread")
+
+    await manager.exec_command("echo $FOO", env={"FOO": "bar"}, yield_time_ms=200)
+
+    assert sandbox.commands.run_calls
+    _, kwargs = sandbox.commands.run_calls[0]
+    assert kwargs.get("envs") == {"FOO": "bar"}
+
+
+@pytest.mark.asyncio
 async def test_write_stdin_sends_raw_input_and_reports_exit():
     sandbox = FakeSandbox()
     manager = SandboxTerminalManager(sandbox, "workspace", "thread")

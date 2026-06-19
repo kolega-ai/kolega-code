@@ -455,6 +455,9 @@ class SandboxTerminalManager(TerminalManager):
         if hasattr(working_dir, "__fspath__"):  # Check if it's a Path-like object
             working_dir = str(working_dir)
 
+        # Forward the terminal's environment to the sandbox command.
+        env = terminal_info.get("env") or {}
+
         # Store command in output
         self.outputs[terminal_id].append(
             {"type": "command", "data": command, "timestamp": datetime.now(timezone.utc), "purpose": purpose}
@@ -481,6 +484,7 @@ class SandboxTerminalManager(TerminalManager):
                 result = await self.sandbox.commands.run(
                     command,
                     cwd=working_dir,
+                    envs=env,
                     on_stdout=stdout_handler,
                     on_stderr=stderr_handler,
                     timeout=0,  # No timeout for sandbox
@@ -491,6 +495,7 @@ class SandboxTerminalManager(TerminalManager):
                     self.sandbox.commands.run(
                         command,
                         cwd=working_dir,
+                        envs=env,
                         on_stdout=stdout_handler,
                         on_stderr=stderr_handler,
                         timeout=sandbox_timeout,
@@ -697,6 +702,9 @@ class SandboxTerminalManager(TerminalManager):
             if hasattr(working_dir, "__fspath__"):  # Check if it's a Path-like object
                 working_dir = str(working_dir)
 
+            # Forward the terminal's environment to the sandbox command.
+            env = self.terminals.get(terminal_id, {}).get("env") or {}
+
             # Create streaming output handlers
             stdout_handler = await self._create_output_handler(terminal_id, "stdout")
             stderr_handler = await self._create_output_handler(terminal_id, "stderr")
@@ -711,6 +719,7 @@ class SandboxTerminalManager(TerminalManager):
                         command,
                         background=True,
                         cwd=working_dir,
+                        envs=env,
                         on_stdout=stdout_handler,
                         on_stderr=stderr_handler,
                         stdin=True,
@@ -724,6 +733,7 @@ class SandboxTerminalManager(TerminalManager):
                         command,
                         background=True,
                         cwd=working_dir,
+                        envs=env,
                         on_stdout=stdout_handler,
                         on_stderr=stderr_handler,
                         stdin=True,
