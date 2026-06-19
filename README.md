@@ -1,96 +1,145 @@
-# kolega-code
+# Kolega Code
 
-Kolega Code is a local-first AI coding agent for the terminal.
+**An AI coding agent that runs in your terminal — local-first, model-agnostic, plan-then-build.**
 
-The package owns the `kolega_code` import namespace and provides the
-`kolega-code` command.
+[![PyPI version](https://img.shields.io/pypi/v/kolega-code)](https://pypi.org/project/kolega-code/)
+[![Python versions](https://img.shields.io/pypi/pyversions/kolega-code)](https://pypi.org/project/kolega-code/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![CI](https://github.com/kolega-ai/kolega-code/actions/workflows/ci.yml/badge.svg)](https://github.com/kolega-ai/kolega-code/actions/workflows/ci.yml)
+[![Docs](https://img.shields.io/badge/docs-kolega--ai.github.io-blue)](https://kolega-ai.github.io/kolega-code/)
 
-## Install
+Point Kolega Code at a project directory and it opens an interactive UI where you talk to an
+agent that can read and edit your code, run shell commands, search the codebase, browse the
+web, and dispatch specialized sub-agents to get work done.
 
-Install with the public installer:
+It's **local-first**: the agent operates on your actual filesystem and terminal, and your
+sessions, settings, and API keys stay on your own machine.
+
+![Kolega Code in action](docs/src/assets/demo.gif)
+
+## Why Kolega Code
+
+- **Plans before it builds.** A read-only **Plan mode** produces a reviewable plan and a
+  shared task list before anything changes; **Build mode** implements it. Toggle with `Shift+Tab`.
+- **Orchestrates many agents.** For larger jobs, the main agent dispatches specialized
+  sub-agents (investigation, browser, coding, general) and can fan them out in parallel for
+  broad audits, large migrations, or implementing a plan's independent parts at once.
+- **Local-first by design.** It works on your real files and terminal; sessions, settings,
+  and credentials live on your machine, not in someone else's cloud.
+- **Bring your own model.** Talks to a range of providers and lets you assign different models
+  to different roles.
+
+## What it does
+
+- **Reads and edits your code.** Opens files, searches across the codebase, creates new files,
+  and applies precise edits.
+- **Runs commands.** Executes shell commands and watches their output in a dedicated terminal view.
+- **Plans before it builds.** Plan mode investigates and proposes; Build mode executes.
+- **Browses the web.** A built-in browser agent (powered by Playwright) fetches pages and
+  interacts with sites when a task needs it.
+- **Dispatches sub-agents.** Hands work off to specialized agents and tracks their activity live.
+- **Orchestrates workflows.** With [gigacode](https://kolega-ai.github.io/kolega-code/gigacode/),
+  it fans out many sub-agents in parallel.
+- **Works non-interactively too.** Run a single prompt with `kolega-code ask`, get JSON output,
+  and save or resume sessions.
+
+## Quick start
+
+**1. Install** with the script:
 
 ```bash
 curl -fsSL https://kolega.dev/install-kolega-code.sh | sh
 ```
 
-Or install directly from PyPI with uv:
+Or with [uv](https://docs.astral.sh/uv/) (or `pip`):
 
 ```bash
 uv tool install kolega-code
+# or: pip install kolega-code
 ```
 
-Verify the command is available:
+Verify the install:
 
 ```bash
 kolega-code --version
 ```
 
-Upgrade or uninstall:
-
-```bash
-kolega-code update
-uv tool uninstall kolega-code
-```
-
-Running the installer again also updates an existing install to the latest
-released version.
-
-Run the Textual UI and open the Settings tab to pick any provider and model from the catalog, choose the model's thinking effort, and save your API key:
+**2. Start a session** in your project:
 
 ```bash
 kolega-code .
 ```
 
-In the Textual UI, press `Shift+Tab` to switch between build mode and planning mode. Planning mode uses a standalone read-only planning agent; when it submits a complete plan, choose whether to implement it or keep discussing the plan.
+**3. Add a provider key.** Open the **Settings** tab to pick a provider and model and save your
+API key. Then press `Shift+Tab` anytime to switch between **Plan** and **Build** mode.
 
-All CLI sessions use the CLI-specific coding-agent prompt, including resumed sessions. Launching the UI starts a fresh thread by default. Resume an existing thread explicitly:
+Resume a previous conversation:
 
 ```bash
-kolega-code . --resume
-kolega-code . --resume <thread-or-session-id>
+kolega-code . --resume            # latest session
+kolega-code . --resume <id>       # a specific thread or session
 ```
 
-You can also use env/flag based configuration for non-UI commands. API key
-variables provide credentials only; set a provider/model explicitly or save one
-in the Settings UI:
+## Two ways to use it
+
+| Mode | Command | Best for |
+| --- | --- | --- |
+| **Interactive TUI** | `kolega-code .` | Day-to-day development, exploration, pair-programming |
+| **One-shot** | `kolega-code ask "…"` | Scripting, automation, quick questions, CI |
+
+There are also helper commands for managing sessions and checking your setup:
 
 ```bash
-export KOLEGA_CODE_PROVIDER=deepseek
-export DEEPSEEK_API_KEY=...
 kolega-code ask "summarize this repository" --project .
-kolega-code ask "summarize this repository" --project . --provider deepseek --model deepseek-v4-pro
 kolega-code sessions list --project .
 kolega-code doctor --project .
 ```
 
-The Settings UI exposes every model in the catalog (`kolega_code/llm/specs.py`) across all supported providers — the provider and model dropdowns are derived from that catalog, so adding a model there makes it selectable in the UI automatically. A saved UI selection is used for all agent model roles, and switching models resets thinking effort to that model's default. API keys are stored in the local CLI settings file with restrictive permissions. Existing environment and model/provider flag overrides continue to work, but API key variables alone never select a provider or model. Local session state is stored under the platform state directory unless `KOLEGA_CODE_STATE_DIR` is set.
+## Bring your own model
 
-## From source
+Kolega Code talks to a range of LLM providers — including Anthropic, OpenAI, Google, Moonshot,
+and DeepSeek — and lets you assign **different models to different roles**: a strong
+long-context model for coding, a fast cheap model for small utility calls, and one for extended
+"thinking". See [Providers & Models](https://kolega-ai.github.io/kolega-code/configuration/providers-and-models/).
 
-```bash
-git clone https://github.com/kolega-ai/kolega-code.git
-cd kolega-code
-uv sync --extra dev
-uv run kolega-code --version
-```
+## Configuration
 
-## Tests
-
-Fast tests run by default:
+Set your provider, model, and API keys from the **Settings** tab in the UI, or via environment
+variables and flags for non-interactive use:
 
 ```bash
-./run_tests.sh
+export KOLEGA_CODE_PROVIDER=deepseek
+export DEEPSEEK_API_KEY=...
+kolega-code ask "summarize this repository" --project . --provider deepseek --model deepseek-v4-pro
 ```
 
-Some slow and integration tests require real provider credentials. To run them locally, create an ignored `.env` file from the example and fill only the keys you need:
+API key variables only provide credentials — pick a provider/model explicitly or save one in
+Settings. Local session state lives under your platform's state directory unless
+`KOLEGA_CODE_STATE_DIR` is set. See the
+[Configuration docs](https://kolega-ai.github.io/kolega-code/configuration/settings-and-api-keys/)
+for the full story.
 
-```bash
-cp .env.example .env
-./run_tests.sh --all
-```
+## Requirements
 
-The test runner loads `.env` through pytest and keeps existing shell environment variables higher priority than values in the file. You can pass additional pytest arguments through the wrapper:
+- **Python 3.11+**
+- An **API key** for at least one supported provider
+- A terminal that supports a modern TUI (most do)
 
-```bash
-./run_tests.sh kolega_code/agent/tests/llm/test_client.py -ra
-```
+## Documentation
+
+Full documentation lives at **[kolega-ai.github.io/kolega-code](https://kolega-ai.github.io/kolega-code/)**:
+
+- [Quick Start](https://kolega-ai.github.io/kolega-code/getting-started/quick-start/)
+- [CLI overview](https://kolega-ai.github.io/kolega-code/cli/overview/)
+- [How it works & concepts](https://kolega-ai.github.io/kolega-code/concepts/how-it-works/)
+- [Configuration](https://kolega-ai.github.io/kolega-code/configuration/settings-and-api-keys/)
+
+## Contributing
+
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for local setup, running the
+test suite, and building the docs site. Please report security issues privately per
+[SECURITY.md](SECURITY.md).
+
+## License
+
+Released under the [MIT License](LICENSE).
