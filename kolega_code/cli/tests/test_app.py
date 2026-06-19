@@ -6313,3 +6313,121 @@ async def test_textual_app_question_recovers_focus_but_allows_free_form_answer(
 
         app._pending_question = None
         app._set_question_actions_visible(False)
+
+
+@pytest.mark.asyncio
+async def test_agent_models_section_saves_override_and_builds_agent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
+) -> None:
+    pytest.importorskip("textual")
+
+    from textual.widgets import Input, Select
+
+    from kolega_code.cli import app as app_module
+    from kolega_code.cli.app import KolegaCodeApp
+
+    class FakeCoderAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def restore_message_history(self, history):
+            return None
+
+        def dump_message_history(self):
+            return []
+
+        async def cleanup(self):
+            return None
+
+    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    state_dir = tmp_path / "state"
+    store = SessionStore(state_dir)
+    settings_store = SettingsStore(state_dir)
+    session = store.create(project, "code", {})
+    app = KolegaCodeApp(
+        project_path=project,
+        mode="code",
+        store=store,
+        settings_store=settings_store,
+        session=session,
+    )
+
+    async with app.run_test() as pilot:
+        app.query_one("#api_key_input", Input).value = "moonshot-key"
+        # Give the investigation role its own model (same provider keeps one API key).
+        app.query_one("#am_provider_investigation", Select).value = UI_DEFAULT_PROVIDER
+        await pilot.pause()  # let the provider->model cascade settle
+        app.query_one("#am_model_investigation", Select).value = MOONSHOT_K26_MODEL
+        await pilot.pause()
+        await app._save_settings_from_ui()
+
+        saved = settings_store.load().get_agent_model("investigation")
+        assert saved is not None
+        assert saved["provider"] == UI_DEFAULT_PROVIDER
+        assert saved["model"] == MOONSHOT_K26_MODEL
+
+        config = app.agent.kwargs["config"]
+        assert config.model_config_for_agent("investigation-agent").model == MOONSHOT_K26_MODEL
+        # Roles left on "Default" still inherit the active model.
+        assert config.model_config_for_agent("coder").model == UI_DEFAULT_MODEL
+
+
+@pytest.mark.asyncio
+async def test_agent_models_section_populates_and_clears_to_inherit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
+) -> None:
+    pytest.importorskip("textual")
+
+    from textual.widgets import Select
+
+    from kolega_code.cli import app as app_module
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.provider_registry import INHERIT_SENTINEL
+
+    class FakeCoderAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def restore_message_history(self, history):
+            return None
+
+        def dump_message_history(self):
+            return []
+
+        async def cleanup(self):
+            return None
+
+    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    state_dir = tmp_path / "state"
+    store = SessionStore(state_dir)
+    settings_store = SettingsStore(state_dir)
+    settings = CliSettings(active_provider=UI_DEFAULT_PROVIDER, active_model=UI_DEFAULT_MODEL)
+    settings.set_api_key(UI_DEFAULT_PROVIDER, "moonshot-key")
+    settings.set_agent_model("investigation", UI_DEFAULT_PROVIDER, MOONSHOT_K26_MODEL)
+    settings_store.save(settings)
+    session = store.create(project, "code", {})
+    app = KolegaCodeApp(
+        project_path=project,
+        mode="code",
+        store=store,
+        settings_store=settings_store,
+        session=session,
+    )
+
+    async with app.run_test() as pilot:
+        # The saved override is reflected in the row on mount.
+        assert app.query_one("#am_provider_investigation", Select).value == UI_DEFAULT_PROVIDER
+        assert app.query_one("#am_model_investigation", Select).value == MOONSHOT_K26_MODEL
+
+        # Switching the row back to "Default" clears the override on save.
+        app.query_one("#am_provider_investigation", Select).value = INHERIT_SENTINEL
+        await pilot.pause()
+        await app._save_settings_from_ui()
+
+        assert settings_store.load().get_agent_model("investigation") is None

@@ -90,8 +90,13 @@ class AgentContext:
     hook_dispatcher: HookDispatcher = NO_OP_DISPATCHER
 
     def create_llm_client(self, agent_name: str) -> LLMClient:
-        """Create the LLM client, instrumented when a Langfuse client is available."""
-        model_config = self.config.long_context_config
+        """Create the LLM client, instrumented when a Langfuse client is available.
+
+        The client is bound to the provider for this agent's role (which may differ
+        from the global model when a per-agent override is configured); the model id
+        itself is still passed per call.
+        """
+        model_config = self.config.model_config_for_agent(agent_name)
 
         if self.telemetry.langfuse_client:
             return InstrumentedLLMClient(

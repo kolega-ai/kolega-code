@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from kolega_code.config import ModelProvider
+from kolega_code.config import AgentRole, ModelProvider
 from kolega_code.llm.specs import (
     MODEL_SPECS,
     default_thinking_effort,
@@ -204,6 +204,30 @@ def _thinking_effort_label(effort: str) -> str:
         "xhigh": "Extra high",
         "max": "Max",
     }.get(effort, effort)
+
+
+# Sentinel value used by the Settings "Agent Models" provider selects to mean
+# "no override — inherit the active model". Kept distinct from any real provider id.
+INHERIT_SENTINEL = "__inherit__"
+
+# Display labels and render order for the configurable agent roles in the UI.
+AGENT_ROLE_LABELS: dict[AgentRole, str] = {
+    AgentRole.PLANNING: "Planning",
+    AgentRole.BUILDING: "Building (Coder)",
+    AgentRole.INVESTIGATION: "Investigation",
+    AgentRole.GENERAL: "General",
+    AgentRole.BROWSER: "Browser",
+}
+
+
+def agent_role_options() -> list[tuple[str, str]]:
+    """Return (label, role-value) pairs for the configurable agent roles, in order."""
+    return [(label, role.value) for role, label in AGENT_ROLE_LABELS.items()]
+
+
+def agent_role_provider_options() -> list[tuple[str, str]]:
+    """Provider Select options for a per-agent row, with an inherit option first."""
+    return [("Default (inherit)", INHERIT_SENTINEL), *ui_provider_options()]
 
 
 def default_model_for_provider(provider: ModelProvider) -> str:

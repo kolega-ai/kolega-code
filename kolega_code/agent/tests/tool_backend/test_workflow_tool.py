@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from kolega_code.agent.tool_backend.workflow_tool import WorkflowTool
-from kolega_code.config import AgentConfig
+from kolega_code.config import AgentConfig, ModelConfig, ModelProvider
 from kolega_code.events import AgentConnectionManager
 
 
@@ -173,3 +173,35 @@ async def test_invalid_meta_reports_failure(workflow_tool):
 
     with pytest.raises(WorkflowScriptError):
         await tool.run_workflow(script="return 1")
+
+
+def _config_with_investigation_override() -> AgentConfig:
+    return AgentConfig(
+        anthropic_api_key="anthropic-key",
+        deepseek_api_key="deepseek-key",
+        agent_models={
+            "investigation": ModelConfig(provider=ModelProvider.DEEPSEEK, model="deepseek-v4-flash"),
+        },
+    )
+
+
+def test_config_override_clears_agent_models_for_explicit_model(tmp_path, connection_manager, caller):
+    config = _config_with_investigation_override()
+    tool = WorkflowTool(str(tmp_path / "project"), "ws", "thread", connection_manager, config, caller, None)
+
+    overridden = tool._config_override("claude-opus-4-7", "high")
+
+    assert overridden.long_context_config.model == "claude-opus-4-7"
+    assert overridden.long_context_config.thinking_effort == "high"
+    # The workflow author's explicit model wins over the role override.
+    assert overridden.agent_models == {}
+    assert overridden.model_config_for_agent("investigation-agent").model == "claude-opus-4-7"
+
+
+def test_config_override_none_preserves_role_overrides(tmp_path, connection_manager, caller):
+    config = _config_with_investigation_override()
+    tool = WorkflowTool(str(tmp_path / "project"), "ws", "thread", connection_manager, config, caller, None)
+
+    # No explicit model/effort -> no clone, role overrides still flow to sub-agents.
+    assert tool._config_override(None, None) is None
+    assert config.model_config_for_agent("investigation-agent").model == "deepseek-v4-flash"

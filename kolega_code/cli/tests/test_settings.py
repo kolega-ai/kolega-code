@@ -15,7 +15,12 @@ from kolega_code.cli.provider_registry import (
     ui_provider_options,
     ui_thinking_effort_options,
 )
-from kolega_code.cli.settings import CliSettings, SettingsStore, SettingsStoreError
+from kolega_code.cli.settings import (
+    SETTINGS_SCHEMA_VERSION,
+    CliSettings,
+    SettingsStore,
+    SettingsStoreError,
+)
 from kolega_code.config import ModelProvider
 from kolega_code.llm.specs import MODEL_SPECS
 
@@ -48,6 +53,48 @@ def test_settings_store_missing_file_returns_empty_settings(tmp_path: Path) -> N
     assert settings.active_model is None
     assert settings.active_thinking_effort is None
     assert settings.api_keys == {}
+    assert settings.agent_models == {}
+
+
+def test_settings_store_round_trips_agent_models(tmp_path: Path) -> None:
+    store = SettingsStore(tmp_path)
+    settings = CliSettings(active_provider=UI_DEFAULT_PROVIDER, active_model=UI_DEFAULT_MODEL)
+    settings.set_agent_model("investigation", "deepseek", "deepseek-v4-flash", "high")
+    settings.set_agent_model("building", "anthropic", "claude-opus-4-8")
+
+    store.save(settings)
+    loaded = store.load()
+
+    assert loaded.get_agent_model("investigation") == {
+        "provider": "deepseek",
+        "model": "deepseek-v4-flash",
+        "thinking_effort": "high",
+    }
+    assert loaded.get_agent_model("building") == {"provider": "anthropic", "model": "claude-opus-4-8"}
+
+
+def test_clear_agent_model_makes_role_inherit() -> None:
+    settings = CliSettings()
+    settings.set_agent_model("investigation", "deepseek", "deepseek-v4-flash")
+    settings.clear_agent_model("investigation")
+
+    assert settings.get_agent_model("investigation") is None
+    assert settings.agent_models == {}
+
+
+def test_from_dict_drops_incomplete_agent_model_entries() -> None:
+    data = {
+        "schema_version": SETTINGS_SCHEMA_VERSION,
+        "agent_models": {
+            "investigation": {"provider": "deepseek", "model": "deepseek-v4-flash"},
+            "building": {"provider": "anthropic"},  # missing model -> dropped
+            "general": "not-a-dict",  # malformed -> dropped
+        },
+    }
+
+    settings = CliSettings.from_dict(data)
+
+    assert set(settings.agent_models) == {"investigation"}
 
 
 def test_settings_store_migrates_v1_settings(tmp_path: Path) -> None:
@@ -60,10 +107,11 @@ def test_settings_store_migrates_v1_settings(tmp_path: Path) -> None:
 
     settings = store.load()
 
-    assert settings.schema_version == 2
+    assert settings.schema_version == SETTINGS_SCHEMA_VERSION
     assert settings.active_provider == UI_DEFAULT_PROVIDER
     assert settings.active_model == MOONSHOT_K26_MODEL
     assert settings.active_thinking_effort is None
+    assert settings.agent_models == {}
 
 
 def test_settings_store_rejects_corrupt_json(tmp_path: Path) -> None:

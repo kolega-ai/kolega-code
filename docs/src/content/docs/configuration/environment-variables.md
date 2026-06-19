@@ -67,6 +67,19 @@ provider's default model, or set both provider and model.
 
 See [Providers & Models](../providers-and-models/) for what each role does.
 
+## Per-agent models
+
+Give an individual agent its own model. `<ROLE>` is one of `PLANNING`, `BUILDING`,
+`INVESTIGATION`, `GENERAL`, or `BROWSER`. A role with no override inherits the main
+model. These also override anything saved in the Settings tab's **Agent Models**
+section.
+
+| Variable | Purpose |
+| --- | --- |
+| `KOLEGA_CODE_<ROLE>_PROVIDER` | Provider for that agent (e.g. `KOLEGA_CODE_INVESTIGATION_PROVIDER`) |
+| `KOLEGA_CODE_<ROLE>_MODEL` | Model for that agent |
+| `KOLEGA_CODE_<ROLE>_EFFORT` | Thinking effort for that agent |
+
 ## State & environment
 
 | Variable | Purpose |

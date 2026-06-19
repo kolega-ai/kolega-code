@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Optional
+from typing import Dict, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -20,6 +20,31 @@ class ModelProvider(str, Enum):
     DEEPSEEK = "deepseek"
     ZAI = "zai"
     KIMI_CODING = "kimi_coding"
+
+
+class AgentRole(str, Enum):
+    """Configurable agent roles that can each run on their own model.
+
+    Keyed off each agent class's stable ``agent_name``. A role with no entry in
+    ``AgentConfig.agent_models`` inherits the global ``long_context_config``.
+    """
+
+    PLANNING = "planning"
+    BUILDING = "building"  # the coder agent
+    INVESTIGATION = "investigation"
+    GENERAL = "general"
+    BROWSER = "browser"
+
+
+# Maps a BaseAgent.agent_name to its configurable role. Agents whose name is not
+# listed (e.g. the abstract base) simply fall back to the global model.
+AGENT_ROLE_BY_NAME: Dict[str, AgentRole] = {
+    "planning-agent": AgentRole.PLANNING,
+    "coder": AgentRole.BUILDING,
+    "investigation-agent": AgentRole.INVESTIGATION,
+    "general-agent": AgentRole.GENERAL,
+    "browser-agent": AgentRole.BROWSER,
+}
 
 
 class RateLimitConfig(BaseModel):
@@ -121,6 +146,28 @@ class AgentConfig(BaseModel):
         description="Configuration for thinking operations",
     )
 
+    # Per-agent-role model overrides, keyed by AgentRole value (e.g. "investigation").
+    # A role with no entry inherits long_context_config, so an empty mapping
+    # reproduces the previous single-model behavior.
+    agent_models: Dict[str, ModelConfig] = Field(
+        default_factory=dict,
+        description="Per-agent-role model overrides keyed by AgentRole value",
+    )
+
+    def model_config_for_agent(self, agent_name: Optional[str]) -> ModelConfig:
+        """Return the model configuration an agent should use for its main loop.
+
+        Resolves the agent's role from its ``agent_name`` and returns the matching
+        override, falling back to ``long_context_config`` when the role has no
+        override configured.
+        """
+        role = AGENT_ROLE_BY_NAME.get(agent_name or "")
+        if role is not None:
+            override = self.agent_models.get(role.value)
+            if override is not None:
+                return override
+        return self.long_context_config
+
     def get_api_key(self, provider: ModelProvider) -> Optional[str]:
         """Get the API key for a specific provider."""
         api_key_map = {
@@ -148,6 +195,7 @@ class AgentConfig(BaseModel):
             (self.fast_config, "fast"),
             (self.thinking_config, "thinking"),
         ]
+        configs.extend((override, f"agent '{role}'") for role, override in self.agent_models.items())
 
         for config, config_name in configs:
             if config.provider != ModelProvider.LLAMA and self.get_api_key(config.provider) is None:
