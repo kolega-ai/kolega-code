@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import os
+import random
 from typing import Any, Awaitable, Callable, Dict, Iterable, List, Optional
 
 from .budget import Budget
@@ -26,11 +27,20 @@ from .types import AgentRunSpec, DispatchFn, EmitFn, WorkflowResolver
 MAX_FANOUT = 4096
 DEFAULT_AGENT_CAP = 1000
 
+# A batch admitted through the semaphore together would otherwise fire LLM requests at the
+# same instant; a small random pre-dispatch delay de-synchronizes them so concurrent
+# sub-agents don't collectively spike the account rate limit.
+START_STAGGER_SECONDS = 0.75
+
 
 def default_concurrency() -> int:
-    """Concurrent-agent cap: a few below the core count, clamped to [1, 16]."""
+    """Concurrent-agent cap: a few below the core count, clamped to [1, 8].
+
+    Kept modest so a fan-out doesn't burst enough simultaneous LLM requests to trip
+    account-level rate limits; the jittered start-stagger further de-correlates them.
+    """
     cpus = os.cpu_count() or 4
-    return max(1, min(16, cpus - 2))
+    return max(1, min(8, cpus - 2))
 
 
 def _call_with_arity(fn: Callable[..., Any], *args: Any) -> Any:
@@ -152,6 +162,9 @@ class WorkflowRuntime:
         self.budget.check()
 
         async with self._sem:
+            # Stagger starts within the admitted batch so they don't hit the API in lockstep.
+            if START_STAGGER_SECONDS:
+                await asyncio.sleep(random.uniform(0, START_STAGGER_SECONDS))
             result = await self._dispatch(spec)
 
         self.budget.add(result.tokens)

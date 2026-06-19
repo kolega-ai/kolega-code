@@ -82,7 +82,17 @@ class GoogleProvider(BaseLLMProvider):
         base_url: Optional[str] = None,
     ):
         super().__init__(api_key, max_retries, requests_per_minute, tokens_per_minute, base_url)
-        self.async_client = genai_client(api_key=api_key)
+        # Wire the google-genai client's built-in retry (exponential backoff) so transient
+        # 429/5xx are retried like the other providers. attempts is total tries = retries + 1.
+        self.async_client = genai_client(
+            api_key=api_key,
+            http_options=genai_types.HttpOptions(
+                retry_options=genai_types.HttpRetryOptions(
+                    attempts=max(1, max_retries + 1),
+                    http_status_codes=[408, 429, 500, 502, 503, 504],
+                )
+            ),
+        )
 
     @property
     def retry_decorator(self):

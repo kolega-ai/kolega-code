@@ -54,7 +54,17 @@ class RateLimitConfig(BaseModel):
 
     tokens_per_minute: int = Field(default=80_000, description="Maximum number of tokens allowed per minute", gt=0)
 
-    max_retries: int = Field(default=3, description="Maximum number of retries for failed requests", ge=0)
+    max_retries: int = Field(
+        default=4,
+        description="Retries the underlying SDK client performs per request (exponential backoff + jitter, honors retry-after)",
+        ge=0,
+    )
+
+    loop_max_retries: int = Field(
+        default=3,
+        description="Consecutive agent-loop retries on rate-limit/overload after the SDK's own retries are exhausted",
+        ge=0,
+    )
 
 
 class ModelConfig(BaseModel):

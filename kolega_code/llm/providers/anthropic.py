@@ -107,8 +107,10 @@ class AnthropicProvider(BaseLLMProvider):
     ):
         super().__init__(api_key, max_retries, requests_per_minute, tokens_per_minute, base_url)
         self.provider_name = provider_name
-        self.async_client = AsyncAnthropic(api_key=api_key, base_url=base_url)
-        self.sync_client = Anthropic(api_key=api_key, base_url=base_url)
+        # Forward max_retries so the SDK's built-in exponential backoff + jitter (which
+        # honors retry-after and retries 429/5xx/529 + connection errors) is actually used.
+        self.async_client = AsyncAnthropic(api_key=api_key, base_url=base_url, max_retries=max_retries)
+        self.sync_client = Anthropic(api_key=api_key, base_url=base_url, max_retries=max_retries)
         
         # OpenAI-compatible Anthropic-shaped APIs do not expose messages/count_tokens,
         # so local counting is only a preflight context-size estimate for those models.

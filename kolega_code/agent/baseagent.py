@@ -2,8 +2,10 @@ import asyncio
 import contextvars
 import logging
 import os
+import random
 import re
 import uuid
+from email.utils import parsedate_to_datetime
 from datetime import datetime
 from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Optional
@@ -25,6 +27,7 @@ from kolega_code.hooks import (
 )
 from kolega_code.llm.exceptions import (
     LLMError,
+    LLMInternalServerError,
     LLMRateLimitError,
     llm_error_message,
     map_to_llm_error,
@@ -251,6 +254,9 @@ class BaseAgent(LogMixin):
 
         self.conversation = Conversation(max_tool_result_chars=self.max_tool_result_chars_in_history)
         self.conversation.skill_content_pattern = self.skill_content_pattern
+        # Counts consecutive transient LLM failures (rate-limit / overload) so the turn loop
+        # backs off and eventually gives up instead of retrying forever; reset on any good turn.
+        self._consecutive_llm_retries = 0
         self.compressor = HistoryCompressor(threshold=self.history_compression_threshold)
         self.emitter = AgentEventEmitter(
             connection_manager=self.connection_manager,
@@ -1045,31 +1051,74 @@ class BaseAgent(LogMixin):
             tool_call_id=tool_call_id,
         )
 
+    @staticmethod
+    def _parse_retry_after(error: Exception) -> Optional[float]:
+        """Best-effort retry-after (seconds) from a RAW provider exception.
+
+        Must be called before map_to_llm_error, which discards the response headers.
+        Handles both the integer-seconds and HTTP-date forms; returns None on any miss.
+        """
+        raw = None
+        response = getattr(error, "response", None)
+        headers = getattr(response, "headers", None)
+        if headers is not None:
+            try:
+                raw = headers.get("retry-after")
+            except Exception:
+                raw = None
+        if raw is None:
+            raw = getattr(error, "retry_after", None)
+        if raw is None:
+            return None
+        try:
+            return max(0.0, float(raw))
+        except (TypeError, ValueError):
+            pass
+        try:
+            retry_dt = parsedate_to_datetime(str(raw))
+            return max(0.0, (retry_dt - datetime.now(retry_dt.tzinfo)).total_seconds())
+        except Exception:
+            return None
+
     async def handle_llm_error(self, error: Exception) -> None:
+        """Centralized handling for LLM errors raised in the turn loop.
+
+        Transient failures (rate-limit, overload/5xx, connection drops) are retried with
+        bounded exponential backoff + jitter — honoring retry-after when present — up to
+        ``loop_max_retries`` *consecutive* attempts, then surfaced cleanly. This is the
+        fallback for failures the SDK's own retries didn't absorb (budget exhausted, or the
+        failure happened mid-stream, which the SDK does not retry). Returning (not raising)
+        lets the turn loop re-issue the identical request. Other LLM errors and non-LLM
+        errors are terminal.
         """
-        Handle LLM errors with appropriate retry logic and logging.
-
-        This method provides centralized error handling for all LLM operations:
-        - Rate limit errors: Log warning, wait 60 seconds, and allow retry
-        - Other LLM errors: Emit a user-facing status and re-raise
-        - Non-LLM errors: Re-raise as-is
-
-        Args:
-            error: The exception to handle
-
-        Raises:
-            LLMError: Re-raises LLM errors after logging
-            Exception: Re-raises non-LLM exceptions as-is
-        """
+        # Extract retry-after from the raw exception before mapping strips the headers.
+        retry_after = self._parse_retry_after(error)
         error = map_to_llm_error(error, provider=self.primary_model_config.provider.value)
 
-        if isinstance(error, LLMRateLimitError):
+        # LLMInternalServerError covers 500/529 overloaded plus connection/transport errors.
+        if isinstance(error, (LLMRateLimitError, LLMInternalServerError)):
+            cap = self.primary_model_config.rate_limits.loop_max_retries
+            self._consecutive_llm_retries += 1
+            if self._consecutive_llm_retries > cap:
+                await self.emitter.llm_status(
+                    "error",
+                    llm_error_message(error, model=self.primary_model_config.model),
+                )
+                raise error
+            if retry_after is not None:
+                delay = min(retry_after, 60.0)
+            else:
+                # Full jitter on capped exponential backoff de-correlates concurrent agents.
+                backoff = min(30.0, 2.0 * (2 ** (self._consecutive_llm_retries - 1)))
+                delay = random.uniform(0, backoff)
             await self.log_warning(
-                f"Rate limit exceeded: {error}. Waiting for 60 seconds before retrying...", sender=self.agent_name
+                f"Transient LLM error ({error}); retry "
+                f"{self._consecutive_llm_retries}/{cap} in {delay:.1f}s.",
+                sender=self.agent_name,
             )
-            await asyncio.sleep(60)
-            await self.log_info("Resuming after rate limit wait period.", sender=self.agent_name)
-            # Don't re-raise - allow retry
+            await asyncio.sleep(delay)
+            await self.log_info("Resuming after backoff.", sender=self.agent_name)
+            # Don't re-raise - the turn loop re-issues the request.
 
         elif isinstance(error, LLMError):
             await self.emitter.llm_status(
@@ -1282,6 +1331,9 @@ class BaseAgent(LogMixin):
                 stop_reason = assistant_message.stop_reason
 
                 self.append_assistant_message(assistant_message)
+                # A clean stream resets the transient-failure budget, so the cap measures
+                # only consecutive failures, not lifetime failures across the turn.
+                self._consecutive_llm_retries = 0
 
                 if thinking_started or current_thinking:
                     yield {"type": "thinking", "content": current_thinking, "complete": True, "uuid": thinking_uuid}

@@ -616,6 +616,12 @@ async def test_retry_on_error():
     assert isinstance(client.provider.max_retries, int)
     assert client.provider.max_retries == 3
 
+    # Regression guard: max_retries must actually reach the underlying SDK clients,
+    # whose built-in exponential backoff is the primary retry mechanism. (Previously
+    # the value was stored but never forwarded, so the SDK silently used its default.)
+    assert client.provider.async_client.max_retries == 3
+    assert client.provider.sync_client.max_retries == 3
+
     # This test passes as long as the retry mechanism is properly set up
 
 

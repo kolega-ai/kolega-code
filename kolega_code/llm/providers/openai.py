@@ -138,8 +138,10 @@ class OpenAIProvider(BaseLLMProvider):
         # OpenAI-compatible providers (xai, together, fireworks, dashscope, ...) reuse this
         # provider; provider_name is used to look up the model's thinking-effort spec.
         self.provider_name = provider_name
-        self.async_client = AsyncOpenAI(api_key=api_key, base_url=base_url)
-        self.sync_client = OpenAI(api_key=api_key, base_url=base_url)
+        # Forward max_retries so the SDK's built-in exponential backoff + jitter (which
+        # honors retry-after and retries 429/5xx + connection errors) is actually used.
+        self.async_client = AsyncOpenAI(api_key=api_key, base_url=base_url, max_retries=max_retries)
+        self.sync_client = OpenAI(api_key=api_key, base_url=base_url, max_retries=max_retries)
 
     @property
     def retry_decorator(self):
