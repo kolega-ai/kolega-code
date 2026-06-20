@@ -241,6 +241,90 @@ async def test_settings_tab_grouped_into_model_and_appearance_sections(
 
 
 @pytest.mark.asyncio
+async def test_web_search_settings_section_reveal_and_save(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from textual.widgets import Input, Select
+
+    from kolega_code.cli import app as app_module
+    from kolega_code.cli.app import KolegaCodeApp
+
+    class FakeCoderAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def restore_message_history(self, history):
+            return None
+
+        def dump_message_history(self):
+            return []
+
+        async def cleanup(self):
+            return None
+
+    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    state_dir = tmp_path / "state"
+    store = SessionStore(state_dir)
+    settings_store = SettingsStore(state_dir)
+    settings = CliSettings(active_provider=UI_DEFAULT_PROVIDER, active_model=UI_DEFAULT_MODEL)
+    settings.set_api_key(UI_DEFAULT_PROVIDER, "moonshot-key")
+    settings_store.save(settings)
+    session = store.create(project, "code", {})
+
+    app = KolegaCodeApp(
+        project_path=project,
+        mode="code",
+        store=store,
+        settings_store=settings_store,
+        session=session,
+    )
+
+    async with app.run_test() as pilot:
+        assert app.query_one("#settings_web_search").border_title == "Web Search"
+        backend_select = app.query_one("#web_search_backend_select", Select)
+        # Keyless DuckDuckGo is the default; key + base-url fields are hidden.
+        assert str(backend_select.value) == "duckduckgo"
+        assert app.query_one("#web_search_api_key_input").display is False
+        assert app.query_one("#web_search_base_url_input").display is False
+
+        # A cloud backend reveals the key field (no NoMatches on the initial Changed).
+        backend_select.value = "tavily"
+        await pilot.pause()
+        assert app.query_one("#web_search_api_key_input").display is True
+        assert app.query_one("#web_search_base_url_input").display is False
+
+        # SearXNG reveals the base-url field instead.
+        backend_select.value = "searxng"
+        await pilot.pause()
+        assert app.query_one("#web_search_base_url_input").display is True
+        assert app.query_one("#web_search_api_key_input").display is False
+
+        # Firecrawl is keyless-capable but still offers an OPTIONAL key field.
+        backend_select.value = "firecrawl"
+        await pilot.pause()
+        assert app.query_one("#web_search_api_key_input").display is True
+        assert app.query_one("#web_search_base_url_input").display is False
+        assert "Optional" in app.query_one("#web_search_api_key_input", Input).placeholder
+
+        # Configure Tavily with a key and save.
+        backend_select.value = "tavily"
+        await pilot.pause()
+        app.query_one("#web_search_api_key_input", Input).value = "tvly-secret"
+        await app._save_settings_from_ui()
+        # Secret is never echoed back into the field after saving.
+        assert app.query_one("#web_search_api_key_input", Input).value == ""
+
+    stored = settings_store.load()
+    assert stored.web_search_backend == "tavily"
+    assert stored.get_api_key("tavily") == "tvly-secret"
+
+
+@pytest.mark.asyncio
 async def test_textual_app_context_usage_updates_status_without_raw_json(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

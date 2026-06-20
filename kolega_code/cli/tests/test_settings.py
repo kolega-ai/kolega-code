@@ -162,3 +162,38 @@ def test_ui_provider_registry_is_derived_from_model_specs() -> None:
     assert deepseek_model is not None
     assert deepseek_model.api_key_env == "DEEPSEEK_API_KEY"
     assert deepseek_model.default_thinking_effort == "high"
+
+
+def test_web_search_settings_round_trip(tmp_path: Path) -> None:
+    store = SettingsStore(tmp_path)
+    settings = CliSettings(
+        active_provider=UI_DEFAULT_PROVIDER,
+        active_model=UI_DEFAULT_MODEL,
+        web_search_backend="tavily",
+        web_search_base_url="https://searx.example",
+    )
+    settings.set_api_key("tavily", "tvly-secret")
+
+    store.save(settings)
+    loaded = store.load()
+
+    assert loaded.web_search_backend == "tavily"
+    assert loaded.web_search_base_url == "https://searx.example"
+    assert loaded.get_api_key("tavily") == "tvly-secret"
+
+
+def test_web_search_settings_absent_in_old_file_default_to_none() -> None:
+    # A v3 file written before web search existed: keys absent -> None (active_theme
+    # precedent), and additive fields ship without a schema bump.
+    settings = CliSettings.from_dict(
+        {
+            "schema_version": 3,
+            "active_provider": UI_DEFAULT_PROVIDER,
+            "active_model": UI_DEFAULT_MODEL,
+            "api_keys": {UI_DEFAULT_PROVIDER: "k"},
+        }
+    )
+
+    assert settings.web_search_backend is None
+    assert settings.web_search_base_url is None
+    assert SETTINGS_SCHEMA_VERSION == 3

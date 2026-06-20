@@ -56,6 +56,12 @@ from kolega_code.agent.prompts import (
     build_implement_plan_prompt,
     build_init_agents_prompt,
 )
+from kolega_code.agent.tool_backend.search_backends import (
+    DEFAULT_BACKEND as DEFAULT_WEB_SEARCH_BACKEND,
+    SearchBackendError,
+    available_backends,
+    get_backend_class,
+)
 from kolega_code.hooks import HookDispatcher, HookEvent, load_hook_config, project_hooks_present
 from kolega_code.llm.exceptions import LLMError, llm_error_message
 from kolega_code.llm.models import Message, MessageHistory, TextBlock, ToolCall, ToolResult
@@ -90,7 +96,7 @@ from .provider_registry import (
     ui_thinking_effort_options,
 )
 from .session_store import SessionRecord, SessionStore
-from .settings import CliSettings, SettingsStore
+from .settings import CliSettings, SettingsStore, WEB_SEARCH_KEY_NAMES
 from .skills import (
     SkillCatalog,
     activated_skill_names,
@@ -1554,6 +1560,27 @@ class KolegaCodeApp(App):
                                         with Horizontal(classes="agent-model-field"):
                                             yield Label("Effort", classes="agent-model-field-label")
                                             yield Select([], id=f"am_effort_{role_value}", allow_blank=True, prompt="—")
+                            with Vertical(classes="settings-section", id="settings_web_search") as web_search_section:
+                                web_search_section.border_title = "Web Search"
+                                yield Static(
+                                    "Backend for the web_search tool. DuckDuckGo and Firecrawl work "
+                                    "without a key; add a key for higher rate limits.",
+                                    classes="settings-hint",
+                                )
+                                yield Label("Backend")
+                                yield Select(
+                                    available_backends(),
+                                    id="web_search_backend_select",
+                                    allow_blank=False,
+                                    value=DEFAULT_WEB_SEARCH_BACKEND,
+                                )
+                                yield Label("API key", id="web_search_api_key_label")
+                                yield Input(password=True, id="web_search_api_key_input")
+                                yield Label("SearXNG base URL", id="web_search_base_url_label")
+                                yield Input(
+                                    id="web_search_base_url_input",
+                                    placeholder="https://searxng.example.com",
+                                )
                             with Vertical(classes="settings-section", id="settings_appearance") as appearance_section:
                                 appearance_section.border_title = "Appearance"
                                 yield Label("Theme")
@@ -1993,6 +2020,10 @@ class KolegaCodeApp(App):
             self._set_effort_select_default(provider, str(event.value))
             return
 
+        if select_id == "web_search_backend_select":
+            self._update_search_backend_fields(str(event.value))
+            return
+
         if select_id.startswith("am_provider_"):
             role = select_id[len("am_provider_") :]
             provider = str(event.value)
@@ -2260,6 +2291,7 @@ class KolegaCodeApp(App):
         )
         api_key_input.placeholder = self._api_key_placeholder(provider)
         self._populate_agent_model_rows()
+        self._populate_web_search_controls()
         self._update_settings_status()
 
     def _populate_agent_model_rows(self) -> None:
@@ -2289,6 +2321,71 @@ class KolegaCodeApp(App):
                 self._pending_agent_efforts[f"am_effort_{role}"] = str(entry["thinking_effort"])
             # Triggers on_select_changed, which consumes the pending model/effort.
             provider_select.value = provider
+
+    def _update_search_backend_fields(self, backend: str) -> None:
+        """Show only the inputs the selected web-search backend needs.
+
+        Called from on_select_changed (which can fire its initial Changed on mount,
+        before the section is fully populated) and from populate, so every query_one
+        is guarded against NoMatches."""
+        try:
+            backend_cls = get_backend_class(backend)
+        except SearchBackendError:
+            backend_cls = None
+        needs_key = bool(backend_cls and backend_cls.accepts_api_key)
+        needs_url = bool(backend_cls and backend_cls.requires_base_url)
+        for widget_id, visible in (
+            ("web_search_api_key_label", needs_key),
+            ("web_search_api_key_input", needs_key),
+            ("web_search_base_url_label", needs_url),
+            ("web_search_base_url_input", needs_url),
+        ):
+            try:
+                self.query_one(f"#{widget_id}").display = visible
+            except NoMatches:
+                pass
+        if needs_key:
+            try:
+                key_input = self.query_one("#web_search_api_key_input", Input)
+            except NoMatches:
+                return
+            env_var = (backend_cls.env_var if backend_cls else None) or "API"
+            if self.settings.has_api_key(backend):
+                key_input.placeholder = "Stored API key will be kept if blank"
+            elif backend_cls and backend_cls.requires_api_key:
+                key_input.placeholder = f"{env_var} key"
+            else:
+                key_input.placeholder = f"Optional — {env_var} key for higher rate limits"
+
+    def _populate_web_search_controls(self) -> None:
+        """Seed the Web Search controls from saved settings (key field stays blank)."""
+        valid = {name for _, name in available_backends()}
+        backend = self.settings.web_search_backend
+        if backend not in valid:
+            backend = DEFAULT_WEB_SEARCH_BACKEND
+        try:
+            self.query_one("#web_search_backend_select", Select).value = backend
+            self.query_one("#web_search_base_url_input", Input).value = self.settings.web_search_base_url or ""
+            self.query_one("#web_search_api_key_input", Input).value = ""
+        except NoMatches:
+            pass
+        self._update_search_backend_fields(backend)
+
+    def _collect_web_search_from_ui(self) -> None:
+        """Write the Web Search controls into settings (keys only when newly typed)."""
+        try:
+            backend = str(self.query_one("#web_search_backend_select", Select).value)
+            base_url_input = self.query_one("#web_search_base_url_input", Input)
+            key_input = self.query_one("#web_search_api_key_input", Input)
+        except NoMatches:
+            return
+        self.settings.web_search_backend = backend
+        self.settings.web_search_base_url = base_url_input.value.strip() or None
+        key = key_input.value.strip()
+        if key and backend in WEB_SEARCH_KEY_NAMES:
+            self.settings.set_api_key(backend, key)
+        key_input.value = ""
+        self._update_search_backend_fields(backend)
 
     def _set_effort_select_default(
         self, provider: str, model: str, effort_id: str = "thinking_effort_select", *, preferred: Optional[str] = None
@@ -2374,6 +2471,7 @@ class KolegaCodeApp(App):
         if api_key:
             self.settings.set_api_key(provider, api_key)
         self._collect_agent_models_from_ui()
+        self._collect_web_search_from_ui()
         self.settings_store.save(self.settings)
         api_key_input.value = ""
         api_key_input.placeholder = self._api_key_placeholder(provider)

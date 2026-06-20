@@ -104,6 +104,7 @@ def test_investigation_agent_tools(project_path, mock_connection_manager, agent_
         "sleep",
         "think_hard",
         "web_fetch",
+        "web_search",
     ]
 
     assert len(tools) == len(expected_tools)

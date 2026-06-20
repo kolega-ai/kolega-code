@@ -26,6 +26,7 @@ from .tool_backend.replace_lines_tool import ReplaceLinesTool
 from .tool_backend.search_and_replace_tool import SearchAndReplaceTool
 from .tool_backend.search_codebase_tool import SearchCodebaseTool
 from .tool_backend.web_fetch_tool import WebFetchTool
+from .tool_backend.web_search_tool import WebSearchTool
 from .tool_backend.terminal_tool import TerminalTool
 from .tool_backend.think_hard_tool import ThinkHardTool
 from .tool_backend.workflow_tool import RUN_WORKFLOW_INPUT_SCHEMA, WorkflowTool
@@ -104,6 +105,7 @@ class ToolCollection(LogMixin):
         "find_files_by_pattern",
         "think_hard",
         "web_fetch",
+        "web_search",
         "sleep",
     ]
 
@@ -323,6 +325,15 @@ class ToolCollection(LogMixin):
             self.filesystem,
         )
         self.web_fetch_tool = WebFetchTool(
+            self.project_path,
+            self.workspace_id,
+            self.thread_id,
+            self.connection_manager,
+            self.config,
+            self.caller,
+            self.filesystem,
+        )
+        self.web_search_tool = WebSearchTool(
             self.project_path,
             self.workspace_id,
             self.thread_id,
@@ -1294,6 +1305,24 @@ class ToolCollection(LogMixin):
             The model's response derived from the fetched content, truncated to an internal character limit if needed.
         """
         return await self.web_fetch_tool.web_fetch(url, instruction)
+
+    async def web_search(self, query: str, max_results: int = 5) -> str:
+        """
+        Search the web and return a ranked list of results (title, URL, and a short snippet).
+
+        Use this to discover relevant pages for a query when you don't already know the URL.
+        The search backend (DuckDuckGo, Firecrawl, Tavily, or a self-hosted SearXNG instance)
+        is whatever the user configured in Settings; the default works without an API key. To
+        read a specific result in depth, follow up with the web_fetch tool on its URL.
+
+        Args:
+            query: The search query (natural language or keywords).
+            max_results: Maximum number of results to return (clamped to 1-10, default 5).
+
+        Returns:
+            A markdown list of results, or a message if no results were found.
+        """
+        return await self.web_search_tool.web_search(query, max_results)
 
     async def find_files_by_pattern(
         self, pattern: str, include_directories: bool = True, show_details: bool = True

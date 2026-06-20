@@ -311,3 +311,70 @@ def test_build_agent_config_no_agent_model_overrides_by_default(tmp_path: Path) 
     )
 
     assert config.agent_models == {}
+
+
+def test_web_search_defaults_to_keyless_duckduckgo(tmp_path: Path) -> None:
+    config = build_agent_config(
+        tmp_path, env={"ANTHROPIC_API_KEY": "anthropic-key", "KOLEGA_CODE_PROVIDER": "anthropic"}
+    )
+
+    assert config.web_search_backend == "duckduckgo"
+    assert config.web_search_api_key is None
+    assert config.web_search_base_url is None
+
+
+def test_web_search_backend_key_from_settings(tmp_path: Path) -> None:
+    settings = CliSettings(
+        active_provider="anthropic", active_model=DEFAULT_LONG_MODEL, web_search_backend="firecrawl"
+    )
+    settings.set_api_key("anthropic", "anthropic-key")
+    settings.set_api_key("firecrawl", "fc-from-settings")
+
+    config = build_agent_config(tmp_path, settings=settings, env={"ANTHROPIC_API_KEY": "anthropic-key"})
+
+    assert config.web_search_backend == "firecrawl"
+    assert config.web_search_api_key == "fc-from-settings"
+
+
+def test_web_search_key_env_overrides_settings(tmp_path: Path) -> None:
+    settings = CliSettings(
+        active_provider="anthropic", active_model=DEFAULT_LONG_MODEL, web_search_backend="firecrawl"
+    )
+    settings.set_api_key("anthropic", "anthropic-key")
+    settings.set_api_key("firecrawl", "fc-from-settings")
+
+    config = build_agent_config(
+        tmp_path,
+        settings=settings,
+        env={"ANTHROPIC_API_KEY": "anthropic-key", "FIRECRAWL_API_KEY": "fc-from-env"},
+    )
+
+    assert config.web_search_api_key == "fc-from-env"
+
+
+def test_web_search_cloud_backend_without_key_does_not_block_startup(tmp_path: Path) -> None:
+    settings = CliSettings(
+        active_provider="anthropic", active_model=DEFAULT_LONG_MODEL, web_search_backend="tavily"
+    )
+    settings.set_api_key("anthropic", "anthropic-key")
+
+    # Selecting a cloud backend without its key must NOT raise (keyless-default promise).
+    config = build_agent_config(tmp_path, settings=settings, env={"ANTHROPIC_API_KEY": "anthropic-key"})
+
+    assert config.web_search_backend == "tavily"
+    assert config.web_search_api_key is None
+
+
+def test_web_search_backend_and_base_url_from_env(tmp_path: Path) -> None:
+    config = build_agent_config(
+        tmp_path,
+        env={
+            "ANTHROPIC_API_KEY": "anthropic-key",
+            "KOLEGA_CODE_PROVIDER": "anthropic",
+            "KOLEGA_CODE_WEB_SEARCH_BACKEND": "searxng",
+            "SEARXNG_BASE_URL": "https://searx.example",
+        },
+    )
+
+    assert config.web_search_backend == "searxng"
+    assert config.web_search_base_url == "https://searx.example"
