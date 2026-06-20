@@ -242,7 +242,7 @@ class AgentConfig(BaseModel):
             if provider == ModelProvider.OPENAI_CHATGPT:
                 # OAuth provider: satisfied by stored ChatGPT tokens, not an api key.
                 if self.openai_chatgpt_tokens is None:
-                    raise ValueError(f"Not signed in to ChatGPT for {config_name}; run /login to sign in.")
+                    raise ValueError(f"Not signed in to ChatGPT for {config_name}; run /login chatgpt to sign in.")
                 continue
             if self.get_api_key(provider) is None:
                 raise ValueError(f"Missing API key for {config_name} provider '{provider.value}'")

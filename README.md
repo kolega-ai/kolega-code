@@ -106,9 +106,9 @@ long-context model for coding, a fast cheap model for small utility calls, and o
 ## Sign in with ChatGPT
 
 If you have a paid **ChatGPT** plan (Plus, Pro, or Business), you can use it to run OpenAI models
-instead of a separate API key. Run `/login` in the TUI, complete the browser sign-in, and Kolega
-Code switches to the **OpenAI (ChatGPT subscription)** provider (e.g. `gpt-5-codex`). Tokens are
-stored locally (chmod `600`) and refreshed automatically; `/logout` removes them.
+instead of a separate API key. Run `/login chatgpt` in the TUI, complete the browser sign-in, and
+Kolega Code switches to the **OpenAI (ChatGPT subscription)** provider (e.g. `gpt-5-codex`). Tokens
+are stored locally (chmod `600`) and refreshed automatically; `/logout chatgpt` removes them.
 
 > **Heads-up:** This reuses the OpenAI Codex OAuth client and ChatGPT backend, the same approach
 > other third-party agents use. It is **not** an officially sanctioned integration — OpenAI's

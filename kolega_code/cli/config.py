@@ -373,7 +373,7 @@ def build_agent_config(
     chatgpt_tokens = _resolve_chatgpt_tokens(settings)
     if ModelProvider.OPENAI_CHATGPT in required_providers and chatgpt_tokens is None:
         raise CliConfigError(
-            "Not signed in to ChatGPT. Run /login to sign in with your ChatGPT subscription."
+            "Not signed in to ChatGPT. Run /login chatgpt to sign in with your ChatGPT subscription."
         )
 
     try:

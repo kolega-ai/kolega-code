@@ -120,6 +120,10 @@ STATUS_TOKENS_UNKNOWN = "Token counts unavailable."
 LOG_IGNORED_EVENT = "Ignored non-display event: {event_type}"
 
 # Sign in with ChatGPT
+LOGIN_USAGE = "Usage: /login <provider>. Available providers: {targets}."
+LOGIN_UNKNOWN_TARGET = "Unknown login provider '{target}'. Available providers: {targets}."
+LOGOUT_USAGE = "Usage: /logout <provider>. Available providers: {targets}."
+LOGOUT_UNKNOWN_TARGET = "Unknown logout provider '{target}'. Available providers: {targets}."
 CHATGPT_LOGIN_STARTING = "Opening your browser to sign in to ChatGPT…"
 CHATGPT_LOGIN_URL = "If your browser did not open, visit this URL to sign in:\n{url}"
 CHATGPT_LOGIN_SUCCESS = "Signed in to ChatGPT as {email} on the {plan} plan."

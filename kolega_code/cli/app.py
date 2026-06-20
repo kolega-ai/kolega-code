@@ -3169,7 +3169,26 @@ class KolegaCodeApp(App):
         clean_value = value.strip().lower()
         return next((model for _, model in model_options if model.lower() == clean_value), None)
 
+    # Providers the user can sign in to with /login <provider>. Add new targets
+    # here as more OAuth integrations land.
+    LOGIN_TARGETS: tuple[str, ...] = ("chatgpt",)
+
     async def _command_login(self, args: str) -> None:
+        """Sign in to a provider: ``/login <provider>`` (e.g. ``/login chatgpt``)."""
+        target = args.strip().lower()
+        targets = ", ".join(self.LOGIN_TARGETS)
+        if target == "chatgpt":
+            await self._login_chatgpt()
+        elif target in ("", "help"):
+            self._add_conversation_entry(
+                ConversationEntry(kind="system", content=messages.LOGIN_USAGE.format(targets=targets))
+            )
+        else:
+            self._notify_user(
+                messages.LOGIN_UNKNOWN_TARGET.format(target=target, targets=targets), severity="warning"
+            )
+
+    async def _login_chatgpt(self) -> None:
         """Start the browser "Sign in with ChatGPT" flow in a background worker.
 
         The flow can wait up to a few minutes for the browser round-trip, so it
@@ -3216,6 +3235,21 @@ class KolegaCodeApp(App):
             self._notify_user(messages.CHATGPT_LOGIN_SWITCH_FAILED.format(error=exc), severity="warning")
 
     async def _command_logout(self, args: str) -> None:
+        """Sign out of a provider: ``/logout <provider>`` (e.g. ``/logout chatgpt``)."""
+        target = args.strip().lower()
+        targets = ", ".join(self.LOGIN_TARGETS)
+        if target == "chatgpt":
+            self._logout_chatgpt()
+        elif target in ("", "help"):
+            self._add_conversation_entry(
+                ConversationEntry(kind="system", content=messages.LOGOUT_USAGE.format(targets=targets))
+            )
+        else:
+            self._notify_user(
+                messages.LOGOUT_UNKNOWN_TARGET.format(target=target, targets=targets), severity="warning"
+            )
+
+    def _logout_chatgpt(self) -> None:
         if not self.settings.has_oauth_token(chatgpt_constants.PROVIDER_KEY):
             self._notify_user(messages.CHATGPT_LOGOUT_NONE, severity="warning")
             return
@@ -4021,8 +4055,8 @@ class KolegaCodeApp(App):
         if provider == chatgpt_constants.PROVIDER_KEY:
             # OAuth provider: no API key — the field is informational only.
             if self.settings.has_oauth_token(provider):
-                return "Signed in with ChatGPT — run /login to switch accounts"
-            return "Run /login to sign in with your ChatGPT subscription"
+                return "Signed in with ChatGPT — run /login chatgpt to switch accounts"
+            return "Run /login chatgpt to sign in with your ChatGPT subscription"
         if self.settings.has_api_key(provider):
             return "Stored API key will be kept if blank"
         model = get_ui_model(provider, (ui_model_options(provider) or [("", "")])[0][1])

@@ -161,7 +161,9 @@ class ChatGPTTokenManager:
             try:
                 payload = await request_token(data, token_url=self._token_url, http_client=self._http_client)
             except OAuthError as exc:
-                raise TokenRefreshError(f"ChatGPT token refresh failed: {exc}; sign in again with /login.") from exc
+                raise TokenRefreshError(
+                    f"ChatGPT token refresh failed: {exc}; sign in again with /login chatgpt."
+                ) from exc
             new_tokens = OAuthTokens.from_token_response(payload, previous=self._tokens)
             self._tokens = new_tokens
             if self._persist is not None:

@@ -99,7 +99,7 @@ def _error_html(reason: str) -> bytes:
         b"<!doctype html><html><head><meta charset=utf-8><title>Sign-in failed</title></head>"
         b"<body style='font-family:system-ui;text-align:center;padding-top:4rem'>"
         b"<h2>Sign-in failed.</h2><p>" + safe.encode("utf-8", "replace") + b"</p>"
-        b"<p>Return to kolega-code and try <code>/login</code> again.</p></body></html>"
+        b"<p>Return to kolega-code and try <code>/login chatgpt</code> again.</p></body></html>"
     )
 
 

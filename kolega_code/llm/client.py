@@ -107,7 +107,7 @@ class LLMClient:
             # authenticated by a refreshing token manager rather than an api key.
             if provider.lower() == chatgpt_constants.PROVIDER_KEY:
                 if self._token_manager is None:
-                    raise ValueError("ChatGPT provider requires sign-in; run /login to sign in.")
+                    raise ValueError("ChatGPT provider requires sign-in; run /login chatgpt to sign in.")
                 return ChatGPTOAuthProvider(
                     token_manager=self._token_manager,
                     max_retries=max_retries,
