@@ -35,8 +35,9 @@ sessions, settings, and API keys stay on your own machine.
   and applies precise edits.
 - **Runs commands.** Executes shell commands and watches their output in a dedicated terminal view.
 - **Plans before it builds.** Plan mode investigates and proposes; Build mode executes.
-- **Browses the web.** A built-in browser agent (powered by Playwright) fetches pages and
-  interacts with sites when a task needs it.
+- **Searches and browses the web.** The agent can search for relevant pages, fetch URLs
+  directly, or use the built-in browser agent (powered by Playwright) when a task needs
+  site interaction.
 - **Dispatches sub-agents.** Hands work off to specialized agents and tracks their activity live.
 - **Orchestrates workflows.** With [gigacode](https://kolega-ai.github.io/kolega-code/gigacode/),
   it fans out many sub-agents in parallel.
@@ -118,6 +119,10 @@ Settings. Local session state lives under your platform's state directory unless
 `KOLEGA_CODE_STATE_DIR` is set. See the
 [Configuration docs](https://kolega-ai.github.io/kolega-code/configuration/settings-and-api-keys/)
 for the full story.
+
+The `web_search` tool uses DuckDuckGo by default without a key. To choose another backend,
+set it in **Settings** or export `KOLEGA_CODE_WEB_SEARCH_BACKEND` as `firecrawl`, `tavily`,
+or `searxng`; use `FIRECRAWL_API_KEY`, `TAVILY_API_KEY`, or `SEARXNG_BASE_URL` as needed.
 
 ## Requirements
 

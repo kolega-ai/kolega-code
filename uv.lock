@@ -8,7 +8,7 @@ resolution-markers = [
 
 [options]
 prerelease-mode = "allow"
-exclude-newer = "2026-06-13T05:12:39.17404Z"
+exclude-newer = "2026-06-13T06:35:08.454954Z"
 exclude-newer-span = "P1W"
 
 [[package]]
@@ -1098,7 +1098,7 @@ wheels = [
 
 [[package]]
 name = "kolega-code"
-version = "0.6.0"
+version = "0.7.0"
 source = { editable = "." }
 dependencies = [
     { name = "anthropic" },
@@ -1109,6 +1109,7 @@ dependencies = [
     { name = "httpx" },
     { name = "jinja2" },
     { name = "langfuse" },
+    { name = "lxml-html-clean" },
     { name = "nest-asyncio" },
     { name = "openai" },
     { name = "packaging" },
@@ -1142,6 +1143,7 @@ requires-dist = [
     { name = "httpx", specifier = "==0.28.1" },
     { name = "jinja2", specifier = "==3.1.6" },
     { name = "langfuse", specifier = "==3.14.5" },
+    { name = "lxml-html-clean", specifier = "==0.4.4" },
     { name = "nest-asyncio", specifier = "==1.6.0" },
     { name = "openai", specifier = "==1.109.1" },
     { name = "packaging", specifier = "==25.0" },

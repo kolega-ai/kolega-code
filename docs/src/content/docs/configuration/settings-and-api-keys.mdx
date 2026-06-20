@@ -32,6 +32,13 @@ agents (planning, building, investigation, general, browser) their own provider,
 model, and effort. Leave a role on **Default** to inherit the active model. See
 [Per-agent models](../providers-and-models/#per-agent-models).
 
+The **Web Search** section configures the `web_search` tool. DuckDuckGo is the
+default and needs no key. Firecrawl can also run without a key, with an optional
+key for higher rate limits. Tavily requires a key, and SearXNG requires the base
+URL of your self-hosted instance. The same settings can be supplied with
+[`KOLEGA_CODE_WEB_SEARCH_BACKEND`, `FIRECRAWL_API_KEY`, `TAVILY_API_KEY`, and
+`SEARXNG_BASE_URL`](../environment-variables/#web-search).
+
 ## Where settings live
 
 Settings are stored as JSON in your platform's state directory, in a file named
@@ -56,7 +63,8 @@ The file looks like this:
   "active_thinking_effort": "auto",
   "api_keys": {
     "moonshot": "sk-...",
-    "deepseek": "sk-..."
+    "deepseek": "sk-...",
+    "tavily": "tvly-..."
   },
   "agent_models": {
     "investigation": {
@@ -64,13 +72,17 @@ The file looks like this:
       "model": "deepseek-v4-flash",
       "thinking_effort": "high"
     }
-  }
+  },
+  "web_search_backend": "tavily",
+  "web_search_base_url": null
 }
 ```
 
 `agent_models` holds per-agent overrides keyed by role (`planning`, `building`,
 `investigation`, `general`, `browser`); a role that is absent inherits the active
 model. The field is optional and older `schema_version` files load unchanged.
+Cloud web-search keys are stored in `api_keys` under their backend names
+(`firecrawl` or `tavily`); `web_search_base_url` is used by SearXNG.
 
 <Aside type="caution" title="Keys are stored in plaintext">
 API keys are written to `settings.json` in plaintext, but the file is created with
@@ -83,7 +95,7 @@ store keys on disk at all, supply them via
 
 <FileTree>
 - kolega-code/
-  - settings.json   Provider, model, thinking effort, and API keys (0600)
+  - settings.json   Provider, model, web search, thinking effort, and API keys (0600)
   - sessions/
     - &lt;session-id&gt;.json   One file per saved session
 </FileTree>
