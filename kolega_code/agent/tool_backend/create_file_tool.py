@@ -1,4 +1,5 @@
 from .base_tool import BaseTool
+from .edit_preview import build_head_preview
 
 
 class CreateFileTool(BaseTool):
@@ -39,8 +40,13 @@ class CreateFileTool(BaseTool):
             # Create the file
             self.filesystem.write_text(path, content)
 
-            # Return success message with content
-            return f"File created successfully\n\n```\n{content}\n```"
+            # Surface a syntax-highlighted head inline (UI-only; no model tokens).
+            await self.send_edit_preview(
+                build_head_preview(content, path),
+                tool_call_id=getattr(self.caller, "current_tool_execution_id", None),
+                tool_name="create_file",
+            )
+            return f"Created {path}"
 
         except PermissionError:
             error_msg = f"Permission denied: Cannot create file {path}"

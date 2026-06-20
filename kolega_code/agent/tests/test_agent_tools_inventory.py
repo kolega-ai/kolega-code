@@ -238,7 +238,6 @@ def test_planning_agent_exposes_read_only_and_planning_tools(project_path, mock_
     assert "update_task_list" not in tool_names
     assert "create_file" not in tool_names
     assert "replace_entire_file" not in tool_names
-    assert "apply_patch" not in tool_names
     assert "exec_command" not in tool_names
     assert tool_names - expected_planning_tools <= set(agent.tool_collection.read_only_tools)
 

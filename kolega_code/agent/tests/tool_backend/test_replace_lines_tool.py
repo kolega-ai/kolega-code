@@ -36,6 +36,8 @@ def agent_config():
 def mock_base_agent():
     mock = Mock()
     mock.agent_name = "test_agent"
+    mock.sub_agent = False
+    mock.current_tool_execution_id = "test-call-id"
     return mock
 
 
@@ -59,28 +61,21 @@ class TestReplaceLinesTool:
         new_content = "New Line 2\nNew Line 3"
         result = await replace_lines_tool.replace_lines("test.txt", 2, 3, new_content)
 
-        expected_result = "Replaced lines 2-3 in file test.txt\n\nReplaced:\n```\nLine 2\nLine 3\n```\nwith:\n```\nNew Line 2\nNew Line 3\n```"
-        assert result == expected_result
+        assert result == "Replaced lines 2-3 in test.txt"
         assert sample_file.read_text() == "Line 1\nNew Line 2\nNew Line 3\nLine 4\nLine 5"
 
     async def test_replace_lines_single_line(self, replace_lines_tool, sample_file):
         new_content = "New Line 1"
         result = await replace_lines_tool.replace_lines("test.txt", 1, 1, new_content)
 
-        expected_result = (
-            "Replaced lines 1-1 in file test.txt\n\nReplaced:\n```\nLine 1\n```\nwith:\n```\nNew Line 1\n```"
-        )
-        assert result == expected_result
+        assert result == "Replaced lines 1-1 in test.txt"
         assert sample_file.read_text() == "New Line 1\nLine 2\nLine 3\nLine 4\nLine 5"
 
     async def test_replace_lines_at_end(self, replace_lines_tool, sample_file):
         new_content = "New Line 5"
         result = await replace_lines_tool.replace_lines("test.txt", 5, 5, new_content)
 
-        # Use direct string comparison to avoid newline issues
-        # Note: No trailing newline for the last line of the file
-        expected_result = "Replaced lines 5-5 in file test.txt\n\nReplaced:\n```\nLine 5```\nwith:\n```\nNew Line 5```"
-        assert result == expected_result
+        assert result == "Replaced lines 5-5 in test.txt"
         assert sample_file.read_text() == "Line 1\nLine 2\nLine 3\nLine 4\nNew Line 5"
 
     async def test_replace_lines_file_not_found(self, replace_lines_tool):
@@ -116,8 +111,7 @@ class TestReplaceLinesTool:
     async def test_replace_lines_with_empty_content(self, replace_lines_tool, sample_file):
         result = await replace_lines_tool.replace_lines("test.txt", 2, 2, "")
 
-        expected_result = "Replaced lines 2-2 in file test.txt\n\nReplaced:\n```\nLine 2\n```\nwith:\n```\n\n```"
-        assert result == expected_result
+        assert result == "Replaced lines 2-2 in test.txt"
         assert sample_file.read_text() == "Line 1\n\nLine 3\nLine 4\nLine 5"
 
     async def test_replace_lines_preserve_newline(self, replace_lines_tool, project_path):
@@ -128,14 +122,12 @@ class TestReplaceLinesTool:
         new_content = "New Line 1\nNew Line 2"
         result = await replace_lines_tool.replace_lines("newline.txt", 1, 2, new_content)
 
-        expected_result = "Replaced lines 1-2 in file newline.txt\n\nReplaced:\n```\nLine 1\nLine 2\n```\nwith:\n```\nNew Line 1\nNew Line 2\n```"
-        assert result == expected_result
+        assert result == "Replaced lines 1-2 in newline.txt"
         assert file_path.read_text() == "New Line 1\nNew Line 2\n"
 
     async def test_replace_lines_with_multiple_newlines(self, replace_lines_tool, sample_file):
         new_content = "New Line 2\n\nNew Line 4"
         result = await replace_lines_tool.replace_lines("test.txt", 2, 3, new_content)
 
-        expected_result = "Replaced lines 2-3 in file test.txt\n\nReplaced:\n```\nLine 2\nLine 3\n```\nwith:\n```\nNew Line 2\n\nNew Line 4\n```"
-        assert result == expected_result
+        assert result == "Replaced lines 2-3 in test.txt"
         assert sample_file.read_text() == "Line 1\nNew Line 2\n\nNew Line 4\nLine 4\nLine 5"

@@ -209,6 +209,7 @@ class ConversationEntry:
     tool_call_id: Optional[str] = None
     tone: Optional[str] = None  # "warning" | "error" styling hint for progress entries
     full_content: str = ""  # untruncated tool output for expand-on-demand (capped)
+    edit_preview: Optional[dict] = None  # UI-only structured diff/head preview for edit tools (not persisted)
     entry_id: str = field(default_factory=_next_entry_id)  # UI-only widget key, not persisted
 
 
@@ -387,14 +388,25 @@ class ConversationEntryWidget(Static):
 class ToolEntryWidget(Vertical):
     """Tool entry rendered as a collapsed-by-default Collapsible with the full output inside."""
 
-    def __init__(self, entry: ConversationEntry, title_factory: Callable[[ConversationEntry], str]) -> None:
+    def __init__(
+        self,
+        entry: ConversationEntry,
+        title_factory: Callable[[ConversationEntry], str],
+        preview_factory: Optional[Callable[[ConversationEntry], object]] = None,
+    ) -> None:
         super().__init__()
         self.entry = entry
         self._title_factory = title_factory
+        self._preview_factory = preview_factory
         self._collapsible: Optional[Collapsible] = None
         self._body: Optional[Static] = None
+        self._preview: Optional[Static] = None
 
     def compose(self) -> ComposeResult:
+        # Always-visible inline preview (diff/file-head) for edit tools; hidden otherwise.
+        self._preview = Static("", markup=False, classes="tool-preview")
+        self._preview.display = False
+        yield self._preview
         self._body = Static("", markup=False, classes="tool-body")
         self._collapsible = Collapsible(self._body, title=self._title_factory(self.entry), collapsed=True)
         yield self._collapsible
@@ -407,6 +419,14 @@ class ToolEntryWidget(Vertical):
             return
         self._collapsible.title = self._title_factory(self.entry)
         self._body.update(self.entry.full_content or self.entry.content)
+        if self._preview is not None:
+            renderable = self._preview_factory(self.entry) if self._preview_factory else None
+            if renderable is not None:
+                self._preview.update(renderable)
+                self._preview.display = True
+            else:
+                self._preview.update("")
+                self._preview.display = False
 
 
 class ConversationView(VerticalScroll):
@@ -2058,6 +2078,10 @@ class KolegaCodeApp(App):
                 self._note_sub_agent_tool_stream(event)
             else:
                 self._apply_tool_streaming_update(event.content)
+        elif event.event_type == "file_edit_preview":
+            # UI-only inline diff/head preview. Sub-agent edits are not shown inline (v1).
+            if not event.sub_agent_info:
+                self._apply_edit_preview(event.content)
         elif event.event_type == "llm_context_update":
             if event.sub_agent_info:
                 self._note_sub_agent_context(event)
@@ -4304,16 +4328,19 @@ class KolegaCodeApp(App):
             self._update_activity_progress(messages.TOOL_DONE.format(tool=tool_name))
 
         if entry is None:
-            self._add_conversation_entry(
-                ConversationEntry(
-                    kind=message_type,
-                    content=entry_content,
-                    complete=complete,
-                    tool_name=tool_name,
-                    tool_call_id=tool_call_id or None,
-                    full_content=full_content,
-                )
+            new_entry = ConversationEntry(
+                kind=message_type,
+                content=entry_content,
+                complete=complete,
+                tool_name=tool_name,
+                tool_call_id=tool_call_id or None,
+                full_content=full_content,
             )
+            # A preview event can land before this entry exists; apply any stash now.
+            pending = getattr(self, "_pending_edit_previews", None)
+            if pending and tool_call_id and tool_call_id in pending:
+                new_entry.edit_preview = pending.pop(tool_call_id)
+            self._add_conversation_entry(new_entry)
             return
 
         entry.kind = message_type
@@ -4384,6 +4411,20 @@ class KolegaCodeApp(App):
         if tool_call_id:
             self._tool_stream_buffers.pop(tool_call_id, None)
         self._tool_stream_buffers.pop(f"name:{tool_name}", None)
+
+    def _apply_edit_preview(self, content: dict) -> None:
+        """Attach a UI-only diff/head preview (from a file_edit_preview event) to its tool entry."""
+        tool_call_id = str(content.get("tool_call_id") or "")
+        tool_name = str(content.get("tool_name") or "")
+        if not tool_call_id:
+            return
+        entry = self._find_tool_entry(tool_call_id, tool_name)
+        if entry is None:
+            # Preview can arrive before the tool entry exists; stash and apply on creation.
+            self.__dict__.setdefault("_pending_edit_previews", {})[tool_call_id] = content
+            return
+        entry.edit_preview = content
+        self._invalidate_conversation(entry)
 
     def _find_tool_entry(self, tool_call_id: str, tool_name: str) -> Optional[ConversationEntry]:
         if tool_call_id and tool_call_id in self._tool_entries:
@@ -5086,7 +5127,7 @@ class KolegaCodeApp(App):
 
     def _make_entry_widget(self, entry: ConversationEntry) -> ConversationEntryWidget | ToolEntryWidget:
         if entry.kind in {"tool_call", "tool_result", "tool_error"}:
-            return ToolEntryWidget(entry, self._tool_entry_title)
+            return ToolEntryWidget(entry, self._tool_entry_title, self._tool_preview_renderable)
         if entry.kind == "sub_agent":
             return SubAgentEntryWidget(entry, self._format_conversation_entry)
         return ConversationEntryWidget(entry, self._format_conversation_entry)
@@ -5225,6 +5266,79 @@ class KolegaCodeApp(App):
     def _tool_entry_title(self, entry: ConversationEntry) -> str:
         state, color = tool_state_presentation(entry.kind)
         return theme.role_header(Glyph.TOOL, escape(entry.tool_name or "tool"), color, state=state)
+
+    def _tool_preview_renderable(self, entry: ConversationEntry) -> Optional[Group]:
+        """Inline diff/file-head preview for an edit tool, or None to hide the preview region."""
+        preview = entry.edit_preview
+        if not preview:
+            return None
+        try:
+            return self._build_edit_preview(preview)
+        except Exception:
+            return None
+
+    def _build_edit_preview(self, preview: dict) -> Group:
+        kind = str(preview.get("kind") or "")
+        path = str(preview.get("path") or "file")
+        lines = preview.get("lines") or []
+        more = int(preview.get("more") or 0)
+
+        meta = Text()
+        meta.append(escape(path), style="bold")
+        if kind == "diff":
+            meta.append("  ")
+            meta.append(f"+{int(preview.get('adds') or 0)}", style=Color.SUCCESS)
+            meta.append(" ")
+            meta.append(f"-{int(preview.get('dels') or 0)}", style=Color.ERROR)
+
+        if kind == "head":
+            code = "\n".join(str(row[1]) for row in lines if isinstance(row, (list, tuple)) and len(row) >= 2)
+            body = self._edit_preview_code(code, str(preview.get("language") or "text"))
+        else:
+            body = self._edit_preview_diff(lines)
+
+        parts: list = [meta, Padding(body, (0, 0, 0, theme.INSET_WIDTH))]
+        if more > 0:
+            footer = Text(f"{theme.g(Glyph.ELLIPSIS)} +{more} more lines", style="dim")
+            parts.append(Padding(footer, (0, 0, 0, theme.INSET_WIDTH)))
+        return Group(*parts)
+
+    def _edit_preview_diff(self, lines: list) -> Text:
+        bar = f"{theme.g(Glyph.INSET_BAR)} "
+        styles = {"add": Color.SUCCESS, "del": Color.ERROR, "meta": "dim", "context": "dim"}
+        rendered = Text()
+        for index, row in enumerate(lines):
+            if isinstance(row, (list, tuple)) and len(row) >= 2:
+                tag, text = str(row[0]), str(row[1])
+            else:
+                tag, text = "context", str(row)
+            if index:
+                rendered.append("\n")
+            rendered.append(bar, style="dim")
+            rendered.append(text, style=styles.get(tag))
+        return rendered
+
+    def _edit_preview_code(self, code: str, language: str):
+        try:
+            from rich.syntax import Syntax
+
+            return Syntax(
+                code,
+                language or "text",
+                theme=theme.markdown_code_theme(),
+                background_color="default",
+                word_wrap=False,
+            )
+        except Exception:
+            # Unknown lexer / pathological content: fall back to plain inset text.
+            bar = f"{theme.g(Glyph.INSET_BAR)} "
+            rendered = Text()
+            for index, line in enumerate(code.split("\n")):
+                if index:
+                    rendered.append("\n")
+                rendered.append(bar, style="dim")
+                rendered.append(line)
+            return rendered
 
     def _format_inset_text(self, content: str, style: Optional[str] = None) -> Text:
         bar = f"  {theme.g(Glyph.INSET_BAR)}"

@@ -65,7 +65,6 @@ def tool_collection(
     collection.create_file_tool.create_file = AsyncMock()
     collection.replace_entire_file_tool.replace_entire_file = AsyncMock()
     collection.replace_lines_tool.replace_lines = AsyncMock()
-    collection.apply_patch_tool.apply_patch = AsyncMock()
     collection.memory_tool.read_memory = AsyncMock()
     collection.memory_tool.write_memory = AsyncMock()
     collection.search_codebase_tool.search_codebase = AsyncMock()
@@ -278,15 +277,6 @@ class TestToolCollection:
         tool_collection.replace_lines_tool.replace_lines.assert_called_once_with(
             path, start_line, end_line, new_content
         )
-
-    async def test_apply_patch(self, tool_collection: AsyncMock) -> None:
-        patch_content = "diff content"
-        expected_response = "Patched content"
-        tool_collection.apply_patch_tool.apply_patch.return_value = expected_response
-
-        result = await tool_collection.apply_patch(patch_content)
-        assert result == expected_response
-        tool_collection.apply_patch_tool.apply_patch.assert_called_once_with(patch_content)
 
     async def test_read_memory(self, tool_collection: AsyncMock) -> None:
         expected_response = "Memory content"

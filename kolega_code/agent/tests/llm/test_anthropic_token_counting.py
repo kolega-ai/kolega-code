@@ -126,7 +126,6 @@ def real_tools(tmp_path):
             "write_memory",
             "execute_terminal_command",
             "replace_lines",
-            "apply_patch",
             "get_tool_list",
             "log_error",
             "log_info",

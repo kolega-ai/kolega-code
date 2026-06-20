@@ -36,6 +36,8 @@ def agent_config():
 def mock_base_agent():
     mock = Mock()
     mock.agent_name = "test_agent"
+    mock.sub_agent = False
+    mock.current_tool_execution_id = "test-call-id"
     return mock
 
 
@@ -51,7 +53,7 @@ class TestCreateFileTool:
     async def test_create_file_success(self, create_file_tool, project_path):
         result = await create_file_tool.create_file("test.txt", "Hello World")
 
-        assert "File created successfully" in result
+        assert result.startswith("Created")
         assert (project_path / "test.txt").exists()
         assert (project_path / "test.txt").read_text() == "Hello World"
 
@@ -59,7 +61,7 @@ class TestCreateFileTool:
     async def test_create_file_in_subdirectory(self, create_file_tool, project_path):
         result = await create_file_tool.create_file("subdir/test.txt", "Hello World")
 
-        assert "File created successfully" in result
+        assert result.startswith("Created")
         assert (project_path / "subdir" / "test.txt").exists()
         assert (project_path / "subdir" / "test.txt").read_text() == "Hello World"
 
@@ -84,7 +86,7 @@ class TestCreateFileTool:
 
             result = await create_file_tool.create_file(str(target), "x = 1\n")
 
-            assert "File created successfully" in result
+            assert result.startswith("Created")
             assert target.exists()
             assert target.read_text() == "x = 1\n"
 
@@ -92,7 +94,7 @@ class TestCreateFileTool:
     async def test_create_file_parent_directory_does_not_exist(self, create_file_tool, project_path):
         result = await create_file_tool.create_file("nonexistent/test.txt", "Hello World")
 
-        assert "File created successfully" in result
+        assert result.startswith("Created")
         assert (project_path / "nonexistent" / "test.txt").exists()
         assert (project_path / "nonexistent" / "test.txt").read_text() == "Hello World"
 
@@ -116,15 +118,32 @@ class TestCreateFileTool:
     async def test_create_file_with_empty_content(self, create_file_tool, project_path):
         result = await create_file_tool.create_file("test.txt", "")
 
-        assert "File created successfully" in result
+        assert result.startswith("Created")
         assert (project_path / "test.txt").exists()
         assert (project_path / "test.txt").read_text() == ""
+
+    @pytest.mark.asyncio
+    async def test_create_file_emits_preview_event(self, create_file_tool, mock_connection_manager):
+        result = await create_file_tool.create_file("m.py", "import os\nx = 1\n")
+
+        # Terse result — the content is NOT echoed back into model context.
+        assert result == "Created m.py"
+
+        # A single UI-only file_edit_preview event was broadcast with the head payload.
+        events = [call.args[0] for call in mock_connection_manager.broadcast_event.await_args_list]
+        previews = [e for e in events if e.event_type == "file_edit_preview"]
+        assert len(previews) == 1
+        content = previews[0].content
+        assert content["tool_name"] == "create_file"
+        assert content["tool_call_id"] == "test-call-id"
+        assert content["kind"] == "head"
+        assert content["path"] == "m.py"
 
     @pytest.mark.asyncio
     async def test_create_file_with_multiline_content(self, create_file_tool, project_path):
         content = "Line 1\nLine 2\nLine 3"
         result = await create_file_tool.create_file("test.txt", content)
 
-        assert "File created successfully" in result
+        assert result.startswith("Created")
         assert (project_path / "test.txt").exists()
         assert (project_path / "test.txt").read_text() == content

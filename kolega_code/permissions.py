@@ -34,7 +34,6 @@ COMMAND_PERMISSION_TOOLS = frozenset(
 )
 EDIT_PERMISSION_TOOLS = frozenset(
     {
-        "apply_patch",
         "create_file",
         "replace_entire_file",
         "replace_lines",
@@ -204,7 +203,7 @@ def permission_request_for_tool(tool_name: str, inputs: dict[str, Any]) -> Optio
         )
 
     if tool_name in EDIT_PERMISSION_TOOLS:
-        path = _path_from_edit_inputs(tool_name, inputs)
+        path = _path_from_edit_inputs(inputs)
         return PermissionRequest(
             kind=PermissionKind.EDIT,
             tool_name=tool_name,
@@ -255,9 +254,7 @@ def _matches_edit(rule: PermissionRule, request: PermissionRequest) -> bool:
     return False
 
 
-def _path_from_edit_inputs(tool_name: str, inputs: dict[str, Any]) -> str:
-    if tool_name == "apply_patch":
-        return ""
+def _path_from_edit_inputs(inputs: dict[str, Any]) -> str:
     value = inputs.get("path")
     return str(value).strip() if value is not None else ""
 

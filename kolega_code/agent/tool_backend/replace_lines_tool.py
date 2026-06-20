@@ -1,4 +1,5 @@
 from .base_tool import BaseTool
+from .edit_preview import build_diff_preview
 
 
 class ReplaceLinesTool(BaseTool):
@@ -52,9 +53,6 @@ class ReplaceLinesTool(BaseTool):
             start_idx = start_line - 1
             end_idx = min(end_line, len(lines))
 
-            # Store the old content before replacing
-            old_content = "".join(lines[start_idx:end_idx])
-
             # Handle newlines
             new_content_lines = new_content.splitlines()
             if not new_content_lines:
@@ -78,14 +76,13 @@ class ReplaceLinesTool(BaseTool):
             success_msg = f"Successfully replaced lines {start_line}-{end_line} in file: {path}"
             await self.log_info(success_msg, sender=self.caller.agent_name)
 
-            # Return the formatted message with both old and new content
-            return (
-                f"Replaced lines {start_line}-{end_line} in file {path}\n\n"
-                f"Replaced:\n"
-                f"```\n{old_content}```\n"
-                f"with:\n"
-                f"```\n{formatted_new_content}```"
+            # Surface the diff inline (UI-only; no model tokens).
+            await self.send_edit_preview(
+                build_diff_preview(file_content, updated_content, path),
+                tool_call_id=getattr(self.caller, "current_tool_execution_id", None),
+                tool_name="replace_lines",
             )
+            return f"Replaced lines {start_line}-{end_line} in {path}"
 
         except PermissionError:
             error_msg = f"Permission denied when writing to file: {path}"

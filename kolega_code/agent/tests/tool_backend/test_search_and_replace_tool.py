@@ -32,6 +32,8 @@ def agent_config():
 def mock_base_agent():
     mock = Mock()
     mock.agent_name = "test_agent"
+    mock.sub_agent = False
+    mock.current_tool_execution_id = "test-call-id"
     return mock
 
 
@@ -55,14 +57,7 @@ New Line 3
 
         result = await search_and_replace_tool.search_and_replace("test.txt", blocks)
 
-        expected_result = (
-            "Search and replace in file test.txt\n\n"
-            "Replaced:\n"
-            "```\nLine 2\nLine 3\n```\n"
-            "with:\n"
-            "```\nNew Line 2\nNew Line 3\n```"
-        )
-        assert result == expected_result
+        assert result == "Edited test.txt"
         assert sample_file.read_text() == "Line 1\nNew Line 2\nNew Line 3\nLine 4\nLine 5"
 
     async def test_search_and_replace_no_match(self, search_and_replace_tool, sample_file):
