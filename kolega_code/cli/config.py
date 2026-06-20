@@ -45,6 +45,15 @@ API_KEY_ENV = {
     ModelProvider.KIMI_CODING: "KIMI_CODING_API_KEY",
 }
 
+DEFAULT_WEB_SEARCH_BACKEND = "duckduckgo"
+WEB_SEARCH_BACKEND_ENV = "KOLEGA_CODE_WEB_SEARCH_BACKEND"
+SEARXNG_BASE_URL_ENV = "SEARXNG_BASE_URL"
+# Env vars that supply a cloud web-search backend's key, keyed by backend name.
+SEARCH_BACKEND_KEY_ENV = {
+    "firecrawl": "FIRECRAWL_API_KEY",
+    "tavily": "TAVILY_API_KEY",
+}
+
 
 class CliConfigError(ValueError):
     """Raised when CLI configuration is incomplete or invalid."""
@@ -94,6 +103,29 @@ def _api_key_for_provider(
     if settings:
         return settings.get_api_key(provider.value)
     return None
+
+
+def _search_config(
+    env: Mapping[str, str],
+    settings: Optional[CliSettings],
+) -> tuple[str, Optional[str], Optional[str]]:
+    """Resolve (backend, api_key, base_url) for the web_search tool.
+
+    Backend keys follow the same env-over-settings precedence as model-provider keys
+    (see ``_api_key_for_provider``). A missing key is never an error here — the default
+    backend is keyless, and a missing cloud key surfaces at tool-call time instead.
+    """
+    backend = (
+        env.get(WEB_SEARCH_BACKEND_ENV)
+        or (settings.web_search_backend if settings else None)
+        or DEFAULT_WEB_SEARCH_BACKEND
+    )
+    env_name = SEARCH_BACKEND_KEY_ENV.get(backend)
+    api_key = (env.get(env_name) if env_name else None) or (
+        settings.get_api_key(backend) if settings else None
+    )
+    base_url = env.get(SEARXNG_BASE_URL_ENV) or (settings.web_search_base_url if settings else None)
+    return backend, api_key, base_url
 
 
 def _active_provider_model(
@@ -283,6 +315,7 @@ def build_agent_config(
     )
 
     agent_model_overrides = _agent_model_overrides(loaded_env, settings, active_provider, active_model)
+    web_search_backend, web_search_api_key, web_search_base_url = _search_config(loaded_env, settings)
 
     required_providers = {long_provider, fast_provider, thinking_provider}
     required_providers.update(override.provider for override in agent_model_overrides.values())
@@ -313,6 +346,9 @@ def build_agent_config(
             fast_config=_model_config(fast_provider, fast_model),
             thinking_config=_model_config(thinking_provider, thinking_model, thinking_effort=think_hard_effort),
             agent_models=agent_model_overrides,
+            web_search_backend=web_search_backend,
+            web_search_api_key=web_search_api_key,
+            web_search_base_url=web_search_base_url,
         )
     except ValueError as exc:
         raise CliConfigError(str(exc)) from exc

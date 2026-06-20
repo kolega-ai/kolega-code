@@ -14,6 +14,8 @@ SETTINGS_SCHEMA_VERSION = 3
 _SUPPORTED_SCHEMA_VERSIONS = {1, 2, 3}
 # Keys read from each saved per-agent-role model entry.
 _AGENT_MODEL_KEYS = ("provider", "model", "thinking_effort")
+# Reserved keys in the shared ``api_keys`` dict used for cloud web-search backends.
+WEB_SEARCH_KEY_NAMES = ("firecrawl", "tavily")
 
 
 class SettingsStoreError(RuntimeError):
@@ -53,6 +55,12 @@ class CliSettings:
     agent_models: dict[str, dict] = field(default_factory=dict)
     # Resolved project paths whose .kolega/hooks.json the user has opted to trust.
     trusted_hook_projects: list[str] = field(default_factory=list)
+    # Web search backend selection. Additive optional fields (absent -> None -> the
+    # "duckduckgo" default is applied downstream), so no schema bump is needed — same
+    # convention as active_theme. Cloud backend API keys live in api_keys under the
+    # WEB_SEARCH_KEY_NAMES keys.
+    web_search_backend: Optional[str] = None
+    web_search_base_url: Optional[str] = None
     schema_version: int = SETTINGS_SCHEMA_VERSION
 
     @classmethod
@@ -74,6 +82,9 @@ class CliSettings:
             # Additive optional field; absent in pre-v3 files -> empty mapping.
             agent_models=_coerce_agent_models(data.get("agent_models")),
             trusted_hook_projects=[str(path) for path in trusted if path],
+            # Additive optional fields; absent in older files -> None -> default backend.
+            web_search_backend=data.get("web_search_backend"),
+            web_search_base_url=data.get("web_search_base_url"),
         )
 
     def to_dict(self) -> dict:
@@ -86,6 +97,8 @@ class CliSettings:
             "api_keys": self.api_keys,
             "agent_models": self.agent_models,
             "trusted_hook_projects": self.trusted_hook_projects,
+            "web_search_backend": self.web_search_backend,
+            "web_search_base_url": self.web_search_base_url,
         }
 
     def get_api_key(self, provider: str) -> Optional[str]:

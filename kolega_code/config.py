@@ -129,6 +129,18 @@ class AgentConfig(BaseModel):
     zai_api_key: Optional[str] = Field(default=None, description="API key for Z.AI (GLM Coding Plan)")
     kimi_coding_api_key: Optional[str] = Field(default=None, description="API key for Kimi Coding Plan")
 
+    # Web search configuration (the web_search tool). Optional: the default backend is
+    # keyless, so these must never be required for AgentConfig to be constructable.
+    web_search_backend: str = Field(
+        default="duckduckgo", description="Selected web_search backend (duckduckgo, firecrawl, tavily, searxng)"
+    )
+    web_search_api_key: Optional[str] = Field(
+        default=None, description="API key for the selected cloud web-search backend (Firecrawl/Tavily)"
+    )
+    web_search_base_url: Optional[str] = Field(
+        default=None, description="Base URL for the self-hosted SearXNG web-search backend"
+    )
+
     # Langfuse configuration
     langfuse_enabled: bool = Field(default=False, description="Enable Langfuse tracing")
     langfuse_host: Optional[str] = Field(default=None, description="Langfuse host URL")
