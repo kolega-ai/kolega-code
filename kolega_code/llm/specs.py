@@ -156,16 +156,9 @@ MODEL_SPECS: Dict[Tuple[str, str], Dict[str, Any]] = {
             mode="openai_reasoning_effort",
         ),
     },
-    ("openai", "gpt-5.3-codex-spark"): {
-        "context_length": 256000,
-        "max_completion_tokens": 128000,
-        "default_temperature": 1.0,
-        "thinking_effort": ThinkingEffortSpec(
-            options=("none", "low", "medium"),
-            default="low",
-            mode="openai_reasoning_effort",
-        ),
-    },
+    # Note: gpt-5.3-codex-spark is intentionally NOT on the API-key `openai`
+    # provider — it's a Codex model that 404s on Chat Completions and is only
+    # reachable through the ChatGPT-subscription backend (openai_chatgpt) below.
     # OpenAI via ChatGPT subscription (Responses API, OAuth). Model slugs mirror
     # the Codex model picker; context/output limits mirror the API gpt-5.x specs
     # and are server-enforced (we never send max_output_tokens).
