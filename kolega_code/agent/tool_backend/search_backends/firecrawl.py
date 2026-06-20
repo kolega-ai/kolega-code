@@ -9,9 +9,18 @@ use the official ``firecrawl-py`` SDK (which requires a key) for the keyed path.
 from __future__ import annotations
 
 import asyncio
+import warnings
 
 import httpx
-from firecrawl import Firecrawl
+
+# The firecrawl package emits a pydantic UserWarning at import time — its
+# v2/types.py defines a model field named "json" that shadows BaseModel.json.
+# That's a bug in firecrawl's own code (not ours and not fixable here), so we
+# silence exactly that warning at the import boundary; otherwise it prints to
+# stderr on every startup.
+with warnings.catch_warnings():
+    warnings.filterwarnings("ignore", category=UserWarning, module=r"firecrawl.*")
+    from firecrawl import Firecrawl
 
 from .base import DEFAULT_RESULTS, SearchBackend, clamp_results
 from .errors import (
