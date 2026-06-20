@@ -136,6 +136,16 @@ MODEL_SPECS: Dict[Tuple[str, str], Dict[str, Any]] = {
             mode="openai_reasoning_effort",
         ),
     },
+    ("openai", "gpt-5.4"): {
+        "context_length": 400000,
+        "max_completion_tokens": 128000,
+        "default_temperature": 1.0,
+        "thinking_effort": ThinkingEffortSpec(
+            options=("none", "low", "medium", "high", "xhigh"),
+            default="medium",
+            mode="openai_reasoning_effort",
+        ),
+    },
     ("openai", "gpt-5.4-mini"): {
         "context_length": 400000,
         "max_completion_tokens": 128000,
@@ -143,6 +153,16 @@ MODEL_SPECS: Dict[Tuple[str, str], Dict[str, Any]] = {
         "thinking_effort": ThinkingEffortSpec(
             options=("none", "low", "medium", "high", "xhigh"),
             default="medium",
+            mode="openai_reasoning_effort",
+        ),
+    },
+    ("openai", "gpt-5.3-codex-spark"): {
+        "context_length": 256000,
+        "max_completion_tokens": 128000,
+        "default_temperature": 1.0,
+        "thinking_effort": ThinkingEffortSpec(
+            options=("none", "low", "medium"),
+            default="low",
             mode="openai_reasoning_effort",
         ),
     },
