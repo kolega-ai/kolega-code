@@ -174,6 +174,70 @@ async def test_responses_stream_wrapper_text_tools_and_usage():
 
 
 @pytest.mark.asyncio
+async def test_responses_stream_wrapper_uses_deltas_when_completed_output_empty():
+    # The ChatGPT/Codex backend streams the answer as deltas but sends
+    # response.completed with an empty output[]. The final message must come from
+    # the deltas, not the empty output (this was the "agent says one thing and
+    # stops" bug).
+    completed = _ns(
+        output=[],
+        usage=_ns(input_tokens=5, output_tokens=1, total_tokens=6, input_tokens_details=None),
+        status="completed",
+        incomplete_details=None,
+    )
+    events = [
+        _ns(type="response.output_text.delta", delta="ready"),
+        _ns(type="response.completed", response=completed),
+    ]
+    wrapper = ResponsesStreamWrapper(_FakeStream(events))
+    async with wrapper as stream:
+        async for _chunk in stream:
+            pass
+    message = await wrapper.get_final_message()
+    assert message.get_text_content() == "ready"
+    assert message.usage_metadata["completion_tokens"] == 1
+    assert message.stop_reason == "end_turn"
+
+
+@pytest.mark.asyncio
+async def test_responses_stream_wrapper_tool_call_from_output_item_done():
+    # Tool calls must survive even when args arrive only via output_item.done
+    # (and the completed output is empty, as on the ChatGPT backend).
+    completed = _ns(output=[], usage=None, status="completed", incomplete_details=None)
+    events = [
+        _ns(
+            type="response.output_item.done",
+            item=_ns(type="function_call", id="fc_1", call_id="call_1", name="read_file", arguments='{"path": "a.py"}'),
+        ),
+        _ns(type="response.completed", response=completed),
+    ]
+    wrapper = ResponsesStreamWrapper(_FakeStream(events))
+    async with wrapper as stream:
+        async for _chunk in stream:
+            pass
+    message = await wrapper.get_final_message()
+    tool_calls = [b for b in message.content if isinstance(b, ToolCall)]
+    assert tool_calls and tool_calls[0].id == "call_1"
+    assert tool_calls[0].name == "read_file"
+    assert tool_calls[0].input == {"path": "a.py"}
+    assert message.stop_reason == "tool_use"
+
+
+@pytest.mark.asyncio
+async def test_provider_always_sends_non_empty_instructions():
+    # The backend 400s with "Instructions are required" on an empty instructions.
+    provider = ChatGPTOAuthProvider(token_manager=ChatGPTTokenManager(_tokens()))
+    fake = _FakeResponses(_FakeStream([]))
+    provider.async_client = _ns(responses=fake)
+    await provider.stream(
+        MessageHistory([Message(role="user", content=[TextBlock(text="hi")])]),
+        params=GenerationParams(),
+        model="gpt-5.5",
+    )
+    assert fake.last_kwargs["instructions"]  # present and non-empty
+
+
+@pytest.mark.asyncio
 async def test_responses_stream_wrapper_max_tokens_stop_reason():
     completed = _ns(
         output=[_ns(type="message", content=[_ns(type="output_text", text="partial")])],

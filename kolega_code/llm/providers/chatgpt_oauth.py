@@ -320,6 +320,21 @@ class ResponsesStreamWrapper:
             arguments = getattr(event, "arguments", None)
             if arguments is not None:
                 record["arguments"] = arguments
+        elif event_type == "response.output_item.done":
+            # The completed function_call item carries the final name + arguments;
+            # capture it so tool calls survive even if argument deltas were sparse.
+            item = getattr(event, "item", None)
+            if getattr(item, "type", None) == "function_call":
+                item_id = getattr(item, "id", None) or getattr(item, "call_id", "")
+                call_id = getattr(item, "call_id", None) or item_id
+                record = self._function_calls.setdefault(item_id, {"call_id": call_id, "name": "", "arguments": ""})
+                record["call_id"] = call_id or record["call_id"]
+                name = getattr(item, "name", None)
+                arguments = getattr(item, "arguments", None)
+                if name:
+                    record["name"] = name
+                if arguments:
+                    record["arguments"] = arguments
         elif event_type == "response.completed":
             self._final_response = getattr(event, "response", None)
         elif event_type in ("response.failed", "error"):
@@ -328,12 +343,21 @@ class ResponsesStreamWrapper:
         return MessageChunk(type="ignore", text="")
 
     async def get_final_message(self) -> Message:
+        # Build content from the streamed deltas, NOT response.completed.output:
+        # the ChatGPT/Codex backend sends response.completed with an empty output[]
+        # (the text/tool calls arrive only as deltas), so parsing the final
+        # response there would drop the whole answer.
+        content_blocks, tool_use_blocks = self._blocks_from_accumulators()
         if self._final_response is not None:
-            content_blocks, tool_use_blocks = _blocks_from_response(self._final_response, self._tool_execution_ids)
             usage_metadata = _usage_from_response(self._final_response)
+            if not content_blocks and not tool_use_blocks:
+                # Fallback for backends that only populate the final output (and
+                # not deltas) — e.g. a non-streaming-shaped response.
+                content_blocks, tool_use_blocks = _blocks_from_response(
+                    self._final_response, self._tool_execution_ids
+                )
             stop_reason = _stop_reason_from_response(self._final_response, bool(tool_use_blocks))
         else:
-            content_blocks, tool_use_blocks = self._blocks_from_accumulators()
             usage_metadata = {}
             stop_reason = "tool_use" if tool_use_blocks else "end_turn"
             logger.warning("ResponsesStreamWrapper: no response.completed event; billing may be skipped")
@@ -435,9 +459,9 @@ class ChatGPTOAuthProvider(OpenAIProvider):
             "stream": True,
             "prompt_cache_key": self._session_id,
         }
-        instructions = instructions_from(system, messages)
-        if instructions:
-            request["instructions"] = instructions
+        # The ChatGPT backend hard-requires a non-empty instructions field
+        # (400 "Instructions are required" otherwise), so always send one.
+        request["instructions"] = instructions_from(system, messages) or "You are a helpful coding assistant."
         if params and params.thinking:
             thinking_params = build_thinking_request_params(self.provider_name, model, params.thinking)
             if thinking_params.get("reasoning"):
