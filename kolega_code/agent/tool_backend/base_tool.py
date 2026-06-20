@@ -4,7 +4,7 @@ from typing import Union, Optional, Set
 
 from ..common import LogMixin
 from kolega_code.config import AgentConfig
-from kolega_code.events import AgentConnectionManager
+from kolega_code.events import AgentConnectionManager, AgentEvent
 from kolega_code.services.file_system import FileSystem, LocalFileSystem
 from kolega_code.services.base import TerminalManager, BrowserManager
 from ..prompt_provider import AgentMode
@@ -218,3 +218,29 @@ class BaseTool(LogMixin):
         if os.path.basename(path) in self._get_vibe_blacklist_basenames():
             return f"You are not allowed to edit this file: {path}"
         return None
+
+    async def send_edit_preview(self, preview: Optional[dict], *, tool_call_id: Optional[str], tool_name: str) -> None:
+        """Broadcast a UI-only diff/head preview for inline rendering in the chat.
+
+        The preview rides a dedicated ``file_edit_preview`` event and is never added to
+        the tool result, so it costs zero model tokens. No-op when there is nothing to
+        show (``preview`` is None) or no tool_call_id is available to route it.
+        """
+        if not preview or not tool_call_id:
+            return
+
+        # Attach dispatch metadata for sub-agent callers so the UI can route correctly
+        # (mirrors StreamingTool.send_streaming_update).
+        sub_agent_info = None
+        sub_agent_context = getattr(self.caller, "sub_agent_context", None)
+        if getattr(self.caller, "sub_agent", False) is True and isinstance(sub_agent_context, dict):
+            sub_agent_info = dict(sub_agent_context)
+
+        event = AgentEvent(
+            sender=self.caller.agent_name,
+            event_type="file_edit_preview",
+            content={"tool_call_id": tool_call_id, "tool_name": tool_name, **preview},
+            is_streaming=False,
+            sub_agent_info=sub_agent_info,
+        )
+        await self.connection_manager.broadcast_event(event, self.workspace_id, self.thread_id)

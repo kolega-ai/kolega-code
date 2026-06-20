@@ -36,6 +36,8 @@ def agent_config():
 def mock_base_agent():
     mock = Mock()
     mock.agent_name = "test_agent"
+    mock.sub_agent = False
+    mock.current_tool_execution_id = "test-call-id"
     return mock
 
 

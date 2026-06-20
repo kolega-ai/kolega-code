@@ -32,6 +32,7 @@ class AgentEvent(BaseModel):
         "credit_alert",
         "llm_context_update",
         "tool_streaming_update",
+        "file_edit_preview",
         "memory_suggestions",
     ]
     sender: str

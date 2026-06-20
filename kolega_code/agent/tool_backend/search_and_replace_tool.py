@@ -1,6 +1,7 @@
 import re
 
 from .base_tool import BaseTool
+from .edit_preview import build_diff_preview
 
 
 class SearchAndReplaceTool(BaseTool):
@@ -120,18 +121,13 @@ class SearchAndReplaceTool(BaseTool):
                 return blocked_msg
             self.filesystem.write_text(path, updated_content)
 
-            # Extract search and replace text for output
-            search_text = matches[0].group(1)
-            replace_text = matches[0].group(2)
-
-            # Return a message similar to replace_lines tool
-            return (
-                f"Search and replace in file {path}\n\n"
-                f"Replaced:\n"
-                f"```\n{search_text}\n```\n"
-                f"with:\n"
-                f"```\n{replace_text}\n```"
+            # Surface the diff inline (UI-only; the change is already in the tool args).
+            await self.send_edit_preview(
+                build_diff_preview(original_content, updated_content, path),
+                tool_call_id=getattr(self.caller, "current_tool_execution_id", None),
+                tool_name="search_and_replace",
             )
+            return f"Edited {path}"
 
         except ValueError as e:
             # Re-raise ValueError exceptions which are used for validation errors
