@@ -13,7 +13,7 @@ from pydantic import ValidationError
 
 from kolega_code.auth.tokens import ChatGPTTokenManager, OAuthTokens
 from kolega_code.config import AgentConfig, AgentRole, ModelConfig, ModelProvider, RateLimitConfig
-from kolega_code.llm.specs import get_model_specs, normalize_thinking_effort
+from kolega_code.llm.specs import MODEL_SPECS, get_model_specs, normalize_thinking_effort
 
 from .provider_registry import default_model_for_provider
 from .settings import CliSettings, SettingsStore
@@ -161,6 +161,18 @@ def _search_config(
     return backend, api_key, base_url
 
 
+def _coerce_known_model(provider: ModelProvider, model: Optional[str]) -> str:
+    """Return ``model`` if it's a known spec for ``provider``, else the default.
+
+    Guards against a settings.json that points at a model which has since been
+    renamed or removed (e.g. an old ChatGPT slug): without this, config building
+    raises and the TUI disables the composer, locking the user out.
+    """
+    if model and (provider.value, model) in MODEL_SPECS:
+        return model
+    return default_model_for_provider(provider)
+
+
 def _active_provider_model(
     env: Mapping[str, str],
     overrides: CliConfigOverrides,
@@ -174,8 +186,11 @@ def _active_provider_model(
         return provider, model_value or default_model_for_provider(provider)
 
     if settings and settings.active_provider and settings.active_model:
-        provider = _provider(settings.active_provider)
-        return provider, settings.active_model
+        try:
+            provider = _provider(settings.active_provider)
+        except CliConfigError:
+            return None, None
+        return provider, _coerce_known_model(provider, settings.active_model)
 
     return None, None
 

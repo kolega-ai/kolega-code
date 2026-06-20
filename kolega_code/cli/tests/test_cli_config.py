@@ -34,6 +34,31 @@ def test_build_agent_config_requires_model_selection_even_with_api_key(
         build_agent_config(tmp_path, env={api_key_env: api_key})
 
 
+def test_build_agent_config_coerces_stale_active_model(tmp_path: Path) -> None:
+    # A settings.json pointing at a model that has since been removed (e.g. an old
+    # ChatGPT slug) must not brick startup — it falls back to the provider default.
+    settings = CliSettings(
+        active_provider="openai_chatgpt",
+        active_model="gpt-5-codex",  # no longer in MODEL_SPECS
+        active_thinking_effort="medium",
+    )
+    settings.set_oauth_token(
+        "openai_chatgpt",
+        {"access_token": "at", "refresh_token": "rt", "expires_at": 10**12, "account_id": "a", "plan_type": "pro"},
+    )
+
+    config = build_agent_config(tmp_path, env={}, settings=settings)
+
+    assert config.long_context_config.provider == ModelProvider.OPENAI_CHATGPT
+    assert config.long_context_config.model == "gpt-5.5"  # coerced from the removed slug
+
+
+def test_build_agent_config_unknown_saved_provider_is_unconfigured(tmp_path: Path) -> None:
+    settings = CliSettings(active_provider="nonexistent-provider", active_model="whatever")
+    with pytest.raises(CliConfigError, match="No provider/model configured"):
+        build_agent_config(tmp_path, env={}, settings=settings)
+
+
 def test_build_agent_config_explicit_provider_uses_provider_default_model(tmp_path: Path) -> None:
     config = build_agent_config(
         tmp_path,
