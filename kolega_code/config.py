@@ -1,7 +1,9 @@
 from enum import Enum
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, PrivateAttr, model_validator
+
+from kolega_code.auth.tokens import OAuthTokens
 
 
 class ModelProvider(str, Enum):
@@ -9,6 +11,7 @@ class ModelProvider(str, Enum):
 
     ANTHROPIC = "anthropic"
     OPENAI = "openai"
+    OPENAI_CHATGPT = "openai_chatgpt"  # OpenAI via ChatGPT-subscription OAuth (Responses API)
     GOOGLE = "google"
     GROQ = "groq"
     TOGETHER = "together"
@@ -129,6 +132,14 @@ class AgentConfig(BaseModel):
     zai_api_key: Optional[str] = Field(default=None, description="API key for Z.AI (GLM Coding Plan)")
     kimi_coding_api_key: Optional[str] = Field(default=None, description="API key for Kimi Coding Plan")
 
+    # ChatGPT-subscription OAuth credentials (used instead of an api key for the
+    # OPENAI_CHATGPT provider). The live, refreshing token manager is attached
+    # separately via attach_chatgpt_token_manager so refreshes persist to disk.
+    openai_chatgpt_tokens: Optional[OAuthTokens] = Field(
+        default=None, description="ChatGPT OAuth tokens for the openai_chatgpt provider"
+    )
+    _chatgpt_token_manager: Optional[Any] = PrivateAttr(default=None)
+
     # Web search configuration (the web_search tool). Optional: the default backend is
     # keyless, so these must never be required for AgentConfig to be constructable.
     web_search_backend: str = Field(
@@ -195,6 +206,11 @@ class AgentConfig(BaseModel):
         api_key_map = {
             ModelProvider.ANTHROPIC: self.anthropic_api_key,
             ModelProvider.OPENAI: self.openai_api_key,
+            # The OAuth access token doubles as the "api key" for compatibility with
+            # call sites; the live provider uses the refreshing token manager instead.
+            ModelProvider.OPENAI_CHATGPT: (
+                self.openai_chatgpt_tokens.access_token if self.openai_chatgpt_tokens else None
+            ),
             ModelProvider.GOOGLE: self.google_api_key,
             ModelProvider.GROQ: self.groq_api_key,
             ModelProvider.TOGETHER: self.together_api_key,
@@ -220,7 +236,32 @@ class AgentConfig(BaseModel):
         configs.extend((override, f"agent '{role}'") for role, override in self.agent_models.items())
 
         for config, config_name in configs:
-            if config.provider != ModelProvider.LLAMA and self.get_api_key(config.provider) is None:
-                raise ValueError(f"Missing API key for {config_name} provider '{config.provider.value}'")
+            provider = config.provider
+            if provider == ModelProvider.LLAMA:
+                continue
+            if provider == ModelProvider.OPENAI_CHATGPT:
+                # OAuth provider: satisfied by stored ChatGPT tokens, not an api key.
+                if self.openai_chatgpt_tokens is None:
+                    raise ValueError(f"Not signed in to ChatGPT for {config_name}; run /login to sign in.")
+                continue
+            if self.get_api_key(provider) is None:
+                raise ValueError(f"Missing API key for {config_name} provider '{provider.value}'")
 
         return self
+
+    def attach_chatgpt_token_manager(self, manager: Any) -> None:
+        """Attach a live, persisting ChatGPT token manager (wired by the CLI)."""
+        self._chatgpt_token_manager = manager
+
+    def get_chatgpt_token_manager(self) -> Optional[Any]:
+        """Return the ChatGPT token manager, building an in-memory one if needed.
+
+        The CLI attaches a manager whose refreshes persist to settings.json. When
+        none is attached (e.g. programmatic use), fall back to a manager built from
+        the stored tokens that refreshes in-memory only.
+        """
+        if self._chatgpt_token_manager is None and self.openai_chatgpt_tokens is not None:
+            from kolega_code.auth.tokens import ChatGPTTokenManager
+
+            self._chatgpt_token_manager = ChatGPTTokenManager(self.openai_chatgpt_tokens)
+        return self._chatgpt_token_manager

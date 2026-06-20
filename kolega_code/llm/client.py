@@ -40,6 +40,8 @@ from .providers.google import GoogleProvider
 from .providers.models import GenerationParams, TokenCount
 from .specs import validate_thinking_effort
 from .providers.openai import OpenAIProvider
+from .providers.chatgpt_oauth import ChatGPTOAuthProvider
+from kolega_code.auth import constants as chatgpt_constants
 
 
 class LLMClient:
@@ -66,9 +68,12 @@ class LLMClient:
         max_retries: int = 3,
         requests_per_minute: Optional[int] = None,
         tokens_per_minute: Optional[int] = None,
+        token_manager: Optional[Any] = None,
     ):
         self.provider_name = provider.lower()
         self._api_key = api_key  # Store API key privately
+        # Refreshing OAuth token manager, used only by the ChatGPT-subscription provider.
+        self._token_manager = token_manager
         self.provider = self._initialize_provider(
             provider,
             max_retries=max_retries,
@@ -98,6 +103,20 @@ class LLMClient:
             LLMError: If an unsupported provider name is specified or initialization fails
         """
         try:
+            # ChatGPT-subscription OAuth provider: distinct base URL + Responses API,
+            # authenticated by a refreshing token manager rather than an api key.
+            if provider.lower() == chatgpt_constants.PROVIDER_KEY:
+                if self._token_manager is None:
+                    raise ValueError("ChatGPT provider requires sign-in; run /login to sign in.")
+                return ChatGPTOAuthProvider(
+                    token_manager=self._token_manager,
+                    max_retries=max_retries,
+                    requests_per_minute=requests_per_minute,
+                    tokens_per_minute=tokens_per_minute,
+                    base_url=chatgpt_constants.INFERENCE_BASE_URL,
+                    provider_name=chatgpt_constants.PROVIDER_KEY,
+                )
+
             providers: Dict[str, Type[Union[AnthropicProvider, OpenAIProvider, GoogleProvider]]] = {
                 "anthropic": AnthropicProvider,
                 "openai": OpenAIProvider,

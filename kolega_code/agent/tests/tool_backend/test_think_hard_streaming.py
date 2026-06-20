@@ -145,6 +145,7 @@ async def test_think_hard_streaming_with_thinking_and_text(think_hard_tool, mock
                 max_retries=3,
                 requests_per_minute=10,
                 tokens_per_minute=100000,
+                token_manager=None,
             )
 
             # Verify stream was called (we can't use assert_called_once with a regular function)

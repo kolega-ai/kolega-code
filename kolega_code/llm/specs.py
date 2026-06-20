@@ -146,6 +146,30 @@ MODEL_SPECS: Dict[Tuple[str, str], Dict[str, Any]] = {
             mode="openai_reasoning_effort",
         ),
     },
+    # OpenAI via ChatGPT subscription (Responses API, OAuth). Same model slugs as
+    # the API, but routed through chatgpt.com/backend-api/codex.
+    ("openai_chatgpt", "gpt-5-codex"): {
+        "context_length": 272000,
+        "max_completion_tokens": 128000,
+        "default_temperature": 1.0,
+        "supports_temperature": False,
+        "thinking_effort": ThinkingEffortSpec(
+            options=("minimal", "low", "medium", "high"),
+            default="medium",
+            mode="openai_responses_reasoning",
+        ),
+    },
+    ("openai_chatgpt", "gpt-5"): {
+        "context_length": 272000,
+        "max_completion_tokens": 128000,
+        "default_temperature": 1.0,
+        "supports_temperature": False,
+        "thinking_effort": ThinkingEffortSpec(
+            options=("minimal", "low", "medium", "high"),
+            default="medium",
+            mode="openai_responses_reasoning",
+        ),
+    },
     # Together.ai models
     ("together", "moonshotai/Kimi-K2.7-Code"): {"context_length": 262144, "max_completion_tokens": 32768, "default_temperature": 1.0},
     ("together", "zai-org/GLM-5.1"): {"context_length": 202752, "max_completion_tokens": 16384, "default_temperature": 0.6},
@@ -332,5 +356,10 @@ def build_thinking_request_params(provider: str, model_name: str, effort: Option
 
     if spec.mode == "openai_reasoning_effort":
         return {"reasoning_effort": normalized}
+
+    if spec.mode == "openai_responses_reasoning":
+        # The Responses API nests reasoning effort under a "reasoning" object,
+        # unlike Chat Completions' flat "reasoning_effort".
+        return {"reasoning": {"effort": normalized}}
 
     raise ValueError(f"Unknown thinking effort mode '{spec.mode}' for {_provider_value(provider)}/{model_name}.")

@@ -47,6 +47,8 @@ TUI_COMMAND_ENTRIES: tuple[SlashCommandEntry, ...] = (
     SlashCommandEntry("permissions", "Show or switch shell/edit permission mode", CommandScope.TUI),
     SlashCommandEntry("model", "Show or switch the active model", CommandScope.TUI),
     SlashCommandEntry("effort", "Show or set the active thinking effort", CommandScope.TUI),
+    SlashCommandEntry("login", "Sign in with ChatGPT to use your subscription", CommandScope.TUI),
+    SlashCommandEntry("logout", "Sign out of ChatGPT and remove stored credentials", CommandScope.TUI),
     SlashCommandEntry("gigacode", "Toggle gigacode workflow orchestration on or off", CommandScope.TUI),
     SlashCommandEntry("theme", "Show or switch the color theme", CommandScope.TUI),
     SlashCommandEntry("copy", "Copy the last response to the clipboard", CommandScope.TUI),

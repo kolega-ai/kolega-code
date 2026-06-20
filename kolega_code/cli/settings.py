@@ -42,6 +42,23 @@ def _coerce_agent_models(raw: object) -> dict[str, dict]:
     return result
 
 
+def _coerce_oauth_tokens(raw: object) -> dict[str, dict]:
+    """Normalize a stored oauth_tokens mapping (provider -> token dict).
+
+    Tolerant of partial/legacy data: an entry missing the access/refresh token
+    is dropped so a malformed file can never crash startup."""
+    if not isinstance(raw, dict):
+        return {}
+    result: dict[str, dict] = {}
+    for provider, entry in raw.items():
+        if not isinstance(entry, dict):
+            continue
+        if not entry.get("access_token") or not entry.get("refresh_token"):
+            continue
+        result[str(provider)] = dict(entry)
+    return result
+
+
 @dataclass
 class CliSettings:
     active_provider: Optional[str] = None
@@ -61,6 +78,11 @@ class CliSettings:
     # WEB_SEARCH_KEY_NAMES keys.
     web_search_backend: Optional[str] = None
     web_search_base_url: Optional[str] = None
+    # ChatGPT-subscription OAuth credentials, keyed by provider value (e.g.
+    # "openai_chatgpt"), each a serialized OAuthTokens dict. Additive optional
+    # field — absent in older files -> empty mapping, no schema bump (same
+    # convention as web_search_backend / active_theme).
+    oauth_tokens: dict[str, dict] = field(default_factory=dict)
     schema_version: int = SETTINGS_SCHEMA_VERSION
 
     @classmethod
@@ -85,6 +107,8 @@ class CliSettings:
             # Additive optional fields; absent in older files -> None -> default backend.
             web_search_backend=data.get("web_search_backend"),
             web_search_base_url=data.get("web_search_base_url"),
+            # Additive optional field; absent in older files -> empty mapping.
+            oauth_tokens=_coerce_oauth_tokens(data.get("oauth_tokens")),
         )
 
     def to_dict(self) -> dict:
@@ -99,6 +123,7 @@ class CliSettings:
             "trusted_hook_projects": self.trusted_hook_projects,
             "web_search_backend": self.web_search_backend,
             "web_search_base_url": self.web_search_base_url,
+            "oauth_tokens": self.oauth_tokens,
         }
 
     def get_api_key(self, provider: str) -> Optional[str]:
@@ -125,6 +150,22 @@ class CliSettings:
 
     def has_api_key(self, provider: str) -> bool:
         return bool(self.get_api_key(provider))
+
+    def get_oauth_token(self, provider: str) -> Optional[dict]:
+        """Return the stored OAuth token dict for a provider, or None."""
+        return self.oauth_tokens.get(provider)
+
+    def set_oauth_token(self, provider: str, token: dict) -> None:
+        """Persist an OAuth token dict (serialized OAuthTokens) for a provider."""
+        if token:
+            self.oauth_tokens[provider] = dict(token)
+
+    def clear_oauth_token(self, provider: str) -> None:
+        """Remove stored OAuth credentials for a provider (sign out)."""
+        self.oauth_tokens.pop(provider, None)
+
+    def has_oauth_token(self, provider: str) -> bool:
+        return bool(self.get_oauth_token(provider))
 
     def is_hook_project_trusted(self, project_path) -> bool:
         return str(Path(project_path).resolve()) in self.trusted_hook_projects

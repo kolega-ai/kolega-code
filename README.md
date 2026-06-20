@@ -103,6 +103,19 @@ and DeepSeek — and lets you assign **different models to different roles**: a 
 long-context model for coding, a fast cheap model for small utility calls, and one for extended
 "thinking". See [Providers & Models](https://kolega-ai.github.io/kolega-code/configuration/providers-and-models/).
 
+## Sign in with ChatGPT
+
+If you have a paid **ChatGPT** plan (Plus, Pro, or Business), you can use it to run OpenAI models
+instead of a separate API key. Run `/login` in the TUI, complete the browser sign-in, and Kolega
+Code switches to the **OpenAI (ChatGPT subscription)** provider (e.g. `gpt-5-codex`). Tokens are
+stored locally (chmod `600`) and refreshed automatically; `/logout` removes them.
+
+> **Heads-up:** This reuses the OpenAI Codex OAuth client and ChatGPT backend, the same approach
+> other third-party agents use. It is **not** an officially sanctioned integration — OpenAI's
+> supported "Sign in with ChatGPT" is identity-only and does not grant model access to third-party
+> tools. Using it is at your own risk and may violate OpenAI's terms; a Free plan cannot run models
+> this way. If in doubt, use an `OPENAI_API_KEY` instead.
+
 ## Configuration
 
 Set your provider, model, and API keys from the **Settings** tab in the UI, or via environment

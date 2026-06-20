@@ -129,7 +129,13 @@ def test_ui_provider_registry_is_derived_from_model_specs() -> None:
     for provider_value, model in MODEL_SPECS:
         option = get_ui_model(provider_value, model)
         assert option is not None, (provider_value, model)
-        assert option.api_key_env == API_KEY_ENV[ModelProvider(provider_value)]
+        provider = ModelProvider(provider_value)
+        # OAuth providers (ChatGPT subscription) authenticate via sign-in, not an
+        # API-key env var, so they carry no api_key_env.
+        if provider in API_KEY_ENV:
+            assert option.api_key_env == API_KEY_ENV[provider]
+        else:
+            assert option.api_key_env == ""
 
     # Every provider that has specs appears in the provider dropdown.
     spec_providers = {provider_value for provider_value, _ in MODEL_SPECS}
@@ -180,6 +186,69 @@ def test_web_search_settings_round_trip(tmp_path: Path) -> None:
     assert loaded.web_search_backend == "tavily"
     assert loaded.web_search_base_url == "https://searx.example"
     assert loaded.get_api_key("tavily") == "tvly-secret"
+
+
+def test_oauth_tokens_round_trip(tmp_path: Path) -> None:
+    store = SettingsStore(tmp_path)
+    settings = CliSettings(active_provider=UI_DEFAULT_PROVIDER, active_model=UI_DEFAULT_MODEL)
+    settings.set_oauth_token(
+        "openai_chatgpt",
+        {
+            "access_token": "at",
+            "refresh_token": "rt",
+            "id_token": "it",
+            "expires_at": 4600.0,
+            "account_id": "acct_1",
+            "plan_type": "pro",
+            "email": "u@example.com",
+        },
+    )
+
+    store.save(settings)
+    loaded = store.load()
+
+    assert loaded.has_oauth_token("openai_chatgpt")
+    token = loaded.get_oauth_token("openai_chatgpt")
+    assert token is not None
+    assert token["access_token"] == "at"
+    assert token["plan_type"] == "pro"
+
+
+def test_clear_oauth_token_signs_out() -> None:
+    settings = CliSettings()
+    settings.set_oauth_token("openai_chatgpt", {"access_token": "a", "refresh_token": "r"})
+    settings.clear_oauth_token("openai_chatgpt")
+
+    assert not settings.has_oauth_token("openai_chatgpt")
+    assert settings.oauth_tokens == {}
+
+
+def test_from_dict_drops_incomplete_oauth_token_entries() -> None:
+    data = {
+        "schema_version": SETTINGS_SCHEMA_VERSION,
+        "oauth_tokens": {
+            "openai_chatgpt": {"access_token": "a", "refresh_token": "r"},
+            "broken": {"access_token": "a"},  # missing refresh_token -> dropped
+            "garbage": "not-a-dict",  # malformed -> dropped
+        },
+    }
+
+    settings = CliSettings.from_dict(data)
+
+    assert set(settings.oauth_tokens) == {"openai_chatgpt"}
+
+
+def test_oauth_tokens_absent_in_old_file_default_to_empty() -> None:
+    settings = CliSettings.from_dict(
+        {
+            "schema_version": 3,
+            "active_provider": UI_DEFAULT_PROVIDER,
+            "active_model": UI_DEFAULT_MODEL,
+            "api_keys": {UI_DEFAULT_PROVIDER: "k"},
+        }
+    )
+
+    assert settings.oauth_tokens == {}
 
 
 def test_web_search_settings_absent_in_old_file_default_to_none() -> None:

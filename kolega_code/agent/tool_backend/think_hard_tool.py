@@ -43,6 +43,7 @@ class ThinkHardTool(StreamingTool):
                 environment=self.caller.llm.environment,
                 user_id=self.caller.user_id,
                 user_email=self.caller.user_email,
+                token_manager=self.config.get_chatgpt_token_manager(),
             )
         else:
             # Fallback to regular client
@@ -52,6 +53,7 @@ class ThinkHardTool(StreamingTool):
                 max_retries=rate_limits.max_retries,
                 requests_per_minute=rate_limits.requests_per_minute,
                 tokens_per_minute=rate_limits.tokens_per_minute,
+                token_manager=self.config.get_chatgpt_token_manager(),
             )
 
         try:

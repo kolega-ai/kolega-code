@@ -9,11 +9,17 @@ from typing import Mapping, Optional
 
 from dotenv import dotenv_values
 
+from pydantic import ValidationError
+
+from kolega_code.auth.tokens import ChatGPTTokenManager, OAuthTokens
 from kolega_code.config import AgentConfig, AgentRole, ModelConfig, ModelProvider, RateLimitConfig
 from kolega_code.llm.specs import get_model_specs, normalize_thinking_effort
 
 from .provider_registry import default_model_for_provider
-from .settings import CliSettings
+from .settings import CliSettings, SettingsStore
+
+# Providers authenticated by an OAuth sign-in instead of a static API key.
+OAUTH_PROVIDERS = frozenset({ModelProvider.OPENAI_CHATGPT})
 
 DEFAULT_LONG_PROVIDER = ModelProvider.ANTHROPIC
 DEFAULT_LONG_MODEL = "claude-opus-4-8"
@@ -103,6 +109,33 @@ def _api_key_for_provider(
     if settings:
         return settings.get_api_key(provider.value)
     return None
+
+
+def _resolve_chatgpt_tokens(settings: Optional[CliSettings]) -> Optional[OAuthTokens]:
+    """Load stored ChatGPT OAuth tokens from settings, if present and well-formed."""
+    if not settings:
+        return None
+    raw = settings.get_oauth_token(ModelProvider.OPENAI_CHATGPT.value)
+    if not raw:
+        return None
+    try:
+        return OAuthTokens.model_validate(raw)
+    except ValidationError:
+        return None
+
+
+def _build_chatgpt_token_manager(
+    tokens: OAuthTokens,
+    settings: CliSettings,
+    settings_store: SettingsStore,
+) -> ChatGPTTokenManager:
+    """A token manager whose refreshes are persisted back to settings.json."""
+
+    def _persist(new_tokens: OAuthTokens) -> None:
+        settings.set_oauth_token(ModelProvider.OPENAI_CHATGPT.value, new_tokens.model_dump(mode="json"))
+        settings_store.save(settings)
+
+    return ChatGPTTokenManager(tokens, persist=_persist)
 
 
 def _search_config(
@@ -257,8 +290,14 @@ def build_agent_config(
     overrides: Optional[CliConfigOverrides] = None,
     env: Optional[Mapping[str, str]] = None,
     settings: Optional[CliSettings] = None,
+    settings_store: Optional[SettingsStore] = None,
 ) -> AgentConfig:
-    """Build an AgentConfig for CLI-hosted agents."""
+    """Build an AgentConfig for CLI-hosted agents.
+
+    When ``settings_store`` is provided and a ChatGPT-subscription provider is in
+    use, a persisting token manager is attached so refreshed tokens survive
+    restarts.
+    """
     overrides = overrides or CliConfigOverrides()
     loaded_env = load_cli_env(project_path, env)
     if "KOLEGA_CODE_THINKING_TOKENS" in loaded_env:
@@ -319,16 +358,26 @@ def build_agent_config(
 
     required_providers = {long_provider, fast_provider, thinking_provider}
     required_providers.update(override.provider for override in agent_model_overrides.values())
+    # API-key providers: env/settings key required. OAuth and local providers are
+    # exempt (OAuth is checked via stored tokens below; LLAMA is keyless).
     missing_keys = [
         API_KEY_ENV[provider]
         for provider in sorted(required_providers, key=lambda item: item.value)
-        if provider != ModelProvider.LLAMA and not _api_key_for_provider(provider, loaded_env, settings)
+        if provider != ModelProvider.LLAMA
+        and provider not in OAUTH_PROVIDERS
+        and not _api_key_for_provider(provider, loaded_env, settings)
     ]
     if missing_keys:
         raise CliConfigError(f"Missing required API key environment variable(s): {', '.join(missing_keys)}")
 
+    chatgpt_tokens = _resolve_chatgpt_tokens(settings)
+    if ModelProvider.OPENAI_CHATGPT in required_providers and chatgpt_tokens is None:
+        raise CliConfigError(
+            "Not signed in to ChatGPT. Run /login to sign in with your ChatGPT subscription."
+        )
+
     try:
-        return AgentConfig(
+        config = AgentConfig(
             anthropic_api_key=_api_key_for_provider(ModelProvider.ANTHROPIC, loaded_env, settings),
             openai_api_key=_api_key_for_provider(ModelProvider.OPENAI, loaded_env, settings),
             google_api_key=_api_key_for_provider(ModelProvider.GOOGLE, loaded_env, settings),
@@ -349,14 +398,30 @@ def build_agent_config(
             web_search_backend=web_search_backend,
             web_search_api_key=web_search_api_key,
             web_search_base_url=web_search_base_url,
+            openai_chatgpt_tokens=chatgpt_tokens,
         )
     except ValueError as exc:
         raise CliConfigError(str(exc)) from exc
 
+    # Attach a persisting token manager so mid-session refreshes are written back
+    # to settings.json (only possible when a store is supplied by the caller).
+    if chatgpt_tokens is not None and settings is not None and settings_store is not None:
+        config.attach_chatgpt_token_manager(
+            _build_chatgpt_token_manager(chatgpt_tokens, settings, settings_store)
+        )
+    return config
+
 
 def key_status(provider: str, project_path: Path, settings: Optional[CliSettings] = None) -> str:
-    """Return the API-key source for display without exposing the key."""
+    """Return the API-key (or sign-in) status for display without exposing secrets."""
     provider_value = _provider(provider)
+    if provider_value in OAUTH_PROVIDERS:
+        if settings and settings.has_oauth_token(provider_value.value):
+            token = settings.get_oauth_token(provider_value.value) or {}
+            email = token.get("email") or "ChatGPT account"
+            plan = token.get("plan_type") or "subscription"
+            return f"signed in as {email} ({plan})"
+        return "not signed in"
     env = load_cli_env(project_path)
     env_name = API_KEY_ENV.get(provider_value)
     if env_name and env.get(env_name):

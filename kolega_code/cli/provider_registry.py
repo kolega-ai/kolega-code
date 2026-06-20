@@ -28,6 +28,7 @@ PROVIDER_LABELS: dict[ModelProvider, str] = {
     ModelProvider.KIMI_CODING: "Kimi Coding Plan",
     ModelProvider.ANTHROPIC: "Anthropic",
     ModelProvider.OPENAI: "OpenAI",
+    ModelProvider.OPENAI_CHATGPT: "OpenAI (ChatGPT subscription)",
     ModelProvider.GOOGLE: "Google",
     ModelProvider.XAI: "xAI",
     ModelProvider.FIREWORKS: "Fireworks",
@@ -61,6 +62,9 @@ MODEL_LABELS: dict[str, str] = {
     # OpenAI
     "gpt-5.5": "GPT-5.5",
     "gpt-5.4-mini": "GPT-5.4 Mini",
+    # OpenAI via ChatGPT subscription
+    "gpt-5-codex": "GPT-5 Codex",
+    "gpt-5": "GPT-5",
     # Google
     "gemini-3.1-pro-preview": "Gemini 3.1 Pro",
     "gemini-3.5-flash": "Gemini 3.5 Flash",
@@ -87,6 +91,7 @@ PROVIDER_DEFAULT_MODEL: dict[ModelProvider, str] = {
     ModelProvider.KIMI_CODING: "kimi-for-coding",
     ModelProvider.ANTHROPIC: "claude-opus-4-8",
     ModelProvider.OPENAI: "gpt-5.5",
+    ModelProvider.OPENAI_CHATGPT: "gpt-5-codex",
     ModelProvider.GOOGLE: "gemini-3.1-pro-preview",
     ModelProvider.XAI: "grok-4.3",
     ModelProvider.FIREWORKS: "accounts/fireworks/models/glm-5p1",
@@ -114,7 +119,13 @@ class ModelOption:
 
 
 def _api_key_env(provider: ModelProvider) -> str:
-    """Env var name holding the provider's API key (matches cli/config.API_KEY_ENV)."""
+    """Env var name holding the provider's API key (matches cli/config.API_KEY_ENV).
+
+    OAuth providers (ChatGPT subscription) authenticate via sign-in, not an env
+    key, so they have no API-key env var.
+    """
+    if provider == ModelProvider.OPENAI_CHATGPT:
+        return ""
     return f"{provider.value.upper()}_API_KEY"
 
 

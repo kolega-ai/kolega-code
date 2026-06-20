@@ -113,6 +113,7 @@ class AgentContext:
                 user_id=self.telemetry.user_id,
                 user_email=self.telemetry.user_email,
                 usage_recorder=self.telemetry.usage_recorder,
+                token_manager=self.config.get_chatgpt_token_manager(),
             )
 
         return LLMClient(
@@ -121,4 +122,5 @@ class AgentContext:
             max_retries=model_config.rate_limits.max_retries,
             requests_per_minute=model_config.rate_limits.requests_per_minute,
             tokens_per_minute=model_config.rate_limits.tokens_per_minute,
+            token_manager=self.config.get_chatgpt_token_manager(),
         )
