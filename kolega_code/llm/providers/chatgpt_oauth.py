@@ -391,10 +391,13 @@ class ChatGPTOAuthProvider(OpenAIProvider):
         self.provider_name = provider_name
         self._token_manager = token_manager
         self._session_id = str(uuid.uuid4())
+        # Match Codex's client identity. The HTTP /responses backend does NOT take
+        # an OpenAI-Beta header (that's the WebSocket path only); it expects the
+        # codex_cli_rs originator + User-Agent.
         default_headers = {
             "originator": chatgpt_constants.ORIGINATOR,
-            "OpenAI-Beta": chatgpt_constants.OPENAI_BETA,
-            "session_id": self._session_id,
+            "User-Agent": chatgpt_constants.USER_AGENT,
+            "session-id": self._session_id,
         }
         self.async_client = AsyncOpenAI(
             api_key="chatgpt-oauth",
@@ -415,27 +418,30 @@ class ChatGPTOAuthProvider(OpenAIProvider):
         system: Optional[Message],
         params: Optional[GenerationParams],
         kwargs: Dict[str, Any],
-        stream: bool,
     ) -> Dict[str, Any]:
+        """Build a Responses request matching what Codex sends to this backend.
+
+        Notably this does NOT send ``max_output_tokens`` (Codex never does; the
+        backend rejects it) and always streams (the backend is SSE-only).
+        """
         model = str(kwargs.get("model") or chatgpt_constants.DEFAULT_MODEL)
         request: Dict[str, Any] = {
             "model": model,
             "input": to_responses_input(messages),
-            "stream": stream,
+            "tools": responses_tools(params) or [],
+            "tool_choice": "auto",
+            "parallel_tool_calls": False,
             "store": False,
+            "stream": True,
+            "prompt_cache_key": self._session_id,
         }
         instructions = instructions_from(system, messages)
         if instructions:
             request["instructions"] = instructions
-        tools = responses_tools(params)
-        if tools:
-            request["tools"] = tools
         if params and params.thinking:
             thinking_params = build_thinking_request_params(self.provider_name, model, params.thinking)
             if thinking_params.get("reasoning"):
                 request["reasoning"] = thinking_params["reasoning"]
-        if params and params.max_completion_tokens:
-            request["max_output_tokens"] = params.max_completion_tokens
         return request
 
     async def stream(
@@ -445,7 +451,7 @@ class ChatGPTOAuthProvider(OpenAIProvider):
         params: Optional[GenerationParams] = None,
         **kwargs,
     ) -> ResponsesStreamWrapper:
-        request = self._build_request(messages, system, params, kwargs, stream=True)
+        request = self._build_request(messages, system, params, kwargs)
         await self.rate_limiter.acquire()
         responses_stream = await self.async_client.responses.create(**request)
         return ResponsesStreamWrapper(responses_stream)
@@ -457,19 +463,15 @@ class ChatGPTOAuthProvider(OpenAIProvider):
         params: Optional[GenerationParams] = None,
         **kwargs,
     ) -> Message:
-        request = self._build_request(messages, system, params, kwargs, stream=False)
+        # The backend only supports streaming, so drain a stream into a full message.
+        request = self._build_request(messages, system, params, kwargs)
         await self.rate_limiter.acquire()
-        response = await self.async_client.responses.create(**request)
-
-        tool_execution_ids = ToolExecutionIdRegistry()
-        content_blocks, tool_use_blocks = _blocks_from_response(response, tool_execution_ids)
-        usage_metadata = _usage_from_response(response)
-        if not usage_metadata:
+        responses_stream = await self.async_client.responses.create(**request)
+        wrapper = ResponsesStreamWrapper(responses_stream)
+        async with wrapper:
+            async for _chunk in wrapper:
+                pass
+        message = await wrapper.get_final_message()
+        if not message.usage_metadata:
             logger.warning("ChatGPTOAuthProvider.generate: response had no usage metadata; billing may be skipped")
-        return Message(
-            role="assistant",
-            content=content_blocks,
-            tool_calls=tool_use_blocks or None,
-            stop_reason=_stop_reason_from_response(response, bool(tool_use_blocks)),
-            usage_metadata=usage_metadata,
-        )
+        return message

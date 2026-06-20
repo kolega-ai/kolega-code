@@ -203,15 +203,15 @@ class _FakeResponses:
 
 
 @pytest.mark.asyncio
-async def test_provider_generate_builds_responses_request():
+async def test_provider_generate_builds_codex_shaped_request():
     provider = ChatGPTOAuthProvider(token_manager=ChatGPTTokenManager(_tokens()))
-    response = _ns(
+    completed = _ns(
         output=[_ns(type="message", content=[_ns(type="output_text", text="hi")])],
         usage=_ns(input_tokens=3, output_tokens=2, total_tokens=5, input_tokens_details=None),
         status="completed",
         incomplete_details=None,
     )
-    fake = _FakeResponses(response)
+    fake = _FakeResponses(_FakeStream([_ns(type="response.completed", response=completed)]))
     provider.async_client = _ns(responses=fake)
 
     params = GenerationParams(max_completion_tokens=256, thinking="high")
@@ -219,17 +219,21 @@ async def test_provider_generate_builds_responses_request():
         MessageHistory([Message(role="user", content=[TextBlock(text="hello")])]),
         system=Message(role="system", content=[TextBlock(text="sys")]),
         params=params,
-        model="gpt-5-codex",
+        model="gpt-5.5",
     )
 
     assert message.get_text_content() == "hi"
     kwargs = fake.last_kwargs
-    assert kwargs["model"] == "gpt-5-codex"
+    assert kwargs["model"] == "gpt-5.5"
     assert kwargs["store"] is False
-    assert kwargs["stream"] is False
+    assert kwargs["stream"] is True  # backend is SSE-only; generate streams too
     assert kwargs["instructions"] == "sys"
-    assert kwargs["reasoning"] == {"effort": "high"}
-    assert kwargs["max_output_tokens"] == 256
+    assert kwargs["reasoning"] == {"effort": "high", "summary": "auto"}
+    assert kwargs["tool_choice"] == "auto"
+    assert kwargs["parallel_tool_calls"] is False
+    assert "prompt_cache_key" in kwargs
+    # Codex never sends max_output_tokens; sending it triggers a 400.
+    assert "max_output_tokens" not in kwargs
     assert kwargs["input"] == [{"role": "user", "content": [{"type": "input_text", "text": "hello"}]}]
 
 
@@ -240,7 +244,7 @@ async def test_provider_stream_returns_wrapper():
     stream = await provider.stream(
         MessageHistory([Message(role="user", content=[TextBlock(text="hi")])]),
         params=GenerationParams(),
-        model="gpt-5-codex",
+        model="gpt-5.5",
     )
     assert isinstance(stream, ResponsesStreamWrapper)
 
@@ -279,9 +283,9 @@ def test_llmclient_chatgpt_without_manager_raises():
 def test_agent_config_validates_with_chatgpt_tokens():
     config = AgentConfig(
         openai_chatgpt_tokens=_tokens(),
-        long_context_config=ModelConfig(provider=ModelProvider.OPENAI_CHATGPT, model="gpt-5-codex"),
-        fast_config=ModelConfig(provider=ModelProvider.OPENAI_CHATGPT, model="gpt-5-codex"),
-        thinking_config=ModelConfig(provider=ModelProvider.OPENAI_CHATGPT, model="gpt-5-codex"),
+        long_context_config=ModelConfig(provider=ModelProvider.OPENAI_CHATGPT, model="gpt-5.5"),
+        fast_config=ModelConfig(provider=ModelProvider.OPENAI_CHATGPT, model="gpt-5.5"),
+        thinking_config=ModelConfig(provider=ModelProvider.OPENAI_CHATGPT, model="gpt-5.5"),
     )
     assert config.get_api_key(ModelProvider.OPENAI_CHATGPT) == "at"
     manager = config.get_chatgpt_token_manager()
@@ -291,7 +295,7 @@ def test_agent_config_validates_with_chatgpt_tokens():
 def test_agent_config_without_tokens_rejects_chatgpt_provider():
     with pytest.raises(ValueError, match="signed in"):
         AgentConfig(
-            long_context_config=ModelConfig(provider=ModelProvider.OPENAI_CHATGPT, model="gpt-5-codex"),
-            fast_config=ModelConfig(provider=ModelProvider.OPENAI_CHATGPT, model="gpt-5-codex"),
-            thinking_config=ModelConfig(provider=ModelProvider.OPENAI_CHATGPT, model="gpt-5-codex"),
+            long_context_config=ModelConfig(provider=ModelProvider.OPENAI_CHATGPT, model="gpt-5.5"),
+            fast_config=ModelConfig(provider=ModelProvider.OPENAI_CHATGPT, model="gpt-5.5"),
+            thinking_config=ModelConfig(provider=ModelProvider.OPENAI_CHATGPT, model="gpt-5.5"),
         )

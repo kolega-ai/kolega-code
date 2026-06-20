@@ -36,10 +36,13 @@ EXTRA_AUTHORIZE_PARAMS = {
 # Inference backend (Responses API only).
 INFERENCE_BASE_URL = "https://chatgpt.com/backend-api/codex"
 # Default model selected after a successful ChatGPT sign-in.
-DEFAULT_MODEL = "gpt-5-codex"
+DEFAULT_MODEL = "gpt-5.5"
+# Codex identifies itself with these on the backend; the originator + a
+# codex_cli_rs User-Agent are what the backend expects from the Codex client.
 ORIGINATOR = "codex_cli_rs"
-OPENAI_BETA = "responses=experimental"
-ACCOUNT_ID_HEADER = "chatgpt-account-id"
+CODEX_VERSION = "0.50.0"
+USER_AGENT = f"codex_cli_rs/{CODEX_VERSION}"
+ACCOUNT_ID_HEADER = "ChatGPT-Account-ID"
 
 # Custom claims namespace inside the id_token / access_token JWT.
 AUTH_CLAIMS_NAMESPACE = "https://api.openai.com/auth"
