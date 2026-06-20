@@ -936,6 +936,7 @@ class BaseAgent(LogMixin):
             max_retries=model_config.rate_limits.max_retries,
             requests_per_minute=model_config.rate_limits.requests_per_minute,
             tokens_per_minute=model_config.rate_limits.tokens_per_minute,
+            token_manager=self.config.get_chatgpt_token_manager(),
         )
         response = await client.generate(
             model=model_config.model,

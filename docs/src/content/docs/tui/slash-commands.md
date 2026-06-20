@@ -40,6 +40,8 @@ These control the app and your session.
 | `/permissions` | Show or switch the shell/edit permission mode |
 | `/model` | Choose the active model |
 | `/effort` | Choose the active model's thinking effort |
+| `/login` | Sign in to a provider, e.g. `/login chatgpt` |
+| `/logout` | Sign out of a provider, e.g. `/logout chatgpt` |
 | `/gigacode` | Toggle [gigacode](../../gigacode/) workflow orchestration on or off |
 | `/copy` | Copy the last response to the clipboard |
 | `/version` | Show the Kolega Code version |
@@ -52,6 +54,10 @@ provider. You can also switch directly with `/model <name>`.
 
 Run `/effort` to open a selectable list of supported effort values for the
 active model. You can also switch directly with `/effort <level>`.
+
+Run `/login chatgpt` to sign in with a ChatGPT subscription and use OpenAI models
+without an API key; `/logout chatgpt` removes the stored credentials. See
+[Sign in with ChatGPT](../../configuration/sign-in-with-chatgpt/).
 
 Run `/init` to have the agent inspect the repository and create or update a
 concise root `AGENTS.md`. Extra text after the command is passed as focus or

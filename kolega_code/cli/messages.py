@@ -119,6 +119,19 @@ STATUS_TOKENS_UNKNOWN = "Token counts unavailable."
 # Logs
 LOG_IGNORED_EVENT = "Ignored non-display event: {event_type}"
 
+# Sign in with ChatGPT
+LOGIN_USAGE = "Usage: /login <provider>. Available providers: {targets}."
+LOGIN_UNKNOWN_TARGET = "Unknown login provider '{target}'. Available providers: {targets}."
+LOGOUT_USAGE = "Usage: /logout <provider>. Available providers: {targets}."
+LOGOUT_UNKNOWN_TARGET = "Unknown logout provider '{target}'. Available providers: {targets}."
+CHATGPT_LOGIN_STARTING = "Opening your browser to sign in to ChatGPT…"
+CHATGPT_LOGIN_URL = "If your browser did not open, visit this URL to sign in:\n{url}"
+CHATGPT_LOGIN_SUCCESS = "Signed in to ChatGPT as {email} on the {plan} plan."
+CHATGPT_LOGIN_FAILED = "ChatGPT sign-in failed: {error}"
+CHATGPT_LOGIN_SWITCH_FAILED = "Signed in, but could not switch to the ChatGPT provider: {error}"
+CHATGPT_LOGOUT_DONE = "Signed out of ChatGPT. Stored credentials were removed."
+CHATGPT_LOGOUT_NONE = "You are not signed in to ChatGPT."
+
 # Misc
 COPY_MACOS_FAILED = "Copied for supported terminals, but the macOS clipboard failed."
 STREAM_TRUNCATED = "[stream truncated to the last {chars} characters]"

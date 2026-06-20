@@ -57,6 +57,10 @@ export default defineConfig({
               slug: "configuration/providers-and-models",
             },
             {
+              label: "Sign in with ChatGPT",
+              slug: "configuration/sign-in-with-chatgpt",
+            },
+            {
               label: "Settings & API Keys",
               slug: "configuration/settings-and-api-keys",
             },

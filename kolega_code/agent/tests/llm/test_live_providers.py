@@ -18,7 +18,7 @@ import os
 
 import pytest
 
-from kolega_code.cli.config import API_KEY_ENV
+from kolega_code.cli.config import API_KEY_ENV, OAUTH_PROVIDERS
 from kolega_code.cli.provider_registry import default_model_for_provider
 from kolega_code.config import ModelProvider
 from kolega_code.llm.client import LLMClient
@@ -53,6 +53,10 @@ def _provider_default_models() -> list[tuple[str, str]]:
     added: set[str] = set()
     for provider_value, _model in MODEL_SPECS:
         if provider_value in added:
+            continue
+        # OAuth providers authenticate via interactive sign-in, not an env key, so
+        # they can't be driven from this key-based matrix (see test_chatgpt_live.py).
+        if ModelProvider(provider_value) in OAUTH_PROVIDERS:
             continue
         added.add(provider_value)
         model = default_model_for_provider(ModelProvider(provider_value))

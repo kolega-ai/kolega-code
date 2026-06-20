@@ -49,6 +49,8 @@ from textual.widgets import (
 from textual.widgets.option_list import Option
 
 from kolega_code.agent import AgentConfig, AgentEvent, CoderAgent, PlanningAgent, PromptExtension, ToolExtension
+from kolega_code.auth import constants as chatgpt_constants
+from kolega_code.auth.chatgpt_oauth import run_login_flow
 from kolega_code.agent.prompt_provider import AgentMode
 from kolega_code.agent.prompts import (
     PLANNING_QUESTION_PROMPT,
@@ -2007,7 +2009,10 @@ class KolegaCodeApp(App):
             provider = str(event.value)
             self._repopulate_model_select(provider, "model_select", "thinking_effort_select")
             try:
-                self.query_one("#api_key_input", Input).placeholder = self._api_key_placeholder(provider)
+                api_key_input = self.query_one("#api_key_input", Input)
+                api_key_input.placeholder = self._api_key_placeholder(provider)
+                # OAuth providers sign in via /login, so the key field is read-only.
+                api_key_input.disabled = provider == chatgpt_constants.PROVIDER_KEY
             except NoMatches:
                 pass
             return
@@ -2290,6 +2295,7 @@ class KolegaCodeApp(App):
             else theme.DEFAULT_THEME_NAME
         )
         api_key_input.placeholder = self._api_key_placeholder(provider)
+        api_key_input.disabled = provider == chatgpt_constants.PROVIDER_KEY
         self._populate_agent_model_rows()
         self._populate_web_search_controls()
         self._update_settings_status()
@@ -2501,7 +2507,9 @@ class KolegaCodeApp(App):
 
     async def _ensure_agent_from_settings(self, rebuild: bool = False) -> None:
         try:
-            config = build_agent_config(self.project_path, self.overrides, settings=self.settings)
+            config = build_agent_config(
+                self.project_path, self.overrides, settings=self.settings, settings_store=self.settings_store
+            )
         except CliConfigError as exc:
             self.config = None
             self._set_chat_enabled(False)
@@ -2913,6 +2921,8 @@ class KolegaCodeApp(App):
             "/permissions": self._command_permissions,
             "/model": self._command_model,
             "/effort": self._command_effort,
+            "/login": self._command_login,
+            "/logout": self._command_logout,
             "/gigacode": self._command_gigacode,
             "/theme": self._command_theme,
             "/copy": self._command_copy,
@@ -3158,6 +3168,94 @@ class KolegaCodeApp(App):
     def _match_model_value(self, model_options: list[tuple[str, str]], value: str) -> Optional[str]:
         clean_value = value.strip().lower()
         return next((model for _, model in model_options if model.lower() == clean_value), None)
+
+    # Providers the user can sign in to with /login <provider>. Add new targets
+    # here as more OAuth integrations land.
+    LOGIN_TARGETS: tuple[str, ...] = ("chatgpt",)
+
+    async def _command_login(self, args: str) -> None:
+        """Sign in to a provider: ``/login <provider>`` (e.g. ``/login chatgpt``)."""
+        target = args.strip().lower()
+        targets = ", ".join(self.LOGIN_TARGETS)
+        if target == "chatgpt":
+            await self._login_chatgpt()
+        elif target in ("", "help"):
+            self._add_conversation_entry(
+                ConversationEntry(kind="system", content=messages.LOGIN_USAGE.format(targets=targets))
+            )
+        else:
+            self._notify_user(
+                messages.LOGIN_UNKNOWN_TARGET.format(target=target, targets=targets), severity="warning"
+            )
+
+    async def _login_chatgpt(self) -> None:
+        """Start the browser "Sign in with ChatGPT" flow in a background worker.
+
+        The flow can wait up to a few minutes for the browser round-trip, so it
+        runs as a worker to keep the UI responsive.
+        """
+        if self._turn_active or self.agent_worker is not None:
+            self._show_composer_hint(messages.BLOCK_STOP_BEFORE_MODEL_SWITCH)
+            self._notify_user(messages.BLOCK_STOP_BEFORE_MODEL_SWITCH, severity="warning")
+            return
+        self._add_conversation_entry(ConversationEntry(kind="system", content=messages.CHATGPT_LOGIN_STARTING))
+        self.run_worker(self._do_chatgpt_login(), name="chatgpt-login", group="auth", exclusive=True)
+
+    def _on_login_url(self, url: str) -> None:
+        self._add_conversation_entry(
+            ConversationEntry(kind="system", content=messages.CHATGPT_LOGIN_URL.format(url=url))
+        )
+
+    async def _do_chatgpt_login(self) -> None:
+        try:
+            tokens = await run_login_flow(on_url=self._on_login_url)
+        except Exception as exc:  # LoginError / TokenRefreshError / unexpected
+            text = messages.CHATGPT_LOGIN_FAILED.format(error=exc)
+            self._notify_user(text, severity="error")
+            self._add_conversation_entry(ConversationEntry(kind="system", content=text, tone="error"))
+            return
+
+        self.settings.set_oauth_token(chatgpt_constants.PROVIDER_KEY, tokens.model_dump(mode="json"))
+        self.settings_store.save(self.settings)
+        self._add_conversation_entry(
+            ConversationEntry(
+                kind="system",
+                content=messages.CHATGPT_LOGIN_SUCCESS.format(
+                    email=tokens.email or "your ChatGPT account",
+                    plan=tokens.plan_type or "subscription",
+                ),
+            )
+        )
+        # Switch to the ChatGPT provider so it's usable immediately. The stored
+        # token is already saved above, so the agent rebuild inside _switch_model
+        # picks it up.
+        try:
+            await self._switch_model(chatgpt_constants.PROVIDER_KEY, chatgpt_constants.DEFAULT_MODEL)
+        except Exception as exc:
+            self._notify_user(messages.CHATGPT_LOGIN_SWITCH_FAILED.format(error=exc), severity="warning")
+
+    async def _command_logout(self, args: str) -> None:
+        """Sign out of a provider: ``/logout <provider>`` (e.g. ``/logout chatgpt``)."""
+        target = args.strip().lower()
+        targets = ", ".join(self.LOGIN_TARGETS)
+        if target == "chatgpt":
+            self._logout_chatgpt()
+        elif target in ("", "help"):
+            self._add_conversation_entry(
+                ConversationEntry(kind="system", content=messages.LOGOUT_USAGE.format(targets=targets))
+            )
+        else:
+            self._notify_user(
+                messages.LOGOUT_UNKNOWN_TARGET.format(target=target, targets=targets), severity="warning"
+            )
+
+    def _logout_chatgpt(self) -> None:
+        if not self.settings.has_oauth_token(chatgpt_constants.PROVIDER_KEY):
+            self._notify_user(messages.CHATGPT_LOGOUT_NONE, severity="warning")
+            return
+        self.settings.clear_oauth_token(chatgpt_constants.PROVIDER_KEY)
+        self.settings_store.save(self.settings)
+        self._notify_user(messages.CHATGPT_LOGOUT_DONE)
 
     async def _command_effort(self, args: str) -> None:
         provider, model = self._startup_model()
@@ -3954,6 +4052,11 @@ class KolegaCodeApp(App):
         self._refresh_status_dashboard()
 
     def _api_key_placeholder(self, provider: str) -> str:
+        if provider == chatgpt_constants.PROVIDER_KEY:
+            # OAuth provider: no API key — the field is informational only.
+            if self.settings.has_oauth_token(provider):
+                return "Signed in with ChatGPT — run /login chatgpt to switch accounts"
+            return "Run /login chatgpt to sign in with your ChatGPT subscription"
         if self.settings.has_api_key(provider):
             return "Stored API key will be kept if blank"
         model = get_ui_model(provider, (ui_model_options(provider) or [("", "")])[0][1])

@@ -136,6 +136,16 @@ MODEL_SPECS: Dict[Tuple[str, str], Dict[str, Any]] = {
             mode="openai_reasoning_effort",
         ),
     },
+    ("openai", "gpt-5.4"): {
+        "context_length": 400000,
+        "max_completion_tokens": 128000,
+        "default_temperature": 1.0,
+        "thinking_effort": ThinkingEffortSpec(
+            options=("none", "low", "medium", "high", "xhigh"),
+            default="medium",
+            mode="openai_reasoning_effort",
+        ),
+    },
     ("openai", "gpt-5.4-mini"): {
         "context_length": 400000,
         "max_completion_tokens": 128000,
@@ -144,6 +154,56 @@ MODEL_SPECS: Dict[Tuple[str, str], Dict[str, Any]] = {
             options=("none", "low", "medium", "high", "xhigh"),
             default="medium",
             mode="openai_reasoning_effort",
+        ),
+    },
+    # Note: gpt-5.3-codex-spark is intentionally NOT on the API-key `openai`
+    # provider — it's a Codex model that 404s on Chat Completions and is only
+    # reachable through the ChatGPT-subscription backend (openai_chatgpt) below.
+    # OpenAI via ChatGPT subscription (Responses API, OAuth). Model slugs mirror
+    # the Codex model picker; context/output limits mirror the API gpt-5.x specs
+    # and are server-enforced (we never send max_output_tokens).
+    ("openai_chatgpt", "gpt-5.5"): {
+        "context_length": 1050000,
+        "max_completion_tokens": 128000,
+        "default_temperature": 1.0,
+        "supports_temperature": False,
+        "thinking_effort": ThinkingEffortSpec(
+            options=("minimal", "low", "medium", "high", "xhigh"),
+            default="medium",
+            mode="openai_responses_reasoning",
+        ),
+    },
+    ("openai_chatgpt", "gpt-5.4"): {
+        "context_length": 400000,
+        "max_completion_tokens": 128000,
+        "default_temperature": 1.0,
+        "supports_temperature": False,
+        "thinking_effort": ThinkingEffortSpec(
+            options=("minimal", "low", "medium", "high"),
+            default="medium",
+            mode="openai_responses_reasoning",
+        ),
+    },
+    ("openai_chatgpt", "gpt-5.4-mini"): {
+        "context_length": 400000,
+        "max_completion_tokens": 128000,
+        "default_temperature": 1.0,
+        "supports_temperature": False,
+        "thinking_effort": ThinkingEffortSpec(
+            options=("minimal", "low", "medium", "high"),
+            default="medium",
+            mode="openai_responses_reasoning",
+        ),
+    },
+    ("openai_chatgpt", "gpt-5.3-codex-spark"): {
+        "context_length": 256000,
+        "max_completion_tokens": 128000,
+        "default_temperature": 1.0,
+        "supports_temperature": False,
+        "thinking_effort": ThinkingEffortSpec(
+            options=("minimal", "low", "medium"),
+            default="low",
+            mode="openai_responses_reasoning",
         ),
     },
     # Together.ai models
@@ -332,5 +392,11 @@ def build_thinking_request_params(provider: str, model_name: str, effort: Option
 
     if spec.mode == "openai_reasoning_effort":
         return {"reasoning_effort": normalized}
+
+    if spec.mode == "openai_responses_reasoning":
+        # The Responses API nests reasoning effort under a "reasoning" object,
+        # unlike Chat Completions' flat "reasoning_effort". Codex also sends
+        # summary=auto, which the ChatGPT backend expects.
+        return {"reasoning": {"effort": normalized, "summary": "auto"}}
 
     raise ValueError(f"Unknown thinking effort mode '{spec.mode}' for {_provider_value(provider)}/{model_name}.")
