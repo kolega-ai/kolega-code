@@ -329,7 +329,10 @@ async def test_tool_formats_results_and_streams(tool) -> None:
     backend.search = AsyncMock(return_value=response)
     with patch("kolega_code.agent.tool_backend.web_search_tool.build_search_backend", return_value=backend):
         result = await tool.web_search("cats", max_results=3)
-    assert "https://cats.test" in result and "Cats" in result and "meow" in result
+    # The URL appears as its own line (exact match, not a substring check).
+    assert any(line.strip() == "https://cats.test" for line in result.splitlines())
+    assert "Cats" in result
+    assert "meow" in result
     # A final (is_complete) streaming update is emitted.
     final = [c for c in tool.connection_manager.broadcast_event.call_args_list]
     assert final, "expected streaming updates"
