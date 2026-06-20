@@ -38,7 +38,13 @@ the [TUI](../../cli/overview/) or [`ask`](../../cli/ask/).
 
 ### Web
 
+- `web_search` — search the web for relevant pages and return ranked results.
 - `web_fetch` — fetch and parse a web page without a full browser.
+
+Use `web_search` when you do not already know the right URL, then follow up with
+`web_fetch` to read a result in depth. The default backend is keyless DuckDuckGo;
+Firecrawl, Tavily, and self-hosted SearXNG can be selected in Settings or with
+environment variables.
 
 ### Reasoning & memory
 
@@ -57,8 +63,8 @@ and `dispatch_general_agent`.
 Tools are gated by mode. In a read-only context — like [Plan mode](../../tui/modes/)
 or an investigation sub-agent — only non-mutating tools are available
 (`list_directory`, `read_entire_file`, `read_file_section`, `search_codebase`,
-`find_files_by_pattern`, `web_fetch`, `think_hard`, and reading memory). Editing
-files and running commands require Build mode's full toolset.
+`find_files_by_pattern`, `web_search`, `web_fetch`, `think_hard`, and reading
+memory). Editing files and running commands require Build mode's full toolset.
 
 This separation is what makes Plan mode safe to run against any codebase: the
 planning agent can look but not touch.

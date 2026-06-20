@@ -87,6 +87,18 @@ section.
 | `KOLEGA_CODE_STATE_DIR` | Override where settings and sessions are stored |
 | `KOLEGA_CODE_ENVIRONMENT` | Environment label attached to tracing/metadata (default `development`) |
 
+## Web search
+
+The `web_search` tool defaults to the keyless DuckDuckGo backend. Set a backend
+explicitly when you want a cloud provider or a self-hosted SearXNG instance.
+
+| Variable | Purpose |
+| --- | --- |
+| `KOLEGA_CODE_WEB_SEARCH_BACKEND` | Backend for `web_search`: `duckduckgo`, `firecrawl`, `tavily`, or `searxng` |
+| `FIRECRAWL_API_KEY` | Optional Firecrawl key for higher rate limits |
+| `TAVILY_API_KEY` | Tavily API key |
+| `SEARXNG_BASE_URL` | Base URL for a self-hosted SearXNG instance |
+
 ## Telemetry (Langfuse)
 
 Optional [Langfuse](https://langfuse.com/) tracing of LLM usage.
@@ -112,6 +124,9 @@ ANTHROPIC_API_KEY=
 KOLEGA_CODE_PROVIDER=moonshot
 KOLEGA_CODE_MODEL=kimi-k2.7-code
 KOLEGA_CODE_THINKING_EFFORT=auto
+
+# Optional: web search
+KOLEGA_CODE_WEB_SEARCH_BACKEND=duckduckgo
 
 # Optional: Langfuse tracing
 LANGFUSE_HOST=https://us.cloud.langfuse.com
