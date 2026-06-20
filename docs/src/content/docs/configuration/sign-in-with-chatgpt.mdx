@@ -1,0 +1,93 @@
+---
+title: Sign in with ChatGPT
+description: Use your ChatGPT subscription to run OpenAI models in Kolega Code, without an API key.
+---
+
+import { Aside, Steps } from '@astrojs/starlight/components';
+
+If you have a paid **ChatGPT** plan, you can use it to run OpenAI models in Kolega
+Code — no separate `OPENAI_API_KEY` required. Sign in once with `/login chatgpt`
+and Kolega Code uses your subscription for the **OpenAI (ChatGPT subscription)**
+provider.
+
+## Eligibility
+
+| Plan | Runs models |
+| --- | --- |
+| Plus | Yes |
+| Pro | Yes |
+| Business | Yes |
+| Free | No |
+
+A Free plan can sign in, but can't run models this way — use an
+[`OPENAI_API_KEY`](../providers-and-models/) instead.
+
+## Signing in
+
+<Steps>
+
+1. In the TUI composer, run:
+
+   ```text
+   /login chatgpt
+   ```
+
+2. Your browser opens to the ChatGPT sign-in page. Complete the sign-in there.
+   (If the browser doesn't open, the composer prints a URL you can paste in
+   yourself.)
+
+3. When sign-in finishes, the browser shows a confirmation page and Kolega Code
+   switches to the **OpenAI (ChatGPT subscription)** provider, ready to use.
+
+</Steps>
+
+## Models
+
+The ChatGPT-subscription provider (identifier `openai_chatgpt`) exposes the Codex
+model line-up:
+
+| Model | Label |
+| --- | --- |
+| `gpt-5.5` | GPT-5.5 — default, frontier coding and reasoning |
+| `gpt-5.4` | GPT-5.4 — strong everyday coding |
+| `gpt-5.4-mini` | GPT-5.4 Mini — fast and economical |
+| `gpt-5.3-codex-spark` | GPT-5.3 Codex Spark — ultra-fast |
+
+Switch between them with [`/model`](../../tui/slash-commands/) or from the
+**Settings** tab. Each model supports a reasoning **thinking effort** you can set
+with [`/effort`](../../tui/slash-commands/).
+
+## Where credentials live
+
+Sign-in tokens are stored in your `settings.json` under `oauth_tokens`, in the
+same [state directory](../settings-and-api-keys/#where-settings-live) as the rest
+of your settings, with `0600` permissions (readable and writable only by your
+user). They refresh automatically in the background, so a single sign-in keeps
+working across sessions.
+
+## Checking status
+
+`doctor` reports whether you're signed in, without exposing any token:
+
+```bash
+kolega-code doctor --project .
+```
+
+For the ChatGPT-subscription provider it shows `signed in as <email> (<plan>)` or
+`not signed in`. See [`doctor`](../../cli/doctor/).
+
+## Signing out
+
+To remove your stored ChatGPT credentials:
+
+```text
+/logout chatgpt
+```
+
+After signing out, switch to another provider — or sign in again with
+`/login chatgpt` — to keep working.
+
+<Aside type="tip">
+`/login` and `/logout` take a provider name so more sign-in options can be added
+over time. Today, `chatgpt` is the available target.
+</Aside>
