@@ -14,6 +14,13 @@ class ThinkingEffortSpec:
 # Dictionary mapping (provider, model_name) to model specifications
 # Each entry contains context_length (maximum input tokens), max_completion_tokens, default_temperature,
 # and optional model capability flags.
+#
+# ``supports_vision`` indicates whether a model accepts image input. When
+# uncertain, default to False (the safe failure mode is a clear "model doesn't
+# support images" message rather than a mid-conversation API error). The flag
+# is the single tunable knob and is consumed by ``supports_vision()`` below,
+# ``BaseAgent._unsupported_attachment_message`` (replacing the old hardcoded
+# DeepSeek guard), and the ``read_image`` tool gate.
 MODEL_SPECS: Dict[Tuple[str, str], Dict[str, Any]] = {
     # Anthropic models
     ("anthropic", "claude-opus-4-8"): {
@@ -21,6 +28,7 @@ MODEL_SPECS: Dict[Tuple[str, str], Dict[str, Any]] = {
         "max_completion_tokens": 128000,
         "default_temperature": 1.0,
         "supports_temperature": False,
+        "supports_vision": True,
         "thinking_effort": ThinkingEffortSpec(
             options=("low", "medium", "high", "xhigh", "max"),
             default="medium",
@@ -32,6 +40,7 @@ MODEL_SPECS: Dict[Tuple[str, str], Dict[str, Any]] = {
         "max_completion_tokens": 128000,
         "default_temperature": 1.0,
         "supports_temperature": False,
+        "supports_vision": True,
         "thinking_effort": ThinkingEffortSpec(
             options=("low", "medium", "high", "xhigh", "max"),
             default="medium",
@@ -42,6 +51,7 @@ MODEL_SPECS: Dict[Tuple[str, str], Dict[str, Any]] = {
         "context_length": 1000000,
         "max_completion_tokens": 128000,
         "default_temperature": 1.0,
+        "supports_vision": True,
         "thinking_effort": ThinkingEffortSpec(
             options=("low", "medium", "high", "max"),
             default="medium",
@@ -52,20 +62,22 @@ MODEL_SPECS: Dict[Tuple[str, str], Dict[str, Any]] = {
         "context_length": 1000000,
         "max_completion_tokens": 64000,
         "default_temperature": 1.0,
+        "supports_vision": True,
         "thinking_effort": ThinkingEffortSpec(
             options=("low", "medium", "high", "max"),
             default="medium",
             mode="anthropic_adaptive_effort",
         ),
     },
-    ("anthropic", "claude-sonnet-4-5-20250929"): {"context_length": 200000, "max_completion_tokens": 16384, "default_temperature": 1.0},
-    ("anthropic", "claude-opus-4-5-20251101"): {"context_length": 200000, "max_completion_tokens": 16384, "default_temperature": 1.0},
-    ("anthropic", "claude-haiku-4-5-20251001"): {"context_length": 200000, "max_completion_tokens": 16384, "default_temperature": 1.0},
+    ("anthropic", "claude-sonnet-4-5-20250929"): {"context_length": 200000, "max_completion_tokens": 16384, "default_temperature": 1.0, "supports_vision": True},
+    ("anthropic", "claude-opus-4-5-20251101"): {"context_length": 200000, "max_completion_tokens": 16384, "default_temperature": 1.0, "supports_vision": True},
+    ("anthropic", "claude-haiku-4-5-20251001"): {"context_length": 200000, "max_completion_tokens": 16384, "default_temperature": 1.0, "supports_vision": True},
     # Moonshot models (recommended default first)
     ("moonshot", "kimi-k2.7-code"): {
         "context_length": 262144,
         "max_completion_tokens": 32768,
         "default_temperature": 1.0,
+        "supports_vision": True,
         "thinking_effort": ThinkingEffortSpec(
             options=("auto",),
             default="auto",
@@ -76,6 +88,7 @@ MODEL_SPECS: Dict[Tuple[str, str], Dict[str, Any]] = {
         "context_length": 262144,
         "max_completion_tokens": 32768,
         "default_temperature": 1.0,
+        "supports_vision": True,
         "thinking_effort": ThinkingEffortSpec(
             options=("auto", "none"),
             default="auto",
@@ -86,6 +99,7 @@ MODEL_SPECS: Dict[Tuple[str, str], Dict[str, Any]] = {
         "context_length": 262144,
         "max_completion_tokens": 32768,
         "default_temperature": 1.0,
+        "supports_vision": True,
         "thinking_effort": ThinkingEffortSpec(
             options=("auto",),
             default="auto",
@@ -98,6 +112,7 @@ MODEL_SPECS: Dict[Tuple[str, str], Dict[str, Any]] = {
         "context_length": 262144,
         "max_completion_tokens": 32768,
         "default_temperature": 1.0,
+        "supports_vision": True,
         "thinking_effort": ThinkingEffortSpec(
             options=("auto", "none"),
             default="auto",
@@ -109,6 +124,7 @@ MODEL_SPECS: Dict[Tuple[str, str], Dict[str, Any]] = {
         "context_length": 1000000,
         "max_completion_tokens": 384000,
         "default_temperature": 1.0,
+        "supports_vision": False,
         "thinking_effort": ThinkingEffortSpec(
             options=("none", "high", "max"),
             default="high",
@@ -119,6 +135,7 @@ MODEL_SPECS: Dict[Tuple[str, str], Dict[str, Any]] = {
         "context_length": 1000000,
         "max_completion_tokens": 384000,
         "default_temperature": 1.0,
+        "supports_vision": False,
         "thinking_effort": ThinkingEffortSpec(
             options=("none", "high", "max"),
             default="high",
@@ -130,6 +147,7 @@ MODEL_SPECS: Dict[Tuple[str, str], Dict[str, Any]] = {
         "context_length": 1050000,
         "max_completion_tokens": 128000,
         "default_temperature": 1.0,
+        "supports_vision": True,
         "thinking_effort": ThinkingEffortSpec(
             options=("none", "low", "medium", "high", "xhigh"),
             default="medium",
@@ -140,6 +158,7 @@ MODEL_SPECS: Dict[Tuple[str, str], Dict[str, Any]] = {
         "context_length": 400000,
         "max_completion_tokens": 128000,
         "default_temperature": 1.0,
+        "supports_vision": True,
         "thinking_effort": ThinkingEffortSpec(
             options=("none", "low", "medium", "high", "xhigh"),
             default="medium",
@@ -150,6 +169,7 @@ MODEL_SPECS: Dict[Tuple[str, str], Dict[str, Any]] = {
         "context_length": 400000,
         "max_completion_tokens": 128000,
         "default_temperature": 1.0,
+        "supports_vision": True,
         "thinking_effort": ThinkingEffortSpec(
             options=("none", "low", "medium", "high", "xhigh"),
             default="medium",
@@ -167,6 +187,7 @@ MODEL_SPECS: Dict[Tuple[str, str], Dict[str, Any]] = {
         "max_completion_tokens": 128000,
         "default_temperature": 1.0,
         "supports_temperature": False,
+        "supports_vision": True,
         "thinking_effort": ThinkingEffortSpec(
             options=("minimal", "low", "medium", "high", "xhigh"),
             default="medium",
@@ -178,6 +199,7 @@ MODEL_SPECS: Dict[Tuple[str, str], Dict[str, Any]] = {
         "max_completion_tokens": 128000,
         "default_temperature": 1.0,
         "supports_temperature": False,
+        "supports_vision": True,
         "thinking_effort": ThinkingEffortSpec(
             options=("minimal", "low", "medium", "high"),
             default="medium",
@@ -189,6 +211,7 @@ MODEL_SPECS: Dict[Tuple[str, str], Dict[str, Any]] = {
         "max_completion_tokens": 128000,
         "default_temperature": 1.0,
         "supports_temperature": False,
+        "supports_vision": True,
         "thinking_effort": ThinkingEffortSpec(
             options=("minimal", "low", "medium", "high"),
             default="medium",
@@ -200,6 +223,7 @@ MODEL_SPECS: Dict[Tuple[str, str], Dict[str, Any]] = {
         "max_completion_tokens": 128000,
         "default_temperature": 1.0,
         "supports_temperature": False,
+        "supports_vision": True,
         "thinking_effort": ThinkingEffortSpec(
             options=("minimal", "low", "medium"),
             default="low",
@@ -207,13 +231,14 @@ MODEL_SPECS: Dict[Tuple[str, str], Dict[str, Any]] = {
         ),
     },
     # Together.ai models
-    ("together", "moonshotai/Kimi-K2.7-Code"): {"context_length": 262144, "max_completion_tokens": 32768, "default_temperature": 1.0},
-    ("together", "zai-org/GLM-5.1"): {"context_length": 202752, "max_completion_tokens": 16384, "default_temperature": 1.0},
+    ("together", "moonshotai/Kimi-K2.7-Code"): {"context_length": 262144, "max_completion_tokens": 32768, "default_temperature": 1.0, "supports_vision": True},
+    ("together", "zai-org/GLM-5.1"): {"context_length": 202752, "max_completion_tokens": 16384, "default_temperature": 1.0, "supports_vision": False},
     # Google models
     ("google", "gemini-3.1-pro-preview"): {
         "context_length": 1048576,
         "max_completion_tokens": 65536,
         "default_temperature": 1.0,
+        "supports_vision": True,
         "thinking_effort": ThinkingEffortSpec(
             options=("low", "medium", "high"),
             default="high",
@@ -224,6 +249,7 @@ MODEL_SPECS: Dict[Tuple[str, str], Dict[str, Any]] = {
         "context_length": 1048576,
         "max_completion_tokens": 65536,
         "default_temperature": 1.0,
+        "supports_vision": True,
         "thinking_effort": ThinkingEffortSpec(
             options=("minimal", "low", "medium", "high"),
             default="medium",
@@ -235,13 +261,14 @@ MODEL_SPECS: Dict[Tuple[str, str], Dict[str, Any]] = {
         "context_length": 1000000,
         "max_completion_tokens": 16384,
         "default_temperature": 0.6,
+        "supports_vision": True,
         "thinking_effort": ThinkingEffortSpec(
             options=("none", "low", "medium", "high"),
             default="low",
             mode="openai_reasoning_effort",
         ),
     },
-    ("xai", "grok-build-0.1"): {"context_length": 256000, "max_completion_tokens": 16384, "default_temperature": 0.6},
+    ("xai", "grok-build-0.1"): {"context_length": 256000, "max_completion_tokens": 16384, "default_temperature": 0.6, "supports_vision": False},
     # Fireworks models (OpenAI-compatible endpoint). Fireworks reasoning models
     # expose reasoning_content in responses and accept flat reasoning_effort
     # values on chat completions. "none" disables reasoning.
@@ -249,6 +276,7 @@ MODEL_SPECS: Dict[Tuple[str, str], Dict[str, Any]] = {
         "context_length": 1048576,
         "max_completion_tokens": 131072,
         "default_temperature": 1.0,
+        "supports_vision": False,
         "thinking_effort": ThinkingEffortSpec(
             options=("none", "low", "medium", "high", "max"),
             default="medium",
@@ -259,6 +287,7 @@ MODEL_SPECS: Dict[Tuple[str, str], Dict[str, Any]] = {
         "context_length": 202800,
         "max_completion_tokens": 131072,
         "default_temperature": 1.0,
+        "supports_vision": False,
         "thinking_effort": ThinkingEffortSpec(
             options=("none", "low", "medium", "high", "max"),
             default="medium",
@@ -269,6 +298,7 @@ MODEL_SPECS: Dict[Tuple[str, str], Dict[str, Any]] = {
         "context_length": 262144,
         "max_completion_tokens": 262144,
         "default_temperature": 1.0,
+        "supports_vision": True,
         "thinking_effort": ThinkingEffortSpec(
             options=("none", "low", "medium", "high", "max"),
             default="medium",
@@ -279,6 +309,7 @@ MODEL_SPECS: Dict[Tuple[str, str], Dict[str, Any]] = {
         "context_length": 1048576,
         "max_completion_tokens": 384000,
         "default_temperature": 1.0,
+        "supports_vision": False,
         "thinking_effort": ThinkingEffortSpec(
             options=("none", "low", "medium", "high", "max"),
             default="medium",
@@ -289,6 +320,7 @@ MODEL_SPECS: Dict[Tuple[str, str], Dict[str, Any]] = {
         "context_length": 1048576,
         "max_completion_tokens": 384000,
         "default_temperature": 1.0,
+        "supports_vision": False,
         "thinking_effort": ThinkingEffortSpec(
             options=("none", "low", "medium", "high", "max"),
             default="medium",
@@ -299,6 +331,7 @@ MODEL_SPECS: Dict[Tuple[str, str], Dict[str, Any]] = {
         "context_length": 512000,
         "max_completion_tokens": 512000,
         "default_temperature": 1.0,
+        "supports_vision": True,
         "thinking_effort": ThinkingEffortSpec(
             options=("none", "low", "medium", "high", "max"),
             default="medium",
@@ -309,6 +342,7 @@ MODEL_SPECS: Dict[Tuple[str, str], Dict[str, Any]] = {
         "context_length": 262144,
         "max_completion_tokens": 65536,
         "default_temperature": 1.0,
+        "supports_vision": False,
         "thinking_effort": ThinkingEffortSpec(
             options=("none", "low", "medium", "high", "max"),
             default="medium",
@@ -316,13 +350,14 @@ MODEL_SPECS: Dict[Tuple[str, str], Dict[str, Any]] = {
         ),
     },
     # DashScope / Qwen models
-    ("dashscope", "qwen3-coder-plus"): {"context_length": 1000000, "max_completion_tokens": 65536, "default_temperature": 0.7},
-    ("dashscope", "qwen3-coder-flash"): {"context_length": 1000000, "max_completion_tokens": 65536, "default_temperature": 0.7},
+    ("dashscope", "qwen3-coder-plus"): {"context_length": 1000000, "max_completion_tokens": 65536, "default_temperature": 0.7, "supports_vision": False},
+    ("dashscope", "qwen3-coder-flash"): {"context_length": 1000000, "max_completion_tokens": 65536, "default_temperature": 0.7, "supports_vision": False},
     # Z.AI (GLM Coding Plan) models — Anthropic-compatible endpoint (recommended default first)
     ("zai", "glm-5.2"): {
         "context_length": 1000000,
         "max_completion_tokens": 131072,
         "default_temperature": 0.6,
+        "supports_vision": False,
         "thinking_effort": ThinkingEffortSpec(
             options=("high", "max"),
             default="max",
@@ -333,6 +368,7 @@ MODEL_SPECS: Dict[Tuple[str, str], Dict[str, Any]] = {
         "context_length": 202752,
         "max_completion_tokens": 16384,
         "default_temperature": 0.6,
+        "supports_vision": False,
         # GLM-5.1 predates GLM-5.2's named effort levels, so it's a plain
         # enable/disable toggle (no output_config.effort).
         "thinking_effort": ThinkingEffortSpec(
@@ -367,6 +403,16 @@ def get_model_specs(provider: str, model_name: str) -> Dict[str, Any]:
         raise ValueError(f"Model {model_name} from provider {provider_str} is not supported.")
 
     return MODEL_SPECS.get(key)
+
+
+def supports_vision(provider: str, model_name: str) -> bool:
+    """Whether a model accepts image input.
+
+    Defaults to ``False`` for any entry that omits the flag, so a missing key
+    is safely treated as non-vision (a clear guard message beats a mid-flight
+    provider error).
+    """
+    return get_model_specs(provider, model_name).get("supports_vision", False)
 
 
 def get_thinking_effort_spec(provider: str, model_name: str) -> Optional[ThinkingEffortSpec]:

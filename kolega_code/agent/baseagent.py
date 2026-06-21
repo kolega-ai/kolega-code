@@ -34,7 +34,7 @@ from kolega_code.llm.exceptions import (
 )
 from kolega_code.llm.models import ImageBlock, Message, MessageHistory, TextBlock, ToolCall, ToolResult
 from kolega_code.llm.providers.models import TokenCount
-from kolega_code.llm.specs import get_model_specs
+from kolega_code.llm.specs import get_model_specs, supports_vision as model_supports_vision
 from kolega_code.permissions import (
     PermissionDecision,
     PermissionMode,
@@ -90,10 +90,6 @@ class BaseAgent(LogMixin):
     long_content_tool_calls = ["create_file", "replace_entire_file"]
     max_tool_result_chars_in_history = 100_000
     skill_content_pattern = re.compile(r'<skill_content name="[^"]+">')
-    deepseek_image_unsupported_message = (
-        "DeepSeek V4 Pro does not support image input via the DeepSeek API. "
-        "Remove the image or switch to a vision-capable model for this request."
-    )
 
     def __init__(
         self,
@@ -270,6 +266,11 @@ class BaseAgent(LogMixin):
         self.model_context_length = model_specs["context_length"]
         self.model_completion_tokens = model_specs["max_completion_tokens"]
         self.model_default_temperature = model_specs.get("default_temperature", 1.0)
+        # Whether this agent's primary model can accept image input. Read by the
+        # ToolCollection read_image tool gate (so non-vision models never see the
+        # tool) and used by _unsupported_attachment_message to reject image
+        # attachments for non-vision models with a clear message.
+        self.supports_vision = bool(model_specs.get("supports_vision", False))
 
         self.llm = context.create_llm_client(agent_name=self.agent_name)
 
@@ -480,18 +481,21 @@ class BaseAgent(LogMixin):
     # ------------------------------------------------------------------
 
     def _unsupported_attachment_message(self, attachments: Optional[List[Dict[str, Any]]]) -> Optional[str]:
+        if not any(attachment.get("type") == "image" for attachment in attachments or []):
+            return None
+
         provider = getattr(
             self.primary_model_config.provider,
             "value",
             self.primary_model_config.provider,
         )
-        if provider != ModelProvider.DEEPSEEK.value:
+        if model_supports_vision(provider, self.primary_model_config.model):
             return None
 
-        if any(attachment.get("type") == "image" for attachment in attachments or []):
-            return self.deepseek_image_unsupported_message
-
-        return None
+        return (
+            f"{self.primary_model_config.model} does not support image input. "
+            "Remove the image or switch to a vision-capable model for this request."
+        )
 
     def _attachment_blocks(self, attachments: Optional[List[Dict[str, Any]]]) -> List[Any]:
         """Convert attachment payloads into content blocks for a user message."""

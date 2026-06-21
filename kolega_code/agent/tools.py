@@ -19,6 +19,7 @@ from .tool_backend.glob_tool import GlobTool
 from .tool_backend.list_directory_tool import ListDirectoryTool
 from .tool_backend.memory_tool import MemoryTool
 from .tool_backend.read_file_tool import ReadFileTool
+from .tool_backend.read_image_tool import ReadImageTool
 from .tool_backend.replace_entire_file_tool import (
     ReplaceEntireFileTool,
 )
@@ -107,6 +108,7 @@ class ToolCollection(LogMixin):
         "web_fetch",
         "web_search",
         "sleep",
+        "read_image",
     ]
 
     browser_tools = [
@@ -360,6 +362,15 @@ class ToolCollection(LogMixin):
             self.caller,
             self.filesystem,
         )
+        self.read_image_tool = ReadImageTool(
+            self.project_path,
+            self.workspace_id,
+            self.thread_id,
+            self.connection_manager,
+            self.config,
+            self.caller,
+            self.filesystem,
+        )
         self.create_file_tool = CreateFileTool(
             self.project_path,
             self.workspace_id,
@@ -592,6 +603,33 @@ class ToolCollection(LogMixin):
         image_block = ImageBlock(image_type="base64", media_type="image/png", data=result["screenshot"])
 
         return [image_block]
+
+    async def read_image(self, path: str) -> List[Any]:
+        """
+        Read an image file from the project directory so you can see it. Use when the user references a screenshot, diagram, mockup, or other visual asset, or when visual inspection of a file in the workspace is needed. The image is returned for you to view directly.
+
+        When to use: the user asks you to look at an image/screenshot/mockup; you need to inspect a visual asset in the project; text-based reading is insufficient to understand a visual file.
+
+        Args:
+            path: Path to the image file. Relative to the project root is preferred; an absolute path is also accepted.
+
+        Returns:
+            The image, viewable directly.
+
+        Supported formats: PNG, JPEG, GIF, WebP, BMP.
+        """
+        # ChatGPT/Responses backend drops tool-result images, so return a
+        # plain-text hint instead of an ImageBlock for that provider.
+        cfg = getattr(self.caller, "primary_model_config", None)
+        if cfg is not None:
+            provider = getattr(cfg, "provider", None)
+            provider_value = getattr(provider, "value", provider)
+            if provider_value == "openai_chatgpt":
+                return (
+                    f"Image read from {path}, but the ChatGPT Responses backend cannot receive images in tool results. "
+                    "Ask the user to attach the image directly in the chat input instead."
+                )
+        return await self.read_image_tool.read_image(path)
 
     async def interact_with_browser(
         self, browser_id: str, action: str, selector: str, text: str, scroll_px: int
@@ -1482,6 +1520,10 @@ class ToolCollection(LogMixin):
             if getattr(self.caller, "sub_agent", False):
                 return False
             return bool(getattr(self.caller, "gigacode_enabled", False))
+
+        # Vision gate: read_image is only surfaced to vision-capable models.
+        if method_name == "read_image":
+            return bool(getattr(self.caller, "supports_vision", False))
 
         # Check custom tool groups first
         if self.tool_config.custom_tool_groups:

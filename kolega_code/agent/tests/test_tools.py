@@ -40,6 +40,8 @@ def agent_config() -> AgentConfig:
 def mock_base_agent() -> Mock:
     mock = Mock()
     mock.agent_name = "test_agent"
+    # Default: non-vision mock so the read_image tool gate excludes it.
+    mock.supports_vision = False
     return mock
 
 
@@ -661,3 +663,8 @@ class TestToolCollection:
 
         for tool_name in tool_names_browser:
             assert tool_name in ToolCollection.browser_tools
+
+    async def test_read_image_tool_is_registered(self) -> None:
+        """read_image is in read_only_tools and has a ToolCollection wrapper."""
+        assert "read_image" in ToolCollection.read_only_tools
+        assert hasattr(ToolCollection, "read_image")

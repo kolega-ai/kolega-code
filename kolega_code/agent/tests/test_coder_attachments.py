@@ -54,24 +54,34 @@ class _EmptyStream:
         return Message("assistant", [TextBlock("done")], stop_reason="end_turn")
 
 
-def test_deepseek_image_attachment_is_rejected_by_provider_check():
+def test_non_vision_image_attachment_is_rejected_by_provider_check():
     agent = object.__new__(BaseAgent)
-    agent.primary_model_config = SimpleNamespace(provider=ModelProvider.DEEPSEEK.value)
-
-    assert (
-        agent._unsupported_attachment_message([_image_attachment()])
-        == BaseAgent.deepseek_image_unsupported_message
+    agent.primary_model_config = SimpleNamespace(
+        provider=ModelProvider.DEEPSEEK.value, model="deepseek-v4-pro"
     )
 
+    message = agent._unsupported_attachment_message([_image_attachment()])
+    assert message is not None
+    assert "does not support image input" in message
+    assert "deepseek-v4-pro" in message
 
-def test_deepseek_attachment_check_allows_non_images_and_other_providers():
+
+def test_vision_image_attachment_is_allowed():
     agent = object.__new__(BaseAgent)
-    agent.primary_model_config = SimpleNamespace(provider=ModelProvider.DEEPSEEK)
+    agent.primary_model_config = SimpleNamespace(
+        provider=ModelProvider.ANTHROPIC, model="claude-opus-4-8"
+    )
+    assert agent._unsupported_attachment_message([_image_attachment()]) is None
+
+
+def test_attachment_check_allows_non_images_for_non_vision_model():
+    agent = object.__new__(BaseAgent)
+    agent.primary_model_config = SimpleNamespace(
+        provider=ModelProvider.DEEPSEEK, model="deepseek-v4-pro"
+    )
     assert agent._unsupported_attachment_message(None) is None
     assert agent._unsupported_attachment_message([{"type": "document", "data": "abc"}]) is None
-
-    agent.primary_model_config.provider = ModelProvider.ANTHROPIC
-    assert agent._unsupported_attachment_message([_image_attachment()]) is None
+    assert agent._unsupported_attachment_message([{"type": "file", "path": "a.py", "content": "x"}]) is None
 
 
 @pytest.mark.asyncio
@@ -95,7 +105,8 @@ async def test_coder_agent_rejects_deepseek_image_without_llm_call(tmp_path):
 
     assert len(chunks) == 1
     assert chunks[0]["type"] == "response"
-    assert chunks[0]["content"] == BaseAgent.deepseek_image_unsupported_message
+    assert "does not support image input" in chunks[0]["content"]
+    assert "deepseek-v4-pro" in chunks[0]["content"]
     assert chunks[0]["complete"] is True
     assert agent.history == []
     agent.llm.stream.assert_not_called()
@@ -270,12 +281,13 @@ class TestCoderAgentAttachments:
 async def test_coder_agent_process_message_imports():
     """Test that the coder agent has the necessary imports for image handling."""
     # This test verifies the imports are correct
-    from kolega_code.agent.coder import CoderAgent
+    from kolega_code.agent.coder import CoderAgent  # noqa: F401
     from kolega_code.llm.models import ImageBlock, TextBlock
 
     # Just verify the imports work
     assert ImageBlock is not None
     assert TextBlock is not None
+    assert CoderAgent is not None
 
 
 def test_attachment_blocks_mixes_images_and_files():

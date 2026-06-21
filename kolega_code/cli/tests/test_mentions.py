@@ -106,3 +106,33 @@ def test_build_file_attachments_accepts_absolute_path_inside_root(tmp_path: Path
     attachments, unresolved = build_file_attachments(f"@{tmp_path / 'inside.txt'}", tmp_path)
     assert unresolved == []
     assert attachments[0]["path"] == "inside.txt"
+
+
+def test_build_file_attachments_image_yields_image_attachment(tmp_path: Path) -> None:
+    import base64
+
+    payload = b"\x89PNG\r\n\x1a\nfake"
+    (tmp_path / "shot.png").write_bytes(payload)
+    attachments, unresolved = build_file_attachments("look at @shot.png", tmp_path)
+    assert unresolved == []
+    assert len(attachments) == 1
+    assert attachments[0]["type"] == "image"
+    assert attachments[0]["media_type"] == "image/png"
+    assert attachments[0]["path"] == "shot.png"
+    assert base64.b64decode(attachments[0]["data"]) == payload
+
+
+def test_build_file_attachments_non_image_still_file(tmp_path: Path) -> None:
+    (tmp_path / "code.py").write_text("print(1)", encoding="utf-8")
+    attachments, _ = build_file_attachments("see @code.py", tmp_path)
+    assert len(attachments) == 1
+    assert attachments[0]["type"] == "file"
+    assert attachments[0]["content"] == "print(1)"
+
+
+def test_build_file_attachments_jpeg_mention(tmp_path: Path) -> None:
+    (tmp_path / "photo.jpg").write_bytes(b"\xff\xd8\xff\xe0fake jpeg")
+    attachments, _ = build_file_attachments("@photo.jpg", tmp_path)
+    assert len(attachments) == 1
+    assert attachments[0]["type"] == "image"
+    assert attachments[0]["media_type"] == "image/jpeg"

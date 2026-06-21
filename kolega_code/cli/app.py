@@ -715,6 +715,7 @@ class ChatComposer(TextArea):
         Binding("down", "mention_next", "Next match", show=False, priority=True),
         Binding("tab", "mention_accept", "Complete path", show=False, priority=True),
         Binding("escape", "mention_dismiss", "Dismiss matches", show=False, priority=True),
+        Binding("ctrl+shift+v", "paste_clipboard_image", "Paste image", key_display="Ctrl+Shift+V", priority=True),
     ]
 
     MENTION_QUERY_RE = re.compile(r"(?:^|(?<=\s))@(\S*)$")
@@ -827,6 +828,52 @@ class ChatComposer(TextArea):
         dropdown = self.mention_dropdown()
         if dropdown is not None:
             dropdown.close()
+
+    def action_paste_clipboard_image(self) -> None:
+        app = self.app
+        app.run_worker(app._paste_clipboard_image_worker(), name="paste-image", group="turns")
+
+    async def on_paste(self, event: events.Paste) -> None:
+        text = event.text or ""
+        import base64 as _b64
+        from pathlib import Path as _Path
+
+        from kolega_code.utils.images import (
+            encode_image_attachment,
+            encode_image_file,
+            image_media_type,
+        )
+
+        stripped = text.strip()
+        if stripped.startswith("data:image/") and ";base64," in stripped:
+            header, _, b64data = stripped.partition(";base64,")
+            media_type = header[len("data:"):]  # e.g. image/png
+            try:
+                raw = _b64.b64decode(b64data)
+            except Exception:
+                # Not a valid data-URI image — fall through to default paste.
+                return
+            self.app.add_pending_image_attachment(
+                encode_image_attachment(raw, media_type, path="pasted-data-uri")
+            )
+            event.prevent_default()
+            event.stop()
+            return
+        if (
+            stripped
+            and "\n" not in stripped
+            and _Path(stripped).exists()
+            and image_media_type(stripped) is not None
+        ):
+            att = encode_image_file(_Path(stripped))
+            if att is not None:
+                att["path"] = stripped
+                self.app.add_pending_image_attachment(att)
+                event.prevent_default()
+                event.stop()
+                return
+        # No image detected — let TextArea's default _on_paste insert the text.
+        return
 
     def on_blur(self, event) -> None:
         dropdown = self.mention_dropdown()
@@ -1558,6 +1605,7 @@ class KolegaCodeApp(App):
         self._gigacode_enabled = False
         self._pending_question: Optional[PendingQuestion] = None
         self._pending_approval: Optional[PendingApproval] = None
+        self._pending_image_attachments: list[dict] = []
         self._permission_lock = asyncio.Lock()
         self._pending_model_selection: Optional[PendingModelSelection] = None
         self._pending_effort_selection: Optional[PendingEffortSelection] = None
@@ -1945,6 +1993,9 @@ class KolegaCodeApp(App):
             return
         event.composer.load_text("")
         attachments = self._build_mention_attachments(text)
+        if self._pending_image_attachments:
+            attachments = (attachments or []) + self._pending_image_attachments
+            self._pending_image_attachments.clear()
         self._add_conversation_entry(ConversationEntry(kind="user", content=text))
         self.agent_worker = self.run_worker(
             self._process_message(text, attachments), name="kolega-turn", group="turns", exclusive=True
@@ -3043,6 +3094,7 @@ class KolegaCodeApp(App):
 
     def _tui_command_handlers(self) -> dict[str, Callable[[str], Awaitable[None]]]:
         return {
+            "/attach": self._command_attach,
             "/init": self._command_init,
             "/plan": self._command_plan,
             "/build": self._command_build,
@@ -3077,6 +3129,58 @@ class KolegaCodeApp(App):
         composer.load_text("")
         await handler(args.strip())
         return True
+
+    def add_pending_image_attachment(self, attachment: dict) -> None:
+        """Stash a pending image attachment for the next submitted message."""
+        self._pending_image_attachments.append(attachment)
+        names = ", ".join(a.get("path", "image") for a in self._pending_image_attachments)
+        self._show_composer_hint(f"Attached images: {names} (press Enter to send)", tone="info")
+
+    async def _command_attach(self, args: str) -> None:
+        arg = args.strip()
+        if not arg:
+            self._show_composer_hint(
+                "Usage: /attach <path-to-image>  (PNG, JPEG, GIF, WebP, BMP)", tone="warning"
+            )
+            return
+        from pathlib import Path as _Path
+
+        from kolega_code.utils.images import encode_image_file
+
+        candidate = _Path(arg)
+        if not candidate.is_absolute():
+            candidate = (self.project_path / arg).resolve()
+        attachment = encode_image_file(candidate)
+        if attachment is None:
+            self._show_composer_hint(
+                f"Could not attach {arg}: not a supported image, missing, or too large (>20MB). Use /attach <path>",
+                tone="warning",
+            )
+            return
+        attachment["path"] = arg
+        self.add_pending_image_attachment(attachment)
+
+    async def _paste_clipboard_image_worker(self) -> None:
+        from kolega_code.cli.clipboard_image import read_clipboard_image
+        from kolega_code.utils.images import encode_image_attachment
+
+        result = await read_clipboard_image()
+        if result is None:
+            self._show_composer_hint(
+                "No image on the clipboard, or your terminal doesn't support image paste. "
+                "Use /attach <path> or @image.png instead.",
+                tone="warning",
+            )
+            return
+        data, media_type = result
+        if self.agent is not None and not getattr(self.agent, "supports_vision", False):
+            self._show_composer_hint(
+                "Pasted an image, but the current model does not support vision. "
+                "Switch with /model or attach anyway.",
+                tone="warning",
+            )
+        attachment = encode_image_attachment(data, media_type, path="clipboard")
+        self.add_pending_image_attachment(attachment)
 
     async def _command_plan(self, args: str) -> None:
         if self._mode_switch_blocked():

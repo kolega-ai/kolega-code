@@ -4,7 +4,6 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from kolega_code.agent.baseagent import BaseAgent
 from kolega_code.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
 from kolega_code.events import AgentConnectionManager
 from kolega_code.llm.models import Message, TextBlock, ToolCall
@@ -200,7 +199,8 @@ async def test_planning_agent_rejects_deepseek_image_without_llm_call(tmp_path, 
 
     assert len(chunks) == 1
     assert chunks[0]["type"] == "response"
-    assert chunks[0]["content"] == BaseAgent.deepseek_image_unsupported_message
+    assert "does not support image input" in chunks[0]["content"]
+    assert "deepseek-v4-pro" in chunks[0]["content"]
     assert chunks[0]["complete"] is True
     assert agent.history == []
     agent.llm.stream.assert_not_called()

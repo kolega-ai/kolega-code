@@ -74,6 +74,7 @@ def test_browser_agent_tools(project_path, mock_connection_manager, agent_config
         "interact_with_browser",
         "launch_browser",
         "list_browsers",
+        "read_image",
         "set_browser_select_value",
         "take_browser_screenshot",
     ]
@@ -100,6 +101,7 @@ def test_investigation_agent_tools(project_path, mock_connection_manager, agent_
         "list_directory",
         "read_entire_file",
         "read_file_section",
+        "read_image",
         "search_codebase",
         "sleep",
         "think_hard",
