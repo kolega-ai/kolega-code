@@ -3390,6 +3390,10 @@ class KolegaCodeApp(App):
         except Exception:
             pass
         self._restore_composer_placeholder()
+        if self.agent is not None and not getattr(self.agent, "supports_vision", False):
+            conversation = getattr(self.agent, "conversation", None)
+            if conversation is not None and conversation.has_image_blocks():
+                self._show_composer_hint(messages.MODEL_NON_VISION_IMAGE_HISTORY, tone="warning")
         self._notify_user(
             messages.MODEL_SWITCHED.format(
                 provider=provider,

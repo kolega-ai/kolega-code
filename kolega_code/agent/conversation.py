@@ -11,9 +11,88 @@ import logging
 import re
 from typing import Any, Dict, List, Optional
 
-from kolega_code.llm.models import Message, MessageHistory, TextBlock, ToolCall, ToolResult
+from kolega_code.llm.models import ImageBlock, Message, MessageHistory, TextBlock, ToolCall, ToolResult
 
 logger = logging.getLogger(__name__)
+
+
+def _image_placeholder(media_type: str, model_name: str) -> str:
+    """Text substituted for an image block when the active model can't see images."""
+    return f"[An image ({media_type}) was shared earlier in this thread but is not visible to {model_name}.]"
+
+
+def count_image_blocks(messages: List[Message]) -> int:
+    """Count ``ImageBlock`` instances across messages, including ones nested in tool results."""
+    count = 0
+    for message in messages:
+        if not isinstance(message.content, list):
+            continue
+        for block in message.content:
+            if isinstance(block, ImageBlock):
+                count += 1
+            elif isinstance(block, ToolResult) and isinstance(block.content, list):
+                count += sum(1 for inner in block.content if isinstance(inner, ImageBlock))
+    return count
+
+
+def replace_image_blocks_with_placeholders(messages: List[Message], model_name: str) -> List[Message]:
+    """Return a new message list with every ``ImageBlock`` replaced by a text placeholder.
+
+    Non-mutating: messages without images are returned as-is. When a replacement
+    occurs, new ``Message``/``ToolResult`` objects are built so the caller's stored
+    history is never altered — switching back to a vision-capable model restores
+    the original images. ``ImageBlock``s nested inside a ``ToolResult.content`` list
+    (e.g. from the ``read_image`` tool) are handled too.
+    """
+    result: List[Message] = []
+    for message in messages:
+        if not isinstance(message.content, list):
+            result.append(message)
+            continue
+        new_blocks: List[Any] = []
+        changed = False
+        for block in message.content:
+            if isinstance(block, ImageBlock):
+                new_blocks.append(TextBlock(text=_image_placeholder(block.media_type, model_name)))
+                changed = True
+            elif isinstance(block, ToolResult) and isinstance(block.content, list):
+                inner_new: List[Any] = []
+                inner_changed = False
+                for inner in block.content:
+                    if isinstance(inner, ImageBlock):
+                        inner_new.append(TextBlock(text=_image_placeholder(inner.media_type, model_name)))
+                        inner_changed = True
+                    else:
+                        inner_new.append(inner)
+                if inner_changed:
+                    new_blocks.append(
+                        ToolResult(
+                            tool_use_id=block.tool_use_id,
+                            content=inner_new,
+                            name=block.name,
+                            is_error=block.is_error,
+                            cache_checkpoint=block.cache_checkpoint,
+                            execution_id=block.execution_id,
+                        )
+                    )
+                    changed = True
+                else:
+                    new_blocks.append(block)
+            else:
+                new_blocks.append(block)
+        if changed:
+            result.append(
+                Message(
+                    role=message.role,
+                    content=new_blocks,
+                    stop_reason=message.stop_reason,
+                    tool_calls=message.tool_calls,
+                    usage_metadata=message.usage_metadata,
+                )
+            )
+        else:
+            result.append(message)
+    return result
 
 
 class Conversation:
@@ -74,6 +153,14 @@ class Conversation:
         self._history = MessageHistory([])
         self.summary = None
         self.compacted_through = 0
+
+    def has_image_blocks(self) -> bool:
+        """True if the effective (compaction-aware) history still carries any images.
+
+        Images folded into a compaction summary are already gone, so this reflects
+        only what would actually be sent to the model.
+        """
+        return count_image_blocks(list(self.effective_history())) > 0
 
     # ------------------------------------------------------------------
     # Appending

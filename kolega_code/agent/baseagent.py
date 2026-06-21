@@ -15,7 +15,7 @@ from .compression import CompactionResult, HistoryCompressor
 from kolega_code.config import AgentConfig, ModelProvider
 from kolega_code.events import AgentConnectionManager
 from .context import AgentContext, AgentServices, Telemetry, WorkspaceInfo
-from .conversation import Conversation
+from .conversation import Conversation, replace_image_blocks_with_placeholders
 from kolega_code.events import AgentEventEmitter
 from kolega_code.hooks import (
     NO_OP_DISPATCHER,
@@ -366,6 +366,21 @@ class BaseAgent(LogMixin):
         """
         return self.conversation.repaired(messages)
 
+    def _history_for_llm(self) -> MessageHistory:
+        """Build the message history to send to the LLM for this turn.
+
+        Compaction-aware and tool-call-repaired. For non-vision models, any
+        ``ImageBlock`` carried over from earlier turns (user attachments or
+        ``read_image`` tool results) is replaced with a text placeholder on this
+        request copy only — the stored history is never mutated, so switching
+        back to a vision-capable model restores the images.
+        """
+        effective = self.get_effective_history_for_llm()
+        fixed = self.fix_incomplete_tool_calls(list(effective))
+        if not self.supports_vision:
+            fixed = replace_image_blocks_with_placeholders(fixed, self.primary_model_config.model)
+        return MessageHistory(fixed)
+
     def mark_cache_checkpoint(self) -> None:
         """
         Mark the last message in history for caching and remove cache_control from all other messages.
@@ -522,9 +537,9 @@ class BaseAgent(LogMixin):
 
     async def count_current_context(self) -> TokenCount:
         self._sanitize_oversized_tool_results()
-        # Fix history before counting to get accurate count for what LLM will see
-        effective = self.get_effective_history_for_llm()
-        fixed_history = MessageHistory(self.fix_incomplete_tool_calls(list(effective)))
+        # History sent to the LLM (and to token counting): tool-call-repaired and,
+        # for non-vision models, stripped of image blocks from earlier turns.
+        fixed_history = self._history_for_llm()
         token_count = await self.llm.count_tokens(
             system=self.system_prompt,
             messages=fixed_history,
@@ -1308,9 +1323,9 @@ class BaseAgent(LogMixin):
                 response_uuid = str(uuid.uuid4())
                 thinking_uuid = str(uuid.uuid4())
 
-                # Fix history before sending to LLM to ensure valid tool call sequences
-                effective = self.get_effective_history_for_llm()
-                fixed_history = MessageHistory(self.fix_incomplete_tool_calls(list(effective)))
+                # History sent to the LLM: tool-call-repaired and, for non-vision
+                # models, stripped of image blocks carried over from earlier turns.
+                fixed_history = self._history_for_llm()
 
                 async with await self.llm.stream(
                     system=self.system_prompt,
