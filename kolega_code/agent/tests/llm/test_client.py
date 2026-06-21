@@ -52,6 +52,7 @@ from kolega_code.llm.models import (
     ToolResult,
 )
 from kolega_code.llm.providers.anthropic import AnthropicProvider, AnthropicStreamWrapper
+from kolega_code.llm.providers.openai import OpenAIProvider
 
 # Test data
 TEST_MESSAGES = MessageHistory([Message("user", [TextBlock("Hello, how are you?")])])
@@ -216,6 +217,148 @@ async def test_anthropic_stream_tool_use_start_execution_id_matches_final_tool_c
     assert final_message.tool_calls[0].id == "toolu_create_file"
     assert final_message.tool_calls[0].execution_id == execution_id
     assert final_message.content[0].execution_id == execution_id
+
+
+def test_fireworks_uses_openai_compatible_provider():
+    client = LLMClient("fireworks", "test-key")
+
+    assert isinstance(client.provider, OpenAIProvider)
+    assert not isinstance(client.provider, AnthropicProvider)
+    assert client.provider.provider_name == "fireworks"
+    assert client.provider.base_url == "https://api.fireworks.ai/inference/v1"
+
+
+@pytest.mark.asyncio
+async def test_fireworks_generate_maps_openai_provider_response_usage(capsys):
+    client = LLMClient("fireworks", "test-key")
+
+    class MessageObj:
+        content = "ok"
+        reasoning_content = "brief reasoning"
+        tool_calls = None
+
+    class Choice:
+        message = MessageObj()
+
+    class PromptTokenDetails:
+        cached_tokens = 76
+
+    class Usage:
+        prompt_tokens = 321
+        completion_tokens = 54
+        total_tokens = 375
+        prompt_tokens_details = PromptTokenDetails()
+
+    class OpenAIResponse:
+        choices = [Choice()]
+        usage = Usage()
+
+    create = AsyncMock(return_value=OpenAIResponse())
+    with patch.object(client.provider.async_client.chat.completions, "create", create):
+        response = await client.generate(
+            messages=TEST_MESSAGES,
+            system=TEST_SYSTEM,
+            model="accounts/fireworks/models/glm-5p2",
+            temperature=1.0,
+            max_completion_tokens=8,
+            thinking="high",
+        )
+
+    assert create.await_count == 1
+    assert create.await_args.kwargs["model"] == "accounts/fireworks/models/glm-5p2"
+    assert create.await_args.kwargs["reasoning_effort"] == "high"
+    assert response.usage_metadata == {
+        "provider": "fireworks",
+        "prompt_tokens": 321,
+        "completion_tokens": 54,
+        "total_tokens": 375,
+        "cache_read_input_tokens": 76,
+    }
+    assert response.content[0].type == "thinking"
+    assert response.content[1].text == "ok"
+    assert capsys.readouterr().out == ""
+
+
+@pytest.mark.asyncio
+async def test_fireworks_stream_final_message_maps_openai_usage():
+    client = LLMClient("fireworks", "test-key")
+
+    class Delta:
+        def __init__(self, content=None, reasoning_content=None):
+            self.content = content
+            self.reasoning_content = reasoning_content
+            self.tool_calls = []
+
+    class Choice:
+        def __init__(self, delta, finish_reason=None):
+            self.delta = delta
+            self.finish_reason = finish_reason
+
+    class PromptTokenDetails:
+        cached_tokens = 33
+
+    class Usage:
+        prompt_tokens = 11
+        completion_tokens = 22
+        total_tokens = 33
+        prompt_tokens_details = PromptTokenDetails()
+
+    class Chunk:
+        def __init__(self, delta, finish_reason=None, usage=None):
+            self.choices = [Choice(delta, finish_reason)]
+            self.usage = usage
+
+    class FakeOpenAIStream:
+        def __init__(self):
+            self._chunks = iter([
+                Chunk(Delta(reasoning_content="think ")),
+                Chunk(Delta(reasoning_content="hard")),
+                Chunk(Delta(content="ok"), finish_reason="stop", usage=Usage()),
+            ])
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            try:
+                return next(self._chunks)
+            except StopIteration:
+                raise StopAsyncIteration
+
+        async def aclose(self):
+            pass
+
+    create = AsyncMock(return_value=FakeOpenAIStream())
+    with patch.object(client.provider.async_client.chat.completions, "create", create):
+        fireworks_stream = await client.stream(
+            messages=TEST_MESSAGES,
+            system=TEST_SYSTEM,
+            model="accounts/fireworks/models/glm-5p2",
+            temperature=1.0,
+            max_completion_tokens=8,
+            thinking="low",
+        )
+
+        chunks = []
+        async with fireworks_stream as stream_ctx:
+            async for chunk in stream_ctx:
+                chunks.append(chunk)
+            final_message = await stream_ctx.get_final_message()
+
+    assert create.await_count == 1
+    assert create.await_args.kwargs["model"] == "accounts/fireworks/models/glm-5p2"
+    assert create.await_args.kwargs["reasoning_effort"] == "low"
+    assert [chunk.type for chunk in chunks] == ["thinking", "thinking", "text"]
+    assert final_message.content[0].type == "thinking"
+    assert final_message.content[0].thinking == "think hard"
+    assert final_message.content[1].text == "ok"
+    assert final_message.usage_metadata == {
+        "prompt_tokens": 11,
+        "completion_tokens": 22,
+        "total_tokens": 33,
+        "cache_read_input_tokens": 33,
+        "provider": "fireworks",
+    }
 
 
 @pytest.mark.asyncio

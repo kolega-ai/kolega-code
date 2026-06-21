@@ -112,7 +112,7 @@ class AnthropicProvider(BaseLLMProvider):
         self.async_client = AsyncAnthropic(api_key=api_key, base_url=base_url, max_retries=max_retries)
         self.sync_client = Anthropic(api_key=api_key, base_url=base_url, max_retries=max_retries)
         
-        # OpenAI-compatible Anthropic-shaped APIs do not expose messages/count_tokens,
+        # Anthropic-shaped compatible APIs generally do not expose messages/count_tokens,
         # so local counting is only a preflight context-size estimate for those models.
         # Billing/accounting must use provider response usage metadata instead.
         self.use_local_token_counting = (

@@ -242,9 +242,79 @@ MODEL_SPECS: Dict[Tuple[str, str], Dict[str, Any]] = {
         ),
     },
     ("xai", "grok-build-0.1"): {"context_length": 256000, "max_completion_tokens": 16384, "default_temperature": 0.6},
-    # Fireworks models
-    ("fireworks", "accounts/fireworks/models/glm-5p1"): {"context_length": 202752, "max_completion_tokens": 16384, "default_temperature": 1.0},
-    ("fireworks", "accounts/fireworks/models/kimi-k2p7-code"): {"context_length": 262144, "max_completion_tokens": 16384, "default_temperature": 1.0},
+    # Fireworks models (OpenAI-compatible endpoint). Fireworks reasoning models
+    # expose reasoning_content in responses and accept flat reasoning_effort
+    # values on chat completions. "none" disables reasoning.
+    ("fireworks", "accounts/fireworks/models/glm-5p2"): {
+        "context_length": 1048576,
+        "max_completion_tokens": 131072,
+        "default_temperature": 1.0,
+        "thinking_effort": ThinkingEffortSpec(
+            options=("none", "low", "medium", "high", "max"),
+            default="medium",
+            mode="openai_reasoning_effort",
+        ),
+    },
+    ("fireworks", "accounts/fireworks/models/glm-5p1"): {
+        "context_length": 202800,
+        "max_completion_tokens": 131072,
+        "default_temperature": 1.0,
+        "thinking_effort": ThinkingEffortSpec(
+            options=("none", "low", "medium", "high", "max"),
+            default="medium",
+            mode="openai_reasoning_effort",
+        ),
+    },
+    ("fireworks", "accounts/fireworks/models/kimi-k2p7-code"): {
+        "context_length": 262144,
+        "max_completion_tokens": 262144,
+        "default_temperature": 1.0,
+        "thinking_effort": ThinkingEffortSpec(
+            options=("none", "low", "medium", "high", "max"),
+            default="medium",
+            mode="openai_reasoning_effort",
+        ),
+    },
+    ("fireworks", "accounts/fireworks/models/deepseek-v4-pro"): {
+        "context_length": 1048576,
+        "max_completion_tokens": 384000,
+        "default_temperature": 1.0,
+        "thinking_effort": ThinkingEffortSpec(
+            options=("none", "low", "medium", "high", "max"),
+            default="medium",
+            mode="openai_reasoning_effort",
+        ),
+    },
+    ("fireworks", "accounts/fireworks/models/deepseek-v4-flash"): {
+        "context_length": 1048576,
+        "max_completion_tokens": 384000,
+        "default_temperature": 1.0,
+        "thinking_effort": ThinkingEffortSpec(
+            options=("none", "low", "medium", "high", "max"),
+            default="medium",
+            mode="openai_reasoning_effort",
+        ),
+    },
+    ("fireworks", "accounts/fireworks/models/minimax-m3"): {
+        "context_length": 512000,
+        "max_completion_tokens": 512000,
+        "default_temperature": 1.0,
+        "thinking_effort": ThinkingEffortSpec(
+            options=("none", "low", "medium", "high", "max"),
+            default="medium",
+            mode="openai_reasoning_effort",
+        ),
+    },
+    ("fireworks", "accounts/fireworks/models/qwen3p7-plus"): {
+        "context_length": 262144,
+        "max_completion_tokens": 65536,
+        "default_temperature": 1.0,
+        "thinking_effort": ThinkingEffortSpec(
+            options=("none", "low", "medium", "high", "max"),
+            default="medium",
+            mode="openai_reasoning_effort",
+        ),
+    },
     # DashScope / Qwen models
     ("dashscope", "qwen3-coder-plus"): {"context_length": 1000000, "max_completion_tokens": 65536, "default_temperature": 0.7},
     ("dashscope", "qwen3-coder-flash"): {"context_length": 1000000, "max_completion_tokens": 65536, "default_temperature": 0.7},
@@ -391,6 +461,8 @@ def build_thinking_request_params(provider: str, model_name: str, effort: Option
         return {"thinking_config": {"thinking_level": normalized}}
 
     if spec.mode == "openai_reasoning_effort":
+        # OpenAI-compatible reasoning APIs use a flat reasoning_effort field.
+        # Fireworks additionally accepts "none" to disable reasoning.
         return {"reasoning_effort": normalized}
 
     if spec.mode == "openai_responses_reasoning":

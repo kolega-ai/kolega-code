@@ -118,12 +118,17 @@ starting point:
 # Pick one provider's key (or several)
 MOONSHOT_API_KEY=
 DEEPSEEK_API_KEY=
+FIREWORKS_API_KEY=
 ANTHROPIC_API_KEY=
 
 # Optional: choose models per role
 KOLEGA_CODE_PROVIDER=moonshot
 KOLEGA_CODE_MODEL=kimi-k2.7-code
 KOLEGA_CODE_THINKING_EFFORT=auto
+
+# Fireworks example:
+# KOLEGA_CODE_PROVIDER=fireworks
+# KOLEGA_CODE_MODEL=accounts/fireworks/models/glm-5p2
 
 # Optional: web search
 KOLEGA_CODE_WEB_SEARCH_BACKEND=duckduckgo

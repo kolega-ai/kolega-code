@@ -71,8 +71,13 @@ MODEL_LABELS: dict[str, str] = {
     "grok-4.3": "Grok 4.3",
     "grok-build-0.1": "Grok Build 0.1",
     # Fireworks
+    "accounts/fireworks/models/glm-5p2": "GLM-5.2",
     "accounts/fireworks/models/glm-5p1": "GLM-5.1",
     "accounts/fireworks/models/kimi-k2p7-code": "Kimi K2.7 Code",
+    "accounts/fireworks/models/deepseek-v4-pro": "DeepSeek V4 Pro",
+    "accounts/fireworks/models/deepseek-v4-flash": "DeepSeek V4 Flash",
+    "accounts/fireworks/models/minimax-m3": "MiniMax M3",
+    "accounts/fireworks/models/qwen3p7-plus": "Qwen 3.7 Plus",
     # Together
     "moonshotai/Kimi-K2.7-Code": "Kimi K2.7 Code",
     "zai-org/GLM-5.1": "GLM-5.1",
@@ -93,7 +98,7 @@ PROVIDER_DEFAULT_MODEL: dict[ModelProvider, str] = {
     ModelProvider.OPENAI_CHATGPT: "gpt-5.5",
     ModelProvider.GOOGLE: "gemini-3.1-pro-preview",
     ModelProvider.XAI: "grok-4.3",
-    ModelProvider.FIREWORKS: "accounts/fireworks/models/glm-5p1",
+    ModelProvider.FIREWORKS: "accounts/fireworks/models/glm-5p2",
     ModelProvider.TOGETHER: "moonshotai/Kimi-K2.7-Code",
     ModelProvider.DASHSCOPE: "qwen3-coder-plus",
 }

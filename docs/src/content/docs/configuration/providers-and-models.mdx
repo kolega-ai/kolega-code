@@ -45,11 +45,21 @@ with thinking effort `auto` (enabled) requests route to **K2.7 Code**, and with 
 (disabled) they route to **K2.6**. Set `KIMI_CODING_API_KEY` to your Kimi Coding Plan key.
 </Aside>
 
+<Aside type="tip">
+**Fireworks.ai.** The `fireworks` provider targets Fireworks' OpenAI-compatible
+serverless endpoint (`https://api.fireworks.ai/inference/v1`) with `FIREWORKS_API_KEY`.
+Fireworks model IDs use resource names such as `accounts/fireworks/models/glm-5p2`.
+Kolega Code exposes GLM-5.2, GLM-5.1, Kimi K2.7 Code, DeepSeek V4 Pro/Flash,
+MiniMax M3, and Qwen 3.7 Plus through the Settings UI and CLI. Fireworks reasoning
+models return `reasoning_content`; Kolega Code exposes `none`, `low`, `medium`,
+`high`, and `max` as `reasoning_effort` values for these models.
+</Aside>
+
 <Aside type="note">
-The **Settings tab** in the TUI currently offers a curated shortlist —
-**Moonshot (Kimi K2.7 Code and Kimi K2.6)** and **DeepSeek (DeepSeek V4 Pro)**.
-The full provider list above is available through environment variables and CLI
-flags. See [Settings & API Keys](../settings-and-api-keys/).
+The **Settings tab** in the TUI is generated from Kolega Code's model registry, so
+new entries in the supported model catalog appear there automatically. You can also
+select any supported provider/model through environment variables and CLI flags.
+See [Settings & API Keys](../settings-and-api-keys/).
 </Aside>
 
 ## Model roles
@@ -153,6 +163,7 @@ models in the TUI.
 | Moonshot `kimi-k2.6` | `auto`, `none` | `auto` |
 | Z.AI `glm-5.2` | `high`, `max` | `max` |
 | Z.AI `glm-5.1` | `auto`, `none` | `auto` |
+| Fireworks serverless reasoning models | `none`, `low`, `medium`, `high`, `max` | `medium` |
 | Google `gemini-2.5-pro` | `auto`, `low`, `medium`, `high` | `medium` |
 | OpenAI reasoning models | `low`, `medium`, `high` | `medium` |
 

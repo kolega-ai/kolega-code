@@ -254,7 +254,7 @@ class InstrumentedLLMClient(LLMClient):
                         "cache_read_input_tokens": usage_details.get("cache_read_input_tokens", 0),
                         "cache_creation_input_tokens": usage_details.get("cache_write_input_tokens", 0),
                     }
-                elif provider == "openai":
+                elif provider in ["openai", "fireworks"]:
                     normalized_usage = {
                         "input": usage_details.get("prompt_tokens", 0),
                         "output": usage_details.get("completion_tokens", 0),
@@ -503,7 +503,7 @@ class MinimalLangfuseStreamWrapper:
                 "cache_read_input_tokens": usage_metadata.get("cache_read_input_tokens", 0),
                 "cache_creation_input_tokens": usage_metadata.get("cache_write_input_tokens", 0),
             }
-        elif provider == "openai":
+        elif provider in ["openai", "fireworks"]:
             return {
                 "input": usage_metadata.get("prompt_tokens", 0),
                 "output": usage_metadata.get("completion_tokens", 0),
