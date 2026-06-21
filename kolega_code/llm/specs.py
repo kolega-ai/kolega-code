@@ -208,7 +208,7 @@ MODEL_SPECS: Dict[Tuple[str, str], Dict[str, Any]] = {
     },
     # Together.ai models
     ("together", "moonshotai/Kimi-K2.7-Code"): {"context_length": 262144, "max_completion_tokens": 32768, "default_temperature": 1.0},
-    ("together", "zai-org/GLM-5.1"): {"context_length": 202752, "max_completion_tokens": 16384, "default_temperature": 0.6},
+    ("together", "zai-org/GLM-5.1"): {"context_length": 202752, "max_completion_tokens": 16384, "default_temperature": 1.0},
     # Google models
     ("google", "gemini-3.1-pro-preview"): {
         "context_length": 1048576,
@@ -234,16 +234,16 @@ MODEL_SPECS: Dict[Tuple[str, str], Dict[str, Any]] = {
     ("xai", "grok-4.3"): {
         "context_length": 1000000,
         "max_completion_tokens": 16384,
-        "default_temperature": 1.0,
+        "default_temperature": 0.6,
         "thinking_effort": ThinkingEffortSpec(
             options=("none", "low", "medium", "high"),
             default="low",
             mode="openai_reasoning_effort",
         ),
     },
-    ("xai", "grok-build-0.1"): {"context_length": 256000, "max_completion_tokens": 16384, "default_temperature": 1.0},
+    ("xai", "grok-build-0.1"): {"context_length": 256000, "max_completion_tokens": 16384, "default_temperature": 0.6},
     # Fireworks models
-    ("fireworks", "accounts/fireworks/models/glm-5p1"): {"context_length": 202752, "max_completion_tokens": 16384, "default_temperature": 0.6},
+    ("fireworks", "accounts/fireworks/models/glm-5p1"): {"context_length": 202752, "max_completion_tokens": 16384, "default_temperature": 1.0},
     ("fireworks", "accounts/fireworks/models/kimi-k2p7-code"): {"context_length": 262144, "max_completion_tokens": 16384, "default_temperature": 1.0},
     # DashScope / Qwen models
     ("dashscope", "qwen3-coder-plus"): {"context_length": 1000000, "max_completion_tokens": 65536, "default_temperature": 0.7},
