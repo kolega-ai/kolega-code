@@ -27,10 +27,53 @@ class Conversation:
         *,
         max_tool_result_chars: int = 100_000,
     ) -> None:
-        self.history = MessageHistory(list(messages) if messages else [])
-        # Compression marker: index of the last message before a summary was appended
-        self.last_compression_index: Optional[int] = None
+        self._history = MessageHistory(list(messages) if messages else [])
+        # Compaction state: ``summary`` stands in for ``history[:compacted_through]``
+        # in the effective view; messages from ``compacted_through`` onward are kept
+        # verbatim. ``summary is None`` / ``compacted_through == 0`` means uncompacted.
+        self.summary: Optional[Message] = None
+        self.compacted_through: int = 0
         self.max_tool_result_chars = max_tool_result_chars
+
+    # ------------------------------------------------------------------
+    # History access (compaction-aware)
+    # ------------------------------------------------------------------
+
+    @property
+    def history(self) -> MessageHistory:
+        return self._history
+
+    @history.setter
+    def history(self, value) -> None:
+        # Wholesale replacement of the log invalidates any compaction boundary.
+        # Internal mutators that must preserve an active summary assign to
+        # ``self._history`` directly instead of going through this setter.
+        self._history = value if isinstance(value, MessageHistory) else MessageHistory(list(value))
+        self.summary = None
+        self.compacted_through = 0
+
+    @property
+    def last_compression_index(self) -> Optional[int]:
+        """Back-compat: index of the last message folded into the summary, or None."""
+        if self.summary is not None and self.compacted_through > 0:
+            return self.compacted_through - 1
+        return None
+
+    @last_compression_index.setter
+    def last_compression_index(self, value: Optional[int]) -> None:
+        # Legacy setter. The only meaningful operation is clearing the boundary;
+        # a real summary is recorded through ``apply_compaction``/``record_compression``.
+        if value is None:
+            self.summary = None
+            self.compacted_through = 0
+        else:
+            self.compacted_through = value + 1
+
+    def clear(self) -> None:
+        """Drop all history and reset compaction state."""
+        self._history = MessageHistory([])
+        self.summary = None
+        self.compacted_through = 0
 
     # ------------------------------------------------------------------
     # Appending
@@ -125,7 +168,9 @@ class Conversation:
     def extend(self, messages: List[Message]) -> None:
         """Extend history with multiple messages, repairing incomplete tool calls in the result."""
         all_messages = list(self.history) + messages
-        self.history = MessageHistory(self.repaired(all_messages))
+        # Assign to _history (not the public setter) so an active compaction survives
+        # appending live turns.
+        self._history = MessageHistory(self.repaired(all_messages))
 
     # ------------------------------------------------------------------
     # Views and validity
@@ -134,20 +179,17 @@ class Conversation:
     def effective_history(self) -> MessageHistory:
         """
         Return the subset of history to send to the LLM:
-        - If compressed: protected skill content + summary + all messages after the summary
-        - Else: the full history
+        - If compacted: protected skill content from the folded prefix, then the
+          summary, then the most-recent turns kept verbatim.
+        - Else: the full history.
         """
-        if self.last_compression_index is not None and self.history:
-            # Summary is the message immediately after the boundary
-            summary_idx = self.last_compression_index + 1
-            if summary_idx < len(self.history):
-                summary_msg = self.history[summary_idx]
-                protected = [message for message in self.history[:summary_idx] if self.is_protected(message)]
-                # Tail starts after the summary
-                tail = list(self.history[summary_idx + 1 :]) if summary_idx + 1 < len(self.history) else []
-                return MessageHistory(protected + [summary_msg] + tail)
+        if self.summary is not None and self.compacted_through > 0 and self._history:
+            cut = min(self.compacted_through, len(self._history))
+            protected = [message for message in self._history[:cut] if self.is_protected(message)]
+            tail = list(self._history[cut:])
+            return MessageHistory(protected + [self.summary] + tail)
 
-        return MessageHistory(list(self.history))
+        return MessageHistory(list(self._history))
 
     def is_protected(self, message: Message) -> bool:
         """True for user messages carrying skill content that must survive compression."""
@@ -388,9 +430,55 @@ class Conversation:
         return sanitized_count
 
     def record_compression(self, summary: Message) -> None:
-        """Append a compression summary and mark the boundary before it."""
-        self.history.append(summary)
-        self.last_compression_index = len(self.history) - 2
+        """Back-compat shim: fold the entire current history into ``summary``.
+
+        Newer callers use ``apply_compaction`` with an explicit split point so the
+        most recent turns are kept verbatim.
+        """
+        self.summary = (
+            summary if isinstance(summary, Message) else Message(role="user", content=[TextBlock(text=str(summary))])
+        )
+        self.compacted_through = len(self._history)
+
+    def apply_compaction(self, summary_text: str, split_point: int) -> None:
+        """Record ``summary_text`` as standing in for ``history[:split_point]``.
+
+        Non-destructive: the full history is untouched; only the compaction
+        boundary moves. Messages from ``split_point`` onward stay verbatim.
+        """
+        self.summary = Message(role="user", content=[TextBlock(text=summary_text)])
+        self.compacted_through = max(0, min(split_point, len(self._history)))
+
+    def compaction_split_point(self, *, keep_recent: int, min_prefix: int) -> Optional[int]:
+        """Index where the verbatim recent tail should begin.
+
+        Keeps the last ``keep_recent`` messages verbatim, then snaps the cut
+        backward so it never lands between an assistant tool_use and its
+        tool_result. Returns None when the prefix to summarize would be smaller
+        than ``min_prefix``.
+        """
+        n = len(self._history)
+        if n <= min_prefix:
+            return None
+        candidate = self._snap_to_safe_boundary(max(0, n - keep_recent))
+        if candidate < min_prefix:
+            return None
+        return candidate
+
+    def _snap_to_safe_boundary(self, idx: int) -> int:
+        """Move ``idx`` backward past any assistant tool_use so a tool_use/tool_result
+        group is never split across the compaction boundary."""
+        while idx > 0:
+            prev = self._history[idx - 1]
+            if (
+                prev.role == "assistant"
+                and isinstance(prev.content, list)
+                and any(isinstance(block, ToolCall) for block in prev.content)
+            ):
+                idx -= 1
+                continue
+            break
+        return idx
 
     # ------------------------------------------------------------------
     # Serialization

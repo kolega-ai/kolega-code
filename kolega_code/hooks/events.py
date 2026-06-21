@@ -26,6 +26,7 @@ class HookEvent(str, Enum):
     STOP = "Stop"
     SUBAGENT_STOP = "SubagentStop"
     PRE_COMPACT = "PreCompact"
+    POST_COMPACT = "PostCompact"
     NOTIFICATION = "Notification"
 
 

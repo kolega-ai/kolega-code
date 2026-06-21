@@ -1,7 +1,7 @@
 import os
 import uuid
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from dotenv import load_dotenv
@@ -25,6 +25,8 @@ from kolega_code.llm.models import (
     ToolCall,
     ToolResult,
 )
+
+from .compaction_helpers import FakeLLM
 
 # Load environment variables
 load_dotenv()
@@ -278,33 +280,31 @@ class TestBaseAgent:
         base_agent.history = MessageHistory(
             [Message(role=role, content=[TextBlock(text=text)]) for role, text in conversation]
         )
+        base_agent.system_prompt = Message(role="system", content=[TextBlock(text="sys")])
+        base_agent.tool_collection = MagicMock()
+        base_agent.tool_collection.get_tool_list = MagicMock(return_value=[])
+        base_agent.model_context_length = 1000
 
-        # Mock the LLM response
-        mock_response = Message(
-            role="assistant", content=[TextBlock(text="This is a compressed summary of the conversation")]
-        )
+        fake = FakeLLM(token_script=[300], summary_text="This is a compressed summary of the conversation")
+        base_agent.llm = fake
 
-        # Mock the LLM client's generate method
-        with patch.object(base_agent.llm, "generate", new_callable=AsyncMock) as mock_generate:
-            mock_generate.return_value = mock_response
+        result = await base_agent.compress_history()
 
-            # Call the method (non-destructive)
-            await base_agent.compress_history()
+        assert result.ok is True
+        # Non-destructive: full history retained; the summary is stored out-of-band.
+        assert len(base_agent.history) == len(conversation)
+        assert base_agent.conversation.summary is not None
+        assert base_agent.last_compression_index is not None
+        # Effective history keeps recent turns verbatim after the summary (fewer than the full log).
+        effective = base_agent.get_effective_history_for_llm()
+        assert len(effective) < len(conversation)
+        assert base_agent.history[-1] in list(effective)  # most recent turn kept verbatim
 
-            # Verify full history retained plus appended summary
-            assert len(base_agent.history) == len(conversation) + 1
-            # Verify markers set and effective history contains summary only (single-message effective)
-            assert base_agent.last_compression_index == len(conversation) - 1
-            effective = base_agent.get_effective_history_for_llm()
-            assert len(effective) == 1  # only the summary is used for LLM
-
-            # Verify the LLM was called with correct parameters
-            mock_generate.assert_called_once()
-            call_args = mock_generate.call_args[1]
-            assert call_args["model"] == base_agent.config.long_context_config.model
-            assert (
-                call_args["max_completion_tokens"] == base_agent.model_completion_tokens
-            )  # Use the model's actual limit
+        fake.stream.assert_awaited_once()
+        call_args = fake.stream.await_args.kwargs
+        assert call_args["model"] == base_agent.primary_model_config.model
+        # Summary budget is capped small (we are not aiming for a gigantic summary).
+        assert call_args["max_completion_tokens"] <= 2048
 
     @pytest.mark.asyncio
     async def testcompress_history_insufficient_history(self, base_agent):
@@ -319,17 +319,22 @@ class TestBaseAgent:
         base_agent.history = MessageHistory(
             [Message(role=role, content=[TextBlock(text=text)]) for role, text in conversation]
         )
+        base_agent.system_prompt = Message(role="system", content=[TextBlock(text="sys")])
+        base_agent.tool_collection = MagicMock()
+        base_agent.tool_collection.get_tool_list = MagicMock(return_value=[])
+        base_agent.model_context_length = 1000
 
-        # Mock the LLM client's generate method
-        with patch.object(base_agent.llm, "generate", new_callable=AsyncMock) as mock_generate:
-            # Call the method
-            await base_agent.compress_history()
+        fake = FakeLLM(token_script=[100])
+        base_agent.llm = fake
 
-            # Verify the history was not compressed
-            assert len(base_agent.history) == 4
-            assert all(isinstance(msg, Message) for msg in base_agent.history)
-            assert base_agent.history == base_agent.history  # History unchanged
-            mock_generate.assert_not_called()
+        result = await base_agent.compress_history()
+
+        # Too few messages to compress: nothing recorded, generate never called.
+        assert result.ok is False
+        assert result.reason == "too_few"
+        assert len(base_agent.history) == 4
+        assert base_agent.conversation.summary is None
+        fake.stream.assert_not_called()
 
     @pytest.mark.asyncio
     async def testcompress_history_error_handling(self, base_agent):
@@ -350,18 +355,22 @@ class TestBaseAgent:
         base_agent.history = MessageHistory(
             [Message(role=role, content=[TextBlock(text=text)]) for role, text in conversation]
         )
+        base_agent.system_prompt = Message(role="system", content=[TextBlock(text="sys")])
+        base_agent.tool_collection = MagicMock()
+        base_agent.tool_collection.get_tool_list = MagicMock(return_value=[])
+        base_agent.model_context_length = 1000
 
-        # Mock the LLM client's generate method to raise an exception
-        with patch.object(base_agent.llm, "generate", new_callable=AsyncMock) as mock_generate:
-            mock_generate.side_effect = Exception("Test error")
+        fake = FakeLLM(token_script=[100])
+        fake.stream = AsyncMock(side_effect=Exception("Test error"))
+        base_agent.llm = fake
 
-            # Call the method
-            await base_agent.compress_history()
+        result = await base_agent.compress_history()
 
-            # Verify the history was not modified
-            assert len(base_agent.history) == 10
-            assert all(isinstance(msg, Message) for msg in base_agent.history)
-            assert base_agent.history == base_agent.history  # History unchanged
+        # The failure is surfaced (not swallowed as success) and history is untouched.
+        assert result.ok is False
+        assert result.reason == "llm_error"
+        assert len(base_agent.history) == 10
+        assert base_agent.conversation.summary is None
 
     @pytest.mark.slow
     @pytest.mark.integration
@@ -407,25 +416,26 @@ class TestBaseAgent:
             [Message(role=role, content=[TextBlock(text=text)]) for role, text in conversation]
         )
 
-        # Store the last two messages for comparison
-        last_two_messages = base_agent.history[-2:]
+        base_agent.system_prompt = Message(role="system", content=[TextBlock(text="You are a helpful coding agent.")])
+        base_agent.tool_collection = MagicMock()
+        base_agent.tool_collection.get_tool_list = MagicMock(return_value=[])
+
+        # The most recent original message should survive compaction verbatim.
+        last_message = base_agent.history[-1]
 
         try:
-            # Call the method with real LLM
-            await base_agent.compress_history()
+            result = await base_agent.compress_history()
 
-            # Verify the summary was appended (allowing for environments where real LLM may be skipped)
-            assert len(base_agent.history) >= len(conversation)
+            assert result.ok is True
+            # Non-destructive: the full log is retained and the summary is recorded out-of-band.
+            assert len(base_agent.history) == len(conversation)
+            summary = base_agent.conversation.summary
+            assert summary is not None
+            assert summary.get_text_content().strip()
 
-            # Verify the summary message was appended at the end
-            summary_message = base_agent.history[-1]
-            assert isinstance(summary_message, Message)
-            assert summary_message.role == "user"
-            summary_text = summary_message.content[0].text
-            assert ("CONVERSATION HISTORY SUMMARY" in summary_text) or ("## Analysis Section" in summary_text)
-
-            # Verify the last two messages are still present just before the summary
-            assert base_agent.history[-3:-1] == last_two_messages
+            # The recent tail is kept verbatim in the effective view.
+            effective = list(base_agent.get_effective_history_for_llm())
+            assert last_message in effective
         except Exception as e:
             pytest.fail(f"Test failed with error: {str(e)}")
 
@@ -2079,13 +2089,10 @@ class TestBaseAgent:
                 Message(role="user", content=[TextBlock(text="c")]),
             ]
         )
-        base_agent.last_compression_index = 2
-        # Append a summary message as it would be after compression
-        base_agent.history.append(
-            Message(role="user", content=[TextBlock(text="CONVERSATION HISTORY SUMMARY (compressed at ...)")])
-        )
+        # Compact all three messages into a summary (empty verbatim tail).
+        base_agent.conversation.apply_compaction("CONVERSATION HISTORY SUMMARY (compressed at ...)", split_point=3)
         eff = base_agent.get_effective_history_for_llm()
-        # boundary is 2, so tail is after index 2 -> empty, but we still have summary
+        # everything folded, tail empty -> just the summary
         assert len(eff) == 1
         assert "CONVERSATION HISTORY SUMMARY" in eff[0].content[0].text
 

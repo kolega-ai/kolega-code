@@ -63,6 +63,7 @@ Both files use the same shape:
 | `PreToolUse` | Before a tool runs (after the permission gate) | Denies the tool; the reason is returned to the agent as a tool error, so it can adjust |
 | `PostToolUse` | After a tool succeeds (and on failure) | Ends the turn; the reason is shown as a warning |
 | `PreCompact` | Before the conversation is compacted | Advisory |
+| `PostCompact` | After the conversation is compacted | Advisory; payload reports before/after token counts |
 | `Stop` | The agent is about to finish its turn | Keeps the agent working; the reason becomes its next instruction |
 | `SubagentStop` | A dispatched sub-agent finished | Advisory; can annotate the result the parent sees |
 | `Notification` | A permission prompt is about to be shown | Advisory (desktop notifications, sounds) |
