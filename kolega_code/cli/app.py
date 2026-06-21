@@ -399,7 +399,14 @@ def _with_selection_offsets(strip: Strip, y: int) -> Strip:
 
 
 def _with_selection_style(strip: Strip, selection: Selection | None, y: int, selection_style: Style) -> Strip:
-    """Apply screen selection styling to Rich renderables that Textual can't style natively."""
+    """Apply the screen selection highlight to Rich renderables that Textual can't style natively.
+
+    Only the selection *background* is applied; each segment keeps its own foreground
+    color. The default ``$screen-selection-foreground`` is ``"transparent"``, so adding
+    the full selection style would override every segment's foreground and render the
+    selected glyphs invisible. Applying the background alone keeps selected text readable
+    across every theme while preserving per-role colors (user/agent/code).
+    """
     if selection is None:
         return strip
 
@@ -415,6 +422,10 @@ def _with_selection_style(strip: Strip, selection: Selection | None, y: int, sel
     end = max(start, min(end, line_length))
     if start == end:
         return strip
+
+    # Background only: Style.from_color(bgcolor=None) is an empty style, so a missing
+    # selection background degrades to "no highlight" rather than blanking the text.
+    selection_background = Style.from_color(bgcolor=selection_style.bgcolor)
 
     selected_segments: list[Segment] = []
     source_x = 0
@@ -441,7 +452,7 @@ def _with_selection_style(strip: Strip, selection: Selection | None, y: int, sel
 
         selected_text = text[selected_start:selected_end]
         if selected_text:
-            style = segment.style + selection_style if segment.style is not None else selection_style
+            style = segment.style + selection_background if segment.style is not None else selection_background
             selected_segments.append(Segment(selected_text, style, segment.control))
 
         if selected_end < len(text):
