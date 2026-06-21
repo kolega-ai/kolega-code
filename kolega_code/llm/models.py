@@ -769,6 +769,12 @@ class MessageChunk:
         """
         delta = chunk.choices[0].delta
 
+        # Fireworks and other OpenAI-compatible reasoning models stream their
+        # reasoning separately from answer text.
+        reasoning_content = getattr(delta, "reasoning_content", None)
+        if reasoning_content:
+            return cls(type="thinking", thinking=reasoning_content)
+
         # Handle text content
         if delta.content is not None:
             return cls(type="text", text=delta.content)
@@ -971,6 +977,12 @@ class Message:
         content_blocks = []
         tool_use_blocks = []
 
+        # OpenAI-compatible reasoning models (including Fireworks via Chat
+        # Completions) may return reasoning separately from answer text.
+        reasoning_content = getattr(message, "reasoning_content", None)
+        if reasoning_content:
+            content_blocks.append(ThinkingBlock(thinking=reasoning_content))
+
         # Handle content
         if hasattr(message, "content") and message.content:
             content_blocks.append(TextBlock(text=message.content))
@@ -1061,6 +1073,7 @@ class Message:
         cls,
         role: str,
         content: str,
+        reasoning_content: str = "",
         tool_calls: Optional[list] = None,
         stop_reason: Optional[str] = None,
         tool_execution_ids: Optional[ToolExecutionIdRegistry] = None,
@@ -1070,6 +1083,7 @@ class Message:
 
         Args:
             content: The content text from the OpenAI message
+            reasoning_content: Reasoning text from OpenAI-compatible reasoning models, if any
             tool_calls: List of tool calls from the OpenAI message, if any
             stop_reason: The reason why the generation stopped
 
@@ -1086,6 +1100,11 @@ class Message:
         tool_execution_ids = tool_execution_ids or ToolExecutionIdRegistry()
         content_blocks = []
         tool_use_blocks = []
+
+        # Handle reasoning content before answer text, matching Anthropic's
+        # thinking-then-text block order.
+        if reasoning_content:
+            content_blocks.append(ThinkingBlock(thinking=reasoning_content))
 
         # Handle content
         if content:

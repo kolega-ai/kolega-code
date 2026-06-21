@@ -14,13 +14,15 @@ from .models import GenerationParams, TokenCount
 
 
 class OpenAIStreamWrapper:
-    def __init__(self, openai_stream, requested_include_usage: bool = False):
+    def __init__(self, openai_stream, requested_include_usage: bool = False, provider_name: str = "openai"):
         self.openai_stream = openai_stream
         self.final_content = ""
+        self.final_reasoning_content = ""
         self.final_tool_calls = {}
         self.stop_reason = None
         self.usage_data = None
         self.tool_execution_ids = ToolExecutionIdRegistry()
+        self.provider_name = provider_name
 
         self._closed = False
         self._requested_include_usage = requested_include_usage
@@ -53,6 +55,10 @@ class OpenAIStreamWrapper:
                     content = getattr(delta, "content", None) or ""
                     if content:
                         self.final_content += content
+
+                    reasoning_content = getattr(delta, "reasoning_content", None) or ""
+                    if reasoning_content:
+                        self.final_reasoning_content += reasoning_content
 
                     for tool_call in getattr(delta, "tool_calls", []) or []:
                         index = tool_call.index
@@ -99,6 +105,7 @@ class OpenAIStreamWrapper:
         message = Message.from_openai_stream(
             role="assistant",
             content=self.final_content,
+            reasoning_content=self.final_reasoning_content,
             tool_calls=self.final_tool_calls,
             stop_reason=self.stop_reason,
             tool_execution_ids=self.tool_execution_ids,
@@ -107,7 +114,8 @@ class OpenAIStreamWrapper:
         # Add usage data if available
         if self.usage_data:
             message.usage_metadata.update(self.usage_data)
-        else:
+        message.usage_metadata["provider"] = self.provider_name
+        if not self.usage_data:
             logger = logging.getLogger(__name__)
             if self._requested_include_usage:
                 logger.warning(
@@ -328,6 +336,7 @@ class OpenAIProvider(BaseLLMProvider):
         return OpenAIStreamWrapper(
             await self.async_client.chat.completions.create(messages=messages.to_openai(), **generation_params),
             requested_include_usage=True,
+            provider_name=self.provider_name,
         )
 
     async def generate(
@@ -358,6 +367,7 @@ class OpenAIProvider(BaseLLMProvider):
 
         # Extract message and add usage data
         message = Message.from_openai(response.choices[0].message)
+        message.usage_metadata["provider"] = self.provider_name
 
         # Add usage data from the response
         if hasattr(response, "usage") and response.usage:

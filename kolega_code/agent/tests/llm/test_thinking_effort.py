@@ -23,6 +23,14 @@ def test_model_specs_expose_provider_specific_thinking_efforts() -> None:
     assert default_thinking_effort("zai", "glm-5.1") == "auto"
     assert thinking_effort_options("kimi_coding", "kimi-for-coding") == ("auto", "none")
     assert default_thinking_effort("kimi_coding", "kimi-for-coding") == "auto"
+    assert thinking_effort_options("fireworks", "accounts/fireworks/models/glm-5p2") == (
+        "none", "low", "medium", "high", "max"
+    )
+    assert default_thinking_effort("fireworks", "accounts/fireworks/models/glm-5p2") == "medium"
+    assert thinking_effort_options("fireworks", "accounts/fireworks/models/deepseek-v4-pro") == (
+        "none", "low", "medium", "high", "max"
+    )
+    assert default_thinking_effort("fireworks", "accounts/fireworks/models/deepseek-v4-pro") == "medium"
 
 
 def test_anthropic_opus_effort_uses_adaptive_thinking_without_budget_tokens() -> None:
@@ -106,6 +114,24 @@ def test_kimi_coding_thinking_toggle_serialization() -> None:
     disabled = {"model": "kimi-for-coding"}
     provider._apply_thinking_params(disabled, GenerationParams(thinking="none"))
     assert disabled == {"model": "kimi-for-coding", "thinking": {"type": "disabled"}}
+
+
+def test_fireworks_openai_reasoning_effort_serialization() -> None:
+    provider = OpenAIProvider(api_key="test-key", provider_name="fireworks")
+
+    high_params = {"model": "accounts/fireworks/models/glm-5p2"}
+    provider._apply_thinking_params(high_params, GenerationParams(thinking="high"))
+    assert high_params == {
+        "model": "accounts/fireworks/models/glm-5p2",
+        "reasoning_effort": "high",
+    }
+
+    disabled_params = {"model": "accounts/fireworks/models/glm-5p2"}
+    provider._apply_thinking_params(disabled_params, GenerationParams(thinking="none"))
+    assert disabled_params == {
+        "model": "accounts/fireworks/models/glm-5p2",
+        "reasoning_effort": "none",
+    }
 
 
 def test_google_gemini_3_pro_uses_thinking_level() -> None:

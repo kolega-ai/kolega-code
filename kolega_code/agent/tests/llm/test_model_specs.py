@@ -1,4 +1,4 @@
-from kolega_code.llm.specs import get_model_specs
+from kolega_code.llm.specs import get_model_specs, thinking_effort_options
 
 
 def test_kimi_k27_code_model_specs():
@@ -29,3 +29,23 @@ def test_deepseek_v4_pro_model_specs():
     assert specs["default_temperature"] == 1.0
     assert specs["thinking_effort"].options == ("none", "high", "max")
     assert specs["thinking_effort"].default == "high"
+
+
+def test_fireworks_serverless_model_specs():
+    expected = {
+        "accounts/fireworks/models/glm-5p2": (1048576, 131072),
+        "accounts/fireworks/models/glm-5p1": (202800, 131072),
+        "accounts/fireworks/models/kimi-k2p7-code": (262144, 262144),
+        "accounts/fireworks/models/deepseek-v4-pro": (1048576, 384000),
+        "accounts/fireworks/models/deepseek-v4-flash": (1048576, 384000),
+        "accounts/fireworks/models/minimax-m3": (512000, 512000),
+        "accounts/fireworks/models/qwen3p7-plus": (262144, 65536),
+    }
+
+    for model, (context_length, max_completion_tokens) in expected.items():
+        specs = get_model_specs("fireworks", model)
+        assert specs["context_length"] == context_length
+        assert specs["max_completion_tokens"] == max_completion_tokens
+        assert specs["default_temperature"] == 1.0
+        assert thinking_effort_options("fireworks", model) == ("none", "low", "medium", "high", "max")
+        assert specs["thinking_effort"].default == "medium"
