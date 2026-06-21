@@ -20,6 +20,12 @@ release branch.
 2. Update `pyproject.toml`, `uv.lock`, and package `__version__` values to the
    release version.
 
+   Running `uv lock` advances the `exclude-newer` cutoff recorded in `uv.lock`,
+   because `pyproject.toml` sets `exclude-newer = "1 week"` as a relative
+   duration. The cutoff timestamp moving forward, and any dependency versions
+   released within the new one-week window being pulled in, is expected and
+   acceptable. Do not revert these changes.
+
 3. Run the fast test suite:
 
    ```bash
