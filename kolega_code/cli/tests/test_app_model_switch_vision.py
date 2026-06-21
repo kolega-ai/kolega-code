@@ -89,6 +89,8 @@ async def test_switch_to_non_vision_model_with_image_history_warns(tmp_path, mon
         app._notify_user = lambda *a, **k: None
         hints: list[tuple] = []
         app._show_composer_hint = lambda text, tone="warning": hints.append((text, tone))
+        entries: list = []
+        app._add_conversation_entry = lambda entry: entries.append(entry)
 
         await app._switch_model("deepseek", DEEPSEEK_DEFAULT_MODEL)
 
@@ -96,6 +98,12 @@ async def test_switch_to_non_vision_model_with_image_history_warns(tmp_path, mon
         text, tone = hints[0]
         assert "images from earlier turns" in text
         assert tone == "warning"
+        # A persistent system message should also be added to the transcript.
+        assert entries, "expected a system message in the transcript"
+        system_entries = [e for e in entries if e.kind == "system"]
+        assert system_entries, "expected a kind='system' entry"
+        assert "images from earlier turns" in system_entries[0].content
+        assert system_entries[0].tone == "warning"
 
 
 @pytest.mark.asyncio
@@ -143,10 +151,13 @@ async def test_switch_to_vision_model_with_image_history_no_warn(tmp_path, monke
         app._notify_user = lambda *a, **k: None
         hints: list[tuple] = []
         app._show_composer_hint = lambda text, tone="warning": hints.append((text, tone))
+        entries: list = []
+        app._add_conversation_entry = lambda entry: entries.append(entry)
 
         await app._switch_model("anthropic", "claude-opus-4-8")
 
         assert hints == [], "vision-capable model should not trigger the image-history warning"
+        assert entries == [], "vision-capable model should not add a system message"
 
 
 @pytest.mark.asyncio
@@ -194,7 +205,10 @@ async def test_switch_to_non_vision_model_without_image_history_no_warn(tmp_path
         app._notify_user = lambda *a, **k: None
         hints: list[tuple] = []
         app._show_composer_hint = lambda text, tone="warning": hints.append((text, tone))
+        entries: list = []
+        app._add_conversation_entry = lambda entry: entries.append(entry)
 
         await app._switch_model("deepseek", DEEPSEEK_DEFAULT_MODEL)
 
         assert hints == [], "no image history should not trigger the warning"
+        assert entries == [], "no image history should not add a system message"

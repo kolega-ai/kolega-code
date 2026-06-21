@@ -509,7 +509,8 @@ class BaseAgent(LogMixin):
 
         return (
             f"{self.primary_model_config.model} does not support image input. "
-            "Remove the image or switch to a vision-capable model for this request."
+            "Your message was not sent to the model. "
+            "Remove the image attachment or switch to a vision-capable model with /model."
         )
 
     def _attachment_blocks(self, attachments: Optional[List[Dict[str, Any]]]) -> List[Any]:

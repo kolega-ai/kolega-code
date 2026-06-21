@@ -64,6 +64,7 @@ def test_non_vision_image_attachment_is_rejected_by_provider_check():
     assert message is not None
     assert "does not support image input" in message
     assert "deepseek-v4-pro" in message
+    assert "not sent to the model" in message
 
 
 def test_vision_image_attachment_is_allowed():
@@ -107,6 +108,7 @@ async def test_coder_agent_rejects_deepseek_image_without_llm_call(tmp_path):
     assert chunks[0]["type"] == "response"
     assert "does not support image input" in chunks[0]["content"]
     assert "deepseek-v4-pro" in chunks[0]["content"]
+    assert "not sent to the model" in chunks[0]["content"]
     assert chunks[0]["complete"] is True
     assert agent.history == []
     agent.llm.stream.assert_not_called()

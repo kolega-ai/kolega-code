@@ -1606,6 +1606,9 @@ class KolegaCodeApp(App):
         self._pending_question: Optional[PendingQuestion] = None
         self._pending_approval: Optional[PendingApproval] = None
         self._pending_image_attachments: list[dict] = []
+        # Dedup flag: one vision-mismatch system message per non-vision model
+        # session. Reset in _switch_model so a new model gets a fresh warning.
+        self._vision_warning_shown = False
         self._permission_lock = asyncio.Lock()
         self._pending_model_selection: Optional[PendingModelSelection] = None
         self._pending_effort_selection: Optional[PendingEffortSelection] = None
@@ -1996,6 +1999,18 @@ class KolegaCodeApp(App):
         if self._pending_image_attachments:
             attachments = (attachments or []) + self._pending_image_attachments
             self._pending_image_attachments.clear()
+        # Pre-send vision gate: block the send when the current model can't see
+        # images. This catches @file.png mentions (which bypass
+        # add_pending_image_attachment) and serves as a final gate for all
+        # attachment paths. History images are NOT blocked here — those are
+        # stripped to placeholders by _history_for_llm and the send proceeds.
+        if attachments and not self._model_supports_vision():
+            has_image = any(a.get("type") == "image" for a in attachments)
+            if has_image:
+                self._add_conversation_entry(ConversationEntry(kind="user", content=text))
+                self._add_vision_mismatch_system_message(context="attachment")
+                self._show_composer_hint(messages.MODEL_NON_VISION_IMAGE_BLOCKED, tone="warning")
+                return
         self._add_conversation_entry(ConversationEntry(kind="user", content=text))
         self.agent_worker = self.run_worker(
             self._process_message(text, attachments), name="kolega-turn", group="turns", exclusive=True
@@ -3130,11 +3145,58 @@ class KolegaCodeApp(App):
         await handler(args.strip())
         return True
 
+    def _model_supports_vision(self) -> bool:
+        """Safely check if the current agent's model supports vision input.
+
+        Returns ``False`` when no agent is loaded (conservative: images won't
+        work without a model, so a warning is the right default).
+        """
+        if self.agent is None:
+            return False
+        return getattr(self.agent, "supports_vision", False)
+
+    def _add_vision_mismatch_system_message(self, *, context: str) -> None:
+        """Add a persistent warning to the transcript when images meet a non-vision model.
+
+        ``context`` is ``"attachment"`` (new image attached) or ``"model_switch"``
+        (switched to a non-vision model with images in history). Deduplicated per
+        model session so repeated attachments don't spam the transcript — the
+        composer hint still updates with each attachment (showing all names), but
+        the transcript system message appears only once.
+        """
+        if self._vision_warning_shown:
+            return
+        model_config = getattr(self.agent, "primary_model_config", None)
+        model_name = getattr(model_config, "model", None) or "The current model"
+        if context == "attachment":
+            message = (
+                f"⚠ {model_name} does not support vision. Attached images will be omitted "
+                f"when sending. Switch to a vision-capable model with /model to include them."
+            )
+        else:  # model_switch
+            message = messages.MODEL_NON_VISION_IMAGE_HISTORY
+        self._add_conversation_entry(ConversationEntry(kind="system", content=message, tone="warning"))
+        self._vision_warning_shown = True
+
     def add_pending_image_attachment(self, attachment: dict) -> None:
-        """Stash a pending image attachment for the next submitted message."""
+        """Stash a pending image attachment for the next submitted message.
+
+        Centralized vision check: when the current model does not support vision,
+        shows a combined warning-tone hint (attachment confirmation + vision
+        mismatch) and a persistent system message in the transcript. This is the
+        single funnel for clipboard paste (both Ctrl+Shift+V and on_paste) and
+        /attach, so the warning is consistent across all three paths.
+        """
         self._pending_image_attachments.append(attachment)
         names = ", ".join(a.get("path", "image") for a in self._pending_image_attachments)
-        self._show_composer_hint(f"Attached images: {names} (press Enter to send)", tone="info")
+        if not self._model_supports_vision():
+            self._show_composer_hint(
+                f"Attached: {names}. {messages.MODEL_NON_VISION_IMAGE_ATTACHED}",
+                tone="warning",
+            )
+            self._add_vision_mismatch_system_message(context="attachment")
+        else:
+            self._show_composer_hint(f"Attached images: {names} (press Enter to send)", tone="info")
 
     async def _command_attach(self, args: str) -> None:
         arg = args.strip()
@@ -3173,13 +3235,8 @@ class KolegaCodeApp(App):
             )
             return
         data, media_type = result
-        if self.agent is not None and not getattr(self.agent, "supports_vision", False):
-            self._show_composer_hint(
-                "Pasted an image, but the current model does not support vision. "
-                "Switch with /model or attach anyway.",
-                tone="warning",
-            )
         attachment = encode_image_attachment(data, media_type, path="clipboard")
+        # Vision check is centralized in add_pending_image_attachment.
         self.add_pending_image_attachment(attachment)
 
     async def _command_plan(self, args: str) -> None:
@@ -3390,10 +3447,17 @@ class KolegaCodeApp(App):
         except Exception:
             pass
         self._restore_composer_placeholder()
-        if self.agent is not None and not getattr(self.agent, "supports_vision", False):
+        # Reset the per-session dedup flag so the new model gets a fresh warning.
+        self._vision_warning_shown = False
+        if self.agent is not None and not self._model_supports_vision():
             conversation = getattr(self.agent, "conversation", None)
             if conversation is not None and conversation.has_image_blocks():
+                # Dual-channel: persistent transcript message + ephemeral composer hint.
+                self._add_vision_mismatch_system_message(context="model_switch")
                 self._show_composer_hint(messages.MODEL_NON_VISION_IMAGE_HISTORY, tone="warning")
+        elif self.agent is not None and self._model_supports_vision():
+            # Switching to a vision-capable model: clear any stale non-vision warning.
+            self._clear_composer_hint()
         self._notify_user(
             messages.MODEL_SWITCHED.format(
                 provider=provider,
