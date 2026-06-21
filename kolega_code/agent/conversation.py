@@ -494,3 +494,26 @@ class Conversation:
         # Keep history authentic - no fixing here
         self.history = MessageHistory(parsed_messages)
         self.sanitize_oversized_tool_results()
+
+    def dump_compaction(self) -> Dict[str, Any]:
+        """Serialize the compaction boundary so it survives save/restore."""
+        return {
+            "summary": self.summary.get_text_content() if self.summary is not None else "",
+            "compacted_through": self.compacted_through,
+        }
+
+    def restore_compaction(self, data: Optional[Dict[str, Any]]) -> None:
+        """Restore a compaction boundary saved by ``dump_compaction``.
+
+        Call AFTER ``restore`` (which resets compaction). Assigns the boundary
+        fields directly so it does not trip the history setter's reset.
+        """
+        data = data or {}
+        text = (data.get("summary") or "").strip()
+        through = int(data.get("compacted_through") or 0)
+        if text and through > 0:
+            self.summary = Message(role="user", content=[TextBlock(text=text)])
+            self.compacted_through = min(through, len(self._history))
+        else:
+            self.summary = None
+            self.compacted_through = 0

@@ -89,6 +89,12 @@ async def test_textual_app_mounts_with_fake_agent(tmp_path: Path, monkeypatch: p
         def restore_message_history(self, history):
             self.history_restored = bool(history)
 
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
+
         def dump_message_history(self):
             return []
 
@@ -155,6 +161,12 @@ async def test_textual_app_status_tab_is_default_dashboard(
         def restore_message_history(self, history):
             return None
 
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
+
         def dump_message_history(self):
             return []
 
@@ -199,6 +211,12 @@ async def test_settings_tab_grouped_into_model_and_appearance_sections(
 
         def restore_message_history(self, history):
             return None
+
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
 
         def dump_message_history(self):
             return []
@@ -257,6 +275,12 @@ async def test_web_search_settings_section_reveal_and_save(
 
         def restore_message_history(self, history):
             return None
+
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
 
         def dump_message_history(self):
             return []
@@ -342,6 +366,12 @@ async def test_textual_app_context_usage_updates_status_without_raw_json(
         def restore_message_history(self, history):
             return None
 
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
+
         def dump_message_history(self):
             return []
 
@@ -404,6 +434,12 @@ async def test_textual_app_status_dashboard_tracks_interaction_mode(
         def restore_message_history(self, history):
             return None
 
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
+
         def dump_message_history(self):
             return []
 
@@ -447,6 +483,12 @@ async def test_textual_app_turn_status_formats_error_duration(
 
         def restore_message_history(self, history):
             return None
+
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
 
         def dump_message_history(self):
             return []
@@ -504,6 +546,12 @@ async def test_progress_entry_tone_drives_styling_not_prose(
         def restore_message_history(self, history):
             return None
 
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
+
         def dump_message_history(self):
             return []
 
@@ -555,6 +603,12 @@ async def test_textual_app_keeps_command_c_for_screen_copy(
         def restore_message_history(self, history):
             return None
 
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
+
         def dump_message_history(self):
             return []
 
@@ -595,6 +649,12 @@ async def test_textual_app_shift_tab_toggles_between_build_and_plan_agents(
 
         def restore_message_history(self, history):
             self.history = list(history)
+
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
 
         def dump_message_history(self):
             return self.history
@@ -681,6 +741,12 @@ async def test_textual_app_ctrl_p_toggles_permission_mode(
         def restore_message_history(self, history):
             return None
 
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
+
         def dump_message_history(self):
             return []
 
@@ -734,6 +800,12 @@ async def test_textual_app_ctrl_o_toggles_sidebar_and_keeps_active_tab(
 
         def restore_message_history(self, history):
             return None
+
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
 
         def dump_message_history(self):
             return []
@@ -793,6 +865,12 @@ async def test_textual_app_permission_approval_actions_show_rule_labels_without_
 
         def restore_message_history(self, history):
             return None
+
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
 
         def dump_message_history(self):
             return []
@@ -864,6 +942,12 @@ async def test_textual_app_restores_saved_plan_and_interaction_mode(
         def restore_message_history(self, history):
             self.history = list(history)
 
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
+
         def dump_message_history(self):
             return self.history
 
@@ -925,6 +1009,12 @@ async def test_textual_app_restores_saved_plan_in_build_mode_without_plan_action
         def restore_message_history(self, history):
             return None
 
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
+
         def dump_message_history(self):
             return []
 
@@ -971,6 +1061,12 @@ async def test_textual_app_invalid_saved_interaction_mode_falls_back_to_build(
         def restore_message_history(self, history):
             return None
 
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
+
         def dump_message_history(self):
             return []
 
@@ -1012,6 +1108,12 @@ async def test_textual_app_passes_shared_task_list_tools_to_build_agent_only(
 
         def restore_message_history(self, history):
             self.history = list(history)
+
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
 
         def dump_message_history(self):
             return self.history
@@ -1089,6 +1191,12 @@ async def test_textual_app_passes_skill_extensions_to_build_and_plan_agents(
         def restore_message_history(self, history):
             self.history = list(history)
 
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
+
         def dump_message_history(self):
             return self.history
 
@@ -1150,6 +1258,12 @@ async def test_textual_app_skill_slash_commands_list_and_activate(
         def restore_message_history(self, history):
             self.history = [Message.from_dict(item) for item in history]
 
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
+
         def dump_message_history(self):
             return [message.to_dict() for message in self.history]
 
@@ -1207,6 +1321,12 @@ async def test_textual_app_skill_slash_command_with_prompt_starts_turn(
         def restore_message_history(self, history):
             self.history = [Message.from_dict(item) for item in history]
 
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
+
         def dump_message_history(self):
             return [message.to_dict() for message in self.history]
 
@@ -1260,6 +1380,12 @@ async def test_textual_app_planning_question_tool_accepts_option_list_answer(
 
         def restore_message_history(self, history):
             self.history = list(history)
+
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
 
         def dump_message_history(self):
             return self.history
@@ -1344,6 +1470,12 @@ async def test_textual_app_planning_question_supports_arrow_and_digit_selection(
         def restore_message_history(self, history):
             self.history = list(history)
 
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
+
         def dump_message_history(self):
             return self.history
 
@@ -1413,6 +1545,12 @@ async def test_textual_app_planning_question_tool_accepts_custom_text_answer(
         def restore_message_history(self, history):
             self.history = list(history)
 
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
+
         def dump_message_history(self):
             return self.history
 
@@ -1481,6 +1619,12 @@ async def test_textual_app_planning_question_tool_asks_multiple_questions_sequen
         def restore_message_history(self, history):
             self.history = list(history)
 
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
+
         def dump_message_history(self):
             return self.history
 
@@ -1548,6 +1692,12 @@ async def test_textual_app_planning_question_tool_rejects_malformed_input(
 
         def restore_message_history(self, history):
             self.history = list(history)
+
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
 
         def dump_message_history(self):
             return self.history
@@ -1630,6 +1780,12 @@ async def test_textual_app_blocks_mode_toggle_during_active_turn(
         def restore_message_history(self, history):
             return None
 
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
+
         def dump_message_history(self):
             return []
 
@@ -1674,6 +1830,12 @@ async def test_textual_app_shows_plan_decision_when_planning_agent_writes_plan(
 
         def restore_message_history(self, history):
             return None
+
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
 
         def dump_message_history(self):
             return []
@@ -1783,6 +1945,12 @@ async def test_textual_app_implement_plan_switches_to_build_and_sends_plan(
         def restore_message_history(self, history):
             self.history = list(history)
 
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
+
         def dump_message_history(self):
             return self.history
 
@@ -1851,6 +2019,12 @@ async def test_textual_app_implemented_plan_not_reoffered_on_reentry(
 
         def restore_message_history(self, history):
             self.history = list(history)
+
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
 
         def dump_message_history(self):
             return self.history
@@ -1922,6 +2096,12 @@ async def test_textual_app_clear_context_and_implement_plan_starts_build_agent_f
 
         def restore_message_history(self, history):
             self.history = list(history)
+
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
 
         def dump_message_history(self):
             return self.history
@@ -2002,6 +2182,12 @@ async def test_textual_app_discuss_plan_clears_old_plan_until_new_plan_is_writte
         def restore_message_history(self, history):
             self.history = list(history)
 
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
+
         def dump_message_history(self):
             return self.history
 
@@ -2077,6 +2263,12 @@ async def test_textual_app_does_not_save_startup_entry_to_history(
         def restore_message_history(self, history):
             return None
 
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
+
         def dump_message_history(self):
             return saved_history
 
@@ -2116,6 +2308,12 @@ async def test_textual_app_composer_shift_enter_inserts_line_break_and_enter_sub
 
         def restore_message_history(self, history):
             return None
+
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
 
         def dump_message_history(self):
             return []
@@ -2171,6 +2369,12 @@ async def test_textual_app_composer_ctrl_enter_still_inserts_line_break(
         def restore_message_history(self, history):
             return None
 
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
+
         def dump_message_history(self):
             return []
 
@@ -2215,6 +2419,12 @@ async def test_textual_app_composer_preserves_multiline_paste(
 
         def restore_message_history(self, history):
             return None
+
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
 
         def dump_message_history(self):
             return []
@@ -2272,6 +2482,12 @@ async def test_textual_app_reset_command_clears_current_thread(
 
         def restore_message_history(self, history):
             self.history = list(history)
+
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
 
         def dump_message_history(self):
             return self.history
@@ -2358,6 +2574,12 @@ async def test_textual_app_reset_command_waits_for_active_turn(
 
         def restore_message_history(self, history):
             return None
+
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
 
         def dump_message_history(self):
             return self.history
@@ -2495,6 +2717,12 @@ async def test_textual_app_mounts_with_stored_kimi_settings(
         def restore_message_history(self, history):
             return None
 
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
+
         def dump_message_history(self):
             return []
 
@@ -2544,6 +2772,12 @@ async def test_textual_app_mounts_with_stored_deepseek_settings(
 
         def restore_message_history(self, history):
             return None
+
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
 
         def dump_message_history(self):
             return []
@@ -2596,6 +2830,12 @@ async def test_textual_app_saves_settings_and_builds_agent(
 
         def restore_message_history(self, history):
             return None
+
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
 
         def dump_message_history(self):
             return []
@@ -2653,6 +2893,12 @@ async def test_textual_app_saves_deepseek_settings_and_builds_agent(
 
         def restore_message_history(self, history):
             return None
+
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
 
         def dump_message_history(self):
             return []
@@ -2716,6 +2962,12 @@ async def test_textual_app_merges_streamed_response_chunks(
         def restore_message_history(self, history):
             return None
 
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
+
         def dump_message_history(self):
             return []
 
@@ -2769,6 +3021,12 @@ async def test_textual_app_merges_streamed_thinking_chunks(
         def restore_message_history(self, history):
             return None
 
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
+
         def dump_message_history(self):
             return []
 
@@ -2813,6 +3071,12 @@ async def test_textual_app_formats_thinking_as_italic_chat_entry(
         def restore_message_history(self, history):
             return None
 
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
+
         def dump_message_history(self):
             return []
 
@@ -2855,6 +3119,12 @@ async def test_textual_app_renders_one_widget_per_chat_entry(
 
         def restore_message_history(self, history):
             return None
+
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
 
         def dump_message_history(self):
             return []
@@ -2922,6 +3192,12 @@ async def test_conversation_render_skips_detached_view_during_teardown(
         def restore_message_history(self, history):
             return None
 
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
+
         def dump_message_history(self):
             return []
 
@@ -2979,6 +3255,12 @@ async def test_conversation_entry_widget_extracts_plain_selected_text(
         def restore_message_history(self, history):
             return None
 
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
+
         def dump_message_history(self):
             return []
 
@@ -3028,6 +3310,12 @@ async def test_conversation_entry_supports_mouse_drag_selection(
 
         def restore_message_history(self, history):
             return None
+
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
 
         def dump_message_history(self):
             return []
@@ -3308,6 +3596,12 @@ async def test_command_c_copies_selected_chat_text_to_macos_clipboard(
         def restore_message_history(self, history):
             return None
 
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
+
         def dump_message_history(self):
             return []
 
@@ -3362,6 +3656,12 @@ async def test_textual_app_formats_agent_and_tool_chat_entries(
 
         def restore_message_history(self, history):
             return None
+
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
 
         def dump_message_history(self):
             return []
@@ -3429,6 +3729,12 @@ async def test_textual_app_ignores_empty_final_response_without_existing_entry(
         def restore_message_history(self, history):
             return None
 
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
+
         def dump_message_history(self):
             return []
 
@@ -3475,6 +3781,12 @@ async def test_textual_app_shows_working_progress_during_active_turn(
 
         def restore_message_history(self, history):
             return None
+
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
 
         def dump_message_history(self):
             return []
@@ -3545,6 +3857,12 @@ async def test_textual_app_renders_tool_events_in_chat(tmp_path: Path, monkeypat
 
         def restore_message_history(self, history):
             return None
+
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
 
         def dump_message_history(self):
             return []
@@ -3623,6 +3941,12 @@ async def test_textual_app_appends_append_mode_tool_streaming_events_in_chat(
 
         def restore_message_history(self, history):
             return None
+
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
 
         def dump_message_history(self):
             return []
@@ -3722,6 +4046,12 @@ async def test_textual_app_replaces_default_tool_streaming_events_in_chat(
         def restore_message_history(self, history):
             return None
 
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
+
         def dump_message_history(self):
             return []
 
@@ -3785,6 +4115,12 @@ async def test_textual_app_caps_long_append_mode_tool_streaming_events(
         def restore_message_history(self, history):
             return None
 
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
+
         def dump_message_history(self):
             return []
 
@@ -3844,6 +4180,12 @@ async def test_textual_app_renders_queued_tool_events_during_active_turn(
 
         def restore_message_history(self, history):
             return None
+
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
 
         def dump_message_history(self):
             return []
@@ -3949,6 +4291,12 @@ async def test_textual_app_late_tool_result_updates_existing_tool_row(
         def restore_message_history(self, history):
             return None
 
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
+
         def dump_message_history(self):
             return []
 
@@ -4018,6 +4366,12 @@ async def test_textual_app_cancellation_is_visible_in_chat(
 
         def restore_message_history(self, history):
             return None
+
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
 
         def dump_message_history(self):
             return []
@@ -4142,6 +4496,12 @@ async def test_textual_app_handles_llm_error_without_worker_traceback(
         def restore_message_history(self, history):
             return None
 
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
+
         def dump_message_history(self):
             return []
 
@@ -4195,6 +4555,12 @@ async def test_textual_app_reraises_non_llm_error(tmp_path: Path, monkeypatch: p
         def restore_message_history(self, history):
             return None
 
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
+
         def dump_message_history(self):
             return []
 
@@ -4244,6 +4610,12 @@ async def test_textual_app_renders_resumed_history_in_chat(
 
         def restore_message_history(self, history):
             self.restored_history = history
+
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
 
         def dump_message_history(self):
             return self.restored_history or []
@@ -4314,6 +4686,12 @@ def _build_sub_agent_test_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
         def restore_message_history(self, history):
             return None
+
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
 
         def dump_message_history(self):
             return []
@@ -5573,6 +5951,12 @@ def _build_mention_test_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         def restore_message_history(self, history):
             self.history = [Message.from_dict(item) for item in history]
 
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
+
         def dump_message_history(self):
             return [message.to_dict() for message in self.history]
 
@@ -5918,6 +6302,12 @@ async def test_textual_app_plan_and_build_slash_commands_switch_mode(
         def restore_message_history(self, history):
             return None
 
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
+
         def dump_message_history(self):
             return []
 
@@ -6028,6 +6418,12 @@ async def test_textual_app_init_slash_command_switches_from_plan_to_build(
         def restore_message_history(self, history):
             self.history = list(history)
 
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
+
         def dump_message_history(self):
             return self.history
 
@@ -6109,6 +6505,12 @@ async def test_textual_app_model_slash_command_shows_and_switches_model(
 
         def restore_message_history(self, history):
             return None
+
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
 
         def dump_message_history(self):
             return []
@@ -6226,6 +6628,12 @@ async def test_textual_app_model_slash_command_selects_from_action_list(
         def restore_message_history(self, history):
             return None
 
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
+
         def dump_message_history(self):
             return []
 
@@ -6296,6 +6704,12 @@ async def test_textual_app_model_slash_command_accepts_typed_selection_and_rejec
 
         def restore_message_history(self, history):
             return None
+
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
 
         def dump_message_history(self):
             return []
@@ -6369,6 +6783,12 @@ async def test_textual_app_model_slash_command_blocks_selector_during_active_tur
         def restore_message_history(self, history):
             return None
 
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
+
         def dump_message_history(self):
             return []
 
@@ -6425,6 +6845,12 @@ async def test_textual_app_effort_slash_command_selects_from_action_list(
 
         def restore_message_history(self, history):
             return None
+
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
 
         def dump_message_history(self):
             return []
@@ -6497,6 +6923,12 @@ async def test_textual_app_effort_slash_command_accepts_typed_selection_and_reje
         def restore_message_history(self, history):
             return None
 
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
+
         def dump_message_history(self):
             return []
 
@@ -6566,6 +6998,12 @@ async def test_textual_app_effort_slash_command_blocks_selector_during_active_tu
 
         def restore_message_history(self, history):
             return None
+
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
 
         def dump_message_history(self):
             return []
@@ -6765,6 +7203,12 @@ async def test_textual_app_prompt_list_recovers_focus_after_drift(
         def restore_message_history(self, history):
             return None
 
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
+
         def dump_message_history(self):
             return []
 
@@ -6826,6 +7270,12 @@ async def test_textual_app_question_recovers_focus_but_allows_free_form_answer(
         def restore_message_history(self, history):
             return None
 
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
+
         def dump_message_history(self):
             return []
 
@@ -6883,6 +7333,12 @@ async def test_agent_models_section_saves_override_and_builds_agent(
 
         def restore_message_history(self, history):
             return None
+
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
 
         def dump_message_history(self):
             return []
@@ -6944,6 +7400,12 @@ async def test_agent_models_section_populates_and_clears_to_inherit(
 
         def restore_message_history(self, history):
             return None
+
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
 
         def dump_message_history(self):
             return []

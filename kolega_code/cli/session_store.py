@@ -30,6 +30,7 @@ class SessionRecord:
     updated_at: str
     config: dict[str, Any] = field(default_factory=dict)
     history: list[dict[str, Any]] = field(default_factory=list)
+    compaction: dict[str, Any] = field(default_factory=dict)
     task_list_markdown: str = ""
     latest_plan_markdown: str = ""
     plan_pending: bool = False
@@ -79,6 +80,7 @@ class SessionRecord:
             updated_at=data["updated_at"],
             config=data.get("config") or {},
             history=data.get("history") or [],
+            compaction=data.get("compaction") or {},
             task_list_markdown=data.get("task_list_markdown") or "",
             latest_plan_markdown=data.get("latest_plan_markdown") or "",
             plan_pending=bool(data.get("plan_pending", False)),
@@ -99,6 +101,7 @@ class SessionRecord:
             "updated_at": self.updated_at,
             "config": self.config,
             "history": self.history,
+            "compaction": self.compaction,
             "task_list_markdown": self.task_list_markdown,
             "latest_plan_markdown": self.latest_plan_markdown,
             "plan_pending": self.plan_pending,

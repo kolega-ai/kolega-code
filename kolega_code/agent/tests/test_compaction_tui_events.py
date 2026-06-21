@@ -77,3 +77,22 @@ def test_app_apply_compaction_status_adds_summary_collapsible():
     assert isinstance(added[0], ConversationEntry)
     assert added[0].kind == "compaction_summary"
     assert "Do the thing" in added[0].content
+
+
+def test_app_resume_compaction_entry():
+    # The resume helper builds a collapsible summary entry from session.compaction.
+    from kolega_code.cli.app import KolegaCodeApp
+
+    def app_with(compaction):
+        return SimpleNamespace(session=SimpleNamespace(compaction=compaction))
+
+    assert KolegaCodeApp._resume_compaction_entry(app_with({})) is None
+    assert KolegaCodeApp._resume_compaction_entry(app_with({"summary": "", "compacted_through": 3})) is None
+    assert KolegaCodeApp._resume_compaction_entry(app_with({"summary": "S", "compacted_through": 0})) is None
+
+    entry = KolegaCodeApp._resume_compaction_entry(
+        app_with({"summary": "RESTORED SUMMARY", "compacted_through": 5})
+    )
+    assert entry is not None
+    assert entry.kind == "compaction_summary"
+    assert "RESTORED SUMMARY" in entry.content

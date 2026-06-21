@@ -398,6 +398,14 @@ class BaseAgent(LogMixin):
         """Restores the message history from a list of dictionaries using custom methods."""
         self.conversation.restore(serialized_history)
 
+    def dump_compaction_state(self) -> Dict[str, Any]:
+        """Serialize the compaction boundary (summary + how many leading messages it folds)."""
+        return self.conversation.dump_compaction()
+
+    def restore_compaction_state(self, data: Optional[Dict[str, Any]]) -> None:
+        """Restore the compaction boundary; must be called after restore_message_history."""
+        self.conversation.restore_compaction(data)
+
     def _sanitize_oversized_tool_results(self) -> int:
         return self.conversation.sanitize_oversized_tool_results()
 

@@ -545,6 +545,7 @@ async def _run_ask(args: argparse.Namespace) -> int:
     agent_ref["agent"] = agent
     if session.history:
         agent.restore_message_history(session.history)
+        agent.restore_compaction_state(session.compaction)
 
     fire_hook = getattr(agent, "fire_hook", None)
     if fire_hook is not None:
@@ -580,6 +581,7 @@ async def _run_ask(args: argparse.Namespace) -> int:
                 print(activation_content)
             if args.save or args.session:
                 session.history = agent.dump_message_history()
+                session.compaction = agent.dump_compaction_state()
                 session.config = summary
                 store.save(session)
             await agent.cleanup()
@@ -607,6 +609,7 @@ async def _run_ask(args: argparse.Namespace) -> int:
 
         if args.save or args.session:
             session.history = agent.dump_message_history()
+            session.compaction = agent.dump_compaction_state()
             session.config = summary
             store.save(session)
     except LLMBillingError as exc:

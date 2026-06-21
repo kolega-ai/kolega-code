@@ -159,3 +159,34 @@ def test_dump_restore_resets_compaction():
     assert restored.summary is None
     assert restored.compacted_through == 0
     assert len(restored.history) == 8
+
+
+def test_dump_restore_compaction_round_trip():
+    conv = _conv(long_history(6))  # 12 messages
+    conv.apply_compaction("THE SUMMARY", 6)
+    data = conv.dump_compaction()
+    assert data == {"summary": "THE SUMMARY", "compacted_through": 6}
+
+    # A fresh conversation gets the full history back, then the boundary on top.
+    restored = Conversation(list(conv.history))
+    restored.restore_compaction(data)
+    assert restored.summary is not None
+    assert restored.compacted_through == 6
+    effective = list(restored.effective_history())
+    assert effective[0].get_text_content() == "THE SUMMARY"
+    assert effective[1:] == list(conv.history)[6:]  # verbatim tail preserved
+
+
+def test_restore_compaction_empty_is_noop():
+    conv = _conv(long_history(3))
+    for data in ({}, None, {"summary": "", "compacted_through": 5}, {"summary": "S", "compacted_through": 0}):
+        conv.restore_compaction(data)
+        assert conv.summary is None
+        assert conv.compacted_through == 0
+
+
+def test_restore_compaction_clamps_boundary():
+    conv = _conv(long_history(2))  # 4 messages
+    conv.restore_compaction({"summary": "S", "compacted_through": 999})
+    assert conv.compacted_through == 4  # clamped to len(history)
+    assert conv.summary is not None
