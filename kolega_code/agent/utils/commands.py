@@ -1,8 +1,7 @@
+import uuid
 from dataclasses import dataclass
 from functools import wraps
 from typing import Any, AsyncGenerator, Dict, List, Optional, Type
-
-from kolega_code.llm.models import MessageHistory
 
 
 @dataclass(frozen=True)
@@ -44,12 +43,28 @@ class CommandProcessor:
 
     async def _handle_compress(self) -> str:
         """Handle the /compress command."""
-        await self.agent.compress_history()
-        return "Message history compressed."
+        agent = self.agent
+        has_history = len(agent.history) > 0
+        before = (await agent.count_current_context()).input_tokens if has_history else 0
+        result = await agent.compress_history()
+        after = (await agent.count_current_context()).input_tokens if has_history else 0
+        ctx = agent.model_context_length
+
+        def pct(tokens: int) -> int:
+            return int(tokens * 100 / ctx) if ctx else 0
+
+        if result.ok:
+            return (
+                f"Compressed history: {result.summarized_messages} older message(s) summarized. "
+                f"Context {pct(before)}% → {pct(after)}% of the window."
+            )
+        if result.reason == "llm_error":
+            return f"Compression failed: {result.message}"
+        return f"Nothing to compress. {result.message} (context {pct(before)}% of the window)."
 
     async def _handle_clear(self) -> str:
         """Handle the /clear command."""
-        self.agent.history = MessageHistory()
+        self.agent.clear_history()
         return "Message history cleared."
 
     async def _handle_context(self) -> str:
@@ -82,7 +97,12 @@ class CommandProcessor:
             if stripped_message in self.command_processor.commands:
                 command_result = await self.command_processor.commands[stripped_message]()
 
-                yield {"type": "response", "content": command_result, "complete": True}
+                yield {
+                    "type": "response",
+                    "content": command_result,
+                    "complete": True,
+                    "uuid": str(uuid.uuid4()),
+                }
 
                 return
 

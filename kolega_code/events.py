@@ -31,6 +31,7 @@ class AgentEvent(BaseModel):
         "llm_status_update",
         "credit_alert",
         "llm_context_update",
+        "compaction_status",
         "tool_streaming_update",
         "file_edit_preview",
         "memory_suggestions",
@@ -188,6 +189,25 @@ class AgentEventEmitter:
                     "compression_threshold": compression_threshold * 100,  # Convert to percentage
                     "will_compress_at": int(model_context_length * compression_threshold),
                 },
+                sub_agent_info=sub_agent_info,
+            )
+        )
+
+    async def compaction_status(self, phase: str, message: str = "", summary: str = "") -> None:
+        """Send a compaction_status event so the UI can show compaction progress.
+
+        ``phase`` is one of "started" | "finished" | "error". On "finished",
+        ``summary`` carries the summary text so the UI can show it in the transcript.
+        """
+        sub_agent_info = self._sub_agent_info_provider() if self._sub_agent_info_provider else None
+
+        await self.emit(
+            AgentEvent(
+                sender=self.sender,
+                event_type="compaction_status",
+                content={"phase": phase, "message": message, "summary": summary},
+                timestamp=datetime.now().isoformat(),
+                is_streaming=False,
                 sub_agent_info=sub_agent_info,
             )
         )

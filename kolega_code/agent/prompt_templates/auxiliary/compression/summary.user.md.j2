@@ -1,18 +1,17 @@
-Please create a comprehensive summary of the following coding conversation. Follow the structured format exactly as specified in your instructions.
+{% if previous_summary %}
+A prior summary already covers the earliest part of this session. Treat it as established context and fold its facts into your new summary (do not drop anything important from it):
+
+<previous_summary>
+{{ previous_summary }}
+</previous_summary>
+
+Below are the messages that have happened SINCE that summary and now need to be folded in as well:
+{% else %}
+Summarize the following coding session so far:
+{% endif %}
 
 <conversation_history>
 {{ history }}
 </conversation_history>
 
-Create a detailed summary that captures:
-1. The complete chronological flow of the conversation
-2. All technical decisions and implementations
-3. Every file that was modified or created with code snippets
-4. Any problems encountered and how they were solved
-5. The current state and any pending work
-
-Format your response as:
-- An Analysis section with chronological walkthrough
-- A Summary section with all 9 required subsections
-
-Be thorough and include actual code snippets from the conversation.
+Produce the continuity briefing exactly as specified in your instructions. Summary text only — do not call tools.

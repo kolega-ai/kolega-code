@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import jinja2
 
@@ -56,8 +56,12 @@ SKILL_CATALOG_PROMPT_TEMPLATE = prompt_template_source("extensions/skills/catalo
 PLANNING_AGENT_SYSTEM_PROMPT_TEMPLATE = prompt_template_source("system/agents/planning.md.j2")
 
 
-def build_compression_summary_user_prompt(history: str) -> str:
-    return render_prompt_template("auxiliary/compression/summary.user.md.j2", history=history)
+def build_compression_summary_user_prompt(history: str, previous_summary: Optional[str] = None) -> str:
+    return render_prompt_template(
+        "auxiliary/compression/summary.user.md.j2",
+        history=history,
+        previous_summary=previous_summary,
+    )
 
 
 def build_implement_plan_prompt(plan: str, gigacode_enabled: bool = False) -> str:

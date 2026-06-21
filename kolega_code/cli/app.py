@@ -341,6 +341,8 @@ class StatusDashboardState:
     compression_threshold: Optional[float] = None
     alert_level: str = "normal"
     context_note: str = ""
+    is_compacting: bool = False
+    compaction_message: str = ""
 
 
 class ConversationEntryWidget(Static):
@@ -2230,6 +2232,11 @@ class KolegaCodeApp(App):
                 self._note_sub_agent_context(event)
             else:
                 self._apply_context_status_update(event.content)
+        elif event.event_type == "compaction_status":
+            # Only the main agent's compaction drives the status dashboard; a
+            # sub-agent's compaction must not stomp the main indicator.
+            if not event.sub_agent_info:
+                self._apply_compaction_status(event.content)
         elif event.event_type in {"llm_status_update", "status_update"}:
             if event.sub_agent_info:
                 self._note_sub_agent_status(event)
@@ -2348,7 +2355,7 @@ class KolegaCodeApp(App):
                     await fire(HookEvent.SESSION_END, {"reason": "quit"})
                 except Exception:
                     pass
-            self.session.history = self.agent.dump_message_history()
+            self._persist_agent_into_session()
             self._save_session()
             await self.agent.cleanup()
         self.exit()
@@ -2637,9 +2644,12 @@ class KolegaCodeApp(App):
 
     async def _build_agent(self, config: AgentConfig, rebuild: bool = False) -> None:
         history = self.session.history
+        compaction = self.session.compaction
         if self.agent is not None:
             history = self.agent.dump_message_history()
+            compaction = self.agent.dump_compaction_state()
             self.session.history = history
+            self.session.compaction = compaction
             self._save_session()
             if rebuild:
                 await self.agent.cleanup()
@@ -2692,6 +2702,7 @@ class KolegaCodeApp(App):
         self.agent.gigacode_enabled = gigacode_active
         if history:
             self.agent.restore_message_history(history)
+            self.agent.restore_compaction_state(compaction)
             self._restore_conversation_history(history)
         self._update_mode_chrome()
         await self._fire_session_start_once()
@@ -4080,12 +4091,14 @@ class KolegaCodeApp(App):
             self.agent.history = MessageHistory()
             self.agent.last_compression_index = None
         self.session.history = []
+        self.session.compaction = {}
 
     def _reset_current_thread(self) -> None:
         self._close_sub_agent_inspector()
         if self.agent is not None:
             self.agent.history = MessageHistory()
         self.session.history = []
+        self.session.compaction = {}
         self.session.task_list_markdown = ""
         self.conversation_entries = []
         self._stream_entries = {}
@@ -4279,6 +4292,10 @@ class KolegaCodeApp(App):
                 note_style = self._context_note_style(state.alert_level)
                 context_lines += f"\n[{note_style}]{escape(state.context_note)}[/{note_style}]"
 
+        if state.is_compacting:
+            indicator = escape(state.compaction_message or messages.COMPACTING)
+            context_lines += f"\n[{Color.ACCENT}]{theme.g(Glyph.RUNNING)} {indicator}[/{Color.ACCENT}]"
+
         title = theme.role_header(Glyph.STATUS, "Status", Color.ACCENT)
         turn_line = (
             f"{label('Turn')} [{turn_style}]{theme.g(Glyph.STATUS)}[/{turn_style}] "
@@ -4329,6 +4346,27 @@ class KolegaCodeApp(App):
             self._status_state.activity = content
         if turn_state is not None:
             self._status_state.turn_state = turn_state
+        self._refresh_status_dashboard()
+
+    def _apply_compaction_status(self, content: dict) -> None:
+        """Toggle the 'compaction in progress' indicator and, on finish, drop the
+        summary into the transcript as a collapsible the user can expand."""
+        phase = str(content.get("phase") or "")
+        if phase == "started":
+            self._status_state.is_compacting = True
+            message = content.get("message")
+            self._status_state.compaction_message = (
+                message if isinstance(message, str) and message else messages.COMPACTING
+            )
+        else:  # "finished" | "error"
+            self._status_state.is_compacting = False
+            self._status_state.compaction_message = ""
+            if phase == "finished":
+                summary = content.get("summary")
+                if isinstance(summary, str) and summary.strip():
+                    self._add_conversation_entry(
+                        ConversationEntry(kind="compaction_summary", content=summary.strip())
+                    )
         self._refresh_status_dashboard()
 
     def _apply_context_status_update(self, content: dict) -> None:
@@ -4470,13 +4508,36 @@ class KolegaCodeApp(App):
         self._cancel_pending_theme_selection()
         self._refresh_planning_sidebar()
         self._ensure_startup_entry(render=False)
-        for item in history:
+        # If the restored agent is in a compacted state, mark the boundary with a
+        # collapsible summary (between the folded prefix and the verbatim tail).
+        summary_entry = self._resume_compaction_entry()
+        boundary = None
+        if summary_entry is not None:
+            through = int((self.session.compaction or {}).get("compacted_through") or 0)
+            boundary = min(through, len(history))
+        for index, item in enumerate(history):
+            if summary_entry is not None and index == boundary:
+                self.conversation_entries.append(summary_entry)
             try:
                 message = Message.from_dict(item)
             except Exception:
                 continue
             self.conversation_entries.extend(self._conversation_entries_from_message(message))
+        if summary_entry is not None and boundary is not None and boundary >= len(history):
+            self.conversation_entries.append(summary_entry)
         self._render_conversation()
+
+    def _resume_compaction_entry(self) -> Optional[ConversationEntry]:
+        """A collapsible summary entry for the restored compaction boundary, or None.
+
+        Built from the session's persisted compaction metadata (the same data the
+        agent was restored from), so it does not depend on agent internals.
+        """
+        data = self.session.compaction or {}
+        summary_text = (data.get("summary") or "").strip()
+        if not summary_text or int(data.get("compacted_through") or 0) <= 0:
+            return None
+        return ConversationEntry(kind="compaction_summary", content=summary_text)
 
     def _conversation_entries_from_message(self, message: Message) -> list[ConversationEntry]:
         entries: list[ConversationEntry] = []
@@ -4602,10 +4663,17 @@ class KolegaCodeApp(App):
     def _finish_turn_progress(self, content: str, state: TurnState = TurnState.IDLE) -> None:
         self._update_progress(content, complete=True, state=state)
 
-    def _save_session_history(self) -> None:
+    def _persist_agent_into_session(self) -> None:
+        """Capture the agent's message history and compaction boundary into the session."""
         if self.agent is None:
             return
         self.session.history = self.agent.dump_message_history()
+        self.session.compaction = self.agent.dump_compaction_state()
+
+    def _save_session_history(self) -> None:
+        if self.agent is None:
+            return
+        self._persist_agent_into_session()
         self._save_session()
 
     def _add_tool_message(self, message_type: str, content: dict) -> None:
@@ -5436,9 +5504,14 @@ class KolegaCodeApp(App):
     def _make_entry_widget(self, entry: ConversationEntry) -> ConversationEntryWidget | ToolEntryWidget:
         if entry.kind in {"tool_call", "tool_result", "tool_error"}:
             return ToolEntryWidget(entry, self._tool_entry_title, self._tool_preview_renderable)
+        if entry.kind == "compaction_summary":
+            return ToolEntryWidget(entry, self._compaction_summary_title)
         if entry.kind == "sub_agent":
             return SubAgentEntryWidget(entry, self._format_conversation_entry)
         return ConversationEntryWidget(entry, self._format_conversation_entry)
+
+    def _compaction_summary_title(self, entry: ConversationEntry) -> str:
+        return theme.role_header(Glyph.STATUS, messages.COMPACTION_SUMMARY_TITLE, Color.ACCENT)
 
     def _update_jump_button(self) -> None:
         try:

@@ -115,6 +115,8 @@ SETTINGS_ACTIVE_THEME = "Active theme: {theme}"
 
 # Status dashboard
 STATUS_TOKENS_UNKNOWN = "Token counts unavailable."
+COMPACTING = "Compacting conversation…"
+COMPACTION_SUMMARY_TITLE = "Conversation compacted — summary"
 
 # Logs
 LOG_IGNORED_EVENT = "Ignored non-display event: {event_type}"

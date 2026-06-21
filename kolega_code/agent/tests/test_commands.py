@@ -2,6 +2,7 @@ from unittest.mock import AsyncMock, MagicMock, create_autospec
 
 import pytest
 
+from kolega_code.agent.compression import CompactionResult
 from kolega_code.llm.models import Message, MessageHistory
 from ..utils.commands import CommandProcessor
 
@@ -14,6 +15,10 @@ class MockAgent:
         self.command_processor = CommandProcessor(self)
         self.compress_history = AsyncMock()
         self.count_current_context = AsyncMock()
+        self.model_context_length = 1000
+
+    def clear_history(self):
+        self.history = MessageHistory()
 
 
 @pytest.fixture
@@ -55,13 +60,33 @@ async def test_handle_help(command_processor):
 
 
 @pytest.mark.asyncio
-async def test_handle_compress(command_processor, mock_agent):
-    """Test the /compress command handler"""
+async def test_handle_compress(command_processor, mock_agent, mock_message):
+    """The /compress handler reports the real compaction outcome."""
+    mock_agent.history.append(mock_message)
+    token = MagicMock()
+    token.input_tokens = 500
+    mock_agent.count_current_context = AsyncMock(return_value=token)
+    mock_agent.compress_history = AsyncMock(
+        return_value=CompactionResult(ok=True, reason="ok", summarized_messages=3, message="done")
+    )
+
     result = await command_processor._handle_compress()
 
-    # Verify compress was called and returned expected message
-    mock_agent.compress_history.assert_called_once()
-    assert result == "Message history compressed."
+    mock_agent.compress_history.assert_awaited_once()
+    assert "Compressed history" in result
+    assert "3 older message" in result
+
+
+@pytest.mark.asyncio
+async def test_handle_compress_nothing_to_compress(command_processor, mock_agent):
+    """A no-op compaction is reported honestly, not as a success."""
+    mock_agent.compress_history = AsyncMock(
+        return_value=CompactionResult(ok=False, reason="too_few", message="Nothing to compress yet (0 message(s)).")
+    )
+
+    result = await command_processor._handle_compress()
+
+    assert "Nothing to compress" in result
 
 
 @pytest.mark.asyncio
@@ -151,6 +176,27 @@ async def test_process_commands_decorator():
     assert responses[0]["type"] == "response"
     assert responses[0]["content"] == "Normal processing"
     assert responses[0]["complete"] is True
+
+
+@pytest.mark.asyncio
+async def test_command_response_includes_uuid():
+    """Command responses carry a uuid like every other process_message_stream chunk."""
+
+    @CommandProcessor.process_commands
+    class TestAgent:
+        def __init__(self):
+            self.history = MessageHistory()
+            self.command_processor = CommandProcessor(self)
+
+        async def process_message_stream(self, message, attachments=None):
+            yield {"type": "response", "content": "Normal", "complete": True, "uuid": "orig"}
+
+    agent = TestAgent()
+    chunks = [chunk async for chunk in agent.process_message_stream("/help")]
+
+    assert len(chunks) == 1
+    assert isinstance(chunks[0].get("uuid"), str)
+    assert chunks[0]["uuid"]
 
 
 @pytest.mark.asyncio

@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from .common import LogMixin
-from .compression import HistoryCompressor
+from .compression import CompactionResult, HistoryCompressor
 from kolega_code.config import AgentConfig, ModelProvider
 from kolega_code.events import AgentConnectionManager
 from .context import AgentContext, AgentServices, Telemetry, WorkspaceInfo
@@ -398,6 +398,14 @@ class BaseAgent(LogMixin):
         """Restores the message history from a list of dictionaries using custom methods."""
         self.conversation.restore(serialized_history)
 
+    def dump_compaction_state(self) -> Dict[str, Any]:
+        """Serialize the compaction boundary (summary + how many leading messages it folds)."""
+        return self.conversation.dump_compaction()
+
+    def restore_compaction_state(self, data: Optional[Dict[str, Any]]) -> None:
+        """Restore the compaction boundary; must be called after restore_message_history."""
+        self.conversation.restore_compaction(data)
+
     def _sanitize_oversized_tool_results(self) -> int:
         return self.conversation.sanitize_oversized_tool_results()
 
@@ -549,9 +557,12 @@ class BaseAgent(LogMixin):
             message=message,
         )
 
-    async def compress_history(self) -> None:
+    async def compress_history(self) -> CompactionResult:
         """
-        Non-destructively summarize the current history and mark a compression boundary.
+        Non-destructively summarize the current history, keeping recent turns
+        verbatim. Emits a compaction_status event around the work so the UI can
+        show progress, then recounts + emits a context_update so the gauge
+        refreshes. Returns the structured outcome.
         """
 
         async def on_info(message: str) -> None:
@@ -560,16 +571,34 @@ class BaseAgent(LogMixin):
         async def on_error(message: str) -> None:
             await self.log_error(message, sender=self.agent_name)
 
-        await self.compressor.summarize(
-            self.conversation,
-            llm=self.llm,
-            model=self.primary_model_config.model,
-            max_completion_tokens=self.model_completion_tokens,
-            temperature=self.model_default_temperature,
-            thinking=self.primary_model_config.thinking_effort,
-            on_info=on_info,
-            on_error=on_error,
+        await self.emitter.compaction_status("started", "Compacting conversation…")
+        try:
+            result = await self.compressor.summarize(
+                self.conversation,
+                llm=self.llm,
+                model=self.primary_model_config.model,
+                temperature=self.model_default_temperature,
+                # No extended thinking: a bounded summary doesn't need it, and the
+                # thinking budget could otherwise exceed the small summary max_tokens.
+                thinking=None,
+                on_info=on_info,
+                on_error=on_error,
+            )
+        finally:
+            # Recount + emit so the context gauge reflects post-compaction reality
+            # (even on a no-op the UI may have been stale).
+            await self.count_current_context()
+
+        phase = "finished" if result.ok else "error"
+        summary_text = (
+            self.conversation.summary.get_text_content() if result.ok and self.conversation.summary else ""
         )
+        await self.emitter.compaction_status(phase, result.message, summary=summary_text)
+        return result
+
+    def clear_history(self) -> None:
+        """Drop all history and reset compaction state."""
+        self.conversation.clear()
 
     # ------------------------------------------------------------------
     # Tool execution
@@ -1136,9 +1165,8 @@ class BaseAgent(LogMixin):
     #
     # process_message_stream is the single canonical loop shared by every
     # agent. Subclasses customize behavior through the hook methods below
-    # (build_user_content, apply_compression_fallback, on_tool_use_start,
-    # should_stop_after_tools, recap_agent_outcome) rather than overriding
-    # the loop itself.
+    # (build_user_content, on_tool_use_start, should_stop_after_tools,
+    # recap_agent_outcome) rather than overriding the loop itself.
     # ------------------------------------------------------------------
 
     completion_log_message = "Processing complete"
@@ -1165,21 +1193,6 @@ class BaseAgent(LogMixin):
                 )
 
         return content_blocks
-
-    def apply_compression_fallback(self) -> None:
-        """
-        Hard-truncate history when compression alone could not get under budget.
-
-        Default: keep the first message (the original task) plus any protected
-        skill-content messages.
-        """
-        first_message = self.history[0]
-        protected = [
-            message
-            for message in self.history
-            if message is not first_message and self._is_protected_skill_content(message)
-        ]
-        self.history = MessageHistory(protected + [first_message])
 
     async def on_tool_use_start(self, tool_call_delta: Dict[str, Any]) -> None:
         """
@@ -1252,20 +1265,35 @@ class BaseAgent(LogMixin):
                 logger.debug("Input token count: %s", token_count)
 
                 if self.compressor.over_budget(token_count.input_tokens, self.model_context_length):
+                    before_tokens = token_count.input_tokens
                     # PreCompact hooks (advisory): observe before history is compacted.
                     await self.fire_hook(
                         HookEvent.PRE_COMPACT,
                         {
                             "trigger": "auto",
-                            "input_tokens": token_count.input_tokens,
+                            "input_tokens": before_tokens,
                             "model_context_length": self.model_context_length,
                         },
                     )
-                    await self.compress_history()
+                    result = await self.compress_history()
                     token_count = await self.count_current_context()
 
-                    if self.compressor.over_budget(token_count.input_tokens, self.model_context_length):
-                        self.apply_compression_fallback()
+                    # PostCompact hooks (advisory): observe the outcome. There is no
+                    # destructive fallback — a bounded summary plus capped tool results
+                    # and a small verbatim tail keep us under budget; if somehow not, we
+                    # send as-is rather than wipe history.
+                    await self.fire_hook(
+                        HookEvent.POST_COMPACT,
+                        {
+                            "trigger": "auto",
+                            "ok": result.ok,
+                            "reason": result.reason,
+                            "summarized_messages": result.summarized_messages,
+                            "input_tokens_before": before_tokens,
+                            "input_tokens_after": token_count.input_tokens,
+                            "model_context_length": self.model_context_length,
+                        },
+                    )
 
                     self.mark_cache_checkpoint()
 

@@ -69,6 +69,33 @@ def test_session_store_loads_old_sessions_without_planning_state(tmp_path: Path)
     assert loaded.permission_mode == "ask"
 
 
+def test_session_store_round_trips_compaction(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    store = SessionStore(tmp_path / "state")
+
+    record = store.create(project, "code", {})
+    record.compaction = {"summary": "## Goal\nShip it", "compacted_through": 7}
+    store.save(record)
+
+    loaded = store.load(record.session_id)
+    assert loaded.compaction == {"summary": "## Goal\nShip it", "compacted_through": 7}
+
+
+def test_session_store_loads_old_sessions_without_compaction(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    store = SessionStore(tmp_path / "state")
+
+    record = store.create(project, "code", {})
+    payload = record.to_dict()
+    payload.pop("compaction")
+    store.path_for(record.session_id).write_text(json.dumps(payload), encoding="utf-8")
+
+    loaded = store.load(record.session_id)
+    assert loaded.compaction == {}
+
+
 def test_session_store_ignores_corrupt_files_when_listing(tmp_path: Path) -> None:
     store = SessionStore(tmp_path / "state")
     store.ensure_dirs()

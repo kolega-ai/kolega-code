@@ -5,7 +5,7 @@ from kolega_code.agent import prompts
 
 def test_static_prompt_templates_load() -> None:
     assert "software architect" in prompts.THINK_HARD_PROMPT
-    assert "summarizing technical coding conversations" in prompts.COMPRESSION_SUMMARY_SYSTEM_PROMPT
+    assert "continuity briefing" in prompts.COMPRESSION_SUMMARY_SYSTEM_PROMPT
     assert "evaluating shell commands for safety" in prompts.SHELL_SAFETY_SYSTEM_PROMPT
     assert "analyzing shell command output" in prompts.SHELL_COMPRESSION_SYSTEM_PROMPT
     assert "get_task_list" in prompts.SHARED_TASK_LIST_PROMPT
