@@ -46,6 +46,7 @@ from textual.widgets import (
     TabPane,
     TextArea,
 )
+from textual.widgets._collapsible import CollapsibleTitle
 from textual.widgets.option_list import Option
 
 from kolega_code.agent import AgentConfig, AgentEvent, CoderAgent, PlanningAgent, PromptExtension, ToolExtension
@@ -364,21 +365,8 @@ class ConversationEntryWidget(Static):
         self.update(self._formatted)
 
     def render_line(self, y: int) -> Strip:
-        # Tag each segment with its rendered (x, y) offset so the compositor can
-        # map mouse positions to text offsets, enabling drag selection over any
-        # visual type, including rich renderables such as Markdown.
-        strip = super().render_line(y)
-        source_x = 0
-        selectable_segments: list[Segment] = []
-        for segment in strip:
-            if segment.control:
-                selectable_segments.append(segment)
-                continue
-            offset_style = Style.from_meta({"offset": (source_x, y)})
-            style = segment.style + offset_style if segment.style is not None else offset_style
-            selectable_segments.append(Segment(segment.text, style, segment.control))
-            source_x += len(segment.text)
-        return Strip(selectable_segments, strip.cell_length)
+        strip = _with_selection_style(super().render_line(y), self.text_selection, y, self.selection_style)
+        return _with_selection_offsets(strip, y)
 
     def get_selection(self, selection: Selection) -> tuple[str, str] | None:
         # Extract from the rendered lines so coordinates match what is on screen,
@@ -391,6 +379,121 @@ class ConversationEntryWidget(Static):
         if not text.strip():
             return None
         return selection.extract(text), "\n"
+
+
+def _with_selection_offsets(strip: Strip, y: int) -> Strip:
+    """Tag rendered segments so Textual can map mouse positions to text offsets."""
+    source_x = 0
+    selectable_segments: list[Segment] = []
+    for segment in strip:
+        if segment.control:
+            selectable_segments.append(segment)
+            continue
+        offset_style = Style.from_meta({"offset": (source_x, y)})
+        style = segment.style + offset_style if segment.style is not None else offset_style
+        selectable_segments.append(Segment(segment.text, style, segment.control))
+        source_x += len(segment.text)
+    return Strip(selectable_segments, strip.cell_length)
+
+
+def _with_selection_style(strip: Strip, selection: Selection | None, y: int, selection_style: Style) -> Strip:
+    """Apply screen selection styling to Rich renderables that Textual can't style natively."""
+    if selection is None:
+        return strip
+
+    span = selection.get_span(y)
+    if span is None:
+        return strip
+
+    start, end = span
+    line_length = sum(len(segment.text) for segment in strip if not segment.control)
+    if end == -1:
+        end = line_length
+    start = max(0, min(start, line_length))
+    end = max(start, min(end, line_length))
+    if start == end:
+        return strip
+
+    selected_segments: list[Segment] = []
+    source_x = 0
+    for segment in strip:
+        if segment.control:
+            selected_segments.append(segment)
+            continue
+
+        text = segment.text
+        segment_start = source_x
+        segment_end = source_x + len(text)
+        source_x = segment_end
+
+        if segment_end <= start or segment_start >= end:
+            selected_segments.append(segment)
+            continue
+
+        before_end = max(0, start - segment_start)
+        selected_start = before_end
+        selected_end = min(len(text), end - segment_start)
+
+        if before_end:
+            selected_segments.append(Segment(text[:before_end], segment.style, segment.control))
+
+        selected_text = text[selected_start:selected_end]
+        if selected_text:
+            style = segment.style + selection_style if segment.style is not None else selection_style
+            selected_segments.append(Segment(selected_text, style, segment.control))
+
+        if selected_end < len(text):
+            selected_segments.append(Segment(text[selected_end:], segment.style, segment.control))
+
+    return Strip(selected_segments, strip.cell_length)
+
+
+class SelectableCollapsibleTitle(CollapsibleTitle):
+    """Collapsible title that still participates in Textual text selection."""
+
+    ALLOW_SELECT = True
+
+    def render_line(self, y: int) -> Strip:
+        return _with_selection_offsets(super().render_line(y), y)
+
+
+class SelectableCollapsible(Collapsible):
+    """Collapsible with a selectable title, used for transcript tool entries."""
+
+    class Contents(Collapsible.Contents):
+        """Selectable padding/content wrapper so drags can start in the expanded tool indent."""
+
+        ALLOW_SELECT = True
+
+        def render_line(self, y: int) -> Strip:
+            return _with_selection_offsets(super().render_line(y), y)
+
+        def get_selection(self, selection: Selection) -> tuple[str, str] | None:
+            return "", ""
+
+    def __init__(
+        self,
+        *children,
+        title: str = "Toggle",
+        collapsed: bool = True,
+        collapsed_symbol: str = "▶",
+        expanded_symbol: str = "▼",
+        **kwargs,
+    ) -> None:
+        super().__init__(
+            *children,
+            title=title,
+            collapsed=collapsed,
+            collapsed_symbol=collapsed_symbol,
+            expanded_symbol=expanded_symbol,
+            **kwargs,
+        )
+        self._title = SelectableCollapsibleTitle(
+            label=title,
+            collapsed_symbol=collapsed_symbol,
+            expanded_symbol=expanded_symbol,
+            collapsed=collapsed,
+        )
 
 
 class ToolEntryWidget(Vertical):
@@ -416,7 +519,7 @@ class ToolEntryWidget(Vertical):
         self._preview.display = False
         yield self._preview
         self._body = Static("", markup=False, classes="tool-body")
-        self._collapsible = Collapsible(self._body, title=self._title_factory(self.entry), collapsed=True)
+        self._collapsible = SelectableCollapsible(self._body, title=self._title_factory(self.entry), collapsed=True)
         yield self._collapsible
 
     def on_mount(self) -> None:
@@ -1093,12 +1196,12 @@ class KolegaCodeApp(App):
 
     ConversationEntryWidget {
         height: auto;
-        margin-bottom: 1;
+        padding-bottom: 1;
     }
 
     ToolEntryWidget {
         height: auto;
-        margin-bottom: 1;
+        padding-bottom: 1;
     }
 
     ToolEntryWidget Collapsible {
@@ -1106,6 +1209,10 @@ class KolegaCodeApp(App):
         border-top: none;
         padding-bottom: 0;
         padding-left: 0;
+    }
+
+    ToolEntryWidget Collapsible Contents {
+        padding-left: 3;
     }
 
     ToolEntryWidget .tool-body {

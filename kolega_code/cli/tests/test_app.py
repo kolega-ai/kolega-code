@@ -3061,6 +3061,236 @@ async def test_conversation_entry_supports_mouse_drag_selection(
 
 
 @pytest.mark.asyncio
+async def test_conversation_entry_selection_styles_rendered_lines(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from textual.geometry import Offset
+    from textual.selection import Selection
+
+    from kolega_code.cli.app import ConversationEntry, ConversationEntryWidget
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test(size=(100, 40)) as pilot:
+        app.conversation_entries = [
+            ConversationEntry(kind="user", content="select this user text"),
+            ConversationEntry(kind="assistant", content="select this agent text"),
+            ConversationEntry(kind="assistant", content="select this streaming text", complete=False),
+        ]
+        app._render_conversation()
+        await pilot.pause()
+
+        widgets = list(app.query(ConversationEntryWidget))[-3:]
+        for widget in widgets:
+            app.screen.selections = {widget: Selection(Offset(0, 1), Offset(12, 1))}
+            strip = widget.render_line(1)
+            selection_bg = widget.selection_style.bgcolor
+
+            assert any(
+                segment.style is not None
+                and segment.style.bgcolor == selection_bg
+                and segment.style.meta.get("offset") is not None
+                for segment in strip
+            )
+
+
+@pytest.mark.asyncio
+async def test_conversation_selection_can_start_in_blank_separator(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from textual import events
+
+    from kolega_code.cli.app import ConversationEntry, ConversationEntryWidget
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        app.conversation_entries = [
+            ConversationEntry(kind="user", content="first"),
+            ConversationEntry(kind="assistant", content="second", complete=False),
+        ]
+        app._render_conversation()
+        await pilot.pause()
+
+        first, second = list(app.query(ConversationEntryWidget))[-2:]
+        separator_y = first.region.height - 1
+
+        await pilot.mouse_down(first, offset=(0, separator_y))
+        await pilot._post_mouse_events([events.MouseMove], second, offset=(20, 1), button=1)
+        await pilot.mouse_up(second, offset=(20, 1))
+
+        selected_text = app.screen.get_selected_text()
+        assert selected_text is not None
+        assert "second" in selected_text
+
+
+@pytest.mark.asyncio
+async def test_conversation_selection_can_start_after_line_end(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from textual import events
+
+    from kolega_code.cli.app import ConversationEntry, ConversationEntryWidget
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        app.conversation_entries = [
+            ConversationEntry(kind="user", content="first"),
+            ConversationEntry(kind="assistant", content="second", complete=False),
+        ]
+        app._render_conversation()
+        await pilot.pause()
+
+        first, second = list(app.query(ConversationEntryWidget))[-2:]
+
+        await pilot.mouse_down(first, offset=(30, 1))
+        await pilot._post_mouse_events([events.MouseMove], second, offset=(20, 1), button=1)
+        await pilot.mouse_up(second, offset=(20, 1))
+
+        selected_text = app.screen.get_selected_text()
+        assert selected_text is not None
+        assert "second" in selected_text
+
+
+@pytest.mark.asyncio
+async def test_conversation_selection_spans_multiple_messages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from textual import events
+
+    from kolega_code.cli.app import ConversationEntry, ConversationEntryWidget
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        app.conversation_entries = [
+            ConversationEntry(kind="user", content="first message"),
+            ConversationEntry(kind="assistant", content="second message", complete=False),
+        ]
+        app._render_conversation()
+        await pilot.pause()
+
+        first, second = list(app.query(ConversationEntryWidget))[-2:]
+
+        await pilot.mouse_down(first, offset=(0, 1))
+        await pilot._post_mouse_events([events.MouseMove], second, offset=(20, 1), button=1)
+        await pilot.mouse_up(second, offset=(20, 1))
+
+        selected_text = app.screen.get_selected_text()
+        assert selected_text is not None
+        assert "first message" in selected_text
+        assert "second message" in selected_text
+        assert selected_text.index("first message") < selected_text.index("second message")
+
+
+@pytest.mark.asyncio
+async def test_collapsed_tool_title_supports_drag_selection_and_toggle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from textual import events
+    from textual.widgets import Collapsible
+    from textual.widgets._collapsible import CollapsibleTitle
+
+    from kolega_code.cli.app import ConversationEntry, ToolEntryWidget
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        app.conversation_entries = [
+            ConversationEntry(
+                kind="tool_result",
+                content="preview text",
+                full_content="full text",
+                tool_name="read_file",
+            )
+        ]
+        app._render_conversation()
+        await pilot.pause()
+
+        widget = app.query(ToolEntryWidget).last()
+        collapsible = widget.query_one(Collapsible)
+        title = widget.query_one(CollapsibleTitle)
+
+        await pilot.mouse_down(title, offset=(1, 0))
+        await pilot._post_mouse_events([events.MouseMove], title, offset=(20, 0), button=1)
+        await pilot.mouse_up(title, offset=(20, 0))
+
+        selected_text = app.screen.get_selected_text()
+        assert selected_text is not None
+        assert "read_file" in selected_text
+
+        await pilot.click(title, offset=(1, 0))
+        await pilot.pause()
+        assert collapsible.collapsed is False
+
+        title.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert collapsible.collapsed is True
+
+
+@pytest.mark.asyncio
+async def test_expanded_tool_body_line_start_selection_copies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from textual import events
+    from textual.widgets import Collapsible, Static
+    from textual.widgets._collapsible import CollapsibleTitle
+
+    from kolega_code.cli.app import ConversationEntry, ToolEntryWidget
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+    copied: list[str] = []
+    monkeypatch.setattr(app, "copy_to_clipboard", copied.append)
+
+    async with app.run_test(size=(100, 40)) as pilot:
+        app.conversation_entries = [
+            ConversationEntry(
+                kind="tool_result",
+                content="preview text",
+                full_content="alpha line\nbeta line\ngamma line",
+                tool_name="read_file",
+            )
+        ]
+        app._render_conversation()
+        await pilot.pause()
+
+        widget = app.query(ToolEntryWidget).last()
+        title = widget.query_one(CollapsibleTitle)
+        await pilot.click(title, offset=(1, 0))
+        await pilot.pause()
+
+        body = widget.query_one(".tool-body", Static)
+        assert widget.query_one(Collapsible).collapsed is False
+        assert body.region.x == widget.region.x + 3
+
+        body_y = body.region.y - widget.region.y
+        await pilot.mouse_down(widget, offset=(0, body_y))
+        await pilot._post_mouse_events([events.MouseMove], widget, offset=(11, body_y + 1), button=1)
+        await pilot.mouse_up(widget, offset=(11, body_y + 1))
+
+        selected_text = app.screen.get_selected_text()
+        assert selected_text is not None
+        assert selected_text == "alpha line\nbeta line"
+
+        await pilot.press("super+c")
+        assert copied == ["alpha line\nbeta line"]
+
+
+@pytest.mark.asyncio
 async def test_command_c_copies_selected_chat_text_to_macos_clipboard(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
