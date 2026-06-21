@@ -3385,6 +3385,75 @@ async def test_conversation_entry_selection_styles_rendered_lines(
 
 
 @pytest.mark.asyncio
+async def test_conversation_entry_selection_preserves_text_foreground(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from textual.geometry import Offset
+    from textual.selection import Selection
+
+    from kolega_code.cli import theme
+    from kolega_code.cli.app import ConversationEntry, ConversationEntryWidget
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test(size=(100, 40)) as pilot:
+        app.conversation_entries = [
+            ConversationEntry(kind="user", content="select this user text"),
+        ]
+        app._render_conversation()
+        await pilot.pause()
+
+        # Exercise every theme: the fix must keep selected text readable regardless
+        # of the active palette. Theme state is process-global, so restore it after.
+        try:
+            for theme_name in theme.available_themes():
+                app._apply_theme(theme_name)
+                await pilot.pause()
+                widget = app.query(ConversationEntryWidget).last()
+
+                # Foreground colors present on line 1 with no selection.
+                app.screen.selections = {}
+                plain_strip = widget.render_line(1)
+                plain_colors = {
+                    segment.style.color
+                    for segment in plain_strip
+                    if segment.text and segment.style is not None
+                }
+                assert plain_colors, f"expected colored content on line 1 for {theme_name}"
+
+                # Select a span on line 1 and re-render.
+                app.screen.selections = {widget: Selection(Offset(0, 1), Offset(20, 1))}
+                selected_strip = widget.render_line(1)
+                selection_style = widget.selection_style
+                selection_bg = selection_style.bgcolor
+
+                highlighted = [
+                    segment
+                    for segment in selected_strip
+                    if segment.text
+                    and segment.style is not None
+                    and segment.style.bgcolor == selection_bg
+                ]
+                assert highlighted, f"expected highlighted segments for {theme_name}"
+
+                # The selection must not blank out the text: every highlighted segment
+                # keeps its original foreground (one seen unselected) and never the
+                # transparent selection foreground.
+                for segment in highlighted:
+                    assert segment.style.color in plain_colors, (
+                        f"selection wiped the text foreground for {theme_name}"
+                    )
+                    if selection_style.color is not None:
+                        assert segment.style.color != selection_style.color, (
+                            f"selection foreground overrode text color for {theme_name}"
+                        )
+        finally:
+            theme.apply_theme(theme.DEFAULT_THEME_NAME)
+
+
+@pytest.mark.asyncio
 async def test_conversation_selection_can_start_in_blank_separator(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
