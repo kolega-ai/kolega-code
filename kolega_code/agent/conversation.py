@@ -214,8 +214,11 @@ class Conversation:
         # Compaction state: ``summary`` stands in for ``history[:compacted_through]``
         # in the effective view; messages from ``compacted_through`` onward are kept
         # verbatim. ``summary is None`` / ``compacted_through == 0`` means uncompacted.
+        # ``compacted_history_length`` is the history length captured when compaction
+        # ran, so the UI can place the summary after the retained tail on restore.
         self.summary: Optional[Message] = None
         self.compacted_through: int = 0
+        self.compacted_history_length: int = 0
         self.max_tool_result_chars = max_tool_result_chars
 
     # ------------------------------------------------------------------
@@ -234,6 +237,7 @@ class Conversation:
         self._history = value if isinstance(value, MessageHistory) else MessageHistory(list(value))
         self.summary = None
         self.compacted_through = 0
+        self.compacted_history_length = 0
 
     @property
     def last_compression_index(self) -> Optional[int]:
@@ -249,6 +253,7 @@ class Conversation:
         if value is None:
             self.summary = None
             self.compacted_through = 0
+            self.compacted_history_length = 0
         else:
             self.compacted_through = value + 1
 
@@ -257,6 +262,7 @@ class Conversation:
         self._history = MessageHistory([])
         self.summary = None
         self.compacted_through = 0
+        self.compacted_history_length = 0
 
     def has_image_blocks(self) -> bool:
         """True if the effective (compaction-aware) history still carries any images.
@@ -630,6 +636,7 @@ class Conversation:
             summary if isinstance(summary, Message) else Message(role="user", content=[TextBlock(text=str(summary))])
         )
         self.compacted_through = len(self._history)
+        self.compacted_history_length = len(self._history)
 
     def apply_compaction(self, summary_text: str, split_point: int) -> None:
         """Record ``summary_text`` as standing in for ``history[:split_point]``.
@@ -639,6 +646,7 @@ class Conversation:
         """
         self.summary = Message(role="user", content=[TextBlock(text=summary_text)])
         self.compacted_through = max(0, min(split_point, len(self._history)))
+        self.compacted_history_length = len(self._history)
 
     def compaction_split_point(self, *, keep_recent: int, min_prefix: int) -> Optional[int]:
         """Index where the verbatim recent tail should begin.
@@ -691,13 +699,15 @@ class Conversation:
         return {
             "summary": self.summary.get_text_content() if self.summary is not None else "",
             "compacted_through": self.compacted_through,
+            "compacted_history_length": self.compacted_history_length,
         }
 
     def restore_compaction(self, data: Optional[Dict[str, Any]]) -> None:
         """Restore a compaction boundary saved by ``dump_compaction``.
 
         Call AFTER ``restore`` (which resets compaction). Assigns the boundary
-        fields directly so it does not trip the history setter's reset.
+        fields directly so it does not trip the history setter's reset. Old
+        sessions without ``compacted_history_length`` fall back to 0.
         """
         data = data or {}
         text = (data.get("summary") or "").strip()
@@ -705,6 +715,8 @@ class Conversation:
         if text and through > 0:
             self.summary = Message(role="user", content=[TextBlock(text=text)])
             self.compacted_through = min(through, len(self._history))
+            self.compacted_history_length = int(data.get("compacted_history_length") or 0)
         else:
             self.summary = None
             self.compacted_through = 0
+            self.compacted_history_length = 0

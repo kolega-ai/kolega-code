@@ -165,16 +165,47 @@ def test_dump_restore_compaction_round_trip():
     conv = _conv(long_history(6))  # 12 messages
     conv.apply_compaction("THE SUMMARY", 6)
     data = conv.dump_compaction()
-    assert data == {"summary": "THE SUMMARY", "compacted_through": 6}
+    assert data == {"summary": "THE SUMMARY", "compacted_through": 6, "compacted_history_length": 12}
 
     # A fresh conversation gets the full history back, then the boundary on top.
     restored = Conversation(list(conv.history))
     restored.restore_compaction(data)
     assert restored.summary is not None
     assert restored.compacted_through == 6
+    assert restored.compacted_history_length == 12
     effective = list(restored.effective_history())
     assert effective[0].get_text_content() == "THE SUMMARY"
     assert effective[1:] == list(conv.history)[6:]  # verbatim tail preserved
+
+
+def test_apply_compaction_captures_history_length():
+    conv = _conv(long_history(5))  # 10 messages
+    conv.apply_compaction("S", split_point=4)
+    assert conv.compacted_history_length == len(conv.history) == 10
+
+
+def test_restore_compaction_without_history_length_falls_back():
+    # Old sessions persisted before compacted_history_length existed.
+    conv = _conv(long_history(3))  # 6 messages
+    conv.restore_compaction({"summary": "S", "compacted_through": 3})  # no compacted_history_length
+    assert conv.summary is not None
+    assert conv.compacted_through == 3
+    assert conv.compacted_history_length == 0  # graceful default
+
+
+def test_clear_and_history_setter_reset_history_length():
+    conv = _conv(long_history(4))
+    conv.apply_compaction("S", 3)
+    assert conv.compacted_history_length == 8
+
+    conv.clear()
+    assert conv.compacted_history_length == 0
+
+    conv2 = _conv(long_history(4))
+    conv2.apply_compaction("S", 3)
+    assert conv2.compacted_history_length == 8
+    conv2.history = MessageHistory([text_msg("user", "fresh")])
+    assert conv2.compacted_history_length == 0
 
 
 def test_restore_compaction_empty_is_noop():

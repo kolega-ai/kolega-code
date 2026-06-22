@@ -4761,17 +4761,21 @@ class KolegaCodeApp(App):
         self._cancel_pending_theme_selection()
         self._refresh_planning_sidebar()
         self._ensure_startup_entry(render=False)
-        # If the restored agent is in a compacted state, mark the boundary with a
-        # collapsible summary (between the folded prefix and the verbatim tail).
+        # If the restored agent is in a compacted state, place the collapsible
+        # summary where it sat in the live transcript: after the retained tail
+        # messages, before any newer turns. The history length captured when
+        # compaction ran tells us that position; old sessions without it fall
+        # back to the compaction boundary so the summary still renders.
         summary_entry = self._resume_compaction_entry()
-        boundary = None
         if summary_entry is not None:
-            through = int((self.session.compaction or {}).get("compacted_through") or 0)
+            compaction = self.session.compaction or {}
+            through = int(compaction.get("compacted_through") or 0)
             boundary = min(through, len(history))
-        if summary_entry is not None and boundary is not None:
-            self.conversation_entries.extend(self._conversation_entries_from_history_items(history[:boundary]))
+            summary_index = int(compaction.get("compacted_history_length") or boundary)
+            summary_index = min(summary_index, len(history))
+            self.conversation_entries.extend(self._conversation_entries_from_history_items(history[:summary_index]))
             self.conversation_entries.append(summary_entry)
-            self.conversation_entries.extend(self._conversation_entries_from_history_items(history[boundary:]))
+            self.conversation_entries.extend(self._conversation_entries_from_history_items(history[summary_index:]))
         else:
             self.conversation_entries.extend(self._conversation_entries_from_history_items(history))
         self._render_conversation()
