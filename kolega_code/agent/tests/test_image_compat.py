@@ -110,6 +110,36 @@ def test_adapt_preserves_deepseek_thinking_when_targeting_deepseek():
     assert out[0].content[0].signature == "deepseek-sig"
 
 
+def test_adapt_preserves_fireworks_thinking_when_targeting_fireworks():
+    history = [_assistant(ThinkingBlock(thinking="native reasoning"), provider="fireworks")]
+
+    out = adapt_history_for_provider(
+        history,
+        target_provider="fireworks",
+        target_model="accounts/fireworks/models/glm-5p2",
+        supports_vision=False,
+    )
+
+    assert out is history
+    assert isinstance(out[0].content[0], ThinkingBlock)
+    assert out[0].content[0].thinking == "native reasoning"
+
+
+def test_adapt_converts_thinking_without_source_provider():
+    history = [_assistant(ThinkingBlock(thinking="unknown-source reasoning"))]
+
+    out = adapt_history_for_provider(
+        history,
+        target_provider="fireworks",
+        target_model="accounts/fireworks/models/glm-5p2",
+        supports_vision=False,
+    )
+
+    assert out[0] is not history[0]
+    assert isinstance(out[0].content[0], TextBlock)
+    assert "Prior reasoning from unknown provider omitted" in out[0].content[0].text
+
+
 def test_adapt_preserves_images_for_vision_target_while_converting_foreign_thinking():
     tr = ToolResult(tool_use_id="t1", name="read_image", content=[_image("image/jpeg")], is_error=False)
     history = [

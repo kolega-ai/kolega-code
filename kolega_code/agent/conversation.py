@@ -113,11 +113,8 @@ def replace_image_blocks_with_placeholders(messages: List[Message], model_name: 
     return result
 
 
-_NATIVE_REASONING_PROVIDERS = {"anthropic", "moonshot", "kimi_coding", "deepseek", "zai"}
-
-
 def _preserve_reasoning_block(block: Any, *, source_provider: str, target_provider: str) -> bool:
-    return target_provider in _NATIVE_REASONING_PROVIDERS and source_provider == target_provider
+    return bool(source_provider) and source_provider == target_provider
 
 
 def _reasoning_placeholder(block: Any, source_provider: str) -> TextBlock:
@@ -167,11 +164,12 @@ def adapt_history_for_provider(
 ) -> List[Message]:
     """Return a request-safe history for the target provider without mutating storage.
 
-    Provider-managed reasoning blocks are not portable across providers. Keep
-    only native reasoning for the same provider; convert foreign or unknown
-    reasoning blocks to text placeholders. Image blocks are preserved for vision
-    models and replaced with placeholders for non-vision models, matching the
-    previous image compatibility behavior.
+    Provider-managed reasoning blocks are not portable across providers, but
+    reasoning produced by a provider is safe to send back to the same provider.
+    Preserve same-provider reasoning; convert foreign or unknown reasoning
+    blocks to text placeholders. Image blocks are preserved for vision models
+    and replaced with placeholders for non-vision models, matching the previous
+    image compatibility behavior.
     """
     target_provider = _provider_value(target_provider)
     result: List[Message] = []
