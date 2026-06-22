@@ -513,8 +513,12 @@ def build_thinking_request_params(provider: str, model_name: str, effort: Option
 
     if spec.mode == "openai_responses_reasoning":
         # The Responses API nests reasoning effort under a "reasoning" object,
-        # unlike Chat Completions' flat "reasoning_effort". Codex also sends
-        # summary=auto, which the ChatGPT backend expects.
+        # unlike Chat Completions' flat "reasoning_effort". We request
+        # summary="auto" so the backend streams a human-readable reasoning summary
+        # for the TUI thinking display. (Codex defaults these models to summary
+        # "none" and shows no reasoning text; kolega surfaces it, so we keep it
+        # on.) This is independent of reasoning continuity, which is carried by
+        # reasoning.encrypted_content (see the ChatGPT provider), not the summary.
         return {"reasoning": {"effort": normalized, "summary": "auto"}}
 
     raise ValueError(f"Unknown thinking effort mode '{spec.mode}' for {_provider_value(provider)}/{model_name}.")

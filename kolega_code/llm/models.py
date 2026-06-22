@@ -348,6 +348,84 @@ class RedactedThinkingBlock(ContentBlock):
         return "*Redacted thinking*"
 
 
+@register_content_block
+class ResponsesReasoningBlock(ContentBlock):
+    """OpenAI Responses-API reasoning item, kept so it can be resent next turn.
+
+    The Responses API hides raw chain-of-thought, but when a request asks for
+    ``include=["reasoning.encrypted_content"]`` each reasoning item comes back
+    with an opaque ``encrypted_content`` blob. Resending that blob in the next
+    request's ``input`` lets the model *continue* its prior reasoning instead of
+    re-deriving it on every tool-call round — which is exactly what Codex does
+    and why Codex doesn't blow up its thinking time at high effort.
+
+    The block is specific to the ``openai_chatgpt`` (Responses) provider. It is
+    serialized back via :meth:`to_responses_item`; the ``to_anthropic`` /
+    ``to_openai`` / ``to_google`` conversions return a harmless placeholder so a
+    stray cross-provider conversion never sends a foreign reasoning blob.
+    """
+
+    TYPE_NAME = "responses_reasoning"
+
+    def __init__(
+        self,
+        encrypted_content: str,
+        summary: Optional[List[str]] = None,
+        item_id: Optional[str] = None,
+        cache_checkpoint: bool = False,
+    ):
+        super().__init__(type=self.TYPE_NAME, cache_checkpoint=cache_checkpoint)
+        self.encrypted_content = encrypted_content
+        self.summary = list(summary or [])
+        self.item_id = item_id
+
+    def to_dict(self) -> Dict[str, Any]:
+        result = {
+            "type": self.type,
+            "encrypted_content": self.encrypted_content,
+            "summary": list(self.summary),
+            "cache_checkpoint": self.cache_checkpoint,
+        }
+        if self.item_id:
+            result["item_id"] = self.item_id
+        return result
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "ResponsesReasoningBlock":
+        return cls(
+            encrypted_content=data["encrypted_content"],
+            summary=data.get("summary") or [],
+            item_id=data.get("item_id"),
+            cache_checkpoint=data.get("cache_checkpoint", False),
+        )
+
+    def to_responses_item(self) -> Dict[str, Any]:
+        """Serialize back to a Responses API ``input`` reasoning item.
+
+        Mirrors what Codex sends to the same backend: a ``reasoning`` item with
+        its ``summary`` parts and the opaque ``encrypted_content``. The server
+        item id is intentionally omitted — with ``store=false`` it is not a valid
+        server reference and Codex clears it too.
+        """
+        return {
+            "type": "reasoning",
+            "summary": [{"type": "summary_text", "text": text} for text in self.summary],
+            "encrypted_content": self.encrypted_content,
+        }
+
+    def to_anthropic(self) -> Dict[str, Any]:
+        return {"type": "text", "text": "[Reasoning]"}
+
+    def to_openai(self) -> Dict[str, Any]:
+        return {"type": "text", "text": "[Reasoning]"}
+
+    def to_google(self) -> genai_types.Part:
+        return genai_types.Part.from_text(text="[Reasoning]")
+
+    def to_markdown(self) -> str:
+        return "*Reasoning*"
+
+
 class ToolParameter:
     """Parameter definition for a tool"""
 

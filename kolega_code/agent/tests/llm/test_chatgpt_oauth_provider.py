@@ -13,6 +13,7 @@ from kolega_code.llm.models import (
     ImageBlock,
     Message,
     MessageHistory,
+    ResponsesReasoningBlock,
     TextBlock,
     ToolCall,
     ToolDefinition,
@@ -147,6 +148,32 @@ def test_to_responses_input_multiple_tool_outputs_before_image_followups():
     assert items[1]["call_id"] == "call_2"
     assert items[2]["role"] == "user"
     assert any(part.get("type") == "input_image" for part in items[2]["content"])
+
+
+def test_to_responses_input_resends_reasoning_before_tool_call():
+    # A prior assistant turn carrying captured reasoning must resend it as a
+    # reasoning item that *precedes* the function_call it belongs to.
+    history = MessageHistory(
+        [
+            Message(
+                role="assistant",
+                content=[
+                    ResponsesReasoningBlock(encrypted_content="ENC", summary=["thinking..."], item_id="rs_1"),
+                    ToolCall(id="call_1", name="read_file", input={"path": "a.py"}),
+                ],
+            ),
+        ]
+    )
+    items = to_responses_input(history)
+    assert items[0] == {
+        "type": "reasoning",
+        "summary": [{"type": "summary_text", "text": "thinking..."}],
+        "encrypted_content": "ENC",
+    }
+    # The opaque server id is intentionally not resent (matches Codex, store=false).
+    assert "id" not in items[0]
+    assert items[1]["type"] == "function_call"
+    assert items[1]["call_id"] == "call_1"
 
 
 def test_responses_tools_flattens_function_shape():
@@ -313,6 +340,86 @@ async def test_responses_stream_wrapper_max_tokens_stop_reason():
     assert message.stop_reason == "max_tokens"
 
 
+@pytest.mark.asyncio
+async def test_responses_stream_wrapper_captures_reasoning_for_continuity():
+    # With include=["reasoning.encrypted_content"], the backend emits a completed
+    # reasoning item carrying the encrypted blob. We capture it (leading the
+    # assistant message) so it round-trips into the next request for continuity.
+    completed = _ns(output=[], usage=None, status="completed", incomplete_details=None)
+    events = [
+        _ns(
+            type="response.output_item.done",
+            item=_ns(
+                type="reasoning",
+                id="rs_1",
+                encrypted_content="ENC",
+                summary=[_ns(type="summary_text", text="planning")],
+            ),
+        ),
+        _ns(
+            type="response.output_item.done",
+            item=_ns(type="function_call", id="fc_1", call_id="call_1", name="read_file", arguments='{"path": "a.py"}'),
+        ),
+        _ns(type="response.completed", response=completed),
+    ]
+    wrapper = ResponsesStreamWrapper(_FakeStream(events))
+    async with wrapper as stream:
+        async for _chunk in stream:
+            pass
+    message = await wrapper.get_final_message()
+
+    # Reasoning leads the assistant content so it precedes the tool call on resend.
+    assert isinstance(message.content[0], ResponsesReasoningBlock)
+    assert message.content[0].encrypted_content == "ENC"
+    assert message.content[0].summary == ["planning"]
+
+    items = to_responses_input(MessageHistory([message]))
+    assert items[0]["type"] == "reasoning"
+    assert items[0]["encrypted_content"] == "ENC"
+    assert items[1]["type"] == "function_call"
+
+
+@pytest.mark.asyncio
+async def test_responses_stream_wrapper_reasoning_from_final_output_fallback():
+    # Some backends populate reasoning only on the final response output, not via
+    # output_item.done events. The fallback path must still capture it.
+    completed = _ns(
+        output=[
+            _ns(type="reasoning", id="rs_1", encrypted_content="ENC2", summary=[]),
+            _ns(type="message", content=[_ns(type="output_text", text="hi")]),
+        ],
+        usage=None,
+        status="completed",
+        incomplete_details=None,
+    )
+    wrapper = ResponsesStreamWrapper(_FakeStream([_ns(type="response.completed", response=completed)]))
+    async with wrapper as stream:
+        async for _chunk in stream:
+            pass
+    message = await wrapper.get_final_message()
+    reasoning = [b for b in message.content if isinstance(b, ResponsesReasoningBlock)]
+    assert reasoning and reasoning[0].encrypted_content == "ENC2"
+    assert reasoning[0].summary == []
+
+
+@pytest.mark.asyncio
+async def test_responses_stream_wrapper_skips_reasoning_without_encrypted_content():
+    # A reasoning item lacking encrypted_content is useless for continuity (and
+    # would be rejected on resend), so it must be dropped.
+    completed = _ns(output=[], usage=None, status="completed", incomplete_details=None)
+    events = [
+        _ns(type="response.output_item.done", item=_ns(type="reasoning", id="rs_1", encrypted_content=None, summary=[])),
+        _ns(type="response.output_text.delta", delta="ok"),
+        _ns(type="response.completed", response=completed),
+    ]
+    wrapper = ResponsesStreamWrapper(_FakeStream(events))
+    async with wrapper as stream:
+        async for _chunk in stream:
+            pass
+    message = await wrapper.get_final_message()
+    assert not [b for b in message.content if isinstance(b, ResponsesReasoningBlock)]
+
+
 # --- provider request building (no network) -------------------------------------
 
 
@@ -352,13 +459,38 @@ async def test_provider_generate_builds_codex_shaped_request():
     assert kwargs["store"] is False
     assert kwargs["stream"] is True  # backend is SSE-only; generate streams too
     assert kwargs["instructions"] == "sys"
+    # summary="auto" so the backend streams a reasoning summary for the thinking
+    # display; this is independent of continuity, which rides on `include` below.
     assert kwargs["reasoning"] == {"effort": "high", "summary": "auto"}
+    # Reasoning continuity: ask the backend for the encrypted reasoning blob so it
+    # can be resent next turn (matches Codex; the cause of the long-thinking gap).
+    assert kwargs["include"] == ["reasoning.encrypted_content"]
     assert kwargs["tool_choice"] == "auto"
     assert kwargs["parallel_tool_calls"] is False
     assert "prompt_cache_key" in kwargs
     # Codex never sends max_output_tokens; sending it triggers a 400.
     assert "max_output_tokens" not in kwargs
     assert kwargs["input"] == [{"role": "user", "content": [{"type": "input_text", "text": "hello"}]}]
+
+
+@pytest.mark.asyncio
+async def test_provider_generate_omits_reasoning_and_include_without_thinking():
+    provider = ChatGPTOAuthProvider(token_manager=ChatGPTTokenManager(_tokens()))
+    completed = _ns(
+        output=[_ns(type="message", content=[_ns(type="output_text", text="hi")])],
+        usage=None,
+        status="completed",
+        incomplete_details=None,
+    )
+    fake = _FakeResponses(_FakeStream([_ns(type="response.completed", response=completed)]))
+    provider.async_client = _ns(responses=fake)
+    await provider.generate(
+        MessageHistory([Message(role="user", content=[TextBlock(text="hello")])]),
+        params=GenerationParams(),  # no thinking effort
+        model="gpt-5.5",
+    )
+    assert "reasoning" not in fake.last_kwargs
+    assert "include" not in fake.last_kwargs
 
 
 @pytest.mark.asyncio
