@@ -24,6 +24,7 @@ from kolega_code.permissions import (
     normalize_permission_mode,
 )
 from kolega_code.services.browser import PlaywrightBrowserManager
+from kolega_code.utils.images import encode_image_file
 
 from .config import (
     DEPRECATED_THINKING_TOKENS_MESSAGE,
@@ -193,6 +194,13 @@ def _build_subcommand_parser() -> argparse.ArgumentParser:
         "--trust-hooks",
         action="store_true",
         help="Trust and enable this project's .kolega/hooks.json (persisted for future runs).",
+    )
+    ask.add_argument(
+        "--image",
+        action="append",
+        default=[],
+        type=Path,
+        help="Attach an image file to the prompt (repeatable).",
     )
     _add_session_args(ask)
     _add_common_model_args(ask)
@@ -590,6 +598,15 @@ async def _run_ask(args: argparse.Namespace) -> int:
     attachments, unresolved_mentions = build_file_attachments(prompt, project_path)
     for mention in unresolved_mentions:
         print(f"Note: @{mention} not found, sent as plain text", file=sys.stderr)
+    for image_path in getattr(args, "image", None) or []:
+        encoded = encode_image_file(image_path)
+        if encoded is not None:
+            attachments.append(encoded)
+        else:
+            print(
+                f"Warning: --image {image_path} could not be attached (not a supported image, missing, or too large)",
+                file=sys.stderr,
+            )
 
     response_chunks: list[dict] = []
     exit_code = 0

@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
+from kolega_code.utils.images import MAX_IMAGE_BYTES, encode_image_attachment, image_media_type
+
 MENTION_RE = re.compile(r'(?:(?<=\s)|^)@(?:"([^"]+)"|(\S+))')
 
 TRAILING_PUNCTUATION = ",.;:!?)]}'\""
@@ -71,6 +73,24 @@ def build_file_attachments(text: str, project_path: Path) -> Tuple[List[Dict[str
                 }
             )
         else:
+            media_type = image_media_type(target.name)
+            if media_type is not None:
+                raw = target.read_bytes()
+                if len(raw) > MAX_IMAGE_BYTES:
+                    attachments.append(
+                        {
+                            "type": "file",
+                            "path": rel,
+                            "content": "[image too large to attach - over 20MB; ask the agent to read it directly]",
+                            "truncated": True,
+                            "is_dir": False,
+                        }
+                    )
+                else:
+                    attachment = encode_image_attachment(raw, media_type, path=rel)
+                    attachment["path"] = rel
+                    attachments.append(attachment)
+                continue
             content, truncated = _read_file_content(target)
             attachments.append(
                 {

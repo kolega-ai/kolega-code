@@ -54,24 +54,35 @@ class _EmptyStream:
         return Message("assistant", [TextBlock("done")], stop_reason="end_turn")
 
 
-def test_deepseek_image_attachment_is_rejected_by_provider_check():
+def test_non_vision_image_attachment_is_rejected_by_provider_check():
     agent = object.__new__(BaseAgent)
-    agent.primary_model_config = SimpleNamespace(provider=ModelProvider.DEEPSEEK.value)
-
-    assert (
-        agent._unsupported_attachment_message([_image_attachment()])
-        == BaseAgent.deepseek_image_unsupported_message
+    agent.primary_model_config = SimpleNamespace(
+        provider=ModelProvider.DEEPSEEK.value, model="deepseek-v4-pro"
     )
 
+    message = agent._unsupported_attachment_message([_image_attachment()])
+    assert message is not None
+    assert "does not support image input" in message
+    assert "deepseek-v4-pro" in message
+    assert "not sent to the model" in message
 
-def test_deepseek_attachment_check_allows_non_images_and_other_providers():
+
+def test_vision_image_attachment_is_allowed():
     agent = object.__new__(BaseAgent)
-    agent.primary_model_config = SimpleNamespace(provider=ModelProvider.DEEPSEEK)
+    agent.primary_model_config = SimpleNamespace(
+        provider=ModelProvider.ANTHROPIC, model="claude-opus-4-8"
+    )
+    assert agent._unsupported_attachment_message([_image_attachment()]) is None
+
+
+def test_attachment_check_allows_non_images_for_non_vision_model():
+    agent = object.__new__(BaseAgent)
+    agent.primary_model_config = SimpleNamespace(
+        provider=ModelProvider.DEEPSEEK, model="deepseek-v4-pro"
+    )
     assert agent._unsupported_attachment_message(None) is None
     assert agent._unsupported_attachment_message([{"type": "document", "data": "abc"}]) is None
-
-    agent.primary_model_config.provider = ModelProvider.ANTHROPIC
-    assert agent._unsupported_attachment_message([_image_attachment()]) is None
+    assert agent._unsupported_attachment_message([{"type": "file", "path": "a.py", "content": "x"}]) is None
 
 
 @pytest.mark.asyncio
@@ -95,7 +106,9 @@ async def test_coder_agent_rejects_deepseek_image_without_llm_call(tmp_path):
 
     assert len(chunks) == 1
     assert chunks[0]["type"] == "response"
-    assert chunks[0]["content"] == BaseAgent.deepseek_image_unsupported_message
+    assert "does not support image input" in chunks[0]["content"]
+    assert "deepseek-v4-pro" in chunks[0]["content"]
+    assert "not sent to the model" in chunks[0]["content"]
     assert chunks[0]["complete"] is True
     assert agent.history == []
     agent.llm.stream.assert_not_called()
@@ -270,12 +283,13 @@ class TestCoderAgentAttachments:
 async def test_coder_agent_process_message_imports():
     """Test that the coder agent has the necessary imports for image handling."""
     # This test verifies the imports are correct
-    from kolega_code.agent.coder import CoderAgent
+    from kolega_code.agent.coder import CoderAgent  # noqa: F401
     from kolega_code.llm.models import ImageBlock, TextBlock
 
     # Just verify the imports work
     assert ImageBlock is not None
     assert TextBlock is not None
+    assert CoderAgent is not None
 
 
 def test_attachment_blocks_mixes_images_and_files():
@@ -323,3 +337,152 @@ async def test_coder_agent_file_attachment_added_to_history(tmp_path):
     texts = [block.text for block in user_message.content if isinstance(block, TextBlock)]
     assert texts[0] == "see the notes"
     assert texts[1] == '<attached-file path="notes.md">\nremember the milk\n</attached-file>'
+
+
+# ---------------------------------------------------------------------------
+# Historical image handling: non-vision model in a thread that already has images
+# ---------------------------------------------------------------------------
+
+
+def _anthropic_config() -> AgentConfig:
+    model_config = ModelConfig(
+        provider=ModelProvider.ANTHROPIC,
+        model="claude-haiku-4-5-20251001",
+        rate_limits=RateLimitConfig(),
+    )
+    return AgentConfig(
+        anthropic_api_key="test-key",
+        long_context_config=model_config,
+        fast_config=model_config,
+        thinking_config=model_config,
+    )
+
+
+def _image_history_message() -> Message:
+    """A user message carrying a text block and an image block from an earlier turn."""
+    return Message(
+        role="user",
+        content=[
+            TextBlock(text="what is in this image?"),
+            ImageBlock(image_type="base64", media_type="image/png", data="ZmFrZQ=="),
+        ],
+    )
+
+
+def _sent_messages(agent) -> list:
+    """The messages passed to llm.stream on the most recent call."""
+    return list(agent.llm.stream.call_args.kwargs["messages"])
+
+
+@pytest.mark.asyncio
+async def test_non_vision_model_strips_historical_images_before_llm_call(tmp_path):
+    from kolega_code.agent.conversation import count_image_blocks
+
+    connection_manager = Mock()
+    connection_manager.broadcast_event = AsyncMock()
+    agent = CoderAgent(
+        project_path=tmp_path,
+        workspace_id="workspace-123",
+        thread_id="thread-123",
+        connection_manager=connection_manager,
+        config=_deepseek_config(),
+        agent_mode=AgentMode.CLI,
+    )
+    assert agent.supports_vision is False
+    # Pre-populate history with an image-bearing message from an earlier turn.
+    agent.append_user_message([_image_history_message().content[0], _image_history_message().content[1]])
+    assert count_image_blocks(list(agent.history)) == 1
+
+    agent.count_current_context = AsyncMock(return_value=TokenCount(input_tokens=42))
+    agent.llm = Mock()
+    agent.llm.stream = AsyncMock(return_value=_EmptyStream())
+
+    chunks = [chunk async for chunk in agent.process_message_stream("follow up question")]
+
+    # Turn completed normally (no provider error surfaced).
+    assert chunks[-1]["complete"] is True
+    # The request sent to the LLM contains NO image blocks.
+    sent = _sent_messages(agent)
+    assert count_image_blocks(sent) == 0
+    # A text placeholder describing the image is present instead.
+    placeholders = [
+        block.text
+        for m in sent
+        for block in (m.content if isinstance(m.content, list) else [])
+        if isinstance(block, TextBlock) and "not visible" in block.text
+    ]
+    assert placeholders, "expected an image placeholder text block in the request"
+    assert "image/png" in placeholders[0]
+    assert "deepseek-v4-pro" in placeholders[0]
+    # Stored history is NOT mutated — the original image survives for a switch back.
+    assert count_image_blocks(list(agent.history)) == 1
+
+
+@pytest.mark.asyncio
+async def test_vision_model_passes_historical_images_through(tmp_path):
+    from kolega_code.agent.conversation import count_image_blocks
+
+    connection_manager = Mock()
+    connection_manager.broadcast_event = AsyncMock()
+    agent = CoderAgent(
+        project_path=tmp_path,
+        workspace_id="workspace-123",
+        thread_id="thread-123",
+        connection_manager=connection_manager,
+        config=_anthropic_config(),
+        agent_mode=AgentMode.CLI,
+    )
+    assert agent.supports_vision is True
+    agent.append_user_message([_image_history_message().content[0], _image_history_message().content[1]])
+
+    agent.count_current_context = AsyncMock(return_value=TokenCount(input_tokens=42))
+    agent.llm = Mock()
+    agent.llm.stream = AsyncMock(return_value=_EmptyStream())
+
+    chunks = [chunk async for chunk in agent.process_message_stream("follow up question")]
+    assert chunks[-1]["complete"] is True
+
+    # Vision-capable model receives the image block unchanged.
+    sent = _sent_messages(agent)
+    assert count_image_blocks(sent) == 1
+
+
+@pytest.mark.asyncio
+async def test_non_vision_model_count_context_also_strips_images(tmp_path):
+    """count_current_context must not send image blocks to a non-vision model's tokenizer."""
+    from kolega_code.agent.conversation import count_image_blocks
+
+    connection_manager = Mock()
+    connection_manager.broadcast_event = AsyncMock()
+    agent = CoderAgent(
+        project_path=tmp_path,
+        workspace_id="workspace-123",
+        thread_id="thread-123",
+        connection_manager=connection_manager,
+        config=_deepseek_config(),
+        agent_mode=AgentMode.CLI,
+    )
+    agent.append_user_message([_image_history_message().content[0], _image_history_message().content[1]])
+
+    captured = {}
+
+    async def _capture_count(*args, **kwargs):
+        captured["messages"] = list(kwargs.get("messages", []))
+        return TokenCount(input_tokens=42)
+
+    agent.llm = Mock()
+    agent.llm.count_tokens = AsyncMock(side_effect=_capture_count)
+    # Tool list needed by count_current_context.
+    agent.tool_collection = Mock()
+    agent.tool_collection.get_tool_list = Mock(return_value=[])
+
+    await agent.count_current_context()
+
+    assert count_image_blocks(captured["messages"]) == 0
+    placeholders = [
+        block.text
+        for m in captured["messages"]
+        for block in (m.content if isinstance(m.content, list) else [])
+        if isinstance(block, TextBlock) and "not visible" in block.text
+    ]
+    assert placeholders

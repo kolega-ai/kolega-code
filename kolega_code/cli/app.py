@@ -715,6 +715,7 @@ class ChatComposer(TextArea):
         Binding("down", "mention_next", "Next match", show=False, priority=True),
         Binding("tab", "mention_accept", "Complete path", show=False, priority=True),
         Binding("escape", "mention_dismiss", "Dismiss matches", show=False, priority=True),
+        Binding("ctrl+shift+v", "paste_clipboard_image", "Paste image", key_display="Ctrl+Shift+V", priority=True),
     ]
 
     MENTION_QUERY_RE = re.compile(r"(?:^|(?<=\s))@(\S*)$")
@@ -827,6 +828,52 @@ class ChatComposer(TextArea):
         dropdown = self.mention_dropdown()
         if dropdown is not None:
             dropdown.close()
+
+    def action_paste_clipboard_image(self) -> None:
+        app = self.app
+        app.run_worker(app._paste_clipboard_image_worker(), name="paste-image", group="turns")
+
+    async def on_paste(self, event: events.Paste) -> None:
+        text = event.text or ""
+        import base64 as _b64
+        from pathlib import Path as _Path
+
+        from kolega_code.utils.images import (
+            encode_image_attachment,
+            encode_image_file,
+            image_media_type,
+        )
+
+        stripped = text.strip()
+        if stripped.startswith("data:image/") and ";base64," in stripped:
+            header, _, b64data = stripped.partition(";base64,")
+            media_type = header[len("data:"):]  # e.g. image/png
+            try:
+                raw = _b64.b64decode(b64data)
+            except Exception:
+                # Not a valid data-URI image — fall through to default paste.
+                return
+            self.app.add_pending_image_attachment(
+                encode_image_attachment(raw, media_type, path="pasted-data-uri")
+            )
+            event.prevent_default()
+            event.stop()
+            return
+        if (
+            stripped
+            and "\n" not in stripped
+            and _Path(stripped).exists()
+            and image_media_type(stripped) is not None
+        ):
+            att = encode_image_file(_Path(stripped))
+            if att is not None:
+                att["path"] = stripped
+                self.app.add_pending_image_attachment(att)
+                event.prevent_default()
+                event.stop()
+                return
+        # No image detected — let TextArea's default _on_paste insert the text.
+        return
 
     def on_blur(self, event) -> None:
         dropdown = self.mention_dropdown()
@@ -1332,11 +1379,36 @@ class KolegaCodeApp(App):
         background: $surface;
     }
 
-    #composer_hint {
+    #composer_hint_row {
         display: none;
-        height: 1;
-        padding: 0 1;
+        height: auto;
+        max-height: 4;
         background: $surface;
+    }
+
+    #composer_hint_row #composer_hint {
+        width: 1fr;
+        height: auto;
+        padding: 0 1;
+    }
+
+    #composer_hint_row #detach_btn {
+        width: 3;
+        height: 1;
+        min-height: 1;
+        border: none;
+        background: transparent;
+        color: $text-muted;
+        padding: 0 1;
+    }
+
+    #composer_hint_row #detach_btn:hover {
+        color: $warning;
+    }
+
+    #composer_hint_row #detach_btn:focus {
+        color: $warning;
+        text-style: bold;
     }
 
     #completion_dropdown {
@@ -1558,6 +1630,10 @@ class KolegaCodeApp(App):
         self._gigacode_enabled = False
         self._pending_question: Optional[PendingQuestion] = None
         self._pending_approval: Optional[PendingApproval] = None
+        self._pending_image_attachments: list[dict] = []
+        # Dedup flag: one vision-mismatch system message per non-vision model
+        # session. Reset in _switch_model so a new model gets a fresh warning.
+        self._vision_warning_shown = False
         self._permission_lock = asyncio.Lock()
         self._pending_model_selection: Optional[PendingModelSelection] = None
         self._pending_effort_selection: Optional[PendingEffortSelection] = None
@@ -1613,7 +1689,11 @@ class KolegaCodeApp(App):
                 yield ActionList(id="effort_actions")
                 yield ActionList(id="theme_actions")
                 yield Static("", id="turn_status", markup=True)
-                yield Static("", id="composer_hint", markup=False)
+                with Horizontal(id="composer_hint_row"):
+                    yield Static("", id="composer_hint", markup=False)
+                    yield Button(
+                        theme.g(Glyph.CROSS), id="detach_btn", classes="hint-detach"
+                    )
                 yield CompletionDropdown(id="completion_dropdown")
                 yield ChatComposer(placeholder=COMPOSER_PLACEHOLDER, id="composer")
             with Vertical(id="side_panel"):
@@ -1740,6 +1820,7 @@ class KolegaCodeApp(App):
         self._set_effort_actions_visible(False)
         self._refresh_planning_sidebar()
         self._ensure_startup_entry()
+        self._update_detach_button()
         if self.check_for_updates:
             self.run_worker(self._check_for_update_on_startup(), name="kolega-update-check", group="updates")
         self._conversation.anchor()
@@ -1943,8 +2024,30 @@ class KolegaCodeApp(App):
             if stripped_text:
                 self._set_settings_status(messages.SETTINGS_REQUIRED, tone="warning")
             return
-        event.composer.load_text("")
+        # Build attachments first (without clearing pending) so the vision gate
+        # can block before we consume the composer text and pending images.
         attachments = self._build_mention_attachments(text)
+        if self._pending_image_attachments:
+            attachments = (attachments or []) + self._pending_image_attachments
+        # Pre-send vision gate: block when the current model can't see images.
+        # Catches @file.png mentions (which bypass add_pending_image_attachment)
+        # and serves as a final gate for all attachment paths. When blocked, the
+        # composer text and pending attachments are PRESERVED so the user can
+        # remove the image (/detach or edit the @mention) or switch model and
+        # resend — nothing is added to the transcript because nothing was sent.
+        # History images are NOT blocked (stripped to placeholders by
+        # _history_for_llm, send proceeds normally).
+        if attachments and not self._model_supports_vision():
+            has_image = any(a.get("type") == "image" for a in attachments)
+            if has_image:
+                self._add_vision_mismatch_system_message(context="attachment")
+                self._show_composer_hint(messages.MODEL_NON_VISION_IMAGE_BLOCKED, tone="warning")
+                return
+        # Safe to consume — clear the composer, pending attachments, and the
+        # attach hint (which would otherwise linger during generation).
+        event.composer.load_text("")
+        self._pending_image_attachments.clear()
+        self._clear_composer_hint()
         self._add_conversation_entry(ConversationEntry(kind="user", content=text))
         self.agent_worker = self.run_worker(
             self._process_message(text, attachments), name="kolega-turn", group="turns", exclusive=True
@@ -2119,6 +2222,9 @@ class KolegaCodeApp(App):
             self._set_chat_enabled(self.agent is not None and not self._plan_decision_active)
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "detach_btn":
+            await self._command_detach("")
+            return
         if event.button.id == "save_settings":
             await self._save_settings_from_ui()
 
@@ -3026,23 +3132,36 @@ class KolegaCodeApp(App):
     def _show_composer_hint(self, text: str, tone: str = "warning") -> None:
         try:
             hint = self.query_one("#composer_hint", Static)
+            row = self.query_one("#composer_hint_row", Horizontal)
         except Exception:
             return
         hint.set_class(tone == "warning", "hint-warning")
         hint.set_class(tone != "warning", "hint-info")
         hint.update(text)
-        hint.display = bool(text)
+        row.display = bool(text)
+        self._update_detach_button()
 
     def _clear_composer_hint(self) -> None:
         try:
+            row = self.query_one("#composer_hint_row", Horizontal)
             hint = self.query_one("#composer_hint", Static)
         except Exception:
             return
         hint.update("")
-        hint.display = False
+        row.display = False
+
+    def _update_detach_button(self) -> None:
+        """Show the detach × button only when there are pending image attachments."""
+        try:
+            btn = self.query_one("#detach_btn", Button)
+        except Exception:
+            return
+        btn.display = bool(self._pending_image_attachments)
 
     def _tui_command_handlers(self) -> dict[str, Callable[[str], Awaitable[None]]]:
         return {
+            "/attach": self._command_attach,
+            "/detach": self._command_detach,
             "/init": self._command_init,
             "/plan": self._command_plan,
             "/build": self._command_build,
@@ -3077,6 +3196,118 @@ class KolegaCodeApp(App):
         composer.load_text("")
         await handler(args.strip())
         return True
+
+    def _model_supports_vision(self) -> bool:
+        """Safely check if the current agent's model supports vision input.
+
+        Returns ``False`` when no agent is loaded (conservative: images won't
+        work without a model, so a warning is the right default).
+        """
+        if self.agent is None:
+            return False
+        return getattr(self.agent, "supports_vision", False)
+
+    def _add_vision_mismatch_system_message(self, *, context: str) -> None:
+        """Add a persistent warning to the transcript when images meet a non-vision model.
+
+        ``context`` is ``"attachment"`` (new image attached) or ``"model_switch"``
+        (switched to a non-vision model with images in history). Deduplicated per
+        model session so repeated attachments don't spam the transcript — the
+        composer hint still updates with each attachment (showing all names), but
+        the transcript system message appears only once.
+        """
+        if self._vision_warning_shown:
+            return
+        model_config = getattr(self.agent, "primary_model_config", None)
+        model_name = getattr(model_config, "model", None) or "The current model"
+        if context == "attachment":
+            message = (
+                f"⚠ {model_name} does not support vision. Use /detach to remove image "
+                f"attachments or /model to switch to a vision-capable model."
+            )
+        else:  # model_switch
+            message = messages.MODEL_NON_VISION_IMAGE_HISTORY
+        self._add_conversation_entry(ConversationEntry(kind="system", content=message, tone="warning"))
+        self._vision_warning_shown = True
+
+    def add_pending_image_attachment(self, attachment: dict) -> None:
+        """Stash a pending image attachment for the next submitted message.
+
+        Centralized vision check: when the current model does not support vision,
+        shows a combined warning-tone hint (attachment confirmation + vision
+        mismatch) and a persistent system message in the transcript. This is the
+        single funnel for clipboard paste (both Ctrl+Shift+V and on_paste) and
+        /attach, so the warning is consistent across all three paths.
+        """
+        self._pending_image_attachments.append(attachment)
+        names = ", ".join(a.get("path", "image") for a in self._pending_image_attachments)
+        if not self._model_supports_vision():
+            self._show_composer_hint(
+                f"Attached: {names}. {messages.MODEL_NON_VISION_IMAGE_ATTACHED}",
+                tone="warning",
+            )
+            self._add_vision_mismatch_system_message(context="attachment")
+        else:
+            self._show_composer_hint(
+                f"Attached images: {names} (press Enter to send, × to remove)", tone="info"
+            )
+
+    async def _command_attach(self, args: str) -> None:
+        arg = args.strip()
+        if not arg:
+            self._show_composer_hint(
+                "Usage: /attach <path-to-image>  (PNG, JPEG, GIF, WebP, BMP)", tone="warning"
+            )
+            return
+        from pathlib import Path as _Path
+
+        from kolega_code.utils.images import encode_image_file
+
+        candidate = _Path(arg)
+        if not candidate.is_absolute():
+            candidate = (self.project_path / arg).resolve()
+        attachment = encode_image_file(candidate)
+        if attachment is None:
+            self._show_composer_hint(
+                f"Could not attach {arg}: not a supported image, missing, or too large (>20MB). Use /attach <path>",
+                tone="warning",
+            )
+            return
+        attachment["path"] = arg
+        self.add_pending_image_attachment(attachment)
+
+    async def _command_detach(self, args: str) -> None:
+        """Remove all pending image attachments (clears the attach queue).
+
+        The user has no other way to discard a pending image once attached,
+        especially on a non-vision model where the image can't be sent.
+        """
+        if not self._pending_image_attachments:
+            self._show_composer_hint("No pending image attachments to remove.", tone="info")
+            return
+        names = ", ".join(a.get("path", "image") for a in self._pending_image_attachments)
+        count = len(self._pending_image_attachments)
+        self._pending_image_attachments.clear()
+        self._show_composer_hint(
+            f"Removed {count} image attachment(s): {names}", tone="info"
+        )
+
+    async def _paste_clipboard_image_worker(self) -> None:
+        from kolega_code.cli.clipboard_image import read_clipboard_image
+        from kolega_code.utils.images import encode_image_attachment
+
+        result = await read_clipboard_image()
+        if result is None:
+            self._show_composer_hint(
+                "No image on the clipboard, or your terminal doesn't support image paste. "
+                "Use /attach <path> or @image.png instead.",
+                tone="warning",
+            )
+            return
+        data, media_type = result
+        attachment = encode_image_attachment(data, media_type, path="clipboard")
+        # Vision check is centralized in add_pending_image_attachment.
+        self.add_pending_image_attachment(attachment)
 
     async def _command_plan(self, args: str) -> None:
         if self._mode_switch_blocked():
@@ -3286,6 +3517,17 @@ class KolegaCodeApp(App):
         except Exception:
             pass
         self._restore_composer_placeholder()
+        # Reset the per-session dedup flag so the new model gets a fresh warning.
+        self._vision_warning_shown = False
+        if self.agent is not None and not self._model_supports_vision():
+            conversation = getattr(self.agent, "conversation", None)
+            if conversation is not None and conversation.has_image_blocks():
+                # Dual-channel: persistent transcript message + ephemeral composer hint.
+                self._add_vision_mismatch_system_message(context="model_switch")
+                self._show_composer_hint(messages.MODEL_NON_VISION_IMAGE_HISTORY, tone="warning")
+        elif self.agent is not None and self._model_supports_vision():
+            # Switching to a vision-capable model: clear any stale non-vision warning.
+            self._clear_composer_hint()
         self._notify_user(
             messages.MODEL_SWITCHED.format(
                 provider=provider,
@@ -4526,16 +4768,12 @@ class KolegaCodeApp(App):
         if summary_entry is not None:
             through = int((self.session.compaction or {}).get("compacted_through") or 0)
             boundary = min(through, len(history))
-        for index, item in enumerate(history):
-            if summary_entry is not None and index == boundary:
-                self.conversation_entries.append(summary_entry)
-            try:
-                message = Message.from_dict(item)
-            except Exception:
-                continue
-            self.conversation_entries.extend(self._conversation_entries_from_message(message))
-        if summary_entry is not None and boundary is not None and boundary >= len(history):
+        if summary_entry is not None and boundary is not None:
+            self.conversation_entries.extend(self._conversation_entries_from_history_items(history[:boundary]))
             self.conversation_entries.append(summary_entry)
+            self.conversation_entries.extend(self._conversation_entries_from_history_items(history[boundary:]))
+        else:
+            self.conversation_entries.extend(self._conversation_entries_from_history_items(history))
         self._render_conversation()
 
     def _resume_compaction_entry(self) -> Optional[ConversationEntry]:
@@ -4550,7 +4788,51 @@ class KolegaCodeApp(App):
             return None
         return ConversationEntry(kind="compaction_summary", content=summary_text)
 
-    def _conversation_entries_from_message(self, message: Message) -> list[ConversationEntry]:
+    def _conversation_entries_from_history_items(self, history: list[dict]) -> list[ConversationEntry]:
+        """Build restored transcript entries, coalescing completed tool executions.
+
+        Live tool events render one row per execution by mutating a running
+        ``tool_call`` entry into ``tool_result``/``tool_error``. Saved history stores
+        the assistant ToolCall and the user ToolResult as separate provider messages,
+        so restore needs to rejoin them for the transcript to match the live UI.
+        """
+        entries: list[ConversationEntry] = []
+        pending_tool_entries: dict[str, ConversationEntry] = {}
+
+        def remember_tool_entry(block: ToolCall, entry: ConversationEntry) -> None:
+            for value in (getattr(block, "id", None), getattr(block, "execution_id", None)):
+                if value:
+                    pending_tool_entries[str(value)] = entry
+
+        def forget_tool_entry(entry: ConversationEntry) -> None:
+            for key, candidate in list(pending_tool_entries.items()):
+                if candidate is entry:
+                    pending_tool_entries.pop(key, None)
+
+        for item in history:
+            try:
+                message = Message.from_dict(item)
+            except Exception:
+                continue
+            entries.extend(
+                self._conversation_entries_from_message(
+                    message,
+                    pending_tool_entries=pending_tool_entries,
+                    remember_tool_entry=remember_tool_entry,
+                    forget_tool_entry=forget_tool_entry,
+                )
+            )
+
+        return entries
+
+    def _conversation_entries_from_message(
+        self,
+        message: Message,
+        *,
+        pending_tool_entries: Optional[dict[str, ConversationEntry]] = None,
+        remember_tool_entry: Optional[Callable[[ToolCall, ConversationEntry], None]] = None,
+        forget_tool_entry: Optional[Callable[[ConversationEntry], None]] = None,
+    ) -> list[ConversationEntry]:
         entries: list[ConversationEntry] = []
 
         if isinstance(message.content, str):
@@ -4572,30 +4854,57 @@ class KolegaCodeApp(App):
                 pending_text.append(block.text)
             elif isinstance(block, ToolCall):
                 flush_text()
-                entries.append(
-                    ConversationEntry(
-                        kind="tool_call",
-                        content=f"Calling {block.name}",
-                        complete=True,
-                        tool_name=block.name,
-                        tool_call_id=getattr(block, "execution_id", None),
-                    )
+                entry = ConversationEntry(
+                    kind="tool_call",
+                    content=f"Calling {block.name}",
+                    complete=False,
+                    tool_name=block.name,
+                    tool_call_id=getattr(block, "execution_id", None),
                 )
+                entries.append(entry)
+                if remember_tool_entry is not None:
+                    remember_tool_entry(block, entry)
             elif isinstance(block, ToolResult):
                 flush_text()
                 text = self._tool_content_to_text(block.content)
-                entries.append(
-                    ConversationEntry(
-                        kind="tool_error" if block.is_error else "tool_result",
-                        content=self._truncate_tool_text(text) if block.is_error else self._tool_result_preview(text),
-                        tool_name=block.name,
-                        tool_call_id=getattr(block, "execution_id", None),
-                        full_content=self._capped_tool_text(text),
+                entry = self._restored_tool_entry_for_result(block, text, pending_tool_entries)
+                if entry is None:
+                    entries.append(
+                        ConversationEntry(
+                            kind="tool_error" if block.is_error else "tool_result",
+                            content=self._truncate_tool_text(text) if block.is_error else self._tool_result_preview(text),
+                            tool_name=block.name,
+                            tool_call_id=getattr(block, "execution_id", None),
+                            full_content=self._capped_tool_text(text),
+                        )
                     )
-                )
+                else:
+                    entry.kind = "tool_error" if block.is_error else "tool_result"
+                    entry.content = self._truncate_tool_text(text) if block.is_error else self._tool_result_preview(text)
+                    entry.complete = True
+                    entry.tool_name = block.name or entry.tool_name
+                    entry.tool_call_id = getattr(block, "execution_id", None) or entry.tool_call_id
+                    entry.full_content = self._capped_tool_text(text)
+                    if forget_tool_entry is not None:
+                        forget_tool_entry(entry)
 
         flush_text()
         return entries
+
+    def _restored_tool_entry_for_result(
+        self,
+        block: ToolResult,
+        text: str,
+        pending_tool_entries: Optional[dict[str, ConversationEntry]],
+    ) -> Optional[ConversationEntry]:
+        if not pending_tool_entries:
+            return None
+        for value in (getattr(block, "tool_use_id", None), getattr(block, "execution_id", None)):
+            if value:
+                entry = pending_tool_entries.get(str(value))
+                if entry is not None:
+                    return entry
+        return None
 
     def _conversation_entry_for_text(self, role: str, text: str) -> ConversationEntry:
         names = skill_names_in_text(text)

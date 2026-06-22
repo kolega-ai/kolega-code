@@ -240,19 +240,34 @@ class OpenAIProvider(BaseLLMProvider):
                         elif hasattr(item, "data") and hasattr(item, "media_type"):
                             # ImageBlock - estimate tokens based on base64 data size
                             num_tokens += self._estimate_image_tokens(len(item.data))
-                        # Handle tool calls
+                        # Handle tool calls. OpenAI's prompt accounting uses a compact
+                        # internal representation for assistant tool calls rather than
+                        # charging the full Chat Completions JSON wrapper. Counting the
+                        # stable fields (id, function name, serialized arguments) tracks
+                        # the API much more closely for resumed/provider-shaped history.
                         elif isinstance(item, ToolCall):
-                            tool_call_json = json.dumps(item.to_openai())
-                            num_tokens += len(encoding.encode(tool_call_json))
-                            num_tokens += 2  # Minimal formatting overhead for tool calls
+                            tool_call_payload = item.to_openai()
+                            function_payload = tool_call_payload.get("function", {})
+                            arguments = str(function_payload.get("arguments") or "")
+                            num_tokens += len(encoding.encode(str(tool_call_payload.get("id") or "")))
+                            num_tokens += len(encoding.encode(str(function_payload.get("name") or item.name)))
+                            num_tokens += len(encoding.encode(arguments))
+                            num_tokens += 1  # Compact formatting overhead for tool calls
                         # Handle tool results
                         elif isinstance(item, ToolResult):
-                            # Tool results contain content that needs to be counted
+                            # Tool results contain content that needs to be counted.
+                            # OpenAI tool messages are text-only, but image-bearing
+                            # tool results are serialized as a follow-up user image
+                            # message, so nested images contribute image tokens.
                             if isinstance(item.content, str):
                                 num_tokens += len(encoding.encode(item.content))
                             elif isinstance(item.content, list):
                                 for result_item in item.content:
-                                    if hasattr(result_item, "text") and result_item.text:
+                                    if isinstance(result_item, ImageBlock):
+                                        num_tokens += self._estimate_image_tokens(len(result_item.data))
+                                    elif hasattr(result_item, "data") and hasattr(result_item, "media_type"):
+                                        num_tokens += self._estimate_image_tokens(len(result_item.data))
+                                    elif hasattr(result_item, "text") and result_item.text:
                                         num_tokens += len(encoding.encode(result_item.text))
                             num_tokens += 2  # Minimal formatting overhead for tool results
 

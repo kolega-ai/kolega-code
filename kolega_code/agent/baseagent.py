@@ -15,7 +15,7 @@ from .compression import CompactionResult, HistoryCompressor
 from kolega_code.config import AgentConfig, ModelProvider
 from kolega_code.events import AgentConnectionManager
 from .context import AgentContext, AgentServices, Telemetry, WorkspaceInfo
-from .conversation import Conversation
+from .conversation import Conversation, adapt_history_for_provider
 from kolega_code.events import AgentEventEmitter
 from kolega_code.hooks import (
     NO_OP_DISPATCHER,
@@ -34,7 +34,7 @@ from kolega_code.llm.exceptions import (
 )
 from kolega_code.llm.models import ImageBlock, Message, MessageHistory, TextBlock, ToolCall, ToolResult
 from kolega_code.llm.providers.models import TokenCount
-from kolega_code.llm.specs import get_model_specs
+from kolega_code.llm.specs import get_model_specs, supports_vision as model_supports_vision
 from kolega_code.permissions import (
     PermissionDecision,
     PermissionMode,
@@ -90,10 +90,6 @@ class BaseAgent(LogMixin):
     long_content_tool_calls = ["create_file", "replace_entire_file"]
     max_tool_result_chars_in_history = 100_000
     skill_content_pattern = re.compile(r'<skill_content name="[^"]+">')
-    deepseek_image_unsupported_message = (
-        "DeepSeek V4 Pro does not support image input via the DeepSeek API. "
-        "Remove the image or switch to a vision-capable model for this request."
-    )
 
     def __init__(
         self,
@@ -270,6 +266,11 @@ class BaseAgent(LogMixin):
         self.model_context_length = model_specs["context_length"]
         self.model_completion_tokens = model_specs["max_completion_tokens"]
         self.model_default_temperature = model_specs.get("default_temperature", 1.0)
+        # Whether this agent's primary model can accept image input. Read by the
+        # ToolCollection read_image tool gate (so non-vision models never see the
+        # tool) and used by _unsupported_attachment_message to reject image
+        # attachments for non-vision models with a clear message.
+        self.supports_vision = bool(model_specs.get("supports_vision", False))
 
         self.llm = context.create_llm_client(agent_name=self.agent_name)
 
@@ -364,6 +365,26 @@ class BaseAgent(LogMixin):
             List[Message]: Fixed messages with placeholder tool results added where needed
         """
         return self.conversation.repaired(messages)
+
+    def _history_for_llm(self) -> MessageHistory:
+        """Build the message history to send to the LLM for this turn.
+
+        Compaction-aware and tool-call-repaired. For non-vision models, any
+        ``ImageBlock`` carried over from earlier turns (user attachments or
+        ``read_image`` tool results) is replaced with a text placeholder on this
+        request copy only — the stored history is never mutated, so switching
+        back to a vision-capable model restores the images.
+        """
+        effective = self.get_effective_history_for_llm()
+        fixed = self.fix_incomplete_tool_calls(list(effective))
+        provider = getattr(self.primary_model_config.provider, "value", self.primary_model_config.provider)
+        fixed = adapt_history_for_provider(
+            fixed,
+            target_provider=str(provider),
+            target_model=self.primary_model_config.model,
+            supports_vision=self.supports_vision,
+        )
+        return MessageHistory(fixed)
 
     def mark_cache_checkpoint(self) -> None:
         """
@@ -480,18 +501,22 @@ class BaseAgent(LogMixin):
     # ------------------------------------------------------------------
 
     def _unsupported_attachment_message(self, attachments: Optional[List[Dict[str, Any]]]) -> Optional[str]:
+        if not any(attachment.get("type") == "image" for attachment in attachments or []):
+            return None
+
         provider = getattr(
             self.primary_model_config.provider,
             "value",
             self.primary_model_config.provider,
         )
-        if provider != ModelProvider.DEEPSEEK.value:
+        if model_supports_vision(provider, self.primary_model_config.model):
             return None
 
-        if any(attachment.get("type") == "image" for attachment in attachments or []):
-            return self.deepseek_image_unsupported_message
-
-        return None
+        return (
+            f"{self.primary_model_config.model} does not support image input. "
+            "Your message was not sent to the model. "
+            "Remove the image attachment or switch to a vision-capable model with /model."
+        )
 
     def _attachment_blocks(self, attachments: Optional[List[Dict[str, Any]]]) -> List[Any]:
         """Convert attachment payloads into content blocks for a user message."""
@@ -518,9 +543,9 @@ class BaseAgent(LogMixin):
 
     async def count_current_context(self) -> TokenCount:
         self._sanitize_oversized_tool_results()
-        # Fix history before counting to get accurate count for what LLM will see
-        effective = self.get_effective_history_for_llm()
-        fixed_history = MessageHistory(self.fix_incomplete_tool_calls(list(effective)))
+        # History sent to the LLM (and to token counting): tool-call-repaired and,
+        # for non-vision models, stripped of image blocks from earlier turns.
+        fixed_history = self._history_for_llm()
         token_count = await self.llm.count_tokens(
             system=self.system_prompt,
             messages=fixed_history,
@@ -1304,9 +1329,9 @@ class BaseAgent(LogMixin):
                 response_uuid = str(uuid.uuid4())
                 thinking_uuid = str(uuid.uuid4())
 
-                # Fix history before sending to LLM to ensure valid tool call sequences
-                effective = self.get_effective_history_for_llm()
-                fixed_history = MessageHistory(self.fix_incomplete_tool_calls(list(effective)))
+                # History sent to the LLM: tool-call-repaired and, for non-vision
+                # models, stripped of image blocks carried over from earlier turns.
+                fixed_history = self._history_for_llm()
 
                 async with await self.llm.stream(
                     system=self.system_prompt,
