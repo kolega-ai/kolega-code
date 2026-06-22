@@ -80,6 +80,36 @@ def test_adapt_preserves_anthropic_thinking_when_targeting_anthropic():
     assert out[0].content[0].signature == "anthropic-sig"
 
 
+def test_adapt_preserves_zai_thinking_when_targeting_zai():
+    history = [_assistant(ThinkingBlock(thinking="native reasoning", signature="zai-sig"), provider="zai")]
+
+    out = adapt_history_for_provider(
+        history,
+        target_provider="zai",
+        target_model="glm-5.2",
+        supports_vision=False,
+    )
+
+    assert out is history
+    assert isinstance(out[0].content[0], ThinkingBlock)
+    assert out[0].content[0].signature == "zai-sig"
+
+
+def test_adapt_preserves_deepseek_thinking_when_targeting_deepseek():
+    history = [_assistant(ThinkingBlock(thinking="native reasoning", signature="deepseek-sig"), provider="deepseek")]
+
+    out = adapt_history_for_provider(
+        history,
+        target_provider="deepseek",
+        target_model="deepseek-v4-pro",
+        supports_vision=False,
+    )
+
+    assert out is history
+    assert isinstance(out[0].content[0], ThinkingBlock)
+    assert out[0].content[0].signature == "deepseek-sig"
+
+
 def test_adapt_preserves_images_for_vision_target_while_converting_foreign_thinking():
     tr = ToolResult(tool_use_id="t1", name="read_image", content=[_image("image/jpeg")], is_error=False)
     history = [
