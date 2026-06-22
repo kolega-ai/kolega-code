@@ -402,6 +402,18 @@ async def test_submit_with_image_vision_model_proceeds(tmp_path, monkeypatch):
         # Agent worker spawned (send proceeds).
         assert spawned, "agent worker should be spawned for vision model"
 
+        # The composer hint must be cleared after a successful submit — it
+        # should not linger during generation.
+        from textual.containers import Horizontal
+
+        row = app.query_one("#composer_hint_row", Horizontal)
+        assert not row.display, "composer hint row should be hidden after submit"
+        # And the detach button should be hidden (no pending attachments).
+        from textual.widgets import Button
+
+        btn = app.query_one("#detach_btn", Button)
+        assert not btn.display, "detach button should be hidden after submit"
+
 
 @pytest.mark.asyncio
 async def test_submit_text_only_non_vision_with_history_images_proceeds(tmp_path, monkeypatch):

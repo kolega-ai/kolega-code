@@ -2043,9 +2043,11 @@ class KolegaCodeApp(App):
                 self._add_vision_mismatch_system_message(context="attachment")
                 self._show_composer_hint(messages.MODEL_NON_VISION_IMAGE_BLOCKED, tone="warning")
                 return
-        # Safe to consume — clear the composer and pending attachments now.
+        # Safe to consume — clear the composer, pending attachments, and the
+        # attach hint (which would otherwise linger during generation).
         event.composer.load_text("")
         self._pending_image_attachments.clear()
+        self._clear_composer_hint()
         self._add_conversation_entry(ConversationEntry(kind="user", content=text))
         self.agent_worker = self.run_worker(
             self._process_message(text, attachments), name="kolega-turn", group="turns", exclusive=True
