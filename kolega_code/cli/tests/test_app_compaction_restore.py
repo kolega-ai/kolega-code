@@ -11,6 +11,8 @@ from pathlib import Path
 
 import pytest
 
+from kolega_code.cli.tui import agent_runtime as agent_runtime_module
+
 from kolega_code.cli.config import build_agent_config, config_summary
 from kolega_code.cli.session_store import SessionStore
 
@@ -57,10 +59,9 @@ def build_test_config(project: Path):
 async def test_restore_places_summary_after_retained_tail(tmp_path: Path, monkeypatch) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
 
-    monkeypatch.setattr(app_module, "CoderAgent", _FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", _FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -112,10 +113,9 @@ async def test_restore_places_summary_after_retained_tail(tmp_path: Path, monkey
 async def test_restore_old_session_without_history_length_falls_back(tmp_path: Path, monkeypatch) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
 
-    monkeypatch.setattr(app_module, "CoderAgent", _FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", _FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()

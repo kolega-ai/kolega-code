@@ -14,6 +14,8 @@ import base64
 
 import pytest
 
+from kolega_code.cli.tui import agent_runtime as agent_runtime_module
+
 from kolega_code.cli.config import build_agent_config, config_summary
 from kolega_code.cli.session_store import SessionStore
 
@@ -58,7 +60,6 @@ def _make_app(tmp_path, monkeypatch):
     """Build a KolegaCodeApp with a no-op FakeCoderAgent; agent set by the caller."""
     pytest.importorskip("textual")
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
 
     class FakeCoderAgent:
@@ -80,7 +81,7 @@ def _make_app(tmp_path, monkeypatch):
         async def cleanup(self):
             return None
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -284,7 +285,7 @@ async def test_submit_with_pending_image_non_vision_blocked(tmp_path, monkeypatc
 
         app.run_worker = _track_worker
 
-        from kolega_code.cli.app import ChatComposer
+        from kolega_code.cli.tui.widgets import ChatComposer
 
         composer = app.query_one("#composer", ChatComposer)
         composer.text = "describe this"
@@ -354,7 +355,7 @@ async def test_submit_with_mention_image_non_vision_blocked(tmp_path, monkeypatc
 
         app.run_worker = _track_worker
 
-        from kolega_code.cli.app import ChatComposer
+        from kolega_code.cli.tui.widgets import ChatComposer
 
         composer = app.query_one("#composer", ChatComposer)
         text = "@screenshot.png describe this"
@@ -392,7 +393,7 @@ async def test_submit_with_image_vision_model_proceeds(tmp_path, monkeypatch):
 
         app.run_worker = _track_worker
 
-        from kolega_code.cli.app import ChatComposer
+        from kolega_code.cli.tui.widgets import ChatComposer
 
         composer = app.query_one("#composer", ChatComposer)
         composer.text = "describe this"
@@ -435,7 +436,7 @@ async def test_submit_text_only_non_vision_with_history_images_proceeds(tmp_path
 
         app.run_worker = _track_worker
 
-        from kolega_code.cli.app import ChatComposer
+        from kolega_code.cli.tui.widgets import ChatComposer
 
         composer = app.query_one("#composer", ChatComposer)
         composer.text = "follow up question"

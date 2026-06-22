@@ -39,7 +39,8 @@ async def test_compress_history_emits_error_phase_on_failure(tmp_path):
 
 def test_app_apply_compaction_status_toggles_indicator():
     # Exercise the dashboard toggle without constructing the full Textual app.
-    from kolega_code.cli.app import KolegaCodeApp, StatusDashboardState
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.state import StatusDashboardState
 
     refreshed = []
     fake = SimpleNamespace(
@@ -60,7 +61,8 @@ def test_app_apply_compaction_status_toggles_indicator():
 
 def test_app_apply_compaction_status_adds_summary_collapsible():
     # On finish with a summary, a collapsible transcript entry is created.
-    from kolega_code.cli.app import ConversationEntry, KolegaCodeApp, StatusDashboardState
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.state import ConversationEntry, StatusDashboardState
 
     added = []
     fake = SimpleNamespace(

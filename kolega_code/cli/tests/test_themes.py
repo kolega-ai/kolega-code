@@ -2,8 +2,10 @@ from pathlib import Path
 
 import pytest
 
+from kolega_code.cli.tui import agent_runtime as agent_runtime_module
+
 from kolega_code.cli import theme
-from kolega_code.cli.app import TurnState, tool_state_presentation, turn_state_color
+from kolega_code.cli.tui.state import TurnState, tool_state_presentation, turn_state_color
 from kolega_code.cli.config import config_summary
 from kolega_code.cli.session_store import SessionStore
 from kolega_code.cli.settings import CliSettings, SettingsStore
@@ -164,10 +166,9 @@ def test_settings_back_compat_without_active_theme():
 
 
 def _make_app(tmp_path: Path, monkeypatch, *, persisted_theme=None):
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
     project = tmp_path / "project"
     project.mkdir()
     config = build_test_config(project)
