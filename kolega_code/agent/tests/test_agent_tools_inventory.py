@@ -97,6 +97,10 @@ def test_investigation_agent_tools(project_path, mock_connection_manager, agent_
     tool_names = [tool.name for tool in tools]
 
     expected_tools = [
+        "exec_command",
+        "write_stdin",
+        "kill_command",
+        "list_sessions",
         "find_files_by_pattern",
         "list_directory",
         "read_entire_file",
@@ -111,6 +115,11 @@ def test_investigation_agent_tools(project_path, mock_connection_manager, agent_
 
     assert len(tools) == len(expected_tools)
     assert set(tool_names) == set(expected_tools)
+    # File-edit tools remain unavailable to the read-only investigation agent.
+    assert "create_file" not in tool_names
+    assert "replace_entire_file" not in tool_names
+    assert "search_and_replace" not in tool_names
+    assert "replace_lines" not in tool_names
 
 
 def test_cli_coder_agent_does_not_expose_manifest_build_tools(project_path, mock_connection_manager, agent_config):
@@ -241,8 +250,13 @@ def test_planning_agent_exposes_read_only_and_planning_tools(project_path, mock_
     assert "update_task_list" not in tool_names
     assert "create_file" not in tool_names
     assert "replace_entire_file" not in tool_names
-    assert "exec_command" not in tool_names
-    assert tool_names - expected_planning_tools <= set(agent.tool_collection.read_only_tools)
+    assert "search_and_replace" not in tool_names
+    assert "replace_lines" not in tool_names
+    # Planning agent can run investigative shell commands but cannot edit files.
+    assert {"exec_command", "write_stdin", "kill_command", "list_sessions"} <= tool_names
+    assert tool_names - expected_planning_tools <= set(agent.tool_collection.read_only_tools) | set(
+        agent.tool_collection.command_tools
+    )
 
 
 def test_shared_tool_names_are_well_formed(project_path, mock_connection_manager, agent_config):

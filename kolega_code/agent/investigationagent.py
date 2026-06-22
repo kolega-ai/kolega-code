@@ -6,7 +6,7 @@ from kolega_code.config import AgentConfig
 from kolega_code.events import AgentConnectionManager
 from kolega_code.llm.models import Message, TextBlock
 from .prompt_provider import AgentMode, AgentType, PromptExtension
-from .tools import ToolCollection
+from .tools import ToolCollection, ToolCollectionConfig
 
 
 class InvestigationAgent(BaseAgent):
@@ -106,7 +106,7 @@ class InvestigationAgent(BaseAgent):
             self.connection_manager,
             self.config,
             caller=self,
-            read_only=True,
+            tool_config=ToolCollectionConfig(read_only=True, custom_tool_groups=["command_tools"]),
             filesystem=self.filesystem,
             terminal_manager=self.terminal_manager,
             browser_manager=self.browser_manager,

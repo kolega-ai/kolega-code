@@ -152,6 +152,17 @@ class ToolCollection(LogMixin):
         "run_workflow",
     ]
 
+    # Shell execution + session management. Exposed to the planning and
+    # investigation agents (via custom_tool_groups) so they can run investigative
+    # commands even while read_only=True. Not read-only, so deliberately excluded
+    # from the parallel-safe set in _build_tool.
+    command_tools = [
+        "exec_command",
+        "write_stdin",
+        "kill_command",
+        "list_sessions",
+    ]
+
     def __init__(
         self,
         project_path: Union[str, Path],

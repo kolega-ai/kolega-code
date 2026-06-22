@@ -12,10 +12,10 @@ agent can hand off to the others when a task benefits from focus.
 | Agent | Specialty | Can edit files? |
 | --- | --- | --- |
 | **Coder** | The main, general-purpose coding agent. Full toolset. | Yes |
-| **Investigation** | Read-only exploration of the codebase. | No |
+| **Investigation** | Read-only exploration of the codebase. Can run investigative commands. | No |
 | **Browser** | Web navigation and interaction via Playwright. | No (browser tools only) |
 | **General** | A flexible agent that can read and dispatch other agents. | Limited |
-| **Planning** | Drives [Plan mode](../../tui/modes/): investigates and writes a plan, read-only. | No |
+| **Planning** | Drives [Plan mode](../../tui/modes/): investigates and writes a plan. Can run commands but cannot edit files. | No |
 
 ## Dispatching sub-agents
 

@@ -226,3 +226,27 @@ async def test_planning_agent_does_not_print_context_token_counts(
 
     assert chunks[-1]["complete"] is True
     assert capsys.readouterr().out == ""
+
+
+def test_planning_agent_exposes_command_tools_but_not_file_edits(
+    tmp_path, mock_connection_manager, agent_config
+):
+    """PlanningAgent can run investigative shell commands but cannot edit files."""
+    agent = PlanningAgent(
+        project_path=tmp_path,
+        workspace_id="test_workspace",
+        thread_id=str(uuid.uuid4()),
+        connection_manager=mock_connection_manager,
+        config=agent_config,
+        agent_mode=AgentMode.CLI,
+    )
+
+    tool_names = {tool.name for tool in agent.tool_collection.get_tool_list()}
+
+    assert {"exec_command", "write_stdin", "kill_command", "list_sessions"} <= tool_names
+    assert "create_file" not in tool_names
+    assert "replace_entire_file" not in tool_names
+    assert "replace_lines" not in tool_names
+    assert "search_and_replace" not in tool_names
+    # read_only stays True so gigacode workflow sub-agents are still forced read-only.
+    assert agent.tool_collection.read_only is True
