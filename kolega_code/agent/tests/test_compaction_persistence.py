@@ -17,6 +17,7 @@ async def test_agent_compaction_survives_dump_restore(tmp_path):
     pre_effective = [m.get_text_content() for m in agent.get_effective_history_for_llm()]
     assert compaction_dump["summary"] == "PERSISTED SUMMARY"
     assert compaction_dump["compacted_through"] > 0
+    assert compaction_dump["compacted_history_length"] == 12  # captured at compaction time
 
     # Resume into a fresh agent: restore messages, then the compaction boundary.
     fresh, _cm2 = build_agent(tmp_path, llm=FakeLLM())
@@ -25,6 +26,7 @@ async def test_agent_compaction_survives_dump_restore(tmp_path):
 
     assert fresh.conversation.summary is not None
     assert len(fresh.history) == 12  # full history intact
+    assert fresh.conversation.compacted_history_length == 12  # round-tripped
     # The effective view the model sees is identical to before saving.
     assert [m.get_text_content() for m in fresh.get_effective_history_for_llm()] == pre_effective
 
@@ -34,7 +36,7 @@ async def test_agent_without_compaction_dumps_empty(tmp_path):
     agent, _cm = build_agent(tmp_path, llm=FakeLLM())
     agent.history = long_history(2)  # 4 messages, never compacted
     data = agent.dump_compaction_state()
-    assert data == {"summary": "", "compacted_through": 0}
+    assert data == {"summary": "", "compacted_through": 0, "compacted_history_length": 0}
 
     fresh, _cm2 = build_agent(tmp_path, llm=FakeLLM())
     fresh.restore_message_history(agent.dump_message_history())
