@@ -1379,12 +1379,36 @@ class KolegaCodeApp(App):
         background: $surface;
     }
 
-    #composer_hint {
+    #composer_hint_row {
         display: none;
         height: auto;
         max-height: 4;
-        padding: 0 1;
         background: $surface;
+    }
+
+    #composer_hint_row #composer_hint {
+        width: 1fr;
+        height: auto;
+        padding: 0 1;
+    }
+
+    #composer_hint_row #detach_btn {
+        width: 3;
+        height: 1;
+        min-height: 1;
+        border: none;
+        background: transparent;
+        color: $text-muted;
+        padding: 0 1;
+    }
+
+    #composer_hint_row #detach_btn:hover {
+        color: $warning;
+    }
+
+    #composer_hint_row #detach_btn:focus {
+        color: $warning;
+        text-style: bold;
     }
 
     #completion_dropdown {
@@ -1665,7 +1689,11 @@ class KolegaCodeApp(App):
                 yield ActionList(id="effort_actions")
                 yield ActionList(id="theme_actions")
                 yield Static("", id="turn_status", markup=True)
-                yield Static("", id="composer_hint", markup=False)
+                with Horizontal(id="composer_hint_row"):
+                    yield Static("", id="composer_hint", markup=False)
+                    yield Button(
+                        theme.g(Glyph.CROSS), id="detach_btn", classes="hint-detach"
+                    )
                 yield CompletionDropdown(id="completion_dropdown")
                 yield ChatComposer(placeholder=COMPOSER_PLACEHOLDER, id="composer")
             with Vertical(id="side_panel"):
@@ -1792,6 +1820,7 @@ class KolegaCodeApp(App):
         self._set_effort_actions_visible(False)
         self._refresh_planning_sidebar()
         self._ensure_startup_entry()
+        self._update_detach_button()
         if self.check_for_updates:
             self.run_worker(self._check_for_update_on_startup(), name="kolega-update-check", group="updates")
         self._conversation.anchor()
@@ -2191,6 +2220,9 @@ class KolegaCodeApp(App):
             self._set_chat_enabled(self.agent is not None and not self._plan_decision_active)
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "detach_btn":
+            await self._command_detach("")
+            return
         if event.button.id == "save_settings":
             await self._save_settings_from_ui()
 
@@ -3098,20 +3130,31 @@ class KolegaCodeApp(App):
     def _show_composer_hint(self, text: str, tone: str = "warning") -> None:
         try:
             hint = self.query_one("#composer_hint", Static)
+            row = self.query_one("#composer_hint_row", Horizontal)
         except Exception:
             return
         hint.set_class(tone == "warning", "hint-warning")
         hint.set_class(tone != "warning", "hint-info")
         hint.update(text)
-        hint.display = bool(text)
+        row.display = bool(text)
+        self._update_detach_button()
 
     def _clear_composer_hint(self) -> None:
         try:
+            row = self.query_one("#composer_hint_row", Horizontal)
             hint = self.query_one("#composer_hint", Static)
         except Exception:
             return
         hint.update("")
-        hint.display = False
+        row.display = False
+
+    def _update_detach_button(self) -> None:
+        """Show the detach × button only when there are pending image attachments."""
+        try:
+            btn = self.query_one("#detach_btn", Button)
+        except Exception:
+            return
+        btn.display = bool(self._pending_image_attachments)
 
     def _tui_command_handlers(self) -> dict[str, Callable[[str], Awaitable[None]]]:
         return {
@@ -3203,7 +3246,9 @@ class KolegaCodeApp(App):
             )
             self._add_vision_mismatch_system_message(context="attachment")
         else:
-            self._show_composer_hint(f"Attached images: {names} (press Enter to send)", tone="info")
+            self._show_composer_hint(
+                f"Attached images: {names} (press Enter to send, × to remove)", tone="info"
+            )
 
     async def _command_attach(self, args: str) -> None:
         arg = args.strip()

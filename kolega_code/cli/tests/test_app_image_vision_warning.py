@@ -494,3 +494,58 @@ async def test_detach_command_registered(tmp_path, monkeypatch):
         handlers = app._tui_command_handlers()
         assert "/detach" in handlers
         assert handlers["/detach"] == app._command_detach
+
+
+# ---------------------------------------------------------------------------
+# Detach × button — clickable UI element in the composer hint row
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_detach_button_visible_when_image_attached(tmp_path, monkeypatch):
+    """The × button in the hint row is visible when there are pending image attachments."""
+    from textual.widgets import Button
+
+    app = _make_app(tmp_path, monkeypatch)
+    async with app.run_test():
+        app.agent = _FakeAgent(supports_vision=True)
+        app.add_pending_image_attachment(_image_attachment("photo.png"))
+
+        btn = app.query_one("#detach_btn", Button)
+        assert btn.display, "detach button should be visible when an image is attached"
+
+
+@pytest.mark.asyncio
+async def test_detach_button_hidden_when_no_attachments(tmp_path, monkeypatch):
+    """The × button is hidden when there are no pending image attachments."""
+    from textual.widgets import Button
+
+    app = _make_app(tmp_path, monkeypatch)
+    async with app.run_test():
+        app.agent = _FakeAgent(supports_vision=True)
+
+        btn = app.query_one("#detach_btn", Button)
+        assert not btn.display, "detach button should be hidden when no image is attached"
+
+
+@pytest.mark.asyncio
+async def test_detach_button_click_clears_attachments(tmp_path, monkeypatch):
+    """Clicking the × button calls _command_detach and clears pending attachments."""
+    from textual.widgets import Button
+
+    app = _make_app(tmp_path, monkeypatch)
+    async with app.run_test():
+        app.agent = _FakeAgent(supports_vision=True)
+        app.add_pending_image_attachment(_image_attachment("photo.png"))
+        app.add_pending_image_attachment(_image_attachment("chart.png"))
+
+        assert app._pending_image_attachments, "should have pending attachments"
+
+        # Simulate clicking the detach button.
+        btn = app.query_one("#detach_btn", Button)
+        await app.on_button_pressed(Button.Pressed(btn))
+
+        assert app._pending_image_attachments == [], "clicking × should clear attachments"
+
+        # Button should now be hidden.
+        assert not btn.display, "detach button should be hidden after clearing"
