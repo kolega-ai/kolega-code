@@ -12,6 +12,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from .common import LogMixin
 from .compression import CompactionResult, HistoryCompressor
+from .errors import MaxAgentIterationsExceeded
 from kolega_code.config import AgentConfig, ModelProvider
 from kolega_code.events import AgentConnectionManager
 from .context import AgentContext, AgentServices, Telemetry, WorkspaceInfo
@@ -119,6 +120,7 @@ class BaseAgent(LogMixin):
         sub_agent_recorder: Optional[Any] = None,
         hook_dispatcher: Optional[HookDispatcher] = None,
         context: Optional[AgentContext] = None,
+        max_iterations: Optional[int] = None,
     ) -> None:
         """
         Initialize a new BaseAgent instance.
@@ -203,7 +205,11 @@ class BaseAgent(LogMixin):
         if hook_dispatcher is not None:
             context.hook_dispatcher = hook_dispatcher
 
+        if max_iterations is not None and max_iterations < 1:
+            raise ValueError("max_iterations must be a positive integer or None")
+
         self.context = context
+        self.max_iterations = max_iterations
 
         # Flat attributes kept for compatibility with subclasses, tools, and hosts.
         self.project_path = context.workspace.project_path
@@ -1282,7 +1288,15 @@ class BaseAgent(LogMixin):
 
         stop_reason = None
         stop_overrides = 0
+        iterations = 0
         while stop_reason not in ["end_turn", "max_tokens", "stop_sequence"]:
+            iterations += 1
+            if self.max_iterations is not None and iterations > self.max_iterations:
+                raise MaxAgentIterationsExceeded(
+                    f"Agent '{self.agent_name}' exceeded max_iterations={self.max_iterations} "
+                    "without reaching a terminal stop reason"
+                )
+
             self.mark_cache_checkpoint()
 
             try:

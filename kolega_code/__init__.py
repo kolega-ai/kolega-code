@@ -18,6 +18,7 @@ from .agent.planningagent import PlanningAgent
 from .agent.compression import HistoryCompressor
 from .agent.context import AgentContext, AgentServices, Telemetry, WorkspaceInfo
 from .agent.conversation import Conversation
+from .agent.errors import AgentError, MaxAgentIterationsExceeded
 from .events import AgentEventEmitter
 
 # Configuration
@@ -86,6 +87,8 @@ __all__ = [
     "AgentContext",
     "AgentServices",
     "Telemetry",
+    "AgentError",
+    "MaxAgentIterationsExceeded",
     "WorkspaceInfo",
     "Conversation",
     "HistoryCompressor",

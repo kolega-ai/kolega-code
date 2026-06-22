@@ -241,6 +241,7 @@ class AgentTool(BaseTool):
                 usage_recorder=getattr(self.caller, "usage_recorder", None) if self.caller else None,
                 sub_agent_recorder=getattr(self.caller, "sub_agent_recorder", None) if self.caller else None,
                 hook_dispatcher=getattr(self.caller, "hook_dispatcher", None) if self.caller else None,
+                max_iterations=getattr(self.caller, "max_iterations", None),
             )
 
             # Store agent reference
@@ -557,6 +558,7 @@ class AgentTool(BaseTool):
             usage_recorder=getattr(self.caller, "usage_recorder", None) if self.caller else None,
             sub_agent_recorder=getattr(self.caller, "sub_agent_recorder", None) if self.caller else None,
             hook_dispatcher=getattr(self.caller, "hook_dispatcher", None) if self.caller else None,
+            max_iterations=getattr(self.caller, "max_iterations", None),
         )
 
     async def dispatch_workflow_agent(
