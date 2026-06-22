@@ -17,6 +17,7 @@ from kolega_code.llm.models import (
     ImageBlock,
     Message,
     RedactedThinkingBlock,
+    ResponsesReasoningBlock,
     TextBlock,
     ThinkingBlock,
     ToolCall,
@@ -224,6 +225,61 @@ def test_adapted_kimi_thinking_is_not_serialized_as_anthropic_thinking():
     assert payload[1]["role"] == "user"
     assert payload[1]["content"][0]["type"] == "tool_result"
     assert payload[1]["content"][0]["tool_use_id"] == "tool1"
+
+
+def test_adapt_preserves_responses_reasoning_when_targeting_chatgpt():
+    block = ResponsesReasoningBlock(encrypted_content="ENC", summary=["plan"], item_id="rs_1")
+    tool_call = ToolCall(id="t1", name="read_file", input={"path": "a.py"})
+    history = [_assistant(block, tool_call, provider="openai_chatgpt")]
+
+    out = adapt_history_for_provider(
+        history,
+        target_provider="openai_chatgpt",
+        target_model="gpt-5.5",
+        supports_vision=True,
+    )
+
+    # Same provider -> reasoning is preserved so continuity keeps working.
+    assert out is history
+    assert isinstance(out[0].content[0], ResponsesReasoningBlock)
+    assert out[0].content[0].encrypted_content == "ENC"
+
+
+def test_adapt_preserves_responses_reasoning_across_openai_backends():
+    # api-key `openai` and `openai_chatgpt` are the same OpenAI Responses API, so
+    # reasoning produced by one replays cleanly to the other — preserved, not a
+    # placeholder. (Both directions.)
+    for source, target in (("openai_chatgpt", "openai"), ("openai", "openai_chatgpt")):
+        block = ResponsesReasoningBlock(encrypted_content="ENC", summary=["plan"], item_id="rs_1")
+        tool_call = ToolCall(id="t1", name="read_file", input={"path": "a.py"})
+        history = [_assistant(block, tool_call, provider=source)]
+
+        out = adapt_history_for_provider(
+            history,
+            target_provider=target,
+            target_model="gpt-5.5",
+            supports_vision=True,
+        )
+
+        assert out is history  # nothing changed -> reasoning preserved
+        assert isinstance(out[0].content[0], ResponsesReasoningBlock)
+        assert out[0].content[0].encrypted_content == "ENC"
+
+
+def test_adapt_converts_responses_reasoning_when_targeting_anthropic():
+    block = ResponsesReasoningBlock(encrypted_content="ENC", summary=[], item_id="rs_1")
+    history = [_assistant(block, provider="openai_chatgpt")]
+
+    out = adapt_history_for_provider(
+        history,
+        target_provider="anthropic",
+        target_model="claude-opus-4-8",
+        supports_vision=True,
+    )
+
+    assert out[0] is not history[0]
+    assert isinstance(out[0].content[0], TextBlock)
+    assert "Prior reasoning from openai_chatgpt omitted" in out[0].content[0].text
 
 
 # ---------------------------------------------------------------------------
