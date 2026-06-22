@@ -113,11 +113,12 @@ async def test_add_pending_image_non_vision_shows_warning_hint(tmp_path, monkeyp
         text, tone = hints[0]
         assert tone == "warning"
         assert "clipboard" in text
-        assert "does not support vision" in text
+        assert "can't see images" in text
         # Transcript system message added.
         system = [e for e in entries if e.kind == "system"]
         assert system, "expected a system message in the transcript"
         assert system[0].tone == "warning"
+        assert "does not support vision" in system[0].content
 
 
 @pytest.mark.asyncio
@@ -197,7 +198,7 @@ async def test_paste_clipboard_image_non_vision_warning_not_overwritten(tmp_path
         assert hints, "expected at least one hint"
         final_text, final_tone = hints[-1]
         assert final_tone == "warning", "warning should not be overwritten by info hint"
-        assert "does not support vision" in final_text
+        assert "can't see images" in final_text
         # And a transcript system message.
         assert any(e.kind == "system" for e in entries)
 
@@ -252,7 +253,7 @@ async def test_attach_command_non_vision_shows_warning(tmp_path, monkeypatch):
         assert hints, "expected a hint"
         final_text, final_tone = hints[-1]
         assert final_tone == "warning"
-        assert "does not support vision" in final_text
+        assert "can't see images" in final_text
         assert any(e.kind == "system" for e in entries)
 
 
@@ -293,15 +294,20 @@ async def test_submit_with_pending_image_non_vision_blocked(tmp_path, monkeypatc
 
         # No agent worker spawned (send blocked).
         assert spawned == [], "no agent worker should be spawned when the send is blocked"
-        # Transcript has the user message + a system warning.
+        # The user's message must NOT appear in the transcript (it was never sent).
         kinds = [e.kind for e in entries]
-        assert "user" in kinds
+        assert "user" not in kinds, "blocked message should not appear in the transcript"
+        # A system warning IS added to the transcript.
         assert "system" in kinds
         system = [e for e in entries if e.kind == "system"]
         assert "does not support vision" in system[0].content
         # Composer hint shows the blocked message.
         assert hints
-        assert "not sent" in hints[-1][0]
+        assert "not sent" in hints[-1][0].lower() or "Not sent" in hints[-1][0]
+        # Composer text is preserved so the user can edit and resend.
+        assert composer.text == "describe this", "composer text should be preserved when blocked"
+        # Pending attachment is preserved so the user can /detach it.
+        assert app._pending_image_attachments, "pending attachment should be preserved when blocked"
 
 
 @pytest.mark.asyncio
@@ -358,8 +364,13 @@ async def test_submit_with_mention_image_non_vision_blocked(tmp_path, monkeypatc
 
         # Send blocked — no agent worker.
         assert spawned == [], "no agent worker should be spawned"
+        # The user's message must NOT appear in the transcript (it was never sent).
+        kinds = [e.kind for e in entries]
+        assert "user" not in kinds, "blocked message should not appear in the transcript"
         system = [e for e in entries if e.kind == "system"]
         assert system, "expected a system message"
+        # Composer text preserved so the user can edit the @mention and resend.
+        assert composer.text == text, "composer text should be preserved when blocked"
 
 
 @pytest.mark.asyncio
@@ -422,3 +433,64 @@ async def test_submit_text_only_non_vision_with_history_images_proceeds(tmp_path
         # Agent worker spawned — the CLI gate only blocks NEW image attachments,
         # not history images (those are handled by _history_for_llm).
         assert spawned, "agent worker should be spawned for text-only message"
+
+
+# ---------------------------------------------------------------------------
+# /detach — remove pending image attachments
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_detach_clears_pending_attachments(tmp_path, monkeypatch):
+    """/detach removes all pending image attachments and confirms via hint."""
+    app = _make_app(tmp_path, monkeypatch)
+    async with app.run_test():
+        app.agent = _FakeAgent(supports_vision=False)
+        app._pending_image_attachments.append(_image_attachment("photo.png"))
+        app._pending_image_attachments.append(_image_attachment("chart.png"))
+
+        hints: list[tuple] = []
+        app._show_composer_hint = lambda text, tone="warning": hints.append((text, tone))
+
+        await app._command_detach("")
+
+        assert app._pending_image_attachments == [], "pending attachments should be cleared"
+        assert hints, "expected a confirmation hint"
+        text, tone = hints[-1]
+        assert tone == "info"
+        assert "photo.png" in text
+        assert "chart.png" in text
+        assert "Removed" in text
+
+
+@pytest.mark.asyncio
+async def test_detach_with_no_attachments(tmp_path, monkeypatch):
+    """/detach with nothing pending shows an info hint, not an error."""
+    app = _make_app(tmp_path, monkeypatch)
+    async with app.run_test():
+        app.agent = _FakeAgent(supports_vision=False)
+
+        hints: list[tuple] = []
+        app._show_composer_hint = lambda text, tone="warning": hints.append((text, tone))
+
+        await app._command_detach("")
+
+        assert app._pending_image_attachments == []
+        assert hints, "expected an info hint"
+        text, tone = hints[-1]
+        assert tone == "info"
+        assert "No pending" in text
+
+
+@pytest.mark.asyncio
+async def test_detach_command_registered(tmp_path, monkeypatch):
+    """/detach is in the TUI command handler dict and the slash command list."""
+    from kolega_code.cli.slash_commands import TUI_COMMAND_NAMES
+
+    assert "/detach" in TUI_COMMAND_NAMES
+
+    app = _make_app(tmp_path, monkeypatch)
+    async with app.run_test():
+        handlers = app._tui_command_handlers()
+        assert "/detach" in handlers
+        assert handlers["/detach"] == app._command_detach

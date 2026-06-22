@@ -1381,7 +1381,8 @@ class KolegaCodeApp(App):
 
     #composer_hint {
         display: none;
-        height: 1;
+        height: auto;
+        max-height: 4;
         padding: 0 1;
         background: $surface;
     }
@@ -1994,23 +1995,28 @@ class KolegaCodeApp(App):
             if stripped_text:
                 self._set_settings_status(messages.SETTINGS_REQUIRED, tone="warning")
             return
-        event.composer.load_text("")
+        # Build attachments first (without clearing pending) so the vision gate
+        # can block before we consume the composer text and pending images.
         attachments = self._build_mention_attachments(text)
         if self._pending_image_attachments:
             attachments = (attachments or []) + self._pending_image_attachments
-            self._pending_image_attachments.clear()
-        # Pre-send vision gate: block the send when the current model can't see
-        # images. This catches @file.png mentions (which bypass
-        # add_pending_image_attachment) and serves as a final gate for all
-        # attachment paths. History images are NOT blocked here — those are
-        # stripped to placeholders by _history_for_llm and the send proceeds.
+        # Pre-send vision gate: block when the current model can't see images.
+        # Catches @file.png mentions (which bypass add_pending_image_attachment)
+        # and serves as a final gate for all attachment paths. When blocked, the
+        # composer text and pending attachments are PRESERVED so the user can
+        # remove the image (/detach or edit the @mention) or switch model and
+        # resend — nothing is added to the transcript because nothing was sent.
+        # History images are NOT blocked (stripped to placeholders by
+        # _history_for_llm, send proceeds normally).
         if attachments and not self._model_supports_vision():
             has_image = any(a.get("type") == "image" for a in attachments)
             if has_image:
-                self._add_conversation_entry(ConversationEntry(kind="user", content=text))
                 self._add_vision_mismatch_system_message(context="attachment")
                 self._show_composer_hint(messages.MODEL_NON_VISION_IMAGE_BLOCKED, tone="warning")
                 return
+        # Safe to consume — clear the composer and pending attachments now.
+        event.composer.load_text("")
+        self._pending_image_attachments.clear()
         self._add_conversation_entry(ConversationEntry(kind="user", content=text))
         self.agent_worker = self.run_worker(
             self._process_message(text, attachments), name="kolega-turn", group="turns", exclusive=True
@@ -3110,6 +3116,7 @@ class KolegaCodeApp(App):
     def _tui_command_handlers(self) -> dict[str, Callable[[str], Awaitable[None]]]:
         return {
             "/attach": self._command_attach,
+            "/detach": self._command_detach,
             "/init": self._command_init,
             "/plan": self._command_plan,
             "/build": self._command_build,
@@ -3170,8 +3177,8 @@ class KolegaCodeApp(App):
         model_name = getattr(model_config, "model", None) or "The current model"
         if context == "attachment":
             message = (
-                f"⚠ {model_name} does not support vision. Attached images will be omitted "
-                f"when sending. Switch to a vision-capable model with /model to include them."
+                f"⚠ {model_name} does not support vision. Use /detach to remove image "
+                f"attachments or /model to switch to a vision-capable model."
             )
         else:  # model_switch
             message = messages.MODEL_NON_VISION_IMAGE_HISTORY
@@ -3221,6 +3228,22 @@ class KolegaCodeApp(App):
             return
         attachment["path"] = arg
         self.add_pending_image_attachment(attachment)
+
+    async def _command_detach(self, args: str) -> None:
+        """Remove all pending image attachments (clears the attach queue).
+
+        The user has no other way to discard a pending image once attached,
+        especially on a non-vision model where the image can't be sent.
+        """
+        if not self._pending_image_attachments:
+            self._show_composer_hint("No pending image attachments to remove.", tone="info")
+            return
+        names = ", ".join(a.get("path", "image") for a in self._pending_image_attachments)
+        count = len(self._pending_image_attachments)
+        self._pending_image_attachments.clear()
+        self._show_composer_hint(
+            f"Removed {count} image attachment(s): {names}", tone="info"
+        )
 
     async def _paste_clipboard_image_worker(self) -> None:
         from kolega_code.cli.clipboard_image import read_clipboard_image

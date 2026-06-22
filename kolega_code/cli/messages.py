@@ -75,12 +75,11 @@ MODEL_NON_VISION_IMAGE_HISTORY = (
     "vision-capable model with /model to see them again."
 )
 MODEL_NON_VISION_IMAGE_ATTACHED = (
-    "The current model does not support vision. Attached images will be omitted "
-    "when sending. Switch to a vision-capable model with /model to include them."
+    "This model can't see images — use /detach to remove or /model to switch."
 )
 MODEL_NON_VISION_IMAGE_BLOCKED = (
-    "Message not sent — the current model does not support vision. "
-    "Remove the image or switch with /model."
+    "Not sent — this model can't see images. "
+    "Use /detach to remove or /model to switch."
 )
 EFFORT_SWITCHED = "Switched thinking effort to {effort} for {provider}/{model}."
 EFFORT_UNKNOWN = "Unknown thinking effort {effort} for {provider}/{model}."
