@@ -1881,6 +1881,30 @@ class TestBaseAgent:
         assert isinstance(history[1].content[0], ToolResult)
         assert history[1].content[0].tool_use_id == "tool1"
 
+    def test_history_for_llm_preserves_fireworks_thinking_when_targeting_fireworks(self, base_agent):
+        base_agent.primary_model_config.provider = ModelProvider.FIREWORKS
+        base_agent.primary_model_config.model = "accounts/fireworks/models/glm-5p2"
+        base_agent.supports_vision = False
+        base_agent.history = MessageHistory(
+            [
+                Message(
+                    role="assistant",
+                    content=[
+                        ThinkingBlock(thinking="fireworks reasoning"),
+                        TextBlock(text="final answer"),
+                    ],
+                    usage_metadata={"provider": "fireworks"},
+                )
+            ]
+        )
+
+        history = base_agent._history_for_llm()
+
+        assert isinstance(history[0].content[0], ThinkingBlock)
+        assert history[0].content[0].thinking == "fireworks reasoning"
+        assert isinstance(history[0].content[1], TextBlock)
+        assert history[0].content[1].text == "final answer"
+
     def test_history_for_llm_preserves_images_when_target_anthropic_supports_vision(self, base_agent):
         image = ImageBlock(image_type="base64", media_type="image/png", data="BASE64")
         nested_image = ImageBlock(image_type="base64", media_type="image/jpeg", data="BASE642")
