@@ -2,6 +2,8 @@
 
 import pytest
 
+from kolega_code.cli.tui import agent_runtime as agent_runtime_module
+
 from kolega_code.cli.config import build_agent_config, config_summary
 from kolega_code.cli.provider_registry import DEEPSEEK_DEFAULT_MODEL
 from kolega_code.cli.session_store import SessionStore
@@ -47,7 +49,6 @@ def _image_history() -> list:
 async def test_switch_to_non_vision_model_with_image_history_warns(tmp_path, monkeypatch):
     pytest.importorskip("textual")
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
 
     class FakeCoderAgent:
@@ -69,7 +70,7 @@ async def test_switch_to_non_vision_model_with_image_history_warns(tmp_path, mon
         async def cleanup(self):
             return None
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -110,7 +111,6 @@ async def test_switch_to_non_vision_model_with_image_history_warns(tmp_path, mon
 async def test_switch_to_vision_model_with_image_history_no_warn(tmp_path, monkeypatch):
     pytest.importorskip("textual")
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
 
     class FakeCoderAgent:
@@ -132,7 +132,7 @@ async def test_switch_to_vision_model_with_image_history_no_warn(tmp_path, monke
         async def cleanup(self):
             return None
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -164,7 +164,6 @@ async def test_switch_to_vision_model_with_image_history_no_warn(tmp_path, monke
 async def test_switch_to_non_vision_model_without_image_history_no_warn(tmp_path, monkeypatch):
     pytest.importorskip("textual")
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
 
     class FakeCoderAgent:
@@ -186,7 +185,7 @@ async def test_switch_to_non_vision_model_without_image_history_no_warn(tmp_path
         async def cleanup(self):
             return None
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()

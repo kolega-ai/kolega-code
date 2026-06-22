@@ -4,6 +4,8 @@ import json
 
 import pytest
 
+from kolega_code.cli.tui import agent_runtime as agent_runtime_module
+
 from kolega_code.config import ModelProvider
 from kolega_code.llm.exceptions import (
     LLMBillingError,
@@ -78,7 +80,6 @@ async def test_textual_app_mounts_with_fake_agent(tmp_path: Path, monkeypatch: p
     from textual.containers import VerticalScroll
     from textual.widgets import Collapsible, Header, Markdown
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
 
     class FakeCoderAgent:
@@ -101,7 +102,7 @@ async def test_textual_app_mounts_with_fake_agent(tmp_path: Path, monkeypatch: p
         async def cleanup(self):
             return None
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -151,7 +152,6 @@ async def test_textual_app_status_tab_is_default_dashboard(
 
     from textual.widgets import Static, TabbedContent
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
 
     class FakeCoderAgent:
@@ -173,7 +173,7 @@ async def test_textual_app_status_tab_is_default_dashboard(
         async def cleanup(self):
             return None
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -202,7 +202,6 @@ async def test_settings_tab_grouped_into_model_and_appearance_sections(
 ) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
 
     class FakeCoderAgent:
@@ -224,7 +223,7 @@ async def test_settings_tab_grouped_into_model_and_appearance_sections(
         async def cleanup(self):
             return None
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -266,7 +265,6 @@ async def test_web_search_settings_section_reveal_and_save(
 
     from textual.widgets import Input, Select
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
 
     class FakeCoderAgent:
@@ -288,7 +286,7 @@ async def test_web_search_settings_section_reveal_and_save(
         async def cleanup(self):
             return None
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -356,7 +354,6 @@ async def test_textual_app_context_usage_updates_status_without_raw_json(
 
     from textual.widgets import Static
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.widgets import ChatComposer
     from kolega_code.cli.messages import COMPOSER_PLACEHOLDER
@@ -380,7 +377,7 @@ async def test_textual_app_context_usage_updates_status_without_raw_json(
         async def cleanup(self):
             return None
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -426,7 +423,6 @@ async def test_textual_app_status_dashboard_tracks_interaction_mode(
 
     from textual.widgets import Static
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
 
     class FakeAgent:
@@ -448,8 +444,8 @@ async def test_textual_app_status_dashboard_tracks_interaction_mode(
         async def cleanup(self):
             return None
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeAgent)
-    monkeypatch.setattr(app_module, "PlanningAgent", FakeAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeAgent)
+    monkeypatch.setattr(agent_runtime_module, "PlanningAgent", FakeAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -476,7 +472,6 @@ async def test_textual_app_turn_status_formats_error_duration(
 
     from textual.widgets import Static
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.state import TurnState
 
@@ -499,7 +494,7 @@ async def test_textual_app_turn_status_formats_error_duration(
         async def cleanup(self):
             return None
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -538,7 +533,6 @@ async def test_progress_entry_tone_drives_styling_not_prose(
 ) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli import theme
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.state import ConversationEntry, TurnState
@@ -562,7 +556,7 @@ async def test_progress_entry_tone_drives_styling_not_prose(
         async def cleanup(self):
             return None
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -597,7 +591,6 @@ async def test_textual_app_keeps_command_c_for_screen_copy(
 ) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
 
     class FakeCoderAgent:
@@ -619,7 +612,7 @@ async def test_textual_app_keeps_command_c_for_screen_copy(
         async def cleanup(self):
             return None
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -642,7 +635,6 @@ async def test_textual_app_shift_tab_toggles_between_build_and_plan_agents(
 
     from textual.widgets import Markdown
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.constants import BUILD_INTERACTION_MODE, PLAN_INTERACTION_MODE
     from kolega_code.cli.tui.state import PendingQuestion
@@ -674,8 +666,8 @@ async def test_textual_app_shift_tab_toggles_between_build_and_plan_agents(
     class FakePlanningAgent(FakeBaseAgent):
         pass
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
-    monkeypatch.setattr(app_module, "PlanningAgent", FakePlanningAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "PlanningAgent", FakePlanningAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -735,7 +727,6 @@ async def test_textual_app_ctrl_p_toggles_permission_mode(
 
     from textual.widgets import Static
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.permissions import PermissionMode
 
@@ -765,7 +756,7 @@ async def test_textual_app_ctrl_p_toggles_permission_mode(
         async def cleanup(self):
             return None
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -797,7 +788,6 @@ async def test_textual_app_ctrl_o_toggles_sidebar_and_keeps_active_tab(
 
     from textual.widgets import TabbedContent
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
 
     class FakeCoderAgent:
@@ -819,7 +809,7 @@ async def test_textual_app_ctrl_o_toggles_sidebar_and_keeps_active_tab(
         async def cleanup(self):
             return None
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -861,7 +851,6 @@ async def test_textual_app_permission_approval_actions_show_rule_labels_without_
 ) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.state import PendingApproval
     from kolega_code.cli.tui.widgets import ActionList
@@ -886,7 +875,7 @@ async def test_textual_app_permission_approval_actions_show_rule_labels_without_
         async def cleanup(self):
             return None
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -939,7 +928,6 @@ async def test_textual_app_restores_saved_plan_and_interaction_mode(
 
     from textual.widgets import Markdown
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.widgets import ActionList, ChatComposer
 
@@ -969,8 +957,8 @@ async def test_textual_app_restores_saved_plan_and_interaction_mode(
     class FakePlanningAgent(FakeBaseAgent):
         pass
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
-    monkeypatch.setattr(app_module, "PlanningAgent", FakePlanningAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "PlanningAgent", FakePlanningAgent)
 
     saved_plan = "# Saved plan\n\nUse the restored plan."
     saved_history = [Message(role="assistant", content=[TextBlock("saved response")]).to_dict()]
@@ -1008,7 +996,6 @@ async def test_textual_app_restores_saved_plan_in_build_mode_without_plan_action
 
     from textual.widgets import Markdown
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
 
     class FakeCoderAgent:
@@ -1030,7 +1017,7 @@ async def test_textual_app_restores_saved_plan_in_build_mode_without_plan_action
         async def cleanup(self):
             return None
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     saved_plan = "# Saved plan\n\nKeep this visible."
     project = tmp_path / "project"
@@ -1060,7 +1047,6 @@ async def test_textual_app_invalid_saved_interaction_mode_falls_back_to_build(
 ) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.constants import BUILD_INTERACTION_MODE
 
@@ -1083,7 +1069,7 @@ async def test_textual_app_invalid_saved_interaction_mode_falls_back_to_build(
         async def cleanup(self):
             return None
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -1108,7 +1094,6 @@ async def test_textual_app_passes_shared_task_list_tools_to_build_agent_only(
 
     from textual.widgets import Markdown
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
 
     class FakeBaseAgent:
@@ -1137,8 +1122,8 @@ async def test_textual_app_passes_shared_task_list_tools_to_build_agent_only(
     class FakePlanningAgent(FakeBaseAgent):
         pass
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
-    monkeypatch.setattr(app_module, "PlanningAgent", FakePlanningAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "PlanningAgent", FakePlanningAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -1190,7 +1175,6 @@ async def test_textual_app_passes_skill_extensions_to_build_and_plan_agents(
 ) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
 
     class FakeBaseAgent:
@@ -1219,8 +1203,8 @@ async def test_textual_app_passes_skill_extensions_to_build_and_plan_agents(
     class FakePlanningAgent(FakeBaseAgent):
         pass
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
-    monkeypatch.setattr(app_module, "PlanningAgent", FakePlanningAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "PlanningAgent", FakePlanningAgent)
 
     project = tmp_path / "project"
     skill_dir = project / ".agents" / "skills" / "demo-skill"
@@ -1254,7 +1238,6 @@ async def test_textual_app_skill_slash_commands_list_and_activate(
 ) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.widgets import ChatComposer
 
@@ -1281,7 +1264,7 @@ async def test_textual_app_skill_slash_commands_list_and_activate(
         async def cleanup(self):
             return None
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     skill_dir = project / ".agents" / "skills" / "demo-skill"
@@ -1317,7 +1300,6 @@ async def test_textual_app_skill_slash_command_with_prompt_starts_turn(
 ) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.widgets import ChatComposer
 
@@ -1349,7 +1331,7 @@ async def test_textual_app_skill_slash_command_with_prompt_starts_turn(
             self.messages.append(message)
             yield {"type": "response", "content": "done", "complete": True, "uuid": "response-1"}
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     skill_dir = project / ".agents" / "skills" / "demo-skill"
@@ -1382,7 +1364,6 @@ async def test_textual_app_planning_question_tool_accepts_option_list_answer(
 
     from textual.widgets import OptionList
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.widgets import ActionList, ChatComposer
     from kolega_code.cli.messages import COMPOSER_PLACEHOLDER
@@ -1413,8 +1394,8 @@ async def test_textual_app_planning_question_tool_accepts_option_list_answer(
     class FakePlanningAgent(FakeBaseAgent):
         pass
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
-    monkeypatch.setattr(app_module, "PlanningAgent", FakePlanningAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "PlanningAgent", FakePlanningAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -1473,7 +1454,6 @@ async def test_textual_app_planning_question_supports_arrow_and_digit_selection(
 ) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.widgets import ActionList
 
@@ -1503,8 +1483,8 @@ async def test_textual_app_planning_question_supports_arrow_and_digit_selection(
     class FakePlanningAgent(FakeBaseAgent):
         pass
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
-    monkeypatch.setattr(app_module, "PlanningAgent", FakePlanningAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "PlanningAgent", FakePlanningAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -1549,7 +1529,6 @@ async def test_textual_app_planning_question_tool_accepts_custom_text_answer(
 ) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.widgets import ActionList, ChatComposer
 
@@ -1579,8 +1558,8 @@ async def test_textual_app_planning_question_tool_accepts_custom_text_answer(
     class FakePlanningAgent(FakeBaseAgent):
         pass
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
-    monkeypatch.setattr(app_module, "PlanningAgent", FakePlanningAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "PlanningAgent", FakePlanningAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -1623,7 +1602,6 @@ async def test_textual_app_planning_question_tool_asks_multiple_questions_sequen
 ) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.widgets import ActionList
     from textual.widgets import OptionList
@@ -1654,8 +1632,8 @@ async def test_textual_app_planning_question_tool_asks_multiple_questions_sequen
     class FakePlanningAgent(FakeBaseAgent):
         pass
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
-    monkeypatch.setattr(app_module, "PlanningAgent", FakePlanningAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "PlanningAgent", FakePlanningAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -1698,7 +1676,6 @@ async def test_textual_app_planning_question_tool_rejects_malformed_input(
 ) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.tools import ToolError
 
@@ -1728,8 +1705,8 @@ async def test_textual_app_planning_question_tool_rejects_malformed_input(
     class FakePlanningAgent(FakeBaseAgent):
         pass
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
-    monkeypatch.setattr(app_module, "PlanningAgent", FakePlanningAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "PlanningAgent", FakePlanningAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -1787,7 +1764,6 @@ async def test_textual_app_blocks_mode_toggle_during_active_turn(
 
     from textual.widgets import Static
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.widgets import ChatComposer
     from kolega_code.cli.messages import COMPOSER_PLACEHOLDER
@@ -1811,7 +1787,7 @@ async def test_textual_app_blocks_mode_toggle_during_active_turn(
         async def cleanup(self):
             return None
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -1838,7 +1814,6 @@ async def test_textual_app_shows_plan_decision_when_planning_agent_writes_plan(
 ) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli import app as app_module
     from textual.widgets import Markdown
 
     from kolega_code.cli.app import KolegaCodeApp
@@ -1879,8 +1854,8 @@ async def test_textual_app_shows_plan_decision_when_planning_agent_writes_plan(
             self.completed_plan = None
             return plan
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
-    monkeypatch.setattr(app_module, "PlanningAgent", FakePlanningAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "PlanningAgent", FakePlanningAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -1981,7 +1956,6 @@ async def test_textual_app_implement_plan_switches_to_build_and_sends_plan(
 
     from textual.widgets import Markdown
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
 
     class FakeCoderAgent:
@@ -2012,8 +1986,8 @@ async def test_textual_app_implement_plan_switches_to_build_and_sends_plan(
     class FakePlanningAgent(FakeCoderAgent):
         pass
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
-    monkeypatch.setattr(app_module, "PlanningAgent", FakePlanningAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "PlanningAgent", FakePlanningAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -2060,7 +2034,6 @@ async def test_textual_app_implemented_plan_not_reoffered_on_reentry(
 
     from textual.widgets import Markdown
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.constants import PLAN_INTERACTION_MODE
     from kolega_code.cli.tui.widgets import ActionList
@@ -2091,8 +2064,8 @@ async def test_textual_app_implemented_plan_not_reoffered_on_reentry(
     class FakePlanningAgent(FakeCoderAgent):
         pass
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
-    monkeypatch.setattr(app_module, "PlanningAgent", FakePlanningAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "PlanningAgent", FakePlanningAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -2141,7 +2114,6 @@ async def test_textual_app_clear_context_and_implement_plan_starts_build_agent_f
 
     from textual.widgets import Markdown
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
 
     class FakeCoderAgent:
@@ -2173,8 +2145,8 @@ async def test_textual_app_clear_context_and_implement_plan_starts_build_agent_f
     class FakePlanningAgent(FakeCoderAgent):
         pass
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
-    monkeypatch.setattr(app_module, "PlanningAgent", FakePlanningAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "PlanningAgent", FakePlanningAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -2231,7 +2203,6 @@ async def test_textual_app_discuss_plan_preserves_old_plan_until_new_plan_is_wri
 
     from textual.widgets import Markdown
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
 
     class FakeCoderAgent:
@@ -2262,8 +2233,8 @@ async def test_textual_app_discuss_plan_preserves_old_plan_until_new_plan_is_wri
     class FakePlanningAgent(FakeCoderAgent):
         pass
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
-    monkeypatch.setattr(app_module, "PlanningAgent", FakePlanningAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "PlanningAgent", FakePlanningAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -2324,7 +2295,6 @@ async def test_textual_app_does_not_save_startup_entry_to_history(
 ) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
 
     saved_history = [Message(role="assistant", content=[TextBlock("saved response")]).to_dict()]
@@ -2348,7 +2318,7 @@ async def test_textual_app_does_not_save_startup_entry_to_history(
         async def cleanup(self):
             return None
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -2371,7 +2341,6 @@ async def test_textual_app_composer_shift_enter_inserts_line_break_and_enter_sub
 ) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.widgets import ChatComposer
 
@@ -2399,7 +2368,7 @@ async def test_textual_app_composer_shift_enter_inserts_line_break_and_enter_sub
             self.messages.append(message)
             yield {"type": "response", "content": "ok", "complete": True, "uuid": "response-1"}
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -2433,7 +2402,6 @@ async def test_textual_app_composer_ctrl_enter_still_inserts_line_break(
 ) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.widgets import ChatComposer
 
@@ -2456,7 +2424,7 @@ async def test_textual_app_composer_ctrl_enter_still_inserts_line_break(
         async def cleanup(self):
             return None
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -2484,7 +2452,6 @@ async def test_textual_app_composer_preserves_multiline_paste(
 
     from textual import events
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.widgets import ChatComposer
 
@@ -2512,7 +2479,7 @@ async def test_textual_app_composer_preserves_multiline_paste(
             self.messages.append(message)
             yield {"type": "response", "content": "ok", "complete": True, "uuid": "response-1"}
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     pasted = "line one\n    line two\nline three"
     project = tmp_path / "project"
@@ -2548,7 +2515,6 @@ async def test_textual_app_reset_command_clears_current_thread(
 
     from textual.widgets import Markdown
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.state import PendingQuestion
     from kolega_code.cli.tui.widgets import ChatComposer
@@ -2577,7 +2543,7 @@ async def test_textual_app_reset_command_clears_current_thread(
         async def process_message_stream(self, message):
             raise AssertionError("reset commands should not be sent to the agent")
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     saved_history = [
         Message(role="user", content=[TextBlock("old request")]).to_dict(),
@@ -2646,7 +2612,6 @@ async def test_textual_app_reset_command_waits_for_active_turn(
 
     from textual.widgets import Static
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.widgets import ChatComposer
     from kolega_code.cli.messages import COMPOSER_PLACEHOLDER
@@ -2671,7 +2636,7 @@ async def test_textual_app_reset_command_waits_for_active_turn(
         async def cleanup(self):
             return None
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     saved_history = [Message(role="user", content=[TextBlock("old request")]).to_dict()]
     project = tmp_path / "project"
@@ -2706,7 +2671,6 @@ async def test_textual_app_mounts_settings_without_api_key(
 ) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.widgets import ChatComposer
 
@@ -2714,7 +2678,7 @@ async def test_textual_app_mounts_settings_without_api_key(
         def __init__(self, **kwargs):
             raise AssertionError("agent should not be built without a valid API key")
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -2750,7 +2714,6 @@ async def test_textual_app_does_not_select_model_from_api_key_env(
 ) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.widgets import ChatComposer
 
@@ -2759,7 +2722,7 @@ async def test_textual_app_does_not_select_model_from_api_key_env(
             raise AssertionError("agent should not be built from an API key alone")
 
     monkeypatch.setenv("MOONSHOT_API_KEY", "moonshot-key")
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -2793,7 +2756,6 @@ async def test_textual_app_mounts_with_stored_kimi_settings(
 ) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.widgets import ChatComposer
 
@@ -2816,7 +2778,7 @@ async def test_textual_app_mounts_with_stored_kimi_settings(
         async def cleanup(self):
             return None
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -2850,7 +2812,6 @@ async def test_textual_app_mounts_with_stored_deepseek_settings(
 ) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.widgets import ChatComposer
 
@@ -2873,7 +2834,7 @@ async def test_textual_app_mounts_with_stored_deepseek_settings(
         async def cleanup(self):
             return None
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -2909,7 +2870,6 @@ async def test_textual_app_saves_settings_and_builds_agent(
 
     from textual.widgets import Input
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.widgets import ChatComposer
 
@@ -2932,7 +2892,7 @@ async def test_textual_app_saves_settings_and_builds_agent(
         async def cleanup(self):
             return None
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -2973,7 +2933,6 @@ async def test_textual_app_saves_deepseek_settings_and_builds_agent(
 
     from textual.widgets import Input, Select
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.widgets import ChatComposer
 
@@ -2996,7 +2955,7 @@ async def test_textual_app_saves_deepseek_settings_and_builds_agent(
         async def cleanup(self):
             return None
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -3036,7 +2995,6 @@ async def test_textual_app_merges_streamed_response_chunks(
 ) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.widgets import ChatComposer
     from kolega_code.cli.messages import COMPOSER_PLACEHOLDER
@@ -3070,7 +3028,7 @@ async def test_textual_app_merges_streamed_response_chunks(
             for chunk in chunks:
                 yield chunk
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -3096,7 +3054,6 @@ async def test_textual_app_merges_streamed_thinking_chunks(
 ) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
 
     chunks = [
@@ -3129,7 +3086,7 @@ async def test_textual_app_merges_streamed_thinking_chunks(
             for chunk in chunks:
                 yield chunk
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -3153,7 +3110,6 @@ async def test_textual_app_formats_thinking_as_italic_chat_entry(
 ) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.state import ConversationEntry
 
@@ -3176,7 +3132,7 @@ async def test_textual_app_formats_thinking_as_italic_chat_entry(
         async def cleanup(self):
             return None
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -3203,7 +3159,6 @@ async def test_textual_app_renders_one_widget_per_chat_entry(
 ) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.state import ConversationEntry
     from kolega_code.cli.tui.widgets import ConversationEntryWidget
@@ -3227,7 +3182,7 @@ async def test_textual_app_renders_one_widget_per_chat_entry(
         async def cleanup(self):
             return None
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -3272,7 +3227,6 @@ async def test_conversation_render_skips_detached_view_during_teardown(
     mounting into it used to raise MountError and crash the CLI on exit."""
     pytest.importorskip("textual")
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.state import ConversationEntry
     from kolega_code.cli.tui.widgets import ConversationEntryWidget, ConversationView
@@ -3296,7 +3250,7 @@ async def test_conversation_render_skips_detached_view_during_teardown(
         async def cleanup(self):
             return None
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -3337,7 +3291,6 @@ async def test_conversation_entry_widget_extracts_plain_selected_text(
 
     from textual.selection import Selection
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.state import ConversationEntry
     from kolega_code.cli.tui.widgets import ConversationEntryWidget
@@ -3361,7 +3314,7 @@ async def test_conversation_entry_widget_extracts_plain_selected_text(
         async def cleanup(self):
             return None
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -3395,7 +3348,6 @@ async def test_conversation_entry_supports_mouse_drag_selection(
 
     from textual import events
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.state import ConversationEntry
     from kolega_code.cli.tui.widgets import ConversationEntryWidget
@@ -3419,7 +3371,7 @@ async def test_conversation_entry_supports_mouse_drag_selection(
         async def cleanup(self):
             return None
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -3787,7 +3739,7 @@ async def test_command_c_copies_selected_chat_text_to_macos_clipboard(
     def fake_run(args, *, input, text, check):
         pbcopy_calls.append({"args": args, "input": input, "text": text, "check": check})
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
     monkeypatch.setattr(app_module.sys, "platform", "darwin")
     monkeypatch.setattr(app_module.subprocess, "run", fake_run)
 
@@ -3821,7 +3773,6 @@ async def test_textual_app_formats_agent_and_tool_chat_entries(
 ) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.state import ConversationEntry
 
@@ -3844,7 +3795,7 @@ async def test_textual_app_formats_agent_and_tool_chat_entries(
         async def cleanup(self):
             return None
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -3894,7 +3845,6 @@ async def test_textual_app_ignores_empty_final_response_without_existing_entry(
 ) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.widgets import ChatComposer
     from kolega_code.cli.messages import COMPOSER_PLACEHOLDER
@@ -3921,7 +3871,7 @@ async def test_textual_app_ignores_empty_final_response_without_existing_entry(
         async def process_message_stream(self, message):
             yield {"type": "response", "content": "", "complete": True, "uuid": "response-empty"}
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -3946,7 +3896,6 @@ async def test_textual_app_shows_working_progress_during_active_turn(
 
     from textual.widgets import Static
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.widgets import ChatComposer
     from kolega_code.cli.messages import COMPOSER_PLACEHOLDER
@@ -3978,7 +3927,7 @@ async def test_textual_app_shows_working_progress_during_active_turn(
             await release.wait()
             yield {"type": "response", "content": "done", "complete": True, "uuid": "response-1"}
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -4027,7 +3976,6 @@ async def test_textual_app_shows_working_progress_during_active_turn(
 async def test_textual_app_renders_tool_events_in_chat(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.theme import TOOL_RESULT_PREVIEW_CHARS
 
@@ -4050,7 +3998,7 @@ async def test_textual_app_renders_tool_events_in_chat(tmp_path: Path, monkeypat
         async def cleanup(self):
             return None
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -4112,7 +4060,6 @@ async def test_textual_app_appends_append_mode_tool_streaming_events_in_chat(
 ) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
 
     class FakeCoderAgent:
@@ -4134,7 +4081,7 @@ async def test_textual_app_appends_append_mode_tool_streaming_events_in_chat(
         async def cleanup(self):
             return None
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -4216,7 +4163,6 @@ async def test_textual_app_replaces_default_tool_streaming_events_in_chat(
 ) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
 
     class FakeCoderAgent:
@@ -4238,7 +4184,7 @@ async def test_textual_app_replaces_default_tool_streaming_events_in_chat(
         async def cleanup(self):
             return None
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -4285,7 +4231,6 @@ async def test_textual_app_caps_long_append_mode_tool_streaming_events(
 ) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.theme import TOOL_STREAM_PREVIEW_CHARS
 
@@ -4308,7 +4253,7 @@ async def test_textual_app_caps_long_append_mode_tool_streaming_events(
         async def cleanup(self):
             return None
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -4346,7 +4291,6 @@ async def test_textual_app_renders_queued_tool_events_during_active_turn(
 
     from textual.widgets import Static
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.widgets import ChatComposer
     from kolega_code.cli.messages import COMPOSER_PLACEHOLDER
@@ -4416,7 +4360,7 @@ async def test_textual_app_renders_queued_tool_events_during_active_turn(
                 return entries
             await asyncio.sleep(0.01)
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -4464,7 +4408,6 @@ async def test_textual_app_late_tool_result_updates_existing_tool_row(
 ) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
 
     class FakeCoderAgent:
@@ -4486,7 +4429,7 @@ async def test_textual_app_late_tool_result_updates_existing_tool_row(
         async def cleanup(self):
             return None
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -4538,7 +4481,6 @@ async def test_textual_app_cancellation_is_visible_in_chat(
 
     from textual.widgets import Static
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.widgets import ChatComposer
     from kolega_code.cli.messages import COMPOSER_PLACEHOLDER
@@ -4570,7 +4512,7 @@ async def test_textual_app_cancellation_is_visible_in_chat(
                 await asyncio.sleep(1)
                 yield {"type": "thinking", "content": "still working", "complete": False, "uuid": "thinking-1"}
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -4671,7 +4613,6 @@ async def test_textual_app_handles_llm_error_without_worker_traceback(
 
     from textual.widgets import Static
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.state import TurnState
     from kolega_code.cli.tui.widgets import ChatComposer
@@ -4700,7 +4641,7 @@ async def test_textual_app_handles_llm_error_without_worker_traceback(
             raise error
             yield {"type": "response", "content": "unreachable"}
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -4733,7 +4674,6 @@ async def test_textual_app_handles_llm_error_without_worker_traceback(
 async def test_textual_app_reraises_non_llm_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.state import TurnState
     from kolega_code.cli.tui.widgets import ChatComposer
@@ -4761,7 +4701,7 @@ async def test_textual_app_reraises_non_llm_error(tmp_path: Path, monkeypatch: p
             raise RuntimeError("tool host exploded")
             yield {"type": "response", "content": "unreachable"}
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -4790,7 +4730,6 @@ async def test_textual_app_renders_resumed_history_in_chat(
 ) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
 
     class FakeCoderAgent:
@@ -4813,7 +4752,7 @@ async def test_textual_app_renders_resumed_history_in_chat(
         async def cleanup(self):
             return None
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -4864,7 +4803,6 @@ async def test_textual_app_restore_tool_history_matches_legacy_and_execution_ids
 ) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
 
     class FakeCoderAgent:
@@ -4887,7 +4825,7 @@ async def test_textual_app_restore_tool_history_matches_legacy_and_execution_ids
         async def cleanup(self):
             return None
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -4985,7 +4923,6 @@ async def test_textual_app_model_rebuild_rerenders_completed_tool_once(
 ) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
 
     class FakeCoderAgent:
@@ -5009,7 +4946,7 @@ async def test_textual_app_model_rebuild_rerenders_completed_tool_once(
         async def cleanup(self):
             return None
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -5044,7 +4981,6 @@ async def test_textual_app_model_rebuild_rerenders_completed_tool_once(
 def _build_sub_agent_test_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     pytest.importorskip("textual")
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
 
     class FakeCoderAgent:
@@ -5066,7 +5002,7 @@ def _build_sub_agent_test_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         async def cleanup(self):
             return None
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -6305,7 +6241,6 @@ async def test_logs_tab_shows_activity_dot_until_visited(
 
 
 def _build_mention_test_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
 
     class FakeCoderAgent:
@@ -6338,7 +6273,7 @@ def _build_mention_test_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
             self.attachments.append(attachments)
             yield {"type": "response", "content": "done", "complete": True, "uuid": "response-1"}
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -6663,7 +6598,6 @@ async def test_textual_app_plan_and_build_slash_commands_switch_mode(
 ) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.widgets import ChatComposer
 
@@ -6692,8 +6626,8 @@ async def test_textual_app_plan_and_build_slash_commands_switch_mode(
     class FakePlanningAgent(FakeAgent):
         pass
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
-    monkeypatch.setattr(app_module, "PlanningAgent", FakePlanningAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "PlanningAgent", FakePlanningAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -6778,7 +6712,6 @@ async def test_textual_app_init_slash_command_switches_from_plan_to_build(
 ) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.widgets import ChatComposer
 
@@ -6813,8 +6746,8 @@ async def test_textual_app_init_slash_command_switches_from_plan_to_build(
     class FakePlanningAgent(FakeBaseAgent):
         pass
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
-    monkeypatch.setattr(app_module, "PlanningAgent", FakePlanningAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "PlanningAgent", FakePlanningAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -6869,7 +6802,6 @@ async def test_textual_app_model_slash_command_shows_and_switches_model(
 ) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui import command_handlers as command_handlers_module
     from kolega_code.cli.tui import settings_panel as settings_panel_module
@@ -6894,7 +6826,7 @@ async def test_textual_app_model_slash_command_shows_and_switches_model(
         async def cleanup(self):
             return None
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
     def fake_model_options(provider):
         return [
             ("Kimi K2.7 Code", UI_DEFAULT_MODEL),
@@ -6969,7 +6901,7 @@ async def test_textual_app_model_slash_command_shows_and_switches_model(
 
         # kimi-k3 is a fake model the real config builder rejects, so stub it for the rebuild step.
         saved_config = app.config
-        monkeypatch.setattr(app_module, "build_agent_config", lambda *args, **kwargs: saved_config)
+        monkeypatch.setattr(agent_runtime_module, "build_agent_config", lambda *args, **kwargs: saved_config)
 
         composer.load_text("/model kimi-k3")
         await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
@@ -6991,7 +6923,6 @@ async def test_textual_app_model_slash_command_selects_from_action_list(
 ) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.widgets import ActionList, ChatComposer
 
@@ -7014,7 +6945,7 @@ async def test_textual_app_model_slash_command_selects_from_action_list(
         async def cleanup(self):
             return None
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -7068,7 +6999,6 @@ async def test_textual_app_model_slash_command_accepts_typed_selection_and_rejec
 ) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.widgets import ActionList, ChatComposer
 
@@ -7096,7 +7026,7 @@ async def test_textual_app_model_slash_command_accepts_typed_selection_and_rejec
             self.messages.append(message)
             yield {"type": "response", "content": "unexpected"}
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -7148,7 +7078,6 @@ async def test_textual_app_model_slash_command_blocks_selector_during_active_tur
 ) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.widgets import ActionList, ChatComposer
 
@@ -7171,7 +7100,7 @@ async def test_textual_app_model_slash_command_blocks_selector_during_active_tur
         async def cleanup(self):
             return None
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -7212,7 +7141,6 @@ async def test_textual_app_effort_slash_command_selects_from_action_list(
 ) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.widgets import ActionList, ChatComposer
 
@@ -7235,7 +7163,7 @@ async def test_textual_app_effort_slash_command_selects_from_action_list(
         async def cleanup(self):
             return None
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -7289,7 +7217,6 @@ async def test_textual_app_effort_slash_command_accepts_typed_selection_and_reje
 ) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.widgets import ActionList, ChatComposer
 
@@ -7317,7 +7244,7 @@ async def test_textual_app_effort_slash_command_accepts_typed_selection_and_reje
             self.messages.append(message)
             yield {"type": "response", "content": "unexpected"}
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -7367,7 +7294,6 @@ async def test_textual_app_effort_slash_command_blocks_selector_during_active_tu
 ) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.widgets import ActionList, ChatComposer
 
@@ -7390,7 +7316,7 @@ async def test_textual_app_effort_slash_command_blocks_selector_during_active_tu
         async def cleanup(self):
             return None
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -7572,7 +7498,6 @@ async def test_textual_app_prompt_list_recovers_focus_after_drift(
     """
     pytest.importorskip("textual")
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.state import PendingApproval
     from kolega_code.cli.tui.widgets import ActionList
@@ -7597,7 +7522,7 @@ async def test_textual_app_prompt_list_recovers_focus_after_drift(
         async def cleanup(self):
             return None
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -7642,7 +7567,6 @@ async def test_textual_app_question_recovers_focus_but_allows_free_form_answer(
     enabled composer (to type a free-form answer) must NOT be fought."""
     pytest.importorskip("textual")
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.state import PendingQuestion
     from kolega_code.cli.tui.widgets import ActionList, ChatComposer
@@ -7666,7 +7590,7 @@ async def test_textual_app_question_recovers_focus_but_allows_free_form_answer(
         async def cleanup(self):
             return None
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -7708,7 +7632,6 @@ async def test_agent_models_section_saves_override_and_builds_agent(
 
     from textual.widgets import Input, Select
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
 
     class FakeCoderAgent:
@@ -7730,7 +7653,7 @@ async def test_agent_models_section_saves_override_and_builds_agent(
         async def cleanup(self):
             return None
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -7774,7 +7697,6 @@ async def test_agent_models_section_populates_and_clears_to_inherit(
 
     from textual.widgets import Select
 
-    from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.provider_registry import INHERIT_SENTINEL
 
@@ -7797,7 +7719,7 @@ async def test_agent_models_section_populates_and_clears_to_inherit(
         async def cleanup(self):
             return None
 
-    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
