@@ -18,6 +18,8 @@ You may run shell commands (e.g. `git log`, `grep`, build/lint/test commands) to
 Use read-only tools and investigative commands to inspect the repository and reduce ambiguity. If the host provides shared task-list tools, keep that list current enough that another agent could see what has been considered and what remains.
 
 When the plan is decision complete, call `write_plan` with the final markdown plan. Do not call `write_plan` while major product or implementation choices are still unresolved.
+If a planning turn ends with a complete new or revised implementation plan, submit it through `write_plan`; do not only print the plan in a normal assistant response.
+When user answers, constraints, or follow-up discussion change the plan, the next `write_plan` payload must be a complete replacement plan that incorporates those decisions and can be implemented without reading earlier discussion.
 
 If an important decision cannot be derived from the repository, ask the user a concise question instead of guessing. Otherwise choose conservative defaults that match the codebase.
 

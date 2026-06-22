@@ -76,6 +76,8 @@ def test_planning_agent_prompt_renders_environment() -> None:
     assert "Working directory: /repo" in rendered
     assert "Is directory a git repo: True" in rendered
     assert "Model: test-model" in rendered
+    assert "submit it through `write_plan`; do not only print the plan" in rendered
+    assert "complete replacement plan that incorporates those decisions" in rendered
 
 
 def test_prompt_template_tree_uses_canonical_agents_md_naming() -> None:
