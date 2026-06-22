@@ -40,6 +40,7 @@ from .providers.google import GoogleProvider
 from .providers.models import GenerationParams, TokenCount
 from .specs import validate_thinking_effort
 from .providers.openai import OpenAIProvider
+from .providers.openai_responses import OpenAIResponsesProvider
 from .providers.chatgpt_oauth import ChatGPTOAuthProvider
 from kolega_code.auth import constants as chatgpt_constants
 
@@ -119,7 +120,10 @@ class LLMClient:
 
             providers: Dict[str, Type[Union[AnthropicProvider, OpenAIProvider, GoogleProvider]]] = {
                 "anthropic": AnthropicProvider,
-                "openai": OpenAIProvider,
+                # api-key OpenAI uses the Responses API (gpt-5.x reject
+                # tools+reasoning_effort on Chat Completions). The OpenAI-compatible
+                # providers below keep the Chat Completions OpenAIProvider.
+                "openai": OpenAIResponsesProvider,
                 "together": OpenAIProvider,
                 "groq": OpenAIProvider,
                 "fireworks": OpenAIProvider,
@@ -155,7 +159,7 @@ class LLMClient:
             base_url = base_urls.get(provider.lower())
 
             provider_kwargs = {}
-            if provider_class in (AnthropicProvider, OpenAIProvider):
+            if provider_class in (AnthropicProvider, OpenAIProvider, OpenAIResponsesProvider):
                 provider_kwargs["provider_name"] = provider.lower()
 
             return provider_class(

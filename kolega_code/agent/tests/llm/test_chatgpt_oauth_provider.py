@@ -258,6 +258,9 @@ async def test_responses_stream_wrapper_text_tools_and_usage():
     assert tool_calls[0].input == {"path": "a.py"}
     assert message.usage_metadata["prompt_tokens"] == 12
     assert message.usage_metadata["completion_tokens"] == 4
+    # Messages must be tagged with the real provider so history adaptation treats
+    # them as openai_chatgpt (not the api-key "openai" provider).
+    assert message.usage_metadata["provider"] == "openai_chatgpt"
 
 
 @pytest.mark.asyncio
@@ -454,6 +457,7 @@ async def test_provider_generate_builds_codex_shaped_request():
     )
 
     assert message.get_text_content() == "hi"
+    assert message.usage_metadata["provider"] == "openai_chatgpt"
     kwargs = fake.last_kwargs
     assert kwargs["model"] == "gpt-5.5"
     assert kwargs["store"] is False

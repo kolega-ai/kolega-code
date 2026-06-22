@@ -16,6 +16,7 @@ from kolega_code.llm.models import (
     Message,
     MessageHistory,
     RedactedThinkingBlock,
+    ResponsesReasoningBlock,
     TextBlock,
     ThinkingBlock,
     ToolCall,
@@ -113,8 +114,21 @@ def replace_image_blocks_with_placeholders(messages: List[Message], model_name: 
     return result
 
 
+# Groups of providers whose reasoning is mutually replayable. The api-key
+# `openai` and the ChatGPT-subscription `openai_chatgpt` are both the OpenAI
+# Responses API, so encrypted reasoning produced by one replays cleanly to the
+# other — the one exception to "only replay reasoning to the same provider".
+_REASONING_COMPATIBLE_GROUPS: tuple[frozenset[str], ...] = (frozenset({"openai", "openai_chatgpt"}),)
+
+
 def _preserve_reasoning_block(block: Any, *, source_provider: str, target_provider: str) -> bool:
-    return bool(source_provider) and source_provider == target_provider
+    if not source_provider:
+        return False
+    if source_provider == target_provider:
+        return True
+    return any(
+        source_provider in group and target_provider in group for group in _REASONING_COMPATIBLE_GROUPS
+    )
 
 
 def _reasoning_placeholder(block: Any, source_provider: str) -> TextBlock:
@@ -134,7 +148,7 @@ def _adapt_content_blocks_for_provider(
         if isinstance(block, ImageBlock) and not supports_vision:
             adapted.append(TextBlock(text=_image_placeholder(block.media_type, target_model)))
             changed = True
-        elif isinstance(block, (ThinkingBlock, RedactedThinkingBlock)):
+        elif isinstance(block, (ThinkingBlock, RedactedThinkingBlock, ResponsesReasoningBlock)):
             if _preserve_reasoning_block(block, source_provider=source_provider, target_provider=target_provider):
                 adapted.append(block)
             else:

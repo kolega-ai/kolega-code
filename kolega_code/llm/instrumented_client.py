@@ -94,7 +94,7 @@ class InstrumentedLLMClient(LLMClient):
             output_tokens = usage_metadata.get("output_tokens", 0)
             cache_read_tokens = usage_metadata.get("cache_read_input_tokens", 0)
             cache_write_tokens = usage_metadata.get("cache_write_input_tokens", 0)
-        elif provider in ["openai", "together", "groq", "fireworks", "llama", "xai", "dashscope"]:
+        elif provider in ["openai", "openai_chatgpt", "together", "groq", "fireworks", "llama", "xai", "dashscope"]:
             input_tokens = usage_metadata.get("prompt_tokens", 0)
             output_tokens = usage_metadata.get("completion_tokens", 0)
             cache_read_tokens = usage_metadata.get("cache_read_input_tokens", 0)
@@ -254,7 +254,7 @@ class InstrumentedLLMClient(LLMClient):
                         "cache_read_input_tokens": usage_details.get("cache_read_input_tokens", 0),
                         "cache_creation_input_tokens": usage_details.get("cache_write_input_tokens", 0),
                     }
-                elif provider in ["openai", "fireworks"]:
+                elif provider in ["openai", "openai_chatgpt", "fireworks"]:
                     normalized_usage = {
                         "input": usage_details.get("prompt_tokens", 0),
                         "output": usage_details.get("completion_tokens", 0),
@@ -503,7 +503,7 @@ class MinimalLangfuseStreamWrapper:
                 "cache_read_input_tokens": usage_metadata.get("cache_read_input_tokens", 0),
                 "cache_creation_input_tokens": usage_metadata.get("cache_write_input_tokens", 0),
             }
-        elif provider in ["openai", "fireworks"]:
+        elif provider in ["openai", "openai_chatgpt", "fireworks"]:
             return {
                 "input": usage_metadata.get("prompt_tokens", 0),
                 "output": usage_metadata.get("completion_tokens", 0),

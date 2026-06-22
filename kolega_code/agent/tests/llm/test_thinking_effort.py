@@ -149,13 +149,17 @@ def test_google_gemini_3_pro_uses_thinking_level() -> None:
 
 
 def test_openai_reasoning_effort_is_sent_for_reasoning_models() -> None:
+    # The api-key `openai` provider's gpt-5.x models now use the Responses API
+    # (served by OpenAIResponsesProvider), so effort serializes to a nested
+    # reasoning object rather than a flat reasoning_effort field.
     provider = OpenAIProvider(api_key="test-key")
     generation_params = provider._prepare_generation_params(GenerationParams(thinking="high"))
     generation_params["model"] = "gpt-5.5"
 
     provider._apply_thinking_params(generation_params, GenerationParams(thinking="high"))
 
-    assert generation_params["reasoning_effort"] == "high"
+    assert generation_params["reasoning"] == {"effort": "high", "summary": "auto"}
+    assert "reasoning_effort" not in generation_params
 
 
 def test_numeric_thinking_budget_is_rejected() -> None:

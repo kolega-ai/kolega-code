@@ -318,8 +318,9 @@ class TestProviderInitialization:
 
     def test_provider_initialization_with_error(self):
         """Test that provider initialization errors are properly wrapped."""
-        # Mock the provider class to raise an error during initialization
-        with patch("kolega_code.llm.client.OpenAIProvider") as MockProvider:
+        # The api-key `openai` provider now uses the Responses provider, so mock
+        # that class to raise during initialization.
+        with patch("kolega_code.llm.client.OpenAIResponsesProvider") as MockProvider:
             MockProvider.side_effect = RuntimeError("Provider init failed")
 
             with pytest.raises(LLMInternalServerError) as exc_info:
