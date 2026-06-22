@@ -61,13 +61,16 @@ and `dispatch_general_agent`.
 ## Read-only vs. full access
 
 Tools are gated by mode. In a read-only context — like [Plan mode](../../tui/modes/)
-or an investigation sub-agent — only non-mutating tools are available
+or an investigation sub-agent — the agent can read and search the codebase
 (`list_directory`, `read_entire_file`, `read_file_section`, `search_codebase`,
 `find_files_by_pattern`, `web_search`, `web_fetch`, `think_hard`, and reading
-memory). Editing files and running commands require Build mode's full toolset.
+memory) **and** run shell commands to investigate. Editing files still requires
+Build mode's full toolset.
 
-This separation is what makes Plan mode safe to run against any codebase: the
-planning agent can look but not touch.
+This separation is what keeps Plan mode safe to run against any codebase: the
+planning agent can look and run investigative commands, but it has no file-edit
+tools. Shell commands are further gated by the active permission mode — in `ask`
+they prompt before running.
 
 In the Textual TUI, Build mode defaults to `ask` permission mode. Shell commands
 and file edits must be approved before they run unless you switch to `auto` or

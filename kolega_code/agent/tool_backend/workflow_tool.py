@@ -216,7 +216,9 @@ class WorkflowTool(BaseTool):
         # When the orchestrating agent is itself read-only (e.g. plan mode's
         # PlanningAgent), every workflow sub-agent is forced to a read-only
         # investigation agent so the read-only contract is preserved — the
-        # workflow can research in parallel but never write.
+        # workflow can research in parallel (including running investigative
+        # commands) but cannot edit files, since read_only agents have no
+        # file-edit tools.
         read_only = bool(getattr(getattr(self.caller, "tool_collection", None), "read_only", False))
 
         async def dispatch(spec: AgentRunSpec) -> AgentRunResult:

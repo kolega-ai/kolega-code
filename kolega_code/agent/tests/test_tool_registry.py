@@ -82,7 +82,10 @@ class TestToolCollectionRegistry:
         assert registry.get("read_entire_file").parallel_safe
         assert registry.get("search_codebase").parallel_safe
         assert not registry.get("create_file").parallel_safe
-        assert not registry.get("exec_command").parallel_safe
+        # Command tools have side effects, so they must never be parallel-safe —
+        # even when exposed to read-only agents via the command_tools group.
+        for command_tool in ToolCollection.command_tools:
+            assert not registry.get(command_tool).parallel_safe
 
     def test_get_tool_list_matches_registry_definitions(self, tmp_path):
         from unittest.mock import Mock
