@@ -6871,6 +6871,8 @@ async def test_textual_app_model_slash_command_shows_and_switches_model(
 
     from kolega_code.cli import app as app_module
     from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui import command_handlers as command_handlers_module
+    from kolega_code.cli.tui import settings_panel as settings_panel_module
     from kolega_code.cli.tui.widgets import ChatComposer
 
     class FakeCoderAgent:
@@ -6893,25 +6895,22 @@ async def test_textual_app_model_slash_command_shows_and_switches_model(
             return None
 
     monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
-    monkeypatch.setattr(
-        app_module,
-        "ui_model_options",
-        lambda provider: [
+    def fake_model_options(provider):
+        return [
             ("Kimi K2.7 Code", UI_DEFAULT_MODEL),
             ("Kimi K2.6", "kimi-k2.6"),
             ("Kimi K3", "kimi-k3"),
-        ],
-    )
-    monkeypatch.setattr(
-        app_module,
-        "ui_thinking_effort_options",
-        lambda provider, model: [("High", "high")] if model == "kimi-k3" else [("Auto", "auto")],
-    )
-    monkeypatch.setattr(
-        app_module,
-        "default_ui_thinking_effort",
-        lambda provider, model: "high" if model == "kimi-k3" else "auto",
-    )
+        ]
+
+    def fake_effort_options(provider, model):
+        return [("High", "high")] if model == "kimi-k3" else [("Auto", "auto")]
+
+    def fake_default_effort(provider, model):
+        return "high" if model == "kimi-k3" else "auto"
+    for module in (settings_panel_module, command_handlers_module):
+        monkeypatch.setattr(module, "ui_model_options", fake_model_options)
+        monkeypatch.setattr(module, "ui_thinking_effort_options", fake_effort_options)
+        monkeypatch.setattr(module, "default_ui_thinking_effort", fake_default_effort)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -7433,7 +7432,7 @@ async def test_textual_app_copy_and_version_slash_commands(
     pytest.importorskip("textual")
 
     import kolega_code
-    from kolega_code.cli import app as app_module
+    from kolega_code.cli.tui import command_handlers as command_handlers_module
     from kolega_code.cli.tui.state import ConversationEntry
     from kolega_code.cli.tui.widgets import ChatComposer
     from kolega_code.cli.updater import UpdateCheckResult
@@ -7441,7 +7440,7 @@ async def test_textual_app_copy_and_version_slash_commands(
     app = _build_mention_test_app(tmp_path, monkeypatch)
     copied: list[str] = []
     monkeypatch.setattr(
-        app_module,
+        command_handlers_module,
         "check_for_update",
         lambda: UpdateCheckResult(current_version=kolega_code.__version__, latest_version=kolega_code.__version__),
     )
@@ -7473,13 +7472,13 @@ async def test_textual_app_update_slash_command_runs_self_update(
 ) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli import app as app_module
+    from kolega_code.cli.tui import command_handlers as command_handlers_module
     from kolega_code.cli.tui.widgets import ChatComposer
     from kolega_code.cli.updater import UpdateRunResult
 
     app = _build_mention_test_app(tmp_path, monkeypatch)
     monkeypatch.setattr(
-        app_module,
+        command_handlers_module,
         "run_self_update",
         lambda *, capture_output=False: UpdateRunResult(returncode=0, stdout="installed\n"),
     )
