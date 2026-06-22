@@ -8,6 +8,9 @@ from .browseragent import BrowserAgent
 from .generalagent import GeneralAgent
 from .planningagent import PlanningAgent
 
+# Export agent errors
+from .errors import AgentError, MaxAgentIterationsExceeded
+
 # Export agent models
 from kolega_code.events import AgentStatus, AgentEvent
 
@@ -25,6 +28,8 @@ __all__ = [
     "BrowserAgent",
     "GeneralAgent",
     "PlanningAgent",
+    "AgentError",
+    "MaxAgentIterationsExceeded",
     "AgentStatus",
     "AgentEvent",
     "AgentConfig",

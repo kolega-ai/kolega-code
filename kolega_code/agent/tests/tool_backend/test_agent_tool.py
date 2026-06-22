@@ -1,14 +1,12 @@
 """Tests for the unified AgentTool dispatch mechanism."""
 
 import pytest
-from pathlib import Path
 from unittest.mock import AsyncMock, Mock, MagicMock, patch
 import uuid
 import builtins
 
 from kolega_code.agent.tool_backend.agent_tool import AgentTool
 from kolega_code.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
-from kolega_code.events import AgentEvent
 
 
 @pytest.fixture
@@ -59,6 +57,7 @@ def mock_caller():
     caller.tool_extensions = []
     caller.usage_recorder = None
     caller.sub_agent_recorder = MockSubAgentRecorder()
+    caller.max_iterations = None
     return caller
 
 
@@ -175,6 +174,7 @@ class TestAgentTool:
 
             # Verify result
             assert result == "Mock agent completed"
+            assert MockAgent.last_instance.init_kwargs["max_iterations"] is None
 
             # Verify start status was sent
             start_event_calls = [
@@ -208,6 +208,32 @@ class TestAgentTool:
                 == mock_caller.workspace_env_var_descriptions
             )
             MockAgent.configure_streaming([])
+
+    async def test_dispatch_agent_inherits_parent_max_iterations(
+        self, agent_tool, mock_caller
+    ):
+        original_import = builtins.__import__
+        mock_caller.max_iterations = 3
+
+        with patch.object(builtins, "__import__") as mock_import:
+            mock_module = MagicMock()
+            mock_module.MockAgent = MockAgent
+
+            def mock_import_func(name, *args, **kwargs):
+                if name == "test.module":
+                    return mock_module
+                return original_import(name, *args, **kwargs)
+
+            mock_import.side_effect = mock_import_func
+            MockAgent.configure_streaming(
+                [{"content": "Done.", "complete": True, "uuid": str(uuid.uuid4()), "type": "response"}]
+            )
+            MockAgent.last_instance = None
+
+            await agent_tool._dispatch_agent(agent_class_import="test.module.MockAgent", task="Test task")
+
+        assert MockAgent.last_instance.init_kwargs["max_iterations"] == 3
+        MockAgent.configure_streaming([])
 
     async def test_dispatch_agent_uses_execution_id_for_sub_agent_conversation(
         self, agent_tool, mock_connection_manager, mock_caller
@@ -265,7 +291,7 @@ class TestAgentTool:
             with patch.object(agent_tool, "_dispatch_agent") as mock_dispatch:
                 mock_dispatch.return_value = f"{agent_type} completed"
 
-                result = await dispatch_method(task)
+                await dispatch_method(task)
 
                 # Verify the dispatch was called with the task
                 assert mock_dispatch.called

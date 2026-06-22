@@ -45,6 +45,7 @@ class BrowserAgent(BaseAgent):
         usage_recorder: Optional[Any] = None,
         sub_agent_recorder: Optional[Any] = None,
         hook_dispatcher: Optional[Any] = None,
+        max_iterations: Optional[int] = None,
     ) -> None:
         """
         Initialize a new BrowserAgent instance.
@@ -97,6 +98,7 @@ class BrowserAgent(BaseAgent):
             usage_recorder=usage_recorder,
             sub_agent_recorder=sub_agent_recorder,
             hook_dispatcher=hook_dispatcher,
+            max_iterations=max_iterations,
         )
 
         self.tool_collection = ToolCollection(
