@@ -25,6 +25,7 @@ from ..models import (
     Message,
     MessageChunk,
     MessageHistory,
+    ResponsesReasoningBlock,
     TextBlock,
     ToolCall,
     ToolResult,
@@ -154,7 +155,15 @@ def to_responses_input(messages: MessageHistory) -> List[Dict[str, Any]]:
         text_parts: List[tuple] = []
         tool_image_messages: List[Dict[str, Any]] = []
         for block in message.content or []:
-            if isinstance(block, ToolCall):
+            if isinstance(block, ResponsesReasoningBlock):
+                # Resend the model's prior reasoning (opaque encrypted blob) so it
+                # continues its chain-of-thought across tool calls instead of
+                # re-deriving it every round — the key to matching Codex's
+                # thinking time. Reasoning items must precede the function_call
+                # they belong to, which holds because the stream wrapper puts the
+                # reasoning block first in the assistant message.
+                items.append(block.to_responses_item())
+            elif isinstance(block, ToolCall):
                 items.append(
                     {
                         "type": "function_call",
@@ -178,7 +187,9 @@ def to_responses_input(messages: MessageHistory) -> List[Dict[str, Any]]:
                 text_parts.append(("text", block.text))
             elif isinstance(block, ImageBlock):
                 text_parts.append(("image", _image_data_url(block)))
-            # Thinking/redacted-thinking blocks are not resent to the backend.
+            # Foreign Anthropic thinking/redacted-thinking blocks (from a prior
+            # provider) are skipped here; adapt_history_for_provider has already
+            # replaced them with text placeholders before this conversion runs.
         if text_parts:
             item = _role_message_item(message.role, text_parts)
             if item:
@@ -291,6 +302,9 @@ class ResponsesStreamWrapper:
         self._closed = False
         self._text = ""
         self._reasoning = ""
+        # Completed reasoning items (with encrypted_content), in stream order, so
+        # they can be resent next turn for chain-of-thought continuity.
+        self._reasoning_items: List[Dict[str, Any]] = []
         self._final_response: Any = None
         self._function_calls: Dict[str, Dict[str, str]] = {}
         self._tool_execution_ids = ToolExecutionIdRegistry()
@@ -358,10 +372,18 @@ class ResponsesStreamWrapper:
             if arguments is not None:
                 record["arguments"] = arguments
         elif event_type == "response.output_item.done":
-            # The completed function_call item carries the final name + arguments;
-            # capture it so tool calls survive even if argument deltas were sparse.
             item = getattr(event, "item", None)
-            if getattr(item, "type", None) == "function_call":
+            item_kind = getattr(item, "type", None)
+            if item_kind == "reasoning":
+                # Capture the completed reasoning item (carries encrypted_content)
+                # so it can be resent next turn for chain-of-thought continuity.
+                captured = self._reasoning_dict(item)
+                if captured:
+                    self._reasoning_items.append(captured)
+            elif item_kind == "function_call":
+                # The completed function_call item carries the final name +
+                # arguments; capture it so tool calls survive even if argument
+                # deltas were sparse.
                 item_id = getattr(item, "id", None) or getattr(item, "call_id", "")
                 call_id = getattr(item, "call_id", None) or item_id
                 record = self._function_calls.setdefault(item_id, {"call_id": call_id, "name": "", "arguments": ""})
@@ -399,13 +421,64 @@ class ResponsesStreamWrapper:
             stop_reason = "tool_use" if tool_use_blocks else "end_turn"
             logger.warning("ResponsesStreamWrapper: no response.completed event; billing may be skipped")
 
+        # Reasoning items lead the assistant turn (they precede the model's
+        # message/function_call output) so the backend continues the prior
+        # chain-of-thought when this message is resent next turn.
+        reasoning_blocks = self._collect_reasoning_blocks()
         return Message(
             role="assistant",
-            content=content_blocks,
+            content=reasoning_blocks + content_blocks,
             tool_calls=tool_use_blocks or None,
             stop_reason=stop_reason,
             usage_metadata=usage_metadata,
         )
+
+    def _collect_reasoning_blocks(self) -> list:
+        """Build the reasoning blocks to carry forward for continuity.
+
+        Prefers items captured from ``response.output_item.done`` events; falls
+        back to the final response output for backends that only populate
+        reasoning there.
+        """
+        items = list(self._reasoning_items)
+        if not items and self._final_response is not None:
+            for out in getattr(self._final_response, "output", None) or []:
+                if getattr(out, "type", None) == "reasoning":
+                    captured = self._reasoning_dict(out)
+                    if captured:
+                        items.append(captured)
+        return [
+            ResponsesReasoningBlock(
+                encrypted_content=item["encrypted_content"],
+                summary=item.get("summary") or [],
+                item_id=item.get("item_id"),
+            )
+            for item in items
+        ]
+
+    @staticmethod
+    def _reasoning_dict(item: Any) -> Optional[Dict[str, Any]]:
+        """Extract resend-relevant fields from a Responses reasoning item.
+
+        Only items carrying ``encrypted_content`` are useful for continuity, so
+        items without it are dropped. Summary parts (if any) are preserved so the
+        resent item matches what the backend returned.
+        """
+        encrypted = getattr(item, "encrypted_content", None)
+        if not encrypted:
+            return None
+        summary: List[str] = []
+        for part in getattr(item, "summary", None) or []:
+            text = getattr(part, "text", None)
+            if text is None and isinstance(part, dict):
+                text = part.get("text")
+            if text:
+                summary.append(text)
+        return {
+            "encrypted_content": encrypted,
+            "summary": summary,
+            "item_id": getattr(item, "id", None),
+        }
 
     def _blocks_from_accumulators(self):
         content_blocks: list = []
@@ -501,8 +574,14 @@ class ChatGPTOAuthProvider(OpenAIProvider):
         request["instructions"] = instructions_from(system, messages) or "You are a helpful coding assistant."
         if params and params.thinking:
             thinking_params = build_thinking_request_params(self.provider_name, model, params.thinking)
-            if thinking_params.get("reasoning"):
-                request["reasoning"] = thinking_params["reasoning"]
+            reasoning = thinking_params.get("reasoning")
+            if reasoning:
+                request["reasoning"] = reasoning
+                # Ask the backend to return the model's reasoning as an opaque
+                # encrypted item so we can resend it next turn for continuity
+                # (mirrors Codex). Without it the model re-reasons from scratch on
+                # every tool-call round and "thinks" far longer at high effort.
+                request["include"] = ["reasoning.encrypted_content"]
         return request
 
     async def stream(
