@@ -284,7 +284,7 @@ async def test_submit_with_pending_image_non_vision_blocked(tmp_path, monkeypatc
 
         app.run_worker = _track_worker
 
-        from kolega_code.cli.app import ChatComposer
+        from kolega_code.cli.tui.widgets import ChatComposer
 
         composer = app.query_one("#composer", ChatComposer)
         composer.text = "describe this"
@@ -354,7 +354,7 @@ async def test_submit_with_mention_image_non_vision_blocked(tmp_path, monkeypatc
 
         app.run_worker = _track_worker
 
-        from kolega_code.cli.app import ChatComposer
+        from kolega_code.cli.tui.widgets import ChatComposer
 
         composer = app.query_one("#composer", ChatComposer)
         text = "@screenshot.png describe this"
@@ -392,7 +392,7 @@ async def test_submit_with_image_vision_model_proceeds(tmp_path, monkeypatch):
 
         app.run_worker = _track_worker
 
-        from kolega_code.cli.app import ChatComposer
+        from kolega_code.cli.tui.widgets import ChatComposer
 
         composer = app.query_one("#composer", ChatComposer)
         composer.text = "describe this"
@@ -435,7 +435,7 @@ async def test_submit_text_only_non_vision_with_history_images_proceeds(tmp_path
 
         app.run_worker = _track_worker
 
-        from kolega_code.cli.app import ChatComposer
+        from kolega_code.cli.tui.widgets import ChatComposer
 
         composer = app.query_one("#composer", ChatComposer)
         composer.text = "follow up question"

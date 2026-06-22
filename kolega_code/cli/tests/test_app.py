@@ -357,7 +357,9 @@ async def test_textual_app_context_usage_updates_status_without_raw_json(
     from textual.widgets import Static
 
     from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import COMPOSER_PLACEHOLDER, ChatComposer, KolegaCodeApp
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.widgets import ChatComposer
+    from kolega_code.cli.messages import COMPOSER_PLACEHOLDER
 
     class FakeCoderAgent:
         def __init__(self, **kwargs):
@@ -475,7 +477,8 @@ async def test_textual_app_turn_status_formats_error_duration(
     from textual.widgets import Static
 
     from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import KolegaCodeApp, TurnState
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.state import TurnState
 
     class FakeCoderAgent:
         def __init__(self, **kwargs):
@@ -519,7 +522,7 @@ def test_turn_state_styles_do_not_depend_on_content_text() -> None:
     pytest.importorskip("textual")
 
     from kolega_code.cli import theme
-    from kolega_code.cli.app import TurnState, turn_state_color
+    from kolega_code.cli.tui.state import TurnState, turn_state_color
 
     # Resolves role names against the active theme's live Color attributes.
     assert turn_state_color(TurnState.ERROR) == theme.Color.ERROR
@@ -537,7 +540,8 @@ async def test_progress_entry_tone_drives_styling_not_prose(
 
     from kolega_code.cli import app as app_module
     from kolega_code.cli import theme
-    from kolega_code.cli.app import ConversationEntry, KolegaCodeApp, TurnState
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.state import ConversationEntry, TurnState
 
     class FakeCoderAgent:
         def __init__(self, **kwargs):
@@ -639,7 +643,9 @@ async def test_textual_app_shift_tab_toggles_between_build_and_plan_agents(
     from textual.widgets import Markdown
 
     from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import BUILD_INTERACTION_MODE, PLAN_INTERACTION_MODE, KolegaCodeApp, PendingQuestion
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.constants import BUILD_INTERACTION_MODE, PLAN_INTERACTION_MODE
+    from kolega_code.cli.tui.state import PendingQuestion
 
     class FakeBaseAgent:
         def __init__(self, **kwargs):
@@ -856,7 +862,9 @@ async def test_textual_app_permission_approval_actions_show_rule_labels_without_
     pytest.importorskip("textual")
 
     from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import ActionList, KolegaCodeApp, PendingApproval
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.state import PendingApproval
+    from kolega_code.cli.tui.widgets import ActionList
     from kolega_code.permissions import PermissionDecision, allow_rule_options, permission_request_for_tool
 
     class FakeCoderAgent:
@@ -932,7 +940,8 @@ async def test_textual_app_restores_saved_plan_and_interaction_mode(
     from textual.widgets import Markdown
 
     from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import ActionList, ChatComposer, KolegaCodeApp
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.widgets import ActionList, ChatComposer
 
     class FakeBaseAgent:
         def __init__(self, **kwargs):
@@ -1052,7 +1061,8 @@ async def test_textual_app_invalid_saved_interaction_mode_falls_back_to_build(
     pytest.importorskip("textual")
 
     from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import BUILD_INTERACTION_MODE, KolegaCodeApp
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.constants import BUILD_INTERACTION_MODE
 
     class FakeCoderAgent:
         def __init__(self, **kwargs):
@@ -1245,7 +1255,8 @@ async def test_textual_app_skill_slash_commands_list_and_activate(
     pytest.importorskip("textual")
 
     from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import ChatComposer, KolegaCodeApp
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.widgets import ChatComposer
 
     class FakeCoderAgent:
         def __init__(self, **kwargs):
@@ -1307,7 +1318,8 @@ async def test_textual_app_skill_slash_command_with_prompt_starts_turn(
     pytest.importorskip("textual")
 
     from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import ChatComposer, KolegaCodeApp
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.widgets import ChatComposer
 
     class FakeCoderAgent:
         def __init__(self, **kwargs):
@@ -1371,7 +1383,9 @@ async def test_textual_app_planning_question_tool_accepts_option_list_answer(
     from textual.widgets import OptionList
 
     from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import COMPOSER_PLACEHOLDER, ActionList, ChatComposer, KolegaCodeApp
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.widgets import ActionList, ChatComposer
+    from kolega_code.cli.messages import COMPOSER_PLACEHOLDER
 
     class FakeBaseAgent:
         def __init__(self, **kwargs):
@@ -1460,7 +1474,8 @@ async def test_textual_app_planning_question_supports_arrow_and_digit_selection(
     pytest.importorskip("textual")
 
     from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import ActionList, KolegaCodeApp
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.widgets import ActionList
 
     class FakeBaseAgent:
         def __init__(self, **kwargs):
@@ -1535,7 +1550,8 @@ async def test_textual_app_planning_question_tool_accepts_custom_text_answer(
     pytest.importorskip("textual")
 
     from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import ActionList, ChatComposer, KolegaCodeApp
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.widgets import ActionList, ChatComposer
 
     class FakeBaseAgent:
         def __init__(self, **kwargs):
@@ -1608,7 +1624,8 @@ async def test_textual_app_planning_question_tool_asks_multiple_questions_sequen
     pytest.importorskip("textual")
 
     from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import ActionList, KolegaCodeApp
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.widgets import ActionList
     from textual.widgets import OptionList
 
     class FakeBaseAgent:
@@ -1771,7 +1788,9 @@ async def test_textual_app_blocks_mode_toggle_during_active_turn(
     from textual.widgets import Static
 
     from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import COMPOSER_PLACEHOLDER, ChatComposer, KolegaCodeApp
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.widgets import ChatComposer
+    from kolega_code.cli.messages import COMPOSER_PLACEHOLDER
 
     class FakeCoderAgent:
         def __init__(self, **kwargs):
@@ -1822,7 +1841,8 @@ async def test_textual_app_shows_plan_decision_when_planning_agent_writes_plan(
     from kolega_code.cli import app as app_module
     from textual.widgets import Markdown
 
-    from kolega_code.cli.app import ActionList, ChatComposer, KolegaCodeApp
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.widgets import ActionList, ChatComposer
 
     class FakeCoderAgent:
         def __init__(self, **kwargs):
@@ -2041,7 +2061,9 @@ async def test_textual_app_implemented_plan_not_reoffered_on_reentry(
     from textual.widgets import Markdown
 
     from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import PLAN_INTERACTION_MODE, ActionList, KolegaCodeApp
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.constants import PLAN_INTERACTION_MODE
+    from kolega_code.cli.tui.widgets import ActionList
 
     class FakeCoderAgent:
         def __init__(self, **kwargs):
@@ -2350,7 +2372,8 @@ async def test_textual_app_composer_shift_enter_inserts_line_break_and_enter_sub
     pytest.importorskip("textual")
 
     from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import ChatComposer, KolegaCodeApp
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.widgets import ChatComposer
 
     class FakeCoderAgent:
         def __init__(self, **kwargs):
@@ -2411,7 +2434,8 @@ async def test_textual_app_composer_ctrl_enter_still_inserts_line_break(
     pytest.importorskip("textual")
 
     from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import ChatComposer, KolegaCodeApp
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.widgets import ChatComposer
 
     class FakeCoderAgent:
         def __init__(self, **kwargs):
@@ -2461,7 +2485,8 @@ async def test_textual_app_composer_preserves_multiline_paste(
     from textual import events
 
     from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import ChatComposer, KolegaCodeApp
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.widgets import ChatComposer
 
     class FakeCoderAgent:
         def __init__(self, **kwargs):
@@ -2524,7 +2549,10 @@ async def test_textual_app_reset_command_clears_current_thread(
     from textual.widgets import Markdown
 
     from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import ChatComposer, KolegaCodeApp, PendingQuestion, THREAD_RESET_MESSAGE
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.state import PendingQuestion
+    from kolega_code.cli.tui.widgets import ChatComposer
+    from kolega_code.cli.messages import THREAD_RESET_MESSAGE
 
     class FakeCoderAgent:
         def __init__(self, **kwargs):
@@ -2619,7 +2647,9 @@ async def test_textual_app_reset_command_waits_for_active_turn(
     from textual.widgets import Static
 
     from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import COMPOSER_PLACEHOLDER, ChatComposer, KolegaCodeApp
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.widgets import ChatComposer
+    from kolega_code.cli.messages import COMPOSER_PLACEHOLDER
 
     class FakeCoderAgent:
         def __init__(self, **kwargs):
@@ -2677,7 +2707,8 @@ async def test_textual_app_mounts_settings_without_api_key(
     pytest.importorskip("textual")
 
     from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import ChatComposer, KolegaCodeApp
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.widgets import ChatComposer
 
     class FakeCoderAgent:
         def __init__(self, **kwargs):
@@ -2720,7 +2751,8 @@ async def test_textual_app_does_not_select_model_from_api_key_env(
     pytest.importorskip("textual")
 
     from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import ChatComposer, KolegaCodeApp
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.widgets import ChatComposer
 
     class FakeCoderAgent:
         def __init__(self, **kwargs):
@@ -2762,7 +2794,8 @@ async def test_textual_app_mounts_with_stored_kimi_settings(
     pytest.importorskip("textual")
 
     from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import ChatComposer, KolegaCodeApp
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.widgets import ChatComposer
 
     class FakeCoderAgent:
         def __init__(self, **kwargs):
@@ -2818,7 +2851,8 @@ async def test_textual_app_mounts_with_stored_deepseek_settings(
     pytest.importorskip("textual")
 
     from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import ChatComposer, KolegaCodeApp
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.widgets import ChatComposer
 
     class FakeCoderAgent:
         def __init__(self, **kwargs):
@@ -2876,7 +2910,8 @@ async def test_textual_app_saves_settings_and_builds_agent(
     from textual.widgets import Input
 
     from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import ChatComposer, KolegaCodeApp
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.widgets import ChatComposer
 
     class FakeCoderAgent:
         def __init__(self, **kwargs):
@@ -2939,7 +2974,8 @@ async def test_textual_app_saves_deepseek_settings_and_builds_agent(
     from textual.widgets import Input, Select
 
     from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import ChatComposer, KolegaCodeApp
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.widgets import ChatComposer
 
     class FakeCoderAgent:
         def __init__(self, **kwargs):
@@ -3001,7 +3037,9 @@ async def test_textual_app_merges_streamed_response_chunks(
     pytest.importorskip("textual")
 
     from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import COMPOSER_PLACEHOLDER, ChatComposer, KolegaCodeApp
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.widgets import ChatComposer
+    from kolega_code.cli.messages import COMPOSER_PLACEHOLDER
 
     chunks = [
         {"type": "response", "content": "hello ", "complete": False, "uuid": "response-1"},
@@ -3116,7 +3154,8 @@ async def test_textual_app_formats_thinking_as_italic_chat_entry(
     pytest.importorskip("textual")
 
     from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import ConversationEntry, KolegaCodeApp
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.state import ConversationEntry
 
     class FakeCoderAgent:
         def __init__(self, **kwargs):
@@ -3165,7 +3204,9 @@ async def test_textual_app_renders_one_widget_per_chat_entry(
     pytest.importorskip("textual")
 
     from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import ConversationEntry, ConversationEntryWidget, KolegaCodeApp
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.state import ConversationEntry
+    from kolega_code.cli.tui.widgets import ConversationEntryWidget
 
     class FakeCoderAgent:
         def __init__(self, **kwargs):
@@ -3232,12 +3273,9 @@ async def test_conversation_render_skips_detached_view_during_teardown(
     pytest.importorskip("textual")
 
     from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import (
-        ConversationEntry,
-        ConversationEntryWidget,
-        ConversationView,
-        KolegaCodeApp,
-    )
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.state import ConversationEntry
+    from kolega_code.cli.tui.widgets import ConversationEntryWidget, ConversationView
 
     class FakeCoderAgent:
         def __init__(self, **kwargs):
@@ -3300,7 +3338,9 @@ async def test_conversation_entry_widget_extracts_plain_selected_text(
     from textual.selection import Selection
 
     from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import ConversationEntry, ConversationEntryWidget, KolegaCodeApp
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.state import ConversationEntry
+    from kolega_code.cli.tui.widgets import ConversationEntryWidget
 
     class FakeCoderAgent:
         def __init__(self, **kwargs):
@@ -3356,7 +3396,9 @@ async def test_conversation_entry_supports_mouse_drag_selection(
     from textual import events
 
     from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import ConversationEntry, ConversationEntryWidget, KolegaCodeApp
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.state import ConversationEntry
+    from kolega_code.cli.tui.widgets import ConversationEntryWidget
 
     class FakeCoderAgent:
         def __init__(self, **kwargs):
@@ -3411,7 +3453,8 @@ async def test_conversation_entry_selection_styles_rendered_lines(
     from textual.geometry import Offset
     from textual.selection import Selection
 
-    from kolega_code.cli.app import ConversationEntry, ConversationEntryWidget
+    from kolega_code.cli.tui.state import ConversationEntry
+    from kolega_code.cli.tui.widgets import ConversationEntryWidget
 
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
 
@@ -3448,7 +3491,8 @@ async def test_conversation_entry_selection_preserves_text_foreground(
     from textual.selection import Selection
 
     from kolega_code.cli import theme
-    from kolega_code.cli.app import ConversationEntry, ConversationEntryWidget
+    from kolega_code.cli.tui.state import ConversationEntry
+    from kolega_code.cli.tui.widgets import ConversationEntryWidget
 
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
 
@@ -3515,7 +3559,8 @@ async def test_conversation_selection_can_start_in_blank_separator(
 
     from textual import events
 
-    from kolega_code.cli.app import ConversationEntry, ConversationEntryWidget
+    from kolega_code.cli.tui.state import ConversationEntry
+    from kolega_code.cli.tui.widgets import ConversationEntryWidget
 
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
 
@@ -3547,7 +3592,8 @@ async def test_conversation_selection_can_start_after_line_end(
 
     from textual import events
 
-    from kolega_code.cli.app import ConversationEntry, ConversationEntryWidget
+    from kolega_code.cli.tui.state import ConversationEntry
+    from kolega_code.cli.tui.widgets import ConversationEntryWidget
 
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
 
@@ -3578,7 +3624,8 @@ async def test_conversation_selection_spans_multiple_messages(
 
     from textual import events
 
-    from kolega_code.cli.app import ConversationEntry, ConversationEntryWidget
+    from kolega_code.cli.tui.state import ConversationEntry
+    from kolega_code.cli.tui.widgets import ConversationEntryWidget
 
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
 
@@ -3613,7 +3660,8 @@ async def test_collapsed_tool_title_supports_drag_selection_and_toggle(
     from textual.widgets import Collapsible
     from textual.widgets._collapsible import CollapsibleTitle
 
-    from kolega_code.cli.app import ConversationEntry, ToolEntryWidget
+    from kolega_code.cli.tui.state import ConversationEntry
+    from kolega_code.cli.tui.widgets import ToolEntryWidget
 
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
 
@@ -3661,7 +3709,8 @@ async def test_expanded_tool_body_line_start_selection_copies(
     from textual.widgets import Collapsible, Static
     from textual.widgets._collapsible import CollapsibleTitle
 
-    from kolega_code.cli.app import ConversationEntry, ToolEntryWidget
+    from kolega_code.cli.tui.state import ConversationEntry
+    from kolega_code.cli.tui.widgets import ToolEntryWidget
 
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
     copied: list[str] = []
@@ -3710,7 +3759,9 @@ async def test_command_c_copies_selected_chat_text_to_macos_clipboard(
     from textual.selection import Selection
 
     from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import ConversationEntry, ConversationEntryWidget, KolegaCodeApp
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.state import ConversationEntry
+    from kolega_code.cli.tui.widgets import ConversationEntryWidget
 
     class FakeCoderAgent:
         def __init__(self, **kwargs):
@@ -3771,7 +3822,8 @@ async def test_textual_app_formats_agent_and_tool_chat_entries(
     pytest.importorskip("textual")
 
     from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import ConversationEntry, KolegaCodeApp
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.state import ConversationEntry
 
     class FakeCoderAgent:
         def __init__(self, **kwargs):
@@ -3843,7 +3895,9 @@ async def test_textual_app_ignores_empty_final_response_without_existing_entry(
     pytest.importorskip("textual")
 
     from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import COMPOSER_PLACEHOLDER, ChatComposer, KolegaCodeApp
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.widgets import ChatComposer
+    from kolega_code.cli.messages import COMPOSER_PLACEHOLDER
 
     class FakeCoderAgent:
         def __init__(self, **kwargs):
@@ -3893,7 +3947,9 @@ async def test_textual_app_shows_working_progress_during_active_turn(
     from textual.widgets import Static
 
     from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import COMPOSER_PLACEHOLDER, ChatComposer, KolegaCodeApp
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.widgets import ChatComposer
+    from kolega_code.cli.messages import COMPOSER_PLACEHOLDER
 
     started = asyncio.Event()
     release = asyncio.Event()
@@ -3972,7 +4028,8 @@ async def test_textual_app_renders_tool_events_in_chat(tmp_path: Path, monkeypat
     pytest.importorskip("textual")
 
     from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import KolegaCodeApp, TOOL_RESULT_PREVIEW_CHARS
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.theme import TOOL_RESULT_PREVIEW_CHARS
 
     class FakeCoderAgent:
         def __init__(self, **kwargs):
@@ -4229,7 +4286,8 @@ async def test_textual_app_caps_long_append_mode_tool_streaming_events(
     pytest.importorskip("textual")
 
     from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import KolegaCodeApp, TOOL_STREAM_PREVIEW_CHARS
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.theme import TOOL_STREAM_PREVIEW_CHARS
 
     class FakeCoderAgent:
         def __init__(self, **kwargs):
@@ -4289,7 +4347,9 @@ async def test_textual_app_renders_queued_tool_events_during_active_turn(
     from textual.widgets import Static
 
     from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import COMPOSER_PLACEHOLDER, ChatComposer, KolegaCodeApp
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.widgets import ChatComposer
+    from kolega_code.cli.messages import COMPOSER_PLACEHOLDER
 
     started = asyncio.Event()
     release = asyncio.Event()
@@ -4479,7 +4539,9 @@ async def test_textual_app_cancellation_is_visible_in_chat(
     from textual.widgets import Static
 
     from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import COMPOSER_PLACEHOLDER, ChatComposer, KolegaCodeApp
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.widgets import ChatComposer
+    from kolega_code.cli.messages import COMPOSER_PLACEHOLDER
 
     started = asyncio.Event()
 
@@ -4610,7 +4672,10 @@ async def test_textual_app_handles_llm_error_without_worker_traceback(
     from textual.widgets import Static
 
     from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import COMPOSER_PLACEHOLDER, ChatComposer, KolegaCodeApp, TurnState
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.state import TurnState
+    from kolega_code.cli.tui.widgets import ChatComposer
+    from kolega_code.cli.messages import COMPOSER_PLACEHOLDER
 
     class FakeCoderAgent:
         def __init__(self, **kwargs):
@@ -4669,7 +4734,9 @@ async def test_textual_app_reraises_non_llm_error(tmp_path: Path, monkeypatch: p
     pytest.importorskip("textual")
 
     from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import ChatComposer, KolegaCodeApp, TurnState
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.state import TurnState
+    from kolega_code.cli.tui.widgets import ChatComposer
 
     class FakeCoderAgent:
         def __init__(self, **kwargs):
@@ -5435,7 +5502,7 @@ async def test_sub_agent_completion_event_records_tokens(
 async def test_open_sub_agent_inspector_renders_trajectory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from kolega_code.cli.app import SubAgentInspectorScreen
+    from kolega_code.cli.tui.sub_agent_screen import SubAgentInspectorScreen
 
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
 
@@ -5824,7 +5891,7 @@ async def test_rapid_stream_chunks_coalesce_renders(tmp_path: Path, monkeypatch:
 async def test_conversation_body_renders_rich_markup_tokens_literally(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from kolega_code.cli.app import ConversationEntry
+    from kolega_code.cli.tui.state import ConversationEntry
 
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
     literal = "I investigated [/dim]\n[bold]not bold[/bold]\npath\\"
@@ -5865,7 +5932,8 @@ async def test_conversation_body_renders_rich_markup_tokens_literally(
 async def test_streaming_assistant_refresh_accepts_literal_markup_tokens(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from kolega_code.cli.app import ConversationEntry, ConversationEntryWidget
+    from kolega_code.cli.tui.state import ConversationEntry
+    from kolega_code.cli.tui.widgets import ConversationEntryWidget
 
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
 
@@ -5893,7 +5961,8 @@ async def test_conversation_scroll_position_survives_streaming(
 ) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli.app import ConversationEntry, JumpToBottomBar
+    from kolega_code.cli.tui.state import ConversationEntry
+    from kolega_code.cli.tui.widgets import JumpToBottomBar
 
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
 
@@ -5937,7 +6006,7 @@ async def test_assistant_entries_render_markdown_when_complete(
     from rich.console import Group
     from rich.markdown import Markdown as RichMarkdown
 
-    from kolega_code.cli.app import ConversationEntry
+    from kolega_code.cli.tui.state import ConversationEntry
 
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
 
@@ -6003,7 +6072,7 @@ async def test_turn_status_strip_shows_spinner_and_outcome_glyph(
     pytest.importorskip("textual")
 
     from kolega_code.cli import theme
-    from kolega_code.cli.app import TurnState
+    from kolega_code.cli.tui.state import TurnState
 
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
     now = 0.0
@@ -6030,7 +6099,8 @@ async def test_tool_entries_render_as_collapsibles_with_full_output(
 
     from textual.widgets import Collapsible
 
-    from kolega_code.cli.app import TOOL_RESULT_PREVIEW_CHARS, ToolEntryWidget
+    from kolega_code.cli.tui.widgets import ToolEntryWidget
+    from kolega_code.cli.theme import TOOL_RESULT_PREVIEW_CHARS
 
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
 
@@ -6189,7 +6259,7 @@ async def test_planning_sidebar_marks_empty_states(tmp_path: Path, monkeypatch: 
 
     from textual.widgets import Markdown
 
-    from kolega_code.cli.app import PLAN_EMPTY_MESSAGE
+    from kolega_code.cli.messages import PLAN_EMPTY_MESSAGE
 
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
 
@@ -6288,7 +6358,7 @@ async def test_textual_app_mention_dropdown_opens_and_escape_dismisses(
 ) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli.app import ChatComposer, CompletionDropdown
+    from kolega_code.cli.tui.widgets import ChatComposer, CompletionDropdown
 
     app = _build_mention_test_app(tmp_path, monkeypatch)
 
@@ -6314,7 +6384,7 @@ async def test_textual_app_mention_dropdown_not_opened_by_email_address(
 ) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli.app import ChatComposer, CompletionDropdown
+    from kolega_code.cli.tui.widgets import ChatComposer, CompletionDropdown
 
     app = _build_mention_test_app(tmp_path, monkeypatch)
 
@@ -6333,7 +6403,7 @@ async def test_textual_app_mention_dropdown_down_and_tab_completes(
 ) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli.app import ChatComposer, CompletionDropdown
+    from kolega_code.cli.tui.widgets import ChatComposer, CompletionDropdown
 
     app = _build_mention_test_app(tmp_path, monkeypatch)
 
@@ -6359,7 +6429,7 @@ async def test_textual_app_mention_enter_completes_instead_of_submitting(
 ) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli.app import ChatComposer, CompletionDropdown
+    from kolega_code.cli.tui.widgets import ChatComposer, CompletionDropdown
 
     app = _build_mention_test_app(tmp_path, monkeypatch)
 
@@ -6385,7 +6455,7 @@ async def test_textual_app_submitting_mention_attaches_file_and_keeps_short_text
 ) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli.app import ChatComposer
+    from kolega_code.cli.tui.widgets import ChatComposer
 
     app = _build_mention_test_app(tmp_path, monkeypatch)
 
@@ -6415,7 +6485,7 @@ async def test_textual_app_unresolved_mention_clears_hint_and_sends_plain_text(
 
     from textual.widgets import Static
 
-    from kolega_code.cli.app import ChatComposer
+    from kolega_code.cli.tui.widgets import ChatComposer
 
     app = _build_mention_test_app(tmp_path, monkeypatch)
 
@@ -6440,7 +6510,7 @@ async def test_textual_app_slash_dropdown_opens_filters_and_tab_completes(
 ) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli.app import ChatComposer, CompletionDropdown
+    from kolega_code.cli.tui.widgets import ChatComposer, CompletionDropdown
     from kolega_code.cli.slash_commands import SlashCommandEntry
 
     app = _build_mention_test_app(tmp_path, monkeypatch)
@@ -6473,7 +6543,7 @@ async def test_textual_app_slash_dropdown_lists_skills_with_descriptions(
 ) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli.app import ChatComposer, CompletionDropdown
+    from kolega_code.cli.tui.widgets import ChatComposer, CompletionDropdown
 
     app = _build_mention_test_app(tmp_path, monkeypatch)
     skill_dir = app.project_path / ".agents" / "skills" / "demo-skill"
@@ -6505,7 +6575,7 @@ async def test_textual_app_slash_dropdown_enter_completes_instead_of_submitting(
 ) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli.app import ChatComposer, CompletionDropdown
+    from kolega_code.cli.tui.widgets import ChatComposer, CompletionDropdown
 
     app = _build_mention_test_app(tmp_path, monkeypatch)
 
@@ -6530,7 +6600,7 @@ async def test_textual_app_slash_dropdown_does_not_open_mid_text_or_after_args(
 ) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli.app import ChatComposer, CompletionDropdown
+    from kolega_code.cli.tui.widgets import ChatComposer, CompletionDropdown
 
     app = _build_mention_test_app(tmp_path, monkeypatch)
 
@@ -6560,7 +6630,7 @@ async def test_textual_app_slash_dropdown_does_not_open_mid_text_or_after_args(
 async def test_chat_composer_active_slash_query(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli.app import ChatComposer
+    from kolega_code.cli.tui.widgets import ChatComposer
 
     app = _build_mention_test_app(tmp_path, monkeypatch)
 
@@ -6594,7 +6664,8 @@ async def test_textual_app_plan_and_build_slash_commands_switch_mode(
     pytest.importorskip("textual")
 
     from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import ChatComposer, KolegaCodeApp
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.widgets import ChatComposer
 
     class FakeAgent:
         def __init__(self, **kwargs):
@@ -6653,7 +6724,7 @@ async def test_textual_app_sidebar_slash_command_toggles_sidebar(
 ) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli.app import ChatComposer
+    from kolega_code.cli.tui.widgets import ChatComposer
 
     app = _build_mention_test_app(tmp_path, monkeypatch)
 
@@ -6682,7 +6753,7 @@ async def test_textual_app_init_slash_command_starts_agents_md_turn(
 ) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli.app import ChatComposer
+    from kolega_code.cli.tui.widgets import ChatComposer
 
     app = _build_mention_test_app(tmp_path, monkeypatch)
 
@@ -6708,7 +6779,8 @@ async def test_textual_app_init_slash_command_switches_from_plan_to_build(
     pytest.importorskip("textual")
 
     from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import ChatComposer, KolegaCodeApp
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.widgets import ChatComposer
 
     class FakeBaseAgent:
         def __init__(self, **kwargs):
@@ -6776,7 +6848,7 @@ async def test_textual_app_init_slash_command_blocks_during_active_turn(
 
     from textual.widgets import Static
 
-    from kolega_code.cli.app import ChatComposer
+    from kolega_code.cli.tui.widgets import ChatComposer
 
     app = _build_mention_test_app(tmp_path, monkeypatch)
 
@@ -6798,7 +6870,8 @@ async def test_textual_app_model_slash_command_shows_and_switches_model(
     pytest.importorskip("textual")
 
     from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import ChatComposer, KolegaCodeApp
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.widgets import ChatComposer
 
     class FakeCoderAgent:
         def __init__(self, **kwargs):
@@ -6857,7 +6930,7 @@ async def test_textual_app_model_slash_command_shows_and_switches_model(
     async with app.run_test():
         from textual.widgets import Input
 
-        from kolega_code.cli.app import ActionList
+        from kolega_code.cli.tui.widgets import ActionList
 
         app.query_one("#api_key_input", Input).value = "moonshot-key"
         await app._save_settings_from_ui()
@@ -6920,7 +6993,8 @@ async def test_textual_app_model_slash_command_selects_from_action_list(
     pytest.importorskip("textual")
 
     from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import ActionList, ChatComposer, KolegaCodeApp
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.widgets import ActionList, ChatComposer
 
     class FakeCoderAgent:
         def __init__(self, **kwargs):
@@ -6996,7 +7070,8 @@ async def test_textual_app_model_slash_command_accepts_typed_selection_and_rejec
     pytest.importorskip("textual")
 
     from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import ActionList, ChatComposer, KolegaCodeApp
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.widgets import ActionList, ChatComposer
 
     class FakeCoderAgent:
         def __init__(self, **kwargs):
@@ -7075,7 +7150,8 @@ async def test_textual_app_model_slash_command_blocks_selector_during_active_tur
     pytest.importorskip("textual")
 
     from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import ActionList, ChatComposer, KolegaCodeApp
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.widgets import ActionList, ChatComposer
 
     class FakeCoderAgent:
         def __init__(self, **kwargs):
@@ -7138,7 +7214,8 @@ async def test_textual_app_effort_slash_command_selects_from_action_list(
     pytest.importorskip("textual")
 
     from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import ActionList, ChatComposer, KolegaCodeApp
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.widgets import ActionList, ChatComposer
 
     class FakeCoderAgent:
         def __init__(self, **kwargs):
@@ -7214,7 +7291,8 @@ async def test_textual_app_effort_slash_command_accepts_typed_selection_and_reje
     pytest.importorskip("textual")
 
     from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import ActionList, ChatComposer, KolegaCodeApp
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.widgets import ActionList, ChatComposer
 
     class FakeCoderAgent:
         def __init__(self, **kwargs):
@@ -7291,7 +7369,8 @@ async def test_textual_app_effort_slash_command_blocks_selector_during_active_tu
     pytest.importorskip("textual")
 
     from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import ActionList, ChatComposer, KolegaCodeApp
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.widgets import ActionList, ChatComposer
 
     class FakeCoderAgent:
         def __init__(self, **kwargs):
@@ -7355,7 +7434,8 @@ async def test_textual_app_copy_and_version_slash_commands(
 
     import kolega_code
     from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import ChatComposer, ConversationEntry
+    from kolega_code.cli.tui.state import ConversationEntry
+    from kolega_code.cli.tui.widgets import ChatComposer
     from kolega_code.cli.updater import UpdateCheckResult
 
     app = _build_mention_test_app(tmp_path, monkeypatch)
@@ -7394,7 +7474,7 @@ async def test_textual_app_update_slash_command_runs_self_update(
     pytest.importorskip("textual")
 
     from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import ChatComposer
+    from kolega_code.cli.tui.widgets import ChatComposer
     from kolega_code.cli.updater import UpdateRunResult
 
     app = _build_mention_test_app(tmp_path, monkeypatch)
@@ -7448,7 +7528,7 @@ async def test_textual_app_quit_slash_command_exits(
 ) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli.app import ChatComposer
+    from kolega_code.cli.tui.widgets import ChatComposer
 
     app = _build_mention_test_app(tmp_path, monkeypatch)
 
@@ -7467,7 +7547,7 @@ async def test_textual_app_unknown_slash_command_falls_through_to_agent(
 ) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli.app import ChatComposer
+    from kolega_code.cli.tui.widgets import ChatComposer
 
     app = _build_mention_test_app(tmp_path, monkeypatch)
 
@@ -7494,7 +7574,9 @@ async def test_textual_app_prompt_list_recovers_focus_after_drift(
     pytest.importorskip("textual")
 
     from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import ActionList, KolegaCodeApp, PendingApproval
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.state import PendingApproval
+    from kolega_code.cli.tui.widgets import ActionList
     from kolega_code.permissions import PermissionDecision, allow_rule_options, permission_request_for_tool
 
     class FakeCoderAgent:
@@ -7562,7 +7644,9 @@ async def test_textual_app_question_recovers_focus_but_allows_free_form_answer(
     pytest.importorskip("textual")
 
     from kolega_code.cli import app as app_module
-    from kolega_code.cli.app import ActionList, ChatComposer, KolegaCodeApp, PendingQuestion
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.state import PendingQuestion
+    from kolega_code.cli.tui.widgets import ActionList, ChatComposer
 
     class FakeCoderAgent:
         def __init__(self, **kwargs):

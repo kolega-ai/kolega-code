@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from kolega_code.cli import theme
-from kolega_code.cli.app import TurnState, tool_state_presentation, turn_state_color
+from kolega_code.cli.tui.state import TurnState, tool_state_presentation, turn_state_color
 from kolega_code.cli.config import config_summary
 from kolega_code.cli.session_store import SessionStore
 from kolega_code.cli.settings import CliSettings, SettingsStore
