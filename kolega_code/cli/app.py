@@ -4768,16 +4768,12 @@ class KolegaCodeApp(App):
         if summary_entry is not None:
             through = int((self.session.compaction or {}).get("compacted_through") or 0)
             boundary = min(through, len(history))
-        for index, item in enumerate(history):
-            if summary_entry is not None and index == boundary:
-                self.conversation_entries.append(summary_entry)
-            try:
-                message = Message.from_dict(item)
-            except Exception:
-                continue
-            self.conversation_entries.extend(self._conversation_entries_from_message(message))
-        if summary_entry is not None and boundary is not None and boundary >= len(history):
+        if summary_entry is not None and boundary is not None:
+            self.conversation_entries.extend(self._conversation_entries_from_history_items(history[:boundary]))
             self.conversation_entries.append(summary_entry)
+            self.conversation_entries.extend(self._conversation_entries_from_history_items(history[boundary:]))
+        else:
+            self.conversation_entries.extend(self._conversation_entries_from_history_items(history))
         self._render_conversation()
 
     def _resume_compaction_entry(self) -> Optional[ConversationEntry]:
@@ -4792,7 +4788,51 @@ class KolegaCodeApp(App):
             return None
         return ConversationEntry(kind="compaction_summary", content=summary_text)
 
-    def _conversation_entries_from_message(self, message: Message) -> list[ConversationEntry]:
+    def _conversation_entries_from_history_items(self, history: list[dict]) -> list[ConversationEntry]:
+        """Build restored transcript entries, coalescing completed tool executions.
+
+        Live tool events render one row per execution by mutating a running
+        ``tool_call`` entry into ``tool_result``/``tool_error``. Saved history stores
+        the assistant ToolCall and the user ToolResult as separate provider messages,
+        so restore needs to rejoin them for the transcript to match the live UI.
+        """
+        entries: list[ConversationEntry] = []
+        pending_tool_entries: dict[str, ConversationEntry] = {}
+
+        def remember_tool_entry(block: ToolCall, entry: ConversationEntry) -> None:
+            for value in (getattr(block, "id", None), getattr(block, "execution_id", None)):
+                if value:
+                    pending_tool_entries[str(value)] = entry
+
+        def forget_tool_entry(entry: ConversationEntry) -> None:
+            for key, candidate in list(pending_tool_entries.items()):
+                if candidate is entry:
+                    pending_tool_entries.pop(key, None)
+
+        for item in history:
+            try:
+                message = Message.from_dict(item)
+            except Exception:
+                continue
+            entries.extend(
+                self._conversation_entries_from_message(
+                    message,
+                    pending_tool_entries=pending_tool_entries,
+                    remember_tool_entry=remember_tool_entry,
+                    forget_tool_entry=forget_tool_entry,
+                )
+            )
+
+        return entries
+
+    def _conversation_entries_from_message(
+        self,
+        message: Message,
+        *,
+        pending_tool_entries: Optional[dict[str, ConversationEntry]] = None,
+        remember_tool_entry: Optional[Callable[[ToolCall, ConversationEntry], None]] = None,
+        forget_tool_entry: Optional[Callable[[ConversationEntry], None]] = None,
+    ) -> list[ConversationEntry]:
         entries: list[ConversationEntry] = []
 
         if isinstance(message.content, str):
@@ -4814,30 +4854,57 @@ class KolegaCodeApp(App):
                 pending_text.append(block.text)
             elif isinstance(block, ToolCall):
                 flush_text()
-                entries.append(
-                    ConversationEntry(
-                        kind="tool_call",
-                        content=f"Calling {block.name}",
-                        complete=True,
-                        tool_name=block.name,
-                        tool_call_id=getattr(block, "execution_id", None),
-                    )
+                entry = ConversationEntry(
+                    kind="tool_call",
+                    content=f"Calling {block.name}",
+                    complete=False,
+                    tool_name=block.name,
+                    tool_call_id=getattr(block, "execution_id", None),
                 )
+                entries.append(entry)
+                if remember_tool_entry is not None:
+                    remember_tool_entry(block, entry)
             elif isinstance(block, ToolResult):
                 flush_text()
                 text = self._tool_content_to_text(block.content)
-                entries.append(
-                    ConversationEntry(
-                        kind="tool_error" if block.is_error else "tool_result",
-                        content=self._truncate_tool_text(text) if block.is_error else self._tool_result_preview(text),
-                        tool_name=block.name,
-                        tool_call_id=getattr(block, "execution_id", None),
-                        full_content=self._capped_tool_text(text),
+                entry = self._restored_tool_entry_for_result(block, text, pending_tool_entries)
+                if entry is None:
+                    entries.append(
+                        ConversationEntry(
+                            kind="tool_error" if block.is_error else "tool_result",
+                            content=self._truncate_tool_text(text) if block.is_error else self._tool_result_preview(text),
+                            tool_name=block.name,
+                            tool_call_id=getattr(block, "execution_id", None),
+                            full_content=self._capped_tool_text(text),
+                        )
                     )
-                )
+                else:
+                    entry.kind = "tool_error" if block.is_error else "tool_result"
+                    entry.content = self._truncate_tool_text(text) if block.is_error else self._tool_result_preview(text)
+                    entry.complete = True
+                    entry.tool_name = block.name or entry.tool_name
+                    entry.tool_call_id = getattr(block, "execution_id", None) or entry.tool_call_id
+                    entry.full_content = self._capped_tool_text(text)
+                    if forget_tool_entry is not None:
+                        forget_tool_entry(entry)
 
         flush_text()
         return entries
+
+    def _restored_tool_entry_for_result(
+        self,
+        block: ToolResult,
+        text: str,
+        pending_tool_entries: Optional[dict[str, ConversationEntry]],
+    ) -> Optional[ConversationEntry]:
+        if not pending_tool_entries:
+            return None
+        for value in (getattr(block, "tool_use_id", None), getattr(block, "execution_id", None)):
+            if value:
+                entry = pending_tool_entries.get(str(value))
+                if entry is not None:
+                    return entry
+        return None
 
     def _conversation_entry_for_text(self, role: str, text: str) -> ConversationEntry:
         names = skill_names_in_text(text)

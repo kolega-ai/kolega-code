@@ -4731,11 +4731,188 @@ async def test_textual_app_renders_resumed_history_in_chat(
         assert [(entry.kind, entry.content, entry.tool_name) for entry in app.conversation_entries[1:]] == [
             ("user", "Please read the README", None),
             ("assistant", "I'll inspect it.", None),
-            ("tool_call", "Calling read_file", "read_file"),
             ("tool_result", "README contents", "read_file"),
             ("tool_error", "Permission denied", "write_file"),
             ("assistant", "Done.", None),
         ]
+
+
+@pytest.mark.asyncio
+async def test_textual_app_restore_tool_history_matches_legacy_and_execution_ids(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli import app as app_module
+    from kolega_code.cli.app import KolegaCodeApp
+
+    class FakeCoderAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.restored_history = None
+
+        def restore_message_history(self, history):
+            self.restored_history = history
+
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
+
+        def dump_message_history(self):
+            return self.restored_history or []
+
+        async def cleanup(self):
+            return None
+
+    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    legacy_call = {
+        "role": "assistant",
+        "content": [
+            {"type": "text", "text": "Legacy first."},
+            {
+                "type": "tool_call",
+                "id": "provider-legacy",
+                "name": "read_file",
+                "input": {"path": "legacy.md"},
+            },
+        ],
+        "stop_reason": "tool_use",
+        "usage_metadata": {},
+    }
+    legacy_result = {
+        "role": "user",
+        "content": [
+            {
+                "type": "tool_result",
+                "tool_use_id": "provider-legacy",
+                "content": "legacy contents",
+                "name": "read_file",
+                "is_error": False,
+                "cache_checkpoint": False,
+            }
+        ],
+        "stop_reason": None,
+        "usage_metadata": {},
+    }
+    execution_call = Message(
+        role="assistant",
+        content=[
+            TextBlock("Modern first."),
+            ToolCall(
+                id="provider-modern",
+                name="search_codebase",
+                input={"pattern": "needle"},
+                execution_id="tool_exec_modern",
+            ),
+        ],
+    ).to_dict()
+    execution_result = Message(
+        role="user",
+        content=[
+            ToolResult(
+                tool_use_id="provider-modern",
+                content="modern contents",
+                name="search_codebase",
+                is_error=False,
+                execution_id="tool_exec_modern",
+            ),
+            TextBlock("Thanks for the tool output."),
+        ],
+    ).to_dict()
+    pending_call = Message(
+        role="assistant",
+        content=[ToolCall(id="provider-pending", name="list_directory", input={"path": "."})],
+    ).to_dict()
+    orphan_result = Message(
+        role="user",
+        content=[
+            ToolResult(tool_use_id="provider-orphan", content="orphan failed", name="write_file", is_error=True)
+        ],
+    ).to_dict()
+    session.history = [legacy_call, legacy_result, execution_call, execution_result, pending_call, orphan_result]
+
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test():
+        restored = app.conversation_entries[1:]
+        assert [(entry.kind, entry.content, entry.tool_name) for entry in restored] == [
+            ("assistant", "Legacy first.", None),
+            ("tool_result", "legacy contents", "read_file"),
+            ("assistant", "Modern first.", None),
+            ("tool_result", "modern contents", "search_codebase"),
+            ("user", "Thanks for the tool output.", None),
+            ("tool_call", "Calling list_directory", "list_directory"),
+            ("tool_error", "orphan failed", "write_file"),
+        ]
+        modern_entry = next(entry for entry in restored if entry.tool_name == "search_codebase")
+        assert modern_entry.tool_call_id == "tool_exec_modern"
+        pending_entry = next(entry for entry in restored if entry.tool_name == "list_directory")
+        assert pending_entry.complete is False
+
+
+@pytest.mark.asyncio
+async def test_textual_app_model_rebuild_rerenders_completed_tool_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli import app as app_module
+    from kolega_code.cli.app import KolegaCodeApp
+
+    class FakeCoderAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.history = []
+            self.compaction = {}
+
+        def restore_message_history(self, history):
+            self.history = history
+
+        def dump_compaction_state(self):
+            return self.compaction
+
+        def restore_compaction_state(self, data):
+            self.compaction = data or {}
+
+        def dump_message_history(self):
+            return self.history
+
+        async def cleanup(self):
+            return None
+
+    monkeypatch.setattr(app_module, "CoderAgent", FakeCoderAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+    history = [
+        Message(
+            role="assistant",
+            content=[ToolCall(id="provider-1", name="list_directory", input={"path": "."})],
+        ).to_dict(),
+        Message(
+            role="user",
+            content=[ToolResult(tool_use_id="provider-1", content="files", name="list_directory", is_error=False)],
+        ).to_dict(),
+    ]
+
+    async with app.run_test():
+        app.agent.history = history
+        await app._build_agent(config, rebuild=True)
+
+        tool_entries = [entry for entry in app.conversation_entries if entry.tool_name == "list_directory"]
+        assert [(entry.kind, entry.content) for entry in tool_entries] == [("tool_result", "files")]
 
 
 # ---------------------------------------------------------------------------
@@ -6177,7 +6354,7 @@ async def test_textual_app_submitting_mention_attaches_file_and_keeps_short_text
 
 
 @pytest.mark.asyncio
-async def test_textual_app_unresolved_mention_shows_hint_and_sends_plain_text(
+async def test_textual_app_unresolved_mention_clears_hint_and_sends_plain_text(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     pytest.importorskip("textual")
@@ -6193,9 +6370,10 @@ async def test_textual_app_unresolved_mention_shows_hint_and_sends_plain_text(
         composer.load_text("look at @does/not/exist.py")
         await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
 
-        # The hint is visible while the turn runs; end-of-turn cleanup restores the placeholder.
+        # Unresolved mentions are sent as plain text; the compose-time hint must
+        # not linger after the message has been submitted.
         hint = app.query_one("#composer_hint", Static)
-        assert "does/not/exist.py" in str(hint.render())
+        assert str(hint.render()) == ""
 
         await pilot.pause()
         assert app.agent.messages == ["look at @does/not/exist.py"]
