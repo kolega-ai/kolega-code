@@ -5,6 +5,8 @@ from typing import Any, Dict, List, Optional, Union
 
 from google.genai import types as genai_types
 
+from kolega_code.utils.images import ascii_thumbnail_from_base64
+
 from .tool_execution_ids import ToolExecutionIdRegistry, new_tool_execution_id
 
 # Mapping from type string to class
@@ -227,20 +229,20 @@ class ImageBlock(ContentBlock):
         return genai_types.Part.from_bytes(data=base64.b64decode(self.data), mime_type=self.media_type)
 
     def to_markdown(self) -> str:
-        """
-        Converts the image block into a markdown string with the image embedded.
+        """Display-only representation of the image for tool output / history.
 
-        For base64 images, this creates a markdown image tag with the data URI scheme,
-        allowing the image to be displayed directly in markdown without external hosting.
+        Returns a small ASCII-art thumbnail (via Pillow) for base64 images, or
+        a short placeholder if the image cannot be decoded. Provider
+        serialization uses ``to_anthropic``/``to_openai``/``to_google`` instead,
+        so the full base64 data is never sent to the UI.
 
         Returns:
-            str: The image formatted as a markdown image tag
+            str: The ASCII-art thumbnail or placeholder string.
         """
-
         if self.image_type == "base64":
-            return f"data:{self.media_type};base64,{self.data}"
-        else:
-            return self.data
+            return ascii_thumbnail_from_base64(self.data, self.media_type)
+        # URL-style image: don't dump a potentially huge URL.
+        return f"[Image URL — {self.media_type}]"
 
 
 @register_content_block
