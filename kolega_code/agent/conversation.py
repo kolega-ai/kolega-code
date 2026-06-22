@@ -11,7 +11,16 @@ import logging
 import re
 from typing import Any, Dict, List, Optional
 
-from kolega_code.llm.models import ImageBlock, Message, MessageHistory, TextBlock, ToolCall, ToolResult
+from kolega_code.llm.models import (
+    ImageBlock,
+    Message,
+    MessageHistory,
+    RedactedThinkingBlock,
+    TextBlock,
+    ThinkingBlock,
+    ToolCall,
+    ToolResult,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +42,32 @@ def count_image_blocks(messages: List[Message]) -> int:
             elif isinstance(block, ToolResult) and isinstance(block.content, list):
                 count += sum(1 for inner in block.content if isinstance(inner, ImageBlock))
     return count
+
+
+def _provider_value(provider: Any) -> str:
+    value = getattr(provider, "value", provider)
+    return str(value or "")
+
+
+def _message_with_content(message: Message, content: List[Any]) -> Message:
+    return Message(
+        role=message.role,
+        content=content,
+        stop_reason=message.stop_reason,
+        tool_calls=message.tool_calls,
+        usage_metadata=message.usage_metadata,
+    )
+
+
+def _tool_result_with_content(tool_result: ToolResult, content: List[Any]) -> ToolResult:
+    return ToolResult(
+        tool_use_id=tool_result.tool_use_id,
+        content=content,
+        name=tool_result.name,
+        is_error=tool_result.is_error,
+        cache_checkpoint=tool_result.cache_checkpoint,
+        execution_id=tool_result.execution_id,
+    )
 
 
 def replace_image_blocks_with_placeholders(messages: List[Message], model_name: str) -> List[Message]:
@@ -65,34 +100,104 @@ def replace_image_blocks_with_placeholders(messages: List[Message], model_name: 
                     else:
                         inner_new.append(inner)
                 if inner_changed:
-                    new_blocks.append(
-                        ToolResult(
-                            tool_use_id=block.tool_use_id,
-                            content=inner_new,
-                            name=block.name,
-                            is_error=block.is_error,
-                            cache_checkpoint=block.cache_checkpoint,
-                            execution_id=block.execution_id,
-                        )
-                    )
+                    new_blocks.append(_tool_result_with_content(block, inner_new))
                     changed = True
                 else:
                     new_blocks.append(block)
             else:
                 new_blocks.append(block)
         if changed:
-            result.append(
-                Message(
-                    role=message.role,
-                    content=new_blocks,
-                    stop_reason=message.stop_reason,
-                    tool_calls=message.tool_calls,
-                    usage_metadata=message.usage_metadata,
-                )
-            )
+            result.append(_message_with_content(message, new_blocks))
         else:
             result.append(message)
     return result
+
+
+def _preserve_reasoning_block(block: Any, *, source_provider: str, target_provider: str) -> bool:
+    if target_provider == "anthropic":
+        return source_provider == "anthropic"
+    if target_provider in {"moonshot", "kimi_coding"}:
+        return source_provider == target_provider
+    return False
+
+
+def _reasoning_placeholder(block: Any, source_provider: str) -> TextBlock:
+    source = source_provider or "unknown provider"
+    if isinstance(block, RedactedThinkingBlock):
+        return TextBlock(text=f"[Prior redacted reasoning from {source} omitted for compatibility.]")
+    return TextBlock(text=f"[Prior reasoning from {source} omitted for compatibility.]")
+
+
+def _adapt_content_blocks_for_provider(
+    blocks: List[Any], *, source_provider: str, target_provider: str, target_model: str, supports_vision: bool
+) -> tuple[List[Any], bool]:
+    adapted: List[Any] = []
+    changed = False
+
+    for block in blocks:
+        if isinstance(block, ImageBlock) and not supports_vision:
+            adapted.append(TextBlock(text=_image_placeholder(block.media_type, target_model)))
+            changed = True
+        elif isinstance(block, (ThinkingBlock, RedactedThinkingBlock)):
+            if _preserve_reasoning_block(block, source_provider=source_provider, target_provider=target_provider):
+                adapted.append(block)
+            else:
+                adapted.append(_reasoning_placeholder(block, source_provider))
+                changed = True
+        elif isinstance(block, ToolResult) and isinstance(block.content, list):
+            inner, inner_changed = _adapt_content_blocks_for_provider(
+                block.content,
+                source_provider=source_provider,
+                target_provider=target_provider,
+                target_model=target_model,
+                supports_vision=supports_vision,
+            )
+            if inner_changed:
+                adapted.append(_tool_result_with_content(block, inner))
+                changed = True
+            else:
+                adapted.append(block)
+        else:
+            adapted.append(block)
+
+    return adapted, changed
+
+
+def adapt_history_for_provider(
+    messages: List[Message], *, target_provider: str, target_model: str, supports_vision: bool
+) -> List[Message]:
+    """Return a request-safe history for the target provider without mutating storage.
+
+    Provider-managed reasoning blocks (Anthropic/Moonshot/Kimi thinking) are not
+    portable across providers. Keep only native reasoning for the same provider;
+    convert foreign or unknown reasoning blocks to text placeholders. Image blocks
+    are preserved for vision models and replaced with placeholders for non-vision
+    models, matching the previous image compatibility behavior.
+    """
+    target_provider = _provider_value(target_provider)
+    result: List[Message] = []
+    changed_any = False
+
+    for message in messages:
+        if not isinstance(message.content, list):
+            result.append(message)
+            continue
+
+        source_provider = _provider_value((message.usage_metadata or {}).get("provider"))
+        adapted_content, changed = _adapt_content_blocks_for_provider(
+            message.content,
+            source_provider=source_provider,
+            target_provider=target_provider,
+            target_model=target_model,
+            supports_vision=supports_vision,
+        )
+        if changed:
+            result.append(_message_with_content(message, adapted_content))
+            changed_any = True
+        else:
+            result.append(message)
+
+    return result if changed_any else messages
 
 
 class Conversation:

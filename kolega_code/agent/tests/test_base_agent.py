@@ -17,6 +17,7 @@ from kolega_code.llm.exceptions import (
     LLMRateLimitError,
 )
 from kolega_code.llm.models import (
+    ImageBlock,
     Message,
     MessageHistory,
     RedactedThinkingBlock,
@@ -1850,6 +1851,63 @@ class TestBaseAgent:
         assert effective[0].content[1].thinking == "signed thinking"
         assert effective[0].content[1].signature == "sig"
         assert effective[0].content[2].data == "encrypted-redacted-thinking"
+
+    def test_history_for_llm_converts_foreign_thinking_when_switching_to_anthropic(self, base_agent):
+        tool_call = ToolCall(id="tool1", name="read_file", input={"path": "README.md"})
+        base_agent.primary_model_config.provider = ModelProvider.ANTHROPIC
+        base_agent.primary_model_config.model = "claude-opus-4-8"
+        base_agent.supports_vision = True
+        base_agent.history = MessageHistory(
+            [
+                Message(
+                    role="assistant",
+                    content=[ThinkingBlock(thinking="kimi reasoning", signature="kimi-sig"), tool_call],
+                    usage_metadata={"provider": "kimi_coding"},
+                ),
+                Message(
+                    role="user",
+                    content=[ToolResult(tool_use_id="tool1", name="read_file", content="ok", is_error=False)],
+                ),
+            ]
+        )
+
+        history = base_agent._history_for_llm()
+
+        assert not any(isinstance(block, ThinkingBlock) for block in history[0].content)
+        assert isinstance(history[0].content[0], TextBlock)
+        assert "Prior reasoning from kimi_coding omitted" in history[0].content[0].text
+        assert isinstance(history[0].content[1], ToolCall)
+        assert history[1].role == "user"
+        assert isinstance(history[1].content[0], ToolResult)
+        assert history[1].content[0].tool_use_id == "tool1"
+
+    def test_history_for_llm_preserves_images_when_target_anthropic_supports_vision(self, base_agent):
+        image = ImageBlock(image_type="base64", media_type="image/png", data="BASE64")
+        nested_image = ImageBlock(image_type="base64", media_type="image/jpeg", data="BASE642")
+        base_agent.primary_model_config.provider = ModelProvider.ANTHROPIC
+        base_agent.primary_model_config.model = "claude-opus-4-8"
+        base_agent.supports_vision = True
+        base_agent.history = MessageHistory(
+            [
+                Message(role="user", content=[TextBlock(text="look"), image]),
+                Message(
+                    role="user",
+                    content=[
+                        ToolResult(
+                            tool_use_id="tool1",
+                            name="read_image",
+                            content=[nested_image],
+                            is_error=False,
+                        )
+                    ],
+                ),
+            ]
+        )
+
+        history = base_agent._history_for_llm()
+
+        assert history[0].content[1] is image
+        assert history[1].content[0].content[0] is nested_image
 
     def test_extend_history_no_fix_needed(self, base_agent):
         """Test extend_history works normally when no fix needed."""

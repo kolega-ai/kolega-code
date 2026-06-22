@@ -73,19 +73,51 @@ def _image_data_url(block: ImageBlock) -> str:
     return f"data:{block.media_type};base64,{block.data}"
 
 
+def _tool_result_images(block: ToolResult) -> List[ImageBlock]:
+    if not isinstance(block.content, list):
+        return []
+    return [item for item in block.content if isinstance(item, ImageBlock)]
+
+
 def _tool_result_text(block: ToolResult) -> str:
-    """Flatten a tool result to the plain text a function_call_output expects."""
+    """Flatten a tool result to the plain text a function_call_output expects.
+
+    Responses function_call_output.output is string-only. If a tool returned
+    images, ``to_responses_input`` attaches them in a following user input item.
+    """
     content = block.content
     if isinstance(content, str):
         return content
     parts: List[str] = []
+    image_count = 0
     for item in content or []:
         text = getattr(item, "text", None)
         if text:
             parts.append(text)
         elif isinstance(item, ImageBlock) or getattr(item, "media_type", None):
-            parts.append("[image omitted]")
+            image_count += 1
+    if image_count:
+        parts.append(
+            f"[{block.name} returned {image_count} image"
+            f"{'s' if image_count != 1 else ''}; attached in the following user message.]"
+        )
+    if block.is_error and not parts:
+        return "Tool execution error"
     return "\n".join(parts)
+
+
+def _tool_result_image_message(block: ToolResult) -> Optional[Dict[str, Any]]:
+    images = _tool_result_images(block)
+    if not images:
+        return None
+    content: List[Dict[str, Any]] = [
+        {
+            "type": "input_text",
+            "text": f"Image returned by tool {block.name} for tool call {block.tool_use_id}.",
+        }
+    ]
+    content.extend({"type": "input_image", "image_url": _image_data_url(image)} for image in images)
+    return {"role": "user", "content": content}
 
 
 def _role_message_item(role: str, parts: List[tuple]) -> Optional[Dict[str, Any]]:
@@ -120,6 +152,7 @@ def to_responses_input(messages: MessageHistory) -> List[Dict[str, Any]]:
             continue
 
         text_parts: List[tuple] = []
+        tool_image_messages: List[Dict[str, Any]] = []
         for block in message.content or []:
             if isinstance(block, ToolCall):
                 items.append(
@@ -138,6 +171,9 @@ def to_responses_input(messages: MessageHistory) -> List[Dict[str, Any]]:
                         "output": _tool_result_text(block),
                     }
                 )
+                image_message = _tool_result_image_message(block)
+                if image_message is not None:
+                    tool_image_messages.append(image_message)
             elif isinstance(block, TextBlock):
                 text_parts.append(("text", block.text))
             elif isinstance(block, ImageBlock):
@@ -147,6 +183,7 @@ def to_responses_input(messages: MessageHistory) -> List[Dict[str, Any]]:
             item = _role_message_item(message.role, text_parts)
             if item:
                 items.append(item)
+        items.extend(tool_image_messages)
     return items
 
 

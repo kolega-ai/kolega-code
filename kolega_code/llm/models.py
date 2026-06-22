@@ -653,15 +653,15 @@ class ToolResult(ContentBlock):
         """
         Converts the tool result into the OpenAI format.
 
+        OpenAI Chat Completions tool messages only accept string content or text
+        parts. Image-bearing tool results are split by ``MessageHistory.to_openai``
+        into a text-only tool message plus a follow-up user image message. This
+        method returns only the valid text-only tool message for the result.
+
         Returns:
             Dict[str, Any]: A dictionary with the structure expected by OpenAI API
         """
-        # Handle case where content is a list
-        openai_content = self.content
-        if isinstance(self.content, list):
-            openai_content = [item.to_openai() for item in self.content]
-
-        return {"role": "tool", "content": openai_content, "tool_call_id": self.tool_use_id}
+        return _openai_tool_result_message(self)
 
     def to_google(self) -> genai_types.FunctionResponse:
         google_content = self.content
@@ -693,6 +693,91 @@ class ToolResult(ContentBlock):
             markdown_content = "\n\n".join([item.to_markdown() for item in self.content])
 
         return f"{status} from tool call (ID: {self.tool_use_id}):\n\n```\n{markdown_content}\n```"
+
+
+def _tool_result_blocks(tool_result: "ToolResult") -> List[ContentBlock]:
+    if isinstance(tool_result.content, list):
+        return tool_result.content
+    return []
+
+
+def _openai_tool_result_text(tool_result: "ToolResult") -> str:
+    """Return text-only content for an OpenAI tool message.
+
+    Chat Completions ``role=tool`` messages cannot carry image parts. If a tool
+    returned images, acknowledge them in text; ``MessageHistory.to_openai`` emits
+    the actual images in a following user message.
+    """
+    if isinstance(tool_result.content, str):
+        text = tool_result.content
+    else:
+        text_parts: List[str] = []
+        image_count = 0
+        for block in tool_result.content or []:
+            if isinstance(block, TextBlock):
+                if block.text:
+                    text_parts.append(block.text)
+            elif isinstance(block, ImageBlock):
+                image_count += 1
+            else:
+                block_text = getattr(block, "text", None)
+                if block_text:
+                    text_parts.append(str(block_text))
+        text = "\n".join(text_parts).strip()
+        if image_count:
+            marker = (
+                f"[{tool_result.name} returned {image_count} image"
+                f"{'s' if image_count != 1 else ''}; attached in the following user message.]"
+            )
+            text = f"{text}\n{marker}".strip() if text else marker
+
+    if tool_result.is_error and not text:
+        return "Tool execution error"
+    return text
+
+
+def _openai_tool_result_images(tool_result: "ToolResult") -> List[ImageBlock]:
+    return [block for block in _tool_result_blocks(tool_result) if isinstance(block, ImageBlock)]
+
+
+def _openai_tool_result_message(tool_result: "ToolResult") -> Dict[str, Any]:
+    return {
+        "role": "tool",
+        "content": _openai_tool_result_text(tool_result),
+        "tool_call_id": tool_result.tool_use_id,
+    }
+
+
+def _openai_tool_result_image_followup(tool_result: "ToolResult") -> Optional[Dict[str, Any]]:
+    images = _openai_tool_result_images(tool_result)
+    if not images:
+        return None
+    content: List[Dict[str, Any]] = [
+        {
+            "type": "text",
+            "text": f"Image returned by tool {tool_result.name} for tool call {tool_result.tool_use_id}.",
+        }
+    ]
+    content.extend(image.to_openai() for image in images)
+    return {"role": "user", "content": content}
+
+
+def _openai_messages_for_tool_results(tool_results: List["ToolResult"]) -> List[Dict[str, Any]]:
+    """Serialize tool results preserving OpenAI's required tool-message ordering.
+
+    All text-only ``role=tool`` messages are emitted first, followed by user image
+    messages for any image-bearing tool results. This keeps all required tool
+    responses contiguous immediately after the assistant tool-call message.
+    """
+    messages: List[Dict[str, Any]] = []
+    followups: List[Dict[str, Any]] = []
+    for tool_result in tool_results:
+        messages.append(_openai_tool_result_message(tool_result))
+        followup = _openai_tool_result_image_followup(tool_result)
+        if followup is not None:
+            followups.append(followup)
+    messages.extend(followups)
+    return messages
 
 
 class MessageChunk:
@@ -1298,19 +1383,45 @@ class MessageHistory(list):
     def to_openai(self) -> list:
         processed_messages = []
         consumed_tool_result_ids = set()
+        messages = list(self)
 
-        for message in self:
+        def payload_has_content(payload: Dict[str, Any]) -> bool:
+            content = payload.get("content")
+            return (isinstance(content, str) and bool(content)) or (isinstance(content, list) and bool(content))
+
+        def collect_lookahead_tool_results(start_index: int, needed_ids: set) -> List[ToolResult]:
+            found: List[ToolResult] = []
+            if not needed_ids:
+                return found
+            found_ids = set()
+            for look_ahead in messages[start_index + 1 :]:
+                if not isinstance(look_ahead.content, list):
+                    continue
+                for item in look_ahead.content:
+                    if (
+                        isinstance(item, ToolResult)
+                        and item.tool_use_id in needed_ids
+                        and item.tool_use_id not in consumed_tool_result_ids
+                        and item.tool_use_id not in found_ids
+                    ):
+                        found.append(item)
+                        found_ids.add(item.tool_use_id)
+                if needed_ids.issubset(found_ids):
+                    break
+            return found
+
+        for index, message in enumerate(messages):
             # No list content: pass through
             if not isinstance(message.content, list):
                 processed_messages.append(message.to_openai())
                 continue
 
             # Partition ToolResult blocks so they become separate 'tool' messages
-            non_tool_result_blocks = [
-                item for item in message.content if not isinstance(item, ToolResult)
-            ]
+            non_tool_result_blocks = [item for item in message.content if not isinstance(item, ToolResult)]
             tool_result_blocks = [
-                item for item in message.content if isinstance(item, ToolResult) and item.tool_use_id not in consumed_tool_result_ids
+                item
+                for item in message.content
+                if isinstance(item, ToolResult) and item.tool_use_id not in consumed_tool_result_ids
             ]
 
             if tool_result_blocks:
@@ -1325,75 +1436,62 @@ class MessageHistory(list):
                 temp_payload = temp_message.to_openai()
 
                 # Avoid emitting empty assistant/user messages with neither content nor tool_calls
-                has_content = (
-                    isinstance(temp_payload.get("content"), str) and bool(temp_payload.get("content"))
-                ) or (
-                    isinstance(temp_payload.get("content"), list) and len(temp_payload.get("content")) > 0
-                )
-                has_tool_calls = bool(temp_payload.get("tool_calls"))
-                if has_content or has_tool_calls:
+                if payload_has_content(temp_payload) or temp_payload.get("tool_calls"):
                     processed_messages.append(temp_payload)
 
-                # Emit each tool_result as a separate tool message
-                for tr in tool_result_blocks:
-                    processed_messages.append(tr.to_openai())
+                # If this same message included tool_calls, pull any missing tool
+                # results forward so all role=tool messages stay contiguous.
+                tool_call_ids = [item.id for item in message.content if isinstance(item, ToolCall)]
+                found_ids = {tr.tool_use_id for tr in tool_result_blocks}
+                lookahead_results = collect_lookahead_tool_results(index, set(tool_call_ids) - found_ids)
+                batch_tool_results = tool_result_blocks + lookahead_results
+
+                processed_messages.extend(_openai_tool_result_message(tr) for tr in batch_tool_results)
+                for tr in batch_tool_results:
                     consumed_tool_result_ids.add(tr.tool_use_id)
 
-                # If assistant included tool_calls, ensure their tool results appear immediately after
-                tool_call_ids = [item.id for item in message.content if isinstance(item, ToolCall)]
-                if tool_call_ids:
-                    found_ids = set(tr.tool_use_id for tr in tool_result_blocks)
-                    added_ids = set()
-                    # Look ahead for missing tool results and emit them now
-                    needed = set(tool_call_ids) - found_ids
-                    if needed:
-                        start_index = list(self).index(message)
-                        for look_ahead in self[start_index + 1 :]:
-                            if not isinstance(look_ahead.content, list):
-                                continue
-                            for item in look_ahead.content:
-                                if (
-                                    isinstance(item, ToolResult)
-                                    and item.tool_use_id in needed
-                                    and item.tool_use_id not in consumed_tool_result_ids
-                                ):
-                                    processed_messages.append(item.to_openai())
-                                    consumed_tool_result_ids.add(item.tool_use_id)
-                                    added_ids.add(item.tool_use_id)
-                            if needed.issubset(added_ids | found_ids):
-                                break
-
-                    # If still missing, emit placeholder tool messages to satisfy API requirements
-                    remaining = set(tool_call_ids) - (found_ids | added_ids)
-                    for missing_id in remaining:
-                        processed_messages.append({"role": "tool", "content": "", "tool_call_id": missing_id})
+                # If still missing, emit placeholder tool messages to satisfy API requirements.
+                # These must come before any image follow-up user messages so all required
+                # role=tool responses stay contiguous after the assistant tool calls.
+                added_ids = {tr.tool_use_id for tr in lookahead_results}
+                remaining = set(tool_call_ids) - (found_ids | added_ids)
+                for missing_id in remaining:
+                    processed_messages.append({"role": "tool", "content": "", "tool_call_id": missing_id})
+                for tr in batch_tool_results:
+                    followup = _openai_tool_result_image_followup(tr)
+                    if followup is not None:
+                        processed_messages.append(followup)
             else:
+                # If this message only contained tool results that were already
+                # emitted next to their assistant tool calls, skip it.
+                if not non_tool_result_blocks and any(isinstance(item, ToolResult) for item in message.content):
+                    continue
+
                 # No ToolResult in this message. If it has tool_calls, ensure immediate tool responses.
                 temp_payload = message.to_openai()
-                processed_messages.append(temp_payload)
+                if payload_has_content(temp_payload) or temp_payload.get("tool_calls"):
+                    processed_messages.append(temp_payload)
 
                 tool_calls = temp_payload.get("tool_calls") or []
                 if tool_calls:
                     tool_call_ids = [tc.get("id") for tc in tool_calls if tc.get("id")]
-                    added_ids = set()
-                    start_index = list(self).index(message)
+                    lookahead_results = collect_lookahead_tool_results(index, set(tool_call_ids))
 
-                    # Search ahead for ToolResult blocks matching these ids
-                    for look_ahead in self[start_index + 1 :]:
-                        if not isinstance(look_ahead.content, list):
-                            continue
-                        for item in look_ahead.content:
-                            if isinstance(item, ToolResult) and item.tool_use_id in tool_call_ids and item.tool_use_id not in consumed_tool_result_ids:
-                                processed_messages.append(item.to_openai())
-                                consumed_tool_result_ids.add(item.tool_use_id)
-                                added_ids.add(item.tool_use_id)
-                        if set(tool_call_ids).issubset(added_ids):
-                            break
+                    processed_messages.extend(_openai_tool_result_message(tr) for tr in lookahead_results)
+                    for tr in lookahead_results:
+                        consumed_tool_result_ids.add(tr.tool_use_id)
 
-                    # If any are still missing, emit placeholder tool messages to satisfy API ordering
+                    # If any are still missing, emit placeholder tool messages to satisfy API ordering.
+                    # Placeholders also come before image follow-up user messages to keep all role=tool
+                    # responses contiguous after the assistant tool-call message.
+                    added_ids = {tr.tool_use_id for tr in lookahead_results}
                     remaining = [tc_id for tc_id in tool_call_ids if tc_id not in added_ids]
                     for missing_id in remaining:
                         processed_messages.append({"role": "tool", "content": "", "tool_call_id": missing_id})
+                    for tr in lookahead_results:
+                        followup = _openai_tool_result_image_followup(tr)
+                        if followup is not None:
+                            processed_messages.append(followup)
 
         return processed_messages
 

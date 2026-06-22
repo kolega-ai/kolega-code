@@ -89,6 +89,66 @@ def test_to_responses_input_image_and_system_skip():
     ]
 
 
+def test_to_responses_input_image_tool_result_adds_followup_user_image():
+    history = MessageHistory(
+        [
+            Message(role="assistant", content=[ToolCall(id="call_1", name="read_image", input={"path": "shot.png"})]),
+            Message(
+                role="user",
+                content=[
+                    ToolResult(
+                        tool_use_id="call_1",
+                        content=[ImageBlock(image_type="base64", media_type="image/png", data="BASE64")],
+                        name="read_image",
+                        is_error=False,
+                    )
+                ],
+            ),
+        ]
+    )
+
+    items = to_responses_input(history)
+
+    assert items[0]["type"] == "function_call"
+    assert items[1] == {
+        "type": "function_call_output",
+        "call_id": "call_1",
+        "output": "[read_image returned 1 image; attached in the following user message.]",
+    }
+    assert items[2]["role"] == "user"
+    assert items[2]["content"] == [
+        {"type": "input_text", "text": "Image returned by tool read_image for tool call call_1."},
+        {"type": "input_image", "image_url": "data:image/png;base64,BASE64"},
+    ]
+
+
+def test_to_responses_input_multiple_tool_outputs_before_image_followups():
+    history = MessageHistory(
+        [
+            Message(
+                role="user",
+                content=[
+                    ToolResult(
+                        tool_use_id="call_1",
+                        content=[ImageBlock(image_type="base64", media_type="image/png", data="BASE64")],
+                        name="read_image",
+                        is_error=False,
+                    ),
+                    ToolResult(tool_use_id="call_2", content="file contents", name="read_file", is_error=False),
+                ],
+            )
+        ]
+    )
+
+    items = to_responses_input(history)
+
+    assert [item.get("type") for item in items[:2]] == ["function_call_output", "function_call_output"]
+    assert items[0]["call_id"] == "call_1"
+    assert items[1]["call_id"] == "call_2"
+    assert items[2]["role"] == "user"
+    assert any(part.get("type") == "input_image" for part in items[2]["content"])
+
+
 def test_responses_tools_flattens_function_shape():
     tool = ToolDefinition(
         name="read_file",

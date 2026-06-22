@@ -9,13 +9,16 @@ only reports images that would actually be sent.
 
 from kolega_code.agent.conversation import (
     Conversation,
+    adapt_history_for_provider,
     count_image_blocks,
     replace_image_blocks_with_placeholders,
 )
 from kolega_code.llm.models import (
     ImageBlock,
     Message,
+    RedactedThinkingBlock,
     TextBlock,
+    ThinkingBlock,
     ToolCall,
     ToolResult,
 )
@@ -29,8 +32,138 @@ def _user(*blocks) -> Message:
     return Message(role="user", content=list(blocks))
 
 
-def _assistant(*blocks) -> Message:
-    return Message(role="assistant", content=list(blocks))
+def _assistant(*blocks, provider: str | None = None) -> Message:
+    return Message(
+        role="assistant",
+        content=list(blocks),
+        usage_metadata={"provider": provider} if provider else {},
+    )
+
+
+# ---------------------------------------------------------------------------
+# adapt_history_for_provider
+# ---------------------------------------------------------------------------
+
+
+def test_adapt_converts_kimi_thinking_when_targeting_anthropic():
+    tool_call = ToolCall(id="tool1", name="read_image", input={"path": "a.png"})
+    history = [
+        _assistant(ThinkingBlock(thinking="foreign reasoning", signature="kimi-sig"), tool_call, provider="kimi_coding")
+    ]
+
+    out = adapt_history_for_provider(
+        history,
+        target_provider="anthropic",
+        target_model="claude-opus-4-8",
+        supports_vision=True,
+    )
+
+    assert out[0] is not history[0]
+    assert not any(isinstance(block, ThinkingBlock) for block in out[0].content)
+    assert isinstance(out[0].content[0], TextBlock)
+    assert "Prior reasoning from kimi_coding omitted" in out[0].content[0].text
+    assert any(isinstance(block, ToolCall) and block.id == "tool1" for block in out[0].content)
+
+
+def test_adapt_preserves_anthropic_thinking_when_targeting_anthropic():
+    history = [_assistant(ThinkingBlock(thinking="native reasoning", signature="anthropic-sig"), provider="anthropic")]
+
+    out = adapt_history_for_provider(
+        history,
+        target_provider="anthropic",
+        target_model="claude-opus-4-8",
+        supports_vision=True,
+    )
+
+    assert out is history
+    assert isinstance(out[0].content[0], ThinkingBlock)
+    assert out[0].content[0].signature == "anthropic-sig"
+
+
+def test_adapt_preserves_images_for_vision_target_while_converting_foreign_thinking():
+    tr = ToolResult(tool_use_id="t1", name="read_image", content=[_image("image/jpeg")], is_error=False)
+    history = [
+        _user(TextBlock(text="look"), _image("image/png"), tr),
+        _assistant(ThinkingBlock(thinking="foreign", signature="kimi-sig"), provider="kimi_coding"),
+    ]
+
+    out = adapt_history_for_provider(
+        history,
+        target_provider="anthropic",
+        target_model="claude-opus-4-8",
+        supports_vision=True,
+    )
+
+    assert count_image_blocks(out) == 2
+    assert isinstance(out[0].content[1], ImageBlock)
+    assert isinstance(out[0].content[2].content[0], ImageBlock)
+    assert isinstance(out[1].content[0], TextBlock)
+
+
+def test_adapt_replaces_images_for_non_vision_target_and_converts_foreign_thinking():
+    tr = ToolResult(tool_use_id="t1", name="read_image", content=[_image("image/jpeg")], is_error=False)
+    history = [
+        _user(TextBlock(text="look"), _image("image/png"), tr),
+        _assistant(RedactedThinkingBlock(data="encrypted"), provider="kimi_coding"),
+    ]
+
+    out = adapt_history_for_provider(
+        history,
+        target_provider="deepseek",
+        target_model="deepseek-v4-pro",
+        supports_vision=False,
+    )
+
+    assert count_image_blocks(out) == 0
+    assert isinstance(out[0].content[1], TextBlock)
+    assert "not visible" in out[0].content[1].text
+    assert isinstance(out[0].content[2].content[0], TextBlock)
+    assert isinstance(out[1].content[0], TextBlock)
+    assert "redacted reasoning from kimi_coding omitted" in out[1].content[0].text
+
+
+def test_adapt_does_not_mutate_stored_history():
+    image = _image("image/png")
+    thinking = ThinkingBlock(thinking="foreign", signature="kimi-sig")
+    history = [_user(image), _assistant(thinking, provider="kimi_coding")]
+
+    out = adapt_history_for_provider(
+        history,
+        target_provider="anthropic",
+        target_model="claude-opus-4-8",
+        supports_vision=True,
+    )
+
+    assert out is not history
+    assert isinstance(history[0].content[0], ImageBlock)
+    assert history[0].content[0] is image
+    assert isinstance(history[1].content[0], ThinkingBlock)
+    assert history[1].content[0] is thinking
+    assert isinstance(out[1].content[0], TextBlock)
+
+
+def test_adapted_kimi_thinking_is_not_serialized_as_anthropic_thinking():
+    tool_call = ToolCall(id="tool1", name="read_file", input={"path": "README.md"})
+    result = ToolResult(tool_use_id="tool1", name="read_file", content="ok", is_error=False)
+    history = [
+        _assistant(ThinkingBlock(thinking="foreign", signature="kimi-sig"), tool_call, provider="kimi_coding"),
+        _user(result),
+    ]
+
+    adapted = adapt_history_for_provider(
+        history,
+        target_provider="anthropic",
+        target_model="claude-opus-4-8",
+        supports_vision=True,
+    )
+    payload = [message.to_anthropic() for message in adapted]
+
+    assert payload[0]["role"] == "assistant"
+    assert all(block.get("type") != "thinking" for block in payload[0]["content"])
+    assert payload[0]["content"][1]["type"] == "tool_use"
+    assert payload[1]["role"] == "user"
+    assert payload[1]["content"][0]["type"] == "tool_result"
+    assert payload[1]["content"][0]["tool_use_id"] == "tool1"
 
 
 # ---------------------------------------------------------------------------

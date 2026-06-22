@@ -5,10 +5,7 @@ These tests verify that local tiktoken-based token counting is within reasonable
 of OpenAI's official API token counting, using real system prompts and tool definitions.
 """
 
-import json
 import os
-from pathlib import Path
-from typing import List
 from unittest.mock import Mock
 
 import pytest
@@ -16,15 +13,12 @@ from dotenv import load_dotenv
 
 from kolega_code.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
 from kolega_code.events import AgentConnectionManager
-from kolega_code.llm.client import LLMClient
 from kolega_code.llm.models import (
     ImageBlock,
     Message,
     MessageHistory,
     TextBlock,
     ToolCall,
-    ToolDefinition,
-    ToolParameter,
     ToolResult,
 )
 from kolega_code.llm.providers.openai import OpenAIProvider
@@ -231,6 +225,24 @@ def get_accuracy_threshold(api_count: int, has_tools: bool = False) -> float:
     return 10.0  # Moderate threshold for realistic contexts (OpenAI less predictable than Anthropic)
 
 
+@pytest.mark.asyncio
+async def test_nested_image_tool_result_contributes_image_tokens():
+    provider = OpenAIProvider(api_key="test")
+    image = ImageBlock(image_type="base64", media_type="image/png", data="A" * 100)
+    messages = MessageHistory(
+        [
+            Message(
+                "user",
+                [ToolResult(tool_use_id="call_img", name="read_image", content=[image], is_error=False)],
+            )
+        ]
+    )
+
+    result = await provider.count_tokens(messages=messages, tools=[])
+
+    assert result.input_tokens >= provider._estimate_image_tokens(len(image.data))
+
+
 @pytest.mark.slow
 @pytest.mark.integration
 @pytest.mark.asyncio
@@ -263,7 +275,7 @@ async def test_simple_message_comparison(
     diff_pct = calculate_percentage_difference(local_result.input_tokens, api_count)
     threshold = get_accuracy_threshold(api_count)
 
-    print(f"\nSimple message comparison:")
+    print("\nSimple message comparison:")
     print(f"  Local count: {local_result.input_tokens}")
     print(f"  API count: {api_count}")
     print(f"  Difference: {diff_pct:.2f}%")
@@ -307,7 +319,7 @@ async def test_with_real_system_prompt(
     diff_pct = calculate_percentage_difference(local_result.input_tokens, api_count)
     threshold = get_accuracy_threshold(api_count)
 
-    print(f"\nReal system prompt comparison:")
+    print("\nReal system prompt comparison:")
     print(f"  Local count: {local_result.input_tokens}")
     print(f"  API count: {api_count}")
     print(f"  Difference: {diff_pct:.2f}%")
@@ -353,7 +365,7 @@ async def test_with_tools(
     diff_pct = calculate_percentage_difference(local_result.input_tokens, api_count)
     threshold = get_accuracy_threshold(api_count, has_tools=True)
 
-    print(f"\nWith tools comparison:")
+    print("\nWith tools comparison:")
     print(f"  Tool count: {len(real_tools)}")
     print(f"  Local count: {local_result.input_tokens}")
     print(f"  API count: {api_count}")
@@ -398,7 +410,7 @@ async def test_with_complex_conversation(
     diff_pct = calculate_percentage_difference(local_result.input_tokens, api_count)
     threshold = get_accuracy_threshold(api_count)
 
-    print(f"\nComplex conversation comparison:")
+    print("\nComplex conversation comparison:")
     print(f"  Message count: {len(complex_messages)}")
     print(f"  Local count: {local_result.input_tokens}")
     print(f"  API count: {api_count}")
@@ -460,7 +472,7 @@ async def test_with_images(
     # Calculate percentage difference
     diff_pct = calculate_percentage_difference(local_result.input_tokens, api_count)
 
-    print(f"\nWith images comparison:")
+    print("\nWith images comparison:")
     print(f"  Image size: {len(tiny_image_base64)} chars (base64)")
     print(f"  Local count: {local_result.input_tokens}")
     print(f"  API count: {api_count}")
@@ -516,7 +528,7 @@ async def test_with_tool_calls(
     # Tool calls/results have higher variance in token counting, similar to images
     threshold = 25.0 if api_count < 200 else 15.0
 
-    print(f"\nWith tool calls comparison:")
+    print("\nWith tool calls comparison:")
     print(f"  Message count: {len(messages_with_tool_calls)}")
     print(f"  Local count: {local_result.input_tokens}")
     print(f"  API count: {api_count}")
@@ -563,7 +575,7 @@ async def test_full_agent_context(
     diff_pct = calculate_percentage_difference(local_result.input_tokens, api_count)
     threshold = get_accuracy_threshold(api_count, has_tools=True)
 
-    print(f"\nFull agent context comparison:")
+    print("\nFull agent context comparison:")
     print(f"  Message count: {len(complex_messages)}")
     print(f"  Tool count: {len(real_tools)}")
     print(f"  Local count: {local_result.input_tokens}")

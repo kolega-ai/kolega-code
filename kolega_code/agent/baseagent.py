@@ -15,7 +15,7 @@ from .compression import CompactionResult, HistoryCompressor
 from kolega_code.config import AgentConfig, ModelProvider
 from kolega_code.events import AgentConnectionManager
 from .context import AgentContext, AgentServices, Telemetry, WorkspaceInfo
-from .conversation import Conversation, replace_image_blocks_with_placeholders
+from .conversation import Conversation, adapt_history_for_provider
 from kolega_code.events import AgentEventEmitter
 from kolega_code.hooks import (
     NO_OP_DISPATCHER,
@@ -377,8 +377,13 @@ class BaseAgent(LogMixin):
         """
         effective = self.get_effective_history_for_llm()
         fixed = self.fix_incomplete_tool_calls(list(effective))
-        if not self.supports_vision:
-            fixed = replace_image_blocks_with_placeholders(fixed, self.primary_model_config.model)
+        provider = getattr(self.primary_model_config.provider, "value", self.primary_model_config.provider)
+        fixed = adapt_history_for_provider(
+            fixed,
+            target_provider=str(provider),
+            target_model=self.primary_model_config.model,
+            supports_vision=self.supports_vision,
+        )
         return MessageHistory(fixed)
 
     def mark_cache_checkpoint(self) -> None:

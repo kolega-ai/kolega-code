@@ -618,17 +618,6 @@ class ToolCollection(LogMixin):
 
         Supported formats: PNG, JPEG, GIF, WebP, BMP.
         """
-        # ChatGPT/Responses backend drops tool-result images, so return a
-        # plain-text hint instead of an ImageBlock for that provider.
-        cfg = getattr(self.caller, "primary_model_config", None)
-        if cfg is not None:
-            provider = getattr(cfg, "provider", None)
-            provider_value = getattr(provider, "value", provider)
-            if provider_value == "openai_chatgpt":
-                return (
-                    f"Image read from {path}, but the ChatGPT Responses backend cannot receive images in tool results. "
-                    "Ask the user to attach the image directly in the chat input instead."
-                )
         return await self.read_image_tool.read_image(path)
 
     async def interact_with_browser(

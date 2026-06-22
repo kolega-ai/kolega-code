@@ -89,33 +89,34 @@ class TestReadImageWrapper:
         collection.read_image_tool.read_image.assert_awaited_once_with("x.png")
 
     @pytest.mark.asyncio
-    async def test_wrapper_chatgpt_provider_returns_string(self, tmp_path):
+    async def test_wrapper_chatgpt_provider_delegates(self, tmp_path):
         collection = ToolCollection.__new__(ToolCollection)
+        expected = [ImageBlock(image_type="base64", media_type="image/png", data="")]
         collection.read_image_tool = Mock()
-        collection.read_image_tool.read_image = AsyncMock()
+        collection.read_image_tool.read_image = AsyncMock(return_value=expected)
         collection.caller = SimpleNamespace(
             primary_model_config=SimpleNamespace(provider="openai_chatgpt")
         )
 
         result = await collection.read_image("img.png")
-        assert isinstance(result, str)
-        assert "ChatGPT Responses backend" in result
-        collection.read_image_tool.read_image.assert_not_awaited()
+        assert result is expected
+        collection.read_image_tool.read_image.assert_awaited_once_with("img.png")
 
     @pytest.mark.asyncio
-    async def test_wrapper_chatgpt_provider_enum_value(self, tmp_path):
+    async def test_wrapper_chatgpt_provider_enum_value_delegates(self, tmp_path):
         from kolega_code.config import ModelProvider
 
         collection = ToolCollection.__new__(ToolCollection)
+        expected = [ImageBlock(image_type="base64", media_type="image/png", data="")]
         collection.read_image_tool = Mock()
-        collection.read_image_tool.read_image = AsyncMock()
+        collection.read_image_tool.read_image = AsyncMock(return_value=expected)
         collection.caller = SimpleNamespace(
             primary_model_config=SimpleNamespace(provider=ModelProvider.OPENAI_CHATGPT)
         )
 
         result = await collection.read_image("img.png")
-        assert isinstance(result, str)
-        collection.read_image_tool.read_image.assert_not_awaited()
+        assert result is expected
+        collection.read_image_tool.read_image.assert_awaited_once_with("img.png")
 
     @pytest.mark.asyncio
     async def test_wrapper_non_chatgpt_provider_delegates(self, tmp_path):
