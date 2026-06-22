@@ -34,6 +34,7 @@ class SessionRecord:
     task_list_markdown: str = ""
     latest_plan_markdown: str = ""
     plan_pending: bool = False
+    plan_reofferable: bool = False
     interaction_mode: str = "build"
     permission_mode: str = "ask"
     schema_version: int = SCHEMA_VERSION
@@ -68,6 +69,8 @@ class SessionRecord:
     def from_dict(cls, data: dict[str, Any]) -> "SessionRecord":
         if data.get("schema_version") != SCHEMA_VERSION:
             raise SessionStoreError(f"Unsupported session schema version: {data.get('schema_version')}")
+        latest_plan_markdown = data.get("latest_plan_markdown") or ""
+        plan_pending = bool(latest_plan_markdown and data.get("plan_pending", False))
         return cls(
             schema_version=data["schema_version"],
             session_id=data["session_id"],
@@ -82,8 +85,9 @@ class SessionRecord:
             history=data.get("history") or [],
             compaction=data.get("compaction") or {},
             task_list_markdown=data.get("task_list_markdown") or "",
-            latest_plan_markdown=data.get("latest_plan_markdown") or "",
-            plan_pending=bool(data.get("plan_pending", False)),
+            latest_plan_markdown=latest_plan_markdown,
+            plan_pending=plan_pending,
+            plan_reofferable=bool(latest_plan_markdown and data.get("plan_reofferable", plan_pending)),
             interaction_mode=data.get("interaction_mode") or "build",
             permission_mode=data.get("permission_mode") or "ask",
         )
@@ -105,6 +109,7 @@ class SessionRecord:
             "task_list_markdown": self.task_list_markdown,
             "latest_plan_markdown": self.latest_plan_markdown,
             "plan_pending": self.plan_pending,
+            "plan_reofferable": self.plan_reofferable,
             "interaction_mode": self.interaction_mode,
             "permission_mode": self.permission_mode,
         }

@@ -20,6 +20,7 @@ def test_session_store_create_load_list_export_delete(tmp_path: Path) -> None:
     record.task_list_markdown = "- [ ] inspect\n- [x] plan"
     record.latest_plan_markdown = "# Plan\n\nImplement it."
     record.plan_pending = True
+    record.plan_reofferable = True
     record.interaction_mode = "plan"
     record.permission_mode = "auto"
     store.save(record)
@@ -30,6 +31,7 @@ def test_session_store_create_load_list_export_delete(tmp_path: Path) -> None:
     assert loaded.task_list_markdown == "- [ ] inspect\n- [x] plan"
     assert loaded.latest_plan_markdown == "# Plan\n\nImplement it."
     assert loaded.plan_pending is True
+    assert loaded.plan_reofferable is True
     assert loaded.interaction_mode == "plan"
     assert loaded.permission_mode == "auto"
     assert store.latest_for_project(project).session_id == record.session_id
@@ -38,6 +40,7 @@ def test_session_store_create_load_list_export_delete(tmp_path: Path) -> None:
     assert "task_list_markdown" in exported
     assert "latest_plan_markdown" in exported
     assert "plan_pending" in exported
+    assert "plan_reofferable" in exported
     assert "interaction_mode" in exported
     assert "permission_mode" in exported
 
@@ -56,6 +59,7 @@ def test_session_store_loads_old_sessions_without_planning_state(tmp_path: Path)
     payload.pop("task_list_markdown")
     payload.pop("latest_plan_markdown")
     payload.pop("plan_pending")
+    payload.pop("plan_reofferable")
     payload.pop("interaction_mode")
     payload.pop("permission_mode")
     store.path_for(record.session_id).write_text(json.dumps(payload), encoding="utf-8")
@@ -65,8 +69,28 @@ def test_session_store_loads_old_sessions_without_planning_state(tmp_path: Path)
     assert loaded.task_list_markdown == ""
     assert loaded.latest_plan_markdown == ""
     assert loaded.plan_pending is False
+    assert loaded.plan_reofferable is False
     assert loaded.interaction_mode == "build"
     assert loaded.permission_mode == "ask"
+
+
+def test_session_store_old_pending_plan_is_reofferable(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    store = SessionStore(tmp_path / "state")
+
+    record = store.create(project, "code", {})
+    payload = record.to_dict()
+    payload["latest_plan_markdown"] = "# Plan\n\nImplement it."
+    payload["plan_pending"] = True
+    payload.pop("plan_reofferable")
+    store.path_for(record.session_id).write_text(json.dumps(payload), encoding="utf-8")
+
+    loaded = store.load(record.session_id)
+
+    assert loaded.latest_plan_markdown == "# Plan\n\nImplement it."
+    assert loaded.plan_pending is True
+    assert loaded.plan_reofferable is True
 
 
 def test_session_store_round_trips_compaction(tmp_path: Path) -> None:

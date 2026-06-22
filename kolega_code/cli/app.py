@@ -1625,7 +1625,10 @@ class KolegaCodeApp(App):
         self._active_progress_entry: Optional[ConversationEntry] = None
         self._turn_active = False
         self._latest_plan: Optional[str] = self.session.latest_plan_markdown or None
-        self._plan_pending: bool = bool(self.session.plan_pending)
+        self._plan_pending: bool = bool(self._latest_plan and self.session.plan_pending)
+        self._plan_reofferable: bool = bool(
+            self._latest_plan and (self.session.plan_reofferable or self._plan_pending)
+        )
         self._plan_decision_active = False
         self._gigacode_enabled = False
         self._pending_question: Optional[PendingQuestion] = None
@@ -1948,7 +1951,8 @@ class KolegaCodeApp(App):
         self.session.interaction_mode = self.interaction_mode
         self.session.permission_mode = self.permission_mode.value
         self.session.latest_plan_markdown = self._latest_plan or ""
-        self.session.plan_pending = self._plan_pending
+        self.session.plan_pending = bool(self._latest_plan and self._plan_pending)
+        self.session.plan_reofferable = bool(self._latest_plan and self._plan_reofferable)
 
     def _save_session(self) -> None:
         self._sync_planning_state_to_session()
@@ -2899,10 +2903,16 @@ class KolegaCodeApp(App):
             return
 
         plan = self.agent.consume_completed_plan()
-        if not plan:
+        if plan:
+            self._latest_plan = plan
+            self._plan_reofferable = True
+            self._show_plan_for_decision(plan, notification=messages.PLAN_CAPTURED)
             return
 
-        self._latest_plan = plan
+        if self._latest_plan and self._plan_reofferable and not self._plan_pending:
+            self._show_plan_for_decision(self._latest_plan, notification=messages.PLAN_REOFFERED)
+
+    def _show_plan_for_decision(self, plan: str, *, notification: str) -> None:
         self._plan_pending = True
         self._plan_decision_active = True
         self._save_session()
@@ -2911,11 +2921,11 @@ class KolegaCodeApp(App):
         self._set_plan_actions_visible(True, allow_discuss=True)
         self._set_composer_status(PLAN_READY_PLACEHOLDER)
         self._set_chat_enabled(False)
-        self._notify_user(messages.PLAN_CAPTURED)
+        self._notify_user(notification)
 
     async def _implement_pending_plan(self, *, clear_context: bool = False) -> None:
         plan = self._latest_plan
-        if not plan or self._turn_active or self.agent_worker is not None:
+        if not plan or not self._plan_pending or self._turn_active or self.agent_worker is not None:
             return
 
         # Leave self._latest_plan set so the planning sidebar keeps showing the
@@ -2923,6 +2933,7 @@ class KolegaCodeApp(App):
         # _plan_pending is what hides the "Implement plan" action so it does not
         # reappear when the user re-enters plan mode.
         self._plan_pending = False
+        self._plan_reofferable = False
         self._plan_decision_active = False
         if clear_context:
             self._clear_agent_context()
@@ -2941,8 +2952,8 @@ class KolegaCodeApp(App):
         if not self._latest_plan:
             return
 
-        self._latest_plan = None
         self._plan_pending = False
+        self._plan_reofferable = True
         self._plan_decision_active = False
         self._save_session()
         self._refresh_planning_sidebar()
@@ -4364,6 +4375,7 @@ class KolegaCodeApp(App):
         self._active_progress_entry = None
         self._latest_plan = None
         self._plan_pending = False
+        self._plan_reofferable = False
         self._plan_decision_active = False
         self._save_session()
         self._set_plan_actions_visible(False)

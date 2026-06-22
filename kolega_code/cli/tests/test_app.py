@@ -1892,18 +1892,44 @@ async def test_textual_app_shows_plan_decision_when_planning_agent_writes_plan(
         assert app.conversation_entries[-1].kind == "plan"
         loaded = store.load(session.session_id)
         assert loaded.latest_plan_markdown == initial_plan
+        assert loaded.plan_reofferable is True
         assert loaded.interaction_mode == "plan"
 
         app._discuss_pending_plan()
 
         assert app._plan_decision_active is False
         assert app._plan_pending is False
-        assert app._latest_plan is None
+        assert app._plan_reofferable is True
+        assert app._latest_plan == initial_plan
         assert app.query_one("#composer", ChatComposer).disabled is False
-        assert app.query_one("#planning_plan_markdown", Markdown).source == "No plan captured yet."
+        assert app.query_one("#planning_plan_markdown", Markdown).source == initial_plan
         assert plan_actions.display is False
         assert plan_actions.option_count == 0
-        assert store.load(session.session_id).latest_plan_markdown == ""
+        loaded = store.load(session.session_id)
+        assert loaded.latest_plan_markdown == initial_plan
+        assert loaded.plan_pending is False
+        assert loaded.plan_reofferable is True
+
+        await app._process_message("keep discussing")
+
+        assert app._plan_decision_active is True
+        assert app._plan_pending is True
+        assert app._latest_plan == initial_plan
+        assert app.query_one("#composer", ChatComposer).disabled is True
+        assert plan_actions.display is True
+        assert [option.id for option in plan_actions.options] == [
+            "implement_plan",
+            "implement_plan_clear",
+            "discuss_plan",
+        ]
+        assert app.conversation_entries[-1].kind == "plan"
+        assert app.conversation_entries[-1].content == initial_plan
+        loaded = store.load(session.session_id)
+        assert loaded.latest_plan_markdown == initial_plan
+        assert loaded.plan_pending is True
+        assert loaded.plan_reofferable is True
+
+        app._discuss_pending_plan()
 
         app.agent.completed_plan = "# Revised plan\n\nBuild planning mode carefully."
         app._capture_completed_plan()
@@ -1922,7 +1948,9 @@ async def test_textual_app_shows_plan_decision_when_planning_agent_writes_plan(
             app.query_one("#planning_plan_markdown", Markdown).source
             == "# Revised plan\n\nBuild planning mode carefully."
         )
-        assert store.load(session.session_id).latest_plan_markdown == "# Revised plan\n\nBuild planning mode carefully."
+        loaded = store.load(session.session_id)
+        assert loaded.latest_plan_markdown == "# Revised plan\n\nBuild planning mode carefully."
+        assert loaded.plan_reofferable is True
 
 
 @pytest.mark.asyncio
@@ -1978,6 +2006,7 @@ async def test_textual_app_implement_plan_switches_to_build_and_sends_plan(
         await app.action_toggle_interaction_mode()
         app._latest_plan = "# Plan\n\nBuild it."
         app._plan_pending = True
+        app._plan_reofferable = True
         app._plan_decision_active = True
 
         await app._implement_pending_plan()
@@ -1992,12 +2021,14 @@ async def test_textual_app_implement_plan_switches_to_build_and_sends_plan(
         # The plan is kept as a read-only sidebar reference, but it is no longer
         # pending a decision so the action must not be re-offered.
         assert app._plan_pending is False
+        assert app._plan_reofferable is False
         assert app._latest_plan == "# Plan\n\nBuild it."
         assert app.query_one("#planning_plan_markdown", Markdown).source == "# Plan\n\nBuild it."
         assert app.query_one("#plan_actions").display is False
         loaded = store.load(session.session_id)
         assert loaded.latest_plan_markdown == "# Plan\n\nBuild it."
         assert loaded.plan_pending is False
+        assert loaded.plan_reofferable is False
         assert loaded.interaction_mode == "build"
 
 
@@ -2053,6 +2084,7 @@ async def test_textual_app_implemented_plan_not_reoffered_on_reentry(
         await app.action_toggle_interaction_mode()
         app._latest_plan = "# Plan\n\nBuild it."
         app._plan_pending = True
+        app._plan_reofferable = True
         app._plan_decision_active = True
 
         # Implement it: switches to build and runs the plan.
@@ -2066,6 +2098,7 @@ async def test_textual_app_implemented_plan_not_reoffered_on_reentry(
         await app._set_interaction_mode(PLAN_INTERACTION_MODE)
 
         assert app._plan_pending is False
+        assert app._plan_reofferable is False
         assert app._latest_plan == "# Plan\n\nBuild it."
         plan_actions = app.query_one("#plan_actions", ActionList)
         assert plan_actions.display is False
@@ -2073,7 +2106,9 @@ async def test_textual_app_implemented_plan_not_reoffered_on_reentry(
         assert app.query_one("#planning_plan_markdown", Markdown).source == "# Plan\n\nBuild it."
 
         # A restart (reloading from the persisted session) must also not re-offer it.
-        assert store.load(session.session_id).plan_pending is False
+        loaded = store.load(session.session_id)
+        assert loaded.plan_pending is False
+        assert loaded.plan_reofferable is False
 
 
 @pytest.mark.asyncio
@@ -2133,6 +2168,8 @@ async def test_textual_app_clear_context_and_implement_plan_starts_build_agent_f
         app.agent.history = ["planning message 1", "planning message 2"]
         prior_entry_count = len(app.conversation_entries)
         app._latest_plan = "# Plan\n\nBuild it."
+        app._plan_pending = True
+        app._plan_reofferable = True
         app._plan_decision_active = True
 
         await app._implement_pending_plan(clear_context=True)
@@ -2150,6 +2187,8 @@ async def test_textual_app_clear_context_and_implement_plan_starts_build_agent_f
         assert "# Plan\n\nBuild it." in app.agent.messages[-1]
         # The plan itself is preserved (sidebar keeps showing it).
         assert app._plan_decision_active is False
+        assert app._plan_pending is False
+        assert app._plan_reofferable is False
         assert app._latest_plan == "# Plan\n\nBuild it."
         assert app.query_one("#planning_plan_markdown", Markdown).source == "# Plan\n\nBuild it."
         assert app.query_one("#plan_actions").display is False
@@ -2163,7 +2202,7 @@ async def test_textual_app_clear_context_and_implement_plan_starts_build_agent_f
 
 
 @pytest.mark.asyncio
-async def test_textual_app_discuss_plan_clears_old_plan_until_new_plan_is_written(
+async def test_textual_app_discuss_plan_preserves_old_plan_until_new_plan_is_written(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     pytest.importorskip("textual")
@@ -2214,21 +2253,30 @@ async def test_textual_app_discuss_plan_clears_old_plan_until_new_plan_is_writte
     async with app.run_test():
         await app.action_toggle_interaction_mode()
         app._latest_plan = "# Plan\n\nBuild it after discussing."
+        app._plan_pending = True
+        app._plan_reofferable = True
         app._plan_decision_active = True
 
         app._discuss_pending_plan()
 
-        assert app._latest_plan is None
+        assert app._latest_plan == "# Plan\n\nBuild it after discussing."
+        assert app._plan_pending is False
+        assert app._plan_reofferable is True
         assert app._plan_decision_active is False
-        assert app.query_one("#planning_plan_markdown", Markdown).source == "No plan captured yet."
+        assert app.query_one("#planning_plan_markdown", Markdown).source == "# Plan\n\nBuild it after discussing."
         assert app.query_one("#plan_actions").display is False
-        assert store.load(session.session_id).latest_plan_markdown == ""
+        loaded = store.load(session.session_id)
+        assert loaded.latest_plan_markdown == "# Plan\n\nBuild it after discussing."
+        assert loaded.plan_pending is False
+        assert loaded.plan_reofferable is True
 
         await app._implement_pending_plan()
         assert app.agent_worker is None
         assert app.interaction_mode == "plan"
 
         app._latest_plan = "# New plan\n\nBuild this instead."
+        app._plan_pending = True
+        app._plan_reofferable = True
         app._plan_decision_active = True
 
         await app._implement_pending_plan()
@@ -2240,9 +2288,12 @@ async def test_textual_app_discuss_plan_clears_old_plan_until_new_plan_is_writte
         assert "# New plan\n\nBuild this instead." in app.agent.messages[-1]
         assert "# Plan\n\nBuild it after discussing." not in app.agent.messages[-1]
         assert app._latest_plan == "# New plan\n\nBuild this instead."
+        assert app._plan_reofferable is False
         assert app.query_one("#planning_plan_markdown", Markdown).source == "# New plan\n\nBuild this instead."
         assert app.query_one("#plan_actions").display is False
-        assert store.load(session.session_id).latest_plan_markdown == "# New plan\n\nBuild this instead."
+        loaded = store.load(session.session_id)
+        assert loaded.latest_plan_markdown == "# New plan\n\nBuild this instead."
+        assert loaded.plan_reofferable is False
 
 
 @pytest.mark.asyncio
@@ -2521,6 +2572,7 @@ async def test_textual_app_reset_command_clears_current_thread(
         assert len(app.agent.history) == 2
         assert any(entry.content == "old request" for entry in app.conversation_entries)
         app._latest_plan = "# Plan\n\nOld plan."
+        app._plan_reofferable = True
         app._plan_decision_active = False
         app._set_plan_actions_visible(True)
         question_future = asyncio.get_running_loop().create_future()
@@ -2540,6 +2592,7 @@ async def test_textual_app_reset_command_clears_current_thread(
         assert app.session.history == []
         assert app.session.task_list_markdown == ""
         assert app._latest_plan is None
+        assert app._plan_reofferable is False
         assert app._plan_decision_active is False
         assert app._pending_question is None
         assert question_future.cancelled()
@@ -2550,6 +2603,7 @@ async def test_textual_app_reset_command_clears_current_thread(
         assert store.load(session.session_id).history == []
         assert store.load(session.session_id).task_list_markdown == ""
         assert store.load(session.session_id).latest_plan_markdown == ""
+        assert store.load(session.session_id).plan_reofferable is False
         assert composer.text == ""
         assert [entry.kind for entry in app.conversation_entries] == ["startup", "progress"]
         assert app.conversation_entries[-1].content == THREAD_RESET_MESSAGE
