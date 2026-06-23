@@ -976,7 +976,9 @@ class KolegaCodeApp(
 
         self.permission_mode = mode
         self.session.permission_mode = mode.value
+        self.settings.permission_mode = mode.value
         await self._save_session_async()
+        await asyncio.to_thread(self.settings_store.save, self.settings)
         if self.agent is not None:
             self.agent.set_permission_mode(mode)
             self.agent.set_permission_callback(self._permission_callback)

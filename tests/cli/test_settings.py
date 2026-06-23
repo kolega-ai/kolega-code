@@ -31,6 +31,7 @@ def test_settings_store_round_trip_and_file_permissions(tmp_path: Path) -> None:
         active_provider=UI_DEFAULT_PROVIDER,
         active_model=UI_DEFAULT_MODEL,
         active_thinking_effort="auto",
+        permission_mode="auto",
     )
     settings.set_api_key(UI_DEFAULT_PROVIDER, "secret-key")
 
@@ -40,6 +41,7 @@ def test_settings_store_round_trip_and_file_permissions(tmp_path: Path) -> None:
     assert loaded.active_provider == UI_DEFAULT_PROVIDER
     assert loaded.active_model == UI_DEFAULT_MODEL
     assert loaded.active_thinking_effort == "auto"
+    assert loaded.permission_mode == "auto"
     assert loaded.get_api_key(UI_DEFAULT_PROVIDER) == "secret-key"
 
     if os.name != "nt":
@@ -52,6 +54,7 @@ def test_settings_store_missing_file_returns_empty_settings(tmp_path: Path) -> N
     assert settings.active_provider is None
     assert settings.active_model is None
     assert settings.active_thinking_effort is None
+    assert settings.permission_mode == "ask"
     assert settings.api_keys == {}
     assert settings.agent_models == {}
 
@@ -249,6 +252,32 @@ def test_oauth_tokens_absent_in_old_file_default_to_empty() -> None:
     )
 
     assert settings.oauth_tokens == {}
+
+
+def test_permission_mode_absent_in_old_file_defaults_to_ask() -> None:
+    settings = CliSettings.from_dict(
+        {
+            "schema_version": 3,
+            "active_provider": UI_DEFAULT_PROVIDER,
+            "active_model": UI_DEFAULT_MODEL,
+            "api_keys": {UI_DEFAULT_PROVIDER: "k"},
+        }
+    )
+
+    assert settings.permission_mode == "ask"
+
+
+def test_invalid_permission_mode_defaults_to_ask() -> None:
+    settings = CliSettings.from_dict(
+        {
+            "schema_version": 3,
+            "active_provider": UI_DEFAULT_PROVIDER,
+            "active_model": UI_DEFAULT_MODEL,
+            "permission_mode": "dangerously-yolo",
+        }
+    )
+
+    assert settings.permission_mode == "ask"
 
 
 def test_web_search_settings_absent_in_old_file_default_to_none() -> None:

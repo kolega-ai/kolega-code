@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+from kolega_code.permissions import PermissionMode
+
 from .session_store import default_state_dir
 
 SETTINGS_SCHEMA_VERSION = 3
@@ -59,6 +61,16 @@ def _coerce_oauth_tokens(raw: object) -> dict[str, dict]:
     return result
 
 
+def _coerce_permission_mode(raw: object) -> str:
+    """Normalize a stored permission mode, falling back safely for old/bad files."""
+    if raw is None:
+        return PermissionMode.ASK.value
+    try:
+        return PermissionMode(str(raw).lower()).value
+    except ValueError:
+        return PermissionMode.ASK.value
+
+
 @dataclass
 class CliSettings:
     active_provider: Optional[str] = None
@@ -83,6 +95,9 @@ class CliSettings:
     # field — absent in older files -> empty mapping, no schema bump (same
     # convention as web_search_backend / active_theme).
     oauth_tokens: dict[str, dict] = field(default_factory=dict)
+    # Global default for new TUI sessions. Resumed sessions keep their own
+    # SessionRecord.permission_mode unless a CLI override is supplied.
+    permission_mode: str = PermissionMode.ASK.value
     schema_version: int = SETTINGS_SCHEMA_VERSION
 
     @classmethod
@@ -109,6 +124,8 @@ class CliSettings:
             web_search_base_url=data.get("web_search_base_url"),
             # Additive optional field; absent in older files -> empty mapping.
             oauth_tokens=_coerce_oauth_tokens(data.get("oauth_tokens")),
+            # Additive optional field; absent in older files -> ask.
+            permission_mode=_coerce_permission_mode(data.get("permission_mode")),
         )
 
     def to_dict(self) -> dict:
@@ -124,6 +141,7 @@ class CliSettings:
             "web_search_backend": self.web_search_backend,
             "web_search_base_url": self.web_search_base_url,
             "oauth_tokens": self.oauth_tokens,
+            "permission_mode": _coerce_permission_mode(self.permission_mode),
         }
 
     def get_api_key(self, provider: str) -> Optional[str]:

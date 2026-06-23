@@ -36,7 +36,7 @@ from .config import (
 from .connection import CliConnectionManager
 from .mentions import build_file_attachments
 from .session_store import SessionRecord, SessionStore, SessionStoreError
-from .settings import SettingsStore, SettingsStoreError
+from .settings import CliSettings, SettingsStore, SettingsStoreError
 from .slash_commands import SKILLS_LIST_COMMAND, agent_command_names
 from .skills import (
     SkillCatalog,
@@ -327,6 +327,32 @@ def _resolve_tui_session(
     return store.create(project_path, CLI_AGENT_MODE, summary)
 
 
+def _safe_permission_mode_value(value: Optional[str]) -> str:
+    try:
+        return normalize_permission_mode(value, default=PermissionMode.ASK).value
+    except ValueError:
+        return PermissionMode.ASK.value
+
+
+def _resolve_tui_permission_mode(
+    session: SessionRecord,
+    settings: CliSettings,
+    requested_permission_mode: Optional[str],
+    *,
+    resumed: bool,
+) -> str:
+    """Resolve the TUI permission mode for this launch.
+
+    Precedence: explicit CLI flag, resumed session value, then global setting for
+    new sessions. Invalid legacy values fall back to ask.
+    """
+    if requested_permission_mode:
+        return normalize_permission_mode(requested_permission_mode, default=PermissionMode.ASK).value
+    if resumed:
+        return _safe_permission_mode_value(session.permission_mode)
+    return _safe_permission_mode_value(settings.permission_mode)
+
+
 def _run_version() -> int:
     result = check_for_update()
     print(f"kolega-code {result.current_version}")
@@ -374,11 +400,14 @@ def _run_tui(args: argparse.Namespace) -> int:
         args.resume,
         args.session,
     )
-    if args.permission_mode:
-        session.permission_mode = normalize_permission_mode(
-            args.permission_mode,
-            default=PermissionMode.ASK,
-        ).value
+    effective_permission_mode = _resolve_tui_permission_mode(
+        session,
+        settings,
+        args.permission_mode,
+        resumed=args.resume is not None or bool(args.session),
+    )
+    if session.permission_mode != effective_permission_mode:
+        session.permission_mode = effective_permission_mode
         store.save(session)
 
     from .app import KolegaCodeApp
@@ -391,7 +420,7 @@ def _run_tui(args: argparse.Namespace) -> int:
         settings_store=settings_store,
         overrides=_overrides_from_args(args),
         session=session,
-        permission_mode=args.permission_mode,
+        permission_mode=effective_permission_mode,
         browser_visible=args.browser_visible,
         check_for_updates=True,
         show_logs=args.show_logs,
