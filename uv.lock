@@ -8,7 +8,7 @@ resolution-markers = [
 
 [options]
 prerelease-mode = "allow"
-exclude-newer = "2026-06-15T18:13:37.213874Z"
+exclude-newer = "2026-06-16T12:51:07.553149Z"
 exclude-newer-span = "P1W"
 
 [[package]]
@@ -1098,7 +1098,7 @@ wheels = [
 
 [[package]]
 name = "kolega-code"
-version = "0.8.1"
+version = "0.8.2"
 source = { editable = "." }
 dependencies = [
     { name = "anthropic" },
