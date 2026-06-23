@@ -113,7 +113,9 @@ class TestPlaywrightBrowserManager:
         browser_manager.browsers[browser_id] = mock_browser_info
 
         result = await browser_manager.get_browser_console_logs(
-            browser_id, max_logs=2, log_types=[]  # Empty list to include all types
+            browser_id,
+            max_logs=2,
+            log_types=[],  # Empty list to include all types
         )
 
         assert result["total_logs_count"] == 6
@@ -133,7 +135,9 @@ class TestPlaywrightBrowserManager:
         browser_manager.browsers[browser_id] = mock_browser_info
 
         result = await browser_manager.get_browser_console_logs(
-            browser_id, minutes_back=5, log_types=[]  # Include all types, filter by time
+            browser_id,
+            minutes_back=5,
+            log_types=[],  # Include all types, filter by time
         )
 
         assert result["total_logs_count"] == 6
@@ -154,7 +158,9 @@ class TestPlaywrightBrowserManager:
 
         # Set a very low character limit to test truncation
         result = await browser_manager.get_browser_console_logs(
-            browser_id, max_chars=50, log_types=[]  # Include all types
+            browser_id,
+            max_chars=50,
+            log_types=[],  # Include all types
         )
 
         assert result["total_logs_count"] == 6
@@ -278,7 +284,8 @@ class TestPlaywrightBrowserManager:
         browser_manager.browsers[browser_id] = mock_browser_info
 
         result = await browser_manager.get_browser_console_logs(
-            browser_id, log_types=[]  # Empty list should include all types
+            browser_id,
+            log_types=[],  # Empty list should include all types
         )
 
         assert result["total_logs_count"] == 6

@@ -44,6 +44,7 @@ ANTHROPIC_CACHE_TEST_MODEL = "claude-sonnet-4-6"
 # Check if running in CI environment
 SKIP_IN_CI = bool(os.getenv("CI")) or bool(os.getenv("GITLAB_CI"))
 
+
 @pytest.fixture
 def real_langfuse_client():
     """Create a real Langfuse client if credentials are available."""

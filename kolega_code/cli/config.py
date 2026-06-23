@@ -154,9 +154,7 @@ def _search_config(
         or DEFAULT_WEB_SEARCH_BACKEND
     )
     env_name = SEARCH_BACKEND_KEY_ENV.get(backend)
-    api_key = (env.get(env_name) if env_name else None) or (
-        settings.get_api_key(backend) if settings else None
-    )
+    api_key = (env.get(env_name) if env_name else None) or (settings.get_api_key(backend) if settings else None)
     base_url = env.get(SEARXNG_BASE_URL_ENV) or (settings.web_search_base_url if settings else None)
     return backend, api_key, base_url
 
@@ -363,9 +361,7 @@ def build_agent_config(
         settings,
     )
     think_hard_effort = (
-        active_thinking_effort
-        if thinking_provider == long_provider and thinking_model == long_model
-        else None
+        active_thinking_effort if thinking_provider == long_provider and thinking_model == long_model else None
     )
 
     agent_model_overrides = _agent_model_overrides(loaded_env, settings, active_provider, active_model)
@@ -387,9 +383,7 @@ def build_agent_config(
 
     chatgpt_tokens = _resolve_chatgpt_tokens(settings)
     if ModelProvider.OPENAI_CHATGPT in required_providers and chatgpt_tokens is None:
-        raise CliConfigError(
-            "Not signed in to ChatGPT. Run /login chatgpt to sign in with your ChatGPT subscription."
-        )
+        raise CliConfigError("Not signed in to ChatGPT. Run /login chatgpt to sign in with your ChatGPT subscription.")
 
     try:
         config = AgentConfig(
@@ -421,9 +415,7 @@ def build_agent_config(
     # Attach a persisting token manager so mid-session refreshes are written back
     # to settings.json (only possible when a store is supplied by the caller).
     if chatgpt_tokens is not None and settings is not None and settings_store is not None:
-        config.attach_chatgpt_token_manager(
-            _build_chatgpt_token_manager(chatgpt_tokens, settings, settings_store)
-        )
+        config.attach_chatgpt_token_manager(_build_chatgpt_token_manager(chatgpt_tokens, settings, settings_store))
     return config
 
 

@@ -93,9 +93,7 @@ async def test_macos_osascript_failure_returns_none(tmp_path, monkeypatch):
     """When osascript returns a non-zero exit and pngpaste is absent, returns None."""
     monkeypatch.setattr(clipboard_image.sys, "platform", "darwin")
     monkeypatch.setattr(clipboard_image.tempfile, "gettempdir", lambda: str(tmp_path))
-    monkeypatch.setattr(
-        clipboard_image.asyncio, "create_subprocess_exec", lambda *a, **k: _make_proc(returncode=1)
-    )
+    monkeypatch.setattr(clipboard_image.asyncio, "create_subprocess_exec", lambda *a, **k: _make_proc(returncode=1))
     monkeypatch.setattr(clipboard_image.shutil, "which", lambda _: None)
 
     result = await read_clipboard_image()

@@ -72,9 +72,7 @@ class SkillCatalog:
         return "\n".join(lines)
 
     def prompt_catalog(self) -> str:
-        catalog_lines = [
-            f"- `{record.name}` ({record.scope}): {record.description}" for record in self.skills.values()
-        ]
+        catalog_lines = [f"- `{record.name}` ({record.scope}): {record.description}" for record in self.skills.values()]
         return build_skill_catalog_prompt("\n".join(catalog_lines))
 
     def activation_content(self, name: str, *, active_names: Optional[set[str]] = None) -> str:

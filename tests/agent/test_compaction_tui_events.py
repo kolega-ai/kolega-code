@@ -92,9 +92,7 @@ def test_app_resume_compaction_entry():
     assert KolegaCodeApp._resume_compaction_entry(app_with({"summary": "", "compacted_through": 3})) is None
     assert KolegaCodeApp._resume_compaction_entry(app_with({"summary": "S", "compacted_through": 0})) is None
 
-    entry = KolegaCodeApp._resume_compaction_entry(
-        app_with({"summary": "RESTORED SUMMARY", "compacted_through": 5})
-    )
+    entry = KolegaCodeApp._resume_compaction_entry(app_with({"summary": "RESTORED SUMMARY", "compacted_through": 5}))
     assert entry is not None
     assert entry.kind == "compaction_summary"
     assert "RESTORED SUMMARY" in entry.content

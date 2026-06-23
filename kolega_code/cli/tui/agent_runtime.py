@@ -35,7 +35,9 @@ class AgentRuntimeMixin:
             async for chunk in stream:
                 if chunk.get("type") == "response":
                     if chunk.get("content"):
-                        self._update_progress(messages.READING_RESPONSE, complete=False, state=tui_state.TurnState.GENERATING)
+                        self._update_progress(
+                            messages.READING_RESPONSE, complete=False, state=tui_state.TurnState.GENERATING
+                        )
                     self._apply_stream_chunk(chunk, kind="assistant")
                     continue
 
@@ -118,7 +120,9 @@ class AgentRuntimeMixin:
             command = str(event.content.get("command") or "")
             self._write_terminal_command(command)
             if command:
-                self._update_activity_progress(messages.RUNNING_TERMINAL_COMMAND, state=tui_state.TurnState.RUNNING_TOOL)
+                self._update_activity_progress(
+                    messages.RUNNING_TERMINAL_COMMAND, state=tui_state.TurnState.RUNNING_TOOL
+                )
         elif event.event_type == "chat_message":
             if event.sub_agent_info:
                 self._render_sub_agent_event(event)

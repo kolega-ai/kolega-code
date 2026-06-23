@@ -119,16 +119,12 @@ class CommandHandlersMixin:
             )
             self._add_vision_mismatch_system_message(context="attachment")
         else:
-            self._show_composer_hint(
-                f"Attached images: {names} (press Enter to send, × to remove)", tone="info"
-            )
+            self._show_composer_hint(f"Attached images: {names} (press Enter to send, × to remove)", tone="info")
 
     async def _command_attach(self, args: str) -> None:
         arg = args.strip()
         if not arg:
-            self._show_composer_hint(
-                "Usage: /attach <path-to-image>  (PNG, JPEG, GIF, WebP, BMP)", tone="warning"
-            )
+            self._show_composer_hint("Usage: /attach <path-to-image>  (PNG, JPEG, GIF, WebP, BMP)", tone="warning")
             return
         from pathlib import Path as _Path
 
@@ -159,9 +155,7 @@ class CommandHandlersMixin:
         names = ", ".join(a.get("path", "image") for a in self._pending_image_attachments)
         count = len(self._pending_image_attachments)
         self._pending_image_attachments.clear()
-        self._show_composer_hint(
-            f"Removed {count} image attachment(s): {names}", tone="info"
-        )
+        self._show_composer_hint(f"Removed {count} image attachment(s): {names}", tone="info")
 
     async def _paste_clipboard_image_worker(self) -> None:
         from kolega_code.cli.clipboard_image import read_clipboard_image
@@ -426,9 +420,7 @@ class CommandHandlersMixin:
                 tui_state.ConversationEntry(kind="system", content=messages.LOGIN_USAGE.format(targets=targets))
             )
         else:
-            self._notify_user(
-                messages.LOGIN_UNKNOWN_TARGET.format(target=target, targets=targets), severity="warning"
-            )
+            self._notify_user(messages.LOGIN_UNKNOWN_TARGET.format(target=target, targets=targets), severity="warning")
 
     async def _login_chatgpt(self) -> None:
         """Start the browser "Sign in with ChatGPT" flow in a background worker.
@@ -440,7 +432,9 @@ class CommandHandlersMixin:
             self._show_composer_hint(messages.BLOCK_STOP_BEFORE_MODEL_SWITCH)
             self._notify_user(messages.BLOCK_STOP_BEFORE_MODEL_SWITCH, severity="warning")
             return
-        self._add_conversation_entry(tui_state.ConversationEntry(kind="system", content=messages.CHATGPT_LOGIN_STARTING))
+        self._add_conversation_entry(
+            tui_state.ConversationEntry(kind="system", content=messages.CHATGPT_LOGIN_STARTING)
+        )
         self.run_worker(self._do_chatgpt_login(), name="chatgpt-login", group="auth", exclusive=True)
 
     def _on_login_url(self, url: str) -> None:
@@ -487,9 +481,7 @@ class CommandHandlersMixin:
                 tui_state.ConversationEntry(kind="system", content=messages.LOGOUT_USAGE.format(targets=targets))
             )
         else:
-            self._notify_user(
-                messages.LOGOUT_UNKNOWN_TARGET.format(target=target, targets=targets), severity="warning"
-            )
+            self._notify_user(messages.LOGOUT_UNKNOWN_TARGET.format(target=target, targets=targets), severity="warning")
 
     def _logout_chatgpt(self) -> None:
         if not self.settings.has_oauth_token(chatgpt_constants.PROVIDER_KEY):
@@ -737,7 +729,9 @@ class CommandHandlersMixin:
         composer.load_text("")
 
         if command_name == "skills":
-            self._add_conversation_entry(tui_state.ConversationEntry(kind="system", content=self.skill_catalog.format_catalog()))
+            self._add_conversation_entry(
+                tui_state.ConversationEntry(kind="system", content=self.skill_catalog.format_catalog())
+            )
             self._log_status(messages.SKILLS_LISTED, "ok")
             return True
 

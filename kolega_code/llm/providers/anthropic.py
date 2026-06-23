@@ -111,13 +111,13 @@ class AnthropicProvider(BaseLLMProvider):
         # honors retry-after and retries 429/5xx/529 + connection errors) is actually used.
         self.async_client = AsyncAnthropic(api_key=api_key, base_url=base_url, max_retries=max_retries)
         self.sync_client = Anthropic(api_key=api_key, base_url=base_url, max_retries=max_retries)
-        
+
         # Anthropic-shaped compatible APIs generally do not expose messages/count_tokens,
         # so local counting is only a preflight context-size estimate for those models.
         # Billing/accounting must use provider response usage metadata instead.
         self.use_local_token_counting = (
             provider_name in {"moonshot", "deepseek", "kimi_coding"}
-            or os.getenv('ANTHROPIC_USE_LOCAL_TOKEN_COUNTING', 'false').lower() == 'true'
+            or os.getenv("ANTHROPIC_USE_LOCAL_TOKEN_COUNTING", "false").lower() == "true"
         )
 
     @property

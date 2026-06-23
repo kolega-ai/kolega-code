@@ -24,11 +24,19 @@ def test_model_specs_expose_provider_specific_thinking_efforts() -> None:
     assert thinking_effort_options("kimi_coding", "kimi-for-coding") == ("auto", "none")
     assert default_thinking_effort("kimi_coding", "kimi-for-coding") == "auto"
     assert thinking_effort_options("fireworks", "accounts/fireworks/models/glm-5p2") == (
-        "none", "low", "medium", "high", "max"
+        "none",
+        "low",
+        "medium",
+        "high",
+        "max",
     )
     assert default_thinking_effort("fireworks", "accounts/fireworks/models/glm-5p2") == "medium"
     assert thinking_effort_options("fireworks", "accounts/fireworks/models/deepseek-v4-pro") == (
-        "none", "low", "medium", "high", "max"
+        "none",
+        "low",
+        "medium",
+        "high",
+        "max",
     )
     assert default_thinking_effort("fireworks", "accounts/fireworks/models/deepseek-v4-pro") == "medium"
 

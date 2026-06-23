@@ -486,8 +486,7 @@ class AgentTool(BaseTool):
         "answer in prose — the `submit_result` call is the only output that is read."
     )
     _STRUCTURED_OUTPUT_NUDGE = (
-        "You have not called `submit_result` yet. Call it now with your result, "
-        "matching the requested schema exactly."
+        "You have not called `submit_result` yet. Call it now with your result, matching the requested schema exactly."
     )
 
     def _structured_output_extension(self, schema: dict, capture: dict):

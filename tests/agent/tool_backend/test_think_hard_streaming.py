@@ -233,7 +233,7 @@ async def test_think_hard_streaming_only_text(think_hard_tool, mock_connection_m
             result = await think_hard_tool.think_hard("Simple question")
 
             # Verify the result format (no thinking section)
-            expected_result = "# Final Analysis\n\n" "Direct response without extended thinking."
+            expected_result = "# Final Analysis\n\nDirect response without extended thinking."
             assert result == expected_result
 
 

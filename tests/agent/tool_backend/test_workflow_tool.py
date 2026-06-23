@@ -121,7 +121,9 @@ async def test_run_workflow_writes_artifacts_and_summary(workflow_tool):
     assert len(journal_lines) == 4
 
     # phase + log + start/end were broadcast as chat_message events.
-    event_types = [c.args[0].content.get("message_type") for c in tool.connection_manager.broadcast_event.call_args_list]
+    event_types = [
+        c.args[0].content.get("message_type") for c in tool.connection_manager.broadcast_event.call_args_list
+    ]
     assert "workflow_phase" in event_types
     assert "workflow_log" in event_types
     assert "workflow_start" in event_types
@@ -222,12 +224,7 @@ async def test_run_workflow_carries_phase_and_label_to_dispatch(workflow_tool):
     stub, calls = _stub_dispatch()
     tool._agent_tool.dispatch_workflow_agent = stub
 
-    script = (
-        'meta = {"name": "p", "description": "d"}\n'
-        'phase("Build")\n'
-        'await agent("go", label="my-label")\n'
-        "return 1\n"
-    )
+    script = 'meta = {"name": "p", "description": "d"}\nphase("Build")\nawait agent("go", label="my-label")\nreturn 1\n'
     await tool.run_workflow(script=script)
     _task, _schema, extra, _artifact_paths, _artifact_metadata = calls[0]
     assert extra["phase"] == "Build"

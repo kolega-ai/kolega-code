@@ -104,7 +104,7 @@ class SandboxFileSystem(FileSystem):
         try:
             result = self.sandbox.commands.run(f"test -e {full_path}")
             return result.exit_code == 0
-        except:
+        except Exception:
             return False
 
     def is_file(self, path: str) -> bool:
@@ -113,7 +113,7 @@ class SandboxFileSystem(FileSystem):
         try:
             result = self.sandbox.commands.run(f"test -f {full_path}")
             return result.exit_code == 0
-        except:
+        except Exception:
             return False
 
     def is_dir(self, path: str) -> bool:
@@ -122,7 +122,7 @@ class SandboxFileSystem(FileSystem):
         try:
             result = self.sandbox.commands.run(f"test -d {full_path}")
             return result.exit_code == 0
-        except:
+        except Exception:
             return False
 
     def stat(self, path: str) -> Dict[str, Any]:
@@ -282,7 +282,7 @@ class SandboxFileSystem(FileSystem):
             else:
                 return []
 
-        except Exception as e:
+        except Exception:
             # If any error occurs, return empty list to match expected behavior
             return []
 
@@ -293,7 +293,7 @@ class SandboxFileSystem(FileSystem):
             # Use file command to detect binary
             result = self.sandbox.commands.run(f"file -b --mime {full_path}")
             return result.exit_code == 0 and "charset=binary" in result.stdout
-        except:
+        except Exception:
             return False
 
     def get_name(self, path: str) -> str:

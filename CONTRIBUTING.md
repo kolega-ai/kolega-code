@@ -29,7 +29,20 @@ environment file only when you need those tests, and never commit real secrets:
 cp .env.example .env
 ```
 
-## Tests
+## Tests and quality checks
+
+Run Ruff linting and formatting checks before opening a pull request:
+
+```bash
+uv run ruff check .
+uv run ruff format --check .
+```
+
+To apply formatting locally:
+
+```bash
+uv run ruff format .
+```
 
 Run the fast test suite before opening a pull request:
 

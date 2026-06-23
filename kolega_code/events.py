@@ -62,7 +62,9 @@ class AgentConnectionManager(abc.ABC):
     """Abstract base class for agent connection managers."""
 
     @abc.abstractmethod
-    async def connect(self, websocket: Any, workspace_id: str, thread_id: str, connection_type: str, user_info=None) -> None:
+    async def connect(
+        self, websocket: Any, workspace_id: str, thread_id: str, connection_type: str, user_info=None
+    ) -> None:
         """
         Connect a client to a specific workspace, thread and connection type.
 
@@ -109,8 +111,6 @@ class AgentConnectionManager(abc.ABC):
         Returns:
             Dictionary with connection counts
         """
-
-
 
 
 class AgentEventEmitter:

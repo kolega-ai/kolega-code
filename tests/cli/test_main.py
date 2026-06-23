@@ -104,9 +104,7 @@ def test_parse_tui_legacy_session_alias() -> None:
 
 
 def test_parse_ask_subcommand() -> None:
-    args = parse_args(
-        ["ask", "hello", "--project", "/tmp/project", "--save", "--json", "--thinking-effort", "high"]
-    )
+    args = parse_args(["ask", "hello", "--project", "/tmp/project", "--save", "--json", "--thinking-effort", "high"])
 
     assert args.command == "ask"
     assert args.prompt == "hello"
@@ -174,9 +172,7 @@ def test_install_script_upgrades_existing_install() -> None:
     assert 'uv tool install --force --upgrade "$PACKAGE_SPEC"' in installer
 
 
-def test_ask_skills_lists_discovered_skills_without_api_key(
-    tmp_path: Path, capsys, isolated_cli_env: None
-) -> None:
+def test_ask_skills_lists_discovered_skills_without_api_key(tmp_path: Path, capsys, isolated_cli_env: None) -> None:
     project = tmp_path / "project"
     project.mkdir()
     write_skill(project)
@@ -189,9 +185,7 @@ def test_ask_skills_lists_discovered_skills_without_api_key(
     assert "Use this demo skill." in output
 
 
-def test_ask_skill_only_prints_activation_without_model_call(
-    tmp_path: Path, capsys, isolated_cli_env: None
-) -> None:
+def test_ask_skill_only_prints_activation_without_model_call(tmp_path: Path, capsys, isolated_cli_env: None) -> None:
     project = tmp_path / "project"
     project.mkdir()
     write_skill(project)

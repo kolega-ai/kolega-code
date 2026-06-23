@@ -281,9 +281,9 @@ async def test_simple_message_comparison(
     print(f"  Threshold: {threshold:.1f}%")
 
     # Assert within threshold
-    assert (
-        diff_pct <= threshold
-    ), f"Difference {diff_pct:.2f}% exceeds {threshold:.1f}% threshold (local={local_result.input_tokens}, api={api_count})"
+    assert diff_pct <= threshold, (
+        f"Difference {diff_pct:.2f}% exceeds {threshold:.1f}% threshold (local={local_result.input_tokens}, api={api_count})"
+    )
 
 
 @pytest.mark.slow
@@ -325,9 +325,9 @@ async def test_with_real_system_prompt(
     print(f"  Threshold: {threshold:.1f}%")
 
     # Assert within threshold (realistic context size)
-    assert (
-        diff_pct <= threshold
-    ), f"Difference {diff_pct:.2f}% exceeds {threshold:.1f}% threshold (local={local_result.input_tokens}, api={api_count})"
+    assert diff_pct <= threshold, (
+        f"Difference {diff_pct:.2f}% exceeds {threshold:.1f}% threshold (local={local_result.input_tokens}, api={api_count})"
+    )
 
 
 @pytest.mark.slow
@@ -372,9 +372,9 @@ async def test_with_tools(
     print(f"  Threshold: {threshold:.1f}%")
 
     # Assert within threshold (realistic context with tools)
-    assert (
-        diff_pct <= threshold
-    ), f"Difference {diff_pct:.2f}% exceeds {threshold:.1f}% threshold (local={local_result.input_tokens}, api={api_count})"
+    assert diff_pct <= threshold, (
+        f"Difference {diff_pct:.2f}% exceeds {threshold:.1f}% threshold (local={local_result.input_tokens}, api={api_count})"
+    )
 
 
 @pytest.mark.slow
@@ -417,9 +417,9 @@ async def test_with_complex_conversation(
     print(f"  Threshold: {threshold:.1f}%")
 
     # Assert within threshold
-    assert (
-        diff_pct <= threshold
-    ), f"Difference {diff_pct:.2f}% exceeds {threshold:.1f}% threshold (local={local_result.input_tokens}, api={api_count})"
+    assert diff_pct <= threshold, (
+        f"Difference {diff_pct:.2f}% exceeds {threshold:.1f}% threshold (local={local_result.input_tokens}, api={api_count})"
+    )
 
 
 @pytest.mark.slow
@@ -489,9 +489,9 @@ async def test_with_images(
     # - OpenAI has complex image token calculation based on detail level
     # - This tiny 1x1 test image is an edge case
     image_threshold = 100.0
-    assert (
-        diff_pct <= image_threshold
-    ), f"Difference {diff_pct:.2f}% exceeds {image_threshold:.1f}% threshold for images (local={local_result.input_tokens}, api={api_count})"
+    assert diff_pct <= image_threshold, (
+        f"Difference {diff_pct:.2f}% exceeds {image_threshold:.1f}% threshold for images (local={local_result.input_tokens}, api={api_count})"
+    )
 
 
 @pytest.mark.slow
@@ -535,9 +535,9 @@ async def test_with_tool_calls(
     print(f"  Threshold: {threshold:.1f}%")
 
     # Assert within threshold (tool calls have higher variance)
-    assert (
-        diff_pct <= threshold
-    ), f"Difference {diff_pct:.2f}% exceeds {threshold:.1f}% threshold (local={local_result.input_tokens}, api={api_count})"
+    assert diff_pct <= threshold, (
+        f"Difference {diff_pct:.2f}% exceeds {threshold:.1f}% threshold (local={local_result.input_tokens}, api={api_count})"
+    )
 
 
 @pytest.mark.slow
@@ -583,9 +583,9 @@ async def test_full_agent_context(
     print(f"  Threshold: {threshold:.1f}%")
 
     # Assert within threshold (realistic full agent context)
-    assert (
-        diff_pct <= threshold
-    ), f"Difference {diff_pct:.2f}% exceeds {threshold:.1f}% threshold (local={local_result.input_tokens}, api={api_count})"
+    assert diff_pct <= threshold, (
+        f"Difference {diff_pct:.2f}% exceeds {threshold:.1f}% threshold (local={local_result.input_tokens}, api={api_count})"
+    )
 
 
 @pytest.mark.slow
@@ -664,7 +664,7 @@ async def test_accuracy_threshold_summary(
     print("\n" + "=" * 80)
     print("Token Counting Accuracy Summary (OpenAI)")
     print("=" * 80)
-    print(f'{"Scenario":<20} {"Local":<10} {"API":<10} {"Diff %":<10} {"Status":<10}')
+    print(f"{'Scenario':<20} {'Local':<10} {'API':<10} {'Diff %':<10} {'Status':<10}")
     print("-" * 80)
 
     all_within_threshold = True

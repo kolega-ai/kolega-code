@@ -79,9 +79,7 @@ class TestBaseAgent:
         assert base_agent.max_iterations is None
 
     @pytest.mark.parametrize("max_iterations", [0, -1])
-    def test_invalid_max_iterations_rejected(
-        self, tmp_path, mock_connection_manager, agent_config, max_iterations
-    ):
+    def test_invalid_max_iterations_rejected(self, tmp_path, mock_connection_manager, agent_config, max_iterations):
         with pytest.raises(ValueError, match="max_iterations must be a positive integer or None"):
             BaseAgent(
                 project_path=tmp_path,
@@ -229,9 +227,12 @@ class TestBaseAgent:
         async def fake_sleep(delay):
             sleeps.append(delay)
 
-        with patch("kolega_code.agent.baseagent.asyncio.sleep", side_effect=fake_sleep), patch(
-            "kolega_code.agent.baseagent.map_to_llm_error",
-            return_value=LLMRateLimitError("429", provider=ModelProvider.ANTHROPIC.value),
+        with (
+            patch("kolega_code.agent.baseagent.asyncio.sleep", side_effect=fake_sleep),
+            patch(
+                "kolega_code.agent.baseagent.map_to_llm_error",
+                return_value=LLMRateLimitError("429", provider=ModelProvider.ANTHROPIC.value),
+            ),
         ):
             await base_agent.handle_llm_error(raw)
 

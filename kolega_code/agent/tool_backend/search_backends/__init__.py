@@ -25,8 +25,7 @@ from .tavily import TavilyBackend
 DEFAULT_BACKEND = "duckduckgo"
 
 _BACKENDS: Dict[str, Type[SearchBackend]] = {
-    backend.name: backend
-    for backend in (DuckDuckGoBackend, FirecrawlBackend, TavilyBackend, SearxngBackend)
+    backend.name: backend for backend in (DuckDuckGoBackend, FirecrawlBackend, TavilyBackend, SearxngBackend)
 }
 
 
@@ -37,9 +36,7 @@ def backend_names() -> List[str]:
 
 def available_backends() -> List[Tuple[str, str]]:
     """``(label, name)`` pairs for the TUI Select, with the default backend first."""
-    ordered = [_BACKENDS[DEFAULT_BACKEND]] + [
-        backend for name, backend in _BACKENDS.items() if name != DEFAULT_BACKEND
-    ]
+    ordered = [_BACKENDS[DEFAULT_BACKEND]] + [backend for name, backend in _BACKENDS.items() if name != DEFAULT_BACKEND]
     return [(backend.label, backend.name) for backend in ordered]
 
 

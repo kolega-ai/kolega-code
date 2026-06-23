@@ -111,7 +111,9 @@ class LocalSandboxManager(SandboxManager):
         # Just return the same ID
         return sandbox_id
 
-    async def sync_sandbox_env_vars(self, sandbox_id: str, workspace_id: str, sandbox: Optional[Any] = None, skip_integration_env_sync: bool = False) -> None:
+    async def sync_sandbox_env_vars(
+        self, sandbox_id: str, workspace_id: str, sandbox: Optional[Any] = None, skip_integration_env_sync: bool = False
+    ) -> None:
         """Sync environment variables (no-op in local mode)."""
         # In local mode, environment variables are managed by the local system
         # No need to sync to a sandbox profile

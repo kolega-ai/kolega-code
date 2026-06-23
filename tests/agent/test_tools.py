@@ -31,7 +31,10 @@ def agent_config() -> AgentConfig:
         ),
         fast_config=ModelConfig(provider=ModelProvider.ANTHROPIC, model="test-model", rate_limits=RateLimitConfig()),
         thinking_config=ModelConfig(
-            provider=ModelProvider.ANTHROPIC, model="test-model", rate_limits=RateLimitConfig(), thinking_effort="medium"
+            provider=ModelProvider.ANTHROPIC,
+            model="test-model",
+            rate_limits=RateLimitConfig(),
+            thinking_effort="medium",
         ),
     )
 
@@ -171,7 +174,12 @@ class TestToolCollection:
         sandbox_fs = Mock()
         sandbox_fs.validate_root = Mock(return_value=None)
         tool_collection = ToolCollection(
-            file_path, "test_workspace", str(uuid.uuid4()), mock_connection_manager, agent_config, mock_base_agent,
+            file_path,
+            "test_workspace",
+            str(uuid.uuid4()),
+            mock_connection_manager,
+            agent_config,
+            mock_base_agent,
             filesystem=sandbox_fs,
         )
         sandbox_fs.validate_root.assert_called_once()
@@ -365,10 +373,9 @@ class TestToolCollection:
         result = await memory_tool.write_memory("New memory")
 
         assert result == "Successfully added new memory to AGENT_MEMORY.md"
-        assert (
-            (project_path / "AGENT_MEMORY.md").read_text(encoding="utf-8")
-            == "# Agent Memory\n\n- Existing memory\n- New memory\n"
-        )
+        assert (project_path / "AGENT_MEMORY.md").read_text(
+            encoding="utf-8"
+        ) == "# Agent Memory\n\n- Existing memory\n- New memory\n"
 
     async def test_memory_tool_read_missing_agent_memory_file(
         self,

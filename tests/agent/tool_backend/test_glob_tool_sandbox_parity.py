@@ -21,7 +21,10 @@ def agent_config():
         ),
         fast_config=ModelConfig(provider=ModelProvider.ANTHROPIC, model="test-model", rate_limits=RateLimitConfig()),
         thinking_config=ModelConfig(
-            provider=ModelProvider.ANTHROPIC, model="test-model", rate_limits=RateLimitConfig(), thinking_effort="medium"
+            provider=ModelProvider.ANTHROPIC,
+            model="test-model",
+            rate_limits=RateLimitConfig(),
+            thinking_effort="medium",
         ),
     )
 
@@ -213,9 +216,9 @@ async def test_glob_tool_local_vs_sandbox_parity(
         # Normalize outcome parity
         local_has = "# Files Matching" in local_res
         sandbox_has = "# Files Matching" in sandbox_res
-        assert (
-            local_has == sandbox_has
-        ), f"Mismatch in results presence for pattern {pat}:\nlocal={local_res}\nsandbox={sandbox_res}"
+        assert local_has == sandbox_has, (
+            f"Mismatch in results presence for pattern {pat}:\nlocal={local_res}\nsandbox={sandbox_res}"
+        )
 
         # Compare presence of key filenames
         for fname in ["main.py", "utils.py", "test_main.py", "README.md"]:

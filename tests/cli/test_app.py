@@ -146,9 +146,7 @@ async def test_textual_app_mounts_with_fake_agent(tmp_path: Path, monkeypatch: p
 
 
 @pytest.mark.asyncio
-async def test_textual_app_status_tab_is_default_dashboard(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_textual_app_status_tab_is_default_dashboard(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
 
     from textual.widgets import Static, TabbedContent
@@ -260,9 +258,7 @@ async def test_settings_tab_grouped_into_model_and_appearance_sections(
 
 
 @pytest.mark.asyncio
-async def test_web_search_settings_section_reveal_and_save(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_web_search_settings_section_reveal_and_save(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
 
     from textual.widgets import Input, Select
@@ -545,9 +541,7 @@ async def test_textual_app_mode_switch_rebuild_skips_transcript_restore(
 
 
 @pytest.mark.asyncio
-async def test_textual_app_startup_entry_updates_incrementally(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_textual_app_startup_entry_updates_incrementally(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
 
     from kolega_code.cli.app import KolegaCodeApp
@@ -676,9 +670,7 @@ async def test_textual_app_mode_switch_preserves_transcript_entries(
 
 
 @pytest.mark.asyncio
-async def test_textual_app_turn_status_formats_error_duration(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_textual_app_turn_status_formats_error_duration(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
 
     from textual.widgets import Static
@@ -739,9 +731,7 @@ def test_turn_state_styles_do_not_depend_on_content_text() -> None:
 
 
 @pytest.mark.asyncio
-async def test_progress_entry_tone_drives_styling_not_prose(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_progress_entry_tone_drives_styling_not_prose(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
 
     from kolega_code.cli import theme
@@ -797,9 +787,7 @@ async def test_progress_entry_tone_drives_styling_not_prose(
 
 
 @pytest.mark.asyncio
-async def test_textual_app_keeps_command_c_for_screen_copy(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_textual_app_keeps_command_c_for_screen_copy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
 
     from kolega_code.cli.app import KolegaCodeApp
@@ -931,9 +919,7 @@ async def test_textual_app_shift_tab_toggles_between_build_and_plan_agents(
 
 
 @pytest.mark.asyncio
-async def test_textual_app_ctrl_p_toggles_permission_mode(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_textual_app_ctrl_p_toggles_permission_mode(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
 
     from textual.widgets import Static
@@ -1179,7 +1165,7 @@ async def test_textual_app_long_permission_command_keeps_approval_actions_visibl
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
 
     async with app.run_test(size=(100, 40)) as pilot:
-        long_command = "python -c \"" + "print('approval layout') ; " * 80 + "\""
+        long_command = 'python -c "' + "print('approval layout') ; " * 80 + '"'
         request = permission_request_for_tool("exec_command", {"command": long_command})
         assert request is not None
         future: asyncio.Future[PermissionDecision] = asyncio.get_running_loop().create_future()
@@ -1768,9 +1754,9 @@ async def test_textual_app_planning_question_tool_accepts_option_list_answer(
 
     async with app.run_test() as pilot:
         await app.action_toggle_interaction_mode()
-        ask_user_choice = extension_by_name(
-            app.agent.kwargs["tool_extensions"], "cli-planning-questions"
-        ).tools["ask_user_choice"]
+        ask_user_choice = extension_by_name(app.agent.kwargs["tool_extensions"], "cli-planning-questions").tools[
+            "ask_user_choice"
+        ]
 
         app._turn_active = True
         answer_task = asyncio.create_task(
@@ -1857,9 +1843,9 @@ async def test_textual_app_planning_question_supports_arrow_and_digit_selection(
 
     async with app.run_test() as pilot:
         await app.action_toggle_interaction_mode()
-        ask_user_choice = extension_by_name(
-            app.agent.kwargs["tool_extensions"], "cli-planning-questions"
-        ).tools["ask_user_choice"]
+        ask_user_choice = extension_by_name(app.agent.kwargs["tool_extensions"], "cli-planning-questions").tools[
+            "ask_user_choice"
+        ]
 
         options = ["Alpha", "Beta", "Gamma", "Delta"]
         answer_task = asyncio.create_task(
@@ -1932,14 +1918,12 @@ async def test_textual_app_planning_question_tool_accepts_custom_text_answer(
 
     async with app.run_test() as pilot:
         await app.action_toggle_interaction_mode()
-        ask_user_choice = extension_by_name(
-            app.agent.kwargs["tool_extensions"], "cli-planning-questions"
-        ).tools["ask_user_choice"]
+        ask_user_choice = extension_by_name(app.agent.kwargs["tool_extensions"], "cli-planning-questions").tools[
+            "ask_user_choice"
+        ]
 
         answer_task = asyncio.create_task(
-            ask_user_choice(
-                questions=question_payload("Which scope?", ["Small fix", "Full workflow"], header="Scope")
-            )
+            ask_user_choice(questions=question_payload("Which scope?", ["Small fix", "Full workflow"], header="Scope"))
         )
         await pilot.pause()
 
@@ -2006,9 +1990,9 @@ async def test_textual_app_planning_question_tool_asks_multiple_questions_sequen
 
     async with app.run_test() as pilot:
         await app.action_toggle_interaction_mode()
-        ask_user_choice = extension_by_name(
-            app.agent.kwargs["tool_extensions"], "cli-planning-questions"
-        ).tools["ask_user_choice"]
+        ask_user_choice = extension_by_name(app.agent.kwargs["tool_extensions"], "cli-planning-questions").tools[
+            "ask_user_choice"
+        ]
 
         questions = question_payload("First?", ["A1", "B1"], header="First") + question_payload(
             "Second?", ["A2", "B2"], header="Second"
@@ -2079,9 +2063,9 @@ async def test_textual_app_planning_question_tool_rejects_malformed_input(
 
     async with app.run_test():
         await app.action_toggle_interaction_mode()
-        ask_user_choice = extension_by_name(
-            app.agent.kwargs["tool_extensions"], "cli-planning-questions"
-        ).tools["ask_user_choice"]
+        ask_user_choice = extension_by_name(app.agent.kwargs["tool_extensions"], "cli-planning-questions").tools[
+            "ask_user_choice"
+        ]
 
         # Empty / non-list questions.
         with pytest.raises(ToolError):
@@ -2204,8 +2188,7 @@ async def test_textual_app_shows_plan_decision_when_planning_agent_writes_plan(
         def __init__(self, **kwargs):
             super().__init__(**kwargs)
             self.completed_plan = "# Plan\n\n" + "\n".join(
-                f"- Step {index}: keep the planning sidebar readable."
-                for index in range(1, 26)
+                f"- Step {index}: keep the planning sidebar readable." for index in range(1, 26)
             )
 
         async def process_message_stream(self, message):
@@ -2235,7 +2218,10 @@ async def test_textual_app_shows_plan_decision_when_planning_agent_writes_plan(
         assert app._plan_pending is True
         assert app._latest_plan == initial_plan
         assert app.query_one("#composer", ChatComposer).disabled is True
-        assert app.query_one("#composer", ChatComposer).placeholder == "Plan ready. Choose Implement plan or Discuss further."
+        assert (
+            app.query_one("#composer", ChatComposer).placeholder
+            == "Plan ready. Choose Implement plan or Discuss further."
+        )
         plan_actions = app.query_one("#plan_actions", ActionList)
         assert plan_actions.display is True
         assert [option.id for option in plan_actions.options] == [
@@ -2698,9 +2684,7 @@ async def test_textual_app_does_not_save_startup_entry_to_history(
 
 
 @pytest.mark.asyncio
-async def test_textual_app_history_save_runs_off_event_loop(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_textual_app_history_save_runs_off_event_loop(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
 
     from kolega_code.cli.app import KolegaCodeApp
@@ -2933,9 +2917,7 @@ async def test_textual_app_composer_ctrl_enter_still_inserts_line_break(
 
 
 @pytest.mark.asyncio
-async def test_textual_app_composer_preserves_multiline_paste(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_textual_app_composer_preserves_multiline_paste(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
 
     from textual import events
@@ -3093,9 +3075,7 @@ async def test_textual_app_reset_command_clears_current_thread(
 
 
 @pytest.mark.asyncio
-async def test_textual_app_reset_command_waits_for_active_turn(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_textual_app_reset_command_waits_for_active_turn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
 
     from textual.widgets import Static
@@ -3478,9 +3458,7 @@ async def test_textual_app_saves_deepseek_settings_and_builds_agent(
 
 
 @pytest.mark.asyncio
-async def test_textual_app_merges_streamed_response_chunks(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_textual_app_merges_streamed_response_chunks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
 
     from kolega_code.cli.app import KolegaCodeApp
@@ -3537,9 +3515,7 @@ async def test_textual_app_merges_streamed_response_chunks(
 
 
 @pytest.mark.asyncio
-async def test_textual_app_merges_streamed_thinking_chunks(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_textual_app_merges_streamed_thinking_chunks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
 
     from kolega_code.cli.app import KolegaCodeApp
@@ -3642,9 +3618,7 @@ async def test_textual_app_formats_thinking_as_italic_chat_entry(
 
 
 @pytest.mark.asyncio
-async def test_textual_app_renders_one_widget_per_chat_entry(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_textual_app_renders_one_widget_per_chat_entry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
 
     from kolega_code.cli.app import KolegaCodeApp
@@ -3756,9 +3730,7 @@ async def test_conversation_render_skips_detached_view_during_teardown(
         # Queue a new entry so a flush would reach view.mount(...), then simulate the
         # exit-time race by detaching the view (is_attached False) without removing it
         # from the DOM, so query_one still resolves it.
-        app.conversation_entries.append(
-            ConversationEntry(kind="assistant", content="late", complete=False)
-        )
+        app.conversation_entries.append(ConversationEntry(kind="assistant", content="late", complete=False))
         app._render_pending = True
         ConversationView.is_attached = property(lambda self: False)
         try:
@@ -3772,9 +3744,7 @@ async def test_conversation_render_skips_detached_view_during_teardown(
 
 
 @pytest.mark.asyncio
-async def test_conversation_flush_uses_dirty_entry_fast_path(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_conversation_flush_uses_dirty_entry_fast_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
 
     from kolega_code.cli.tui.state import ConversationEntry
@@ -3783,9 +3753,7 @@ async def test_conversation_flush_uses_dirty_entry_fast_path(
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
 
     async with app.run_test() as pilot:
-        app.conversation_entries = [
-            ConversationEntry(kind="user", content=f"message {index}") for index in range(50)
-        ]
+        app.conversation_entries = [ConversationEntry(kind="user", content=f"message {index}") for index in range(50)]
         app._render_conversation()
         await pilot.pause()
 
@@ -3810,9 +3778,7 @@ async def test_conversation_flush_uses_dirty_entry_fast_path(
 
 
 @pytest.mark.asyncio
-async def test_repeated_progress_updates_refresh_status_once(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_repeated_progress_updates_refresh_status_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
 
     from kolega_code.cli.tui.state import TurnState
@@ -4092,9 +4058,7 @@ async def test_conversation_entry_selection_preserves_text_foreground(
                 app.screen.selections = {}
                 plain_strip = widget.render_line(1)
                 plain_colors = {
-                    segment.style.color
-                    for segment in plain_strip
-                    if segment.text and segment.style is not None
+                    segment.style.color for segment in plain_strip if segment.text and segment.style is not None
                 }
                 assert plain_colors, f"expected colored content on line 1 for {theme_name}"
 
@@ -4107,9 +4071,7 @@ async def test_conversation_entry_selection_preserves_text_foreground(
                 highlighted = [
                     segment
                     for segment in selected_strip
-                    if segment.text
-                    and segment.style is not None
-                    and segment.style.bgcolor == selection_bg
+                    if segment.text and segment.style is not None and segment.style.bgcolor == selection_bg
                 ]
                 assert highlighted, f"expected highlighted segments for {theme_name}"
 
@@ -4117,9 +4079,7 @@ async def test_conversation_entry_selection_preserves_text_foreground(
                 # keeps its original foreground (one seen unselected) and never the
                 # transparent selection foreground.
                 for segment in highlighted:
-                    assert segment.style.color in plain_colors, (
-                        f"selection wiped the text foreground for {theme_name}"
-                    )
+                    assert segment.style.color in plain_colors, f"selection wiped the text foreground for {theme_name}"
                     if selection_style.color is not None:
                         assert segment.style.color != selection_style.color, (
                             f"selection foreground overrode text color for {theme_name}"
@@ -4162,9 +4122,7 @@ async def test_conversation_selection_can_start_in_blank_separator(
 
 
 @pytest.mark.asyncio
-async def test_conversation_selection_can_start_after_line_end(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_conversation_selection_can_start_after_line_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
 
     from textual import events
@@ -4194,9 +4152,7 @@ async def test_conversation_selection_can_start_after_line_end(
 
 
 @pytest.mark.asyncio
-async def test_conversation_selection_spans_multiple_messages(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_conversation_selection_spans_multiple_messages(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
 
     from textual import events
@@ -4277,9 +4233,7 @@ async def test_collapsed_tool_title_supports_drag_selection_and_toggle(
 
 
 @pytest.mark.asyncio
-async def test_expanded_tool_body_line_start_selection_copies(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_expanded_tool_body_line_start_selection_copies(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
 
     from textual import events
@@ -4393,9 +4347,7 @@ async def test_command_c_copies_selected_chat_text_to_macos_clipboard(
 
 
 @pytest.mark.asyncio
-async def test_textual_app_formats_agent_and_tool_chat_entries(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_textual_app_formats_agent_and_tool_chat_entries(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
 
     from kolega_code.cli.app import KolegaCodeApp
@@ -4430,9 +4382,7 @@ async def test_textual_app_formats_agent_and_tool_chat_entries(
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
 
     async with app.run_test():
-        assistant = app._format_conversation_entry(
-            ConversationEntry(kind="assistant", content="hello", complete=False)
-        )
+        assistant = app._format_conversation_entry(ConversationEntry(kind="assistant", content="hello", complete=False))
         tool_call = app._format_conversation_entry(
             ConversationEntry(
                 kind="tool_call",
@@ -4904,7 +4854,9 @@ async def test_textual_app_caps_long_append_mode_tool_streaming_events(
 
         tool_entries = [entry for entry in app.conversation_entries if entry.kind.startswith("tool")]
         assert len(tool_entries) == 1
-        assert tool_entries[0].content.startswith(f"[stream truncated to the last {TOOL_STREAM_PREVIEW_CHARS} characters]")
+        assert tool_entries[0].content.startswith(
+            f"[stream truncated to the last {TOOL_STREAM_PREVIEW_CHARS} characters]"
+        )
         assert tool_entries[0].content.endswith("a" * TOOL_STREAM_PREVIEW_CHARS)
 
 
@@ -5099,9 +5051,7 @@ async def test_textual_app_late_tool_result_updates_existing_tool_row(
 
 
 @pytest.mark.asyncio
-async def test_textual_app_cancellation_is_visible_in_chat(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_textual_app_cancellation_is_visible_in_chat(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
 
     from textual.widgets import Static
@@ -5350,9 +5300,7 @@ async def test_textual_app_reraises_non_llm_error(tmp_path: Path, monkeypatch: p
 
 
 @pytest.mark.asyncio
-async def test_textual_app_renders_resumed_history_in_chat(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_textual_app_renders_resumed_history_in_chat(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
 
     from kolega_code.cli.app import KolegaCodeApp
@@ -5517,9 +5465,7 @@ async def test_textual_app_restore_tool_history_matches_legacy_and_execution_ids
     ).to_dict()
     orphan_result = Message(
         role="user",
-        content=[
-            ToolResult(tool_use_id="provider-orphan", content="orphan failed", name="write_file", is_error=True)
-        ],
+        content=[ToolResult(tool_use_id="provider-orphan", content="orphan failed", name="write_file", is_error=True)],
     ).to_dict()
     session.history = [legacy_call, legacy_result, execution_call, execution_result, pending_call, orphan_result]
 
@@ -5797,9 +5743,7 @@ async def test_sub_agent_status_update_routes_to_card_not_main_activity(
 
 
 @pytest.mark.asyncio
-async def test_sub_agent_stream_chunks_group_into_single_entry(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_sub_agent_stream_chunks_group_into_single_entry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
 
     async with app.run_test():
@@ -5816,14 +5760,14 @@ async def test_sub_agent_stream_chunks_group_into_single_entry(
 
 
 @pytest.mark.asyncio
-async def test_parallel_sub_agents_create_separate_entries(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_parallel_sub_agents_create_separate_entries(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
 
     async with app.run_test():
         app._render_event(_sub_agent_event(agent_id="a1", task="task one", uuid="u1", text="alpha"))
-        app._render_event(_sub_agent_event(agent_id="a2", task="task two", parent_tool_call_id="tc-2", uuid="u2", text="beta"))
+        app._render_event(
+            _sub_agent_event(agent_id="a2", task="task two", parent_tool_call_id="tc-2", uuid="u2", text="beta")
+        )
         app._render_event(_sub_agent_event(agent_id="a1", task="task one", uuid="u1", text=" more"))
 
         entries = _sub_agent_entries(app)
@@ -5841,7 +5785,9 @@ async def test_sub_agent_tool_events_update_counters_not_top_level(
 
     async with app.run_test():
         app._render_event(
-            _sub_agent_event(message_type="tool_call", text="Calling search_codebase", tool_description="search_codebase")
+            _sub_agent_event(
+                message_type="tool_call", text="Calling search_codebase", tool_description="search_codebase"
+            )
         )
         app._render_event(
             _sub_agent_event(message_type="tool_result", text="found things", tool_description="search_codebase")
@@ -5901,7 +5847,9 @@ async def test_activity_strip_running_sub_agents(tmp_path: Path, monkeypatch: py
         assert app._status_state.turn_state == "Running sub-agents"
 
         app._render_event(_sub_agent_event(agent_id="a1", status="STOPPED", message="Completed"))
-        app._render_event(_sub_agent_event(agent_id="a2", parent_tool_call_id="tc-2", status="STOPPED", message="Completed"))
+        app._render_event(
+            _sub_agent_event(agent_id="a2", parent_tool_call_id="tc-2", status="STOPPED", message="Completed")
+        )
         assert app._status_state.activity == "Working…"
 
 
@@ -6003,9 +5951,7 @@ async def test_thread_reset_clears_sub_agent_state(tmp_path: Path, monkeypatch: 
 
 
 @pytest.mark.asyncio
-async def test_sub_agent_steps_capture_full_trajectory(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_sub_agent_steps_capture_full_trajectory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
 
     async with app.run_test():
@@ -6045,9 +5991,7 @@ async def test_sub_agent_steps_capture_full_trajectory(
 
 
 @pytest.mark.asyncio
-async def test_sub_agent_completion_event_records_tokens(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_sub_agent_completion_event_records_tokens(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
 
     async with app.run_test():
@@ -6060,18 +6004,14 @@ async def test_sub_agent_completion_event_records_tokens(
 
 
 @pytest.mark.asyncio
-async def test_open_sub_agent_inspector_renders_trajectory(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_open_sub_agent_inspector_renders_trajectory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from kolega_code.cli.tui.sub_agent_screen import SubAgentInspectorScreen
 
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
 
     async with app.run_test() as pilot:
         app._render_event(
-            _sub_agent_event(
-                message_type="tool_call", text="Reading", tool_description="read_file", tool_call_id="t1"
-            )
+            _sub_agent_event(message_type="tool_call", text="Reading", tool_description="read_file", tool_call_id="t1")
         )
         app._render_event(_sub_agent_event(uuid="r1", text="some response"))
 
@@ -6093,9 +6033,7 @@ async def test_open_sub_agent_inspector_renders_trajectory(
 
 
 @pytest.mark.asyncio
-async def test_sub_agent_inspector_switches_agents(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_sub_agent_inspector_switches_agents(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
 
     async with app.run_test() as pilot:
@@ -6142,9 +6080,7 @@ async def test_sub_agent_inspector_escape_closes_without_cancelling(
 
 
 @pytest.mark.asyncio
-async def test_open_sub_agent_inspector_empty_notifies(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_open_sub_agent_inspector_empty_notifies(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
 
     async with app.run_test():
@@ -6160,14 +6096,14 @@ async def test_open_sub_agent_inspector_empty_notifies(
 
 
 @pytest.mark.asyncio
-async def test_sub_agent_tool_error_step_captured(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_sub_agent_tool_error_step_captured(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
 
     async with app.run_test():
         app._render_event(
-            _sub_agent_event(message_type="tool_call", text="Running", tool_description="run_command", tool_call_id="t1")
+            _sub_agent_event(
+                message_type="tool_call", text="Running", tool_description="run_command", tool_call_id="t1"
+            )
         )
         app._render_event(
             _sub_agent_event(
@@ -6185,9 +6121,7 @@ async def test_sub_agent_tool_error_step_captured(
 
 
 @pytest.mark.asyncio
-async def test_sub_agent_tool_steps_without_id_do_not_collide(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_sub_agent_tool_steps_without_id_do_not_collide(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # Defensive: two separate executions of the same tool, neither carrying a tool_call_id,
     # must produce two distinct paired steps rather than overwriting one shared step.
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
@@ -6206,9 +6140,7 @@ async def test_sub_agent_tool_steps_without_id_do_not_collide(
 
 
 @pytest.mark.asyncio
-async def test_sub_agent_stream_without_uuid_merges_by_kind(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_sub_agent_stream_without_uuid_merges_by_kind(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
 
     async with app.run_test():
@@ -6227,9 +6159,7 @@ async def test_sub_agent_stream_without_uuid_merges_by_kind(
 
 
 @pytest.mark.asyncio
-async def test_sub_agent_inspector_shows_empty_state(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_sub_agent_inspector_shows_empty_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from textual.widgets import Static
 
     from kolega_code.cli import messages as cli_messages
@@ -6322,15 +6252,11 @@ async def test_workflow_card_lifecycle(tmp_path: Path, monkeypatch: pytest.Monke
 
 
 @pytest.mark.asyncio
-async def test_workflow_card_counts_sub_agents_by_phase(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_workflow_card_counts_sub_agents_by_phase(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
 
     async with app.run_test():
-        app._render_event(
-            _workflow_event("workflow_start", name="wf", description="d", phases=[{"title": "Verify"}])
-        )
+        app._render_event(_workflow_event("workflow_start", name="wf", description="d", phases=[{"title": "Verify"}]))
         card = next(iter(app._workflow_activities.values()))
 
         # A workflow sub-agent carrying run_id + phase rolls into the card even though no
@@ -6347,9 +6273,7 @@ async def test_workflow_card_counts_sub_agents_by_phase(
         assert verify.agents_done == 0
 
         # Completion bumps the done count and rolls up tokens.
-        done = _sub_agent_event(
-            agent_id="wf-a1", task="do it", status="STOPPED", message="Completed", total_tokens=500
-        )
+        done = _sub_agent_event(agent_id="wf-a1", task="do it", status="STOPPED", message="Completed", total_tokens=500)
         done.sub_agent_info["workflow_run_id"] = "wf-1"
         done.sub_agent_info["phase"] = "Verify"
         app._render_event(done)
@@ -6359,9 +6283,7 @@ async def test_workflow_card_counts_sub_agents_by_phase(
 
 
 @pytest.mark.asyncio
-async def test_thread_reset_closes_open_inspector(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_thread_reset_closes_open_inspector(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
 
     async with app.run_test() as pilot:
@@ -6377,9 +6299,7 @@ async def test_thread_reset_closes_open_inspector(
 
 
 @pytest.mark.asyncio
-async def test_sub_agent_inspector_tick_follow_and_copy(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_sub_agent_inspector_tick_follow_and_copy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
 
     async with app.run_test() as pilot:
@@ -6435,7 +6355,9 @@ async def test_rapid_stream_chunks_coalesce_renders(tmp_path: Path, monkeypatch:
         monkeypatch.setattr(app, "_render_conversation", counting_render)
 
         for index in range(50):
-            app._apply_stream_chunk({"uuid": "chunk-1", "content": f"word{index} ", "complete": False}, kind="assistant")
+            app._apply_stream_chunk(
+                {"uuid": "chunk-1", "content": f"word{index} ", "complete": False}, kind="assistant"
+            )
         app._apply_stream_chunk({"uuid": "chunk-1", "content": "done", "complete": True}, kind="assistant")
 
         await pilot.pause(0.1)
@@ -6517,9 +6439,7 @@ async def test_streaming_assistant_refresh_accepts_literal_markup_tokens(
 
 
 @pytest.mark.asyncio
-async def test_conversation_scroll_position_survives_streaming(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_conversation_scroll_position_survives_streaming(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
 
     from kolega_code.cli.tui.state import ConversationEntry
@@ -6595,9 +6515,7 @@ async def test_streaming_growth_stays_pinned_when_following_bottom(
 
 
 @pytest.mark.asyncio
-async def test_jump_to_bottom_keeps_following_continued_stream(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_jump_to_bottom_keeps_following_continued_stream(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
 
     from kolega_code.cli.tui.state import ConversationEntry
@@ -6692,9 +6610,7 @@ async def test_markdown_completion_reflow_after_jump_stays_at_bottom(
 
 
 @pytest.mark.asyncio
-async def test_full_rebuild_preserves_manual_scroll_away(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_full_rebuild_preserves_manual_scroll_away(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
 
     from kolega_code.cli.tui.state import ConversationEntry
@@ -6756,9 +6672,7 @@ async def test_full_rebuild_keeps_following_when_already_at_bottom(
 
 
 @pytest.mark.asyncio
-async def test_assistant_entries_render_markdown_when_complete(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_assistant_entries_render_markdown_when_complete(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
 
     from rich.console import Group
@@ -6780,9 +6694,7 @@ async def test_assistant_entries_render_markdown_when_complete(
         )
         assert isinstance(complete, Group)
         renderables = list(complete.renderables)
-        assert any(
-            isinstance(getattr(item, "renderable", item), RichMarkdown) for item in renderables
-        )
+        assert any(isinstance(getattr(item, "renderable", item), RichMarkdown) for item in renderables)
 
         plan = app._format_conversation_entry(
             ConversationEntry(kind="plan", content="- step one\n- step two", complete=True)
@@ -6791,9 +6703,7 @@ async def test_assistant_entries_render_markdown_when_complete(
 
 
 @pytest.mark.asyncio
-async def test_confirmations_surface_as_logs_without_toasts(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_confirmations_surface_as_logs_without_toasts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
 
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
@@ -6876,9 +6786,7 @@ async def test_tool_entries_render_as_collapsibles_with_full_output(
         assert collapsible.collapsed is True
         assert "running" in str(collapsible.title)
 
-        app._add_tool_message(
-            "tool_result", {"tool_name": "read_file", "tool_call_id": "tc-1", "text": long_output}
-        )
+        app._add_tool_message("tool_result", {"tool_name": "read_file", "tool_call_id": "tc-1", "text": long_output})
         app._flush_conversation_render()
         await pilot.pause()
 
@@ -6892,9 +6800,7 @@ async def test_tool_entries_render_as_collapsibles_with_full_output(
 
 
 @pytest.mark.asyncio
-async def test_log_lines_carry_timestamp_and_level_glyph(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_log_lines_carry_timestamp_and_level_glyph(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
 
     import re
@@ -6918,9 +6824,7 @@ async def test_log_lines_carry_timestamp_and_level_glyph(
 
 
 @pytest.mark.asyncio
-async def test_terminal_commands_render_as_styled_blocks(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_terminal_commands_render_as_styled_blocks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
 
     from kolega_code.agent import AgentEvent
@@ -7035,9 +6939,7 @@ async def test_terminal_rendered_history_is_capped(tmp_path: Path, monkeypatch: 
 
 
 @pytest.mark.asyncio
-async def test_status_dashboard_context_note_uses_alert_level(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_status_dashboard_context_note_uses_alert_level(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
 
     from kolega_code.agent import AgentEvent
@@ -7046,6 +6948,7 @@ async def test_status_dashboard_context_note_uses_alert_level(
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
 
     async with app.run_test():
+
         def context_event(alert_level):
             return AgentEvent(
                 event_type="llm_context_update",
@@ -7152,9 +7055,7 @@ async def test_logs_tab_hidden_by_default_and_write_log_is_noop(
 
 
 @pytest.mark.asyncio
-async def test_logs_tab_can_be_enabled_with_sticky_widget(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_logs_tab_can_be_enabled_with_sticky_widget(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
 
     from textual.widgets import TabbedContent
@@ -7232,9 +7133,7 @@ async def test_logs_rendered_history_is_capped(tmp_path: Path, monkeypatch: pyte
 
 
 @pytest.mark.asyncio
-async def test_logs_tab_shows_activity_dot_until_visited(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_logs_tab_shows_activity_dot_until_visited(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
 
     from textual.widgets import TabbedContent
@@ -7723,7 +7622,10 @@ async def test_textual_app_init_slash_command_starts_agents_md_turn(
         assert "Create or update `AGENTS.md` for this repository." in prompt
         assert "`focus on test commands`" in prompt
         assert "$ARGUMENTS" not in prompt
-        assert any(entry.kind == "user" and entry.content == "/init focus on test commands" for entry in app.conversation_entries)
+        assert any(
+            entry.kind == "user" and entry.content == "/init focus on test commands"
+            for entry in app.conversation_entries
+        )
 
 
 @pytest.mark.asyncio
@@ -7847,6 +7749,7 @@ async def test_textual_app_model_slash_command_shows_and_switches_model(
             return None
 
     monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+
     def fake_model_options(provider):
         return [
             ("Kimi K2.7 Code", UI_DEFAULT_MODEL),
@@ -7859,6 +7762,7 @@ async def test_textual_app_model_slash_command_shows_and_switches_model(
 
     def fake_default_effort(provider, model):
         return "high" if model == "kimi-k3" else "auto"
+
     for module in (settings_panel_module, command_handlers_module):
         monkeypatch.setattr(module, "ui_model_options", fake_model_options)
         monkeypatch.setattr(module, "ui_thinking_effort_options", fake_effort_options)
@@ -8372,9 +8276,7 @@ async def test_textual_app_effort_slash_command_blocks_selector_during_active_tu
 
 
 @pytest.mark.asyncio
-async def test_textual_app_copy_and_version_slash_commands(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_textual_app_copy_and_version_slash_commands(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
 
     import kolega_code

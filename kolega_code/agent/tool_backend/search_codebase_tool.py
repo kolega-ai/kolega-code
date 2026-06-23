@@ -65,7 +65,9 @@ class SearchCodebaseTool(BaseTool):
         "coverage",
     }
 
-    async def search_codebase(self, pattern: str, file_pattern: str = "*", case_sensitive: bool = False, literal: bool = True) -> str:
+    async def search_codebase(
+        self, pattern: str, file_pattern: str = "*", case_sensitive: bool = False, literal: bool = True
+    ) -> str:
         """
         Search the codebase for files containing a specific pattern (grep functionality).
 
@@ -101,7 +103,9 @@ class SearchCodebaseTool(BaseTool):
 
             # Use grep for sandbox environments (single command execution)
             if hasattr(self.filesystem, "sandbox"):
-                return await self._search_with_grep_sandbox(search_pattern, file_pattern, case_sensitive, pattern, literal)
+                return await self._search_with_grep_sandbox(
+                    search_pattern, file_pattern, case_sensitive, pattern, literal
+                )
             else:
                 # Use optimized Python implementation for local filesystem
                 return await self._search_with_python(search_pattern, file_pattern, case_sensitive, regex, pattern)
@@ -111,7 +115,9 @@ class SearchCodebaseTool(BaseTool):
             await self.log_error(error_msg, sender=self.caller.agent_name)
             return f"Error: {error_msg}"
 
-    async def _search_with_grep_sandbox(self, pattern: str, file_pattern: str, case_sensitive: bool, original_pattern: str, literal: bool) -> str:
+    async def _search_with_grep_sandbox(
+        self, pattern: str, file_pattern: str, case_sensitive: bool, original_pattern: str, literal: bool
+    ) -> str:
         """Use single grep command for sandbox environments - most efficient approach"""
 
         # Build grep command
@@ -133,7 +139,7 @@ class SearchCodebaseTool(BaseTool):
 
         # File pattern
         if file_pattern != "*":
-            grep_flags.append(f'--include={file_pattern}')
+            grep_flags.append(f"--include={file_pattern}")
 
         # Exclude directories
         for exclude_dir in self.EXCLUDE_DIRS:
@@ -141,7 +147,7 @@ class SearchCodebaseTool(BaseTool):
 
         # Exclude binary extensions
         for ext in self.BINARY_EXTENSIONS:
-            grep_flags.append(f'--exclude=*{ext}')
+            grep_flags.append(f"--exclude=*{ext}")
 
         # Build command with awk processing for formatting
         # Use the original pattern for grep when literal=True (no escaping needed with -F flag)
@@ -240,7 +246,9 @@ class SearchCodebaseTool(BaseTool):
 
         return output
 
-    async def _search_with_python(self, pattern: str, file_pattern: str, case_sensitive: bool, regex, original_pattern: str) -> str:
+    async def _search_with_python(
+        self, pattern: str, file_pattern: str, case_sensitive: bool, regex, original_pattern: str
+    ) -> str:
         """Optimized Python implementation for local filesystems"""
 
         # Get files with their info
@@ -325,7 +333,7 @@ class SearchCodebaseTool(BaseTool):
                     try:
                         stat_info = path_obj.stat()
                         size = stat_info.st_size
-                    except:
+                    except Exception:
                         size = 0
 
                     files_with_info.append((file_path, size))

@@ -61,9 +61,7 @@ def is_supported_image(path: Union[str, Path]) -> bool:
     return image_media_type(path) is not None
 
 
-def encode_image_attachment(
-    data: bytes, media_type: str, *, path: Optional[str] = None
-) -> Dict[str, Any]:
+def encode_image_attachment(data: bytes, media_type: str, *, path: Optional[str] = None) -> Dict[str, Any]:
     """Build an image attachment dict from raw bytes.
 
     Args:
@@ -111,9 +109,7 @@ def encode_image_file(path: Union[str, Path]) -> Optional[Dict[str, Any]]:
     return encode_image_attachment(data, media_type, path=str(path))
 
 
-def ascii_thumbnail_from_base64(
-    data: str, media_type: str, *, width: int = 40, height: int = 20
-) -> str:
+def ascii_thumbnail_from_base64(data: str, media_type: str, *, width: int = 40, height: int = 20) -> str:
     """Render a grayscale ASCII-art thumbnail from a base64-encoded image.
 
     Decodes the image with Pillow, converts to grayscale, downsamples to

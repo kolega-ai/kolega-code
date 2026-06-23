@@ -67,10 +67,7 @@ def update_status_message(
     include_errors: bool = False,
 ) -> Optional[str]:
     if result.update_available and result.latest_version:
-        return (
-            f"Update available: {result.current_version} -> {result.latest_version}. "
-            "Run `kolega-code update`."
-        )
+        return f"Update available: {result.current_version} -> {result.latest_version}. Run `kolega-code update`."
     if result.error and include_errors:
         return f"Update check failed: {result.error}"
     if include_up_to_date:

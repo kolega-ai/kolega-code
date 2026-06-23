@@ -52,7 +52,7 @@ class CreateFileTool(BaseTool):
             error_msg = f"Permission denied: Cannot create file {path}"
             await self.log_error(error_msg, sender=self.caller.agent_name)
             return error_msg
-        except Exception as e:
+        except Exception:
             error_msg = "Error creating file"
             await self.log_error(error_msg, sender=self.caller.agent_name)
             return error_msg

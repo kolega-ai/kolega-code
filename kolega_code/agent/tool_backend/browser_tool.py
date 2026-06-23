@@ -51,7 +51,7 @@ class BrowserTool(BaseTool):
 
             return f"Launched new browser with browser_id {browser_result}"
         else:
-            return f"Failed to launch browser."
+            return "Failed to launch browser."
 
     async def list_browsers(self):
         results = await self.browser_manager.list_browsers()
@@ -216,7 +216,7 @@ class BrowserTool(BaseTool):
         result = await self.browser_manager.interact_with_browser(browser_id, action, selector, text, scroll_px)
 
         # Format the interaction result as markdown
-        markdown_output = f"# Browser Interaction Result\n\n"
+        markdown_output = "# Browser Interaction Result\n\n"
         markdown_output += f"**Status:** {result['status']}\n"
         markdown_output += f"**Current URL:** {result['current_url']}\n\n"
         markdown_output += f"**Action Performed:** {result['action']}\n"
@@ -233,7 +233,7 @@ class BrowserTool(BaseTool):
         result = await self.browser_manager.set_select_value(browser_id, selector, value)
 
         # Format the select value result as markdown
-        markdown_output = f"# Select Value Update Result\n\n"
+        markdown_output = "# Select Value Update Result\n\n"
         markdown_output += f"**Status:** {result['status']}\n"
         markdown_output += f"**Current URL:** {result['current_url']}\n"
         markdown_output += f"**Selector:** `{result['selector']}`\n\n"

@@ -14,6 +14,7 @@ from ..provider_registry import UI_DEFAULT_MODEL, UI_DEFAULT_PROVIDER
 from ..theme import Color
 from .constants import BUILD_INTERACTION_MODE
 
+
 class TurnState(str, Enum):
     """Explicit lifecycle state of the active turn, shown on the status dashboard."""
 
@@ -54,6 +55,7 @@ def tool_state_presentation(kind: str) -> tuple[str, str]:
     """(state label, live role color) for a tool-entry kind."""
     label, attr = TOOL_STATE_PRESENTATION.get(kind, ("running", "ACCENT"))
     return label, getattr(Color, attr)
+
 
 _ENTRY_ID_COUNTER = itertools.count(1)
 

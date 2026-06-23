@@ -94,9 +94,7 @@ class PlanningAgent(BaseAgent):
             self.connection_manager,
             self.config,
             caller=self,
-            tool_config=ToolCollectionConfig(
-                read_only=True, custom_tool_groups=["planning_tools", "command_tools"]
-            ),
+            tool_config=ToolCollectionConfig(read_only=True, custom_tool_groups=["planning_tools", "command_tools"]),
             filesystem=self.filesystem,
             terminal_manager=self.terminal_manager,
             browser_manager=self.browser_manager,

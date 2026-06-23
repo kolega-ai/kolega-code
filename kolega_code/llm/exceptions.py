@@ -252,7 +252,6 @@ def map_openai_errors(error: OpenAIError) -> LLMError:
 
 def map_google_errors(error: GoogleAPIError) -> LLMError:
     if hasattr(error, "status"):
-
         if error.status == 400:
             return LLMInvalidRequestError(message=f"GoogleAPIError: {str(error)}", provider=ModelProvider.GOOGLE.value)
         elif error.status == 403:
@@ -294,23 +293,17 @@ def map_anthropic_errors(error: AnthropicError, provider: str | None = None) -> 
 
                 # Keep internal/server overload handling by type
                 if error_type in ["overloaded_error", "api_error"]:
-                    return LLMInternalServerError(
-                        message=f"AnthropicError: {str(error)}", provider=provider
-                    )
+                    return LLMInternalServerError(message=f"AnthropicError: {str(error)}", provider=provider)
 
                 if any(phrase in error_message_lower for phrase in context_window_phrases):
-                    return LLMContextWindowExceededError(
-                        message=f"AnthropicError: {str(error)}", provider=provider
-                    )
+                    return LLMContextWindowExceededError(message=f"AnthropicError: {str(error)}", provider=provider)
 
                 # Special case: content filtering block should be mapped to content policy violation
                 if (
                     error_type == "invalid_request_error"
                     and error_message == "Output blocked by content filtering policy"
                 ):
-                    return LLMContentPolicyViolationError(
-                        message=f"AnthropicError: {str(error)}", provider=provider
-                    )
+                    return LLMContentPolicyViolationError(message=f"AnthropicError: {str(error)}", provider=provider)
 
         except Exception:
             pass
@@ -322,36 +315,22 @@ def map_anthropic_errors(error: AnthropicError, provider: str | None = None) -> 
         if error.status_code == 400:
             error_text = str(error).lower()
             if any(phrase in error_text for phrase in context_window_phrases):
-                return LLMContextWindowExceededError(
-                    message=f"AnthropicError: {str(error)}", provider=provider
-                )
-            return LLMInvalidRequestError(
-                message=f"AnthropicError: {str(error)}", provider=provider
-            )
+                return LLMContextWindowExceededError(message=f"AnthropicError: {str(error)}", provider=provider)
+            return LLMInvalidRequestError(message=f"AnthropicError: {str(error)}", provider=provider)
         elif error.status_code == 401:
-            return LLMAuthenticationError(
-                message=f"AnthropicError: {str(error)}", provider=provider
-            )
+            return LLMAuthenticationError(message=f"AnthropicError: {str(error)}", provider=provider)
         elif error.status_code == 403:
-            return LLMPermissionDeniedError(
-                message=f"AnthropicError: {str(error)}", provider=provider
-            )
+            return LLMPermissionDeniedError(message=f"AnthropicError: {str(error)}", provider=provider)
         elif error.status_code == 404:
             return LLMNotFoundError(message=f"AnthropicError: {str(error)}", provider=provider)
         elif error.status_code == 413:
-            return LLMContextWindowExceededError(
-                message=f"AnthropicError: {str(error)}", provider=provider
-            )
+            return LLMContextWindowExceededError(message=f"AnthropicError: {str(error)}", provider=provider)
         if error.status_code == 429:
             return LLMRateLimitError(message=f"AnthropicError: {str(error)}", provider=provider)
         if error.status_code == 500:
-            return LLMInternalServerError(
-                message=f"AnthropicError: {str(error)}", provider=provider
-            )
+            return LLMInternalServerError(message=f"AnthropicError: {str(error)}", provider=provider)
         if error.status_code == 529:
-            return LLMInternalServerError(
-                message=f"AnthropicError: {str(error)}", provider=provider
-            )
+            return LLMInternalServerError(message=f"AnthropicError: {str(error)}", provider=provider)
 
     return LLMError(message=f"AnthropicError: {str(error)}", provider=provider)
 

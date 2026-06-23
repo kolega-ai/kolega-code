@@ -20,7 +20,9 @@ class FakeResponse:
 
 def test_check_for_update_detects_newer_version(monkeypatch) -> None:
     monkeypatch.setattr(updater, "current_version", lambda: "0.2.0")
-    monkeypatch.setattr(updater.request, "urlopen", lambda request, timeout: FakeResponse({"info": {"version": "0.3.0"}}))
+    monkeypatch.setattr(
+        updater.request, "urlopen", lambda request, timeout: FakeResponse({"info": {"version": "0.3.0"}})
+    )
 
     result = updater.check_for_update()
 
@@ -32,7 +34,9 @@ def test_check_for_update_detects_newer_version(monkeypatch) -> None:
 
 def test_check_for_update_accepts_current_version(monkeypatch) -> None:
     monkeypatch.setattr(updater, "current_version", lambda: "0.2.0")
-    monkeypatch.setattr(updater.request, "urlopen", lambda request, timeout: FakeResponse({"info": {"version": "0.2.0"}}))
+    monkeypatch.setattr(
+        updater.request, "urlopen", lambda request, timeout: FakeResponse({"info": {"version": "0.2.0"}})
+    )
 
     result = updater.check_for_update()
 
@@ -42,7 +46,9 @@ def test_check_for_update_accepts_current_version(monkeypatch) -> None:
 
 def test_check_for_update_reports_invalid_latest_version(monkeypatch) -> None:
     monkeypatch.setattr(updater, "current_version", lambda: "0.2.0")
-    monkeypatch.setattr(updater.request, "urlopen", lambda request, timeout: FakeResponse({"info": {"version": "not a version"}}))
+    monkeypatch.setattr(
+        updater.request, "urlopen", lambda request, timeout: FakeResponse({"info": {"version": "not a version"}})
+    )
 
     result = updater.check_for_update()
 

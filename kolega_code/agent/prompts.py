@@ -65,9 +65,7 @@ def build_compression_summary_user_prompt(history: str, previous_summary: Option
 
 
 def build_implement_plan_prompt(plan: str, gigacode_enabled: bool = False) -> str:
-    return render_prompt_template(
-        "user_tasks/cli/implement_plan.md.j2", plan=plan, gigacode_enabled=gigacode_enabled
-    )
+    return render_prompt_template("user_tasks/cli/implement_plan.md.j2", plan=plan, gigacode_enabled=gigacode_enabled)
 
 
 def build_init_agents_prompt(arguments: str) -> str:

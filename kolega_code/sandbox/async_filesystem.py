@@ -42,7 +42,7 @@ class AsyncSandboxFileSystem(FileSystem):
                     if not hasattr(loop, "__module__") or "uvloop" not in loop.__module__:
                         nest_asyncio.apply()
                         self._nest_asyncio_applied = True
-                except:
+                except Exception:
                     # If patching fails, we'll try alternative approaches
                     pass
 
@@ -179,7 +179,7 @@ class AsyncSandboxFileSystem(FileSystem):
                 return result.exit_code == 0
 
             return self._run_async(_exists())
-        except:
+        except Exception:
             return False
 
     def is_file(self, path: str) -> bool:
@@ -192,7 +192,7 @@ class AsyncSandboxFileSystem(FileSystem):
                 return result.exit_code == 0
 
             return self._run_async(_is_file())
-        except:
+        except Exception:
             return False
 
     def is_dir(self, path: str) -> bool:
@@ -205,7 +205,7 @@ class AsyncSandboxFileSystem(FileSystem):
                 return result.exit_code == 0
 
             return self._run_async(_is_dir())
-        except:
+        except Exception:
             return False
 
     def stat(self, path: str) -> Dict[str, Any]:
@@ -411,7 +411,7 @@ class AsyncSandboxFileSystem(FileSystem):
 
             return self._run_async(_glob())
 
-        except Exception as e:
+        except Exception:
             # If any error occurs, return empty list to match expected behavior
             return []
 
@@ -426,7 +426,7 @@ class AsyncSandboxFileSystem(FileSystem):
                 return result.exit_code == 0 and "charset=binary" in result.stdout
 
             return self._run_async(_is_binary())
-        except:
+        except Exception:
             return False
 
     def get_name(self, path: str) -> str:

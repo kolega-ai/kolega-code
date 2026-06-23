@@ -20,7 +20,10 @@ def mock_config():
         ),
         fast_config=ModelConfig(provider=ModelProvider.ANTHROPIC, model="test-model", rate_limits=RateLimitConfig()),
         thinking_config=ModelConfig(
-            provider=ModelProvider.ANTHROPIC, model="test-model", rate_limits=RateLimitConfig(), thinking_effort="medium"
+            provider=ModelProvider.ANTHROPIC,
+            model="test-model",
+            rate_limits=RateLimitConfig(),
+            thinking_effort="medium",
         ),
     )
 
@@ -209,9 +212,7 @@ class TestAgentTool:
             )
             MockAgent.configure_streaming([])
 
-    async def test_dispatch_agent_inherits_parent_max_iterations(
-        self, agent_tool, mock_caller
-    ):
+    async def test_dispatch_agent_inherits_parent_max_iterations(self, agent_tool, mock_caller):
         original_import = builtins.__import__
         mock_caller.max_iterations = 3
 

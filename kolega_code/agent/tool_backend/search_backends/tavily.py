@@ -35,9 +35,7 @@ class TavilyBackend(SearchBackend):
             raise SearchBackendNotConfigured("The 'tavily' search backend requires an API key.")
         count = clamp_results(max_results)
         try:
-            payload = await asyncio.wait_for(
-                asyncio.to_thread(self._search, query, count), timeout=self.timeout
-            )
+            payload = await asyncio.wait_for(asyncio.to_thread(self._search, query, count), timeout=self.timeout)
         except asyncio.TimeoutError as exc:
             raise SearchBackendUnavailable(f"timed out after {self.timeout:.0f}s") from exc
         except (InvalidAPIKeyError, MissingAPIKeyError, ForbiddenError) as exc:

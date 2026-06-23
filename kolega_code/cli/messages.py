@@ -75,13 +75,8 @@ MODEL_NON_VISION_IMAGE_HISTORY = (
     "vision, so those images will be replaced with text placeholders — switch back to a "
     "vision-capable model with /model to see them again."
 )
-MODEL_NON_VISION_IMAGE_ATTACHED = (
-    "This model can't see images — use /detach to remove or /model to switch."
-)
-MODEL_NON_VISION_IMAGE_BLOCKED = (
-    "Not sent — this model can't see images. "
-    "Use /detach to remove or /model to switch."
-)
+MODEL_NON_VISION_IMAGE_ATTACHED = "This model can't see images — use /detach to remove or /model to switch."
+MODEL_NON_VISION_IMAGE_BLOCKED = "Not sent — this model can't see images. Use /detach to remove or /model to switch."
 EFFORT_SWITCHED = "Switched thinking effort to {effort} for {provider}/{model}."
 EFFORT_UNKNOWN = "Unknown thinking effort {effort} for {provider}/{model}."
 EFFORT_UNSUPPORTED = "{provider}/{model} does not support a thinking effort setting."

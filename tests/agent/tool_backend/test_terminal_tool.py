@@ -35,7 +35,10 @@ def agent_config():
         ),
         fast_config=ModelConfig(provider=ModelProvider.ANTHROPIC, model="test-model", rate_limits=RateLimitConfig()),
         thinking_config=ModelConfig(
-            provider=ModelProvider.ANTHROPIC, model="test-model", rate_limits=RateLimitConfig(), thinking_effort="medium"
+            provider=ModelProvider.ANTHROPIC,
+            model="test-model",
+            rate_limits=RateLimitConfig(),
+            thinking_effort="medium",
         ),
     )
 
@@ -205,9 +208,7 @@ class TestUnifiedExecTools:
     @pytest.mark.asyncio
     async def test_kill_command_returns_json(self, terminal_tool):
         terminal_tool.terminal_manager = Mock()
-        terminal_tool.terminal_manager.kill_session = AsyncMock(
-            return_value=ExecResult(status="exited", exit_code=143)
-        )
+        terminal_tool.terminal_manager.kill_session = AsyncMock(return_value=ExecResult(status="exited", exit_code=143))
 
         data = json.loads(await terminal_tool.kill_command("s_1", "TERM"))
         assert data["status"] == "exited"

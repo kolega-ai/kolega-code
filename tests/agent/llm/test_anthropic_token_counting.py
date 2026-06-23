@@ -29,16 +29,16 @@ if dotenv_path.exists():
 @pytest.fixture
 def api_key():
     """Get Anthropic API key from environment."""
-    key = os.getenv('ANTHROPIC_API_KEY')
+    key = os.getenv("ANTHROPIC_API_KEY")
     if not key:
-        pytest.skip('ANTHROPIC_API_KEY not set')
+        pytest.skip("ANTHROPIC_API_KEY not set")
     return key
 
 
 @pytest.fixture
 def anthropic_provider_local(api_key):
     """Create Anthropic provider with local token counting enabled."""
-    with patch.dict(os.environ, {'ANTHROPIC_USE_LOCAL_TOKEN_COUNTING': 'true'}):
+    with patch.dict(os.environ, {"ANTHROPIC_USE_LOCAL_TOKEN_COUNTING": "true"}):
         provider = AnthropicProvider(api_key=api_key)
     return provider
 
@@ -46,7 +46,7 @@ def anthropic_provider_local(api_key):
 @pytest.fixture
 def anthropic_provider_api(api_key):
     """Create Anthropic provider with API token counting enabled."""
-    with patch.dict(os.environ, {'ANTHROPIC_USE_LOCAL_TOKEN_COUNTING': 'false'}):
+    with patch.dict(os.environ, {"ANTHROPIC_USE_LOCAL_TOKEN_COUNTING": "false"}):
         provider = AnthropicProvider(api_key=api_key)
     return provider
 
@@ -220,16 +220,16 @@ async def test_simple_message_comparison(
     diff_pct = calculate_percentage_difference(local_result.input_tokens, api_result.input_tokens)
     threshold = get_accuracy_threshold(api_result.input_tokens)
 
-    print(f"\nSimple message comparison:")
+    print("\nSimple message comparison:")
     print(f"  Local count: {local_result.input_tokens}")
     print(f"  API count: {api_result.input_tokens}")
     print(f"  Difference: {diff_pct:.2f}%")
     print(f"  Threshold: {threshold:.1f}% (small sample)")
 
     # Assert within threshold
-    assert (
-        diff_pct <= threshold
-    ), f"Difference {diff_pct:.2f}% exceeds {threshold:.1f}% threshold (local={local_result.input_tokens}, api={api_result.input_tokens})"
+    assert diff_pct <= threshold, (
+        f"Difference {diff_pct:.2f}% exceeds {threshold:.1f}% threshold (local={local_result.input_tokens}, api={api_result.input_tokens})"
+    )
 
 
 @pytest.mark.slow
@@ -263,16 +263,16 @@ async def test_with_real_system_prompt(
     diff_pct = calculate_percentage_difference(local_result.input_tokens, api_result.input_tokens)
     threshold = get_accuracy_threshold(api_result.input_tokens)
 
-    print(f"\nReal system prompt comparison:")
+    print("\nReal system prompt comparison:")
     print(f"  Local count: {local_result.input_tokens}")
     print(f"  API count: {api_result.input_tokens}")
     print(f"  Difference: {diff_pct:.2f}%")
     print(f"  Threshold: {threshold:.1f}%")
 
     # Assert within 5% tolerance (realistic context size)
-    assert (
-        diff_pct <= threshold
-    ), f"Difference {diff_pct:.2f}% exceeds {threshold:.1f}% threshold (local={local_result.input_tokens}, api={api_result.input_tokens})"
+    assert diff_pct <= threshold, (
+        f"Difference {diff_pct:.2f}% exceeds {threshold:.1f}% threshold (local={local_result.input_tokens}, api={api_result.input_tokens})"
+    )
 
 
 @pytest.mark.slow
@@ -307,7 +307,7 @@ async def test_with_tools(
     diff_pct = calculate_percentage_difference(local_result.input_tokens, api_result.input_tokens)
     threshold = get_accuracy_threshold(api_result.input_tokens)
 
-    print(f"\nWith tools comparison:")
+    print("\nWith tools comparison:")
     print(f"  Tool count: {len(real_tools)}")
     print(f"  Local count: {local_result.input_tokens}")
     print(f"  API count: {api_result.input_tokens}")
@@ -315,9 +315,9 @@ async def test_with_tools(
     print(f"  Threshold: {threshold:.1f}%")
 
     # Assert within 5% tolerance (realistic context with tools)
-    assert (
-        diff_pct <= threshold
-    ), f"Difference {diff_pct:.2f}% exceeds {threshold:.1f}% threshold (local={local_result.input_tokens}, api={api_result.input_tokens})"
+    assert diff_pct <= threshold, (
+        f"Difference {diff_pct:.2f}% exceeds {threshold:.1f}% threshold (local={local_result.input_tokens}, api={api_result.input_tokens})"
+    )
 
 
 @pytest.mark.slow
@@ -351,7 +351,7 @@ async def test_with_complex_conversation(
     diff_pct = calculate_percentage_difference(local_result.input_tokens, api_result.input_tokens)
     threshold = get_accuracy_threshold(api_result.input_tokens)
 
-    print(f"\nComplex conversation comparison:")
+    print("\nComplex conversation comparison:")
     print(f"  Message count: {len(complex_messages)}")
     print(f"  Local count: {local_result.input_tokens}")
     print(f"  API count: {api_result.input_tokens}")
@@ -359,9 +359,9 @@ async def test_with_complex_conversation(
     print(f"  Threshold: {threshold:.1f}% (small sample)")
 
     # Assert within threshold
-    assert (
-        diff_pct <= threshold
-    ), f"Difference {diff_pct:.2f}% exceeds {threshold:.1f}% threshold (local={local_result.input_tokens}, api={api_result.input_tokens})"
+    assert diff_pct <= threshold, (
+        f"Difference {diff_pct:.2f}% exceeds {threshold:.1f}% threshold (local={local_result.input_tokens}, api={api_result.input_tokens})"
+    )
 
 
 @pytest.mark.slow
@@ -413,7 +413,7 @@ async def test_with_images(
     diff_pct = calculate_percentage_difference(local_result.input_tokens, api_result.input_tokens)
     image_threshold = 200.0
 
-    print(f"\nWith images comparison:")
+    print("\nWith images comparison:")
     print(f"  Image size: {len(tiny_image_base64)} chars (base64)")
     print(f"  Local count: {local_result.input_tokens}")
     print(f"  API count: {api_result.input_tokens}")
@@ -432,9 +432,9 @@ async def test_with_images(
     # - This tiny 1x1 test image is an edge case (96 chars base64)
     # - Normal conversation images (screenshots, etc.) will be much larger and more accurate
     # - The key goal is images aren't ignored (count > 0)
-    assert (
-        diff_pct <= image_threshold
-    ), f"Difference {diff_pct:.2f}% exceeds {image_threshold:.1f}% threshold for images (local={local_result.input_tokens}, api={api_result.input_tokens})"
+    assert diff_pct <= image_threshold, (
+        f"Difference {diff_pct:.2f}% exceeds {image_threshold:.1f}% threshold for images (local={local_result.input_tokens}, api={api_result.input_tokens})"
+    )
 
 
 @pytest.mark.slow
@@ -469,7 +469,7 @@ async def test_full_agent_context(
     diff_pct = calculate_percentage_difference(local_result.input_tokens, api_result.input_tokens)
     threshold = get_accuracy_threshold(api_result.input_tokens)
 
-    print(f"\nFull agent context comparison:")
+    print("\nFull agent context comparison:")
     print(f"  Message count: {len(complex_messages)}")
     print(f"  Tool count: {len(real_tools)}")
     print(f"  Local count: {local_result.input_tokens}")
@@ -478,9 +478,9 @@ async def test_full_agent_context(
     print(f"  Threshold: {threshold:.1f}%")
 
     # Assert within 5% tolerance (realistic full agent context)
-    assert (
-        diff_pct <= threshold
-    ), f"Difference {diff_pct:.2f}% exceeds {threshold:.1f}% threshold (local={local_result.input_tokens}, api={api_result.input_tokens})"
+    assert diff_pct <= threshold, (
+        f"Difference {diff_pct:.2f}% exceeds {threshold:.1f}% threshold (local={local_result.input_tokens}, api={api_result.input_tokens})"
+    )
 
 
 @pytest.mark.slow
@@ -547,7 +547,7 @@ async def test_accuracy_threshold_summary(
     print("\n" + "=" * 80)
     print("Token Counting Accuracy Summary")
     print("=" * 80)
-    print(f'{"Scenario":<20} {"Local":<10} {"API":<10} {"Diff %":<10} {"Status":<10}')
+    print(f"{'Scenario':<20} {'Local':<10} {'API':<10} {'Diff %':<10} {'Status':<10}")
     print("-" * 80)
 
     all_within_threshold = True
@@ -560,7 +560,6 @@ async def test_accuracy_threshold_summary(
         status = "✓ PASS" if diff_pct <= threshold else "✗ FAIL"
         if diff_pct > threshold:
             all_within_threshold = False
-        threshold_str = f"{threshold:.0f}%"
         print(f"{name:<20} {local_count:<10} {api_count:<10} {diff_pct:<10.2f} {status:<10}")
 
     print("=" * 80)
@@ -570,58 +569,58 @@ async def test_accuracy_threshold_summary(
     print("=" * 80)
 
     # Assert all scenarios pass their respective thresholds
-    assert all_within_threshold, 'One or more scenarios exceeded their accuracy threshold'
+    assert all_within_threshold, "One or more scenarios exceeded their accuracy threshold"
 
 
 def test_environment_variable_default(api_key):
     """Test that local token counting defaults to False when env var not set."""
     # Clear the environment variable
     with patch.dict(os.environ, {}, clear=False):
-        if 'ANTHROPIC_USE_LOCAL_TOKEN_COUNTING' in os.environ:
-            del os.environ['ANTHROPIC_USE_LOCAL_TOKEN_COUNTING']
+        if "ANTHROPIC_USE_LOCAL_TOKEN_COUNTING" in os.environ:
+            del os.environ["ANTHROPIC_USE_LOCAL_TOKEN_COUNTING"]
         provider = AnthropicProvider(api_key=api_key)
-    
-    assert provider.use_local_token_counting is False, 'Should default to False when env var not set'
+
+    assert provider.use_local_token_counting is False, "Should default to False when env var not set"
 
 
 def test_environment_variable_true(api_key):
     """Test that local token counting is enabled when env var is 'true'."""
-    with patch.dict(os.environ, {'ANTHROPIC_USE_LOCAL_TOKEN_COUNTING': 'true'}):
+    with patch.dict(os.environ, {"ANTHROPIC_USE_LOCAL_TOKEN_COUNTING": "true"}):
         provider = AnthropicProvider(api_key=api_key)
-    
+
     assert provider.use_local_token_counting is True, 'Should be True when env var is "true"'
 
 
 def test_environment_variable_false(api_key):
     """Test that local token counting is disabled when env var is 'false'."""
-    with patch.dict(os.environ, {'ANTHROPIC_USE_LOCAL_TOKEN_COUNTING': 'false'}):
+    with patch.dict(os.environ, {"ANTHROPIC_USE_LOCAL_TOKEN_COUNTING": "false"}):
         provider = AnthropicProvider(api_key=api_key)
-    
+
     assert provider.use_local_token_counting is False, 'Should be False when env var is "false"'
 
 
 def test_environment_variable_case_insensitive(api_key):
     """Test that env var is case insensitive."""
     test_cases = [
-        ('TRUE', True),
-        ('True', True),
-        ('TrUe', True),
-        ('FALSE', False),
-        ('False', False),
-        ('FaLsE', False),
+        ("TRUE", True),
+        ("True", True),
+        ("TrUe", True),
+        ("FALSE", False),
+        ("False", False),
+        ("FaLsE", False),
     ]
-    
+
     for env_value, expected_result in test_cases:
-        with patch.dict(os.environ, {'ANTHROPIC_USE_LOCAL_TOKEN_COUNTING': env_value}):
+        with patch.dict(os.environ, {"ANTHROPIC_USE_LOCAL_TOKEN_COUNTING": env_value}):
             provider = AnthropicProvider(api_key=api_key)
-        assert provider.use_local_token_counting is expected_result, f'Failed for env_value={env_value}'
+        assert provider.use_local_token_counting is expected_result, f"Failed for env_value={env_value}"
 
 
 def test_environment_variable_invalid_value(api_key):
     """Test that invalid env var values default to False."""
-    invalid_values = ['yes', 'no', '1', '0', 'enabled', 'disabled', 'garbage']
-    
+    invalid_values = ["yes", "no", "1", "0", "enabled", "disabled", "garbage"]
+
     for invalid_value in invalid_values:
-        with patch.dict(os.environ, {'ANTHROPIC_USE_LOCAL_TOKEN_COUNTING': invalid_value}):
+        with patch.dict(os.environ, {"ANTHROPIC_USE_LOCAL_TOKEN_COUNTING": invalid_value}):
             provider = AnthropicProvider(api_key=api_key)
-        assert provider.use_local_token_counting is False, f'Should default to False for invalid value: {invalid_value}'
+        assert provider.use_local_token_counting is False, f"Should default to False for invalid value: {invalid_value}"

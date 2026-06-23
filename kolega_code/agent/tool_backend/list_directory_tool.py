@@ -140,19 +140,19 @@ class ListDirectoryTool(BaseTool):
                     try:
                         dir_items = self.filesystem.list_directory(item)
                         size = len(dir_items)
-                    except:
+                    except Exception:
                         size = 0
                 else:
                     # For files, get size
                     try:
                         size = self.filesystem.get_size(item)
-                    except:
+                    except Exception:
                         size = 0
 
                 # Get modification time
                 try:
                     mod_time = self.filesystem.get_modification_time(item).strftime("%Y-%m-%d %H:%M")
-                except:
+                except Exception:
                     mod_time = "Unknown"
 
                 lines_data.append(
@@ -183,7 +183,7 @@ class ListDirectoryTool(BaseTool):
             if parent_dir and parent_dir != ".":
                 navigation = f"📁 Parent Directory: {parent_dir}"
             else:
-                navigation = f"📁 Root Directory"
+                navigation = "📁 Root Directory"
         else:
             title = "# Root Directory"
             navigation = ""
@@ -236,11 +236,11 @@ class ListDirectoryTool(BaseTool):
         if size_bytes < 1024:
             return f"{size_bytes} B"
         elif size_bytes < 1024 * 1024:
-            return f"{size_bytes/1024:.1f} KB"
+            return f"{size_bytes / 1024:.1f} KB"
         elif size_bytes < 1024 * 1024 * 1024:
-            return f"{size_bytes/(1024*1024):.1f} MB"
+            return f"{size_bytes / (1024 * 1024):.1f} MB"
         else:
-            return f"{size_bytes/(1024*1024*1024):.1f} GB"
+            return f"{size_bytes / (1024 * 1024 * 1024):.1f} GB"
 
     def _get_file_description(self, filename: str) -> str:
         """Get a description based on file extension."""

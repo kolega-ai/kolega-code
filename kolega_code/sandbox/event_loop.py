@@ -40,4 +40,3 @@ def cleanup_event_loop(loop: asyncio.AbstractEventLoop) -> None:
     finally:
         if not loop.is_closed():
             loop.close()
-

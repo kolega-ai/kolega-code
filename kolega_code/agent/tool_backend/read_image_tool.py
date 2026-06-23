@@ -28,8 +28,6 @@ class ReadImageTool(BaseTool):
         suffix = self.filesystem.get_suffix(path).lower()
         media_type = IMAGE_MIME_TYPES.get(suffix)
         if media_type is None:
-            raise ValueError(
-                f"Unsupported image format '{suffix}'. Supported: " + ", ".join(sorted(IMAGE_MIME_TYPES))
-            )
+            raise ValueError(f"Unsupported image format '{suffix}'. Supported: " + ", ".join(sorted(IMAGE_MIME_TYPES)))
         data = base64.b64encode(self.filesystem.read_bytes(path)).decode("ascii")
         return [ImageBlock(image_type="base64", media_type=media_type, data=data)]
