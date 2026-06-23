@@ -48,9 +48,9 @@ class AgentRuntimeMixin:
             await self._drain_pending_events()
             self._finalize_sub_agent_activities()
             self._finalize_workflow_activities()
-            self._save_session_history()
+            await self._save_session_history_async()
             self._finish_turn_progress(messages.FINISHED, tui_state.TurnState.IDLE)
-            self._capture_completed_plan()
+            await self._capture_completed_plan()
             self._log_status(messages.FINISHED, "ok")
         except asyncio.CancelledError:
             self._cancel_pending_question()
@@ -58,7 +58,7 @@ class AgentRuntimeMixin:
             await self._drain_pending_events()
             self._finalize_sub_agent_activities()
             self._finalize_workflow_activities()
-            self._save_session_history()
+            await self._save_session_history_async()
             self._finish_turn_progress(messages.STOPPED_BY_USER, tui_state.TurnState.STOPPED)
             self._log_status(messages.STOPPED_BY_USER, "warn")
         except LLMError as exc:
@@ -67,7 +67,7 @@ class AgentRuntimeMixin:
             await self._drain_pending_events()
             self._finalize_sub_agent_activities()
             self._finalize_workflow_activities()
-            self._save_session_history()
+            await self._save_session_history_async()
             model = self.config.long_context_config.model if self.config is not None else None
             message_text = llm_error_message(exc, model=model)
             self._finish_turn_progress(message_text, tui_state.TurnState.ERROR)
@@ -78,7 +78,7 @@ class AgentRuntimeMixin:
             await self._drain_pending_events()
             self._finalize_sub_agent_activities()
             self._finalize_workflow_activities()
-            self._save_session_history()
+            await self._save_session_history_async()
             self._finish_turn_progress(messages.STOPPED_WITH_ERROR.format(error=exc), tui_state.TurnState.ERROR)
             self._log_status(messages.STOPPED_WITH_ERROR.format(error=exc), "error")
             raise
@@ -193,7 +193,7 @@ class AgentRuntimeMixin:
 
         self.config = config
         self.session.config = config_summary(config)
-        self._save_session()
+        await self._save_session_async()
         await self._build_agent(config, rebuild=rebuild)
         self._set_chat_enabled(True)
         self._update_settings_status()
@@ -210,11 +210,9 @@ class AgentRuntimeMixin:
         history = self.session.history
         compaction = self.session.compaction
         if self.agent is not None:
-            history = self.agent.dump_message_history()
-            compaction = self.agent.dump_compaction_state()
-            self.session.history = history
-            self.session.compaction = compaction
-            self._save_session()
+            await self._save_session_history_async()
+            history = self.session.history
+            compaction = self.session.compaction
             if rebuild:
                 await self.agent.cleanup()
 

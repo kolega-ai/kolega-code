@@ -1,6 +1,7 @@
 from pathlib import Path
 import asyncio
 import json
+import time
 
 import pytest
 
@@ -2099,7 +2100,7 @@ async def test_textual_app_shows_plan_decision_when_planning_agent_writes_plan(
         assert loaded.plan_reofferable is True
         assert loaded.interaction_mode == "plan"
 
-        app._discuss_pending_plan()
+        await app._discuss_pending_plan()
 
         assert app._plan_decision_active is False
         assert app._plan_pending is False
@@ -2133,10 +2134,10 @@ async def test_textual_app_shows_plan_decision_when_planning_agent_writes_plan(
         assert loaded.plan_pending is True
         assert loaded.plan_reofferable is True
 
-        app._discuss_pending_plan()
+        await app._discuss_pending_plan()
 
         app.agent.completed_plan = "# Revised plan\n\nBuild planning mode carefully."
-        app._capture_completed_plan()
+        await app._capture_completed_plan()
 
         assert app._plan_decision_active is True
         assert app._plan_pending is True
@@ -2459,7 +2460,7 @@ async def test_textual_app_discuss_plan_preserves_old_plan_until_new_plan_is_wri
         app._plan_reofferable = True
         app._plan_decision_active = True
 
-        app._discuss_pending_plan()
+        await app._discuss_pending_plan()
 
         assert app._latest_plan == "# Plan\n\nBuild it after discussing."
         assert app._plan_pending is False
@@ -2538,10 +2539,136 @@ async def test_textual_app_does_not_save_startup_entry_to_history(
 
     async with app.run_test():
         assert app.conversation_entries[0].kind == "startup"
-        app._save_session_history()
+        await app._save_session_history_async()
 
         assert session.history == saved_history
         assert all("Kolega Code" not in str(item) for item in session.history)
+
+
+@pytest.mark.asyncio
+async def test_textual_app_history_save_runs_off_event_loop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.app import KolegaCodeApp
+
+    saved_history = [Message(role="assistant", content=[TextBlock("saved response")]).to_dict()]
+
+    class FakeAgent:
+        def dump_message_history(self):
+            return saved_history
+
+        def dump_compaction_state(self):
+            return {}
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    original_save = store.save
+
+    def slow_save(record):
+        time.sleep(0.2)
+        original_save(record)
+
+    monkeypatch.setattr(store, "save", slow_save)
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+    app.agent = FakeAgent()
+
+    save_task = asyncio.create_task(app._save_session_history_async())
+    marker_task = asyncio.create_task(asyncio.sleep(0.05))
+    done, _ = await asyncio.wait({save_task, marker_task}, timeout=0.1, return_when=asyncio.FIRST_COMPLETED)
+
+    assert marker_task in done
+    assert not save_task.done()
+    await save_task
+    assert store.load(session.session_id).history == saved_history
+
+
+@pytest.mark.asyncio
+async def test_textual_app_history_save_persists_session_and_compaction(tmp_path: Path) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.app import KolegaCodeApp
+
+    saved_history = [Message(role="assistant", content=[TextBlock("persist me")]).to_dict()]
+    saved_compaction = {"summary": "older turns", "compacted_through": 3, "compacted_history_length": 5}
+
+    class FakeAgent:
+        def dump_message_history(self):
+            return saved_history
+
+        def dump_compaction_state(self):
+            return saved_compaction
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+    app.agent = FakeAgent()
+
+    await app._save_session_history_async()
+
+    assert app.session.history == saved_history
+    assert app.session.compaction == saved_compaction
+    loaded = store.load(session.session_id)
+    assert loaded.history == saved_history
+    assert loaded.compaction == saved_compaction
+
+
+@pytest.mark.asyncio
+async def test_textual_app_overlapping_saves_preserve_later_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.app import KolegaCodeApp
+
+    saved_history = [Message(role="assistant", content=[TextBlock("history from first save")]).to_dict()]
+
+    class FakeAgent:
+        def dump_message_history(self):
+            return saved_history
+
+        def dump_compaction_state(self):
+            return {}
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+    app.agent = FakeAgent()
+
+    original_save = store.save
+    saved_snapshots: list[tuple[str, list[dict]]] = []
+
+    def slow_first_save(record):
+        saved_snapshots.append((record.task_list_markdown, list(record.history)))
+        if len(saved_snapshots) == 1:
+            time.sleep(0.2)
+        original_save(record)
+
+    monkeypatch.setattr(store, "save", slow_first_save)
+
+    first_save = asyncio.create_task(app._save_session_history_async())
+    await asyncio.sleep(0.05)
+    app.session.task_list_markdown = "- [x] later state"
+    second_save = asyncio.create_task(app._save_session_async())
+
+    await asyncio.gather(first_save, second_save)
+
+    assert len(saved_snapshots) == 2
+    assert saved_snapshots[0] == ("", saved_history)
+    assert saved_snapshots[1] == ("- [x] later state", saved_history)
+    loaded = store.load(session.session_id)
+    assert loaded.task_list_markdown == "- [x] later state"
+    assert loaded.history == saved_history
 
 
 @pytest.mark.asyncio
@@ -5579,7 +5706,7 @@ async def test_thread_reset_clears_sub_agent_state(tmp_path: Path, monkeypatch: 
         app._render_event(_sub_agent_event(uuid="u1", text="some output"))
         assert app._sub_agent_activities
 
-        app._reset_current_thread()
+        await app._reset_current_thread()
 
         assert app._sub_agent_activities == {}
         assert app._sub_agent_by_tool_call == {}
@@ -5954,7 +6081,7 @@ async def test_thread_reset_closes_open_inspector(
         await pilot.pause()
         assert app._sub_agent_inspector is not None
 
-        app._reset_current_thread()
+        await app._reset_current_thread()
         await pilot.pause()
 
         assert app._sub_agent_inspector is None

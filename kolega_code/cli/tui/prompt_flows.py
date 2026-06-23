@@ -68,7 +68,7 @@ class PromptFlowMixin:
                 A confirmation that the shared task list was updated.
             """
             self.session.task_list_markdown = task_list_markdown.strip()
-            self._save_session()
+            await self._save_session_async()
             self._refresh_planning_sidebar()
             return "Task list updated."
 
