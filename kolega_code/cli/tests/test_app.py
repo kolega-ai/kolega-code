@@ -6407,6 +6407,203 @@ async def test_conversation_scroll_position_survives_streaming(
 
 
 @pytest.mark.asyncio
+async def test_streaming_growth_stays_pinned_when_following_bottom(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.tui.state import ConversationEntry
+    from kolega_code.cli.tui.widgets import JumpToBottomBar
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        view = app._conversation
+        for index in range(35):
+            app._add_conversation_entry(ConversationEntry(kind="user", content=f"message {index}"))
+        entry = ConversationEntry(kind="assistant", content="stream start", complete=False)
+        app._add_conversation_entry(entry)
+        app._flush_conversation_render()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert view.is_at_bottom()
+        assert view.auto_follow_bottom is True
+
+        widget = app._entry_widgets[entry.entry_id]
+        for index in range(8):
+            entry.content += f"\nstreamed line {index} " + ("x" * 100)
+            app._invalidate_conversation(entry)
+            app._flush_conversation_render()
+            await pilot.pause()
+            await pilot.pause()
+            assert app._entry_widgets[entry.entry_id] is widget
+            assert view.is_at_bottom()
+            assert app.query_one("#jump_to_bottom", JumpToBottomBar).display is False
+
+
+@pytest.mark.asyncio
+async def test_jump_to_bottom_keeps_following_continued_stream(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.tui.state import ConversationEntry
+    from kolega_code.cli.tui.widgets import JumpToBottomBar
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        view = app._conversation
+        for index in range(35):
+            app._add_conversation_entry(ConversationEntry(kind="user", content=f"message {index}"))
+        entry = ConversationEntry(kind="assistant", content="stream start", complete=False)
+        app._add_conversation_entry(entry)
+        app._flush_conversation_render()
+        await pilot.pause()
+        await pilot.pause()
+
+        view.scroll_to(y=0, animate=False)
+        await pilot.pause()
+        assert view.auto_follow_bottom is False
+
+        for index in range(6):
+            entry.content += f"\nwhile away {index} " + ("x" * 100)
+            app._invalidate_conversation(entry)
+            app._flush_conversation_render()
+            await pilot.pause()
+
+        bar = app.query_one("#jump_to_bottom", JumpToBottomBar)
+        assert view.scroll_y == 0
+        assert view.is_at_bottom() is False
+        assert bar.display is True
+
+        app.on_jump_to_bottom_bar_pressed(JumpToBottomBar.Pressed(bar))
+        await pilot.pause()
+        await pilot.pause()
+        assert view.auto_follow_bottom is True
+        assert view.is_at_bottom()
+        assert bar.display is False
+
+        for index in range(6):
+            entry.content += f"\nafter jump {index} " + ("y" * 100)
+            app._invalidate_conversation(entry)
+            app._flush_conversation_render()
+            await pilot.pause()
+            await pilot.pause()
+            assert view.is_at_bottom()
+            assert bar.display is False
+
+
+@pytest.mark.asyncio
+async def test_markdown_completion_reflow_after_jump_stays_at_bottom(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.tui.state import ConversationEntry
+    from kolega_code.cli.tui.widgets import JumpToBottomBar
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        view = app._conversation
+        for index in range(25):
+            app._add_conversation_entry(ConversationEntry(kind="user", content=f"message {index}"))
+        markdown_lines = [f"- streamed markdown item {index} with `code`" for index in range(45)]
+        entry = ConversationEntry(kind="assistant", content="\n".join(markdown_lines), complete=False)
+        app._add_conversation_entry(entry)
+        app._flush_conversation_render()
+        await pilot.pause()
+        await pilot.pause()
+
+        view.scroll_to(y=0, animate=False)
+        await pilot.pause()
+        bar = app.query_one("#jump_to_bottom", JumpToBottomBar)
+        assert bar.display is True
+
+        app.on_jump_to_bottom_bar_pressed(JumpToBottomBar.Pressed(bar))
+        await pilot.pause()
+        await pilot.pause()
+        assert view.is_at_bottom()
+
+        entry.complete = True
+        app._invalidate_conversation(entry)
+        app._flush_conversation_render()
+        await pilot.pause()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert view.auto_follow_bottom is True
+        assert view.is_at_bottom()
+        assert bar.display is False
+
+
+@pytest.mark.asyncio
+async def test_full_rebuild_preserves_manual_scroll_away(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.tui.state import ConversationEntry
+    from kolega_code.cli.tui.widgets import JumpToBottomBar
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        view = app._conversation
+        for index in range(45):
+            app._add_conversation_entry(ConversationEntry(kind="user", content=f"message {index}"))
+        app._flush_conversation_render()
+        await pilot.pause()
+        await pilot.pause()
+        assert view.is_at_bottom()
+
+        view.scroll_to(y=0, animate=False)
+        await pilot.pause()
+        assert view.auto_follow_bottom is False
+
+        app._render_conversation()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert view.scroll_y == 0
+        assert view.is_at_bottom() is False
+        assert view.auto_follow_bottom is False
+        assert app.query_one("#jump_to_bottom", JumpToBottomBar).display is True
+
+
+@pytest.mark.asyncio
+async def test_full_rebuild_keeps_following_when_already_at_bottom(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.tui.state import ConversationEntry
+    from kolega_code.cli.tui.widgets import JumpToBottomBar
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        view = app._conversation
+        for index in range(45):
+            app._add_conversation_entry(ConversationEntry(kind="user", content=f"message {index}"))
+        app._flush_conversation_render()
+        await pilot.pause()
+        await pilot.pause()
+        assert view.is_at_bottom()
+        assert view.auto_follow_bottom is True
+
+        app._render_conversation()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert view.is_at_bottom()
+        assert view.auto_follow_bottom is True
+        assert app.query_one("#jump_to_bottom", JumpToBottomBar).display is False
+
+
+@pytest.mark.asyncio
 async def test_assistant_entries_render_markdown_when_complete(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

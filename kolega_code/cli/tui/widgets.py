@@ -273,8 +273,23 @@ class ToolEntryWidget(Vertical):
 class ConversationView(VerticalScroll):
     """Scrollable list of per-entry widgets, anchored to the bottom while streaming."""
 
+    bottom_tolerance = 1
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.auto_follow_bottom = True
+
+    def is_at_bottom(self) -> bool:
+        """Return whether the current scroll position is effectively at the end."""
+        return self.max_scroll_y <= 0 or self.scroll_y >= self.max_scroll_y - self.bottom_tolerance
+
+    def set_auto_follow(self, enabled: bool) -> None:
+        """Record whether transcript updates should keep the view pinned to the end."""
+        self.auto_follow_bottom = enabled
+
     def watch_scroll_y(self, old_value: float, new_value: float) -> None:
         super().watch_scroll_y(old_value, new_value)
+        self.auto_follow_bottom = self.is_at_bottom()
         try:
             update = getattr(self.app, "_update_jump_button", None)
         except Exception:

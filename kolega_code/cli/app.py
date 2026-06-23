@@ -374,7 +374,7 @@ class KolegaCodeApp(
         self._update_detach_button()
         if self.check_for_updates:
             self.run_worker(self._check_for_update_on_startup(), name="kolega-update-check", group="updates")
-        self._conversation.anchor()
+        self._schedule_conversation_bottom_anchor()
         self.run_worker(self._consume_events(), name="kolega-events", group="events")
         if self.config is not None:
             await self._build_agent(self.config)
