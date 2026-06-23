@@ -202,7 +202,7 @@ run_find() {{
       dir_part="${{pattern%/*}}"
       name_pat="${{pattern##*/}}"
       base_dir="${{dir_part##*/}}"
-      case " {' '.join(sorted(self.EXCLUDE_DIRS))} " in *" $base_dir "*) exit 0;; esac
+      case " {" ".join(sorted(self.EXCLUDE_DIRS))} " in *" $base_dir "*) exit 0;; esac
       find "$dir_part" -maxdepth 1 -name "$name_pat" -print
       ;;
     *)
@@ -298,9 +298,9 @@ echo "__TOTAL__ $total_items"
                         if size_bytes < 1024:
                             size_text = f"{size_bytes} bytes"
                         elif size_bytes < 1024 * 1024:
-                            size_text = f"{size_bytes/1024:.1f} KB"
+                            size_text = f"{size_bytes / 1024:.1f} KB"
                         else:
-                            size_text = f"{size_bytes/(1024*1024):.1f} MB"
+                            size_text = f"{size_bytes / (1024 * 1024):.1f} MB"
                     except Exception:
                         size_text = "unknown size"
 

@@ -388,9 +388,7 @@ class ResponsesStreamWrapper:
             if not content_blocks and not tool_use_blocks:
                 # Fallback for backends that only populate the final output (and
                 # not deltas) — e.g. a non-streaming-shaped response.
-                content_blocks, tool_use_blocks = _blocks_from_response(
-                    self._final_response, self._tool_execution_ids
-                )
+                content_blocks, tool_use_blocks = _blocks_from_response(self._final_response, self._tool_execution_ids)
             stop_reason = _stop_reason_from_response(self._final_response, bool(tool_use_blocks))
         else:
             usage_metadata = {}

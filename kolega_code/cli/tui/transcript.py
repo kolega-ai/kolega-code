@@ -164,7 +164,9 @@ class TranscriptRenderingMixin:
                     entries.append(
                         ConversationEntry(
                             kind="tool_error" if block.is_error else "tool_result",
-                            content=self._truncate_tool_text(text) if block.is_error else self._tool_result_preview(text),
+                            content=self._truncate_tool_text(text)
+                            if block.is_error
+                            else self._tool_result_preview(text),
                             tool_name=block.name,
                             tool_call_id=getattr(block, "execution_id", None),
                             full_content=self._capped_tool_text(text),
@@ -172,7 +174,9 @@ class TranscriptRenderingMixin:
                     )
                 else:
                     entry.kind = "tool_error" if block.is_error else "tool_result"
-                    entry.content = self._truncate_tool_text(text) if block.is_error else self._tool_result_preview(text)
+                    entry.content = (
+                        self._truncate_tool_text(text) if block.is_error else self._tool_result_preview(text)
+                    )
                     entry.complete = True
                     entry.tool_name = block.name or entry.tool_name
                     entry.tool_call_id = getattr(block, "execution_id", None) or entry.tool_call_id
@@ -577,9 +581,7 @@ class TranscriptRenderingMixin:
                 return step
         return None
 
-    def _accumulate_sub_agent_stream(
-        self, activity: SubAgentActivity, kind: str, event: AgentEvent, text: str
-    ) -> None:
+    def _accumulate_sub_agent_stream(self, activity: SubAgentActivity, kind: str, event: AgentEvent, text: str) -> None:
         """Accumulate streamed thinking/response chunks into one step per chunk uuid,
         mirroring the main transcript's _apply_stream_chunk.
 
@@ -676,7 +678,7 @@ class TranscriptRenderingMixin:
         if activity.task:
             task = activity.task
             if len(task) > theme.SUB_AGENT_TASK_PREVIEW_CHARS:
-                task = f"{task[:theme.SUB_AGENT_TASK_PREVIEW_CHARS]}{theme.g(Glyph.ELLIPSIS)}"
+                task = f"{task[: theme.SUB_AGENT_TASK_PREVIEW_CHARS]}{theme.g(Glyph.ELLIPSIS)}"
             body_lines.append(f"Task: {task}")
         tools_line = f"{activity.tool_calls} tool{'' if activity.tool_calls == 1 else 's'}"
         if activity.tokens:
@@ -693,7 +695,7 @@ class TranscriptRenderingMixin:
             tail = " ".join(tail.split())
             if tail:
                 if len(tail) > theme.SUB_AGENT_TAIL_CHARS:
-                    tail = f"{theme.g(Glyph.ELLIPSIS)}{tail[-theme.SUB_AGENT_TAIL_CHARS:]}"
+                    tail = f"{theme.g(Glyph.ELLIPSIS)}{tail[-theme.SUB_AGENT_TAIL_CHARS :]}"
                 body_lines.append(tail)
         if any(step.kind != "sub_agent_task" for step in activity.steps):
             body_lines.append(messages.SUB_AGENT_INSPECT_HINT)
@@ -958,7 +960,7 @@ class TranscriptRenderingMixin:
         if activity.latest_log:
             log = activity.latest_log
             if len(log) > theme.SUB_AGENT_TASK_PREVIEW_CHARS:
-                log = f"{log[:theme.SUB_AGENT_TASK_PREVIEW_CHARS]}{theme.g(Glyph.ELLIPSIS)}"
+                log = f"{log[: theme.SUB_AGENT_TASK_PREVIEW_CHARS]}{theme.g(Glyph.ELLIPSIS)}"
             bits.append(log)
         return f" {sep} ".join(bits)
 
@@ -1016,7 +1018,7 @@ class TranscriptRenderingMixin:
     def _truncate_tool_text(self, text: str) -> str:
         if len(text) <= theme.TOOL_RESULT_PREVIEW_CHARS:
             return text
-        return f"{text[:theme.TOOL_RESULT_PREVIEW_CHARS]}{theme.g(Glyph.ELLIPSIS)}"
+        return f"{text[: theme.TOOL_RESULT_PREVIEW_CHARS]}{theme.g(Glyph.ELLIPSIS)}"
 
     def _capped_tool_text(self, text: str) -> str:
         if len(text) <= theme.TOOL_FULL_CONTENT_CAP_CHARS:
@@ -1027,7 +1029,7 @@ class TranscriptRenderingMixin:
         if len(text) <= theme.TOOL_STREAM_PREVIEW_CHARS:
             return text
         notice = messages.STREAM_TRUNCATED.format(chars=theme.TOOL_STREAM_PREVIEW_CHARS)
-        return f"{notice}\n{text[-theme.TOOL_STREAM_PREVIEW_CHARS:]}"
+        return f"{notice}\n{text[-theme.TOOL_STREAM_PREVIEW_CHARS :]}"
 
     def _invalidate_conversation(self, entry: Optional[ConversationEntry] = None) -> None:
         """Mark the conversation dirty and coalesce re-renders.
@@ -1124,7 +1126,9 @@ class TranscriptRenderingMixin:
         if not view.is_attached:
             return
         had_rendered_entries = bool(self._entry_widgets)
-        should_follow = not had_rendered_entries or bool(getattr(view, "auto_follow_bottom", False)) or view.is_at_bottom()
+        should_follow = (
+            not had_rendered_entries or bool(getattr(view, "auto_follow_bottom", False)) or view.is_at_bottom()
+        )
         view.remove_children()
         self._entry_widgets = {}
         widgets = []

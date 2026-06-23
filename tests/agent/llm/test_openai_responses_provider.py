@@ -143,7 +143,9 @@ async def test_stream_captures_reasoning_for_continuity():
     provider = OpenAIResponsesProvider(api_key="sk-test")
     completed = _ns(output=[], usage=None, status="completed", incomplete_details=None)
     events = [
-        _ns(type="response.output_item.done", item=_ns(type="reasoning", id="rs_1", encrypted_content="ENC", summary=[])),
+        _ns(
+            type="response.output_item.done", item=_ns(type="reasoning", id="rs_1", encrypted_content="ENC", summary=[])
+        ),
         _ns(type="response.output_text.delta", delta="hi"),
         _ns(type="response.completed", response=completed),
     ]

@@ -142,6 +142,7 @@ async def test_switch_to_vision_model_with_image_history_no_warn(tmp_path, monke
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
 
     async with app.run_test():
+
         async def _fake_ensure(rebuild=False):
             app.agent = _FakeAgent(supports_vision=True, has_images=True)
 
@@ -195,6 +196,7 @@ async def test_switch_to_non_vision_model_without_image_history_no_warn(tmp_path
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
 
     async with app.run_test():
+
         async def _fake_ensure(rebuild=False):
             app.agent = _FakeAgent(supports_vision=False, has_images=False)
 

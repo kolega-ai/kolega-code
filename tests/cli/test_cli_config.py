@@ -349,9 +349,7 @@ def test_web_search_defaults_to_keyless_duckduckgo(tmp_path: Path) -> None:
 
 
 def test_web_search_backend_key_from_settings(tmp_path: Path) -> None:
-    settings = CliSettings(
-        active_provider="anthropic", active_model=DEFAULT_LONG_MODEL, web_search_backend="firecrawl"
-    )
+    settings = CliSettings(active_provider="anthropic", active_model=DEFAULT_LONG_MODEL, web_search_backend="firecrawl")
     settings.set_api_key("anthropic", "anthropic-key")
     settings.set_api_key("firecrawl", "fc-from-settings")
 
@@ -362,9 +360,7 @@ def test_web_search_backend_key_from_settings(tmp_path: Path) -> None:
 
 
 def test_web_search_key_env_overrides_settings(tmp_path: Path) -> None:
-    settings = CliSettings(
-        active_provider="anthropic", active_model=DEFAULT_LONG_MODEL, web_search_backend="firecrawl"
-    )
+    settings = CliSettings(active_provider="anthropic", active_model=DEFAULT_LONG_MODEL, web_search_backend="firecrawl")
     settings.set_api_key("anthropic", "anthropic-key")
     settings.set_api_key("firecrawl", "fc-from-settings")
 
@@ -378,9 +374,7 @@ def test_web_search_key_env_overrides_settings(tmp_path: Path) -> None:
 
 
 def test_web_search_cloud_backend_without_key_does_not_block_startup(tmp_path: Path) -> None:
-    settings = CliSettings(
-        active_provider="anthropic", active_model=DEFAULT_LONG_MODEL, web_search_backend="tavily"
-    )
+    settings = CliSettings(active_provider="anthropic", active_model=DEFAULT_LONG_MODEL, web_search_backend="tavily")
     settings.set_api_key("anthropic", "anthropic-key")
 
     # Selecting a cloud backend without its key must NOT raise (keyless-default promise).

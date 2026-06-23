@@ -94,9 +94,7 @@ class TestReadImageWrapper:
         expected = [ImageBlock(image_type="base64", media_type="image/png", data="")]
         collection.read_image_tool = Mock()
         collection.read_image_tool.read_image = AsyncMock(return_value=expected)
-        collection.caller = SimpleNamespace(
-            primary_model_config=SimpleNamespace(provider="openai_chatgpt")
-        )
+        collection.caller = SimpleNamespace(primary_model_config=SimpleNamespace(provider="openai_chatgpt"))
 
         result = await collection.read_image("img.png")
         assert result is expected
@@ -110,9 +108,7 @@ class TestReadImageWrapper:
         expected = [ImageBlock(image_type="base64", media_type="image/png", data="")]
         collection.read_image_tool = Mock()
         collection.read_image_tool.read_image = AsyncMock(return_value=expected)
-        collection.caller = SimpleNamespace(
-            primary_model_config=SimpleNamespace(provider=ModelProvider.OPENAI_CHATGPT)
-        )
+        collection.caller = SimpleNamespace(primary_model_config=SimpleNamespace(provider=ModelProvider.OPENAI_CHATGPT))
 
         result = await collection.read_image("img.png")
         assert result is expected
@@ -124,9 +120,7 @@ class TestReadImageWrapper:
         expected = [ImageBlock(image_type="base64", media_type="image/png", data="")]
         collection.read_image_tool = Mock()
         collection.read_image_tool.read_image = AsyncMock(return_value=expected)
-        collection.caller = SimpleNamespace(
-            primary_model_config=SimpleNamespace(provider="anthropic")
-        )
+        collection.caller = SimpleNamespace(primary_model_config=SimpleNamespace(provider="anthropic"))
 
         result = await collection.read_image("img.png")
         assert result is expected

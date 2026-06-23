@@ -1,3 +1,5 @@
+# ruff: noqa: E402
+
 import asyncio
 import os
 from pathlib import Path
@@ -301,11 +303,13 @@ async def test_fireworks_stream_final_message_maps_openai_usage():
 
     class FakeOpenAIStream:
         def __init__(self):
-            self._chunks = iter([
-                Chunk(Delta(reasoning_content="think ")),
-                Chunk(Delta(reasoning_content="hard")),
-                Chunk(Delta(content="ok"), finish_reason="stop", usage=Usage()),
-            ])
+            self._chunks = iter(
+                [
+                    Chunk(Delta(reasoning_content="think ")),
+                    Chunk(Delta(reasoning_content="hard")),
+                    Chunk(Delta(content="ok"), finish_reason="stop", usage=Usage()),
+                ]
+            )
 
         def __aiter__(self):
             return self

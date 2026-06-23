@@ -203,7 +203,9 @@ class LLMClient:
         except Exception as e:
             raise map_to_llm_error(e, self.provider_name) from e
 
-    def _prepare_thinking_param(self, thinking: Optional[Union[int, str]] = None, model: Optional[str] = None) -> Optional[str]:
+    def _prepare_thinking_param(
+        self, thinking: Optional[Union[int, str]] = None, model: Optional[str] = None
+    ) -> Optional[str]:
         """Validate a model-specific thinking effort value."""
         if thinking is None:
             return None
@@ -249,7 +251,9 @@ class LLMClient:
                     temperature=temperature,
                     max_completion_tokens=max_completion_tokens,
                     tools=tools,
-                    thinking=self._prepare_thinking_param(thinking, str(kwargs.get("model")) if kwargs.get("model") else None),
+                    thinking=self._prepare_thinking_param(
+                        thinking, str(kwargs.get("model")) if kwargs.get("model") else None
+                    ),
                 )
             return await self.provider.generate(messages, system, params, **kwargs)
         except Exception as e:
@@ -290,7 +294,9 @@ class LLMClient:
                     temperature=temperature,
                     max_completion_tokens=max_completion_tokens,
                     tools=tools,
-                    thinking=self._prepare_thinking_param(thinking, str(kwargs.get("model")) if kwargs.get("model") else None),
+                    thinking=self._prepare_thinking_param(
+                        thinking, str(kwargs.get("model")) if kwargs.get("model") else None
+                    ),
                 )
 
             # Return the appropriate stream type for the provider

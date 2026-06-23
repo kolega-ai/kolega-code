@@ -24,6 +24,7 @@ from ..file_index import IndexEntry
 from ..slash_commands import SlashCommandEntry
 from .state import ConversationEntry
 
+
 class ConversationEntryWidget(Static):
     """Displays one ConversationEntry and is updated in place as the entry changes."""
 
@@ -624,24 +625,17 @@ class ChatComposer(TextArea):
         stripped = text.strip()
         if stripped.startswith("data:image/") and ";base64," in stripped:
             header, _, b64data = stripped.partition(";base64,")
-            media_type = header[len("data:"):]  # e.g. image/png
+            media_type = header[len("data:") :]  # e.g. image/png
             try:
                 raw = _b64.b64decode(b64data)
             except Exception:
                 # Not a valid data-URI image — fall through to default paste.
                 return
-            self.app.add_pending_image_attachment(
-                encode_image_attachment(raw, media_type, path="pasted-data-uri")
-            )
+            self.app.add_pending_image_attachment(encode_image_attachment(raw, media_type, path="pasted-data-uri"))
             event.prevent_default()
             event.stop()
             return
-        if (
-            stripped
-            and "\n" not in stripped
-            and _Path(stripped).exists()
-            and image_media_type(stripped) is not None
-        ):
+        if stripped and "\n" not in stripped and _Path(stripped).exists() and image_media_type(stripped) is not None:
             att = encode_image_file(_Path(stripped))
             if att is not None:
                 att["path"] = stripped

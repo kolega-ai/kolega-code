@@ -74,9 +74,7 @@ class FirecrawlBackend(SearchBackend):
     async def _search_keyed(self, query: str, count: int) -> list:
         """Keyed path: official SDK (sync) in a worker thread. Firecrawl timeout is ms."""
         try:
-            data = await asyncio.wait_for(
-                asyncio.to_thread(self._sdk_search, query, count), timeout=self.timeout
-            )
+            data = await asyncio.wait_for(asyncio.to_thread(self._sdk_search, query, count), timeout=self.timeout)
         except asyncio.TimeoutError as exc:
             raise SearchBackendUnavailable(f"timed out after {self.timeout:.0f}s") from exc
         except Exception as exc:

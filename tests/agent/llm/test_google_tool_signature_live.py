@@ -56,8 +56,13 @@ async def test_google_tool_round_trip_non_streaming() -> None:
     history = MessageHistory([_user("List the files in the current directory using the tool.")])
 
     first = await client.generate(
-        messages=history, system=SYSTEM, model=MODEL, max_completion_tokens=8192,
-        temperature=1.0, thinking="high", tools=[LIST_DIR_TOOL],
+        messages=history,
+        system=SYSTEM,
+        model=MODEL,
+        max_completion_tokens=8192,
+        temperature=1.0,
+        thinking="high",
+        tools=[LIST_DIR_TOOL],
     )
     tool_calls = [b for b in first.content if isinstance(b, ToolCall)]
     if not tool_calls:
@@ -69,8 +74,13 @@ async def test_google_tool_round_trip_non_streaming() -> None:
     history.append(first)
     history.append(_tool_results_for(first))
     second = await client.generate(
-        messages=history, system=SYSTEM, model=MODEL, max_completion_tokens=8192,
-        temperature=1.0, thinking="high", tools=[LIST_DIR_TOOL],
+        messages=history,
+        system=SYSTEM,
+        model=MODEL,
+        max_completion_tokens=8192,
+        temperature=1.0,
+        thinking="high",
+        tools=[LIST_DIR_TOOL],
     )
     assert second is not None
     assert second.role == "assistant"
@@ -82,8 +92,13 @@ async def test_google_tool_round_trip_streaming() -> None:
     history = MessageHistory([_user("List the files in the current directory using the tool.")])
 
     stream = await client.stream(
-        messages=history, system=SYSTEM, model=MODEL, max_completion_tokens=8192,
-        temperature=1.0, thinking="high", tools=[LIST_DIR_TOOL],
+        messages=history,
+        system=SYSTEM,
+        model=MODEL,
+        max_completion_tokens=8192,
+        temperature=1.0,
+        thinking="high",
+        tools=[LIST_DIR_TOOL],
     )
     async with stream as ctx:
         async for _ in ctx:
@@ -99,8 +114,13 @@ async def test_google_tool_round_trip_streaming() -> None:
     history.append(_tool_results_for(first))
     # The follow-up request must not 400 on a missing thought_signature.
     second_stream = await client.stream(
-        messages=history, system=SYSTEM, model=MODEL, max_completion_tokens=8192,
-        temperature=1.0, thinking="high", tools=[LIST_DIR_TOOL],
+        messages=history,
+        system=SYSTEM,
+        model=MODEL,
+        max_completion_tokens=8192,
+        temperature=1.0,
+        thinking="high",
+        tools=[LIST_DIR_TOOL],
     )
     async with second_stream as ctx:
         async for _ in ctx:

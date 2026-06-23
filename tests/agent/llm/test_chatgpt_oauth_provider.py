@@ -231,7 +231,10 @@ async def test_responses_stream_wrapper_text_tools_and_usage():
     events = [
         _ns(type="response.output_text.delta", delta="Do"),
         _ns(type="response.output_text.delta", delta="ne."),
-        _ns(type="response.output_item.added", item=_ns(type="function_call", call_id="call_1", id="fc_1", name="read_file")),
+        _ns(
+            type="response.output_item.added",
+            item=_ns(type="function_call", call_id="call_1", id="fc_1", name="read_file"),
+        ),
         _ns(type="response.function_call_arguments.delta", item_id="fc_1", delta='{"path"'),
         _ns(type="response.function_call_arguments.done", item_id="fc_1", arguments='{"path": "a.py"}'),
         _ns(type="response.completed", response=completed_response),
@@ -411,7 +414,9 @@ async def test_responses_stream_wrapper_skips_reasoning_without_encrypted_conten
     # would be rejected on resend), so it must be dropped.
     completed = _ns(output=[], usage=None, status="completed", incomplete_details=None)
     events = [
-        _ns(type="response.output_item.done", item=_ns(type="reasoning", id="rs_1", encrypted_content=None, summary=[])),
+        _ns(
+            type="response.output_item.done", item=_ns(type="reasoning", id="rs_1", encrypted_content=None, summary=[])
+        ),
         _ns(type="response.output_text.delta", delta="ok"),
         _ns(type="response.completed", response=completed),
     ]

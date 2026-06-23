@@ -44,7 +44,9 @@ SYSTEM = Message(
 
 
 def _messages() -> MessageHistory:
-    return MessageHistory([Message(role="user", content=[TextBlock(text="What is 2 + 2? Reply with just the number.")])])
+    return MessageHistory(
+        [Message(role="user", content=[TextBlock(text="What is 2 + 2? Reply with just the number.")])]
+    )
 
 
 def _provider_default_models() -> list[tuple[str, str]]:

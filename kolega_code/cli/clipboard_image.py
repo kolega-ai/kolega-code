@@ -83,9 +83,7 @@ async def _read_linux_clipboard() -> Optional[Tuple[bytes, str]]:
     """Linux/WSL: try xclip, wl-paste, then powershell.exe (WSL)."""
     try:
         if shutil.which("xclip") is not None:
-            stdout, _stderr, rc = await _run_exec(
-                "xclip", "-selection", "clipboard", "-t", "image/png", "-o"
-            )
+            stdout, _stderr, rc = await _run_exec("xclip", "-selection", "clipboard", "-t", "image/png", "-o")
             if rc == 0 and stdout and len(stdout) >= _MIN_IMAGE_BYTES:
                 return stdout, "image/png"
         if shutil.which("wl-paste") is not None:

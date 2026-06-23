@@ -18,7 +18,7 @@ class _Choice:
 
 class _Chunk:
     def __init__(self, text=None, is_final=False):
-        self.choices = [_Choice(delta=_Delta(content=text), finish_reason='stop' if is_final else None)]
+        self.choices = [_Choice(delta=_Delta(content=text), finish_reason="stop" if is_final else None)]
         self.usage = None
 
 
@@ -27,12 +27,12 @@ class _Usage:
         self.prompt_tokens = 3019
         self.completion_tokens = 104
         self.total_tokens = 3123
-        self.prompt_tokens_details = {'cached_tokens': 2048}
+        self.prompt_tokens_details = {"cached_tokens": 2048}
 
 
 class _AsyncStream:
     def __init__(self):
-        self._chunks = [_Chunk('hello '), _Chunk('world', is_final=True)]
+        self._chunks = [_Chunk("hello "), _Chunk("world", is_final=True)]
         self._i = 0
 
     def __aiter__(self):
@@ -54,21 +54,18 @@ class _AsyncStream:
 # TODO: Fix after qwen-3-coder-plus PR is merged - needs OpenAI cache token extraction in streaming
 @pytest.mark.asyncio
 async def test_openai_stream_includes_cached_tokens(monkeypatch):
-    provider = OpenAIProvider(api_key='sk-test', base_url='https://api.openai.com/v1')
+    provider = OpenAIProvider(api_key="sk-test", base_url="https://api.openai.com/v1")
 
     async def fake_create(*args, **kwargs):
         return _AsyncStream()
 
-    monkeypatch.setattr(provider.async_client.chat.completions, 'create', fake_create)
+    monkeypatch.setattr(provider.async_client.chat.completions, "create", fake_create)
 
-    stream = await provider.stream(messages=MessageHistory([Message(role='user', content='hi')]))
+    stream = await provider.stream(messages=MessageHistory([Message(role="user", content="hi")]))
     async with stream as s:
         async for _ in s:
             pass
         final = await s.get_final_message()
-        assert final.usage_metadata['prompt_tokens'] == 3019
-        assert final.usage_metadata['total_tokens'] == 3123
-        assert final.usage_metadata['cache_read_input_tokens'] == 2048
-
-
-
+        assert final.usage_metadata["prompt_tokens"] == 3019
+        assert final.usage_metadata["total_tokens"] == 3123
+        assert final.usage_metadata["cache_read_input_tokens"] == 2048

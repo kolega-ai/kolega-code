@@ -223,9 +223,7 @@ async def test_attach_command_non_vision_shows_warning(tmp_path, monkeypatch):
         # Minimal 1x1 PNG.
         def _minimal_png() -> bytes:
             sig = b"\x89PNG\r\n\x1a\n"
-            ihdr = struct.pack(
-                ">IHHBBBB", 13, 1, 1, 8, 2, 0, 0
-            )  # length=13, w=1, h=1, depth=8, color=2 (RGB)
+            ihdr = struct.pack(">IHHBBBB", 13, 1, 1, 8, 2, 0, 0)  # length=13, w=1, h=1, depth=8, color=2 (RGB)
             ihdr_chunk = b"IHDR" + ihdr
             ihdr_crc = struct.pack(">I", zlib.crc32(ihdr_chunk) & 0xFFFFFFFF)
             ihdr_full = struct.pack(">I", 13) + ihdr_chunk + ihdr_crc

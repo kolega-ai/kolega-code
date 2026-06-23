@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 
 class CommandScope(str, Enum):
-    TUI = "tui"      # handled by KolegaCodeApp
+    TUI = "tui"  # handled by KolegaCodeApp
     AGENT = "agent"  # handled by CommandProcessor inside the agent
     SKILL = "skill"  # dynamic, from SkillCatalog
 
@@ -100,9 +100,7 @@ def all_command_entries(skill_catalog: "SkillCatalog | None" = None) -> List[Sla
     return entries
 
 
-def search_commands(
-    query: str, skill_catalog: "SkillCatalog | None" = None, limit: int = 8
-) -> List[SlashCommandEntry]:
+def search_commands(query: str, skill_catalog: "SkillCatalog | None" = None, limit: int = 8) -> List[SlashCommandEntry]:
     """Filter commands by ``query``: prefix matches first, then substring matches.
 
     An empty query returns all commands (capped at ``limit``). Results are

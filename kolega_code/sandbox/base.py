@@ -282,7 +282,9 @@ class SandboxManager(ABC):
         pass
 
     @abstractmethod
-    async def sync_sandbox_env_vars(self, sandbox_id: str, workspace_id: str, sandbox: Optional[Any] = None, skip_integration_env_sync: bool = False) -> None:
+    async def sync_sandbox_env_vars(
+        self, sandbox_id: str, workspace_id: str, sandbox: Optional[Any] = None, skip_integration_env_sync: bool = False
+    ) -> None:
         """
         Sync current environment variables to an existing sandbox.
 

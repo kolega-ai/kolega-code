@@ -11,6 +11,7 @@ class ThinkingEffortSpec:
     mode: str
     budgets: dict[str, int] = field(default_factory=dict)
 
+
 # Dictionary mapping (provider, model_name) to model specifications
 # Each entry contains context_length (maximum input tokens), max_completion_tokens, default_temperature,
 # and optional model capability flags.
@@ -69,9 +70,24 @@ MODEL_SPECS: Dict[Tuple[str, str], Dict[str, Any]] = {
             mode="anthropic_adaptive_effort",
         ),
     },
-    ("anthropic", "claude-sonnet-4-5-20250929"): {"context_length": 200000, "max_completion_tokens": 16384, "default_temperature": 1.0, "supports_vision": True},
-    ("anthropic", "claude-opus-4-5-20251101"): {"context_length": 200000, "max_completion_tokens": 16384, "default_temperature": 1.0, "supports_vision": True},
-    ("anthropic", "claude-haiku-4-5-20251001"): {"context_length": 200000, "max_completion_tokens": 16384, "default_temperature": 1.0, "supports_vision": True},
+    ("anthropic", "claude-sonnet-4-5-20250929"): {
+        "context_length": 200000,
+        "max_completion_tokens": 16384,
+        "default_temperature": 1.0,
+        "supports_vision": True,
+    },
+    ("anthropic", "claude-opus-4-5-20251101"): {
+        "context_length": 200000,
+        "max_completion_tokens": 16384,
+        "default_temperature": 1.0,
+        "supports_vision": True,
+    },
+    ("anthropic", "claude-haiku-4-5-20251001"): {
+        "context_length": 200000,
+        "max_completion_tokens": 16384,
+        "default_temperature": 1.0,
+        "supports_vision": True,
+    },
     # Moonshot models (recommended default first)
     ("moonshot", "kimi-k2.7-code"): {
         "context_length": 262144,
@@ -237,8 +253,18 @@ MODEL_SPECS: Dict[Tuple[str, str], Dict[str, Any]] = {
         ),
     },
     # Together.ai models
-    ("together", "moonshotai/Kimi-K2.7-Code"): {"context_length": 262144, "max_completion_tokens": 32768, "default_temperature": 1.0, "supports_vision": True},
-    ("together", "zai-org/GLM-5.1"): {"context_length": 202752, "max_completion_tokens": 16384, "default_temperature": 1.0, "supports_vision": False},
+    ("together", "moonshotai/Kimi-K2.7-Code"): {
+        "context_length": 262144,
+        "max_completion_tokens": 32768,
+        "default_temperature": 1.0,
+        "supports_vision": True,
+    },
+    ("together", "zai-org/GLM-5.1"): {
+        "context_length": 202752,
+        "max_completion_tokens": 16384,
+        "default_temperature": 1.0,
+        "supports_vision": False,
+    },
     # Google models
     ("google", "gemini-3.1-pro-preview"): {
         "context_length": 1048576,
@@ -274,7 +300,12 @@ MODEL_SPECS: Dict[Tuple[str, str], Dict[str, Any]] = {
             mode="openai_reasoning_effort",
         ),
     },
-    ("xai", "grok-build-0.1"): {"context_length": 256000, "max_completion_tokens": 16384, "default_temperature": 0.6, "supports_vision": False},
+    ("xai", "grok-build-0.1"): {
+        "context_length": 256000,
+        "max_completion_tokens": 16384,
+        "default_temperature": 0.6,
+        "supports_vision": False,
+    },
     # Fireworks models (OpenAI-compatible endpoint). Fireworks reasoning models
     # expose reasoning_content in responses and accept flat reasoning_effort
     # values on chat completions. "none" disables reasoning.
@@ -356,8 +387,18 @@ MODEL_SPECS: Dict[Tuple[str, str], Dict[str, Any]] = {
         ),
     },
     # DashScope / Qwen models
-    ("dashscope", "qwen3-coder-plus"): {"context_length": 1000000, "max_completion_tokens": 65536, "default_temperature": 0.7, "supports_vision": False},
-    ("dashscope", "qwen3-coder-flash"): {"context_length": 1000000, "max_completion_tokens": 65536, "default_temperature": 0.7, "supports_vision": False},
+    ("dashscope", "qwen3-coder-plus"): {
+        "context_length": 1000000,
+        "max_completion_tokens": 65536,
+        "default_temperature": 0.7,
+        "supports_vision": False,
+    },
+    ("dashscope", "qwen3-coder-flash"): {
+        "context_length": 1000000,
+        "max_completion_tokens": 65536,
+        "default_temperature": 0.7,
+        "supports_vision": False,
+    },
     # Z.AI (GLM Coding Plan) models — Anthropic-compatible endpoint (recommended default first)
     ("zai", "glm-5.2"): {
         "context_length": 1000000,

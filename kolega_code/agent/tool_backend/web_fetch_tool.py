@@ -163,9 +163,7 @@ class WebFetchTool(StreamingTool):
             user_prompt = Message(
                 role="user",
                 content=[
-                    TextBlock(
-                        text=f"Instruction:\n{instruction.strip()}\n\nWeb content:\n{content}{truncated_note}"
-                    )
+                    TextBlock(text=f"Instruction:\n{instruction.strip()}\n\nWeb content:\n{content}{truncated_note}")
                 ],
             )
 

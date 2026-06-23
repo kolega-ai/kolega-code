@@ -621,9 +621,7 @@ class BaseAgent(LogMixin):
             await self.count_current_context()
 
         phase = "finished" if result.ok else "error"
-        summary_text = (
-            self.conversation.summary.get_text_content() if result.ok and self.conversation.summary else ""
-        )
+        summary_text = self.conversation.summary.get_text_content() if result.ok and self.conversation.summary else ""
         await self.emitter.compaction_status(phase, result.message, summary=summary_text)
         return result
 
@@ -1173,8 +1171,7 @@ class BaseAgent(LogMixin):
                 backoff = min(30.0, 2.0 * (2 ** (self._consecutive_llm_retries - 1)))
                 delay = random.uniform(0, backoff)
             await self.log_warning(
-                f"Transient LLM error ({error}); retry "
-                f"{self._consecutive_llm_retries}/{cap} in {delay:.1f}s.",
+                f"Transient LLM error ({error}); retry {self._consecutive_llm_retries}/{cap} in {delay:.1f}s.",
                 sender=self.agent_name,
             )
             await asyncio.sleep(delay)

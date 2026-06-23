@@ -22,6 +22,7 @@ from .widgets import ConversationEntryWidget, ToolEntryWidget
 if TYPE_CHECKING:
     from ..app import KolegaCodeApp
 
+
 class SubAgentEntryWidget(ConversationEntryWidget):
     """A sub-agent summary card that opens the inspector when clicked."""
 

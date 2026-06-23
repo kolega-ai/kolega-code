@@ -14,7 +14,6 @@ from .base import BrowserManager
 
 
 class PlaywrightBrowserManager(BrowserManager):
-
     def __init__(self, use_browserstack: bool = False, browser_backend: str = "local"):
         self.browsers = {}
         self.viewport = {"width": 1280, "height": 720}

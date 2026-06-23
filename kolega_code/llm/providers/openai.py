@@ -130,7 +130,6 @@ class OpenAIStreamWrapper:
 
 
 class OpenAIProvider(BaseLLMProvider):
-
     models_max_completion_tokens = ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.2"]
 
     def __init__(

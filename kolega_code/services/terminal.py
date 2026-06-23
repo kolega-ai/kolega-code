@@ -481,9 +481,7 @@ class LocalTerminalManager(TerminalManager):
         through the session model, accumulating output across poll windows.
         """
         deadline = time.monotonic() + (timeout if timeout and timeout > 0 else 600)
-        result = await self.exec_command(
-            command, workdir=cwd, yield_time_ms=MAX_YIELD_MS, max_output_tokens=200000
-        )
+        result = await self.exec_command(command, workdir=cwd, yield_time_ms=MAX_YIELD_MS, max_output_tokens=200000)
         parts = [result.output]
         session_id = result.session_id
         while result.status == "running" and time.monotonic() < deadline:

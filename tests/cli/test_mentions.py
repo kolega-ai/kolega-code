@@ -88,7 +88,9 @@ def test_build_file_attachments_directory_listing_is_capped(tmp_path: Path) -> N
     for index in range(MAX_DIR_ENTRIES + 10):
         (crowd / f"f{index:04}.txt").write_text("", encoding="utf-8")
     attachments, _ = build_file_attachments("@crowd", tmp_path)
-    assert f"[truncated: showing first {MAX_DIR_ENTRIES} of {MAX_DIR_ENTRIES + 10} entries]" in attachments[0]["content"]
+    assert (
+        f"[truncated: showing first {MAX_DIR_ENTRIES} of {MAX_DIR_ENTRIES + 10} entries]" in attachments[0]["content"]
+    )
 
 
 def test_build_file_attachments_rejects_paths_outside_root(tmp_path: Path) -> None:

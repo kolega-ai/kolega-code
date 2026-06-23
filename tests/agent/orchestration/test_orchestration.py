@@ -91,11 +91,7 @@ async def test_args_passthrough_and_multiline_strings(tmp_path):
 @pytest.mark.asyncio
 async def test_agent_returns_text_and_structured(tmp_path):
     runtime, calls, _, _ = make_runtime(tmp_path)
-    script = META + (
-        "a = await agent('hello')\n"
-        "b = await agent('world', schema={'type': 'object'})\n"
-        "return [a, b]\n"
-    )
+    script = META + ("a = await agent('hello')\nb = await agent('world', schema={'type': 'object'})\nreturn [a, b]\n")
     out = await runtime.execute(script, args=None)
     assert out[0] == "recap:hello"
     assert out[1] == {"prompt": "world", "idx": 1}
@@ -178,12 +174,7 @@ async def test_phase_sets_default_phase_on_agents(tmp_path):
 async def test_budget_accounting_and_ceiling(tmp_path):
     runtime, _, _, _ = make_runtime(tmp_path, budget=Budget(total=10))
     # Two agents at 5 tokens each bring spent to 10 == total; the third must raise.
-    script = META + (
-        "await agent('a')\n"
-        "await agent('b')\n"
-        "await agent('c')\n"
-        "return budget.spent()\n"
-    )
+    script = META + ("await agent('a')\nawait agent('b')\nawait agent('c')\nreturn budget.spent()\n")
     with pytest.raises(WorkflowBudgetExceeded):
         await runtime.execute(script, args=None)
 
@@ -229,11 +220,7 @@ def test_journal_round_trip_and_cache(tmp_path):
 @pytest.mark.asyncio
 async def test_resume_replays_cached_prefix(tmp_path):
     runtime, calls, _, journal = make_runtime(tmp_path)
-    script = META + (
-        "a = await agent('one')\n"
-        "b = await agent('two', schema={'type': 'object'})\n"
-        "return [a, b]\n"
-    )
+    script = META + ("a = await agent('one')\nb = await agent('two', schema={'type': 'object'})\nreturn [a, b]\n")
     first = await runtime.execute(script, args=None)
     assert len(calls) == 2
 

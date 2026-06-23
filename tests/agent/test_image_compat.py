@@ -6,7 +6,6 @@ request copy (stored history is never mutated), and the compaction-aware detecto
 only reports images that would actually be sent.
 """
 
-
 from kolega_code.agent.conversation import (
     Conversation,
     adapt_history_for_provider,

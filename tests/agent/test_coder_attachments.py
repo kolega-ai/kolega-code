@@ -56,9 +56,7 @@ class _EmptyStream:
 
 def test_non_vision_image_attachment_is_rejected_by_provider_check():
     agent = object.__new__(BaseAgent)
-    agent.primary_model_config = SimpleNamespace(
-        provider=ModelProvider.DEEPSEEK.value, model="deepseek-v4-pro"
-    )
+    agent.primary_model_config = SimpleNamespace(provider=ModelProvider.DEEPSEEK.value, model="deepseek-v4-pro")
 
     message = agent._unsupported_attachment_message([_image_attachment()])
     assert message is not None
@@ -69,17 +67,13 @@ def test_non_vision_image_attachment_is_rejected_by_provider_check():
 
 def test_vision_image_attachment_is_allowed():
     agent = object.__new__(BaseAgent)
-    agent.primary_model_config = SimpleNamespace(
-        provider=ModelProvider.ANTHROPIC, model="claude-opus-4-8"
-    )
+    agent.primary_model_config = SimpleNamespace(provider=ModelProvider.ANTHROPIC, model="claude-opus-4-8")
     assert agent._unsupported_attachment_message([_image_attachment()]) is None
 
 
 def test_attachment_check_allows_non_images_for_non_vision_model():
     agent = object.__new__(BaseAgent)
-    agent.primary_model_config = SimpleNamespace(
-        provider=ModelProvider.DEEPSEEK, model="deepseek-v4-pro"
-    )
+    agent.primary_model_config = SimpleNamespace(provider=ModelProvider.DEEPSEEK, model="deepseek-v4-pro")
     assert agent._unsupported_attachment_message(None) is None
     assert agent._unsupported_attachment_message([{"type": "document", "data": "abc"}]) is None
     assert agent._unsupported_attachment_message([{"type": "file", "path": "a.py", "content": "x"}]) is None
@@ -99,10 +93,7 @@ async def test_coder_agent_rejects_deepseek_image_without_llm_call(tmp_path):
     )
     agent.llm = Mock()
 
-    chunks = [
-        chunk
-        async for chunk in agent.process_message_stream("What is in this image?", [_image_attachment()])
-    ]
+    chunks = [chunk async for chunk in agent.process_message_stream("What is in this image?", [_image_attachment()])]
 
     assert len(chunks) == 1
     assert chunks[0]["type"] == "response"
@@ -305,7 +296,7 @@ def test_attachment_blocks_mixes_images_and_files():
     assert len(blocks) == 2
     assert isinstance(blocks[0], ImageBlock)
     assert isinstance(blocks[1], TextBlock)
-    assert blocks[1].text == '<attached-file path="src/app.py">\nprint(\'hi\')\n</attached-file>'
+    assert blocks[1].text == "<attached-file path=\"src/app.py\">\nprint('hi')\n</attached-file>"
 
 
 def test_attachment_blocks_handles_none():

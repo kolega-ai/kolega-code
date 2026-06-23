@@ -288,9 +288,7 @@ class TestInstrumentedLLMClient:
         with patch("kolega_code.llm.client.LLMClient.generate", AsyncMock(return_value=mock_response)):
             messages = MessageHistory([Message(role="user", content=[TextBlock(text="Hello")])])
 
-            await client.generate(
-                messages=messages, model="claude-3-opus", temperature=0.5, max_completion_tokens=100
-            )
+            await client.generate(messages=messages, model="claude-3-opus", temperature=0.5, max_completion_tokens=100)
 
             # Verify trace attributes include user information
             trace.update_trace.assert_called_once()

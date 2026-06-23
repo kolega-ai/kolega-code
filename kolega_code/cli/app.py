@@ -176,9 +176,7 @@ class KolegaCodeApp(
         self._turn_active = False
         self._latest_plan: Optional[str] = self.session.latest_plan_markdown or None
         self._plan_pending: bool = bool(self._latest_plan and self.session.plan_pending)
-        self._plan_reofferable: bool = bool(
-            self._latest_plan and (self.session.plan_reofferable or self._plan_pending)
-        )
+        self._plan_reofferable: bool = bool(self._latest_plan and (self.session.plan_reofferable or self._plan_pending))
         self._plan_decision_active = False
         self._gigacode_enabled = False
         self._pending_question: Optional[tui_state.PendingQuestion] = None
@@ -248,9 +246,7 @@ class KolegaCodeApp(
                 yield Static("", id="turn_status", markup=True)
                 with Horizontal(id="composer_hint_row"):
                     yield Static("", id="composer_hint", markup=False)
-                    yield Button(
-                        theme.g(Glyph.CROSS), id="detach_btn", classes="hint-detach"
-                    )
+                    yield Button(theme.g(Glyph.CROSS), id="detach_btn", classes="hint-detach")
                 yield tui_widgets.CompletionDropdown(id="completion_dropdown")
                 yield tui_widgets.ChatComposer(placeholder=messages.COMPOSER_PLACEHOLDER, id="composer")
             with Vertical(id="side_panel"):
@@ -548,8 +544,6 @@ class KolegaCodeApp(
         self._add_conversation_entry(tui_state.ConversationEntry(kind="system", content=message))
         self._notify_user(message)
 
-
-
     def _validated_interaction_mode(self, interaction_mode: str) -> str:
         if interaction_mode in {tui_constants.BUILD_INTERACTION_MODE, tui_constants.PLAN_INTERACTION_MODE}:
             return interaction_mode
@@ -815,15 +809,12 @@ class KolegaCodeApp(
             self._show_composer_hint(messages.MENTIONS_NOT_FOUND.format(mentions=joined))
         return attachments or None
 
-
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "detach_btn":
             await self._command_detach("")
             return
         if event.button.id == "save_settings":
             await self._save_settings_from_ui()
-
-
 
     def copy_to_clipboard(self, text: str) -> None:
         super().copy_to_clipboard(text)
@@ -837,7 +828,6 @@ class KolegaCodeApp(
                 self._notify_user(messages.COPY_MACOS_FAILED, severity="warning")
             except Exception:
                 pass
-
 
     def _mode_switch_blocked(self) -> bool:
         if self._pending_approval is not None:
@@ -865,7 +855,11 @@ class KolegaCodeApp(
         if self._mode_switch_blocked():
             return
 
-        target = tui_constants.PLAN_INTERACTION_MODE if self.interaction_mode == tui_constants.BUILD_INTERACTION_MODE else tui_constants.BUILD_INTERACTION_MODE
+        target = (
+            tui_constants.PLAN_INTERACTION_MODE
+            if self.interaction_mode == tui_constants.BUILD_INTERACTION_MODE
+            else tui_constants.BUILD_INTERACTION_MODE
+        )
         await self._set_interaction_mode(target)
 
     async def action_toggle_permission_mode(self) -> None:
@@ -942,8 +936,6 @@ class KolegaCodeApp(
                     composer.focus()
             except Exception:
                 return
-
-
 
     async def _set_interaction_mode(self, interaction_mode: str) -> None:
         if interaction_mode not in {tui_constants.BUILD_INTERACTION_MODE, tui_constants.PLAN_INTERACTION_MODE}:
@@ -1259,8 +1251,6 @@ class KolegaCodeApp(
             return
         btn.display = bool(self._pending_image_attachments)
 
-
-
     def _clear_agent_context(self) -> None:
         """Wipe the agent's LLM history so the build agent starts fresh, while leaving
         the visible transcript and the captured plan intact."""
@@ -1303,9 +1293,10 @@ class KolegaCodeApp(
         self._restore_composer_placeholder()
         self._set_chat_enabled(self.agent is not None)
         self._ensure_startup_entry(render=False)
-        self._add_conversation_entry(tui_state.ConversationEntry(kind="progress", content=messages.THREAD_RESET_MESSAGE, complete=True))
+        self._add_conversation_entry(
+            tui_state.ConversationEntry(kind="progress", content=messages.THREAD_RESET_MESSAGE, complete=True)
+        )
         self._notify_user(messages.THREAD_RESET_MESSAGE)
-
 
     def _add_conversation_entry(self, entry: tui_state.ConversationEntry) -> None:
         self.conversation_entries.append(entry)
@@ -1318,7 +1309,9 @@ class KolegaCodeApp(
     def _ensure_startup_entry(self, *, render: bool = True) -> None:
         existing = next((entry for entry in self.conversation_entries if entry.kind == "startup"), None)
         if existing is None:
-            self.conversation_entries.insert(0, tui_state.ConversationEntry(kind="startup", content=self._startup_content()))
+            self.conversation_entries.insert(
+                0, tui_state.ConversationEntry(kind="startup", content=self._startup_content())
+            )
         elif self.conversation_entries[0] is existing:
             existing.content = self._startup_content()
             if render:
@@ -1380,5 +1373,3 @@ class KolegaCodeApp(
         ):
             return self.settings.active_thinking_effort
         return default_ui_thinking_effort(provider, model)
-
-

@@ -46,7 +46,7 @@ class ReplaceEntireFileTool(BaseTool):
                 tool_name="replace_entire_file",
             )
             return f"# {path} has been replaced."
-        except PermissionError as e:
+        except PermissionError:
             error_msg = f"Permission denied when writing to file: {path}"
             await self.log_error(error_msg, sender=self.caller.agent_name)
             raise

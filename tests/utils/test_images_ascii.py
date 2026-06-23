@@ -80,9 +80,7 @@ def test_imageblock_to_markdown_returns_ascii_for_base64() -> None:
 
 
 def test_imageblock_to_markdown_url_image() -> None:
-    block = ImageBlock(
-        image_type="url", media_type="image/jpeg", data="https://example.com/shot.jpg"
-    )
+    block = ImageBlock(image_type="url", media_type="image/jpeg", data="https://example.com/shot.jpg")
 
     assert block.to_markdown() == "[Image URL — image/jpeg]"
 

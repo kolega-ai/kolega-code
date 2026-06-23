@@ -61,9 +61,7 @@ def test_from_token_response_computes_expiry_and_claims() -> None:
 
 
 def test_from_token_response_carries_over_missing_refresh_token() -> None:
-    previous = OAuthTokens(
-        access_token="old", refresh_token="keep-me", id_token=make_id_token(), account_id="acct_123"
-    )
+    previous = OAuthTokens(access_token="old", refresh_token="keep-me", id_token=make_id_token(), account_id="acct_123")
     payload = {"access_token": "rotated", "expires_in": 60}  # no refresh_token, no id_token
     tokens = OAuthTokens.from_token_response(payload, previous=previous, now=0.0)
     assert tokens.refresh_token == "keep-me"

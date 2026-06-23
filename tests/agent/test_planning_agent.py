@@ -135,9 +135,7 @@ def test_planning_agent_only_exposes_write_plan_without_host_task_tools(
 
 
 @pytest.mark.asyncio
-async def test_planning_agent_rejects_unavailable_file_edit_tool(
-    tmp_path, mock_connection_manager, agent_config
-):
+async def test_planning_agent_rejects_unavailable_file_edit_tool(tmp_path, mock_connection_manager, agent_config):
     target = tmp_path / "notes.txt"
     target.write_text("original\n", encoding="utf-8")
     agent = PlanningAgent(
@@ -192,10 +190,7 @@ async def test_planning_agent_rejects_deepseek_image_without_llm_call(tmp_path, 
     )
     agent.llm = Mock()
 
-    chunks = [
-        chunk
-        async for chunk in agent.process_message_stream("Plan from this screenshot", [_image_attachment()])
-    ]
+    chunks = [chunk async for chunk in agent.process_message_stream("Plan from this screenshot", [_image_attachment()])]
 
     assert len(chunks) == 1
     assert chunks[0]["type"] == "response"
@@ -207,9 +202,7 @@ async def test_planning_agent_rejects_deepseek_image_without_llm_call(tmp_path, 
 
 
 @pytest.mark.asyncio
-async def test_planning_agent_does_not_print_context_token_counts(
-    tmp_path, mock_connection_manager, capsys
-):
+async def test_planning_agent_does_not_print_context_token_counts(tmp_path, mock_connection_manager, capsys):
     agent = PlanningAgent(
         project_path=tmp_path,
         workspace_id="test_workspace",
@@ -228,9 +221,7 @@ async def test_planning_agent_does_not_print_context_token_counts(
     assert capsys.readouterr().out == ""
 
 
-def test_planning_agent_exposes_command_tools_but_not_file_edits(
-    tmp_path, mock_connection_manager, agent_config
-):
+def test_planning_agent_exposes_command_tools_but_not_file_edits(tmp_path, mock_connection_manager, agent_config):
     """PlanningAgent can run investigative shell commands but cannot edit files."""
     agent = PlanningAgent(
         project_path=tmp_path,

@@ -41,6 +41,4 @@ class Budget:
     def check(self) -> None:
         """Raise if the ceiling has been reached. Called before each dispatch."""
         if self.total is not None and self._spent >= self.total:
-            raise WorkflowBudgetExceeded(
-                f"workflow token budget exhausted: spent {self._spent} of {self.total}"
-            )
+            raise WorkflowBudgetExceeded(f"workflow token budget exhausted: spent {self._spent} of {self.total}")

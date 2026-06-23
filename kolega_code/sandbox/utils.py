@@ -13,26 +13,26 @@ WORKSPACE_PATH = "/home/user/workspace"
 
 def parse_git_status_output(status_output: str) -> List[str]:
     """Parse git status --porcelain output and return list of files to add.
-    
+
     This is a shared parsing function used by both direct E2B sandbox operations
     and SandboxManager-based operations to ensure consistent git status parsing.
-    
+
     Args:
         status_output: Raw output from 'git -c core.quotePath=false status --porcelain'
-        
+
     Returns:
         List of file paths, excluding deleted files and handling renames correctly
     """
     logger.debug(f"Parsing git status output: {status_output!r}")
-    
+
     if not status_output or not status_output.strip():
         return []
-    
+
     modified_files = []
     for line in status_output.split("\n"):
         if not line or len(line) < 3:
             continue
-        
+
         # Git status format: XY filename
         # X = staging area status, Y = working tree status
         # Status codes (per git-status --porcelain):
@@ -54,7 +54,7 @@ def parse_git_status_output(status_output: str) -> List[str]:
         if status[0] == "D":
             logger.debug(f"Skipping staged deletion (not in git index): {file_path}")
             continue
-        
+
         # Handle renamed files: "R  old -> new"
         # Git quotes filenames containing " -> ": R  "old -> a.txt" -> "new -> b.txt"
         if status.startswith("R"):
@@ -65,9 +65,9 @@ def parse_git_status_output(status_output: str) -> List[str]:
                 for i in range(len(file_path) - 4):  # -4 for " -> " (4 chars)
                     if file_path[i] == '"':
                         in_quotes = not in_quotes
-                    elif not in_quotes and file_path[i:i+4] == ' -> ':
+                    elif not in_quotes and file_path[i : i + 4] == " -> ":
                         # Found the real separator between old and new filenames
-                        file_path = file_path[i+4:].strip()
+                        file_path = file_path[i + 4 :].strip()
                         break
 
         # Remove quotes if present (git quotes filenames with special chars or " -> ")
@@ -77,7 +77,7 @@ def parse_git_status_output(status_output: str) -> List[str]:
             file_path = file_path.replace('\\"', '"')
 
         modified_files.append(file_path)
-    
+
     return modified_files
 
 
@@ -98,7 +98,9 @@ async def get_modified_files_from_sandbox(sandbox_manager: SandboxManager, sandb
 
         # Run git status with core.quotePath=false to get raw filenames without escaping
         # This prevents issues with special characters (e.g., em-dash — being escaped as \342\200\224)
-        result = await terminal_manager.run_command("git -c core.quotePath=false status --porcelain", cwd=WORKSPACE_PATH)
+        result = await terminal_manager.run_command(
+            "git -c core.quotePath=false status --porcelain", cwd=WORKSPACE_PATH
+        )
 
         # Use shared parsing function
         return parse_git_status_output(result)
@@ -191,7 +193,9 @@ async def run_project_tests_in_sandbox(
             try:
                 logger.info(f"Running test command: {cmd}")
                 result = await terminal_manager.run_command(
-                    cmd, cwd=WORKSPACE_PATH, timeout=300  # 5 minute timeout for tests
+                    cmd,
+                    cwd=WORKSPACE_PATH,
+                    timeout=300,  # 5 minute timeout for tests
                 )
 
                 # Determine if command succeeded (this is a simple check)

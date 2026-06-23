@@ -17,7 +17,6 @@ from .base_tool import BaseTool
 
 
 class TerminalTool(BaseTool):
-
     def __init__(
         self,
         project_path: Union[str, Path],

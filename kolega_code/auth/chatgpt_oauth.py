@@ -129,9 +129,7 @@ async def _bind_loopback(
             return server, port
         except OSError as exc:
             last_exc = exc
-    raise LoginError(
-        f"Could not bind a loopback port {ports} for sign-in (is another login in progress?): {last_exc}"
-    )
+    raise LoginError(f"Could not bind a loopback port {ports} for sign-in (is another login in progress?): {last_exc}")
 
 
 async def run_login_flow(

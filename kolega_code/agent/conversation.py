@@ -126,9 +126,7 @@ def _preserve_reasoning_block(block: Any, *, source_provider: str, target_provid
         return False
     if source_provider == target_provider:
         return True
-    return any(
-        source_provider in group and target_provider in group for group in _REASONING_COMPATIBLE_GROUPS
-    )
+    return any(source_provider in group and target_provider in group for group in _REASONING_COMPATIBLE_GROUPS)
 
 
 def _reasoning_placeholder(block: Any, source_provider: str) -> TextBlock:
@@ -409,8 +407,7 @@ class Conversation:
         if not isinstance(message.content, list):
             return False
         return any(
-            isinstance(block, TextBlock) and self.skill_content_pattern.search(block.text)
-            for block in message.content
+            isinstance(block, TextBlock) and self.skill_content_pattern.search(block.text) for block in message.content
         )
 
     def is_valid_for_anthropic(self, messages: Optional[List[Message]] = None) -> bool:

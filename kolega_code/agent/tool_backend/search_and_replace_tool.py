@@ -129,10 +129,10 @@ class SearchAndReplaceTool(BaseTool):
             )
             return f"Edited {path}"
 
-        except ValueError as e:
+        except ValueError:
             # Re-raise ValueError exceptions which are used for validation errors
             raise
-        except PermissionError as e:
+        except PermissionError:
             error_msg = f"Permission denied when writing to file: {path}"
             await self.log_error(error_msg, sender=self.caller.agent_name)
             raise

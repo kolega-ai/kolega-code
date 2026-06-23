@@ -24,9 +24,9 @@ class _Usage:
 
 class _ChoiceMsg:
     def __init__(self):
-        self.content = 'ok'
+        self.content = "ok"
         self.tool_calls = None
-        self.finish_reason = 'stop'
+        self.finish_reason = "stop"
 
 
 class _Response:
@@ -39,20 +39,17 @@ class _Response:
 @pytest.mark.asyncio
 @pytest.mark.skipif(SKIP_IN_CI, reason="Skipping slow test in CI environment")
 async def test_openai_generate_includes_cached_tokens(monkeypatch):
-    provider = OpenAIProvider(api_key='sk-test', base_url='https://api.openai.com/v1')
+    provider = OpenAIProvider(api_key="sk-test", base_url="https://api.openai.com/v1")
 
     async def fake_create(*args, **kwargs):
         return _Response()
 
-    monkeypatch.setattr(provider.async_client.chat.completions, 'create', fake_create)
+    monkeypatch.setattr(provider.async_client.chat.completions, "create", fake_create)
 
-    messages = MessageHistory([Message(role='user', content='hi')])
+    messages = MessageHistory([Message(role="user", content="hi")])
 
     msg = await provider.generate(messages=messages)
-    assert msg.usage_metadata['prompt_tokens'] == 3019
-    assert msg.usage_metadata['completion_tokens'] == 104
-    assert msg.usage_metadata['total_tokens'] == 3123
-    assert msg.usage_metadata['cache_read_input_tokens'] == 2048
-
-
-
+    assert msg.usage_metadata["prompt_tokens"] == 3019
+    assert msg.usage_metadata["completion_tokens"] == 104
+    assert msg.usage_metadata["total_tokens"] == 3123
+    assert msg.usage_metadata["cache_read_input_tokens"] == 2048

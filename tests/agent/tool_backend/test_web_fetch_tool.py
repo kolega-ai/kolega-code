@@ -26,7 +26,10 @@ def agent_config():
         ),
         fast_config=ModelConfig(provider=ModelProvider.ANTHROPIC, model="haiku-model", rate_limits=RateLimitConfig()),
         thinking_config=ModelConfig(
-            provider=ModelProvider.ANTHROPIC, model="think-model", rate_limits=RateLimitConfig(), thinking_effort="medium"
+            provider=ModelProvider.ANTHROPIC,
+            model="think-model",
+            rate_limits=RateLimitConfig(),
+            thinking_effort="medium",
         ),
     )
 
@@ -54,17 +57,20 @@ def web_fetch_tool(project_path, mock_connection_manager, agent_config, mock_cal
 class TestWebFetchTool:
     @pytest.mark.asyncio
     async def test_web_fetch_success(self, web_fetch_tool, agent_config):
-        with patch(
-            "kolega_code.agent.tool_backend.web_fetch_tool.trafilatura.fetch_url",
-            return_value="<html>content</html>",
-        ) as mock_fetch, patch(
-            "kolega_code.agent.tool_backend.web_fetch_tool.trafilatura.extract", return_value="Extracted content"
-        ) as mock_extract, patch(
-            "kolega_code.agent.tool_backend.web_fetch_tool.get_model_specs",
-            return_value={"max_completion_tokens": 1024},
-        ) as mock_specs, patch(
-            "kolega_code.agent.tool_backend.web_fetch_tool.LLMClient"
-        ) as mock_llm_class:
+        with (
+            patch(
+                "kolega_code.agent.tool_backend.web_fetch_tool.trafilatura.fetch_url",
+                return_value="<html>content</html>",
+            ) as mock_fetch,
+            patch(
+                "kolega_code.agent.tool_backend.web_fetch_tool.trafilatura.extract", return_value="Extracted content"
+            ) as mock_extract,
+            patch(
+                "kolega_code.agent.tool_backend.web_fetch_tool.get_model_specs",
+                return_value={"max_completion_tokens": 1024},
+            ) as mock_specs,
+            patch("kolega_code.agent.tool_backend.web_fetch_tool.LLMClient") as mock_llm_class,
+        ):
             mock_response = Mock()
             mock_response.get_text_content.return_value = "Summarized answer"
             mock_llm_instance = mock_llm_class.return_value
@@ -84,17 +90,21 @@ class TestWebFetchTool:
 
     @pytest.mark.asyncio
     async def test_web_fetch_applies_char_limit(self, web_fetch_tool):
-        with patch.object(WebFetchTool, "DEFAULT_RESPONSE_CHAR_LIMIT", 10), patch(
-            "kolega_code.agent.tool_backend.web_fetch_tool.trafilatura.fetch_url",
-            return_value="<html>content</html>",
-        ), patch(
-            "kolega_code.agent.tool_backend.web_fetch_tool.trafilatura.extract", return_value="Extracted content"
-        ), patch(
-            "kolega_code.agent.tool_backend.web_fetch_tool.get_model_specs",
-            return_value={"max_completion_tokens": 1024},
-        ), patch(
-            "kolega_code.agent.tool_backend.web_fetch_tool.LLMClient"
-        ) as mock_llm_class:
+        with (
+            patch.object(WebFetchTool, "DEFAULT_RESPONSE_CHAR_LIMIT", 10),
+            patch(
+                "kolega_code.agent.tool_backend.web_fetch_tool.trafilatura.fetch_url",
+                return_value="<html>content</html>",
+            ),
+            patch(
+                "kolega_code.agent.tool_backend.web_fetch_tool.trafilatura.extract", return_value="Extracted content"
+            ),
+            patch(
+                "kolega_code.agent.tool_backend.web_fetch_tool.get_model_specs",
+                return_value={"max_completion_tokens": 1024},
+            ),
+            patch("kolega_code.agent.tool_backend.web_fetch_tool.LLMClient") as mock_llm_class,
+        ):
             long_text = "Alpha Beta Gamma Delta"
             mock_response = Mock()
             mock_response.get_text_content.return_value = long_text
@@ -107,17 +117,20 @@ class TestWebFetchTool:
 
     @pytest.mark.asyncio
     async def test_web_fetch_caps_large_model_token_limit(self, web_fetch_tool):
-        with patch(
-            "kolega_code.agent.tool_backend.web_fetch_tool.trafilatura.fetch_url",
-            return_value="<html>content</html>",
-        ), patch(
-            "kolega_code.agent.tool_backend.web_fetch_tool.trafilatura.extract", return_value="Extracted content"
-        ), patch(
-            "kolega_code.agent.tool_backend.web_fetch_tool.get_model_specs",
-            return_value={"max_completion_tokens": 384000},
-        ), patch(
-            "kolega_code.agent.tool_backend.web_fetch_tool.LLMClient"
-        ) as mock_llm_class:
+        with (
+            patch(
+                "kolega_code.agent.tool_backend.web_fetch_tool.trafilatura.fetch_url",
+                return_value="<html>content</html>",
+            ),
+            patch(
+                "kolega_code.agent.tool_backend.web_fetch_tool.trafilatura.extract", return_value="Extracted content"
+            ),
+            patch(
+                "kolega_code.agent.tool_backend.web_fetch_tool.get_model_specs",
+                return_value={"max_completion_tokens": 384000},
+            ),
+            patch("kolega_code.agent.tool_backend.web_fetch_tool.LLMClient") as mock_llm_class,
+        ):
             mock_response = Mock()
             mock_response.get_text_content.return_value = "Summarized answer"
             mock_llm_instance = mock_llm_class.return_value
@@ -131,17 +144,20 @@ class TestWebFetchTool:
 
     @pytest.mark.asyncio
     async def test_web_fetch_preserves_smaller_model_token_limit(self, web_fetch_tool):
-        with patch(
-            "kolega_code.agent.tool_backend.web_fetch_tool.trafilatura.fetch_url",
-            return_value="<html>content</html>",
-        ), patch(
-            "kolega_code.agent.tool_backend.web_fetch_tool.trafilatura.extract", return_value="Extracted content"
-        ), patch(
-            "kolega_code.agent.tool_backend.web_fetch_tool.get_model_specs",
-            return_value={"max_completion_tokens": 512},
-        ), patch(
-            "kolega_code.agent.tool_backend.web_fetch_tool.LLMClient"
-        ) as mock_llm_class:
+        with (
+            patch(
+                "kolega_code.agent.tool_backend.web_fetch_tool.trafilatura.fetch_url",
+                return_value="<html>content</html>",
+            ),
+            patch(
+                "kolega_code.agent.tool_backend.web_fetch_tool.trafilatura.extract", return_value="Extracted content"
+            ),
+            patch(
+                "kolega_code.agent.tool_backend.web_fetch_tool.get_model_specs",
+                return_value={"max_completion_tokens": 512},
+            ),
+            patch("kolega_code.agent.tool_backend.web_fetch_tool.LLMClient") as mock_llm_class,
+        ):
             mock_response = Mock()
             mock_response.get_text_content.return_value = "Summarized answer"
             mock_llm_instance = mock_llm_class.return_value
@@ -155,17 +171,20 @@ class TestWebFetchTool:
 
     @pytest.mark.asyncio
     async def test_web_fetch_reports_empty_model_response(self, web_fetch_tool):
-        with patch(
-            "kolega_code.agent.tool_backend.web_fetch_tool.trafilatura.fetch_url",
-            return_value="<html>content</html>",
-        ), patch(
-            "kolega_code.agent.tool_backend.web_fetch_tool.trafilatura.extract", return_value="Extracted content"
-        ), patch(
-            "kolega_code.agent.tool_backend.web_fetch_tool.get_model_specs",
-            return_value={"max_completion_tokens": 1024},
-        ), patch(
-            "kolega_code.agent.tool_backend.web_fetch_tool.LLMClient"
-        ) as mock_llm_class:
+        with (
+            patch(
+                "kolega_code.agent.tool_backend.web_fetch_tool.trafilatura.fetch_url",
+                return_value="<html>content</html>",
+            ),
+            patch(
+                "kolega_code.agent.tool_backend.web_fetch_tool.trafilatura.extract", return_value="Extracted content"
+            ),
+            patch(
+                "kolega_code.agent.tool_backend.web_fetch_tool.get_model_specs",
+                return_value={"max_completion_tokens": 1024},
+            ),
+            patch("kolega_code.agent.tool_backend.web_fetch_tool.LLMClient") as mock_llm_class,
+        ):
             mock_response = Mock()
             mock_response.get_text_content.return_value = ""
             mock_llm_instance = mock_llm_class.return_value
@@ -183,12 +202,13 @@ class TestWebFetchTool:
 
     @pytest.mark.asyncio
     async def test_web_fetch_no_content_downloaded(self, web_fetch_tool):
-        with patch(
-            "kolega_code.agent.tool_backend.web_fetch_tool.trafilatura.fetch_url",
-            return_value=None,
-        ), patch(
-            "kolega_code.agent.tool_backend.web_fetch_tool.LLMClient"
-        ) as mock_llm_class:
+        with (
+            patch(
+                "kolega_code.agent.tool_backend.web_fetch_tool.trafilatura.fetch_url",
+                return_value=None,
+            ),
+            patch("kolega_code.agent.tool_backend.web_fetch_tool.LLMClient") as mock_llm_class,
+        ):
             result = await web_fetch_tool.web_fetch("https://example.com", "Summarize")
             assert result.startswith("Error: No content retrieved from https://example.com")
             mock_llm_class.assert_not_called()

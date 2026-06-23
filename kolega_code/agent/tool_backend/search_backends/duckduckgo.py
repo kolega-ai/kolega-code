@@ -24,9 +24,7 @@ class DuckDuckGoBackend(SearchBackend):
     async def search(self, query: str, max_results: int = DEFAULT_RESULTS) -> SearchResponse:
         count = clamp_results(max_results)
         try:
-            rows = await asyncio.wait_for(
-                asyncio.to_thread(self._fetch, query, count), timeout=self.timeout
-            )
+            rows = await asyncio.wait_for(asyncio.to_thread(self._fetch, query, count), timeout=self.timeout)
         except (asyncio.TimeoutError, TimeoutException) as exc:
             raise SearchBackendUnavailable(f"timed out after {self.timeout:.0f}s") from exc
         except RatelimitException as exc:

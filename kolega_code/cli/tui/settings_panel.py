@@ -174,7 +174,9 @@ class SettingsPanelMixin:
             if effort_value:
                 self._pending_agent_efforts[effort_id] = effort_value
             provider_select.value = provider
-            self._repopulate_model_select(provider, model_id, effort_id, model_value=model_value, effort_value=effort_value)
+            self._repopulate_model_select(
+                provider, model_id, effort_id, model_value=model_value, effort_value=effort_value
+            )
 
     def _update_search_backend_fields(self, backend: str) -> None:
         """Show only the inputs the selected web-search backend needs.

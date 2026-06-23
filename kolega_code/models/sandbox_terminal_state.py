@@ -44,4 +44,3 @@ class SandboxTerminalState(BaseModel):
     total_output_size: int = 0
     MAX_OUTPUT_SIZE: int = 1048576
     MAX_OUTPUT_PER_TERMINAL: int = 262144
-

@@ -69,8 +69,7 @@ class WebSearchTool(StreamingTool):
             return await self._error(f"{exc} Configure it in Settings > Web Search.", tool_call_id)
         except SearchBackendRateLimited as exc:
             return await self._error(
-                f"{exc} The search backend is rate-limited; retry shortly or switch backends "
-                "in Settings > Web Search.",
+                f"{exc} The search backend is rate-limited; retry shortly or switch backends in Settings > Web Search.",
                 tool_call_id,
             )
         except SearchBackendError as exc:

@@ -62,7 +62,6 @@ def safe_parse_tool_arguments(raw: str) -> Dict[str, Any]:
             return {"_raw_arguments": raw, "_parse_error": "json_decode_error"}
 
 
-
 def register_content_block(cls):
     CONTENT_BLOCK_CLASSES[cls.TYPE_NAME] = cls
     return cls

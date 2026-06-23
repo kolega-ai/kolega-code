@@ -11,7 +11,6 @@ from ..prompt_provider import AgentMode
 
 
 class BaseTool(LogMixin):
-
     def __init__(
         self,
         project_path: Union[str, Path],
