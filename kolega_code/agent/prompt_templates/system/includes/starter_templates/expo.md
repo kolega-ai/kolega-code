@@ -140,15 +140,15 @@ import { Hono } from 'hono';
 
 export const create_user_routes = (): Hono => {
   const router = new Hono();
-  
+
   router.get('/', async (c) => {
     // List users
   });
-  
+
   router.post('/', async (c) => {
     // Create user
   });
-  
+
   return router;
 };
 

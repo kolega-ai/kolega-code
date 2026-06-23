@@ -31,7 +31,20 @@ cp .env.example .env
 
 ## Tests and quality checks
 
-Run Ruff linting and formatting checks before opening a pull request:
+Install the pre-commit hooks to run Ruff and lightweight file hygiene checks before each commit:
+
+```bash
+uv run pre-commit install
+```
+
+Run all hooks manually before opening a pull request:
+
+```bash
+uv run pre-commit run --all-files
+```
+
+CI runs Ruff through pre-commit. You can also run Ruff directly for one-off linting and
+formatting checks:
 
 ```bash
 uv run ruff check .

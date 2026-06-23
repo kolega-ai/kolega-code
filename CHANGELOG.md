@@ -58,4 +58,3 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 - Migrated the API-key OpenAI provider to the Responses API.
 - Preserved OpenAI Responses reasoning continuity.
-

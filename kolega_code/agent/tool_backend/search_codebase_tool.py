@@ -156,8 +156,8 @@ class SearchCodebaseTool(BaseTool):
 
         # AWK script to format output exactly like the original
         awk_script = r"""| awk '
-        BEGIN { 
-            file_count = 0; 
+        BEGIN {
+            file_count = 0;
             current_file = "";
             match_count = 0;
             lines = "";
@@ -170,19 +170,19 @@ class SearchCodebaseTool(BaseTool):
             # Parse grep output: filename:line_number:content
             colon1 = index($0, ":");
             colon2 = index(substr($0, colon1 + 1), ":") + colon1;
-            
+
             file = substr($0, 1, colon1 - 1);
             line_num = substr($0, colon1 + 1, colon2 - colon1 - 1);
             line_content = substr($0, colon2 + 1);
-            
+
             # Remove leading/trailing whitespace from content
             gsub(/^[ \t]+|[ \t]+$/, "", line_content);
-            
+
             # Truncate long lines to 200 characters
             if (length(line_content) > max_line_length) {
                 line_content = substr(line_content, 1, max_line_length) "...";
             }
-            
+
             if (file != current_file) {
                 # Print previous file results if any
                 if (current_file != "") {
@@ -193,21 +193,21 @@ class SearchCodebaseTool(BaseTool):
                     }
                     print "";
                 }
-                
+
                 # Check if we reached the file limit
                 file_count++;
                 if (file_count > max_files) {
                     reached_limit = 1;
                     exit;
                 }
-                
+
                 # Start new file
                 current_file = file;
                 match_count = 0;
                 lines = "";
                 lines_shown = 0;
             }
-            
+
             match_count++;
             if (lines_shown < max_lines_per_file) {
                 lines = lines "  Line " line_num ": " line_content "\n";
@@ -223,7 +223,7 @@ class SearchCodebaseTool(BaseTool):
                     print "  ... and " (match_count - max_lines_per_file) " more matches";
                 }
             }
-            
+
             # Add warning if limit reached
             if (file_count > max_files || reached_limit) {
                 print "";
