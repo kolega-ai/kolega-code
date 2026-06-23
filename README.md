@@ -6,6 +6,7 @@
 [![Python versions](https://img.shields.io/pypi/pyversions/kolega-code)](https://pypi.org/project/kolega-code/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![CI](https://github.com/kolega-ai/kolega-code/actions/workflows/ci.yml/badge.svg)](https://github.com/kolega-ai/kolega-code/actions/workflows/ci.yml)
+[![Coverage](docs/src/assets/coverage.svg)](https://github.com/kolega-ai/kolega-code/actions/workflows/ci.yml)
 [![Docs](https://img.shields.io/badge/docs-kolega--ai.github.io-blue)](https://kolega-ai.github.io/kolega-code/)
 [![Changelog](https://img.shields.io/badge/changelog-keep%20up-blue)](CHANGELOG.md)
 
