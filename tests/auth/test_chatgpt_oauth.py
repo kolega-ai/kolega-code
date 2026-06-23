@@ -8,7 +8,7 @@ import pytest
 
 from kolega_code.auth import chatgpt_oauth as flow
 from kolega_code.auth import constants
-from kolega_code.auth.tests.test_tokens import make_id_token
+from .test_tokens import make_id_token
 
 
 def test_generate_pkce_pair_is_valid_s256() -> None:

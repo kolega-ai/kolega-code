@@ -43,4 +43,4 @@ jobs:
         run: uv sync --extra dev --frozen
 
       - name: Run fast tests
-        run: uv run pytest -ra --durations=50 --import-mode=importlib -m "not slow"
+        run: ./run_tests.sh

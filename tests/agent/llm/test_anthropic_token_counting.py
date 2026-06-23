@@ -21,12 +21,10 @@ from kolega_code.llm.providers.anthropic import AnthropicProvider
 from kolega_code.agent.prompt_provider import AgentMode, AgentType, PromptContext, PromptProvider
 from kolega_code.agent.tools import ToolCollection, ToolCollectionConfig
 
-# Load environment variables
-# Navigate up to backend directory: llm -> tests -> agent -> kolega_code -> backend
-dotenv_path = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))), ".env"
-)
-if os.path.exists(dotenv_path):
+# Load environment variables from the repository root.
+REPO_ROOT = Path(__file__).resolve().parents[3]
+dotenv_path = REPO_ROOT / ".env"
+if dotenv_path.exists():
     load_dotenv(dotenv_path)
 
 

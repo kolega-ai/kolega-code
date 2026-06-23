@@ -46,7 +46,7 @@ Run slow and integration tests only when you have the required credentials:
 You can pass additional pytest arguments through the wrapper:
 
 ```bash
-./run_tests.sh kolega_code/agent/tests/llm/test_client.py -ra
+./run_tests.sh tests/agent/llm/test_client.py -ra
 ```
 
 ## Documentation

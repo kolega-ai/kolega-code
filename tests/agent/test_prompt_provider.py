@@ -272,7 +272,7 @@ class TestPromptProvider:
 
 
 def test_public_package_does_not_contain_private_hosted_prompt_markers():
-    package_root = Path(__file__).parents[2]
+    package_root = Path(__file__).resolve().parents[2] / "kolega_code"
     forbidden_markers = [
         "app.kolega.studio/kolega-error-reporter.js",
         "kolega-memory-bank",

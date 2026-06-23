@@ -161,7 +161,7 @@ def test_update_subcommand_reports_missing_uv(capsys, monkeypatch: pytest.Monkey
 
 
 def test_install_script_upgrades_existing_install() -> None:
-    root = Path(__file__).resolve().parents[3]
+    root = Path(__file__).resolve().parents[2]
     installer = (root / "scripts" / "install-kolega-code.sh").read_text(encoding="utf-8")
 
     assert 'uv tool install --force --upgrade "$PACKAGE_SPEC"' in installer

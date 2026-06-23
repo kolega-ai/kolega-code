@@ -73,6 +73,7 @@ kolega-code = "kolega_code.cli.main:main"
 packages = ["kolega_code"]
 
 [tool.pytest.ini_options]
+testpaths = ["tests"]
 asyncio_mode = "strict"
 asyncio_default_fixture_loop_scope = "function"
 markers = [

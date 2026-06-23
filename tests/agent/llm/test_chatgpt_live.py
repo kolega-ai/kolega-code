@@ -4,7 +4,7 @@ Unlike the key-based providers, this one needs OAuth tokens from an interactive
 ``/login``. It is skipped unless real tokens are available, so it never runs in
 CI. To run it locally after signing in via the TUI::
 
-    pytest -m integration kolega_code/agent/tests/llm/test_chatgpt_live.py -v
+    pytest -m integration tests/agent/llm/test_chatgpt_live.py -v
 
 Token source (first match wins):
   - KOLEGA_CODE_CHATGPT_TOKENS env var holding the JSON of an OAuthTokens dump, or

@@ -25,7 +25,7 @@ CLI_CONFIG_ENV_KEYS = {
 
 def pytest_configure() -> None:
     """Load local test environment variables before test modules import."""
-    load_dotenv(Path(__file__).with_name(".env"), override=False)
+    load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=False)
 
 
 @pytest.fixture

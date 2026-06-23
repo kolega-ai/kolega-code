@@ -8,6 +8,7 @@ and Langfuse tracing.
 
 import asyncio
 import os
+from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
@@ -18,12 +19,10 @@ from opentelemetry.sdk.trace import TracerProvider as _OtelTracerProvider
 from kolega_code.llm.instrumented_client import InstrumentedLLMClient
 from kolega_code.llm.models import Message, MessageHistory, TextBlock, ToolCall
 
-# Load environment variables
-# Navigate up to backend directory: tests/llm -> tests -> agent -> kolega_code -> backend
-dotenv_path = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))), ".env"
-)
-if os.path.exists(dotenv_path):
+# Load environment variables from the repository root.
+REPO_ROOT = Path(__file__).resolve().parents[3]
+dotenv_path = REPO_ROOT / ".env"
+if dotenv_path.exists():
     print(f"Loading environment variables from: {dotenv_path}")
     load_dotenv(dotenv_path)
     print(f"ANTHROPIC_API_KEY present: {bool(os.getenv('ANTHROPIC_API_KEY'))}")
