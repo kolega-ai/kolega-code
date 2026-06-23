@@ -114,11 +114,15 @@ class StatusDashboardMixin:
         return Color.WARNING
 
     def _set_status_activity(self, content: str, *, turn_state: Optional[tui_state.TurnState] = None) -> None:
-        if content:
+        changed = False
+        if content and self._status_state.activity != content:
             self._status_state.activity = content
-        if turn_state is not None:
+            changed = True
+        if turn_state is not None and self._status_state.turn_state != turn_state:
             self._status_state.turn_state = turn_state
-        self._refresh_status_dashboard()
+            changed = True
+        if changed:
+            self._refresh_status_dashboard()
 
     def _apply_compaction_status(self, content: dict) -> None:
         """Toggle the 'compaction in progress' indicator and, on finish, drop the

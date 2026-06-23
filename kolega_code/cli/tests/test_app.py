@@ -3620,6 +3620,143 @@ async def test_conversation_render_skips_detached_view_during_teardown(
 
 
 @pytest.mark.asyncio
+async def test_conversation_flush_uses_dirty_entry_fast_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.tui.state import ConversationEntry
+    from kolega_code.cli.tui.widgets import ConversationEntryWidget
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        app.conversation_entries = [
+            ConversationEntry(kind="user", content=f"message {index}") for index in range(50)
+        ]
+        app._render_conversation()
+        await pilot.pause()
+
+        widgets = list(app.query(ConversationEntryWidget))
+        assert len(widgets) == 50
+
+        def fail_full_rebuild() -> None:
+            raise AssertionError("dirty-entry refresh should not rebuild the transcript")
+
+        monkeypatch.setattr(app, "_render_conversation", fail_full_rebuild)
+        entry = app.conversation_entries[25]
+        entry.content = "message 25 updated"
+        app._dirty_entry_ids.add(entry.entry_id)
+        app._render_pending = True
+
+        app._flush_conversation_render()
+        await pilot.pause()
+
+        refreshed = list(app.query(ConversationEntryWidget))
+        assert refreshed == widgets
+        assert "message 25 updated" in renderable_text(refreshed[25]._formatted)
+
+
+@pytest.mark.asyncio
+async def test_repeated_progress_updates_refresh_status_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.tui.state import TurnState
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        refresh_count = 0
+
+        def refresh_status_dashboard() -> None:
+            nonlocal refresh_count
+            refresh_count += 1
+
+        monkeypatch.setattr(app, "_refresh_status_dashboard", refresh_status_dashboard)
+        app._turn_status_text = ""
+        app._status_state.turn_state = TurnState.IDLE
+        app._status_state.activity = "Ready"
+
+        app._update_progress("Reading response", complete=False, state=TurnState.GENERATING)
+        app._update_progress("Reading response", complete=False, state=TurnState.GENERATING)
+        app._update_progress("Reading response", complete=False, state=TurnState.GENERATING)
+
+        assert refresh_count == 1
+
+        app._update_progress("Reading response", complete=False, state=TurnState.THINKING)
+
+        assert refresh_count == 2
+
+
+@pytest.mark.asyncio
+async def test_tab_activity_label_changes_only_on_state_transitions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from textual.widgets import TabbedContent
+
+    from kolega_code.cli import theme
+    from kolega_code.cli.tui.constants import TAB_BASE_LABELS
+    from kolega_code.cli.theme import Glyph
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        tabs = app.query_one("#events", TabbedContent)
+        logs_tab = tabs.get_tab("logs_pane")
+        expected_marked = f"{TAB_BASE_LABELS['logs_pane']} {theme.g(Glyph.STATUS)}"
+
+        app._mark_tab_activity("logs_pane")
+        marked_label = logs_tab.label
+        assert str(marked_label) == expected_marked
+
+        app._mark_tab_activity("logs_pane")
+        assert logs_tab.label is marked_label
+
+        app._clear_tab_activity("logs_pane")
+        cleared_label = logs_tab.label
+        assert str(cleared_label) == TAB_BASE_LABELS["logs_pane"]
+
+        app._clear_tab_activity("logs_pane")
+        assert logs_tab.label is cleared_label
+
+
+@pytest.mark.asyncio
+async def test_conversation_entry_widget_skips_unchanged_updates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.tui.state import ConversationEntry
+    from kolega_code.cli.tui.widgets import ConversationEntryWidget
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        app.conversation_entries = [ConversationEntry(kind="assistant", content="stable")]
+        app._render_conversation()
+        await pilot.pause()
+
+        widget = app.query(ConversationEntryWidget).last()
+        updates = 0
+
+        def update(renderable) -> None:
+            nonlocal updates
+            updates += 1
+
+        monkeypatch.setattr(widget, "update", update)
+        widget.refresh_content()
+        assert updates == 0
+
+        widget.entry.content = "changed"
+        widget.refresh_content()
+        assert updates == 1
+
+
+@pytest.mark.asyncio
 async def test_conversation_entry_widget_extracts_plain_selected_text(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

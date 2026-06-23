@@ -264,8 +264,14 @@ class TranscriptRenderingMixin:
                 )
             self._restore_composer_placeholder()
             return
-        self._turn_status_text = content
-        self._refresh_turn_status_strip()
+
+        text_changed = self._turn_status_text != content
+        state_changed = state is not None and self._status_state.turn_state != state
+        if not text_changed and not state_changed:
+            return
+        if text_changed:
+            self._turn_status_text = content
+            self._refresh_turn_status_strip()
         self._set_status_activity(content, turn_state=state)
 
     def _update_activity_progress(self, content: str, state: Optional[TurnState] = None) -> None:
@@ -1062,6 +1068,17 @@ class TranscriptRenderingMixin:
             self._dirty_entry_ids.clear()
             return
 
+        # Fast path for the common streaming case: the transcript shape is unchanged
+        # and only already-mounted entries need their renderables refreshed.
+        if (
+            self._dirty_entry_ids
+            and len(self._entry_widgets) == len(self.conversation_entries)
+            and all(entry_id in self._entry_widgets for entry_id in self._dirty_entry_ids)
+        ):
+            self._refresh_dirty_entry_widgets()
+            self._update_jump_button()
+            return
+
         rendered_ids = list(self._entry_widgets)
         current_ids = [entry.entry_id for entry in self.conversation_entries]
         if current_ids[: len(rendered_ids)] != rendered_ids:
@@ -1069,11 +1086,7 @@ class TranscriptRenderingMixin:
             self._render_conversation()
             return
 
-        for entry_id in self._dirty_entry_ids:
-            widget = self._entry_widgets.get(entry_id)
-            if widget is not None:
-                widget.refresh_content()
-        self._dirty_entry_ids.clear()
+        self._refresh_dirty_entry_widgets()
 
         new_entries = self.conversation_entries[len(rendered_ids) :]
         if new_entries:
@@ -1084,6 +1097,13 @@ class TranscriptRenderingMixin:
                 widgets.append(widget)
             view.mount(*widgets)
         self._update_jump_button()
+
+    def _refresh_dirty_entry_widgets(self) -> None:
+        for entry_id in self._dirty_entry_ids:
+            widget = self._entry_widgets.get(entry_id)
+            if widget is not None:
+                widget.refresh_content()
+        self._dirty_entry_ids.clear()
 
     def _render_conversation(self) -> None:
         """Full rebuild of the conversation view (restore, reset, startup changes)."""
@@ -1125,7 +1145,9 @@ class TranscriptRenderingMixin:
             bar = self.query_one("#jump_to_bottom", JumpToBottomBar)
         except Exception:
             return
-        bar.display = view.max_scroll_y > 0 and view.scroll_y < view.max_scroll_y - 1
+        should_display = view.max_scroll_y > 0 and view.scroll_y < view.max_scroll_y - 1
+        if bar.display != should_display:
+            bar.display = should_display
 
     def on_jump_to_bottom_bar_pressed(self, message: JumpToBottomBar.Pressed) -> None:
         view = self._conversation
