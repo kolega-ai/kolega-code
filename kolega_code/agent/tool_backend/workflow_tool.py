@@ -9,8 +9,10 @@ UI, and supports journal-based resume.
 
 from __future__ import annotations
 
+import json
 import time
 import uuid
+from pathlib import Path
 from typing import Any, Optional
 
 from kolega_code.events import AgentEvent
@@ -118,8 +120,11 @@ class WorkflowTool(BaseTool):
                 for the unchanged prefix and running new/changed calls live.
 
         Returns:
-            A compact summary including the runId, the persisted scriptPath, agent and
-            token counts, and the workflow's return value.
+            A compact artifact manifest including runId, scriptPath, token count,
+            resultPath, and transcriptPath. Results are persisted in the main
+            result/transcript files instead of being returned inline. Per-agent
+            artifacts are saved for debugging but are intentionally not advertised
+            to the model-facing tool result.
         """
         from kolega_code.cli.session_store import default_state_dir
 
@@ -152,7 +157,7 @@ class WorkflowTool(BaseTool):
         # Emitted (and awaited) before execute() so the workflow_start event is on
         # the broadcast queue ahead of any phase/log the runtime fires — those go
         # through fire-and-forget _emit_soon and can't run until we next await.
-        emit = self._make_emit(run_id)
+        emit = self._make_emit(run_id, journal)
         await emit(
             "workflow_start",
             {
@@ -163,7 +168,7 @@ class WorkflowTool(BaseTool):
         )
 
         runtime = WorkflowRuntime(
-            dispatch=self._make_dispatch(run_id),
+            dispatch=self._make_dispatch(run_id, journal),
             emit=emit,
             journal=journal,
             budget=budget,
@@ -183,14 +188,27 @@ class WorkflowTool(BaseTool):
             status = "failed"
             error = f"workflow failed: {exc}"
 
+        duration_seconds = round(time.time() - started, 2)
+        rendered_result = self._result_json_text(result)
+        journal.write_result_artifacts(result, self._render_result_markdown(meta, run_id, status, error, result))
+
+        await emit("workflow_end", {"status": status, "error": error})
+        journal.write_transcript_markdown(
+            self._render_workflow_transcript(meta, run_id, journal, budget, status, error, duration_seconds)
+        )
+
         journal.update_meta(
             status=status,
             error=error,
-            duration_seconds=round(time.time() - started, 2),
+            duration_seconds=duration_seconds,
             total_tokens=budget.spent(),
+            result_size_chars=len(rendered_result),
+            artifacts={
+                "scriptPath": str(journal.script_path),
+                "resultPath": str(journal.result_md_path),
+                "transcriptPath": str(journal.transcript_md_path),
+            },
         )
-
-        await emit("workflow_end", {"status": status, "error": error})
 
         return self._summarize(meta, run_id, journal, budget, status, error, result)
 
@@ -212,7 +230,7 @@ class WorkflowTool(BaseTool):
                 ) from exc
         raise WorkflowScriptError("run_workflow requires one of: script, script_path, or resume_from_run_id")
 
-    def _make_dispatch(self, run_id: str):
+    def _make_dispatch(self, run_id: str, journal: RunJournal):
         # When the orchestrating agent is itself read-only (e.g. plan mode's
         # PlanningAgent), every workflow sub-agent is forced to a read-only
         # investigation agent so the read-only contract is preserved — the
@@ -228,7 +246,21 @@ class WorkflowTool(BaseTool):
                 import_path = _AGENT_TYPE_IMPORTS.get((spec.agent_type or "").lower(), _DEFAULT_AGENT_IMPORT)
             agent_class = _import_agent_class(import_path)
             config = self._config_override(spec.model, spec.effort)
-            sub_info_extra = {"workflow_run_id": run_id, "phase": spec.phase, "label": spec.label}
+            sub_info_extra = {
+                "workflow_run_id": run_id,
+                "phase": spec.phase,
+                "label": spec.label,
+                "call_index": spec.call_index,
+            }
+            label_for_path = spec.label or spec.agent_type or agent_class.__name__
+            artifact_paths = journal.agent_artifact_paths(spec.call_index, label_for_path)
+            artifact_metadata = {
+                "call_index": spec.call_index,
+                "label": spec.label,
+                "phase": spec.phase,
+                "agent_type": spec.agent_type or agent_class.__name__,
+                "agent_name": getattr(agent_class, "agent_name", agent_class.__name__),
+            }
             try:
                 recap, tokens, structured = await self._agent_tool.dispatch_workflow_agent(
                     agent_class,
@@ -236,14 +268,28 @@ class WorkflowTool(BaseTool):
                     config=config,
                     schema=spec.schema,
                     sub_agent_info_extra=sub_info_extra,
+                    artifact_paths=artifact_paths,
+                    artifact_metadata=artifact_metadata,
                 )
             except Exception as exc:  # noqa: BLE001 - a dead agent becomes a None result, not a crash
-                return AgentRunResult(status="failed", error=str(exc))
-            return AgentRunResult(text=recap, structured=structured, tokens=tokens or 0, status="completed")
+                return AgentRunResult(
+                    status="failed",
+                    error=str(exc),
+                    transcript_path=str(artifact_paths["jsonl"]),
+                    transcript_markdown_path=str(artifact_paths["markdown"]),
+                )
+            return AgentRunResult(
+                text=recap,
+                structured=structured,
+                tokens=tokens or 0,
+                status="completed",
+                transcript_path=str(artifact_paths["jsonl"]),
+                transcript_markdown_path=str(artifact_paths["markdown"]),
+            )
 
         return dispatch
 
-    def _make_emit(self, run_id: str):
+    def _make_emit(self, run_id: str, journal: RunJournal):
         sender = getattr(self.caller, "agent_name", None) or "gigacode"
 
         async def emit(kind: str, content: dict) -> None:
@@ -271,6 +317,7 @@ class WorkflowTool(BaseTool):
                 )
             else:
                 payload.update(message_type="workflow_log", text=str(content))
+            journal.append_transcript_event({"type": kind, "content": content})
             event = AgentEvent(
                 event_type="chat_message",
                 sender=sender,
@@ -313,23 +360,147 @@ class WorkflowTool(BaseTool):
             update={"long_context_config": new_long, "thinking_config": new_thinking, "agent_models": {}}
         )
 
-    def _summarize(self, meta, run_id, journal: RunJournal, budget: Budget, status, error, result) -> str:
-        import json
+    def _result_json_text(self, result: Any) -> str:
+        try:
+            return json.dumps(result, indent=2, default=str)
+        except (TypeError, ValueError):
+            return json.dumps(str(result), indent=2)
 
+    def _render_value_markdown(self, value: Any) -> str:
+        if value is None:
+            return "None"
+        if isinstance(value, str):
+            return value
+        return "```json\n" + self._result_json_text(value) + "\n```"
+
+    def _render_result_markdown(self, meta, run_id: str, status: str, error: Optional[str], result: Any) -> str:
+        lines = [
+            f"# Workflow result: {meta.get('name') or 'workflow'}",
+            "",
+            f"- Run id: `{run_id}`",
+            f"- Status: {status}",
+        ]
+        if error:
+            lines.append(f"- Error: {error}")
+        lines.extend(["", "## Full return value", "", self._render_value_markdown(result)])
+        return "\n".join(lines).rstrip() + "\n"
+
+    def _read_jsonl(self, path: Path) -> list[dict]:
+        if not path.exists():
+            return []
+        entries: list[dict] = []
+        for raw in path.read_text(encoding="utf-8").splitlines():
+            if not raw.strip():
+                continue
+            try:
+                entries.append(json.loads(raw))
+            except json.JSONDecodeError:
+                entries.append({"type": "invalid_jsonl", "raw": raw})
+        return entries
+
+    def _render_workflow_transcript(
+        self,
+        meta,
+        run_id: str,
+        journal: RunJournal,
+        budget: Budget,
+        status: str,
+        error: Optional[str],
+        duration_seconds: float,
+    ) -> str:
+        journal_entries = self._read_jsonl(journal.journal_path)
+        raw_events = self._read_jsonl(journal.transcript_jsonl_path)
+        lines = [
+            f"# Workflow transcript: {meta.get('name') or 'workflow'}",
+            "",
+            f"- Run id: `{run_id}`",
+            f"- Status: {status}",
+            f"- Duration: {duration_seconds}s",
+            f"- Tokens: {budget.spent()}",
+            f"- Script: `{journal.script_path}`",
+            f"- Result: `{journal.result_md_path}`",
+            "",
+            (
+                "> For normal workflow output, read only this main transcript and `resultPath`. "
+                "Avoid reading individual sub-agent transcripts unless you are explicitly debugging "
+                "workflow execution."
+            ),
+        ]
+        if error:
+            lines.extend(["", f"**Error:** {error}"])
+
+        lines.extend(["", "## Agent call index", ""])
+        if journal_entries:
+            lines.append("| # | Label | Phase | Agent type | Status | Tokens |")
+            lines.append("| --- | --- | --- | --- | --- | ---: |")
+            for entry in journal_entries:
+                index = entry.get("index", "")
+                label = str(entry.get("label") or "")
+                phase = str(entry.get("phase") or "")
+                agent_type = str(entry.get("agent_type") or "")
+                status_text = str(entry.get("status") or "")
+                tokens = entry.get("tokens", "")
+                lines.append(f"| {index} | {label} | {phase} | {agent_type} | {status_text} | {tokens} |")
+        else:
+            lines.append("No agent calls were recorded.")
+
+        lines.extend(["", "## Agent results", ""])
+        if journal_entries:
+            for entry in journal_entries:
+                index = entry.get("index", "")
+                label = entry.get("label") or f"agent {index}"
+                lines.extend([f"### Call {index}: {label}", ""])
+                for key in (
+                    "phase",
+                    "agent_type",
+                    "status",
+                    "tokens",
+                    "error",
+                ):
+                    if entry.get(key) is not None:
+                        lines.append(f"- {key}: `{entry.get(key)}`")
+                value_text = self._render_value_markdown(entry.get("value"))
+                if len(value_text) <= 2000:
+                    lines.extend(["", "Returned value:", "", value_text, ""])
+                else:
+                    lines.extend(
+                        [
+                            "",
+                            (
+                                f"Returned value is {len(value_text):,} chars; "
+                                f"read `{journal.result_md_path}` for the full workflow result."
+                            ),
+                            "",
+                        ]
+                    )
+        else:
+            lines.append("No returned agent values were recorded.")
+
+        cached_events = [event for event in raw_events if event.get("type") == "agent_cached"]
+        if cached_events:
+            lines.extend(["", "## Cached resume calls", ""])
+            for event in cached_events:
+                lines.append(f"- Call {event.get('index')}: {event.get('label')} (served from resume cache)")
+
+        return "\n".join(str(line) for line in lines).rstrip() + "\n"
+
+    def _summarize(self, meta, run_id, journal: RunJournal, budget: Budget, status, error, result) -> str:
         lines = [
             f"Workflow {meta.get('name')!r} {status}.",
             f"runId: {run_id}",
             f"scriptPath: {journal.script_path}",
             f"tokens: {budget.spent()}",
+            f"resultPath: {journal.result_md_path}",
+            f"transcriptPath: {journal.transcript_md_path}",
         ]
         if error:
             lines.append(f"error: {error}")
-        if result is not None:
-            try:
-                rendered = json.dumps(result, default=str)
-            except (TypeError, ValueError):
-                rendered = str(result)
-            if len(rendered) > 4000:
-                rendered = rendered[:4000] + "… (truncated)"
-            lines.append(f"result: {rendered}")
+        lines.append(
+            "result: written to resultPath. Read resultPath for the workflow result, "
+            "or transcriptPath for execution details."
+        )
+        lines.append(
+            "IMPORTANT: The workflow already ran. Do not re-run it to recover output; "
+            "read resultPath or transcriptPath first."
+        )
         return "\n".join(lines)

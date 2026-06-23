@@ -43,6 +43,15 @@ When the agent runs a workflow, the transcript shows **phase headers** and short
 [sub-agent inspector](../tui/interface/#sub-agent-inspector) — press `Ctrl+G` to
 watch every agent's live trajectory, grouped by phase.
 
+The `run_workflow` result is a compact artifact manifest. It includes paths like
+`resultPath` and `transcriptPath`; the completed workflow result is written to
+`resultPath` instead of returned inline. For normal workflow output, the agent
+should read those main files and avoid reading individual sub-agent transcripts.
+Raw and per-agent debug artifacts may exist under the run directory for explicit
+workflow debugging.
+The agent should read those paths first — not re-run the workflow just to recover
+output text.
+
 ## How it works
 
 Under the hood, the agent authors a short **Python script** and runs it with a
@@ -69,9 +78,11 @@ return findings
 
 <Aside type="note">
 Workflows are deterministic and **resumable**. Each run is saved under Kolega
-Code's state directory (`workflows/<run-id>/`) with its script, a journal, and each
-sub-agent's transcript, so an interrupted run can pick up where it left off instead
-of redoing finished work.
+Code's state directory (`workflows/<run-id>/`) with its script, full result files,
+a readable Markdown transcript, raw JSONL, a resume journal, and debug sub-agent
+transcripts, so an interrupted run can pick up where it left off instead of redoing
+finished work. Use resume when intentionally iterating on the workflow; use the
+artifact paths when you only need to inspect output.
 </Aside>
 
 ## Behavior and safety

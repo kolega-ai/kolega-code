@@ -150,8 +150,19 @@ class WorkflowRuntime:
 
         cached = self._resume_cache.get(index)
         if cached is not None and cached[0] == key:
-            self._emit_soon("workflow_agent_cached", {"label": spec.label or prompt[:60], "phase": spec.phase})
-            return cached[1]
+            cached_value = cached[1]
+            label = spec.label or prompt[:60]
+            self._journal.append_transcript_event(
+                {
+                    "type": "agent_cached",
+                    "index": index,
+                    "label": label,
+                    "phase": spec.phase,
+                    "value": cached_value,
+                }
+            )
+            self._emit_soon("workflow_agent_cached", {"label": label, "phase": spec.phase})
+            return cached_value
 
         self._agent_count += 1
         if self._agent_count > self._agent_cap:
@@ -169,7 +180,34 @@ class WorkflowRuntime:
 
         self.budget.add(result.tokens)
         value = result.value
-        self._journal.record(index, key, spec.label, value, status=result.status)
+        self._journal.record(
+            index,
+            key,
+            spec.label,
+            value,
+            status=result.status,
+            phase=spec.phase,
+            agent_type=spec.agent_type,
+            tokens=result.tokens,
+            error=result.error,
+            transcript_path=result.transcript_path,
+            transcript_markdown_path=result.transcript_markdown_path,
+        )
+        self._journal.append_transcript_event(
+            {
+                "type": "agent_call",
+                "index": index,
+                "label": spec.label,
+                "phase": spec.phase,
+                "agent_type": spec.agent_type,
+                "status": result.status,
+                "tokens": result.tokens,
+                "error": result.error,
+                "value": value,
+                "transcript_path": result.transcript_path,
+                "transcript_markdown_path": result.transcript_markdown_path,
+            }
+        )
         return value
 
     async def parallel(self, thunks: Iterable[Callable[[], Awaitable[Any]]]) -> List[Any]:

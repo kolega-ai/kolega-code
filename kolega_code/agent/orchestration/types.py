@@ -56,6 +56,8 @@ class AgentRunResult:
     agent_id: Optional[str] = None
     status: str = "completed"  # completed | failed | skipped
     error: Optional[str] = None
+    transcript_path: Optional[str] = None
+    transcript_markdown_path: Optional[str] = None
 
     @property
     def value(self) -> Any:

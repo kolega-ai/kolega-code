@@ -1,7 +1,8 @@
 import uuid
 import inspect
+import json
 from pathlib import Path
-from typing import Union, Optional
+from typing import Any, Union, Optional
 from datetime import datetime, timezone
 import time
 
@@ -561,6 +562,105 @@ class AgentTool(BaseTool):
             max_iterations=getattr(self.caller, "max_iterations", None),
         )
 
+    @staticmethod
+    def _write_jsonl_message(path: Optional[Path], message: dict) -> None:
+        if path is None:
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(message, default=str) + "\n")
+
+    @staticmethod
+    def _render_workflow_message(message: dict) -> str:
+        role = str(message.get("role") or "message")
+        content = message.get("content", "")
+        lines = [f"### {role}", ""]
+        if isinstance(content, str):
+            lines.append(content)
+        elif isinstance(content, list):
+            for item in content:
+                if isinstance(item, dict):
+                    item_type = item.get("type", "content")
+                    if item_type == "text":
+                        lines.append(str(item.get("text", "")))
+                    elif item_type == "tool_use":
+                        lines.append(f"**Tool use:** `{item.get('name', '')}`")
+                        lines.append("```json")
+                        lines.append(json.dumps(item.get("input", {}), indent=2, default=str))
+                        lines.append("```")
+                    elif item_type == "tool_result":
+                        status = "Error" if item.get("is_error") else "Result"
+                        lines.append(f"**Tool {status}:** `{item.get('name', '')}`")
+                        lines.append("```")
+                        lines.append(str(item.get("content", "")))
+                        lines.append("```")
+                    else:
+                        lines.append("```json")
+                        lines.append(json.dumps(item, indent=2, default=str))
+                        lines.append("```")
+                else:
+                    rendered = item.to_markdown() if hasattr(item, "to_markdown") else str(item)
+                    lines.append(rendered)
+        else:
+            lines.append(str(content))
+        return "\n".join(lines).rstrip() + "\n"
+
+    @staticmethod
+    def _render_value_markdown(value: Any) -> str:
+        if value is None:
+            return "None"
+        if isinstance(value, str):
+            return value
+        try:
+            return "```json\n" + json.dumps(value, indent=2, default=str) + "\n```"
+        except (TypeError, ValueError):
+            return str(value)
+
+    def _write_workflow_agent_markdown(
+        self,
+        artifact_paths: Optional[dict],
+        *,
+        metadata: dict,
+        prompt: str,
+        status: str,
+        result: Optional[str] = None,
+        structured: Any = None,
+        tokens: int = 0,
+        error: Optional[str] = None,
+        history: Optional[list[dict]] = None,
+    ) -> None:
+        if not artifact_paths or not artifact_paths.get("markdown"):
+            return
+        path = Path(artifact_paths["markdown"])
+        path.parent.mkdir(parents=True, exist_ok=True)
+        lines = [
+            f"# Workflow agent {metadata.get('call_index', '')}: {metadata.get('label') or metadata.get('agent_name') or 'agent'}",
+            "",
+            "## Metadata",
+            "",
+            f"- Call index: {metadata.get('call_index', '')}",
+            f"- Label: {metadata.get('label') or ''}",
+            f"- Phase: {metadata.get('phase') or ''}",
+            f"- Agent type: {metadata.get('agent_type') or metadata.get('agent_name') or ''}",
+            f"- Status: {status}",
+            f"- Tokens: {tokens}",
+        ]
+        if error:
+            lines.append(f"- Error: {error}")
+        jsonl_path = artifact_paths.get("jsonl")
+        if jsonl_path:
+            lines.append(f"- Raw transcript: `{jsonl_path}`")
+        lines.extend(["", "## Task prompt", "", prompt.strip() or "(empty)"])
+        if structured is not None:
+            lines.extend(["", "## Structured result", "", self._render_value_markdown(structured)])
+        if result is not None:
+            lines.extend(["", "## Final recap", "", result])
+        if history:
+            lines.extend(["", "## Message history", ""])
+            for message in history:
+                lines.append(self._render_workflow_message(message))
+        path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+
     async def dispatch_workflow_agent(
         self,
         agent_class,
@@ -569,6 +669,8 @@ class AgentTool(BaseTool):
         config=None,
         schema: Optional[dict] = None,
         sub_agent_info_extra: Optional[dict] = None,
+        artifact_paths: Optional[dict] = None,
+        artifact_metadata: Optional[dict] = None,
     ):
         """Dispatch one sub-agent for a gigacode workflow.
 
@@ -609,6 +711,16 @@ class AgentTool(BaseTool):
         if sub_agent_info_extra:
             sub_agent_info.update({k: v for k, v in sub_agent_info_extra.items() if v is not None})
 
+        artifact_metadata = dict(artifact_metadata or {})
+        artifact_metadata.setdefault("agent_name", agent_name)
+        if artifact_paths:
+            for key in ("markdown", "jsonl"):
+                if artifact_paths.get(key):
+                    artifact_paths[key] = Path(artifact_paths[key])
+            if artifact_paths.get("jsonl"):
+                artifact_paths["jsonl"].parent.mkdir(parents=True, exist_ok=True)
+                artifact_paths["jsonl"].write_text("", encoding="utf-8")
+
         capture: dict = {}
         extra_extensions = []
         effective_task = task
@@ -618,6 +730,7 @@ class AgentTool(BaseTool):
 
         await self._send_status_event("GENERATING", f"Starting {agent_name} task", sub_agent_info=sub_agent_info)
         conversation_finished = False
+        agent = None
 
         try:
             agent = self._construct_workflow_sub_agent(agent_class, config, extra_extensions)
@@ -627,7 +740,13 @@ class AgentTool(BaseTool):
             agent.sub_agent_context = sub_agent_info
 
             last_saved_index = await self._stream_workflow_agent(
-                agent, agent_name, sub_agent_info, conversation_id, last_saved_index=-1, task=effective_task
+                agent,
+                agent_name,
+                sub_agent_info,
+                conversation_id,
+                last_saved_index=-1,
+                task=effective_task,
+                artifact_jsonl_path=artifact_paths.get("jsonl") if artifact_paths else None,
             )
 
             # Single re-prompt if a schema was requested but submit_result wasn't called.
@@ -639,6 +758,7 @@ class AgentTool(BaseTool):
                     conversation_id,
                     last_saved_index=last_saved_index,
                     task=self._STRUCTURED_OUTPUT_NUDGE,
+                    artifact_jsonl_path=artifact_paths.get("jsonl") if artifact_paths else None,
                 )
 
             result = await agent.recap_agent_outcome()
@@ -664,6 +784,21 @@ class AgentTool(BaseTool):
             )
 
             structured = capture.get("value") if schema else None
+            final_history = agent.dump_message_history() if agent is not None else []
+            if artifact_paths and artifact_paths.get("jsonl"):
+                # Persist any history messages that completed after the last stream event.
+                for i in range(last_saved_index + 1, len(final_history)):
+                    self._write_jsonl_message(artifact_paths.get("jsonl"), final_history[i])
+            self._write_workflow_agent_markdown(
+                artifact_paths,
+                metadata=artifact_metadata,
+                prompt=task,
+                status="completed",
+                result=result,
+                structured=structured,
+                tokens=total_tokens if isinstance(total_tokens, int) else 0,
+                history=final_history,
+            )
             return result, (total_tokens if isinstance(total_tokens, int) else 0), structured
 
         except Exception as e:
@@ -678,6 +813,20 @@ class AgentTool(BaseTool):
                     },
                 )
                 conversation_finished = True
+            final_history = []
+            if agent is not None:
+                try:
+                    final_history = agent.dump_message_history()
+                except Exception:  # noqa: BLE001 - transcript capture must not mask the real failure
+                    final_history = []
+            self._write_workflow_agent_markdown(
+                artifact_paths,
+                metadata=artifact_metadata,
+                prompt=task,
+                status="failed",
+                error=str(e),
+                history=final_history,
+            )
             await self.log_error(f"Error in workflow {agent_name}: {str(e)}", sender="AgentTool")
             await self._send_status_event("ERROR", f"Error in {agent_name}: {str(e)}", sub_agent_info=sub_agent_info)
             raise
@@ -704,6 +853,7 @@ class AgentTool(BaseTool):
         *,
         last_saved_index: int,
         task: str,
+        artifact_jsonl_path: Optional[Path] = None,
     ) -> int:
         """Stream one process_message_stream pass, broadcasting events and recording
         newly-completed history messages. Returns the updated last_saved_index.
@@ -729,19 +879,21 @@ class AgentTool(BaseTool):
             )
             await self.connection_manager.broadcast_event(evt, self.workspace_id, self.thread_id)
 
-            if conversation_id and complete:
+            if complete:
                 current_history = agent.dump_message_history()
                 for i in range(last_saved_index + 1, len(current_history)):
                     hist_msg = current_history[i]
-                    await self._record_message(
-                        conversation_id,
-                        {
-                            "role": hist_msg.get("role", "assistant"),
-                            "content": hist_msg.get("content", []),
-                            "stream_uuid": None,
-                        },
-                        i + 1,
-                    )
+                    if conversation_id:
+                        await self._record_message(
+                            conversation_id,
+                            {
+                                "role": hist_msg.get("role", "assistant"),
+                                "content": hist_msg.get("content", []),
+                                "stream_uuid": None,
+                            },
+                            i + 1,
+                        )
+                    self._write_jsonl_message(artifact_jsonl_path, hist_msg)
                 last_saved_index = len(current_history) - 1
 
         return last_saved_index
