@@ -46,6 +46,10 @@ Do not run destructive commands automatically. Treat commands that delete files,
 
 When running tests or builds, choose the smallest command that gives confidence first, then broaden verification when the change has a wider blast radius.
 
+## Git Branches and Pull Requests
+
+When creating a branch or opening a pull request, follow repository or user conventions if provided; otherwise use Conventional Commits-style names. Use lowercase kebab-case branch names with a conventional type prefix, such as `feat/add-login-rate-limit` or `fix/navbar-overlap`. Use Conventional Commit PR titles, such as `feat(auth): add session timeout` or `fix: handle empty search results`. Keep names descriptive but not overly long.
+
 ## Development Servers
 
 When starting a local development server, use an available port and tell the user the URL. If a server is already running on the default port, use another suitable port. Stop servers you started when they are no longer needed unless the user is actively testing them.
