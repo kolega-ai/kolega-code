@@ -1132,6 +1132,149 @@ async def test_textual_app_permission_approval_actions_show_rule_labels_without_
 
 
 @pytest.mark.asyncio
+async def test_textual_app_long_permission_command_keeps_approval_actions_visible_and_selectable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.state import PendingApproval
+    from kolega_code.cli.tui.widgets import ActionList, PromptPanel
+    from kolega_code.permissions import PermissionDecision, allow_rule_options, permission_request_for_tool
+
+    class FakeCoderAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def restore_message_history(self, history):
+            return None
+
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
+
+        def dump_message_history(self):
+            return []
+
+        async def cleanup(self):
+            return None
+
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test(size=(100, 40)) as pilot:
+        long_command = "python -c \"" + "print('approval layout') ; " * 80 + "\""
+        request = permission_request_for_tool("exec_command", {"command": long_command})
+        assert request is not None
+        future: asyncio.Future[PermissionDecision] = asyncio.get_running_loop().create_future()
+        app._pending_approval = PendingApproval(
+            request=request,
+            future=future,
+            rule_options=allow_rule_options(request),
+        )
+
+        app._set_approval_actions_visible(True)
+        await pilot.pause()
+
+        approval_prompt = app.query_one("#approval_prompt", PromptPanel)
+        approval_actions = app.query_one("#approval_actions", ActionList)
+        assert approval_prompt.display is True
+        assert approval_actions.display is True
+        assert approval_actions.option_count == 5
+        assert app.focused is approval_actions
+        assert approval_actions.region.y + approval_actions.region.height <= (
+            approval_prompt.region.y + approval_prompt.region.height
+        )
+        assert approval_actions.region.y + approval_actions.region.height <= app.size.height
+
+        await pilot.press("1")
+        decision = await asyncio.wait_for(future, timeout=1)
+
+        assert decision.allowed is True
+        assert app._pending_approval is None
+        assert approval_actions.display is False
+
+
+@pytest.mark.asyncio
+async def test_textual_app_long_question_keeps_actions_visible_and_selectable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.state import PendingQuestion
+    from kolega_code.cli.tui.widgets import ActionList, PromptPanel
+
+    class FakeCoderAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def restore_message_history(self, history):
+            return None
+
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
+
+        def dump_message_history(self):
+            return []
+
+        async def cleanup(self):
+            return None
+
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test(size=(100, 40)) as pilot:
+        long_question = "Which migration path should we use? " + "Consider all edge cases and rollout steps. " * 80
+        options = ["Keep current path", "Use bounded prompt header", "Defer the decision"]
+        future: asyncio.Future[str] = asyncio.get_running_loop().create_future()
+        app._pending_question = PendingQuestion(
+            question=long_question,
+            options=options,
+            future=future,
+            descriptions=["Least change", "Fixes the layout", "Needs follow-up"],
+        )
+
+        app._show_question_options(long_question, options, app._pending_question.descriptions)
+        await pilot.pause()
+
+        question_prompt = app.query_one("#question_prompt", PromptPanel)
+        question_actions = app.query_one("#question_actions", ActionList)
+        assert question_prompt.display is True
+        assert question_actions.display is True
+        assert question_actions.option_count == 3
+        assert app.focused is question_actions
+        assert question_actions.region.y + question_actions.region.height <= (
+            question_prompt.region.y + question_prompt.region.height
+        )
+        assert question_actions.region.y + question_actions.region.height <= app.size.height
+
+        await pilot.press("2")
+        answer = await asyncio.wait_for(future, timeout=1)
+
+        assert answer == "Use bounded prompt header"
+        assert app._pending_question is None
+        assert question_actions.display is False
+
+
+@pytest.mark.asyncio
 async def test_textual_app_restores_saved_plan_and_interaction_mode(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

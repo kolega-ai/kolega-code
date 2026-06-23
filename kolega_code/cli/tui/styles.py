@@ -224,15 +224,23 @@ APP_CSS = """
         padding: 0 1;
     }
 
+    #question_prompt > .prompt-header-scroll, #approval_prompt > .prompt-header-scroll {
+        height: auto;
+        max-height: 6;
+        overflow-y: auto;
+        background: $surface;
+    }
+
     #question_prompt > ActionList, #approval_prompt > ActionList {
         border: none;
         background: $surface;
         height: auto;
-        max-height: 10;
+        max-height: 6;
         padding: 0;
     }
 
     .prompt-header {
+        height: auto;
         padding: 0 0 1 0;
         background: $surface;
     }
