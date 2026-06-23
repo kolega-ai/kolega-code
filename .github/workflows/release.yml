@@ -12,6 +12,10 @@ jobs:
   build:
     name: Build and test package
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      attestations: write
+      id-token: write
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -20,44 +24,80 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.11"
-          cache: pip
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
 
       - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install -e ".[dev]" build twine
+        run: uv sync --extra dev --frozen
 
-      - name: Verify tag matches package version
+      - name: Verify release version metadata
         run: |
-          python - <<'PY'
+          uv run python - <<'PY'
+          import ast
           import os
           import sys
           import tomllib
+          from pathlib import Path
+
+          def module_version(path: str) -> str:
+              tree = ast.parse(Path(path).read_text(encoding="utf-8"), filename=path)
+              for node in tree.body:
+                  if isinstance(node, ast.Assign):
+                      for target in node.targets:
+                          if isinstance(target, ast.Name) and target.id == "__version__":
+                              if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+                                  return node.value.value
+              raise RuntimeError(f"Could not find string __version__ assignment in {path}")
 
           tag = os.environ["GITHUB_REF_NAME"]
           with open("pyproject.toml", "rb") as fh:
               version = tomllib.load(fh)["project"]["version"]
-          expected = f"v{version}"
-          if tag != expected:
-              print(f"Release tag {tag!r} does not match pyproject.toml version {version!r}; expected {expected!r}.")
+          expected_tag = f"v{version}"
+          if tag != expected_tag:
+              print(f"Release tag {tag!r} does not match pyproject.toml version {version!r}; expected {expected_tag!r}.")
+              sys.exit(1)
+
+          module_versions = {
+              "kolega_code/__init__.py": module_version("kolega_code/__init__.py"),
+              "kolega_code/agent/__init__.py": module_version("kolega_code/agent/__init__.py"),
+          }
+          mismatches = {path: value for path, value in module_versions.items() if value != version}
+          if mismatches:
+              print("Version metadata mismatch:")
+              print(f"  pyproject.toml: {version}")
+              for path, value in mismatches.items():
+                  print(f"  {path}: {value}")
               sys.exit(1)
           PY
 
       - name: Run tests
-        run: python -m pytest -ra --durations=50 --import-mode=importlib -m "not slow"
+        run: uv run pytest -ra --durations=50 --import-mode=importlib -m "not slow"
 
       - name: Build distributions
-        run: python -m build
+        run: uv build
 
       - name: Check distributions
-        run: python -m twine check dist/*
+        run: uv run twine check dist/*
 
-      - name: Smoke-test wheel
-        run: |
-          python -m venv /tmp/kolega-code-smoke
-          /tmp/kolega-code-smoke/bin/python -m pip install --upgrade pip
-          /tmp/kolega-code-smoke/bin/python -m pip install dist/*.whl
-          /tmp/kolega-code-smoke/bin/kolega-code --version
+      - name: Prepare release asset directory
+        run: mkdir -p release-assets
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: spdx-json
+          output-file: release-assets/kolega-code-sbom.spdx.json
+          upload-artifact: false
+
+      - name: Attest release artifacts
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: "dist/*"
 
       - name: Upload distributions
         uses: actions/upload-artifact@v6
@@ -66,9 +106,50 @@ jobs:
           path: dist/
           if-no-files-found: error
 
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v6
+        with:
+          name: release-sbom
+          path: release-assets/kolega-code-sbom.spdx.json
+          if-no-files-found: error
+
+  smoke:
+    name: Smoke-test artifacts on Python ${{ matrix.python-version }}
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Download distributions
+        uses: actions/download-artifact@v7
+        with:
+          name: python-distributions
+          path: dist/
+
+      - name: Smoke-test wheel
+        run: |
+          python -m venv /tmp/kolega-code-wheel-smoke
+          /tmp/kolega-code-wheel-smoke/bin/python -m pip install --upgrade pip
+          /tmp/kolega-code-wheel-smoke/bin/python -m pip install dist/*.whl
+          /tmp/kolega-code-wheel-smoke/bin/kolega-code --version
+
+      - name: Smoke-test sdist
+        run: |
+          python -m venv /tmp/kolega-code-sdist-smoke
+          /tmp/kolega-code-sdist-smoke/bin/python -m pip install --upgrade pip
+          /tmp/kolega-code-sdist-smoke/bin/python -m pip install dist/*.tar.gz
+          /tmp/kolega-code-sdist-smoke/bin/kolega-code --version
+
   publish:
     name: Publish to PyPI
-    needs: build
+    needs: [build, smoke]
     runs-on: ubuntu-latest
     environment:
       name: pypi
@@ -85,6 +166,9 @@ jobs:
 
       - name: Publish distributions to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+          skip-existing: false
 
   github-release:
     name: Create GitHub Release
