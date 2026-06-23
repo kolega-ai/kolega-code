@@ -456,7 +456,8 @@ class PromptPanel(Vertical):
 
     def compose(self) -> ComposeResult:
         self.border_title = self._title
-        yield Static("", classes="prompt-header", markup=True)
+        with VerticalScroll(classes="prompt-header-scroll"):
+            yield Static("", classes="prompt-header", markup=True)
         yield ActionList(id=self._actions_id)
 
     @property
