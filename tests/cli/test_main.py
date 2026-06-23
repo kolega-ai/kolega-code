@@ -6,7 +6,14 @@ import pytest
 
 from kolega_code import __version__
 from kolega_code.config import ModelProvider
-from kolega_code.cli.main import CLI_AGENT_MODE, RESUME_LATEST, _resolve_tui_session, main, parse_args
+from kolega_code.cli.main import (
+    CLI_AGENT_MODE,
+    RESUME_LATEST,
+    _resolve_tui_permission_mode,
+    _resolve_tui_session,
+    main,
+    parse_args,
+)
 from kolega_code.cli.provider_registry import DEEPSEEK_DEFAULT_MODEL, UI_DEFAULT_MODEL, UI_DEFAULT_PROVIDER
 from kolega_code.cli.session_store import SessionStore, SessionStoreError
 from kolega_code.cli.settings import CliSettings, SettingsStore
@@ -524,6 +531,56 @@ def test_tui_legacy_session_alias_loads_specific_session(tmp_path: Path) -> None
 
     assert session.session_id == existing.session_id
     assert session.mode == CLI_AGENT_MODE
+
+
+def test_tui_permission_mode_new_session_uses_settings(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    store = SessionStore(tmp_path / "state")
+    session = _resolve_tui_session(store, project, {}, resume=None, legacy_session_id=None)
+    settings = CliSettings(permission_mode="auto")
+
+    mode = _resolve_tui_permission_mode(session, settings, None, resumed=False)
+
+    assert mode == "auto"
+
+
+def test_tui_permission_mode_cli_overrides_settings(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    store = SessionStore(tmp_path / "state")
+    session = _resolve_tui_session(store, project, {}, resume=None, legacy_session_id=None)
+    settings = CliSettings(permission_mode="auto")
+
+    mode = _resolve_tui_permission_mode(session, settings, "ask", resumed=False)
+
+    assert mode == "ask"
+
+
+def test_tui_permission_mode_resume_uses_session_value(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", {})
+    session.permission_mode = "ask"
+    settings = CliSettings(permission_mode="auto")
+
+    mode = _resolve_tui_permission_mode(session, settings, None, resumed=True)
+
+    assert mode == "ask"
+
+
+def test_tui_permission_mode_cli_overrides_resumed_session(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", {})
+    session.permission_mode = "auto"
+    settings = CliSettings(permission_mode="auto")
+
+    mode = _resolve_tui_permission_mode(session, settings, "ask", resumed=True)
+
+    assert mode == "ask"
 
 
 def _sub_agent_test_event():

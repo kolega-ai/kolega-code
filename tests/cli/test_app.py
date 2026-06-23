@@ -987,8 +987,16 @@ async def test_textual_app_ctrl_p_toggles_permission_mode(
         assert app.permission_mode == PermissionMode.AUTO
         assert app.agent.permission_mode == PermissionMode.AUTO
         assert store.load(session.session_id).permission_mode == "auto"
+        assert SettingsStore(store.root).load().permission_mode == "auto"
         assert "Permissions: auto" in app.conversation_entries[0].content
         assert "Auto" in str(app.query_one("#status_dashboard", Static).render())
+
+        await app._command_permissions("ask")
+
+        assert app.permission_mode == PermissionMode.ASK
+        assert app.agent.permission_mode == PermissionMode.ASK
+        assert store.load(session.session_id).permission_mode == "ask"
+        assert SettingsStore(store.root).load().permission_mode == "ask"
 
 
 @pytest.mark.asyncio
