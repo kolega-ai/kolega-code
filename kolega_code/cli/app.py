@@ -23,7 +23,6 @@ from textual.widgets import (
     Label,
     Markdown,
     OptionList,
-    RichLog,
     Select,
     Static,
     TabbedContent,
@@ -90,6 +89,10 @@ from .tui import widgets as tui_widgets
 from .tui.styles import APP_CSS
 
 CLI_AGENT_MODE = AgentMode.CLI.value
+LOG_MAX_LINES = 10_000
+TERMINAL_MAX_LINES = 10_000
+TERMINAL_FLUSH_INTERVAL = 0.04
+TERMINAL_IMMEDIATE_FLUSH_CHARS = 64 * 1024
 
 
 class KolegaCodeApp(
@@ -130,6 +133,7 @@ class KolegaCodeApp(
         permission_mode: Optional[str] = None,
         browser_visible: bool = False,
         check_for_updates: bool = False,
+        show_logs: bool = False,
     ) -> None:
         super().__init__()
         self.project_path = project_path
@@ -153,6 +157,7 @@ class KolegaCodeApp(
         self.browser_visible = browser_visible
         self.sidebar_visible = True
         self.check_for_updates = check_for_updates
+        self.show_logs = show_logs
         self.connection_manager = CliConnectionManager()
         self._hook_dispatcher: Optional[HookDispatcher] = None
         self._session_started = False
@@ -211,6 +216,9 @@ class KolegaCodeApp(
         self._last_sub_agent_tick = 0.0
         self._sub_agent_inspector: Optional[tui_sub_agents.SubAgentInspectorScreen] = None
         self._terminal_has_content = False
+        self._terminal_output_buffer: list[str] = []
+        self._terminal_output_buffer_chars = 0
+        self._terminal_flush_timer: Optional[Timer] = None
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="body"):
@@ -252,10 +260,23 @@ class KolegaCodeApp(
                     with TabPane("Status", id="status_pane"):
                         with Vertical(id="status_container"):
                             yield Static("", id="status_dashboard", markup=True)
-                    with TabPane("Logs", id="logs_pane"):
-                        yield RichLog(id="logs", wrap=True, markup=True)
+                    if self.show_logs:
+                        with TabPane("Logs", id="logs_pane"):
+                            yield tui_widgets.LogOutputLog(
+                                id="logs",
+                                wrap=True,
+                                markup=True,
+                                max_lines=LOG_MAX_LINES,
+                            )
                     with TabPane("Terminal", id="terminal_pane"):
-                        yield RichLog(id="terminal", wrap=True, markup=False)
+                        # Sidebar-rendered history is bounded for UI performance;
+                        # command output returned to the agent is unaffected.
+                        yield tui_widgets.TerminalOutputLog(
+                            id="terminal",
+                            wrap=True,
+                            markup=False,
+                            max_lines=TERMINAL_MAX_LINES,
+                        )
                     with TabPane("Planning", id="planning_pane"):
                         with VerticalScroll(id="planning_form"):
                             with Collapsible(title="Plan", collapsed=False, id="planning_plan"):
@@ -388,12 +409,12 @@ class KolegaCodeApp(
         return self.query_one("#conversation", tui_widgets.ConversationView)
 
     @property
-    def _logs(self) -> RichLog:
-        return self.query_one("#logs", RichLog)
+    def _logs(self) -> tui_widgets.LogOutputLog:
+        return self.query_one("#logs", tui_widgets.LogOutputLog)
 
     @property
-    def _terminal(self) -> RichLog:
-        return self.query_one("#terminal", RichLog)
+    def _terminal(self) -> tui_widgets.TerminalOutputLog:
+        return self.query_one("#terminal", tui_widgets.TerminalOutputLog)
 
     def _format_terminal_command(self, command: str) -> Text:
         """Accent prompt glyph plus the command in bold."""
@@ -402,14 +423,58 @@ class KolegaCodeApp(
             (command, "bold"),
         )
 
+    def _queue_terminal_output(self, output: str) -> None:
+        """Buffer terminal chunks so high-volume output renders in batches."""
+        if not output:
+            return
+
+        buffer_was_empty = not self._terminal_output_buffer
+        self._terminal_output_buffer.append(output)
+        self._terminal_output_buffer_chars += len(output)
+        self._terminal_has_content = True
+
+        if buffer_was_empty:
+            self._mark_tab_activity("terminal_pane")
+
+        if self._terminal_output_buffer_chars >= TERMINAL_IMMEDIATE_FLUSH_CHARS:
+            self._flush_terminal_output()
+            return
+
+        if self._terminal_flush_timer is None:
+            self._terminal_flush_timer = self.set_timer(
+                TERMINAL_FLUSH_INTERVAL,
+                self._flush_terminal_output,
+                name="terminal-output-flush",
+            )
+
+    def _flush_terminal_output(self) -> None:
+        """Write any buffered terminal output as a single sticky-follow append."""
+        if self._terminal_flush_timer is not None:
+            self._terminal_flush_timer.stop()
+            self._terminal_flush_timer = None
+
+        if not self._terminal_output_buffer:
+            return
+
+        output = "".join(self._terminal_output_buffer)
+        self._terminal_output_buffer.clear()
+        self._terminal_output_buffer_chars = 0
+
+        try:
+            terminal = self._terminal
+        except Exception:
+            return
+        terminal.write_terminal(output)
+
     def _write_terminal_command(self, command: str) -> None:
+        self._flush_terminal_output()
         try:
             terminal = self._terminal
         except Exception:
             return
         if self._terminal_has_content:
-            terminal.write("")
-        terminal.write(self._format_terminal_command(command))
+            terminal.write_terminal("")
+        terminal.write_terminal(self._format_terminal_command(command))
         self._terminal_has_content = True
         self._mark_tab_activity("terminal_pane")
 
@@ -423,12 +488,14 @@ class KolegaCodeApp(
         )
 
     def _write_log(self, text: str, level: str = "info") -> None:
-        """Single write path into the Logs tab."""
+        """Single write path into the optional Logs tab."""
+        if not self.show_logs:
+            return
         try:
             logs = self._logs
         except Exception:
             return
-        logs.write(self._format_log_line(text, level))
+        logs.write_log(self._format_log_line(text, level))
         self._mark_tab_activity("logs_pane")
 
     def _mark_tab_activity(self, pane_id: str) -> None:

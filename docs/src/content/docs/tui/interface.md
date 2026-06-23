@@ -14,8 +14,9 @@ The screen is split into two columns:
 - **Conversation panel** (left, larger) — your chat with the agent. Responses
   stream in live, tool calls and sub-agent activity appear inline, and detailed
   tool results are collapsed by default so you can expand only what you need.
-- **Side panel** (right) — a set of tabs for status, logs, the terminal, planning,
-  and settings. Toggle it with `Ctrl+O` or `/sidebar`.
+- **Side panel** (right) — a set of tabs for status, the terminal, planning,
+  and settings. Toggle it with `Ctrl+O` or `/sidebar`. The diagnostic Logs tab is
+  opt-in; launch with `--show-logs` when you want it.
 
 At the bottom sits the **composer** — the text box where you type prompts. See
 [Chat Composer](../composer/) for everything it can do.
@@ -25,7 +26,7 @@ At the bottom sits the **composer** — the text box where you type prompts. See
 | Tab | What it shows |
 | --- | --- |
 | **Status** | The active provider/model and thinking effort, the current interaction mode (Build/Plan), permission mode, the agent's turn state (idle, generating, thinking, running a tool, running sub-agents, waiting for input, …), token usage, and context warnings. |
-| **Logs** | A timestamped, color-coded activity log: sub-agent lifecycle, tool calls, configuration changes. An indicator flags new entries when you're on another tab. |
+| **Logs** | Optional. Launch with `--show-logs` to show a timestamped, color-coded diagnostic activity log. New entries preserve manual scrollback and an indicator flags unseen entries when you're on another tab. |
 | **Terminal** | Live output from commands the agent runs. |
 | **Planning** | The current **Plan** (markdown from the planning agent) and the shared **Task List** that both modes can edit. |
 | **Settings** | Provider, model, thinking effort, and API-key configuration. See [Settings & API Keys](../../configuration/settings-and-api-keys/). |

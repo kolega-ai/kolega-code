@@ -16,7 +16,7 @@ from textual.containers import Vertical, VerticalScroll
 from textual.message import Message as TextualMessage
 from textual.selection import Selection
 from textual.strip import Strip
-from textual.widgets import Collapsible, OptionList, Static, TextArea
+from textual.widgets import Collapsible, OptionList, RichLog, Static, TextArea
 from textual.widgets._collapsible import CollapsibleTitle
 from textual.widgets.option_list import Option
 
@@ -296,6 +296,50 @@ class ConversationView(VerticalScroll):
             return
         if update is not None:
             update()
+
+
+class StickyRichLog(RichLog):
+    """RichLog with sticky bottom-follow semantics.
+
+    ``RichLog`` defaults to unconditional auto-scroll on every write. That is
+    wrong for sidebar streams because manual scrollback snaps back to the newest
+    output as soon as another line arrives. This widget keeps the view pinned
+    only while the user is already at the bottom.
+    """
+
+    bottom_tolerance = 1
+
+    def __init__(self, *args, **kwargs) -> None:
+        kwargs["auto_scroll"] = False
+        super().__init__(*args, **kwargs)
+        self.auto_follow_bottom = True
+
+    def is_at_bottom(self) -> bool:
+        """Return whether the current scroll position is effectively at the end."""
+        return self.max_scroll_y <= 0 or self.scroll_y >= self.max_scroll_y - self.bottom_tolerance
+
+    def watch_scroll_y(self, old_value: float, new_value: float) -> None:
+        super().watch_scroll_y(old_value, new_value)
+        self.auto_follow_bottom = self.is_at_bottom()
+
+    def write_sticky(self, content: object) -> None:
+        """Append content, following only if the user was at the bottom."""
+        should_follow = self.auto_follow_bottom or self.is_at_bottom()
+        self.write(content, scroll_end=should_follow)
+
+
+class TerminalOutputLog(StickyRichLog):
+    """Sticky log for terminal output."""
+
+    def write_terminal(self, content: object) -> None:
+        self.write_sticky(content)
+
+
+class LogOutputLog(StickyRichLog):
+    """Sticky log for diagnostic messages."""
+
+    def write_log(self, content: object) -> None:
+        self.write_sticky(content)
 
 
 class JumpToBottomBar(Static):

@@ -37,6 +37,14 @@ def test_parse_default_command_as_tui() -> None:
     assert args.resume is None
     assert args.mode == CLI_AGENT_MODE
     assert args.permission_mode is None
+    assert args.show_logs is False
+
+
+def test_parse_tui_show_logs_flag() -> None:
+    args = parse_args(["/tmp/project", "--show-logs"])
+
+    assert args.command == "tui"
+    assert args.show_logs is True
 
 
 def test_version_flag_prints_package_version(capsys, monkeypatch: pytest.MonkeyPatch) -> None:

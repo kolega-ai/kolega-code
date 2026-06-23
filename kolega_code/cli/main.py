@@ -156,6 +156,7 @@ def _build_tui_parser() -> argparse.ArgumentParser:
         help="Resume the latest saved thread, or resume the given thread/session ID.",
     )
     parser.add_argument("--browser-visible", action="store_true", help="Launch visible Playwright browser windows.")
+    parser.add_argument("--show-logs", action="store_true", help="Show the diagnostic Logs sidebar tab.")
     parser.add_argument(
         "--permission-mode",
         choices=[mode.value for mode in PermissionMode],
@@ -393,6 +394,7 @@ def _run_tui(args: argparse.Namespace) -> int:
         permission_mode=args.permission_mode,
         browser_visible=args.browser_visible,
         check_for_updates=True,
+        show_logs=args.show_logs,
     )
     app.run()
     return 0
