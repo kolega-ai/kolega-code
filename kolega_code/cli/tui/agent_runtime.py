@@ -43,7 +43,7 @@ class AgentRuntimeMixin:
                 if chunk.get("type") == "thinking":
                     self._update_progress(messages.THINKING, complete=False, state=tui_state.TurnState.THINKING)
                     self._apply_stream_chunk(chunk, kind="thinking")
-                    if content:
+                    if content and self.show_logs:
                         self._write_log(content, "debug")
             await self._drain_pending_events()
             self._finalize_sub_agent_activities()
@@ -103,18 +103,17 @@ class AgentRuntimeMixin:
             try:
                 event = self.connection_manager.events.get_nowait()
             except asyncio.QueueEmpty:
-                return
+                break
             self._render_event(event)
+        self._flush_terminal_output()
 
     def _render_event(self, event: AgentEvent) -> None:
-        text = self._display_text_from_event(event)
         if event.event_type == "log_message":
-            level = str(event.content.get("level", "info"))
-            self._write_log(text, level)
+            if self.show_logs:
+                level = str(event.content.get("level", "info"))
+                self._write_log(self._display_text_from_event(event), level)
         elif event.event_type == "terminal_output":
-            self._terminal.write(event.content.get("output", ""))
-            self._terminal_has_content = True
-            self._mark_tab_activity("terminal_pane")
+            self._queue_terminal_output(event.content.get("output", ""))
         elif event.event_type == "terminal_command":
             command = str(event.content.get("command") or "")
             self._write_terminal_command(command)
@@ -160,10 +159,14 @@ class AgentRuntimeMixin:
         elif event.event_type in {"llm_status_update", "status_update"}:
             if event.sub_agent_info:
                 self._note_sub_agent_status(event)
-            elif text:
-                self._write_log(text, "info")
-                self._update_activity_progress(text)
-        else:
+            else:
+                text = self._display_text_from_event(event)
+                if text:
+                    if self.show_logs:
+                        self._write_log(text, "info")
+                    self._update_activity_progress(text)
+        elif self.show_logs:
+            text = self._display_text_from_event(event)
             if text:
                 self._write_log(f"{event.event_type}: {text}", "info")
             else:

@@ -193,7 +193,8 @@ async def test_textual_app_status_tab_is_default_dashboard(
         assert "Build" in dashboard
         assert "Idle" in dashboard
         assert "Waiting for first context count" in dashboard
-        assert dashboard_widget.styles.border == app.query_one("#logs").styles.border
+        assert dashboard_widget.styles.border == app.query_one("#terminal").styles.border
+        assert list(app.query("#logs")) == []
         assert list(app.query("#status")) == []
 
 
@@ -1036,7 +1037,7 @@ async def test_textual_app_ctrl_o_toggles_sidebar_and_keeps_active_tab(
 
         side_panel = app.query_one("#side_panel")
         tabs = app.query_one("#events", TabbedContent)
-        tabs.active = "logs_pane"
+        tabs.active = "terminal_pane"
         await pilot.pause()
 
         assert app.sidebar_visible is True
@@ -1046,13 +1047,13 @@ async def test_textual_app_ctrl_o_toggles_sidebar_and_keeps_active_tab(
 
         assert app.sidebar_visible is False
         assert side_panel.display is False
-        assert tabs.active == "logs_pane"
+        assert tabs.active == "terminal_pane"
 
         await pilot.press("ctrl+o")
 
         assert app.sidebar_visible is True
         assert side_panel.display is True
-        assert tabs.active == "logs_pane"
+        assert tabs.active == "terminal_pane"
 
 
 @pytest.mark.asyncio
@@ -3702,7 +3703,7 @@ async def test_tab_activity_label_changes_only_on_state_transitions(
     from kolega_code.cli.tui.constants import TAB_BASE_LABELS
     from kolega_code.cli.theme import Glyph
 
-    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch, show_logs=True)
 
     async with app.run_test():
         tabs = app.query_one("#events", TabbedContent)
@@ -5451,7 +5452,7 @@ async def test_textual_app_model_rebuild_rerenders_completed_tool_once(
 # ---------------------------------------------------------------------------
 
 
-def _build_sub_agent_test_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def _build_sub_agent_test_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, **app_kwargs):
     pytest.importorskip("textual")
 
     from kolega_code.cli.app import KolegaCodeApp
@@ -5482,7 +5483,7 @@ def _build_sub_agent_test_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     config = build_test_config(project)
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
-    return KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+    return KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session, **app_kwargs)
 
 
 def _sub_agent_event(
@@ -6749,14 +6750,14 @@ async def test_log_lines_carry_timestamp_and_level_glyph(
 
     from kolega_code.agent import AgentEvent
 
-    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch, show_logs=True)
 
     async with app.run_test():
         line = app._format_log_line("boom", "error")
         assert re.fullmatch(r"\d{2}:\d{2}:\d{2} \S+ boom", line.plain)
 
         written: list[object] = []
-        monkeypatch.setattr(app._logs, "write", written.append)
+        monkeypatch.setattr(app._logs, "write_log", written.append)
         app._render_event(
             AgentEvent(event_type="log_message", sender="coder", content={"level": "error", "message": "it [broke]"})
         )
@@ -6781,14 +6782,105 @@ async def test_terminal_commands_render_as_styled_blocks(
         assert formatted.plain == f"{theme.g(theme.Glyph.USER)} ls -la"
 
         written: list[object] = []
-        monkeypatch.setattr(app._terminal, "write", written.append)
+        monkeypatch.setattr(app._terminal, "write_terminal", written.append)
         app._render_event(AgentEvent(event_type="terminal_command", sender="coder", content={"command": "echo one"}))
         app._render_event(AgentEvent(event_type="terminal_output", sender="coder", content={"output": "one"}))
         app._render_event(AgentEvent(event_type="terminal_command", sender="coder", content={"command": "echo two"}))
 
         plains = [item.plain if hasattr(item, "plain") else item for item in written]
-        # Second command block is preceded by a blank separator line
+        # Pending output is flushed before the next command, whose block is preceded
+        # by a blank separator line.
         assert plains == [f"{theme.g(theme.Glyph.USER)} echo one", "one", "", f"{theme.g(theme.Glyph.USER)} echo two"]
+
+
+@pytest.mark.asyncio
+async def test_terminal_output_is_batched_until_flush(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.agent import AgentEvent
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        written: list[object] = []
+        monkeypatch.setattr(app._terminal, "write_terminal", written.append)
+
+        for index in range(5):
+            app._render_event(
+                AgentEvent(event_type="terminal_output", sender="coder", content={"output": f"chunk-{index}\n"})
+            )
+
+        assert written == []
+        app._flush_terminal_output()
+
+        assert written == ["chunk-0\nchunk-1\nchunk-2\nchunk-3\nchunk-4\n"]
+        assert app._terminal_output_buffer == []
+        assert app._terminal_output_buffer_chars == 0
+
+
+@pytest.mark.asyncio
+async def test_terminal_output_preserves_scrollback_when_user_scrolls_up(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from textual.widgets import TabbedContent
+
+    from kolega_code.agent import AgentEvent
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        app.query_one("#events", TabbedContent).active = "terminal_pane"
+        await pilot.pause()
+
+        terminal = app._terminal
+        terminal.write_terminal("".join(f"line {index}\n" for index in range(120)))
+        await pilot.pause()
+        terminal.scroll_end(animate=False, immediate=True)
+        await pilot.pause()
+        assert terminal.max_scroll_y > 0
+
+        terminal.scroll_to(y=0, animate=False, immediate=True)
+        await pilot.pause()
+        scroll_y = terminal.scroll_y
+        assert terminal.auto_follow_bottom is False
+
+        app._render_event(AgentEvent(event_type="terminal_output", sender="coder", content={"output": "new line\n"}))
+        app._flush_terminal_output()
+        await pilot.pause()
+
+        assert terminal.scroll_y == scroll_y
+
+        terminal.scroll_end(animate=False, immediate=True)
+        await pilot.pause()
+        app._render_event(AgentEvent(event_type="terminal_output", sender="coder", content={"output": "tail line\n"}))
+        app._flush_terminal_output()
+        await pilot.pause()
+
+        assert terminal.scroll_y >= terminal.max_scroll_y - terminal.bottom_tolerance
+
+
+@pytest.mark.asyncio
+async def test_terminal_rendered_history_is_capped(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("textual")
+
+    from textual.widgets import TabbedContent
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        app.query_one("#events", TabbedContent).active = "terminal_pane"
+        await pilot.pause()
+
+        terminal = app._terminal
+        terminal.max_lines = 5
+        terminal.write_terminal("".join(f"line {index}\n" for index in range(12)))
+        await pilot.pause()
+
+        rendered = "\n".join(strip.text for strip in terminal.lines)
+        assert len(terminal.lines) <= 5
+        assert "line 11" in rendered
 
 
 @pytest.mark.asyncio
@@ -6882,6 +6974,113 @@ async def test_planning_sidebar_marks_empty_states(tmp_path: Path, monkeypatch: 
 
 
 @pytest.mark.asyncio
+async def test_logs_tab_hidden_by_default_and_write_log_is_noop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from textual.widgets import TabbedContent
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        tabs = app.query_one("#events", TabbedContent)
+        assert tabs.active == "status_pane"
+        assert list(app.query("#logs")) == []
+
+        def fail_format(*args, **kwargs):
+            raise AssertionError("hidden logs should not format log lines")
+
+        def fail_activity(*args, **kwargs):
+            raise AssertionError("hidden logs should not mark tab activity")
+
+        monkeypatch.setattr(app, "_format_log_line", fail_format)
+        monkeypatch.setattr(app, "_mark_tab_activity", fail_activity)
+
+        app._write_log("background activity")
+
+
+@pytest.mark.asyncio
+async def test_logs_tab_can_be_enabled_with_sticky_widget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from textual.widgets import TabbedContent
+
+    from kolega_code.cli.tui.widgets import LogOutputLog
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch, show_logs=True)
+
+    async with app.run_test():
+        tabs = app.query_one("#events", TabbedContent)
+
+        assert tabs.get_tab("logs_pane") is not None
+        assert isinstance(app.query_one("#logs"), LogOutputLog)
+
+
+@pytest.mark.asyncio
+async def test_logs_output_preserves_scrollback_when_user_scrolls_up(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from textual.widgets import TabbedContent
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch, show_logs=True)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        app.query_one("#events", TabbedContent).active = "logs_pane"
+        await pilot.pause()
+
+        logs = app._logs
+        logs.write_log("".join(f"line {index}\n" for index in range(120)))
+        await pilot.pause()
+        logs.scroll_end(animate=False, immediate=True)
+        await pilot.pause()
+        assert logs.max_scroll_y > 0
+
+        logs.scroll_to(y=0, animate=False, immediate=True)
+        await pilot.pause()
+        scroll_y = logs.scroll_y
+        assert logs.auto_follow_bottom is False
+
+        app._write_log("new line")
+        await pilot.pause()
+
+        assert logs.scroll_y == scroll_y
+
+        logs.scroll_end(animate=False, immediate=True)
+        await pilot.pause()
+        app._write_log("tail line")
+        await pilot.pause()
+
+        assert logs.scroll_y >= logs.max_scroll_y - logs.bottom_tolerance
+
+
+@pytest.mark.asyncio
+async def test_logs_rendered_history_is_capped(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("textual")
+
+    from textual.widgets import TabbedContent
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch, show_logs=True)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        app.query_one("#events", TabbedContent).active = "logs_pane"
+        await pilot.pause()
+
+        logs = app._logs
+        logs.max_lines = 5
+        logs.write_log("".join(f"line {index}\n" for index in range(12)))
+        await pilot.pause()
+
+        rendered = "\n".join(strip.text for strip in logs.lines)
+        assert len(logs.lines) <= 5
+        assert "line 11" in rendered
+
+
+@pytest.mark.asyncio
 async def test_logs_tab_shows_activity_dot_until_visited(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -6891,7 +7090,7 @@ async def test_logs_tab_shows_activity_dot_until_visited(
 
     from kolega_code.cli import theme
 
-    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch, show_logs=True)
 
     async with app.run_test() as pilot:
         tabs = app.query_one("#events", TabbedContent)
