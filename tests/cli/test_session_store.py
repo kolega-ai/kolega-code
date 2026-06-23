@@ -1,5 +1,7 @@
 from pathlib import Path
 import json
+import os
+import stat
 
 import pytest
 
@@ -8,6 +10,23 @@ from kolega_code.cli.session_store import SessionStore, SessionStoreError, defau
 
 def test_default_state_dir_honors_env() -> None:
     assert default_state_dir({"KOLEGA_CODE_STATE_DIR": "/tmp/kolega-test"}) == Path("/tmp/kolega-test")
+
+
+def test_session_store_writes_private_files_and_directories(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    store = SessionStore(tmp_path / "state")
+
+    old_umask = os.umask(0)
+    try:
+        record = store.create(project, "code", {"api_key": "secret"})
+    finally:
+        os.umask(old_umask)
+
+    if os.name != "nt":
+        assert stat.S_IMODE(store.root.stat().st_mode) == 0o700
+        assert stat.S_IMODE(store.sessions_dir.stat().st_mode) == 0o700
+        assert stat.S_IMODE(store.path_for(record.session_id).stat().st_mode) == 0o600
 
 
 def test_session_store_create_load_list_export_delete(tmp_path: Path) -> None:

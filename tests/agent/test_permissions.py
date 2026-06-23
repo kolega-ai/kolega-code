@@ -1,4 +1,5 @@
 import os
+import stat
 import uuid
 from unittest.mock import AsyncMock
 
@@ -42,6 +43,26 @@ def agent_config():
             thinking_effort="medium",
         ),
     )
+
+
+def test_permission_store_writes_private_file_and_directory(tmp_path):
+    store = ProjectPermissionStore(tmp_path)
+    rule = PermissionRule.create(
+        kind=PermissionKind.COMMAND,
+        tool="*",
+        match_type="exact",
+        pattern="npm test",
+    )
+
+    old_umask = os.umask(0)
+    try:
+        store.save([rule])
+    finally:
+        os.umask(old_umask)
+
+    if os.name != "nt":
+        assert stat.S_IMODE((tmp_path / ".kolega").stat().st_mode) == 0o700
+        assert stat.S_IMODE(store.path.stat().st_mode) == 0o600
 
 
 def test_permission_store_matches_command_rules(tmp_path):

@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import json
-import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+from kolega_code.local_state import write_private_text
 from kolega_code.permissions import PermissionMode
 
 from .session_store import default_state_dir
@@ -210,17 +210,5 @@ class SettingsStore:
             raise SettingsStoreError(f"Settings file is not valid JSON: {self.path}") from exc
 
     def save(self, settings: CliSettings) -> None:
-        self.root.mkdir(parents=True, exist_ok=True)
         payload = json.dumps(settings.to_dict(), indent=2, sort_keys=True)
-        temp = self.path.with_suffix(".json.tmp")
-        temp.write_text(payload + "\n", encoding="utf-8")
-        _chmod_private(temp)
-        temp.replace(self.path)
-        _chmod_private(self.path)
-
-
-def _chmod_private(path: Path) -> None:
-    try:
-        os.chmod(path, 0o600)
-    except OSError:
-        pass
+        write_private_text(self.path, payload + "\n")

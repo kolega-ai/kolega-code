@@ -11,6 +11,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
+from kolega_code.local_state import ensure_private_dir, write_private_text
+
 
 class PermissionMode(str, Enum):
     AUTO = "auto"
@@ -172,10 +174,8 @@ class ProjectPermissionStore:
             "rules": [rule.to_dict() for rule in rules],
         }
         try:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            temp = self.path.with_suffix(".json.tmp")
-            temp.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-            temp.replace(self.path)
+            ensure_private_dir(self.path.parent)
+            write_private_text(self.path, json.dumps(payload, indent=2, sort_keys=True) + "\n")
         except OSError as exc:
             raise PermissionStoreError(f"Could not write permissions file: {self.path}") from exc
 
