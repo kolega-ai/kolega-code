@@ -1,7 +1,7 @@
 """Sandbox terminal state model for persisting terminal sessions."""
 
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 import uuid
 
 from pydantic import BaseModel, ConfigDict, Field
