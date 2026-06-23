@@ -48,5 +48,34 @@ jobs:
       - name: Check Ruff formatting
         run: uv run ruff format --check .
 
-      - name: Run fast tests
-        run: ./run_tests.sh
+      - name: Run fast tests with coverage
+        run: ./run_tests.sh --coverage
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v6
+        with:
+          name: coverage-xml-python-${{ matrix.python-version }}
+          path: coverage.xml
+          if-no-files-found: error
+
+  dependency-audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Audit locked dependencies
+        run: uv audit --locked
+
