@@ -86,7 +86,6 @@ from .tui import state as tui_state
 from .tui import sub_agent_screen as tui_sub_agents
 from .tui import transcript as tui_transcript
 from .tui import widgets as tui_widgets
-from .tui.styles import APP_CSS
 
 CLI_AGENT_MODE = AgentMode.CLI.value
 LOG_MAX_LINES = 10_000
@@ -106,8 +105,7 @@ class KolegaCodeApp(
 ):
     """Interactive terminal UI for Kolega Code."""
 
-    CSS = APP_CSS
-
+    CSS_PATH = "tui/styles.tcss"
 
     BINDINGS = [
         Binding(
