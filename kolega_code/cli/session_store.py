@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
+from kolega_code.local_state import ensure_private_dir, write_private_text
+
 SCHEMA_VERSION = 1
 
 
@@ -140,7 +142,8 @@ class SessionStore:
         self.sessions_dir = self.root / "sessions"
 
     def ensure_dirs(self) -> None:
-        self.sessions_dir.mkdir(parents=True, exist_ok=True)
+        ensure_private_dir(self.root)
+        ensure_private_dir(self.sessions_dir)
 
     def path_for(self, session_id: str) -> Path:
         return self.sessions_dir / f"{session_id}.json"
@@ -161,10 +164,7 @@ class SessionStore:
         self.ensure_dirs()
         record.updated_at = _now()
         payload = json.dumps(record.to_dict(), indent=2, sort_keys=True)
-        target = self.path_for(record.session_id)
-        temp = target.with_suffix(".json.tmp")
-        temp.write_text(payload + "\n", encoding="utf-8")
-        temp.replace(target)
+        write_private_text(self.path_for(record.session_id), payload + "\n")
 
     def load(self, session_id: str) -> SessionRecord:
         path = self.path_for(session_id)
