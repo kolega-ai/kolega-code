@@ -1068,6 +1068,8 @@ class TranscriptRenderingMixin:
             self._dirty_entry_ids.clear()
             return
 
+        should_follow = bool(getattr(view, "auto_follow_bottom", False)) or view.is_at_bottom()
+
         # Fast path for the common streaming case: the transcript shape is unchanged
         # and only already-mounted entries need their renderables refreshed.
         if (
@@ -1076,7 +1078,10 @@ class TranscriptRenderingMixin:
             and all(entry_id in self._entry_widgets for entry_id in self._dirty_entry_ids)
         ):
             self._refresh_dirty_entry_widgets()
-            self._update_jump_button()
+            if should_follow:
+                self._schedule_conversation_bottom_anchor()
+            else:
+                self._update_jump_button()
             return
 
         rendered_ids = list(self._entry_widgets)
@@ -1096,7 +1101,10 @@ class TranscriptRenderingMixin:
                 self._entry_widgets[entry.entry_id] = widget
                 widgets.append(widget)
             view.mount(*widgets)
-        self._update_jump_button()
+        if should_follow:
+            self._schedule_conversation_bottom_anchor()
+        else:
+            self._update_jump_button()
 
     def _refresh_dirty_entry_widgets(self) -> None:
         for entry_id in self._dirty_entry_ids:
@@ -1115,6 +1123,8 @@ class TranscriptRenderingMixin:
             return
         if not view.is_attached:
             return
+        had_rendered_entries = bool(self._entry_widgets)
+        should_follow = not had_rendered_entries or bool(getattr(view, "auto_follow_bottom", False)) or view.is_at_bottom()
         view.remove_children()
         self._entry_widgets = {}
         widgets = []
@@ -1124,8 +1134,11 @@ class TranscriptRenderingMixin:
             widgets.append(widget)
         if widgets:
             view.mount(*widgets)
-        view.anchor()
-        self._update_jump_button()
+        if should_follow:
+            self._schedule_conversation_bottom_anchor()
+        else:
+            view.set_auto_follow(False)
+            self._update_jump_button()
 
     def _make_entry_widget(self, entry: ConversationEntry) -> ConversationEntryWidget | ToolEntryWidget:
         if entry.kind in {"tool_call", "tool_result", "tool_error"}:
@@ -1139,21 +1152,42 @@ class TranscriptRenderingMixin:
     def _compaction_summary_title(self, entry: ConversationEntry) -> str:
         return theme.role_header(Glyph.STATUS, messages.COMPACTION_SUMMARY_TITLE, Color.ACCENT)
 
+    def _schedule_conversation_bottom_anchor(self, *, update_button: bool = True) -> None:
+        """Pin the transcript to the latest output after layout has settled."""
+        try:
+            view = self._conversation
+        except Exception:
+            return
+        if not view.is_attached:
+            return
+        view.set_auto_follow(True)
+
+        def anchor_after_refresh() -> None:
+            if not view.is_attached:
+                return
+            view.set_auto_follow(True)
+            view.anchor()
+            if update_button:
+                self.call_after_refresh(self._update_jump_button)
+
+        self.call_after_refresh(anchor_after_refresh)
+
     def _update_jump_button(self) -> None:
         try:
             view = self._conversation
             bar = self.query_one("#jump_to_bottom", JumpToBottomBar)
         except Exception:
             return
-        should_display = view.max_scroll_y > 0 and view.scroll_y < view.max_scroll_y - 1
+        should_display = (not bool(getattr(view, "auto_follow_bottom", False))) and not view.is_at_bottom()
         if bar.display != should_display:
             bar.display = should_display
+            try:
+                self.call_after_refresh(self._update_jump_button)
+            except Exception:
+                pass
 
     def on_jump_to_bottom_bar_pressed(self, message: JumpToBottomBar.Pressed) -> None:
-        view = self._conversation
-        view.scroll_end(animate=False)
-        view.anchor()
-        self._update_jump_button()
+        self._schedule_conversation_bottom_anchor()
 
     def _format_conversation_entry(self, entry: ConversationEntry) -> Text | Group:
         """Render an entry using the shared header grammar.
