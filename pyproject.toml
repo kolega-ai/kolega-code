@@ -57,6 +57,10 @@ Homepage = "https://kolega-ai.github.io/kolega-code/"
 Documentation = "https://kolega-ai.github.io/kolega-code/"
 Repository = "https://github.com/kolega-ai/kolega-code"
 Issues = "https://github.com/kolega-ai/kolega-code/issues"
+Changelog = "https://github.com/kolega-ai/kolega-code/blob/main/CHANGELOG.md"
+Contributing = "https://github.com/kolega-ai/kolega-code/blob/main/CONTRIBUTING.md"
+Releases = "https://github.com/kolega-ai/kolega-code/releases"
+Security = "https://github.com/kolega-ai/kolega-code/security/policy"
 
 [project.optional-dependencies]
 cli = []

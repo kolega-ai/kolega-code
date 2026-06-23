@@ -7,6 +7,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![CI](https://github.com/kolega-ai/kolega-code/actions/workflows/ci.yml/badge.svg)](https://github.com/kolega-ai/kolega-code/actions/workflows/ci.yml)
 [![Docs](https://img.shields.io/badge/docs-kolega--ai.github.io-blue)](https://kolega-ai.github.io/kolega-code/)
+[![Changelog](https://img.shields.io/badge/changelog-keep%20up-blue)](CHANGELOG.md)
 
 Point Kolega Code at a project directory and it opens an interactive UI where you talk to an
 agent that can read and edit your code, run shell commands, search the codebase, browse the
@@ -146,6 +147,15 @@ Full documentation lives at **[kolega-ai.github.io/kolega-code](https://kolega-a
 - [CLI overview](https://kolega-ai.github.io/kolega-code/cli/overview/)
 - [How it works & concepts](https://kolega-ai.github.io/kolega-code/concepts/how-it-works/)
 - [Configuration](https://kolega-ai.github.io/kolega-code/configuration/settings-and-api-keys/)
+
+## Project resources
+
+- [Documentation](https://kolega-ai.github.io/kolega-code/)
+- [Releases](https://github.com/kolega-ai/kolega-code/releases)
+- [Changelog](CHANGELOG.md)
+- [Contributing](CONTRIBUTING.md)
+- [Security policy](SECURITY.md)
+- [Issue tracker](https://github.com/kolega-ai/kolega-code/issues)
 
 ## Contributing
 

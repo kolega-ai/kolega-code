@@ -26,13 +26,20 @@ release branch.
    released within the new one-week window being pulled in, is expected and
    acceptable. Do not revert these changes.
 
-3. Run the fast test suite:
+3. Update `CHANGELOG.md`:
+
+   - Move relevant entries from `Unreleased` into a new section for the release.
+   - Use the release date from the release PR.
+   - Keep entries concise and user-facing; GitHub Releases will still provide
+     detailed generated notes from the merged pull requests.
+
+4. Run the fast test suite:
 
    ```bash
    ./run_tests.sh
    ```
 
-4. Commit the release bump and open a pull request against `main`:
+5. Commit the release bump and open a pull request against `main`:
 
    ```bash
    git commit -m "chore: release v0.3.2"
@@ -41,7 +48,7 @@ release branch.
 
    The PR must be reviewed, pass CI, and be merged before tagging.
 
-5. After the PR is merged, update local `main`, then create and push a matching
+6. After the PR is merged, update local `main`, then create and push a matching
    tag from the merge commit:
 
    ```bash
@@ -51,10 +58,10 @@ release branch.
    git push origin v0.3.2
    ```
 
-6. Confirm the `Release` GitHub Actions workflow completes. It builds and tests
+7. Confirm the `Release` GitHub Actions workflow completes. It builds and tests
    the package, publishes to PyPI, then creates the GitHub Release.
 
-7. Verify the release:
+8. Verify the release:
 
    ```bash
    uv tool install --force kolega-code
