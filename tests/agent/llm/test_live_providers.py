@@ -8,7 +8,7 @@ retired ID surfaces here as a 4xx instead of silently shipping.
 
 Run them explicitly with the relevant keys set, e.g.::
 
-    pytest -m integration kolega_code/agent/tests/llm/test_live_providers.py -v
+    pytest -m integration tests/agent/llm/test_live_providers.py -v
 
 The provider/model matrix is derived from the catalog itself, so new models are
 covered automatically.

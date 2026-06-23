@@ -29,7 +29,7 @@ release branch.
 3. Run the fast test suite:
 
    ```bash
-   uv run pytest -ra --durations=50 --import-mode=importlib -m "not slow"
+   ./run_tests.sh
    ```
 
 4. Commit the release bump and open a pull request against `main`:

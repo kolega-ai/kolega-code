@@ -4,7 +4,7 @@ import pytest
 
 from kolega_code.agent.compression import CompactionResult
 from kolega_code.llm.models import Message, MessageHistory
-from ..utils.commands import CommandProcessor
+from kolega_code.agent.utils.commands import CommandProcessor
 
 
 class MockAgent:

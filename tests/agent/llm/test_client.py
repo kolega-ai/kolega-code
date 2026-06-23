@@ -1,13 +1,16 @@
 import asyncio
 import os
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from dotenv import load_dotenv
 
-# Load environment variables directly at module level
-dotenv_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".env")
-if os.path.exists(dotenv_path):
+# Load repository-local environment variables directly at module level.
+REPO_ROOT = Path(__file__).resolve().parents[3]
+
+dotenv_path = REPO_ROOT / ".env"
+if dotenv_path.exists():
     print(f"Loading environment variables from: {dotenv_path}")
     load_dotenv(dotenv_path)
     print(f"ANTHROPIC_API_KEY present: {bool(os.getenv('ANTHROPIC_API_KEY'))}")
@@ -18,22 +21,10 @@ else:
     print(f"Warning: .env file not found at {dotenv_path}")
     print("Tests requiring API keys may be skipped.")
 
-backend_env_local_path = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))),
-    ".env.local",
-)
-if os.path.exists(backend_env_local_path):
+backend_env_local_path = REPO_ROOT / ".env.local"
+if backend_env_local_path.exists():
     print(f"Loading environment variables from: {backend_env_local_path}")
     load_dotenv(backend_env_local_path)
-    print(f"MOONSHOT_API_KEY present: {bool(os.getenv('MOONSHOT_API_KEY'))}")
-
-backend_env_path = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))),
-    ".env",
-)
-if os.path.exists(backend_env_path):
-    print(f"Loading environment variables from: {backend_env_path}")
-    load_dotenv(backend_env_path)
     print(f"MOONSHOT_API_KEY present: {bool(os.getenv('MOONSHOT_API_KEY'))}")
 
 from kolega_code.llm.client import (

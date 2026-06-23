@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from ..skills import SkillCatalog, SkillRecord
-from ..slash_commands import (
+from kolega_code.cli.skills import SkillCatalog, SkillRecord
+from kolega_code.cli.slash_commands import (
     SKILLS_LIST_COMMAND,
     THREAD_RESET_COMMANDS,
     TUI_COMMAND_NAMES,

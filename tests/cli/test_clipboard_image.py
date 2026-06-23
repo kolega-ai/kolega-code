@@ -3,7 +3,7 @@
 These tests mock at the subprocess boundary (``asyncio.create_subprocess_exec``
 and ``asyncio.create_subprocess_shell``) so they never touch the real system
 clipboard. They mirror the mocking pattern used in
-``kolega_code/agent/tests/tool_backend/test_terminal_tool.py``.
+``tests/agent/tool_backend/test_terminal_tool.py``.
 """
 
 from __future__ import annotations
