@@ -200,7 +200,13 @@ class AgentRuntimeMixin:
         self._ensure_startup_entry()
         self.query_one("#composer", tui_widgets.ChatComposer).focus()
 
-    async def _build_agent(self, config: AgentConfig, rebuild: bool = False) -> None:
+    async def _build_agent(
+        self,
+        config: AgentConfig,
+        rebuild: bool = False,
+        *,
+        restore_transcript: bool = True,
+    ) -> None:
         history = self.session.history
         compaction = self.session.compaction
         if self.agent is not None:
@@ -261,7 +267,8 @@ class AgentRuntimeMixin:
         if history:
             self.agent.restore_message_history(history)
             self.agent.restore_compaction_state(compaction)
-            self._restore_conversation_history(history)
+            if restore_transcript:
+                self._restore_conversation_history(history)
         self._update_mode_chrome()
         await self._fire_session_start_once()
 

@@ -465,6 +465,215 @@ async def test_textual_app_status_dashboard_tracks_interaction_mode(
 
 
 @pytest.mark.asyncio
+async def test_textual_app_mode_switch_rebuild_skips_transcript_restore(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from textual.widgets import Static
+
+    from kolega_code.cli.app import KolegaCodeApp
+
+    history = [{"role": "user", "content": [{"type": "text", "text": "keep me"}]}]
+    compaction = {"summary": "summary", "compacted_through": 1, "compacted_history_length": 1}
+
+    class FakeCoderAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.restored_history = None
+            self.restored_compaction = None
+
+        def restore_message_history(self, restored):
+            self.restored_history = restored
+
+        def dump_compaction_state(self):
+            return compaction
+
+        def restore_compaction_state(self, data):
+            self.restored_compaction = data
+
+        def dump_message_history(self):
+            return history
+
+        async def cleanup(self):
+            return None
+
+    class FakePlanningAgent(FakeCoderAgent):
+        instances = []
+
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.instances.append(self)
+
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "PlanningAgent", FakePlanningAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test():
+        restore_calls = []
+        render_calls = []
+
+        def spy_restore(restored):
+            restore_calls.append(restored)
+
+        def spy_render():
+            render_calls.append(True)
+
+        monkeypatch.setattr(app, "_restore_conversation_history", spy_restore)
+        monkeypatch.setattr(app, "_render_conversation", spy_render)
+
+        await app._set_interaction_mode("plan")
+
+        assert restore_calls == []
+        assert render_calls == []
+        assert app.interaction_mode == "plan"
+        assert "plan" in str(app.query_one("#session_meta", Static).render())
+        assert "Plan" in str(app.query_one("#status_dashboard", Static).render())
+
+        assert FakePlanningAgent.instances
+        planning_agent = FakePlanningAgent.instances[-1]
+        assert planning_agent.restored_history == history
+        assert planning_agent.restored_compaction == compaction
+
+
+@pytest.mark.asyncio
+async def test_textual_app_startup_entry_updates_incrementally(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.app import KolegaCodeApp
+
+    class FakeAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def restore_message_history(self, history):
+            return None
+
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
+
+        def dump_message_history(self):
+            return []
+
+        async def cleanup(self):
+            return None
+
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test():
+        startup = app.conversation_entries[0]
+        original_content = startup.content
+        invalidated = []
+        rendered = []
+
+        def spy_invalidate(entry):
+            invalidated.append(entry)
+
+        def spy_render():
+            rendered.append(True)
+
+        monkeypatch.setattr(app, "_invalidate_conversation", spy_invalidate)
+        monkeypatch.setattr(app, "_render_conversation", spy_render)
+
+        app.interaction_mode = "plan"
+        app._ensure_startup_entry()
+
+        assert app.conversation_entries[0] is startup
+        assert startup.content != original_content
+        assert "Interaction: plan" in startup.content
+        assert invalidated == [startup]
+        assert rendered == []
+
+        app.conversation_entries = []
+        app._ensure_startup_entry()
+
+        assert app.conversation_entries[0].kind == "startup"
+        assert rendered == [True]
+
+
+@pytest.mark.asyncio
+async def test_textual_app_mode_switch_preserves_transcript_entries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.state import ConversationEntry
+
+    history = [{"role": "user", "content": [{"type": "text", "text": "persisted"}]}]
+
+    class FakeAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def restore_message_history(self, history):
+            return None
+
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
+
+        def dump_message_history(self):
+            return history
+
+        async def cleanup(self):
+            return None
+
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeAgent)
+    monkeypatch.setattr(agent_runtime_module, "PlanningAgent", FakeAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test():
+        startup = app.conversation_entries[0]
+        user = ConversationEntry(kind="user", content="hello")
+        assistant = ConversationEntry(kind="assistant", content="hi", complete=True)
+        tool = ConversationEntry(
+            kind="tool_result",
+            content="done",
+            complete=True,
+            tool_name="read_file",
+            tool_call_id="tool-1",
+            full_content="done",
+        )
+        app.conversation_entries = [startup, user, assistant, tool]
+        non_startup_entries = app.conversation_entries[1:]
+
+        await app._set_interaction_mode("plan")
+
+        assert app.conversation_entries[0] is startup
+        assert app.conversation_entries[1:] == non_startup_entries
+        assert app.conversation_entries[1] is user
+        assert app.conversation_entries[2] is assistant
+        assert app.conversation_entries[3] is tool
+
+
+@pytest.mark.asyncio
 async def test_textual_app_turn_status_formats_error_duration(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

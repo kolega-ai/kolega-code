@@ -838,7 +838,7 @@ class KolegaCodeApp(
         self._cancel_pending_theme_selection()
 
         if self.config is not None:
-            await self._build_agent(self.config, rebuild=True)
+            await self._build_agent(self.config, rebuild=True, restore_transcript=False)
 
         self._update_mode_chrome()
         self._restore_composer_placeholder()
@@ -1193,11 +1193,15 @@ class KolegaCodeApp(
         existing = next((entry for entry in self.conversation_entries if entry.kind == "startup"), None)
         if existing is None:
             self.conversation_entries.insert(0, tui_state.ConversationEntry(kind="startup", content=self._startup_content()))
+        elif self.conversation_entries[0] is existing:
+            existing.content = self._startup_content()
+            if render:
+                self._invalidate_conversation(existing)
+            return
         else:
             existing.content = self._startup_content()
-            if self.conversation_entries[0] is not existing:
-                self.conversation_entries.remove(existing)
-                self.conversation_entries.insert(0, existing)
+            self.conversation_entries.remove(existing)
+            self.conversation_entries.insert(0, existing)
         if render:
             self._render_conversation()
 
