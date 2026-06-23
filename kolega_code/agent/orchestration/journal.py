@@ -4,9 +4,13 @@ Everything a run needs lives under::
 
     <state-dir>/workflows/<run_id>/
         script.py        the authored source (its path is returned for edit + re-run)
-        run.json         meta, args, status, timing, token totals
+        run.json         meta, args, status, timing, token totals, artifact paths
         journal.jsonl    one line per completed agent() call (drives resume)
-        agents/          per sub-agent transcripts (wired via sub_agent_recorder)
+        result.json      full JSON-rendered workflow return value
+        result.md        readable workflow return value
+        transcript.jsonl raw workflow events/call outcomes
+        transcript.md    readable workflow transcript/index
+        agents/          per sub-agent raw/readable transcripts
 
 Resume contract: scripts are deterministic (the runtime blocks ``random``/``time``
 and ``import``), so the same source + args produce ``agent()`` calls in the same
@@ -18,6 +22,7 @@ new call onward.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
@@ -32,6 +37,15 @@ def saved_workflows_dir(state_dir: Path) -> Path:
     return workflows_root(state_dir) / "_saved"
 
 
+def _slugify(value: str, *, fallback: str = "agent", max_length: int = 64) -> str:
+    """Return a filesystem-friendly slug for workflow artifact filenames."""
+    slug = re.sub(r"[^A-Za-z0-9._-]+", "-", str(value or "").strip().lower())
+    slug = re.sub(r"-+", "-", slug).strip("-._")
+    if not slug:
+        slug = fallback
+    return slug[:max_length].rstrip("-._") or fallback
+
+
 class RunJournal:
     """Owns the on-disk artifacts for a single workflow run."""
 
@@ -40,6 +54,10 @@ class RunJournal:
         self.run_id = run_id
         self.agents_dir = self.run_dir / "agents"
         self._journal_path = self.run_dir / "journal.jsonl"
+        self._transcript_jsonl_path = self.run_dir / "transcript.jsonl"
+        self._transcript_md_path = self.run_dir / "transcript.md"
+        self._result_json_path = self.run_dir / "result.json"
+        self._result_md_path = self.run_dir / "result.md"
         self._script_path = self.run_dir / "script.py"
         self._meta_path = self.run_dir / "run.json"
 
@@ -54,6 +72,33 @@ class RunJournal:
     @property
     def script_path(self) -> Path:
         return self._script_path
+
+    @property
+    def journal_path(self) -> Path:
+        return self._journal_path
+
+    @property
+    def transcript_jsonl_path(self) -> Path:
+        return self._transcript_jsonl_path
+
+    @property
+    def transcript_md_path(self) -> Path:
+        return self._transcript_md_path
+
+    @property
+    def result_json_path(self) -> Path:
+        return self._result_json_path
+
+    @property
+    def result_md_path(self) -> Path:
+        return self._result_md_path
+
+    def agent_artifact_paths(self, call_index: int, label: Optional[str] = None) -> Dict[str, Path]:
+        """Return stable per-agent raw/readable artifact paths for a workflow call."""
+        self.ensure_dirs()
+        suffix = _slugify(label or f"call-{call_index}")
+        stem = f"agent-{call_index:03d}-{suffix}"
+        return {"markdown": self.agents_dir / f"{stem}.md", "jsonl": self.agents_dir / f"{stem}.jsonl"}
 
     def write_script(self, source: str) -> Path:
         self.ensure_dirs()
@@ -86,15 +131,40 @@ class RunJournal:
         label: Optional[str],
         value: Any,
         status: str = "completed",
+        **metadata: Any,
     ) -> None:
-        """Append one completed ``agent()`` result for resume replay."""
+        """Append one completed ``agent()`` result for resume replay.
+
+        ``journal.jsonl`` is the resume contract. Extra fields are allowed and ignored
+        by ``load_cache()`` so newer artifact metadata remains backward-compatible.
+        """
         self.ensure_dirs()
-        line = json.dumps(
-            {"index": call_index, "key": key, "label": label, "status": status, "value": value},
-            default=str,
-        )
+        payload = {"index": call_index, "key": key, "label": label, "status": status, "value": value}
+        payload.update({k: v for k, v in metadata.items() if v is not None})
+        line = json.dumps(payload, default=str)
         with self._journal_path.open("a", encoding="utf-8") as handle:
             handle.write(line + "\n")
+
+    def append_transcript_event(self, event: Dict[str, Any]) -> None:
+        """Append one raw workflow transcript event as JSONL."""
+        self.ensure_dirs()
+        with self._transcript_jsonl_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(event, default=str) + "\n")
+
+    def write_result_artifacts(self, result: Any, markdown: str) -> None:
+        """Persist the full workflow return value in JSON and readable Markdown."""
+        self.ensure_dirs()
+        try:
+            rendered_json = json.dumps(result, indent=2, default=str)
+        except (TypeError, ValueError):
+            rendered_json = json.dumps(str(result), indent=2)
+        self._result_json_path.write_text(rendered_json + "\n", encoding="utf-8")
+        self._result_md_path.write_text(markdown, encoding="utf-8")
+
+    def write_transcript_markdown(self, markdown: str) -> None:
+        """Persist the readable workflow transcript."""
+        self.ensure_dirs()
+        self._transcript_md_path.write_text(markdown, encoding="utf-8")
 
     def load_cache(self) -> Dict[int, Tuple[str, Any]]:
         """Read a prior run's journal into ``{call_index: (key, value)}``.

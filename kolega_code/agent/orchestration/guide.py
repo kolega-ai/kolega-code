@@ -134,10 +134,26 @@ After the workflow returns, integrate the results, run the full test suite yours
 report. If the plan is small or its parts are tightly coupled, skip the workflow and just
 implement it directly — orchestration is for genuinely independent fan-out.
 
+### Artifacts and transcripts
+
+`run_workflow` returns a concise manifest, not necessarily the full workflow output.
+Every completed run persists full artifacts under the state directory and returns
+paths including `resultPath` and `transcriptPath`. If the inline tool result says output was omitted, looks incomplete,
+or would require a long transcript to understand, READ `resultPath` or `transcriptPath`
+with the file-reading tools before deciding work is missing. For normal workflow
+output, use only those main files; avoid reading individual sub-agent transcripts
+unless you are explicitly debugging workflow execution.
+
+Never re-run a completed workflow solely to recover output from an omitted/truncated
+inline result. The workflow already ran; inspect the persisted result/transcript first.
+Use `resume_from_run_id` only when you intentionally want to iterate on or change the
+workflow, not as a transcript-recovery mechanism.
+
 ### Resume
 
-Each run persists its script and a journal under the state directory and returns a
-`runId` and `scriptPath`. To iterate, edit the script and re-run with `script_path`,
-or pass `resume_from_run_id` to replay cached `agent()` results for the unchanged
-prefix and only re-run new/changed calls.
+Each run persists its script, full results, a readable transcript, raw JSONL, and a
+resume journal under the state directory and returns a `runId` plus artifact paths.
+To iterate, edit the script and re-run with `script_path`, or pass `resume_from_run_id`
+to replay cached `agent()` results for the unchanged prefix and only re-run new/changed
+calls.
 """

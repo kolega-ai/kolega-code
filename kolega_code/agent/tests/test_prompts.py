@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from kolega_code.agent import prompts
+from kolega_code.agent.orchestration.guide import GIGACODE_AUTHORING_GUIDE
 
 
 def test_static_prompt_templates_load() -> None:
@@ -43,6 +44,13 @@ def test_implement_plan_prompt_includes_gigacode_nudge_when_enabled() -> None:
     assert "independent" in rendered
     # The plan still renders alongside the nudge.
     assert "- [ ] update docs" in rendered
+
+
+def test_gigacode_guide_points_agents_to_artifact_transcripts() -> None:
+    assert "resultPath" in GIGACODE_AUTHORING_GUIDE
+    assert "transcriptPath" in GIGACODE_AUTHORING_GUIDE
+    assert "Never re-run a completed workflow solely" in GIGACODE_AUTHORING_GUIDE
+    assert "READ `resultPath` or `transcriptPath`" in GIGACODE_AUTHORING_GUIDE
 
 
 def test_init_agents_prompt_renders_arguments() -> None:
