@@ -4,11 +4,10 @@ Test duplicate tool result prevention logic.
 """
 
 import pytest
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch
 from kolega_code.agent.baseagent import BaseAgent
 from kolega_code.llm.models import Message, TextBlock, ToolCall, ToolResult
 from kolega_code.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
-from kolega_code.services.file_system import LocalFileSystem
 
 
 class TestDuplicateToolResultPrevention:

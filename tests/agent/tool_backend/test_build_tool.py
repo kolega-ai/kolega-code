@@ -1,10 +1,8 @@
-import asyncio
 from pathlib import Path
 
 import pytest
 
 from kolega_code.agent.tool_backend.build_tool import BuildTool
-from kolega_code.agent.tool_backend.base_tool import BaseTool
 
 
 class DummyFS:

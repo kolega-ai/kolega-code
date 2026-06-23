@@ -3,7 +3,7 @@
 import datetime
 import os
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from dotenv import load_dotenv
 
 from kolega_code.services.browser import PlaywrightBrowserManager

@@ -7,7 +7,6 @@ of Anthropic's official API token counting, using real system prompts and tool d
 
 import os
 from pathlib import Path
-from typing import List
 from unittest.mock import Mock, patch
 
 import pytest
@@ -15,8 +14,7 @@ from dotenv import load_dotenv
 
 from kolega_code.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
 from kolega_code.events import AgentConnectionManager
-from kolega_code.llm.client import LLMClient
-from kolega_code.llm.models import Message, MessageHistory, TextBlock, ImageBlock, ToolDefinition, ToolParameter
+from kolega_code.llm.models import Message, MessageHistory, TextBlock, ImageBlock
 from kolega_code.llm.providers.anthropic import AnthropicProvider
 from kolega_code.agent.prompt_provider import AgentMode, AgentType, PromptContext, PromptProvider
 from kolega_code.agent.tools import ToolCollection, ToolCollectionConfig

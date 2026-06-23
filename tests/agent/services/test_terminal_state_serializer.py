@@ -1,8 +1,7 @@
 """Unit tests for terminal state serialization."""
 
-import pytest
 from datetime import datetime
-from unittest.mock import Mock, MagicMock
+from unittest.mock import Mock
 from kolega_code.sandbox.serializer import TerminalStateSerializer
 from kolega_code.models.sandbox_terminal_state import SandboxTerminalState, TerminalInfo, TerminalOutput
 

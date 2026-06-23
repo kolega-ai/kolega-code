@@ -1,7 +1,6 @@
 import re
-import os
 from pathlib import Path
-from typing import List, Tuple, Optional, Dict, Any
+from typing import List, Tuple
 
 from .base_tool import BaseTool
 

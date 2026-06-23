@@ -1,7 +1,7 @@
 import datetime
 import os
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock
 from kolega_code.services.browser import PlaywrightBrowserManager
 
 # Check if running in CI environment

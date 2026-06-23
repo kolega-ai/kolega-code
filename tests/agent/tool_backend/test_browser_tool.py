@@ -1,7 +1,7 @@
 import datetime
 import pytest
 import uuid
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 from kolega_code.agent.tool_backend.browser_tool import BrowserTool
 from kolega_code.config import AgentConfig
 

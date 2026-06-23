@@ -3,9 +3,7 @@
 import os
 import base64
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional, Union, BinaryIO
-from contextlib import contextmanager
-from datetime import datetime
+from typing import Any, Dict, Iterator, List, Optional
 import asyncio
 import nest_asyncio
 
@@ -64,7 +62,6 @@ class AsyncSandboxFileSystem(FileSystem):
             # If we couldn't apply nest_asyncio (e.g., uvloop),
             # we need to use a different approach
             import concurrent.futures
-            import threading
 
             # Create a new event loop in a separate thread
             def run_in_new_loop():
