@@ -282,12 +282,6 @@ class TranscriptRenderingMixin:
         self.session.history = self.agent.dump_message_history()
         self.session.compaction = self.agent.dump_compaction_state()
 
-    def _save_session_history(self) -> None:
-        if self.agent is None:
-            return
-        self._persist_agent_into_session()
-        self._save_session()
-
     def _add_tool_message(self, message_type: str, content: dict) -> None:
         tool_name = str(content.get("tool_description") or content.get("tool_name") or "tool")
         tool_call_id = str(content.get("tool_call_id") or "")

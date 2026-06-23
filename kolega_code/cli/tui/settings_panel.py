@@ -68,6 +68,8 @@ class SettingsPanelMixin:
         if select_id.startswith("am_provider_"):
             role = select_id[len("am_provider_") :]
             provider = str(event.value)
+            if str(event.select.value) != provider:
+                return
             if provider == INHERIT_SENTINEL:
                 # Don't drop pending here: the selects post an initial inherit-valued
                 # Changed on mount, which would clear a restore before its real cascade
@@ -95,6 +97,8 @@ class SettingsPanelMixin:
 
         if select_id == "theme_select":
             name = str(event.value)
+            if str(event.select.value) != name:
+                return
             if name != (self.settings.active_theme or theme.DEFAULT_THEME_NAME):
                 self.settings.active_theme = name
                 self.settings_store.save(self.settings)
@@ -142,10 +146,11 @@ class SettingsPanelMixin:
     def _populate_agent_model_rows(self) -> None:
         """Seed each per-agent row from saved settings (absent role -> inherit).
 
-        A model select that was just given its options can't accept a value until the
-        next refresh, and setting the provider value posts a Changed that re-runs the
-        cascade afterwards. So we stash the saved model/effort and let that cascade —
-        the last writer — apply them, rather than assigning here and being clobbered."""
+        Setting the provider value posts a Changed event that re-runs the cascade,
+        but Textual may deliver that event after other awaited startup work. Apply
+        the model/effort directly as the deterministic path, while also leaving the
+        pending values for the Changed event to consume if it arrives later.
+        """
         provider_values = {value for _, value in ui_provider_options()}
         for _, role in agent_role_options():
             try:
@@ -154,18 +159,22 @@ class SettingsPanelMixin:
                 continue
             entry = self.settings.get_agent_model(role) or {}
             provider = entry.get("provider")
-            self._pending_agent_models.pop(f"am_model_{role}", None)
-            self._pending_agent_efforts.pop(f"am_effort_{role}", None)
+            model_id = f"am_model_{role}"
+            effort_id = f"am_effort_{role}"
+            self._pending_agent_models.pop(model_id, None)
+            self._pending_agent_efforts.pop(effort_id, None)
             if provider not in provider_values:
                 provider_select.value = INHERIT_SENTINEL
-                self._clear_model_effort_selects(f"am_model_{role}", f"am_effort_{role}")
+                self._clear_model_effort_selects(model_id, effort_id)
                 continue
-            if entry.get("model"):
-                self._pending_agent_models[f"am_model_{role}"] = str(entry["model"])
-            if entry.get("thinking_effort"):
-                self._pending_agent_efforts[f"am_effort_{role}"] = str(entry["thinking_effort"])
-            # Triggers on_select_changed, which consumes the pending model/effort.
+            model_value = str(entry["model"]) if entry.get("model") else None
+            effort_value = str(entry["thinking_effort"]) if entry.get("thinking_effort") else None
+            if model_value:
+                self._pending_agent_models[model_id] = model_value
+            if effort_value:
+                self._pending_agent_efforts[effort_id] = effort_value
             provider_select.value = provider
+            self._repopulate_model_select(provider, model_id, effort_id, model_value=model_value, effort_value=effort_value)
 
     def _update_search_backend_fields(self, backend: str) -> None:
         """Show only the inputs the selected web-search backend needs.

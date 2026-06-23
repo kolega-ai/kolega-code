@@ -776,7 +776,7 @@ class CommandHandlersMixin:
                 self._process_message(prompt, attachments), name="kolega-turn", group="turns", exclusive=True
             )
         else:
-            self._save_session_history()
+            await self._save_session_history_async()
             self._restore_composer_placeholder()
             self._set_chat_enabled(True)
 

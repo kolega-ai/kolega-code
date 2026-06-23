@@ -1,6 +1,7 @@
 from pathlib import Path
 import asyncio
 import json
+import time
 
 import pytest
 
@@ -462,6 +463,215 @@ async def test_textual_app_status_dashboard_tracks_interaction_mode(
         await app._set_interaction_mode("build")
         dashboard = str(app.query_one("#status_dashboard", Static).render())
         assert "Build" in dashboard
+
+
+@pytest.mark.asyncio
+async def test_textual_app_mode_switch_rebuild_skips_transcript_restore(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from textual.widgets import Static
+
+    from kolega_code.cli.app import KolegaCodeApp
+
+    history = [{"role": "user", "content": [{"type": "text", "text": "keep me"}]}]
+    compaction = {"summary": "summary", "compacted_through": 1, "compacted_history_length": 1}
+
+    class FakeCoderAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.restored_history = None
+            self.restored_compaction = None
+
+        def restore_message_history(self, restored):
+            self.restored_history = restored
+
+        def dump_compaction_state(self):
+            return compaction
+
+        def restore_compaction_state(self, data):
+            self.restored_compaction = data
+
+        def dump_message_history(self):
+            return history
+
+        async def cleanup(self):
+            return None
+
+    class FakePlanningAgent(FakeCoderAgent):
+        instances = []
+
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.instances.append(self)
+
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "PlanningAgent", FakePlanningAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test():
+        restore_calls = []
+        render_calls = []
+
+        def spy_restore(restored):
+            restore_calls.append(restored)
+
+        def spy_render():
+            render_calls.append(True)
+
+        monkeypatch.setattr(app, "_restore_conversation_history", spy_restore)
+        monkeypatch.setattr(app, "_render_conversation", spy_render)
+
+        await app._set_interaction_mode("plan")
+
+        assert restore_calls == []
+        assert render_calls == []
+        assert app.interaction_mode == "plan"
+        assert "plan" in str(app.query_one("#session_meta", Static).render())
+        assert "Plan" in str(app.query_one("#status_dashboard", Static).render())
+
+        assert FakePlanningAgent.instances
+        planning_agent = FakePlanningAgent.instances[-1]
+        assert planning_agent.restored_history == history
+        assert planning_agent.restored_compaction == compaction
+
+
+@pytest.mark.asyncio
+async def test_textual_app_startup_entry_updates_incrementally(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.app import KolegaCodeApp
+
+    class FakeAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def restore_message_history(self, history):
+            return None
+
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
+
+        def dump_message_history(self):
+            return []
+
+        async def cleanup(self):
+            return None
+
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test():
+        startup = app.conversation_entries[0]
+        original_content = startup.content
+        invalidated = []
+        rendered = []
+
+        def spy_invalidate(entry):
+            invalidated.append(entry)
+
+        def spy_render():
+            rendered.append(True)
+
+        monkeypatch.setattr(app, "_invalidate_conversation", spy_invalidate)
+        monkeypatch.setattr(app, "_render_conversation", spy_render)
+
+        app.interaction_mode = "plan"
+        app._ensure_startup_entry()
+
+        assert app.conversation_entries[0] is startup
+        assert startup.content != original_content
+        assert "Interaction: plan" in startup.content
+        assert invalidated == [startup]
+        assert rendered == []
+
+        app.conversation_entries = []
+        app._ensure_startup_entry()
+
+        assert app.conversation_entries[0].kind == "startup"
+        assert rendered == [True]
+
+
+@pytest.mark.asyncio
+async def test_textual_app_mode_switch_preserves_transcript_entries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.state import ConversationEntry
+
+    history = [{"role": "user", "content": [{"type": "text", "text": "persisted"}]}]
+
+    class FakeAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def restore_message_history(self, history):
+            return None
+
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
+
+        def dump_message_history(self):
+            return history
+
+        async def cleanup(self):
+            return None
+
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeAgent)
+    monkeypatch.setattr(agent_runtime_module, "PlanningAgent", FakeAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test():
+        startup = app.conversation_entries[0]
+        user = ConversationEntry(kind="user", content="hello")
+        assistant = ConversationEntry(kind="assistant", content="hi", complete=True)
+        tool = ConversationEntry(
+            kind="tool_result",
+            content="done",
+            complete=True,
+            tool_name="read_file",
+            tool_call_id="tool-1",
+            full_content="done",
+        )
+        app.conversation_entries = [startup, user, assistant, tool]
+        non_startup_entries = app.conversation_entries[1:]
+
+        await app._set_interaction_mode("plan")
+
+        assert app.conversation_entries[0] is startup
+        assert app.conversation_entries[1:] == non_startup_entries
+        assert app.conversation_entries[1] is user
+        assert app.conversation_entries[2] is assistant
+        assert app.conversation_entries[3] is tool
 
 
 @pytest.mark.asyncio
@@ -1890,7 +2100,7 @@ async def test_textual_app_shows_plan_decision_when_planning_agent_writes_plan(
         assert loaded.plan_reofferable is True
         assert loaded.interaction_mode == "plan"
 
-        app._discuss_pending_plan()
+        await app._discuss_pending_plan()
 
         assert app._plan_decision_active is False
         assert app._plan_pending is False
@@ -1924,10 +2134,10 @@ async def test_textual_app_shows_plan_decision_when_planning_agent_writes_plan(
         assert loaded.plan_pending is True
         assert loaded.plan_reofferable is True
 
-        app._discuss_pending_plan()
+        await app._discuss_pending_plan()
 
         app.agent.completed_plan = "# Revised plan\n\nBuild planning mode carefully."
-        app._capture_completed_plan()
+        await app._capture_completed_plan()
 
         assert app._plan_decision_active is True
         assert app._plan_pending is True
@@ -2250,7 +2460,7 @@ async def test_textual_app_discuss_plan_preserves_old_plan_until_new_plan_is_wri
         app._plan_reofferable = True
         app._plan_decision_active = True
 
-        app._discuss_pending_plan()
+        await app._discuss_pending_plan()
 
         assert app._latest_plan == "# Plan\n\nBuild it after discussing."
         assert app._plan_pending is False
@@ -2329,10 +2539,136 @@ async def test_textual_app_does_not_save_startup_entry_to_history(
 
     async with app.run_test():
         assert app.conversation_entries[0].kind == "startup"
-        app._save_session_history()
+        await app._save_session_history_async()
 
         assert session.history == saved_history
         assert all("Kolega Code" not in str(item) for item in session.history)
+
+
+@pytest.mark.asyncio
+async def test_textual_app_history_save_runs_off_event_loop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.app import KolegaCodeApp
+
+    saved_history = [Message(role="assistant", content=[TextBlock("saved response")]).to_dict()]
+
+    class FakeAgent:
+        def dump_message_history(self):
+            return saved_history
+
+        def dump_compaction_state(self):
+            return {}
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    original_save = store.save
+
+    def slow_save(record):
+        time.sleep(0.2)
+        original_save(record)
+
+    monkeypatch.setattr(store, "save", slow_save)
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+    app.agent = FakeAgent()
+
+    save_task = asyncio.create_task(app._save_session_history_async())
+    marker_task = asyncio.create_task(asyncio.sleep(0.05))
+    done, _ = await asyncio.wait({save_task, marker_task}, timeout=0.1, return_when=asyncio.FIRST_COMPLETED)
+
+    assert marker_task in done
+    assert not save_task.done()
+    await save_task
+    assert store.load(session.session_id).history == saved_history
+
+
+@pytest.mark.asyncio
+async def test_textual_app_history_save_persists_session_and_compaction(tmp_path: Path) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.app import KolegaCodeApp
+
+    saved_history = [Message(role="assistant", content=[TextBlock("persist me")]).to_dict()]
+    saved_compaction = {"summary": "older turns", "compacted_through": 3, "compacted_history_length": 5}
+
+    class FakeAgent:
+        def dump_message_history(self):
+            return saved_history
+
+        def dump_compaction_state(self):
+            return saved_compaction
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+    app.agent = FakeAgent()
+
+    await app._save_session_history_async()
+
+    assert app.session.history == saved_history
+    assert app.session.compaction == saved_compaction
+    loaded = store.load(session.session_id)
+    assert loaded.history == saved_history
+    assert loaded.compaction == saved_compaction
+
+
+@pytest.mark.asyncio
+async def test_textual_app_overlapping_saves_preserve_later_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.app import KolegaCodeApp
+
+    saved_history = [Message(role="assistant", content=[TextBlock("history from first save")]).to_dict()]
+
+    class FakeAgent:
+        def dump_message_history(self):
+            return saved_history
+
+        def dump_compaction_state(self):
+            return {}
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+    app.agent = FakeAgent()
+
+    original_save = store.save
+    saved_snapshots: list[tuple[str, list[dict]]] = []
+
+    def slow_first_save(record):
+        saved_snapshots.append((record.task_list_markdown, list(record.history)))
+        if len(saved_snapshots) == 1:
+            time.sleep(0.2)
+        original_save(record)
+
+    monkeypatch.setattr(store, "save", slow_first_save)
+
+    first_save = asyncio.create_task(app._save_session_history_async())
+    await asyncio.sleep(0.05)
+    app.session.task_list_markdown = "- [x] later state"
+    second_save = asyncio.create_task(app._save_session_async())
+
+    await asyncio.gather(first_save, second_save)
+
+    assert len(saved_snapshots) == 2
+    assert saved_snapshots[0] == ("", saved_history)
+    assert saved_snapshots[1] == ("- [x] later state", saved_history)
+    loaded = store.load(session.session_id)
+    assert loaded.task_list_markdown == "- [x] later state"
+    assert loaded.history == saved_history
 
 
 @pytest.mark.asyncio
@@ -5370,7 +5706,7 @@ async def test_thread_reset_clears_sub_agent_state(tmp_path: Path, monkeypatch: 
         app._render_event(_sub_agent_event(uuid="u1", text="some output"))
         assert app._sub_agent_activities
 
-        app._reset_current_thread()
+        await app._reset_current_thread()
 
         assert app._sub_agent_activities == {}
         assert app._sub_agent_by_tool_call == {}
@@ -5745,7 +6081,7 @@ async def test_thread_reset_closes_open_inspector(
         await pilot.pause()
         assert app._sub_agent_inspector is not None
 
-        app._reset_current_thread()
+        await app._reset_current_thread()
         await pilot.pause()
 
         assert app._sub_agent_inspector is None

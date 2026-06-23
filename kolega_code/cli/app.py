@@ -185,6 +185,7 @@ class KolegaCodeApp(
         # session. Reset in _switch_model so a new model gets a fresh warning.
         self._vision_warning_shown = False
         self._permission_lock = asyncio.Lock()
+        self._persistence_lock = asyncio.Lock()
         self._pending_model_selection: Optional[tui_state.PendingModelSelection] = None
         self._pending_effort_selection: Optional[tui_state.PendingEffortSelection] = None
         self._pending_theme_selection: Optional[tui_state.PendingThemeSelection] = None
@@ -491,9 +492,63 @@ class KolegaCodeApp(
         self.session.plan_pending = bool(self._latest_plan and self._plan_pending)
         self.session.plan_reofferable = bool(self._latest_plan and self._plan_reofferable)
 
-    def _save_session(self) -> None:
+    def _session_snapshot_locked(self) -> SessionRecord:
+        """Return a detached session snapshot for background persistence.
+
+        Call only while ``_persistence_lock`` is held. The snapshot gets shallow
+        copies of mutable payloads so ``SessionStore.save`` never serializes the
+        live ``self.session`` object on a worker thread.
+        """
         self._sync_planning_state_to_session()
-        self.store.save(self.session)
+        record = self.session
+        return SessionRecord(
+            schema_version=record.schema_version,
+            session_id=record.session_id,
+            project_path=record.project_path,
+            workspace_id=record.workspace_id,
+            thread_id=record.thread_id,
+            mode=record.mode,
+            title=record.title,
+            created_at=record.created_at,
+            updated_at=record.updated_at,
+            config=dict(record.config),
+            history=list(record.history),
+            compaction=dict(record.compaction),
+            task_list_markdown=record.task_list_markdown,
+            latest_plan_markdown=record.latest_plan_markdown,
+            plan_pending=record.plan_pending,
+            plan_reofferable=record.plan_reofferable,
+            interaction_mode=record.interaction_mode,
+            permission_mode=record.permission_mode,
+        )
+
+    async def _save_session_async(self) -> None:
+        """Persist lightweight session state without blocking Textual's loop."""
+        async with self._persistence_lock:
+            snapshot = self._session_snapshot_locked()
+            await asyncio.to_thread(self.store.save, snapshot)
+            self.session.updated_at = snapshot.updated_at
+
+    async def _save_session_history_async(self) -> None:
+        """Dump agent history and persist the session off the UI loop."""
+        async with self._persistence_lock:
+            agent = self.agent
+            if agent is None:
+                return
+            snapshot = self._session_snapshot_locked()
+
+            def dump_and_save() -> tuple[list[dict], dict, str]:
+                history = agent.dump_message_history()
+                compaction = agent.dump_compaction_state()
+                snapshot.history = history
+                snapshot.compaction = compaction
+                self.store.save(snapshot)
+                return history, compaction, snapshot.updated_at
+
+            history, compaction, updated_at = await asyncio.to_thread(dump_and_save)
+            self.session.history = history
+            self.session.compaction = compaction
+            self.session.updated_at = updated_at
 
     def _restore_plan_action_visibility(self) -> None:
         self._set_plan_actions_visible(
@@ -510,7 +565,7 @@ class KolegaCodeApp(
                 self._notify_user(messages.BLOCK_STOP_BEFORE_RESET, severity="warning")
                 return
             event.composer.load_text("")
-            self._reset_current_thread()
+            await self._reset_current_thread()
             return
 
         if await self._handle_tui_slash_command(stripped_text, event.composer):
@@ -662,7 +717,7 @@ class KolegaCodeApp(
             elif event.option_id == "implement_plan_clear":
                 await self._implement_pending_plan(clear_context=True)
             elif event.option_id == "discuss_plan":
-                self._discuss_pending_plan()
+                await self._discuss_pending_plan()
             return
         if event.option_list.id != "completion_dropdown":
             return
@@ -799,8 +854,7 @@ class KolegaCodeApp(
                     await fire(HookEvent.SESSION_END, {"reason": "quit"})
                 except Exception:
                     pass
-            self._persist_agent_into_session()
-            self._save_session()
+            await self._save_session_history_async()
             await self.agent.cleanup()
         self.exit()
 
@@ -829,7 +883,7 @@ class KolegaCodeApp(
 
         self.interaction_mode = interaction_mode
         self._plan_decision_active = False
-        self._save_session()
+        await self._save_session_async()
         self._restore_plan_action_visibility()
         self._cancel_pending_question()
         self._cancel_pending_approval()
@@ -838,7 +892,7 @@ class KolegaCodeApp(
         self._cancel_pending_theme_selection()
 
         if self.config is not None:
-            await self._build_agent(self.config, rebuild=True)
+            await self._build_agent(self.config, rebuild=True, restore_transcript=False)
 
         self._update_mode_chrome()
         self._restore_composer_placeholder()
@@ -852,14 +906,14 @@ class KolegaCodeApp(
 
         self.permission_mode = mode
         self.session.permission_mode = mode.value
-        self._save_session()
+        await self._save_session_async()
         if self.agent is not None:
             self.agent.set_permission_mode(mode)
             self.agent.set_permission_callback(self._permission_callback)
         self._update_mode_chrome()
         self._notify_user(messages.SWITCHED_PERMISSION_MODE.format(mode=mode.value))
 
-    def _capture_completed_plan(self) -> None:
+    async def _capture_completed_plan(self) -> None:
         if self.interaction_mode != tui_constants.PLAN_INTERACTION_MODE or self.agent is None:
             return
         consume_completed_plan = getattr(self.agent, "consume_completed_plan", None)
@@ -870,16 +924,16 @@ class KolegaCodeApp(
         if plan:
             self._latest_plan = plan
             self._plan_reofferable = True
-            self._show_plan_for_decision(plan, notification=messages.PLAN_CAPTURED)
+            await self._show_plan_for_decision(plan, notification=messages.PLAN_CAPTURED)
             return
 
         if self._latest_plan and self._plan_reofferable and not self._plan_pending:
-            self._show_plan_for_decision(self._latest_plan, notification=messages.PLAN_REOFFERED)
+            await self._show_plan_for_decision(self._latest_plan, notification=messages.PLAN_REOFFERED)
 
-    def _show_plan_for_decision(self, plan: str, *, notification: str) -> None:
+    async def _show_plan_for_decision(self, plan: str, *, notification: str) -> None:
         self._plan_pending = True
         self._plan_decision_active = True
-        self._save_session()
+        await self._save_session_async()
         self._refresh_planning_sidebar()
         self._add_conversation_entry(tui_state.ConversationEntry(kind="plan", content=plan, complete=True))
         self._set_plan_actions_visible(True, allow_discuss=True)
@@ -901,7 +955,7 @@ class KolegaCodeApp(
         self._plan_decision_active = False
         if clear_context:
             self._clear_agent_context()
-        self._save_session()
+        await self._save_session_async()
         await self._set_interaction_mode(tui_constants.BUILD_INTERACTION_MODE)
         self._refresh_planning_sidebar()
         self._set_plan_actions_visible(False)
@@ -912,14 +966,14 @@ class KolegaCodeApp(
             self._process_message(prompt), name="kolega-turn", group="turns", exclusive=True
         )
 
-    def _discuss_pending_plan(self) -> None:
+    async def _discuss_pending_plan(self) -> None:
         if not self._latest_plan:
             return
 
         self._plan_pending = False
         self._plan_reofferable = True
         self._plan_decision_active = False
-        self._save_session()
+        await self._save_session_async()
         self._refresh_planning_sidebar()
         self._set_plan_actions_visible(False)
         self._restore_composer_placeholder()
@@ -1144,7 +1198,7 @@ class KolegaCodeApp(
         self.session.history = []
         self.session.compaction = {}
 
-    def _reset_current_thread(self) -> None:
+    async def _reset_current_thread(self) -> None:
         self._close_sub_agent_inspector()
         if self.agent is not None:
             self.agent.history = MessageHistory()
@@ -1164,7 +1218,7 @@ class KolegaCodeApp(
         self._plan_pending = False
         self._plan_reofferable = False
         self._plan_decision_active = False
-        self._save_session()
+        await self._save_session_async()
         self._set_plan_actions_visible(False)
         self._cancel_pending_question()
         self._cancel_pending_approval()
@@ -1193,11 +1247,15 @@ class KolegaCodeApp(
         existing = next((entry for entry in self.conversation_entries if entry.kind == "startup"), None)
         if existing is None:
             self.conversation_entries.insert(0, tui_state.ConversationEntry(kind="startup", content=self._startup_content()))
+        elif self.conversation_entries[0] is existing:
+            existing.content = self._startup_content()
+            if render:
+                self._invalidate_conversation(existing)
+            return
         else:
             existing.content = self._startup_content()
-            if self.conversation_entries[0] is not existing:
-                self.conversation_entries.remove(existing)
-                self.conversation_entries.insert(0, existing)
+            self.conversation_entries.remove(existing)
+            self.conversation_entries.insert(0, existing)
         if render:
             self._render_conversation()
 
