@@ -33,6 +33,7 @@ class ConversationEntryWidget(Static):
         self._format_entry = format_entry
         self._kind_class = ""
         self._formatted: object = None
+        self._content_snapshot: tuple[object, ...] | None = None
         self.refresh_content()
 
     def refresh_content(self) -> None:
@@ -42,8 +43,24 @@ class ConversationEntryWidget(Static):
                 self.remove_class(self._kind_class)
             self.add_class(kind_class)
             self._kind_class = kind_class
+
+        snapshot = self._entry_snapshot()
+        if snapshot == self._content_snapshot and self._formatted is not None:
+            return
+        self._content_snapshot = snapshot
         self._formatted = self._format_entry(self.entry)
         self.update(self._formatted)
+
+    def _entry_snapshot(self) -> tuple[object, ...]:
+        return (
+            self.entry.kind,
+            self.entry.content,
+            self.entry.complete,
+            self.entry.tool_name,
+            self.entry.tone,
+            self.entry.full_content,
+            repr(self.entry.edit_preview),
+        )
 
     def render_line(self, y: int) -> Strip:
         strip = _with_selection_style(super().render_line(y), self.text_selection, y, self.selection_style)
@@ -204,6 +221,10 @@ class ToolEntryWidget(Vertical):
         self._collapsible: Optional[Collapsible] = None
         self._body: Optional[Static] = None
         self._preview: Optional[Static] = None
+        self._title = ""
+        self._body_content: object = None
+        self._preview_key = ""
+        self._preview_visible = False
 
     def compose(self) -> ComposeResult:
         # Always-visible inline preview (diff/file-head) for edit tools; hidden otherwise.
@@ -220,16 +241,33 @@ class ToolEntryWidget(Vertical):
     def refresh_content(self) -> None:
         if self._collapsible is None or self._body is None:
             return
-        self._collapsible.title = self._title_factory(self.entry)
-        self._body.update(self.entry.full_content or self.entry.content)
+
+        title = self._title_factory(self.entry)
+        if title != self._title:
+            self._collapsible.title = title
+            self._title = title
+
+        body_content = self.entry.full_content or self.entry.content
+        if body_content != self._body_content:
+            self._body.update(body_content)
+            self._body_content = body_content
+
         if self._preview is not None:
+            preview_key = repr(self.entry.edit_preview)
+            if preview_key == self._preview_key:
+                return
+            self._preview_key = preview_key
             renderable = self._preview_factory(self.entry) if self._preview_factory else None
             if renderable is not None:
                 self._preview.update(renderable)
-                self._preview.display = True
+                if not self._preview_visible:
+                    self._preview.display = True
+                    self._preview_visible = True
             else:
-                self._preview.update("")
-                self._preview.display = False
+                if self._preview_visible:
+                    self._preview.update("")
+                    self._preview.display = False
+                    self._preview_visible = False
 
 
 class ConversationView(VerticalScroll):

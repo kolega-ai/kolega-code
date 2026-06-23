@@ -440,7 +440,10 @@ class KolegaCodeApp(
             tabs = self.query_one("#events", TabbedContent)
             if tabs.active == pane_id:
                 return
-            tabs.get_tab(pane_id).label = f"{base} {theme.g(Glyph.STATUS)}"
+            tab = tabs.get_tab(pane_id)
+            label = f"{base} {theme.g(Glyph.STATUS)}"
+            if str(tab.label) != label:
+                tab.label = label
         except Exception:
             return
 
@@ -449,7 +452,9 @@ class KolegaCodeApp(
         if base is None:
             return
         try:
-            self.query_one("#events", TabbedContent).get_tab(pane_id).label = base
+            tab = self.query_one("#events", TabbedContent).get_tab(pane_id)
+            if str(tab.label) != base:
+                tab.label = base
         except Exception:
             return
 
