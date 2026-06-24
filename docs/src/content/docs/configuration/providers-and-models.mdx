@@ -27,6 +27,7 @@ The agent runtime recognizes these providers:
 | DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` |
 | Z.AI (GLM Coding Plan) | `zai` | `ZAI_API_KEY` |
 | Kimi Coding Plan | `kimi_coding` | `KIMI_CODING_API_KEY` |
+| Ollama Cloud | `ollama_cloud` | `OLLAMA_API_KEY` |
 | Llama (local) | `llama` | _none — local model_ |
 
 <Aside type="tip">
@@ -43,6 +44,15 @@ Moonshot API used by the `moonshot` provider. It exposes a single stable model I
 **`kimi-for-coding`**, that the backend auto-routes to the latest underlying model:
 with thinking effort `auto` (enabled) requests route to **K2.7 Code**, and with `none`
 (disabled) they route to **K2.6**. Set `KIMI_CODING_API_KEY` to your Kimi Coding Plan key.
+</Aside>
+
+<Aside type="tip">
+**Ollama Cloud.** The `ollama_cloud` provider uses Ollama Cloud's direct
+OpenAI-compatible API at `https://ollama.com/v1` with `OLLAMA_API_KEY`. Kolega
+Code uses the direct API model IDs returned by Ollama, such as **`glm-5.2`** and
+**`gpt-oss:120b`**, rather than local Ollama aliases such as `:cloud` or
+`-cloud`. Ollama may deprecate or retire older cloud models, so the supported
+model catalog should be refreshed periodically from Ollama's model library/API.
 </Aside>
 
 <Aside type="tip">
@@ -164,6 +174,8 @@ models in the TUI.
 | Z.AI `glm-5.2` | `high`, `max` | `max` |
 | Z.AI `glm-5.1` | `auto`, `none` | `auto` |
 | Fireworks serverless reasoning models | `none`, `low`, `medium`, `high`, `max` | `medium` |
+| Ollama Cloud thinking models | `none`, `low`, `medium`, `high`, `max` | `medium` |
+| Ollama Cloud `gpt-oss:*` | `low`, `medium`, `high` | `medium` |
 | Google `gemini-2.5-pro` | `auto`, `low`, `medium`, `high` | `medium` |
 | OpenAI reasoning models | `low`, `medium`, `high` | `medium` |
 

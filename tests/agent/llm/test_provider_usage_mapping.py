@@ -36,6 +36,15 @@ def test_fireworks_uses_openai_compatible_provider():
     assert client.provider.base_url == "https://api.fireworks.ai/inference/v1"
 
 
+def test_ollama_cloud_uses_openai_compatible_provider():
+    client = LLMClient("ollama_cloud", "test-key")
+
+    assert isinstance(client.provider, OpenAIProvider)
+    assert not isinstance(client.provider, AnthropicProvider)
+    assert client.provider.provider_name == "ollama_cloud"
+    assert client.provider.base_url == "https://ollama.com/v1"
+
+
 @pytest.mark.asyncio
 async def test_fireworks_generate_maps_openai_provider_response_usage(capsys):
     client = LLMClient("fireworks", "test-key")

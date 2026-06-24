@@ -46,12 +46,14 @@ provider or model.
 | `DEEPSEEK_API_KEY` | DeepSeek |
 | `ZAI_API_KEY` | Z.AI (GLM Coding Plan) |
 | `KIMI_CODING_API_KEY` | Kimi Coding Plan |
+| `OLLAMA_API_KEY` | Ollama Cloud |
 
 The local `llama` provider needs no key. The `zai` key authenticates against Z.AI's
 Anthropic-compatible endpoint (it is the key Z.AI also documents as `ANTHROPIC_AUTH_TOKEN`).
 The `kimi_coding` key authenticates against the Kimi Coding Plan's separate
 Anthropic-compatible endpoint (`https://api.kimi.com/coding/`), which is distinct from the
 standard Moonshot API used by the `moonshot` provider.
+The `OLLAMA_API_KEY` key authenticates against Ollama Cloud's direct API (`https://ollama.com/v1` for OpenAI-compatible requests).
 
 ## Model selection
 
@@ -120,6 +122,7 @@ MOONSHOT_API_KEY=
 DEEPSEEK_API_KEY=
 FIREWORKS_API_KEY=
 ANTHROPIC_API_KEY=
+OLLAMA_API_KEY=
 
 # Optional: choose models per role
 KOLEGA_CODE_PROVIDER=moonshot
@@ -129,6 +132,10 @@ KOLEGA_CODE_THINKING_EFFORT=auto
 # Fireworks example:
 # KOLEGA_CODE_PROVIDER=fireworks
 # KOLEGA_CODE_MODEL=accounts/fireworks/models/glm-5p2
+
+# Ollama Cloud example:
+# KOLEGA_CODE_PROVIDER=ollama_cloud
+# KOLEGA_CODE_MODEL=glm-5.2
 
 # Optional: web search
 KOLEGA_CODE_WEB_SEARCH_BACKEND=duckduckgo

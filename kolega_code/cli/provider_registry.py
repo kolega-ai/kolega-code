@@ -34,6 +34,7 @@ PROVIDER_LABELS: dict[ModelProvider, str] = {
     ModelProvider.FIREWORKS: "Fireworks",
     ModelProvider.TOGETHER: "Together AI",
     ModelProvider.DASHSCOPE: "DashScope / Qwen",
+    ModelProvider.OLLAMA_CLOUD: "Ollama Cloud",
 }
 
 # Friendly display names for models. Anything not listed falls back to its raw
@@ -84,6 +85,36 @@ MODEL_LABELS: dict[str, str] = {
     # DashScope / Qwen
     "qwen3-coder-plus": "Qwen3 Coder Plus",
     "qwen3-coder-flash": "Qwen3 Coder Flash",
+    # Ollama Cloud
+    "deepseek-v3.1:671b": "DeepSeek V3.1 671B",
+    "deepseek-v3.2": "DeepSeek V3.2",
+    "devstral-2:123b": "Devstral 2 123B",
+    "devstral-small-2:24b": "Devstral Small 2 24B",
+    "gemini-3-flash-preview": "Gemini 3 Flash Preview",
+    "gemma3:4b": "Gemma 3 4B",
+    "gemma3:12b": "Gemma 3 12B",
+    "gemma3:27b": "Gemma 3 27B",
+    "gemma4:31b": "Gemma 4 31B",
+    "glm-4.7": "GLM-4.7",
+    "glm-5": "GLM-5",
+    "gpt-oss:20b": "GPT-OSS 20B",
+    "gpt-oss:120b": "GPT-OSS 120B",
+    "kimi-k2.5": "Kimi K2.5",
+    "minimax-m2.1": "MiniMax M2.1",
+    "minimax-m2.5": "MiniMax M2.5",
+    "minimax-m2.7": "MiniMax M2.7",
+    "minimax-m3": "MiniMax M3",
+    "ministral-3:3b": "Ministral 3 3B",
+    "ministral-3:8b": "Ministral 3 8B",
+    "ministral-3:14b": "Ministral 3 14B",
+    "mistral-large-3:675b": "Mistral Large 3 675B",
+    "nemotron-3-nano:30b": "Nemotron 3 Nano 30B",
+    "nemotron-3-super": "Nemotron 3 Super",
+    "nemotron-3-ultra": "Nemotron 3 Ultra",
+    "qwen3-coder-next": "Qwen3 Coder Next",
+    "qwen3-coder:480b": "Qwen3 Coder 480B",
+    "qwen3.5:397b": "Qwen3.5 397B",
+    "rnj-1:8b": "RNJ-1 8B",
 }
 
 # Per-provider default model used when only a provider is selected. Covers the
@@ -101,6 +132,7 @@ PROVIDER_DEFAULT_MODEL: dict[ModelProvider, str] = {
     ModelProvider.FIREWORKS: "accounts/fireworks/models/glm-5p2",
     ModelProvider.TOGETHER: "moonshotai/Kimi-K2.7-Code",
     ModelProvider.DASHSCOPE: "qwen3-coder-plus",
+    ModelProvider.OLLAMA_CLOUD: "gpt-oss:20b",
 }
 
 UI_DEFAULT_PROVIDER = ModelProvider.MOONSHOT.value
@@ -130,6 +162,8 @@ def _api_key_env(provider: ModelProvider) -> str:
     """
     if provider == ModelProvider.OPENAI_CHATGPT:
         return ""
+    if provider == ModelProvider.OLLAMA_CLOUD:
+        return "OLLAMA_API_KEY"
     return f"{provider.value.upper()}_API_KEY"
 
 

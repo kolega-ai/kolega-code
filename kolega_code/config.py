@@ -23,6 +23,7 @@ class ModelProvider(str, Enum):
     DEEPSEEK = "deepseek"
     ZAI = "zai"
     KIMI_CODING = "kimi_coding"
+    OLLAMA_CLOUD = "ollama_cloud"
 
 
 class AgentRole(str, Enum):
@@ -131,6 +132,7 @@ class AgentConfig(BaseModel):
     deepseek_api_key: Optional[str] = Field(default=None, description="API key for DeepSeek")
     zai_api_key: Optional[str] = Field(default=None, description="API key for Z.AI (GLM Coding Plan)")
     kimi_coding_api_key: Optional[str] = Field(default=None, description="API key for Kimi Coding Plan")
+    ollama_cloud_api_key: Optional[str] = Field(default=None, description="API key for Ollama Cloud")
 
     # ChatGPT-subscription OAuth credentials (used instead of an api key for the
     # OPENAI_CHATGPT provider). The live, refreshing token manager is attached
@@ -221,6 +223,7 @@ class AgentConfig(BaseModel):
             ModelProvider.DEEPSEEK: self.deepseek_api_key,
             ModelProvider.ZAI: self.zai_api_key,
             ModelProvider.KIMI_CODING: self.kimi_coding_api_key,
+            ModelProvider.OLLAMA_CLOUD: self.ollama_cloud_api_key,
             ModelProvider.LLAMA: None,  # Local model, no API key needed
         }
         return api_key_map[provider]
