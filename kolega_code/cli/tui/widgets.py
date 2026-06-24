@@ -377,6 +377,11 @@ class StickyRichLog(RichLog):
         should_follow = self.auto_follow_bottom or self.is_at_bottom()
         self.write(content, scroll_end=should_follow)
 
+    def clear_output(self) -> None:
+        """Clear rendered output and restore sticky-follow defaults."""
+        self.clear()
+        self.auto_follow_bottom = True
+
 
 class TerminalOutputLog(StickyRichLog):
     """Sticky log for terminal output."""

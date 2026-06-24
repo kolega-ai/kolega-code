@@ -36,6 +36,10 @@ class SlashCommandEntry:
 
 
 THREAD_RESET_COMMANDS: frozenset[str] = frozenset({"/clear", "/reset"})
+TUI_AGENT_COMMAND_DESCRIPTION_OVERRIDES: dict[str, str] = {
+    "/clear": "Clear message history, terminal output, and logs",
+    "/reset": "Clear message history, terminal output, and logs (alias of /clear)",
+}
 SKILLS_LIST_COMMAND = "/skills"
 
 TUI_COMMAND_ENTRIES: tuple[SlashCommandEntry, ...] = (
@@ -66,7 +70,11 @@ TUI_COMMAND_NAMES: frozenset[str] = frozenset(entry.token for entry in TUI_COMMA
 def agent_command_entries() -> tuple[SlashCommandEntry, ...]:
     """Agent built-in commands, derived from the agent's own declarations."""
     return tuple(
-        SlashCommandEntry(spec.name.removeprefix("/"), spec.description, CommandScope.AGENT)
+        SlashCommandEntry(
+            spec.name.removeprefix("/"),
+            TUI_AGENT_COMMAND_DESCRIPTION_OVERRIDES.get(spec.name, spec.description),
+            CommandScope.AGENT,
+        )
         for spec in CommandProcessor.SPECS
     )
 

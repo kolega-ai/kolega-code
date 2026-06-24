@@ -479,6 +479,30 @@ class KolegaCodeApp(
         self._terminal_has_content = True
         self._mark_tab_activity("terminal_pane")
 
+    def _clear_runtime_output(self) -> None:
+        """Clear runtime-only terminal/log sidebar output for thread resets."""
+        if self._terminal_flush_timer is not None:
+            self._terminal_flush_timer.stop()
+            self._terminal_flush_timer = None
+
+        self._terminal_output_buffer.clear()
+        self._terminal_output_buffer_chars = 0
+        self._terminal_has_content = False
+
+        try:
+            self._terminal.clear_output()
+        except Exception:
+            pass
+
+        if self.show_logs:
+            try:
+                self._logs.clear_output()
+            except Exception:
+                pass
+
+        self._clear_tab_activity("terminal_pane")
+        self._clear_tab_activity("logs_pane")
+
     def _format_log_line(self, text: str, level: str = "info") -> Text:
         """One log line: muted HH:MM:SS, a level-colored glyph, then the text."""
         body_style = Color.MUTED if level == "debug" else ""
@@ -1382,6 +1406,7 @@ class KolegaCodeApp(
         self._plan_pending = False
         self._plan_reofferable = False
         self._plan_decision_active = False
+        self._clear_runtime_output()
         await self._save_session_async()
         self._set_plan_actions_visible(False)
         self._cancel_pending_question()
@@ -1398,7 +1423,6 @@ class KolegaCodeApp(
         self._add_conversation_entry(
             tui_state.ConversationEntry(kind="progress", content=messages.THREAD_RESET_MESSAGE, complete=True)
         )
-        self._notify_user(messages.THREAD_RESET_MESSAGE)
 
     def _add_conversation_entry(self, entry: tui_state.ConversationEntry) -> None:
         self.conversation_entries.append(entry)
