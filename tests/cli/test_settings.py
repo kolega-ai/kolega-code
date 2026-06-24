@@ -184,9 +184,11 @@ def test_ui_provider_registry_is_derived_from_model_specs() -> None:
     assert ollama_glm_model.model_label == "GLM-5.2"
     assert ollama_glm_model.default_thinking_effort == "medium"
     assert ui_thinking_effort_options("ollama_cloud", "gpt-oss:120b") == [
+        ("None", "none"),
         ("Low", "low"),
         ("Medium", "medium"),
         ("High", "high"),
+        ("Max", "max"),
     ]
 
 

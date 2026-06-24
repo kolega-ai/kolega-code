@@ -454,7 +454,7 @@ MODEL_SPECS: Dict[Tuple[str, str], Dict[str, Any]] = {
         "default_temperature": 1.0,
         "supports_vision": False,
         "thinking_effort": ThinkingEffortSpec(
-            options=("low", "medium", "high"),
+            options=("none", "low", "medium", "high", "max"),
             default="medium",
             mode="openai_reasoning_effort",
         ),
@@ -465,7 +465,7 @@ MODEL_SPECS: Dict[Tuple[str, str], Dict[str, Any]] = {
         "default_temperature": 1.0,
         "supports_vision": False,
         "thinking_effort": ThinkingEffortSpec(
-            options=("low", "medium", "high"),
+            options=("none", "low", "medium", "high", "max"),
             default="medium",
             mode="openai_reasoning_effort",
         ),

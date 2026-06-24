@@ -56,7 +56,9 @@ class OpenAIStreamWrapper:
                     if content:
                         self.final_content += content
 
-                    reasoning_content = getattr(delta, "reasoning_content", None) or ""
+                    reasoning_content = (
+                        getattr(delta, "reasoning_content", None) or getattr(delta, "reasoning", None) or ""
+                    )
                     if reasoning_content:
                         self.final_reasoning_content += reasoning_content
 

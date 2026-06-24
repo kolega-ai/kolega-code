@@ -16,6 +16,7 @@ covered automatically.
 
 import os
 
+import httpx
 import pytest
 
 from kolega_code.cli.config import API_KEY_ENV, OAUTH_PROVIDERS
@@ -84,6 +85,27 @@ def _require_key(provider_value: str) -> str:
     if not api_key:
         pytest.skip(f"{env_name} not set")
     return api_key
+
+
+def test_live_ollama_cloud_model_catalog_matches_specs() -> None:
+    """Ollama Cloud advertises every model ID in our catalog.
+
+    Subscription-gated models still count as supported: they appear in
+    ``/v1/models`` even if a later generation call would return 403 for the
+    current account.
+    """
+    api_key = _require_key(ModelProvider.OLLAMA_CLOUD.value)
+    response = httpx.get(
+        "https://ollama.com/v1/models",
+        headers={"Authorization": f"Bearer {api_key}"},
+        timeout=30,
+    )
+    response.raise_for_status()
+
+    api_models = {model["id"] for model in response.json()["data"]}
+    spec_models = {model for provider, model in MODEL_SPECS if provider == ModelProvider.OLLAMA_CLOUD.value}
+
+    assert spec_models == api_models
 
 
 @pytest.mark.asyncio
