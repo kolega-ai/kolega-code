@@ -332,6 +332,7 @@ class SubAgentInspectorScreen(ModalScreen):
     def action_close(self) -> None:
         self._owner._sub_agent_inspector = None
         self.dismiss()
+        self._owner._schedule_primary_focus_restore()
 
     def action_toggle_follow(self) -> None:
         self._follow = not self._follow

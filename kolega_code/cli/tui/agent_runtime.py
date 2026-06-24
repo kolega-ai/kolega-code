@@ -17,13 +17,13 @@ from ..config import CliConfigError, build_agent_config, config_summary
 from ..skills import build_skill_prompt_extension, build_skill_tool_extension, discover_skills
 from . import constants as tui_constants
 from . import state as tui_state
-from . import widgets as tui_widgets
 
 
 class AgentRuntimeMixin:
     async def _process_message(self, message: str, attachments: list[dict] | None = None) -> None:
         if self.agent is None:
             return
+        cancelled_by_user = False
         self._begin_turn_progress()
         self._log_status(messages.GENERATING, "ok")
         try:
@@ -55,6 +55,7 @@ class AgentRuntimeMixin:
             await self._capture_completed_plan()
             self._log_status(messages.FINISHED, "ok")
         except asyncio.CancelledError:
+            cancelled_by_user = True
             self._cancel_pending_question()
             self._cancel_pending_approval()
             await self._drain_pending_events()
@@ -94,6 +95,8 @@ class AgentRuntimeMixin:
             else:
                 self._restore_composer_placeholder()
             self._set_chat_enabled(self.agent is not None and not self._plan_decision_active)
+            if cancelled_by_user:
+                self._schedule_primary_focus_restore()
 
     async def _consume_events(self) -> None:
         while True:
@@ -205,7 +208,7 @@ class AgentRuntimeMixin:
         self._set_chat_enabled(True)
         self._update_settings_status()
         self._ensure_startup_entry()
-        self.query_one("#composer", tui_widgets.ChatComposer).focus()
+        self._schedule_primary_focus_restore()
 
     async def _build_agent(
         self,
