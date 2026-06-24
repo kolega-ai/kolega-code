@@ -422,6 +422,13 @@ async def test_logs_rendered_history_is_capped(tmp_path: Path, monkeypatch: pyte
         assert "line 11" in rendered
 
 
+def test_default_scrollback_caps_are_bounded() -> None:
+    from kolega_code.cli.app import LOG_MAX_LINES, TERMINAL_MAX_LINES
+
+    assert LOG_MAX_LINES == 2_000
+    assert TERMINAL_MAX_LINES == 2_000
+
+
 @pytest.mark.asyncio
 async def test_logs_tab_shows_activity_dot_until_visited(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")

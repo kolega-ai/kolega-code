@@ -87,8 +87,8 @@ from .tui import transcript as tui_transcript
 from .tui import widgets as tui_widgets
 
 CLI_AGENT_MODE = AgentMode.CLI.value
-LOG_MAX_LINES = 10_000
-TERMINAL_MAX_LINES = 10_000
+LOG_MAX_LINES = 2_000
+TERMINAL_MAX_LINES = 2_000
 TERMINAL_FLUSH_INTERVAL = 0.04
 TERMINAL_IMMEDIATE_FLUSH_CHARS = 64 * 1024
 
