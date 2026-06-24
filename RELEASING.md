@@ -26,12 +26,37 @@ release branch.
    released within the new one-week window being pulled in, is expected and
    acceptable. Do not revert these changes.
 
-3. Update `CHANGELOG.md`:
+3. Update `CHANGELOG.md` in the release PR before merging. Do not update the
+   changelog after the tag or in a separate follow-up PR.
 
-   - Move relevant entries from `Unreleased` into a new section for the release.
-   - Use the release date from the release PR.
-   - Keep entries concise and user-facing; GitHub Releases will still provide
-     detailed generated notes from the merged pull requests.
+   The changelog must actually describe what changed since the last release,
+   not just bump the version header. To compile the entry:
+
+   - Review merged changes since the previous tag, for example:
+
+     ```bash
+     git log --oneline --no-merges <previous-tag>..HEAD
+     ```
+
+   - Move relevant entries from `Unreleased` into a new section for the
+     release, grouped under the appropriate category. Use standard categories
+     in this order:
+
+     - `Added` — new user-facing features or capabilities.
+     - `Changed` — changes to existing behavior, refactoring, performance
+       improvements, or dependency updates.
+     - `Deprecated` — features that are still present but scheduled for removal.
+     - `Removed` — features or behavior that were deleted.
+     - `Fixed` — bug fixes.
+     - `Security` — vulnerability fixes or hardening changes.
+
+   - Write entries from the user's perspective, not the implementer's. Be
+     concise; GitHub Releases will still provide detailed generated notes from
+     the merged pull requests.
+   - Group related changes together and avoid duplicating the same impact
+     across multiple bullets.
+   - Use the release date from the release PR merge.
+   - Leave an empty `Unreleased` section above the new release section.
 
 4. Run the fast test suite:
 
