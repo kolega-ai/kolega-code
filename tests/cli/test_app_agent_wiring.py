@@ -50,7 +50,7 @@ async def test_textual_app_passes_shared_task_list_tools_to_build_agent_only(
 ) -> None:
     pytest.importorskip("textual")
 
-    from textual.widgets import Markdown
+    from kolega_code.cli.tui.widgets import PlanningMarkdown
 
     from kolega_code.cli.app import KolegaCodeApp
 
@@ -108,7 +108,7 @@ async def test_textual_app_passes_shared_task_list_tools_to_build_agent_only(
         assert await build_tools["get_task_list"]() == "No task list has been set."
         assert await build_tools["update_task_list"]("- [ ] inspect\n- [x] plan") == "Task list updated."
         assert app.session.task_list_markdown == "- [ ] inspect\n- [x] plan"
-        assert app.query_one("#planning_task_list_markdown", Markdown).source == "- [ ] inspect\n- [x] plan"
+        assert app.query_one("#planning_task_list_markdown", PlanningMarkdown).source == "- [ ] inspect\n- [x] plan"
         assert store.load(session.session_id).task_list_markdown == "- [ ] inspect\n- [x] plan"
 
         await pilot.press("shift+tab")

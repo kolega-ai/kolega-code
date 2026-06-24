@@ -50,7 +50,7 @@ async def test_textual_app_shows_plan_decision_when_planning_agent_writes_plan(
 ) -> None:
     pytest.importorskip("textual")
 
-    from textual.widgets import Markdown
+    from kolega_code.cli.tui.widgets import PlanningMarkdown
 
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.widgets import ActionList, ChatComposer
@@ -120,8 +120,8 @@ async def test_textual_app_shows_plan_decision_when_planning_agent_writes_plan(
             "discuss_plan",
         ]
         assert app.focused is plan_actions
-        assert app.query_one("#planning_plan_markdown", Markdown).source == initial_plan
-        assert "Step 25" in app.query_one("#planning_plan_markdown", Markdown).source
+        assert app.query_one("#planning_plan_markdown", PlanningMarkdown).source == initial_plan
+        assert "Step 25" in app.query_one("#planning_plan_markdown", PlanningMarkdown).source
         assert app.conversation_entries[-1].kind == "plan"
         loaded = store.load(session.session_id)
         assert loaded.latest_plan_markdown == initial_plan
@@ -135,7 +135,7 @@ async def test_textual_app_shows_plan_decision_when_planning_agent_writes_plan(
         assert app._plan_reofferable is True
         assert app._latest_plan == initial_plan
         assert app.query_one("#composer", ChatComposer).disabled is False
-        assert app.query_one("#planning_plan_markdown", Markdown).source == initial_plan
+        assert app.query_one("#planning_plan_markdown", PlanningMarkdown).source == initial_plan
         assert plan_actions.display is False
         assert plan_actions.option_count == 0
         loaded = store.load(session.session_id)
@@ -178,7 +178,7 @@ async def test_textual_app_shows_plan_decision_when_planning_agent_writes_plan(
             "discuss_plan",
         ]
         assert (
-            app.query_one("#planning_plan_markdown", Markdown).source
+            app.query_one("#planning_plan_markdown", PlanningMarkdown).source
             == "# Revised plan\n\nBuild planning mode carefully."
         )
         loaded = store.load(session.session_id)
@@ -192,7 +192,7 @@ async def test_textual_app_implement_plan_switches_to_build_and_sends_plan(
 ) -> None:
     pytest.importorskip("textual")
 
-    from textual.widgets import Markdown
+    from kolega_code.cli.tui.widgets import PlanningMarkdown
 
     from kolega_code.cli.app import KolegaCodeApp
 
@@ -255,7 +255,7 @@ async def test_textual_app_implement_plan_switches_to_build_and_sends_plan(
         assert app._plan_pending is False
         assert app._plan_reofferable is False
         assert app._latest_plan == "# Plan\n\nBuild it."
-        assert app.query_one("#planning_plan_markdown", Markdown).source == "# Plan\n\nBuild it."
+        assert app.query_one("#planning_plan_markdown", PlanningMarkdown).source == "# Plan\n\nBuild it."
         assert app.query_one("#plan_actions").display is False
         loaded = store.load(session.session_id)
         assert loaded.latest_plan_markdown == "# Plan\n\nBuild it."
@@ -270,7 +270,7 @@ async def test_textual_app_implemented_plan_not_reoffered_on_reentry(
 ) -> None:
     pytest.importorskip("textual")
 
-    from textual.widgets import Markdown
+    from kolega_code.cli.tui.widgets import PlanningMarkdown
 
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.constants import PLAN_INTERACTION_MODE
@@ -336,7 +336,7 @@ async def test_textual_app_implemented_plan_not_reoffered_on_reentry(
         plan_actions = app.query_one("#plan_actions", ActionList)
         assert plan_actions.display is False
         assert plan_actions.option_count == 0
-        assert app.query_one("#planning_plan_markdown", Markdown).source == "# Plan\n\nBuild it."
+        assert app.query_one("#planning_plan_markdown", PlanningMarkdown).source == "# Plan\n\nBuild it."
 
         # A restart (reloading from the persisted session) must also not re-offer it.
         loaded = store.load(session.session_id)
@@ -350,7 +350,7 @@ async def test_textual_app_clear_context_and_implement_plan_starts_build_agent_f
 ) -> None:
     pytest.importorskip("textual")
 
-    from textual.widgets import Markdown
+    from kolega_code.cli.tui.widgets import PlanningMarkdown
 
     from kolega_code.cli.app import KolegaCodeApp
 
@@ -422,7 +422,7 @@ async def test_textual_app_clear_context_and_implement_plan_starts_build_agent_f
         assert app._plan_pending is False
         assert app._plan_reofferable is False
         assert app._latest_plan == "# Plan\n\nBuild it."
-        assert app.query_one("#planning_plan_markdown", Markdown).source == "# Plan\n\nBuild it."
+        assert app.query_one("#planning_plan_markdown", PlanningMarkdown).source == "# Plan\n\nBuild it."
         assert app.query_one("#plan_actions").display is False
         # LLM-context-only clear: the visible transcript is preserved, plus the new
         # "Implement the approved plan." entry.
@@ -439,7 +439,7 @@ async def test_textual_app_discuss_plan_preserves_old_plan_until_new_plan_is_wri
 ) -> None:
     pytest.importorskip("textual")
 
-    from textual.widgets import Markdown
+    from kolega_code.cli.tui.widgets import PlanningMarkdown
 
     from kolega_code.cli.app import KolegaCodeApp
 
@@ -494,7 +494,9 @@ async def test_textual_app_discuss_plan_preserves_old_plan_until_new_plan_is_wri
         assert app._plan_pending is False
         assert app._plan_reofferable is True
         assert app._plan_decision_active is False
-        assert app.query_one("#planning_plan_markdown", Markdown).source == "# Plan\n\nBuild it after discussing."
+        assert (
+            app.query_one("#planning_plan_markdown", PlanningMarkdown).source == "# Plan\n\nBuild it after discussing."
+        )
         assert app.query_one("#plan_actions").display is False
         loaded = store.load(session.session_id)
         assert loaded.latest_plan_markdown == "# Plan\n\nBuild it after discussing."
@@ -520,7 +522,7 @@ async def test_textual_app_discuss_plan_preserves_old_plan_until_new_plan_is_wri
         assert "# Plan\n\nBuild it after discussing." not in app.agent.messages[-1]
         assert app._latest_plan == "# New plan\n\nBuild this instead."
         assert app._plan_reofferable is False
-        assert app.query_one("#planning_plan_markdown", Markdown).source == "# New plan\n\nBuild this instead."
+        assert app.query_one("#planning_plan_markdown", PlanningMarkdown).source == "# New plan\n\nBuild this instead."
         assert app.query_one("#plan_actions").display is False
         loaded = store.load(session.session_id)
         assert loaded.latest_plan_markdown == "# New plan\n\nBuild this instead."

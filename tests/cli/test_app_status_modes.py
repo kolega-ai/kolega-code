@@ -357,7 +357,7 @@ async def test_textual_app_shift_tab_toggles_between_build_and_plan_agents(
 ) -> None:
     pytest.importorskip("textual")
 
-    from textual.widgets import Markdown
+    from kolega_code.cli.tui.widgets import PlanningMarkdown
 
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.constants import BUILD_INTERACTION_MODE, PLAN_INTERACTION_MODE
@@ -435,7 +435,7 @@ async def test_textual_app_shift_tab_toggles_between_build_and_plan_agents(
         assert app._plan_decision_active is False
         assert app._pending_question is None
         assert question_future.cancelled()
-        assert app.query_one("#planning_plan_markdown", Markdown).source == "# Plan\n\nDo it."
+        assert app.query_one("#planning_plan_markdown", PlanningMarkdown).source == "# Plan\n\nDo it."
         assert app.query_one("#plan_actions").display is False
         assert app.query_one("#question_actions").display is False
         loaded = store.load(session.session_id)

@@ -286,7 +286,7 @@ async def test_textual_app_reset_command_clears_current_thread(
 ) -> None:
     pytest.importorskip("textual")
 
-    from textual.widgets import Markdown
+    from kolega_code.cli.tui.widgets import PlanningMarkdown
 
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.state import PendingQuestion
@@ -365,8 +365,8 @@ async def test_textual_app_reset_command_clears_current_thread(
         assert question_future.cancelled()
         assert app.query_one("#plan_actions").display is False
         assert app.query_one("#question_actions").display is False
-        assert app.query_one("#planning_plan_markdown", Markdown).source == "No plan captured yet."
-        assert app.query_one("#planning_task_list_markdown", Markdown).source == "No task list has been set."
+        assert app.query_one("#planning_plan_markdown", PlanningMarkdown).source == "No plan captured yet."
+        assert app.query_one("#planning_task_list_markdown", PlanningMarkdown).source == "No task list has been set."
         assert store.load(session.session_id).history == []
         assert store.load(session.session_id).task_list_markdown == ""
         assert store.load(session.session_id).latest_plan_markdown == ""

@@ -295,14 +295,14 @@ async def test_status_dashboard_context_note_uses_alert_level(tmp_path: Path, mo
 async def test_planning_sidebar_marks_empty_states(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
 
-    from textual.widgets import Markdown
+    from kolega_code.cli.tui.widgets import PlanningMarkdown
 
     from kolega_code.cli.messages import PLAN_EMPTY_MESSAGE
 
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
 
     async with app.run_test():
-        plan_md = app.query_one("#planning_plan_markdown", Markdown)
+        plan_md = app.query_one("#planning_plan_markdown", PlanningMarkdown)
         assert plan_md.source == PLAN_EMPTY_MESSAGE
         assert plan_md.has_class("empty-state")
 
@@ -311,6 +311,77 @@ async def test_planning_sidebar_marks_empty_states(tmp_path: Path, monkeypatch: 
 
         assert plan_md.source == "# Plan\n\n- do the thing"
         assert not plan_md.has_class("empty-state")
+
+
+@pytest.mark.asyncio
+async def test_planning_sidebar_unchanged_refresh_preserves_scroll_position(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from textual.containers import VerticalScroll
+    from textual.widgets import TabbedContent
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+    long_plan = "# Plan\n\n" + "\n".join(
+        f"- Step {index}: keep this planning reference visible." for index in range(160)
+    )
+    long_task_list = "\n".join(f"- [ ] Task {index}: verify the sidebar keeps its place." for index in range(160))
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        app.query_one("#events", TabbedContent).active = "planning_pane"
+        app._latest_plan = long_plan
+        app.session.task_list_markdown = long_task_list
+        app._refresh_planning_sidebar()
+        await pilot.pause()
+
+        planning_form = app.query_one("#planning_form", VerticalScroll)
+        assert planning_form.max_scroll_y > 0
+        planning_form.scroll_to(y=min(20, planning_form.max_scroll_y), animate=False, immediate=True)
+        await pilot.pause()
+        scroll_y = planning_form.scroll_y
+        assert scroll_y > 0
+
+        app._refresh_planning_sidebar()
+        await pilot.pause()
+
+        assert planning_form.scroll_y == scroll_y
+
+
+@pytest.mark.asyncio
+async def test_planning_markdown_uses_single_cached_renderable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("textual")
+
+    from rich.markdown import Markdown as RichMarkdown
+
+    from kolega_code.cli.tui.widgets import PlanningMarkdown
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+    long_plan = "# Plan\n\n" + "\n".join(f"- Step {index}: do the thing with `code`." for index in range(120))
+
+    async with app.run_test():
+        app._latest_plan = long_plan
+        app._refresh_planning_sidebar()
+        plan_md = app.query_one("#planning_plan_markdown", PlanningMarkdown)
+
+        assert plan_md.source == long_plan
+        assert isinstance(plan_md.content, RichMarkdown)
+        assert list(plan_md.query("MarkdownBlock")) == []
+
+        renderable = plan_md.content
+        refresh_calls = 0
+        original_refresh = plan_md.refresh
+
+        def spy_refresh(*args, **kwargs):
+            nonlocal refresh_calls
+            refresh_calls += 1
+            return original_refresh(*args, **kwargs)
+
+        monkeypatch.setattr(plan_md, "refresh", spy_refresh)
+        plan_md.update(long_plan)
+
+        assert plan_md.content is renderable
+        assert refresh_calls == 0
 
 
 @pytest.mark.asyncio
