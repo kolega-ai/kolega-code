@@ -62,6 +62,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      pull-requests: write
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -81,7 +82,7 @@ jobs:
         run: uv sync --extra dev --frozen
 
       - name: Download Python 3.11 coverage report
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v8
         with:
           name: coverage-xml-python-3.11
           path: coverage-artifact
@@ -96,18 +97,26 @@ jobs:
           badge.write_text(badge.read_text().rstrip("\n") + "\n")
           PY
 
-      - name: Commit coverage badge
-        run: |
-          if [ -z "$(git status --porcelain -- docs/src/assets/coverage.svg)" ]; then
-            echo "Coverage badge is already up to date."
-            exit 0
-          fi
+      - name: Create coverage badge pull request
+        id: cpr
+        uses: peter-evans/create-pull-request@v8
+        with:
+          add-paths: docs/src/assets/coverage.svg
+          commit-message: "chore: update coverage badge"
+          committer: "github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>"
+          author: "github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>"
+          branch: chore/update-coverage-badge
+          delete-branch: true
+          title: "chore: update coverage badge"
+          body: |
+            Automated coverage badge update from CI after tests passed on `main`.
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add docs/src/assets/coverage.svg
-          git commit -m "chore: update coverage badge [skip ci]"
-          git push
+      - name: Enable auto-merge for coverage badge PR
+        if: steps.cpr.outputs.pull-request-number != '' && steps.cpr.outputs.pull-request-operation != 'none'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr merge "${{ steps.cpr.outputs.pull-request-number }}" --auto --squash --delete-branch
 
   dependency-audit:
     name: Dependency audit
