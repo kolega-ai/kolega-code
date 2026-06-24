@@ -714,6 +714,9 @@ class KolegaCodeApp(
         if not stripped_text or self.agent is None:
             if stripped_text:
                 self._set_settings_status(messages.SETTINGS_REQUIRED, tone="warning")
+                if self.config is None:
+                    self._set_composer_status(messages.DISCONNECTED_COMPOSER_PLACEHOLDER)
+                    self._show_composer_hint(messages.DISCONNECTED_ACTIVITY, tone="warning")
             return
         # Build attachments first (without clearing pending) so the vision gate
         # can block before we consume the composer text and pending images.
@@ -1340,6 +1343,10 @@ class KolegaCodeApp(
     def _set_chat_enabled(self, enabled: bool) -> None:
         composer = self.query_one("#composer", tui_widgets.ChatComposer)
         composer.disabled = not enabled or self._plan_decision_active or self._pending_approval is not None
+        if self.config is None and self.agent is None:
+            composer.placeholder = messages.DISCONNECTED_COMPOSER_PLACEHOLDER
+        elif enabled and composer.placeholder == messages.DISCONNECTED_COMPOSER_PLACEHOLDER:
+            composer.placeholder = messages.COMPOSER_PLACEHOLDER
 
     def _set_composer_status(self, status: str) -> None:
         self.query_one("#composer", tui_widgets.ChatComposer).placeholder = status
@@ -1460,10 +1467,19 @@ class KolegaCodeApp(
             if model
             else "not checked until a model is configured"
         )
-        return "\n".join(
+        startup_lines = [*tui_constants.STARTUP_WORDMARK, ""]
+        if self.config is None:
+            startup_lines.extend(
+                [
+                    messages.DISCONNECTED_HEADLINE,
+                    "",
+                    messages.DISCONNECTED_STARTUP_GUIDANCE,
+                    messages.DISCONNECTED_SIDEBAR_GUIDANCE,
+                    "",
+                ]
+            )
+        startup_lines.extend(
             [
-                *tui_constants.STARTUP_WORDMARK,
-                "",
                 f"Project: {self.project_path}",
                 f"Session: {session_id}",
                 f"Mode: {self.mode}",
@@ -1477,6 +1493,7 @@ class KolegaCodeApp(
                 f"Ctrl+C stop turn {theme.g(Glyph.BULLET_SEP)} Cmd+C copy selection {theme.g(Glyph.BULLET_SEP)} / commands",
             ]
         )
+        return "\n".join(startup_lines)
 
     def _startup_model(self) -> tuple[str, str]:
         if self.config is not None:

@@ -38,7 +38,12 @@ class StatusDashboardMixin:
 
     def _format_status_dashboard(self) -> str:
         state = self._status_state
-        provider_model = f"{state.provider}/{state.model}" if state.model else state.provider
+        disconnected = self.config is None
+        provider_model = (
+            messages.DISCONNECTED_MODEL
+            if disconnected
+            else (f"{state.provider}/{state.model}" if state.model else state.provider)
+        )
         effort = state.thinking_effort or "not supported"
         mode = state.mode.title()
         permission_mode = state.permission_mode.title()
@@ -83,7 +88,7 @@ class StatusDashboardMixin:
             f"{label('Context')}\n"
             f"{context_lines}\n\n"
             f"{label('Activity')}\n"
-            f"{escape(state.activity)}"
+            f"{escape(messages.DISCONNECTED_ACTIVITY if disconnected else state.activity)}"
         )
 
     def _context_bar(self, usage_percentage: float) -> str:
