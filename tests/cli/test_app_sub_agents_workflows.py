@@ -442,6 +442,32 @@ async def test_open_sub_agent_inspector_renders_trajectory(tmp_path: Path, monke
 
 
 @pytest.mark.asyncio
+async def test_sub_agent_inspector_close_refocuses_idle_composer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from kolega_code.cli.tui.widgets import ChatComposer
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        app._render_event(_sub_agent_event(uuid="r1", text="some response"))
+        app.action_open_sub_agent()
+        await pilot.pause()
+
+        screen = app._sub_agent_inspector
+        assert screen is not None
+        screen.action_close()
+        composer = app.query_one("#composer", ChatComposer)
+        for _ in range(5):
+            await pilot.pause()
+            if app.focused is composer:
+                break
+
+        assert composer.disabled is False
+        assert app.focused is composer
+
+
+@pytest.mark.asyncio
 async def test_sub_agent_inspector_switches_agents(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
 

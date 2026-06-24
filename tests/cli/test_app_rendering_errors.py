@@ -92,27 +92,32 @@ async def test_textual_app_cancellation_is_visible_in_chat(tmp_path: Path, monke
     now = 10.0
     monkeypatch.setattr(app, "_now", lambda: now)
 
-    async with app.run_test():
+    async with app.run_test() as pilot:
         composer = app.query_one("#composer", ChatComposer)
         turn_status = app.query_one("#turn_status", Static)
         task = asyncio.create_task(app._process_message("hi"))
         app.agent_worker = task
         await started.wait()
 
-        now = 52.0
-        app.action_cancel_generation()
-        progress_entries = [entry for entry in app.conversation_entries if entry.kind == "progress"]
-        assert progress_entries == []
-        assert composer.placeholder == COMPOSER_PLACEHOLDER
-        assert "Stopping…" in str(turn_status.render())
-        assert "42s" in str(turn_status.render())
+        app.screen.set_focus(app.query_one("#conversation"))
+        await pilot.pause()
+        assert composer.disabled is True
 
+        now = 52.0
+        await pilot.press("ctrl+c")
         await task
+        for _ in range(5):
+            await pilot.pause()
+            if app.focused is composer:
+                break
 
         progress_entries = [entry for entry in app.conversation_entries if entry.kind == "progress"]
         assert len(progress_entries) == 1
         assert progress_entries[0].content == "Stopped by user."
         assert progress_entries[0].complete is True
+        assert app.agent_worker is None
+        assert composer.disabled is False
+        assert app.focused is composer
         assert composer.placeholder == COMPOSER_PLACEHOLDER
         assert "Stopped after 42s" in str(turn_status.render())
 

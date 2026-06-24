@@ -394,7 +394,7 @@ class KolegaCodeApp(
         if self.config is not None:
             await self._build_agent(self.config)
             self._set_chat_enabled(True)
-            self.query_one("#composer", tui_widgets.ChatComposer).focus()
+            self._schedule_primary_focus_restore()
         else:
             await self._ensure_agent_from_settings()
 
@@ -753,6 +753,12 @@ class KolegaCodeApp(
         # we run after any AUTO_FOCUS/_reset_focus the same blur triggered.
         self.call_after_refresh(self._heal_prompt_focus)
 
+    def on_app_focus(self, event: events.AppFocus) -> None:
+        # When a terminal window regains OS focus, the next likely action is typing
+        # a prompt. Defer so this runs after Textual's resume/auto-focus churn, while
+        # still respecting active prompt lists and disabled composer states.
+        self._schedule_primary_focus_restore()
+
     async def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         if event.option_list.id == "question_actions":
             event.stop()
@@ -930,12 +936,7 @@ class KolegaCodeApp(
         except Exception:
             return
         if not visible:
-            try:
-                composer = self.query_one("#composer", tui_widgets.ChatComposer)
-                if not composer.disabled:
-                    composer.focus()
-            except Exception:
-                return
+            self._schedule_primary_focus_restore()
 
     async def _set_interaction_mode(self, interaction_mode: str) -> None:
         if interaction_mode not in {tui_constants.BUILD_INTERACTION_MODE, tui_constants.PLAN_INTERACTION_MODE}:
@@ -1042,7 +1043,7 @@ class KolegaCodeApp(
         self._set_plan_actions_visible(False)
         self._restore_composer_placeholder()
         self._set_chat_enabled(self.agent is not None)
-        self.query_one("#composer", tui_widgets.ChatComposer).focus()
+        self._schedule_primary_focus_restore()
         self._notify_user(messages.PLAN_DISCUSSION_RESUMED)
 
     def _active_prompt_actions(self) -> Optional[tui_widgets.ActionList]:
@@ -1073,6 +1074,40 @@ class KolegaCodeApp(
                 return None
             return actions if actions.display else None
         return None
+
+    def _restore_primary_focus(self) -> None:
+        """Focus the highest-priority input target for the current TUI state.
+
+        Prompt/action lists keep keyboard ownership while they are active. In the
+        normal chat state, the composer is the primary input target, but only when
+        it is enabled and the main screen is visible.
+        """
+        try:
+            if len(self.screen_stack) != 1:
+                return
+        except Exception:
+            return
+
+        if self._active_prompt_actions() is not None:
+            self._heal_prompt_focus()
+            return
+
+        try:
+            composer = self.query_one("#composer", tui_widgets.ChatComposer)
+        except Exception:
+            return
+
+        if composer.disabled or self.screen.focused is composer:
+            return
+        self.screen.set_focus(composer)
+
+    def _schedule_primary_focus_restore(self) -> None:
+        """Restore focus now and after refresh to beat Textual focus churn."""
+        self._restore_primary_focus()
+        try:
+            self.call_after_refresh(self._restore_primary_focus)
+        except Exception:
+            pass
 
     def _focus_active_prompt(self) -> None:
         """Focus the active prompt list now and re-assert after the refresh settles.
