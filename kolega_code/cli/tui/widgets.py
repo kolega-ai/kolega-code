@@ -433,6 +433,14 @@ class ActionList(OptionList):
             if not composer.disabled:
                 composer.focus()
 
+    def action_cursor_down(self) -> None:
+        """Move down through options, or from the bottom option into composer."""
+        if self.option_count and self.highlighted == self.option_count - 1:
+            focus_composer = getattr(self.app, "_focus_composer_from_active_prompt", None)
+            if callable(focus_composer) and focus_composer(self):
+                return
+        super().action_cursor_down()
+
     def on_key(self, event: events.Key) -> None:
         if event.character and event.character.isdigit():
             index = int(event.character) - 1
@@ -614,6 +622,25 @@ class ChatComposer(TextArea):
             return
         if row > 0:
             self._delete_via_keyboard((row - 1, 0), (row, 0))
+
+    def action_cursor_up(self, select: bool = False) -> None:
+        """Move up in the draft, or from the top line back to active options."""
+        if select:
+            super().action_cursor_up(select)
+            return
+
+        dropdown = self.mention_dropdown()
+        if dropdown is not None and dropdown.is_open:
+            dropdown.action_cursor_up()
+            return
+
+        row, _ = self.cursor_location
+        if row == 0:
+            focus_prompt = getattr(self.app, "_focus_active_prompt_from_composer", None)
+            if callable(focus_prompt) and focus_prompt():
+                return
+
+        super().action_cursor_up(select)
 
     def action_mention_prev(self) -> None:
         dropdown = self.mention_dropdown()
