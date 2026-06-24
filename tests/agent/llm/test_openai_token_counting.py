@@ -1,3 +1,4 @@
+# ruff: noqa: F401,F811,E402
 """
 Comprehensive tests comparing local vs API token counting for OpenAI provider.
 
@@ -25,6 +26,13 @@ from kolega_code.llm.models import (
 from kolega_code.llm.providers.openai import OpenAIProvider
 from kolega_code.agent.prompt_provider import AgentMode, AgentType, PromptContext, PromptProvider
 from kolega_code.agent.tools import ToolCollection, ToolCollectionConfig
+from ._token_counting_utils import (
+    calculate_percentage_difference,
+    complex_messages,
+    get_accuracy_threshold,
+    simple_messages,
+    simple_system,
+)
 
 # Load environment variables from the repository root.
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -48,16 +56,8 @@ def openai_provider(api_key):
     return OpenAIProvider(api_key=api_key)
 
 
-@pytest.fixture
-def simple_messages():
-    """Simple test messages."""
-    return MessageHistory([Message("user", [TextBlock("Hello, how are you?")])])
 
 
-@pytest.fixture
-def simple_system():
-    """Simple system message."""
-    return Message("system", [TextBlock("You are a helpful assistant.")])
 
 
 @pytest.fixture
@@ -140,31 +140,6 @@ def real_tools(tmp_path):
     return tool_collection.get_tool_list()
 
 
-@pytest.fixture
-def complex_messages():
-    """Multi-turn conversation with various content types."""
-    return MessageHistory(
-        [
-            Message("user", [TextBlock("Can you help me write a Python function?")]),
-            Message(
-                "assistant",
-                [
-                    TextBlock(
-                        "Of course! I'd be happy to help you write a Python function. What would you like the function to do?"
-                    )
-                ],
-            ),
-            Message("user", [TextBlock("I need a function that calculates the factorial of a number recursively.")]),
-            Message(
-                "assistant",
-                [
-                    TextBlock(
-                        "Here's a recursive factorial function:\n\n```python\ndef factorial(n):\n    if n == 0 or n == 1:\n        return 1\n    return n * factorial(n - 1)\n```"
-                    )
-                ],
-            ),
-        ]
-    )
 
 
 @pytest.fixture
@@ -203,25 +178,8 @@ def messages_with_tool_calls():
     )
 
 
-def calculate_percentage_difference(local_count: int, api_count: int) -> float:
-    """Calculate percentage difference between local and API token counts."""
-    if api_count == 0:
-        return 0.0
-    return abs(local_count - api_count) / api_count * 100
 
 
-def get_accuracy_threshold(api_count: int, has_tools: bool = False) -> float:
-    """Get appropriate accuracy threshold based on token count.
-
-    Small token counts (<200) have higher variance due to fixed overhead,
-    so we use a more lenient threshold. For realistic agent contexts (>200 tokens),
-    we enforce a stricter threshold. Tool definitions have additional variance.
-    """
-    if api_count < 200:
-        return 15.0  # Lenient threshold for small samples
-    if has_tools:
-        return 20.0  # More lenient for tool definitions (OpenAI uses compact internal format)
-    return 10.0  # Moderate threshold for realistic contexts (OpenAI less predictable than Anthropic)
 
 
 @pytest.mark.asyncio

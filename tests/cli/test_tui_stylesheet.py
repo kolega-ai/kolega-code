@@ -1,9 +1,10 @@
+# ruff: noqa: F401,F811,E402
 from pathlib import Path
 
 import pytest
 
 from kolega_code.agent.prompt_provider import AgentMode
-from kolega_code.cli.config import build_agent_config, config_summary
+from kolega_code.cli.config import config_summary
 from kolega_code.cli.session_store import SessionStore
 from kolega_code.cli.tui import agent_runtime as agent_runtime_module
 from kolega_code.config import ModelProvider
@@ -12,14 +13,8 @@ from kolega_code.config import ModelProvider
 EXPECTED_CSS_PATH = "tui/styles.tcss"
 
 
-def build_test_config(project: Path):
-    return build_agent_config(
-        project,
-        env={
-            "ANTHROPIC_API_KEY": "test-key",
-            "KOLEGA_CODE_PROVIDER": ModelProvider.ANTHROPIC.value,
-        },
-    )
+from ._app_test_utils import build_test_config
+
 
 
 def test_tui_uses_external_textual_stylesheet(tmp_path: Path) -> None:

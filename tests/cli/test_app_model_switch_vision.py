@@ -1,23 +1,18 @@
+# ruff: noqa: F401,F811,E402
 """Tests for the model-switch warning when a non-vision model inherits image history."""
 
 import pytest
 
 from kolega_code.cli.tui import agent_runtime as agent_runtime_module
 
-from kolega_code.cli.config import build_agent_config, config_summary
+from kolega_code.cli.config import config_summary
 from kolega_code.cli.provider_registry import DEEPSEEK_DEFAULT_MODEL
 from kolega_code.cli.session_store import SessionStore
 from kolega_code.llm.models import ImageBlock, Message, TextBlock
 
 
-def build_test_config(project):
-    return build_agent_config(
-        project,
-        env={
-            "ANTHROPIC_API_KEY": "test-key",
-            "KOLEGA_CODE_PROVIDER": "anthropic",
-        },
-    )
+from ._app_test_utils import build_test_config
+
 
 
 class _FakeConversation:

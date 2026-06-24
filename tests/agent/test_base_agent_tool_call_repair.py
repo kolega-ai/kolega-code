@@ -1,0 +1,860 @@
+# ruff: noqa: F401,F811,E402
+import os
+import uuid
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+from dotenv import load_dotenv
+
+from kolega_code.agent.baseagent import BaseAgent
+from kolega_code.agent.errors import MaxAgentIterationsExceeded
+from kolega_code.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
+from kolega_code.events import AgentConnectionManager
+from kolega_code.llm.exceptions import (
+    LLMBillingError,
+    LLMAuthenticationError,
+    LLMContextWindowExceededError,
+    LLMInternalServerError,
+    LLMRateLimitError,
+)
+from kolega_code.llm.models import (
+    ImageBlock,
+    Message,
+    MessageHistory,
+    RedactedThinkingBlock,
+    TextBlock,
+    ThinkingBlock,
+    ToolCall,
+    ToolResult,
+)
+
+from .compaction_helpers import FakeLLM
+
+# Load environment variables
+load_dotenv()
+
+class TestBaseAgent:
+    def testfix_incomplete_tool_calls_no_changes_needed(self, base_agent):
+        """Test fix method doesn't modify valid history."""
+        valid_history = [
+            Message(role="user", content=[TextBlock(text="Test message")]),
+            Message(role="assistant", content=[ToolCall(id="tool1", name="test_tool", input={})]),
+            Message(
+                role="user",
+                content=[ToolResult(tool_use_id="tool1", name="test_tool", content="Success", is_error=False)],
+            ),
+        ]
+
+        fixed_history = base_agent.fix_incomplete_tool_calls(valid_history)
+
+        assert len(fixed_history) == 3
+        assert fixed_history[0].to_dict() == valid_history[0].to_dict()
+        assert fixed_history[1].to_dict() == valid_history[1].to_dict()
+        assert fixed_history[2].to_dict() == valid_history[2].to_dict()
+
+    def testfix_incomplete_tool_calls_adds_placeholder_result(self, base_agent):
+        """Test fix method adds placeholder result for orphaned tool call."""
+        incomplete_history = [
+            Message(role="user", content=[TextBlock(text="Test message")]),
+            Message(role="assistant", content=[ToolCall(id="tool1", name="test_tool", input={})]),
+            # Missing tool result
+        ]
+
+        fixed_history = base_agent.fix_incomplete_tool_calls(incomplete_history)
+
+        assert len(fixed_history) == 3  # Original 2 + 1 placeholder
+
+        # Check original messages are preserved
+        assert fixed_history[0].to_dict() == incomplete_history[0].to_dict()
+        assert fixed_history[1].to_dict() == incomplete_history[1].to_dict()
+
+        # Check placeholder was added
+        placeholder_msg = fixed_history[2]
+        assert placeholder_msg.role == "user"
+        assert len(placeholder_msg.content) == 1
+        assert isinstance(placeholder_msg.content[0], ToolResult)
+        assert placeholder_msg.content[0].tool_use_id == "tool1"
+        assert placeholder_msg.content[0].name == "test_tool"
+        assert placeholder_msg.content[0].is_error is True
+        assert "interrupted" in placeholder_msg.content[0].content.lower()
+
+    def testfix_incomplete_tool_calls_multiple_tools(self, base_agent):
+        """Test fix method handles multiple incomplete tool calls."""
+        incomplete_history = [
+            Message(
+                role="assistant",
+                content=[
+                    ToolCall(id="tool1", name="test_tool1", input={}),
+                    ToolCall(id="tool2", name="test_tool2", input={}),
+                ],
+            ),
+            # Missing tool results
+        ]
+
+        fixed_history = base_agent.fix_incomplete_tool_calls(incomplete_history)
+
+        assert len(fixed_history) == 2  # Original 1 + 1 placeholder
+
+        # Check placeholder message has results for both tools
+        placeholder_msg = fixed_history[1]
+        assert placeholder_msg.role == "user"
+        assert len(placeholder_msg.content) == 2
+
+        tool_result_ids = {result.tool_use_id for result in placeholder_msg.content}
+        assert tool_result_ids == {"tool1", "tool2"}
+
+        for result in placeholder_msg.content:
+            assert isinstance(result, ToolResult)
+            assert result.is_error is True
+
+    def testfix_incomplete_tool_calls_partial_results(self, base_agent):
+        """Test fix method handles partial tool results correctly."""
+        incomplete_history = [
+            Message(
+                role="assistant",
+                content=[
+                    ToolCall(id="tool1", name="test_tool1", input={}),
+                    ToolCall(id="tool2", name="test_tool2", input={}),
+                ],
+            ),
+            Message(
+                role="user",
+                content=[
+                    ToolResult(tool_use_id="tool1", name="test_tool1", content="Success", is_error=False)
+                    # Missing tool2 result
+                ],
+            ),
+        ]
+
+        fixed_history = base_agent.fix_incomplete_tool_calls(incomplete_history)
+
+        # Should have same length since placeholder is merged into existing user message
+        assert len(fixed_history) == 2  # Same as original
+
+        # Check that the user message now has both tool results
+        user_message = fixed_history[1]
+        assert user_message.role == "user"
+        assert len(user_message.content) == 2  # Now has both tool results
+
+        # Check tool result IDs
+        tool_result_ids = {result.tool_use_id for result in user_message.content if isinstance(result, ToolResult)}
+        assert tool_result_ids == {"tool1", "tool2"}
+
+        # Check that placeholder was added for tool2
+        tool2_result = next(result for result in user_message.content if result.tool_use_id == "tool2")
+        assert tool2_result.is_error is True
+        assert "interrupted" in tool2_result.content.lower()
+
+        # Verify the fixed history is valid
+        assert base_agent._is_history_valid_for_anthropic(fixed_history) is True
+
+    def testfix_incomplete_tool_calls_empty_history(self, base_agent):
+        """Test fix method handles empty history."""
+        fixed_history = base_agent.fix_incomplete_tool_calls([])
+        assert fixed_history == []
+
+    def test_restore_message_history_with_incomplete_tool_calls(self, base_agent):
+        """Test restore method does NOT automatically fix incomplete tool calls."""
+        # Serialized history with incomplete tool call (simulating interrupted state)
+        serialized_incomplete_history = [
+            {
+                "role": "user",
+                "content": [{"type": "text", "text": "Test message", "cache_checkpoint": False}],
+                "stop_reason": None,
+            },
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_call",
+                        "id": "tool1",
+                        "name": "test_tool",
+                        "input": {"param": "value"},
+                        "cache_checkpoint": False,
+                    }
+                ],
+                "stop_reason": "tool_use",
+            },
+            # Missing tool result message (simulating interruption)
+        ]
+
+        base_agent.restore_message_history(serialized_incomplete_history)
+
+        # Verify history was NOT fixed - restore should preserve authentic history
+        assert len(base_agent.history) == 2  # Original 2 messages unchanged
+
+        # Check original messages are preserved as-is
+        assert base_agent.history[0].role == "user"
+        assert base_agent.history[1].role == "assistant"
+        assert len(base_agent.history[1].tool_calls) == 1
+
+        # Verify the history is still invalid for Anthropic (not fixed)
+        assert base_agent._is_history_valid_for_anthropic() is False
+
+        # But verify that fix_incomplete_tool_calls can fix it
+        fixed_history = base_agent.fix_incomplete_tool_calls(list(base_agent.history))
+        assert len(fixed_history) == 3  # Now fixed with placeholder
+        assert base_agent._is_history_valid_for_anthropic(fixed_history) is True
+
+    def testfix_incomplete_tool_calls_at_beginning_of_history(self, base_agent):
+        """Test fix method handles incomplete tool calls at the beginning of message history."""
+        corrupted_history = [
+            # Incomplete tool call sequence at the beginning
+            Message(
+                role="assistant",
+                content=[
+                    ToolCall(id="early_tool1", name="early_tool", input={}),
+                    ToolCall(id="early_tool2", name="another_early_tool", input={}),
+                ],
+            ),
+            Message(
+                role="user",
+                content=[
+                    ToolResult(tool_use_id="early_tool1", name="early_tool", content="Success", is_error=False)
+                    # Missing early_tool2 result
+                ],
+            ),
+            # Normal conversation continues
+            Message(role="user", content=[TextBlock(text="How are things?")]),
+            Message(role="assistant", content=[TextBlock(text="Things are going well.")]),
+            # Complete tool call sequence later
+            Message(role="assistant", content=[ToolCall(id="later_tool", name="later_tool", input={})]),
+            Message(
+                role="user",
+                content=[
+                    ToolResult(tool_use_id="later_tool", name="later_tool", content="Later success", is_error=False)
+                ],
+            ),
+        ]
+
+        fixed_history = base_agent.fix_incomplete_tool_calls(corrupted_history)
+
+        # Should have same length since placeholder is merged into existing user message
+        assert len(fixed_history) == 6  # Same as original
+
+        # Verify the early incomplete sequence was fixed by merging placeholder into existing user message
+        assert fixed_history[0].role == "assistant"  # Original tool call message
+        assert fixed_history[1].role == "user"  # User message now has both results
+        assert len(fixed_history[1].content) == 2  # Now has both tool results
+
+        # Check that both tool results are present
+        tool_result_ids = {result.tool_use_id for result in fixed_history[1].content if isinstance(result, ToolResult)}
+        assert tool_result_ids == {"early_tool1", "early_tool2"}
+
+        # Verify the placeholder result is marked as error
+        placeholder_result = next(result for result in fixed_history[1].content if result.tool_use_id == "early_tool2")
+        assert placeholder_result.is_error is True
+        assert "interrupted" in placeholder_result.content.lower()
+
+        # Verify rest of history is preserved
+        assert fixed_history[2].role == "user"  # "How are things?"
+        assert fixed_history[3].role == "assistant"  # "Things are going well."
+        assert fixed_history[4].role == "assistant"  # later_tool call
+        assert fixed_history[5].role == "user"  # later_tool result
+
+        # Verify final history is valid
+        assert base_agent._is_history_valid_for_anthropic(fixed_history) is True
+
+    def testfix_incomplete_tool_calls_in_middle_of_history(self, base_agent):
+        """Test fix method handles incomplete tool calls in the middle of message history."""
+        corrupted_history = [
+            # Normal conversation start
+            Message(role="user", content=[TextBlock(text="Hello")]),
+            Message(role="assistant", content=[TextBlock(text="Hi there!")]),
+            # Incomplete tool call sequence in the middle
+            Message(
+                role="assistant",
+                content=[
+                    ToolCall(id="middle_tool1", name="middle_tool", input={}),
+                    ToolCall(id="middle_tool2", name="another_middle_tool", input={}),
+                    ToolCall(id="middle_tool3", name="third_middle_tool", input={}),
+                ],
+            ),
+            Message(
+                role="user",
+                content=[
+                    ToolResult(tool_use_id="middle_tool1", name="middle_tool", content="Success", is_error=False),
+                    ToolResult(tool_use_id="middle_tool3", name="third_middle_tool", content="Success", is_error=False),
+                    # Missing middle_tool2 result
+                ],
+            ),
+            # Normal conversation continues
+            Message(role="assistant", content=[TextBlock(text="Let me continue...")]),
+            Message(role="user", content=[TextBlock(text="Sounds good")]),
+        ]
+
+        fixed_history = base_agent.fix_incomplete_tool_calls(corrupted_history)
+
+        # Should have same length since placeholder is merged into existing user message
+        assert len(fixed_history) == 6  # Same as original
+
+        # Verify the middle incomplete sequence was fixed
+        assert fixed_history[2].role == "assistant"  # Tool call message
+        assert fixed_history[3].role == "user"  # User message now has all 3 results
+        assert len(fixed_history[3].content) == 3  # Now has all 3 tool results
+
+        # Check that all tool results are present
+        tool_result_ids = {result.tool_use_id for result in fixed_history[3].content if isinstance(result, ToolResult)}
+        assert tool_result_ids == {"middle_tool1", "middle_tool2", "middle_tool3"}
+
+        # Verify the placeholder result is marked as error
+        placeholder_result = next(result for result in fixed_history[3].content if result.tool_use_id == "middle_tool2")
+        assert placeholder_result.is_error is True
+
+        # Verify rest of history is preserved
+        assert fixed_history[4].role == "assistant"  # "Let me continue..."
+        assert fixed_history[5].role == "user"  # "Sounds good"
+
+        # Verify final history is valid
+        assert base_agent._is_history_valid_for_anthropic(fixed_history) is True
+
+    def test_fix_multiple_incomplete_tool_call_sequences(self, base_agent):
+        """Test fix method handles multiple incomplete tool call sequences in the same history."""
+        corrupted_history = [
+            # First incomplete sequence
+            Message(
+                role="assistant",
+                content=[
+                    ToolCall(id="seq1_tool1", name="tool1", input={}),
+                    ToolCall(id="seq1_tool2", name="tool2", input={}),
+                ],
+            ),
+            Message(
+                role="user",
+                content=[
+                    ToolResult(tool_use_id="seq1_tool1", name="tool1", content="Success", is_error=False)
+                    # Missing seq1_tool2
+                ],
+            ),
+            # Normal conversation
+            Message(role="user", content=[TextBlock(text="Continue")]),
+            Message(role="assistant", content=[TextBlock(text="Continuing...")]),
+            # Second incomplete sequence
+            Message(
+                role="assistant",
+                content=[
+                    ToolCall(id="seq2_tool1", name="tool3", input={}),
+                    ToolCall(id="seq2_tool2", name="tool4", input={}),
+                    ToolCall(id="seq2_tool3", name="tool5", input={}),
+                ],
+            ),
+            Message(
+                role="user",
+                content=[
+                    ToolResult(tool_use_id="seq2_tool2", name="tool4", content="Success", is_error=False)
+                    # Missing seq2_tool1 and seq2_tool3
+                ],
+            ),
+            # End conversation
+            Message(role="assistant", content=[TextBlock(text="Done")]),
+        ]
+
+        fixed_history = base_agent.fix_incomplete_tool_calls(corrupted_history)
+
+        # Should have same length since placeholders are merged into existing user messages
+        assert len(fixed_history) == 7  # Same as original
+
+        # Verify first incomplete sequence was fixed
+        assert fixed_history[1].role == "user"
+        assert len(fixed_history[1].content) == 2  # Now has both tool results
+        first_tool_result_ids = {
+            result.tool_use_id for result in fixed_history[1].content if isinstance(result, ToolResult)
+        }
+        assert first_tool_result_ids == {"seq1_tool1", "seq1_tool2"}
+
+        # Verify second incomplete sequence was fixed
+        assert fixed_history[5].role == "user"
+        assert len(fixed_history[5].content) == 3  # Now has all 3 tool results
+        second_tool_result_ids = {
+            result.tool_use_id for result in fixed_history[5].content if isinstance(result, ToolResult)
+        }
+        assert second_tool_result_ids == {"seq2_tool1", "seq2_tool2", "seq2_tool3"}
+
+        # Verify final history is valid
+        assert base_agent._is_history_valid_for_anthropic(fixed_history) is True
+
+    def testfix_incomplete_tool_calls_at_end_with_no_user_message(self, base_agent):
+        """Test fix method handles incomplete tool calls at the very end with no following user message."""
+        corrupted_history = [
+            Message(role="user", content=[TextBlock(text="Do something")]),
+            Message(role="assistant", content=[TextBlock(text="Sure, let me help.")]),
+            # Tool calls at the end with no user response (simulates interruption)
+            Message(
+                role="assistant",
+                content=[
+                    ToolCall(id="end_tool1", name="end_tool", input={}),
+                    ToolCall(id="end_tool2", name="another_end_tool", input={}),
+                ],
+            ),
+            # No user message follows (interrupted)
+        ]
+
+        fixed_history = base_agent.fix_incomplete_tool_calls(corrupted_history)
+
+        # Should have added 1 new user message for the missing tools
+        assert len(fixed_history) == 4  # Original 3 + 1 new user message
+
+        # Verify placeholder was added at the end
+        assert fixed_history[3].role == "user"
+        assert len(fixed_history[3].content) == 2
+        placeholder_ids = {result.tool_use_id for result in fixed_history[3].content}
+        assert placeholder_ids == {"end_tool1", "end_tool2"}
+
+        for result in fixed_history[3].content:
+            assert result.is_error is True
+            assert "interrupted" in result.content.lower()
+
+        # Verify final history is valid
+        assert base_agent._is_history_valid_for_anthropic(fixed_history) is True
+
+    def test_fix_consecutive_incomplete_tool_sequences(self, base_agent):
+        """Test fix method handles consecutive incomplete tool call sequences."""
+        corrupted_history = [
+            # First assistant message with tool calls
+            Message(role="assistant", content=[ToolCall(id="consec1_tool", name="tool1", input={})]),
+            # Partial results
+            Message(
+                role="user",
+                content=[ToolResult(tool_use_id="consec1_tool", name="tool1", content="Success", is_error=False)],
+            ),
+            # Immediately another assistant message with incomplete tools
+            Message(
+                role="assistant",
+                content=[
+                    ToolCall(id="consec2_tool1", name="tool2", input={}),
+                    ToolCall(id="consec2_tool2", name="tool3", input={}),
+                ],
+            ),
+            Message(
+                role="user",
+                content=[
+                    ToolResult(tool_use_id="consec2_tool1", name="tool2", content="Success", is_error=False)
+                    # Missing consec2_tool2
+                ],
+            ),
+            # Third consecutive assistant message
+            Message(role="assistant", content=[ToolCall(id="consec3_tool", name="tool4", input={})]),
+            # No user message (interrupted)
+        ]
+
+        fixed_history = base_agent.fix_incomplete_tool_calls(corrupted_history)
+
+        # Should have same length since one placeholder is merged, one new message is added
+        assert len(fixed_history) == 6  # Same as original (merge + add)
+
+        # First sequence is complete, no changes
+        assert fixed_history[0].role == "assistant"
+        assert fixed_history[1].role == "user"
+
+        # Second sequence should have placeholder merged into existing user message
+        assert fixed_history[2].role == "assistant"
+        assert fixed_history[3].role == "user"  # Original partial results now complete
+        assert len(fixed_history[3].content) == 2  # Now has both tool results
+        second_tool_result_ids = {
+            result.tool_use_id for result in fixed_history[3].content if isinstance(result, ToolResult)
+        }
+        assert second_tool_result_ids == {"consec2_tool1", "consec2_tool2"}
+
+        # Third sequence should have new user message added
+        assert fixed_history[4].role == "assistant"
+        assert fixed_history[5].role == "user"  # NEW: User message for consec3_tool
+        assert fixed_history[5].content[0].tool_use_id == "consec3_tool"
+
+        # Verify final history is valid
+        assert base_agent._is_history_valid_for_anthropic(fixed_history) is True
+
+    def test_fix_mixed_complete_and_incomplete_sequences(self, base_agent):
+        """Test fix method handles a mix of complete and incomplete tool call sequences."""
+        mixed_history = [
+            # Complete sequence 1
+            Message(role="assistant", content=[ToolCall(id="complete1", name="complete_tool", input={})]),
+            Message(
+                role="user",
+                content=[ToolResult(tool_use_id="complete1", name="complete_tool", content="Success", is_error=False)],
+            ),
+            # Incomplete sequence
+            Message(
+                role="assistant",
+                content=[
+                    ToolCall(id="incomplete1", name="incomplete_tool", input={}),
+                    ToolCall(id="incomplete2", name="another_incomplete", input={}),
+                ],
+            ),
+            Message(
+                role="user",
+                content=[
+                    ToolResult(tool_use_id="incomplete1", name="incomplete_tool", content="Success", is_error=False)
+                    # Missing incomplete2
+                ],
+            ),
+            # Complete sequence 2
+            Message(role="assistant", content=[ToolCall(id="complete2", name="another_complete", input={})]),
+            Message(
+                role="user",
+                content=[
+                    ToolResult(tool_use_id="complete2", name="another_complete", content="Success", is_error=False)
+                ],
+            ),
+            # Normal text
+            Message(role="user", content=[TextBlock(text="All done")]),
+            Message(role="assistant", content=[TextBlock(text="Great work!")]),
+        ]
+
+        fixed_history = base_agent.fix_incomplete_tool_calls(mixed_history)
+
+        # Should have same length since placeholder is merged into existing user message
+        assert len(fixed_history) == 8  # Same as original
+
+        # Verify complete sequences are unchanged
+        assert fixed_history[0].role == "assistant"  # complete1 tool call
+        assert fixed_history[1].role == "user"  # complete1 result
+
+        # Verify incomplete sequence was fixed by merging placeholder
+        assert fixed_history[2].role == "assistant"  # incomplete tools call
+        assert fixed_history[3].role == "user"  # user message now has both results
+        assert len(fixed_history[3].content) == 2  # Now has both tool results
+        incomplete_tool_result_ids = {
+            result.tool_use_id for result in fixed_history[3].content if isinstance(result, ToolResult)
+        }
+        assert incomplete_tool_result_ids == {"incomplete1", "incomplete2"}
+
+        # Verify rest is unchanged
+        assert fixed_history[4].role == "assistant"  # complete2 tool call
+        assert fixed_history[5].role == "user"  # complete2 result
+        assert fixed_history[6].role == "user"  # "All done"
+        assert fixed_history[7].role == "assistant"  # "Great work!"
+
+        # Verify final history is valid
+        assert base_agent._is_history_valid_for_anthropic(fixed_history) is True
+
+    def test_complex_corrupted_history_recovery(self, base_agent):
+        """Test fix method can recover from a complex, heavily corrupted message history."""
+        heavily_corrupted_history = [
+            # Start with incomplete sequence
+            Message(
+                role="assistant",
+                content=[
+                    ToolCall(id="start_tool1", name="start1", input={}),
+                    ToolCall(id="start_tool2", name="start2", input={}),
+                    ToolCall(id="start_tool3", name="start3", input={}),
+                ],
+            ),
+            Message(
+                role="user",
+                content=[
+                    ToolResult(tool_use_id="start_tool2", name="start2", content="Success", is_error=False)
+                    # Missing start_tool1 and start_tool3
+                ],
+            ),
+            # Some normal conversation
+            Message(role="user", content=[TextBlock(text="What about the other tasks?")]),
+            Message(role="assistant", content=[TextBlock(text="Let me check on those.")]),
+            # Another incomplete sequence
+            Message(
+                role="assistant",
+                content=[
+                    ToolCall(id="mid_tool1", name="mid1", input={}),
+                    ToolCall(id="mid_tool2", name="mid2", input={}),
+                    ToolCall(id="mid_tool3", name="mid3", input={}),
+                    ToolCall(id="mid_tool4", name="mid4", input={}),
+                ],
+            ),
+            Message(
+                role="user",
+                content=[
+                    ToolResult(tool_use_id="mid_tool1", name="mid1", content="Success", is_error=False),
+                    ToolResult(tool_use_id="mid_tool4", name="mid4", content="Success", is_error=False),
+                    # Missing mid_tool2 and mid_tool3
+                ],
+            ),
+            # Complete sequence (should be left alone)
+            Message(role="assistant", content=[ToolCall(id="good_tool", name="good", input={})]),
+            Message(
+                role="user",
+                content=[ToolResult(tool_use_id="good_tool", name="good", content="Success", is_error=False)],
+            ),
+            # Final incomplete sequence at the end
+            Message(
+                role="assistant",
+                content=[
+                    ToolCall(id="end_tool1", name="end1", input={}),
+                    ToolCall(id="end_tool2", name="end2", input={}),
+                ],
+            ),
+            # No user response (interrupted at the very end)
+        ]
+
+        # Verify original history is invalid
+        assert base_agent._is_history_valid_for_anthropic(heavily_corrupted_history) is False
+
+        fixed_history = base_agent.fix_incomplete_tool_calls(heavily_corrupted_history)
+
+        # Should have same length since 2 placeholders are merged, 1 new message is added
+        assert len(fixed_history) == 10  # Same as original (2 merges + 1 add = net 0 change)
+
+        # Verify all incomplete sequences were fixed
+
+        # First sequence: placeholders merged into existing user message
+        assert len(fixed_history[1].content) == 3  # Now has all 3 tool results
+        first_placeholders = {r.tool_use_id for r in fixed_history[1].content if isinstance(r, ToolResult)}
+        assert first_placeholders == {"start_tool1", "start_tool2", "start_tool3"}
+
+        # Second sequence: placeholders merged into existing user message
+        assert len(fixed_history[5].content) == 4  # Now has all 4 tool results
+        second_placeholders = {r.tool_use_id for r in fixed_history[5].content if isinstance(r, ToolResult)}
+        assert second_placeholders == {"mid_tool1", "mid_tool2", "mid_tool3", "mid_tool4"}
+
+        # Third sequence: new user message created
+        assert fixed_history[9].role == "user"
+        assert len(fixed_history[9].content) == 2
+        third_placeholders = {r.tool_use_id for r in fixed_history[9].content}
+        assert third_placeholders == {"end_tool1", "end_tool2"}
+
+        # Verify all placeholders are marked as errors (check a few samples)
+        start_placeholder = next(r for r in fixed_history[1].content if r.tool_use_id == "start_tool1")
+        assert start_placeholder.is_error is True
+        assert "interrupted" in start_placeholder.content.lower()
+
+        # Most importantly: verify the fixed history is now valid for Anthropic
+        assert base_agent._is_history_valid_for_anthropic(fixed_history) is True
+
+    def test_append_user_message_with_incomplete_tool_calls(self, base_agent):
+        """Test that append_user_message does NOT fix incomplete tool calls."""
+        # Add assistant message with tool calls
+        base_agent.history.append(Message(role="assistant", content=[ToolCall(id="tool1", name="test_tool", input={})]))
+
+        # Append user message - should NOT fix the history
+        base_agent.append_user_message("New user message")
+
+        # Verify history was NOT fixed - append should preserve authentic history
+        assert len(base_agent.history) == 2  # assistant, user (new message)
+        assert not base_agent._is_history_valid_for_anthropic()  # Still invalid
+
+        # Check the new message was added
+        new_msg = base_agent.history[1]
+        assert new_msg.role == "user"
+        assert new_msg.content[0].text == "New user message"
+
+        # But verify that fix_incomplete_tool_calls can fix it
+        fixed_history = base_agent.fix_incomplete_tool_calls(list(base_agent.history))
+        assert len(fixed_history) == 3  # assistant, user (tool result), user (new message)
+        assert base_agent._is_history_valid_for_anthropic(fixed_history) is True
+
+    def test_append_user_message_no_fix_needed(self, base_agent):
+        """Test that append_user_message works normally when no fix needed."""
+        # Add a normal message
+        base_agent.history.append(Message(role="user", content=[TextBlock(text="Hello")]))
+
+        # Append another user message
+        base_agent.append_user_message("Another message")
+
+        # Should just append normally
+        assert len(base_agent.history) == 2
+        assert base_agent.history[1].content[0].text == "Another message"
+
+    def test_append_user_message_with_list_content(self, base_agent):
+        """Test append_user_message with list of ContentBlocks."""
+        content_blocks = [TextBlock(text="Message part 1"), TextBlock(text="Message part 2")]
+
+        base_agent.append_user_message(content_blocks)
+
+        assert len(base_agent.history) == 1
+        assert len(base_agent.history[0].content) == 2
+        assert base_agent.history[0].content[0].text == "Message part 1"
+        assert base_agent.history[0].content[1].text == "Message part 2"
+
+    def test_append_user_message_with_single_block(self, base_agent):
+        """Test append_user_message with single ContentBlock."""
+        content_block = TextBlock(text="Single block message")
+
+        base_agent.append_user_message(content_block)
+
+        assert len(base_agent.history) == 1
+        assert len(base_agent.history[0].content) == 1
+        assert base_agent.history[0].content[0].text == "Single block message"
+
+    def test_append_assistant_message(self, base_agent):
+        """Test that append_assistant_message works correctly."""
+        # Add a user message first
+        base_agent.append_user_message("User question")
+
+        # Add assistant message
+        assistant_msg = Message(role="assistant", content=[TextBlock(text="Assistant response")])
+        base_agent.append_assistant_message(assistant_msg)
+
+        assert len(base_agent.history) == 2
+        assert base_agent.history[1].role == "assistant"
+        assert base_agent.history[1].content[0].text == "Assistant response"
+
+    def test_extend_history_no_fix_needed(self, base_agent):
+        """Test extend_history works normally when no fix needed."""
+        # Start with valid history
+        base_agent.history.append(Message(role="user", content=[TextBlock(text="Hello")]))
+        base_agent.history.append(Message(role="assistant", content=[TextBlock(text="Hi there")]))
+
+        # Extend with more messages
+        new_messages = [
+            Message(role="user", content=[TextBlock(text="How are you?")]),
+            Message(role="assistant", content=[TextBlock(text="I'm doing well")]),
+        ]
+
+        base_agent.extend_history(new_messages)
+
+        assert len(base_agent.history) == 4
+        assert base_agent.history[2].content[0].text == "How are you?"
+        assert base_agent.history[3].content[0].text == "I'm doing well"
+
+    def test_needs_tool_call_fix(self, base_agent):
+        """Test the _needs_tool_call_fix method."""
+        # Empty history
+        assert not base_agent._needs_tool_call_fix()
+
+        # User message last
+        base_agent.history.append(Message(role="user", content=[TextBlock(text="Hello")]))
+        assert not base_agent._needs_tool_call_fix()
+
+        # Assistant message without tools
+        base_agent.history.append(Message(role="assistant", content=[TextBlock(text="Hi")]))
+        assert not base_agent._needs_tool_call_fix()
+
+        # Assistant message with tools
+        base_agent.history.append(Message(role="assistant", content=[ToolCall(id="tool1", name="test", input={})]))
+        assert base_agent._needs_tool_call_fix()
+
+    def test_needs_tool_call_fix_with_mixed_content(self, base_agent):
+        """Test _needs_tool_call_fix with mixed content blocks."""
+        # Assistant message with text and tool calls
+        base_agent.history.append(
+            Message(
+                role="assistant",
+                content=[
+                    TextBlock(text="Let me help you with that."),
+                    ToolCall(id="tool1", name="read_file", input={"path": "test.txt"}),
+                ],
+            )
+        )
+
+        assert base_agent._needs_tool_call_fix()
+
+    def test_needs_tool_call_fix_string_content(self, base_agent):
+        """Test _needs_tool_call_fix with string content (edge case)."""
+        # This shouldn't happen in practice, but test the edge case
+        base_agent.history.append(Message(role="assistant", content="Just a string"))
+
+        assert not base_agent._needs_tool_call_fix()
+    def test_append_user_message_multiple_incomplete_sequences(self, base_agent):
+        """Test append_user_message does NOT fix multiple incomplete sequences."""
+        # Create history with multiple incomplete tool sequences
+        base_agent.history = MessageHistory(
+            [
+                Message(role="user", content=[TextBlock(text="Initial request")]),
+                Message(
+                    role="assistant",
+                    content=[
+                        ToolCall(id="tool1", name="first_tool", input={}),
+                        ToolCall(id="tool2", name="second_tool", input={}),
+                    ],
+                ),
+                Message(
+                    role="user",
+                    content=[
+                        ToolResult(tool_use_id="tool1", name="first_tool", content="Result 1", is_error=False)
+                        # Missing tool2 result
+                    ],
+                ),
+                Message(role="assistant", content=[ToolCall(id="tool3", name="third_tool", input={})]),
+                # Missing tool3 result
+            ]
+        )
+
+        # Append new user message
+        base_agent.append_user_message("Continue with the task")
+
+        # History should still be invalid - append doesn't fix
+        assert not base_agent._is_history_valid_for_anthropic()
+
+        # But fix_incomplete_tool_calls should be able to fix it
+        fixed_history = base_agent.fix_incomplete_tool_calls(list(base_agent.history))
+        assert base_agent._is_history_valid_for_anthropic(fixed_history)
+
+        # Verify the fixed history has all tool results
+        tool_results = []
+        for msg in fixed_history:
+            if msg.role == "user":
+                tool_results.extend([b for b in msg.content if isinstance(b, ToolResult)])
+
+        tool_result_ids = {r.tool_use_id for r in tool_results}
+        assert "tool2" in tool_result_ids  # Should have placeholder for tool2
+        assert "tool3" in tool_result_ids  # Should have placeholder for tool3
+
+    @pytest.mark.slow
+    @pytest.mark.integration
+    @pytest.mark.asyncio
+    async def test_restore_and_append_scenario(self, base_agent):
+        """Test the scenario where restore and append don't fix, but LLM call fixes."""
+        # Skip if no API key is available
+        api_key = base_agent.config.get_api_key(base_agent.config.long_context_config.provider)
+        if not api_key or api_key == "test_key":
+            pytest.skip("No valid API key available for LLM provider")
+
+        # Create a serialized history that ends with tool calls (simulating what's in the DB)
+        serialized_history = [
+            {
+                "role": "user",
+                "content": [{"type": "text", "text": "Help me with a task", "cache_checkpoint": False}],
+                "stop_reason": None,
+            },
+            {
+                "role": "assistant",
+                "content": [{"type": "text", "text": "I'll help you with that task.", "cache_checkpoint": False}],
+                "stop_reason": None,
+            },
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_call",
+                        "id": "tool_1",
+                        "name": "read_file",
+                        "input": {"path": "task.txt"},
+                        "cache_checkpoint": False,
+                    }
+                ],
+                "stop_reason": "tool_use",
+            },
+            # Missing tool result - simulating an interrupted session
+        ]
+
+        # Restore the history (should NOT auto-fix)
+        base_agent.restore_message_history(serialized_history)
+
+        # Verify history is still invalid
+        assert not base_agent._is_history_valid_for_anthropic()
+
+        # Add a new user message (history remains invalid)
+        base_agent.append_user_message("What's the status of my task?")
+
+        # Verify the history is still invalid
+        assert not base_agent._is_history_valid_for_anthropic()
+
+        # Fix history before API call
+        fixed_history = MessageHistory(base_agent.fix_incomplete_tool_calls(list(base_agent.history)))
+
+        # Test with real API
+        system_message = Message(role="system", content=[TextBlock(text="You are a helpful assistant.")])
+
+        try:
+            response = await base_agent.llm.generate(
+                messages=fixed_history,
+                system=system_message,
+                model=base_agent.config.long_context_config.model,
+                max_completion_tokens=100,
+            )
+
+            assert response is not None
+            assert response.get_text_content()
+        except Exception as e:
+            # If this fails with the tool_use_id error, our fix didn't work
+            pytest.fail(f"API call failed with fixed history: {str(e)}")
+

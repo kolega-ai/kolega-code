@@ -1,3 +1,4 @@
+# ruff: noqa: F401,F811,E402
 """Tests for vision mismatch warnings when attaching/sending images on non-vision models.
 
 Covers all four image attachment entry points:
@@ -16,18 +17,12 @@ import pytest
 
 from kolega_code.cli.tui import agent_runtime as agent_runtime_module
 
-from kolega_code.cli.config import build_agent_config, config_summary
+from kolega_code.cli.config import config_summary
 from kolega_code.cli.session_store import SessionStore
 
 
-def build_test_config(project):
-    return build_agent_config(
-        project,
-        env={
-            "ANTHROPIC_API_KEY": "test-key",
-            "KOLEGA_CODE_PROVIDER": "anthropic",
-        },
-    )
+from ._app_test_utils import build_test_config
+
 
 
 def _image_attachment(path: str = "clipboard") -> dict:

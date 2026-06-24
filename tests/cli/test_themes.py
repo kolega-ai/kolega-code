@@ -1,3 +1,4 @@
+# ruff: noqa: F401,F811,E402
 from pathlib import Path
 
 import pytest
@@ -10,7 +11,7 @@ from kolega_code.cli.config import config_summary
 from kolega_code.cli.session_store import SessionStore
 from kolega_code.cli.settings import CliSettings, SettingsStore
 
-from .test_app import build_test_config
+from ._app_test_utils import build_test_config
 
 
 @pytest.fixture(autouse=True)
