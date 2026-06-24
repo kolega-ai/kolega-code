@@ -28,6 +28,15 @@ TEST_SYSTEM = Message("system", [TextBlock("You are a helpful assistant.")])
 
 
 @pytest.fixture
+def anthropic_client():
+    """Create an Anthropic client with test API key."""
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        pytest.skip("ANTHROPIC_API_KEY not set")
+    return LLMClient("anthropic", api_key)
+
+
+@pytest.fixture
 def openai_client():
     """Create an OpenAI client with test API key"""
     api_key = os.getenv("OPENAI_API_KEY")
