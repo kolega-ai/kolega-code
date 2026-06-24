@@ -6,6 +6,16 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.9.0 - 2026-06-24
+
+### Added
+
+- Added Ollama Cloud as a supported provider, including its model catalog and reasoning-field capture.
+
+### Fixed
+
+- Clarified the disconnected state shown on first run when no provider is configured.
+
 ## 0.8.4 - 2026-06-24
 
 ### Added
