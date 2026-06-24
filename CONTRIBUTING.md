@@ -4,11 +4,24 @@
 
 Kolega Code requires Python 3.11 or newer.
 
-Install the CLI and development dependencies with `uv`:
+Install the CLI, development dependencies, and the tracked Git hooks with the setup script:
+
+```bash
+./scripts/setup-dev.sh
+```
+
+If you prefer to run the steps manually:
 
 ```bash
 uv sync --extra cli --extra dev
+git config core.hooksPath .githooks
+uv run pre-commit install-hooks
+uv run pre-commit run --all-files --show-diff-on-failure
 ```
+
+Installing the `pre-commit` Python package is not enough. This repository uses a tracked
+`.githooks/pre-commit` wrapper that runs the exact same all-files command as CI. Run
+`./scripts/setup-dev.sh` or `git config core.hooksPath .githooks` once per clone.
 
 If you prefer `pip`, install the package in editable mode:
 
@@ -31,16 +44,17 @@ cp .env.example .env
 
 ## Tests and quality checks
 
-Install the pre-commit hooks to run Ruff and lightweight file hygiene checks before each commit:
+Verify that Git is configured to use the tracked hooks:
 
 ```bash
-uv run pre-commit install
+./scripts/check-dev-hooks.sh
 ```
 
-Run all hooks manually before opening a pull request:
+Local commits run the same all-files pre-commit command as CI when `core.hooksPath` points
+to `.githooks`:
 
 ```bash
-uv run pre-commit run --all-files
+uv run pre-commit run --all-files --show-diff-on-failure
 ```
 
 CI runs Ruff through pre-commit. You can also run Ruff directly for one-off linting and

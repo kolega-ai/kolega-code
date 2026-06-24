@@ -1,3 +1,4 @@
+# ruff: noqa: F401,F811,E402
 """Tests for compaction summary placement when restoring the conversation transcript.
 
 When the transcript is rebuilt from saved history (session resume, model switch,
@@ -13,8 +14,11 @@ import pytest
 
 from kolega_code.cli.tui import agent_runtime as agent_runtime_module
 
-from kolega_code.cli.config import build_agent_config, config_summary
+from kolega_code.cli.config import config_summary
 from kolega_code.cli.session_store import SessionStore
+
+
+from ._app_test_utils import build_test_config
 
 
 def _text_message(role: str, text: str) -> dict:
@@ -43,16 +47,6 @@ class _FakeCoderAgent:
 
     async def cleanup(self):
         return None
-
-
-def build_test_config(project: Path):
-    return build_agent_config(
-        project,
-        env={
-            "ANTHROPIC_API_KEY": "test-key",
-            "KOLEGA_CODE_PROVIDER": "anthropic",
-        },
-    )
 
 
 @pytest.mark.asyncio
