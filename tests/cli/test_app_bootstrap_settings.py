@@ -346,16 +346,30 @@ async def test_textual_app_mounts_settings_without_api_key(
 
     async with app.run_test():
         assert app.agent is None
-        assert app.query_one("#composer", ChatComposer).disabled is True
+        composer = app.query_one("#composer", ChatComposer)
+        assert composer.disabled is True
+        assert composer.placeholder == "Connect a model in Settings before chatting."
+        assert app.query_one("#events").active == "status_pane"
         startup = app.conversation_entries[0].content
+        assert "Not connected." in startup
+        assert "Choose a provider and add an API key or sign in from the Settings tab before chatting." in startup
+        assert "Press Ctrl+O to open the sidebar, then select Settings." in startup
         assert "Model: not configured" in startup
         assert "API key: not checked until a model is configured" in startup
-        stored_settings = settings_store.load()
-        assert stored_settings.active_provider is None
-        assert stored_settings.active_model is None
+        dashboard = str(app.query_one("#status_dashboard").render())
+        assert "not connected" in dashboard
+        assert "Open Settings and connect a provider to start chatting." in dashboard
         status = str(app.query_one("#settings_status").render())
         assert "Configuration incomplete" in status
         assert "No provider/model configured" in status
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, "fix this"))
+        assert composer.placeholder == "Connect a model in Settings before chatting."
+        assert "Open Settings and connect a provider to start chatting." in str(
+            app.query_one("#composer_hint").render()
+        )
+        stored_settings = settings_store.load()
+        assert stored_settings.active_provider is None
+        assert stored_settings.active_model is None
 
 
 @pytest.mark.asyncio
@@ -391,8 +405,11 @@ async def test_textual_app_does_not_select_model_from_api_key_env(
 
     async with app.run_test():
         assert app.agent is None
-        assert app.query_one("#composer", ChatComposer).disabled is True
+        composer = app.query_one("#composer", ChatComposer)
+        assert composer.disabled is True
+        assert composer.placeholder == "Connect a model in Settings before chatting."
         startup = app.conversation_entries[0].content
+        assert "Not connected." in startup
         assert "Model: not configured" in startup
         assert f"Model: {UI_DEFAULT_PROVIDER}/{UI_DEFAULT_MODEL}" not in startup
         stored_settings = settings_store.load()
@@ -453,7 +470,10 @@ async def test_textual_app_mounts_with_stored_kimi_settings(
         assert app.agent.kwargs["config"].long_context_config.provider == ModelProvider.MOONSHOT
         assert app.agent.kwargs["config"].long_context_config.model == UI_DEFAULT_MODEL
         assert app.agent.kwargs["config"].long_context_config.thinking_effort == "auto"
-        assert app.query_one("#composer", ChatComposer).disabled is False
+        composer = app.query_one("#composer", ChatComposer)
+        assert composer.disabled is False
+        assert composer.placeholder == "Ask Kolega Code..."
+        assert "Not connected." not in app.conversation_entries[0].content
 
 
 @pytest.mark.asyncio

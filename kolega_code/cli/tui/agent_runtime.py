@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import asyncio
 
-from textual.widgets import TabbedContent
-
 from kolega_code.agent import AgentConfig, AgentEvent, CoderAgent, PlanningAgent, PromptExtension, ToolExtension
 from kolega_code.agent.prompt_provider import AgentMode
 from kolega_code.hooks import HookDispatcher, HookEvent, load_hook_config, project_hooks_present
@@ -198,7 +196,6 @@ class AgentRuntimeMixin:
             self._refresh_status_dashboard()
             self._set_settings_status(messages.SETTINGS_INCOMPLETE.format(error=exc), tone="error")
             self._ensure_startup_entry()
-            self.query_one("#events", TabbedContent).active = "settings_pane"
             return
 
         self.config = config
