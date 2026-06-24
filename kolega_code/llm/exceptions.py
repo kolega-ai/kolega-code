@@ -141,6 +141,7 @@ def _provider_display_name(provider: str | None) -> str:
         ModelProvider.MOONSHOT.value: "Moonshot",
         ModelProvider.DEEPSEEK.value: "DeepSeek",
         ModelProvider.LLAMA.value: "Llama",
+        ModelProvider.OLLAMA_CLOUD.value: "Ollama Cloud",
     }
     if not provider:
         return "The selected provider"

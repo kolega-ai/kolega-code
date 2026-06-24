@@ -934,8 +934,10 @@ class MessageChunk:
         delta = chunk.choices[0].delta
 
         # Fireworks and other OpenAI-compatible reasoning models stream their
-        # reasoning separately from answer text.
-        reasoning_content = getattr(delta, "reasoning_content", None)
+        # reasoning separately from answer text. Ollama Cloud uses the
+        # OpenAI-compatible non-standard "reasoning" field instead of
+        # "reasoning_content".
+        reasoning_content = getattr(delta, "reasoning_content", None) or getattr(delta, "reasoning", None)
         if reasoning_content:
             return cls(type="thinking", thinking=reasoning_content)
 
@@ -1142,8 +1144,9 @@ class Message:
         tool_use_blocks = []
 
         # OpenAI-compatible reasoning models (including Fireworks via Chat
-        # Completions) may return reasoning separately from answer text.
-        reasoning_content = getattr(message, "reasoning_content", None)
+        # Completions) may return reasoning separately from answer text. Ollama
+        # Cloud uses the OpenAI-compatible non-standard "reasoning" field.
+        reasoning_content = getattr(message, "reasoning_content", None) or getattr(message, "reasoning", None)
         if reasoning_content:
             content_blocks.append(ThinkingBlock(thinking=reasoning_content))
 

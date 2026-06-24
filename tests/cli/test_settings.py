@@ -172,6 +172,25 @@ def test_ui_provider_registry_is_derived_from_model_specs() -> None:
     assert deepseek_model.api_key_env == "DEEPSEEK_API_KEY"
     assert deepseek_model.default_thinking_effort == "high"
 
+    ollama_model = get_ui_model("ollama_cloud", "gpt-oss:20b")
+    assert ollama_model is not None
+    assert ollama_model.provider_label == "Ollama Cloud"
+    assert ollama_model.model_label == "GPT-OSS 20B"
+    assert ollama_model.api_key_env == "OLLAMA_API_KEY"
+    assert ollama_model.default_thinking_effort == "medium"
+
+    ollama_glm_model = get_ui_model("ollama_cloud", "glm-5.2")
+    assert ollama_glm_model is not None
+    assert ollama_glm_model.model_label == "GLM-5.2"
+    assert ollama_glm_model.default_thinking_effort == "medium"
+    assert ui_thinking_effort_options("ollama_cloud", "gpt-oss:120b") == [
+        ("None", "none"),
+        ("Low", "low"),
+        ("Medium", "medium"),
+        ("High", "high"),
+        ("Max", "max"),
+    ]
+
 
 def test_web_search_settings_round_trip(tmp_path: Path) -> None:
     store = SettingsStore(tmp_path)

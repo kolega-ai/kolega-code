@@ -135,6 +135,7 @@ class LLMClient:
                 "deepseek": AnthropicProvider,
                 "zai": AnthropicProvider,
                 "kimi_coding": AnthropicProvider,
+                "ollama_cloud": OpenAIProvider,
             }
 
             base_urls: Dict[str, str] = {
@@ -150,6 +151,7 @@ class LLMClient:
                 "deepseek": "https://api.deepseek.com/anthropic",
                 "zai": "https://api.z.ai/api/anthropic",
                 "kimi_coding": "https://api.kimi.com/coding",
+                "ollama_cloud": "https://ollama.com/v1",
             }
 
             provider_class = providers.get(provider.lower())

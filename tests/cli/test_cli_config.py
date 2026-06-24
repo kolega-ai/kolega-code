@@ -223,6 +223,40 @@ def test_build_agent_config_accepts_deepseek_cli_active_model(tmp_path: Path) ->
     assert config.thinking_config.provider == ModelProvider.DEEPSEEK
 
 
+def test_build_agent_config_accepts_ollama_cloud_cli_active_model(tmp_path: Path) -> None:
+    config = build_agent_config(
+        tmp_path,
+        CliConfigOverrides(provider=ModelProvider.OLLAMA_CLOUD.value, model="glm-5.2"),
+        env={"OLLAMA_API_KEY": "ollama-key"},
+    )
+
+    assert config.long_context_config.provider == ModelProvider.OLLAMA_CLOUD
+    assert config.long_context_config.model == "glm-5.2"
+    assert config.long_context_config.thinking_effort == "medium"
+    assert config.fast_config.provider == ModelProvider.OLLAMA_CLOUD
+    assert config.thinking_config.provider == ModelProvider.OLLAMA_CLOUD
+    assert config.ollama_cloud_api_key == "ollama-key"
+
+
+def test_build_agent_config_ollama_cloud_provider_default_is_accessible_model(tmp_path: Path) -> None:
+    config = build_agent_config(
+        tmp_path,
+        CliConfigOverrides(provider=ModelProvider.OLLAMA_CLOUD.value),
+        env={"OLLAMA_API_KEY": "ollama-key"},
+    )
+
+    assert config.long_context_config.provider == ModelProvider.OLLAMA_CLOUD
+    assert config.long_context_config.model == "gpt-oss:20b"
+    assert config.long_context_config.thinking_effort == "medium"
+    assert config.fast_config.model == "gpt-oss:20b"
+    assert config.thinking_config.model == "gpt-oss:20b"
+
+
+def test_ollama_cloud_requires_ollama_api_key(tmp_path: Path) -> None:
+    with pytest.raises(CliConfigError, match="OLLAMA_API_KEY"):
+        build_agent_config(tmp_path, CliConfigOverrides(provider=ModelProvider.OLLAMA_CLOUD.value), env={})
+
+
 def test_env_provider_model_overrides_stored_settings(tmp_path: Path) -> None:
     settings = CliSettings(active_provider=UI_DEFAULT_PROVIDER, active_model=UI_DEFAULT_MODEL)
     settings.set_api_key(UI_DEFAULT_PROVIDER, "moonshot-key")

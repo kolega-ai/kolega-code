@@ -1,3 +1,5 @@
+import asyncio
+
 from kolega_code.llm.models import (
     ImageBlock,
     Message,
@@ -8,6 +10,7 @@ from kolega_code.llm.models import (
     ToolResult,
     TextBlock,
 )
+from kolega_code.llm.providers.openai import OpenAIStreamWrapper
 
 
 def _image() -> ImageBlock:
@@ -119,6 +122,20 @@ def test_openai_message_reasoning_content_maps_to_thinking_block():
     assert message.content[1].text == "final answer"
 
 
+def test_openai_message_reasoning_maps_to_thinking_block():
+    class OpenAIMessage:
+        content = "final answer"
+        reasoning = "ollama reasoning summary"
+        tool_calls = None
+
+    message = Message.from_openai(OpenAIMessage())
+
+    assert isinstance(message.content[0], ThinkingBlock)
+    assert message.content[0].thinking == "ollama reasoning summary"
+    assert isinstance(message.content[1], TextBlock)
+    assert message.content[1].text == "final answer"
+
+
 def test_openai_stream_reasoning_content_maps_to_thinking_block():
     message = Message.from_openai_stream(
         role="assistant",
@@ -149,3 +166,78 @@ def test_openai_stream_chunk_reasoning_content_delta_maps_to_thinking_chunk():
 
     assert chunk.type == "thinking"
     assert chunk.thinking == "reasoning delta"
+
+
+def test_openai_stream_chunk_reasoning_delta_maps_to_thinking_chunk():
+    class Delta:
+        content = None
+        reasoning = "ollama reasoning delta"
+
+    class Choice:
+        delta = Delta()
+
+    class Chunk:
+        choices = [Choice()]
+
+    chunk = MessageChunk.from_openai(Chunk())
+
+    assert chunk.type == "thinking"
+    assert chunk.thinking == "ollama reasoning delta"
+
+
+def test_openai_stream_wrapper_accumulates_reasoning_field_in_final_message():
+    class Delta:
+        def __init__(self, content=None, reasoning=None):
+            self.content = content
+            self.reasoning = reasoning
+
+    class Choice:
+        def __init__(self, delta, finish_reason=None):
+            self.delta = delta
+            self.finish_reason = finish_reason
+
+    class Chunk:
+        def __init__(self, delta, finish_reason=None):
+            self.choices = [Choice(delta, finish_reason)]
+
+    class FakeOpenAIStream:
+        def __init__(self):
+            self.chunks = iter(
+                [
+                    Chunk(Delta(reasoning="ollama ")),
+                    Chunk(Delta(reasoning="reasoning")),
+                    Chunk(Delta(content="final answer"), finish_reason="stop"),
+                ]
+            )
+
+        async def __anext__(self):
+            try:
+                return next(self.chunks)
+            except StopIteration:
+                raise StopAsyncIteration
+
+        async def aclose(self):
+            pass
+
+    async def run_wrapper():
+        wrapper = OpenAIStreamWrapper(FakeOpenAIStream(), provider_name="ollama_cloud")
+        async with wrapper:
+            chunks = []
+            async for chunk in wrapper:
+                chunks.append(chunk)
+            final = await wrapper.get_final_message()
+        return chunks, final
+
+    chunks, message = asyncio.run(run_wrapper())
+
+    assert [(chunk.type, getattr(chunk, "thinking", None), getattr(chunk, "text", None)) for chunk in chunks] == [
+        ("thinking", "ollama ", None),
+        ("thinking", "reasoning", None),
+        ("text", None, "final answer"),
+    ]
+    assert isinstance(message.content[0], ThinkingBlock)
+    assert message.content[0].thinking == "ollama reasoning"
+    assert isinstance(message.content[1], TextBlock)
+    assert message.content[1].text == "final answer"
+    assert message.stop_reason == "end_turn"
+    assert message.usage_metadata["provider"] == "ollama_cloud"
