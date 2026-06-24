@@ -6,16 +6,33 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.8.4 - 2026-06-24
+
 ### Added
 
 - Added minimal GitHub issue templates for bug reports and feature requests.
-- Added CI coverage reporting and dependency vulnerability auditing.
+- Added project links (homepage, documentation, changelog, security) to package metadata.
+- Added pre-commit configuration and a repository coverage badge.
+- Added Ruff lint/formatting checks and dependency vulnerability auditing to CI.
+- Added coverage reporting and SBOM/provenance attestation to the release workflow.
 
 ### Changed
 
 - Hardened local state file permissions for settings, sessions, and project permission files.
-- Hardened the release workflow with lockfile-backed installs, version parity checks, artifact smoke tests, provenance attestation, and SBOM generation.
-- Added Ruff lint and formatting checks to CI and formatted the codebase.
+- Hardened the release workflow with lockfile-backed installs, version parity checks, and artifact smoke tests.
+- Split and reformatted oversized test modules to keep the suite maintainable.
+- Reduced the Logs and Terminal TUI scrollback caps to 2000 lines for better performance.
+- Updated GitHub Actions to Node 24-compatible versions.
+
+### Fixed
+
+- Fixed the chat composer to auto-grow as text wraps across multiple lines.
+- Fixed `ctrl-u` so it clears multiline composer drafts.
+- Fixed composer select-all shortcuts.
+- Fixed prompt-option focus handoff so focus returns from the composer correctly.
+- Fixed chat focus restoration after the app resumes or a turn is cancelled.
+- Fixed runtime output clearing when a planning thread is reset.
+- Optimized planning sidebar markdown rendering to reduce lag.
 
 ## 0.8.3 - 2026-06-23
 

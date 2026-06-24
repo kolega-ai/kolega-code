@@ -26,7 +26,8 @@ release branch.
    released within the new one-week window being pulled in, is expected and
    acceptable. Do not revert these changes.
 
-3. Update `CHANGELOG.md`:
+3. Update `CHANGELOG.md` in the release PR before merging. Do not update the
+   changelog after the tag or in a separate follow-up PR.
 
    - Move relevant entries from `Unreleased` into a new section for the release.
    - Use the release date from the release PR.
