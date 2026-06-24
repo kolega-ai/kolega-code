@@ -627,12 +627,6 @@ MODEL_SPECS: Dict[Tuple[str, str], Dict[str, Any]] = {
             mode="openai_reasoning_effort",
         ),
     },
-    ("ollama_cloud", "rnj-1:8b"): {
-        "context_length": 32768,
-        "max_completion_tokens": 8192,
-        "default_temperature": 1.0,
-        "supports_vision": False,
-    },
     # Fireworks models (OpenAI-compatible endpoint). Fireworks reasoning models
     # expose reasoning_content in responses and accept flat reasoning_effort
     # values on chat completions. "none" disables reasoning.

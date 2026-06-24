@@ -68,6 +68,7 @@ def _provider_default_models() -> list[tuple[str, str]]:
 
 
 PROVIDER_DEFAULT_MODELS = _provider_default_models()
+OLLAMA_CLOUD_MODELS = [model for provider, model in MODEL_SPECS if provider == ModelProvider.OLLAMA_CLOUD.value]
 
 # Subset whose default model exposes a thinking/reasoning-effort control.
 PROVIDER_THINKING_MODELS = [
@@ -87,12 +88,11 @@ def _require_key(provider_value: str) -> str:
     return api_key
 
 
-def test_live_ollama_cloud_model_catalog_matches_specs() -> None:
-    """Ollama Cloud advertises every model ID in our catalog.
+def test_live_ollama_cloud_model_catalog_contains_specs() -> None:
+    """Ollama Cloud advertises every model ID in our supported catalog.
 
-    Subscription-gated models still count as supported: they appear in
-    ``/v1/models`` even if a later generation call would return 403 for the
-    current account.
+    The provider may advertise additional IDs that are not usable through chat
+    completions yet; those should not force us to expose a broken model.
     """
     api_key = _require_key(ModelProvider.OLLAMA_CLOUD.value)
     response = httpx.get(
@@ -103,9 +103,56 @@ def test_live_ollama_cloud_model_catalog_matches_specs() -> None:
     response.raise_for_status()
 
     api_models = {model["id"] for model in response.json()["data"]}
-    spec_models = {model for provider, model in MODEL_SPECS if provider == ModelProvider.OLLAMA_CLOUD.value}
 
-    assert spec_models == api_models
+    assert set(OLLAMA_CLOUD_MODELS) <= api_models
+
+
+@pytest.mark.parametrize("model", OLLAMA_CLOUD_MODELS)
+def test_live_ollama_cloud_model_metadata_matches_specs(model: str) -> None:
+    """Ollama Cloud metadata agrees with our context/capability flags."""
+    api_key = _require_key(ModelProvider.OLLAMA_CLOUD.value)
+    response = httpx.post(
+        "https://ollama.com/api/show",
+        headers={"Authorization": f"Bearer {api_key}"},
+        json={"model": model},
+        timeout=30,
+    )
+    response.raise_for_status()
+
+    metadata = response.json()
+    capabilities = set(metadata.get("capabilities") or [])
+    model_info = metadata.get("model_info") or {}
+    context_lengths = [value for key, value in model_info.items() if key.endswith(".context_length")]
+    specs = get_model_specs(ModelProvider.OLLAMA_CLOUD.value, model)
+
+    assert context_lengths == [specs["context_length"]]
+    assert ("thinking" in capabilities) == (
+        get_thinking_effort_spec(ModelProvider.OLLAMA_CLOUD.value, model) is not None
+    )
+    assert ("vision" in capabilities) == bool(specs.get("supports_vision"))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("model", OLLAMA_CLOUD_MODELS)
+async def test_live_ollama_cloud_model_generate(model: str) -> None:
+    """Every supported Ollama Cloud model accepts our configured generation params."""
+    api_key = _require_key(ModelProvider.OLLAMA_CLOUD.value)
+    client = LLMClient(provider=ModelProvider.OLLAMA_CLOUD.value, api_key=api_key)
+    specs = get_model_specs(ModelProvider.OLLAMA_CLOUD.value, model)
+
+    response = await client.generate(
+        messages=MessageHistory(
+            [Message(role="user", content=[TextBlock(text="Reply with exactly OK and no other text.")])]
+        ),
+        model=model,
+        max_completion_tokens=specs["max_completion_tokens"],
+        temperature=specs["default_temperature"],
+        thinking=default_thinking_effort(ModelProvider.OLLAMA_CLOUD.value, model),
+    )
+
+    assert response is not None
+    assert response.role == "assistant"
+    assert response.get_text_content(), f"empty response from ollama_cloud/{model}"
 
 
 @pytest.mark.asyncio

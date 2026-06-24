@@ -114,7 +114,6 @@ MODEL_LABELS: dict[str, str] = {
     "qwen3-coder-next": "Qwen3 Coder Next",
     "qwen3-coder:480b": "Qwen3 Coder 480B",
     "qwen3.5:397b": "Qwen3.5 397B",
-    "rnj-1:8b": "RNJ-1 8B",
 }
 
 # Per-provider default model used when only a provider is selected. Covers the
