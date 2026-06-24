@@ -1122,6 +1122,48 @@ class KolegaCodeApp(
             self.screen.set_focus(actions)
         self.call_after_refresh(self._heal_prompt_focus)
 
+    def _focus_active_prompt_from_composer(self) -> bool:
+        """Move keyboard focus from the composer back to the active option list.
+
+        Planning questions intentionally allow composer focus for custom answers.
+        When the user wants to return to the visible options, ChatComposer calls
+        this helper from its top-line Up key handling. Returns True only when the
+        handoff happened, so the composer can otherwise keep normal cursor motion.
+        """
+        actions = self._active_prompt_actions()
+        if actions is None:
+            return False
+
+        try:
+            composer = self.query_one("#composer", tui_widgets.ChatComposer)
+        except Exception:
+            return False
+
+        if composer.disabled or self.screen.focused is not composer:
+            return False
+
+        if actions.option_count:
+            actions.highlighted = actions.option_count - 1
+        self.screen.set_focus(actions)
+        return True
+
+    def _focus_composer_from_active_prompt(self, actions: tui_widgets.ActionList) -> bool:
+        """Move keyboard focus from the bottom of an active option list to composer."""
+        active_actions = self._active_prompt_actions()
+        if active_actions is None or active_actions is not actions:
+            return False
+
+        try:
+            composer = self.query_one("#composer", tui_widgets.ChatComposer)
+        except Exception:
+            return False
+
+        if composer.disabled or self.screen.focused is not actions:
+            return False
+
+        self.screen.set_focus(composer)
+        return True
+
     def _heal_prompt_focus(self) -> None:
         """Re-grab focus for the active prompt list if it has drifted. Idempotent.
 

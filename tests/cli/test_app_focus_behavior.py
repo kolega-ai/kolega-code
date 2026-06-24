@@ -155,3 +155,144 @@ async def test_app_focus_heals_question_drift_to_options(tmp_path: Path, monkeyp
 
         app._pending_question = None
         app._set_question_actions_visible(False)
+
+
+@pytest.mark.asyncio
+async def test_question_composer_top_line_up_returns_focus_to_options(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.tui.state import PendingQuestion
+    from kolega_code.cli.tui.widgets import ActionList, ChatComposer
+
+    app = _build_focus_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        future: asyncio.Future[str] = asyncio.get_running_loop().create_future()
+        app._pending_question = PendingQuestion(question="Choose?", options=["A", "B"], future=future)
+        app._show_question_options("Choose?", ["A", "B"])
+        app._set_chat_enabled(True)
+
+        composer = app.query_one("#composer", ChatComposer)
+        question_actions = app.query_one("#question_actions", ActionList)
+        app.screen.set_focus(composer)
+        await pilot.pause()
+        assert app.focused is composer
+        assert composer.cursor_location[0] == 0
+
+        await pilot.press("up")
+        assert app.focused is question_actions
+        assert question_actions.highlighted == 1
+
+        await pilot.press("enter")
+        assert await future == "B"
+        assert app._pending_question is None
+
+
+@pytest.mark.asyncio
+async def test_question_composer_multiline_up_keeps_editor_focus(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.tui.state import PendingQuestion
+    from kolega_code.cli.tui.widgets import ActionList, ChatComposer
+
+    app = _build_focus_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        future: asyncio.Future[str] = asyncio.get_running_loop().create_future()
+        app._pending_question = PendingQuestion(question="Choose?", options=["A", "B"], future=future)
+        app._show_question_options("Choose?", ["A", "B"])
+        app._set_chat_enabled(True)
+
+        composer = app.query_one("#composer", ChatComposer)
+        question_actions = app.query_one("#question_actions", ActionList)
+        composer.load_text("one\ntwo")
+        composer.move_cursor((1, 1), record_width=False)
+        app.screen.set_focus(composer)
+        await pilot.pause()
+        assert app.focused is composer
+
+        await pilot.press("up")
+
+        assert app.focused is composer
+        assert app.focused is not question_actions
+        assert composer.cursor_location[0] == 0
+
+        app._pending_question = None
+        app._set_question_actions_visible(False)
+
+
+@pytest.mark.asyncio
+async def test_question_composer_dropdown_up_keeps_completion_navigation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.file_index import IndexEntry
+    from kolega_code.cli.tui.state import PendingQuestion
+    from kolega_code.cli.tui.widgets import ActionList, ChatComposer, CompletionDropdown, CompletionItem
+
+    app = _build_focus_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        future: asyncio.Future[str] = asyncio.get_running_loop().create_future()
+        app._pending_question = PendingQuestion(question="Choose?", options=["A", "B"], future=future)
+        app._show_question_options("Choose?", ["A", "B"])
+        app._set_chat_enabled(True)
+
+        composer = app.query_one("#composer", ChatComposer)
+        question_actions = app.query_one("#question_actions", ActionList)
+        dropdown = app.query_one("#completion_dropdown", CompletionDropdown)
+        app.screen.set_focus(composer)
+        await pilot.pause()
+        assert app.focused is composer
+        dropdown.open_with(
+            [
+                CompletionItem(prompt="alpha.py", value=IndexEntry(path="alpha.py", is_dir=False)),
+                CompletionItem(prompt="beta.py", value=IndexEntry(path="beta.py", is_dir=False)),
+            ]
+        )
+        dropdown.highlighted = 1
+        assert dropdown.is_open is True
+
+        await pilot.press("up")
+
+        assert app.focused is composer
+        assert app.focused is not question_actions
+        assert dropdown.highlighted == 0
+
+        app._pending_question = None
+        app._set_question_actions_visible(False)
+
+
+@pytest.mark.asyncio
+async def test_question_actions_bottom_down_focuses_composer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.tui.state import PendingQuestion
+    from kolega_code.cli.tui.widgets import ActionList, ChatComposer
+
+    app = _build_focus_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        future: asyncio.Future[str] = asyncio.get_running_loop().create_future()
+        app._pending_question = PendingQuestion(question="Choose?", options=["A", "B", "C"], future=future)
+        app._show_question_options("Choose?", ["A", "B", "C"])
+        app._set_chat_enabled(True)
+
+        composer = app.query_one("#composer", ChatComposer)
+        question_actions = app.query_one("#question_actions", ActionList)
+        assert app.focused is question_actions
+        question_actions.highlighted = question_actions.option_count - 1
+
+        await pilot.press("down")
+
+        assert composer.disabled is False
+        assert app.focused is composer
+        assert question_actions.highlighted == question_actions.option_count - 1
+
+        app._pending_question = None
+        app._set_question_actions_visible(False)
