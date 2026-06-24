@@ -8,6 +8,7 @@ from kolega_code.services.browser import PlaywrightBrowserManager
 # Check if running in CI environment
 SKIP_IN_CI = bool(os.getenv("CI")) or bool(os.getenv("GITLAB_CI"))
 
+
 class TestPlaywrightBrowserManager:
     @pytest.fixture
     def browser_manager(self):
@@ -311,4 +312,3 @@ class TestPlaywrightBrowserManager:
         assert "C" * 10 in returned_texts
         assert "A" * 10 not in returned_texts
         assert "B" * 10 not in returned_texts
-

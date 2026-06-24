@@ -35,6 +35,7 @@ def openai_client():
         pytest.skip("OPENAI_API_KEY not set")
     return LLMClient("openai", api_key)
 
+
 @pytest.mark.slow
 @pytest.mark.asyncio
 async def test_rate_limiting():
@@ -58,6 +59,8 @@ async def test_rate_limiting():
         # Verify that the third request took longer due to rate limiting
         end_time = asyncio.get_event_loop().time()
         assert end_time - start_time >= 0.5  # At least some delay due to rate limiting
+
+
 @pytest.mark.asyncio
 async def test_retry_on_error():
     """Test retry functionality on API errors"""
@@ -76,6 +79,8 @@ async def test_retry_on_error():
     # the value was stored but never forwarded, so the SDK silently used its default.)
     assert client.provider.async_client.max_retries == 3
     assert client.provider.sync_client.max_retries == 3
+
+
 @pytest.mark.slow
 @pytest.mark.asyncio
 async def test_generation_params(anthropic_client):
@@ -86,6 +91,8 @@ async def test_generation_params(anthropic_client):
     # Test that the response has the expected attributes
     assert hasattr(response, "content")
     assert len(response.content) > 0
+
+
 @pytest.mark.asyncio
 async def test_reasoning_effort(openai_client):
     """Test reasoning effort parameter"""
@@ -110,6 +117,8 @@ async def test_reasoning_effort(openai_client):
     finally:
         # Restore the original method
         openai_client.provider.generate = original_generate
+
+
 @pytest.mark.slow
 @pytest.mark.asyncio
 async def test_error_handling():
@@ -117,6 +126,8 @@ async def test_error_handling():
     with pytest.raises(Exception):
         client = LLMClient(provider="anthropic", api_key="invalid-key")
         await client.generate(TEST_MESSAGES, TEST_SYSTEM)
+
+
 @pytest.mark.slow
 @pytest.mark.asyncio
 async def test_concurrent_requests(anthropic_client):
@@ -128,6 +139,8 @@ async def test_concurrent_requests(anthropic_client):
     # Verify all requests succeeded
     assert len(results) == 3
     assert all(hasattr(r, "content") for r in results)
+
+
 @pytest.mark.slow
 @pytest.mark.asyncio
 async def test_streaming_cancellation(anthropic_client):

@@ -11,13 +11,16 @@ from kolega_code.events import AgentConnectionManager
 from kolega_code.agent.tool_backend.memory_tool import MemoryTool
 from kolega_code.agent.tools import ToolCollection, ToolDefinition, ToolCollectionConfig
 
+
 @pytest.fixture
 def mock_connection_manager() -> AsyncMock:
     return AsyncMock()
 
+
 @pytest.fixture
 def project_path(tmp_path: Path) -> Path:
     return tmp_path
+
 
 @pytest.fixture
 def agent_config() -> AgentConfig:
@@ -36,6 +39,7 @@ def agent_config() -> AgentConfig:
         ),
     )
 
+
 @pytest.fixture
 def mock_base_agent() -> Mock:
     mock = Mock()
@@ -43,6 +47,7 @@ def mock_base_agent() -> Mock:
     # Default: non-vision mock so the read_image tool gate excludes it.
     mock.supports_vision = False
     return mock
+
 
 @pytest.fixture
 def tool_collection(
@@ -179,4 +184,3 @@ class TestToolCollection:
         sandbox_fs.validate_root.assert_called_once()
         assert tool_collection.workspace_id == "test_workspace"
         assert tool_collection.project_path == file_path
-

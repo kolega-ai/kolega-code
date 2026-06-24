@@ -34,6 +34,7 @@ from .compaction_helpers import FakeLLM
 # Load environment variables
 load_dotenv()
 
+
 class TestBaseAgent:
     def test_dump_message_history_empty(self, base_agent):
         """Test dumping an empty message history."""
@@ -235,4 +236,3 @@ class TestBaseAgent:
         for restored_msg, original_msg in zip(base_agent.history, original_history):
             # Use the to_dict method for comparing structure
             assert restored_msg.to_dict() == original_msg.to_dict()
-

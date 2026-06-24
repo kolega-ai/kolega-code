@@ -34,6 +34,8 @@ def test_fireworks_uses_openai_compatible_provider():
     assert not isinstance(client.provider, AnthropicProvider)
     assert client.provider.provider_name == "fireworks"
     assert client.provider.base_url == "https://api.fireworks.ai/inference/v1"
+
+
 @pytest.mark.asyncio
 async def test_fireworks_generate_maps_openai_provider_response_usage(capsys):
     client = LLMClient("fireworks", "test-key")
@@ -83,6 +85,8 @@ async def test_fireworks_generate_maps_openai_provider_response_usage(capsys):
     assert response.content[0].type == "thinking"
     assert response.content[1].text == "ok"
     assert capsys.readouterr().out == ""
+
+
 @pytest.mark.asyncio
 async def test_fireworks_stream_final_message_maps_openai_usage():
     client = LLMClient("fireworks", "test-key")
@@ -165,6 +169,8 @@ async def test_fireworks_stream_final_message_maps_openai_usage():
         "cache_read_input_tokens": 33,
         "provider": "fireworks",
     }
+
+
 @pytest.mark.asyncio
 async def test_moonshot_generate_maps_provider_response_usage(capsys):
     """Kimi billing metadata should come from Moonshot's Anthropic-shaped usage block."""
@@ -206,6 +212,8 @@ async def test_moonshot_generate_maps_provider_response_usage(capsys):
         "provider": "moonshot",
     }
     assert capsys.readouterr().out == ""
+
+
 @pytest.mark.asyncio
 async def test_anthropic_opus_47_generate_omits_deprecated_temperature():
     client = LLMClient("anthropic", "test-key")
@@ -231,6 +239,8 @@ async def test_anthropic_opus_47_generate_omits_deprecated_temperature():
         )
 
     assert "temperature" not in create.await_args.kwargs
+
+
 @pytest.mark.asyncio
 async def test_anthropic_opus_47_stream_omits_deprecated_temperature():
     client = LLMClient("anthropic", "test-key")
@@ -245,6 +255,8 @@ async def test_anthropic_opus_47_stream_omits_deprecated_temperature():
         )
 
     assert "temperature" not in stream.call_args.kwargs
+
+
 @pytest.mark.asyncio
 async def test_anthropic_non_opus_47_generate_keeps_temperature():
     client = LLMClient("anthropic", "test-key")

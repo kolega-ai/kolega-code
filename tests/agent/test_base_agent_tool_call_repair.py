@@ -34,6 +34,7 @@ from .compaction_helpers import FakeLLM
 # Load environment variables
 load_dotenv()
 
+
 class TestBaseAgent:
     def testfix_incomplete_tool_calls_no_changes_needed(self, base_agent):
         """Test fix method doesn't modify valid history."""
@@ -743,6 +744,7 @@ class TestBaseAgent:
         base_agent.history.append(Message(role="assistant", content="Just a string"))
 
         assert not base_agent._needs_tool_call_fix()
+
     def test_append_user_message_multiple_incomplete_sequences(self, base_agent):
         """Test append_user_message does NOT fix multiple incomplete sequences."""
         # Create history with multiple incomplete tool sequences
@@ -857,4 +859,3 @@ class TestBaseAgent:
         except Exception as e:
             # If this fails with the tool_use_id error, our fix didn't work
             pytest.fail(f"API call failed with fixed history: {str(e)}")
-

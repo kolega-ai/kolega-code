@@ -8,6 +8,7 @@ from kolega_code.services.browser import PlaywrightBrowserManager
 # Check if running in CI environment
 SKIP_IN_CI = bool(os.getenv("CI")) or bool(os.getenv("GITLAB_CI"))
 
+
 class TestPlaywrightBrowserManagerIntegration:
     """Integration tests for PlaywrightBrowserManager that use real browsers."""
 

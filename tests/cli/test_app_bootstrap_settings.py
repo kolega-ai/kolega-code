@@ -43,6 +43,7 @@ from ._app_test_utils import (
     renderable_text,
 )
 
+
 @pytest.mark.asyncio
 async def test_textual_app_mounts_with_fake_agent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
@@ -113,6 +114,7 @@ async def test_textual_app_mounts_with_fake_agent(tmp_path: Path, monkeypatch: p
         expected_model = f"{config.long_context_config.provider.value}/{config.long_context_config.model}"
         assert f"Model: {expected_model}" in startup
 
+
 @pytest.mark.asyncio
 async def test_textual_app_status_tab_is_default_dashboard(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
@@ -162,6 +164,7 @@ async def test_textual_app_status_tab_is_default_dashboard(tmp_path: Path, monke
         assert dashboard_widget.styles.border == app.query_one("#terminal").styles.border
         assert list(app.query("#logs")) == []
         assert list(app.query("#status")) == []
+
 
 @pytest.mark.asyncio
 async def test_settings_tab_grouped_into_model_and_appearance_sections(
@@ -222,6 +225,7 @@ async def test_settings_tab_grouped_into_model_and_appearance_sections(
         # Save is a form-level action, not nested inside the Model card.
         assert app.query_one("#settings_actions #save_settings")
         assert not list(app.query("#settings_model #save_settings"))
+
 
 @pytest.mark.asyncio
 async def test_web_search_settings_section_reveal_and_save(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -309,6 +313,7 @@ async def test_web_search_settings_section_reveal_and_save(tmp_path: Path, monke
     assert stored.web_search_backend == "tavily"
     assert stored.get_api_key("tavily") == "tvly-secret"
 
+
 @pytest.mark.asyncio
 async def test_textual_app_mounts_settings_without_api_key(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
@@ -351,6 +356,7 @@ async def test_textual_app_mounts_settings_without_api_key(
         assert "Configuration incomplete" in status
         assert "No provider/model configured" in status
 
+
 @pytest.mark.asyncio
 async def test_textual_app_does_not_select_model_from_api_key_env(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
@@ -391,6 +397,7 @@ async def test_textual_app_does_not_select_model_from_api_key_env(
         stored_settings = settings_store.load()
         assert stored_settings.active_provider is None
         assert stored_settings.active_model is None
+
 
 @pytest.mark.asyncio
 async def test_textual_app_mounts_with_stored_kimi_settings(
@@ -447,6 +454,7 @@ async def test_textual_app_mounts_with_stored_kimi_settings(
         assert app.agent.kwargs["config"].long_context_config.thinking_effort == "auto"
         assert app.query_one("#composer", ChatComposer).disabled is False
 
+
 @pytest.mark.asyncio
 async def test_textual_app_mounts_with_stored_deepseek_settings(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
@@ -501,6 +509,7 @@ async def test_textual_app_mounts_with_stored_deepseek_settings(
         assert app.agent.kwargs["config"].long_context_config.model == DEEPSEEK_DEFAULT_MODEL
         assert app.agent.kwargs["config"].long_context_config.thinking_effort == "high"
         assert app.query_one("#composer", ChatComposer).disabled is False
+
 
 @pytest.mark.asyncio
 async def test_textual_app_saves_settings_and_builds_agent(
@@ -563,6 +572,7 @@ async def test_textual_app_saves_settings_and_builds_agent(
         assert f"Model: {UI_DEFAULT_PROVIDER}/{UI_DEFAULT_MODEL}" in startup
         assert "Thinking effort: auto" in startup
         assert "API key: present in local settings" in startup
+
 
 @pytest.mark.asyncio
 async def test_textual_app_saves_deepseek_settings_and_builds_agent(
@@ -627,6 +637,7 @@ async def test_textual_app_saves_deepseek_settings_and_builds_agent(
         assert settings_store.load().active_thinking_effort == "high"
         assert app.query_one("#composer", ChatComposer).disabled is False
 
+
 @pytest.mark.asyncio
 async def test_save_settings_logs_on_success_without_toast(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
@@ -656,6 +667,7 @@ async def test_save_settings_logs_on_success_without_toast(tmp_path: Path, monke
         assert ("Settings saved.", "ok") in logged
         status_text = str(app.query_one("#settings_status").render())
         assert "Active model:" in status_text
+
 
 @pytest.mark.asyncio
 async def test_agent_models_section_saves_override_and_builds_agent(
@@ -720,6 +732,7 @@ async def test_agent_models_section_saves_override_and_builds_agent(
         assert config.model_config_for_agent("investigation-agent").model == MOONSHOT_K26_MODEL
         # Roles left on "Default" still inherit the active model.
         assert config.model_config_for_agent("coder").model == UI_DEFAULT_MODEL
+
 
 @pytest.mark.asyncio
 async def test_agent_models_section_populates_and_clears_to_inherit(

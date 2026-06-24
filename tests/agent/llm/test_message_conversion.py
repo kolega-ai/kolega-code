@@ -36,6 +36,8 @@ def test_anthropic_synthetic_thinking_chunk_conversion():
 
     assert chunk.type == "thinking"
     assert chunk.thinking == "working through the problem"
+
+
 def test_anthropic_raw_thinking_delta_chunk_is_ignored():
     class Delta:
         type = "thinking_delta"
@@ -48,6 +50,8 @@ def test_anthropic_raw_thinking_delta_chunk_is_ignored():
     chunk = MessageChunk.from_anthropic(Chunk())
 
     assert chunk.type == "ignore"
+
+
 def test_anthropic_thinking_blocks_round_trip_to_anthropic_shape():
     class ThinkingContent:
         type = "thinking"
@@ -77,6 +81,8 @@ def test_anthropic_thinking_blocks_round_trip_to_anthropic_shape():
         {"type": "thinking", "thinking": "provider reasoning", "signature": "provider-signature"},
         {"type": "redacted_thinking", "data": "encrypted-redacted-reasoning"},
     ]
+
+
 def test_tool_call_execution_id_is_internal_and_provider_id_is_preserved():
     first = ToolCall(id="dispatch_investigation_agent_0", name="dispatch_investigation_agent", input={})
     second = ToolCall(id="dispatch_investigation_agent_0", name="dispatch_investigation_agent", input={})
@@ -101,6 +107,8 @@ def test_tool_call_execution_id_is_internal_and_provider_id_is_preserved():
     restored = ToolCall.from_dict(first.to_dict())
     assert restored.id == first.id
     assert restored.execution_id == first.execution_id
+
+
 def test_local_anthropic_token_counting_includes_tool_result_content():
     provider = AnthropicProvider(api_key="test_key", provider_name="moonshot")
     large_tool_output = "unique_token " * 20_000
@@ -123,6 +131,8 @@ def test_local_anthropic_token_counting_includes_tool_result_content():
     token_count = provider._count_tokens_local(messages)
 
     assert token_count.input_tokens > 20_000
+
+
 @pytest.mark.asyncio
 async def test_anthropic_stream_tool_use_start_execution_id_matches_final_tool_call():
     class ContentBlock:

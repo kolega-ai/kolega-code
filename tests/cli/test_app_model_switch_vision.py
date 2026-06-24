@@ -14,7 +14,6 @@ from kolega_code.llm.models import ImageBlock, Message, TextBlock
 from ._app_test_utils import build_test_config
 
 
-
 class _FakeConversation:
     def __init__(self, has_images: bool):
         self._has_images = has_images

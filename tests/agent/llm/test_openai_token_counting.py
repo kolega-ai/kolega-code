@@ -56,10 +56,6 @@ def openai_provider(api_key):
     return OpenAIProvider(api_key=api_key)
 
 
-
-
-
-
 @pytest.fixture
 def real_system_prompt():
     """Get real system prompt from CoderAgent."""
@@ -140,8 +136,6 @@ def real_tools(tmp_path):
     return tool_collection.get_tool_list()
 
 
-
-
 @pytest.fixture
 def messages_with_tool_calls():
     """Messages containing tool calls and results."""
@@ -176,10 +170,6 @@ def messages_with_tool_calls():
             ),
         ]
     )
-
-
-
-
 
 
 @pytest.mark.asyncio

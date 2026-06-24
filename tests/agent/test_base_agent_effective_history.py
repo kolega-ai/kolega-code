@@ -34,6 +34,7 @@ from .compaction_helpers import FakeLLM
 # Load environment variables
 load_dotenv()
 
+
 class TestBaseAgent:
     def test_get_effective_history_preserves_thinking_blocks(self, base_agent):
         base_agent.history = MessageHistory(
@@ -170,4 +171,3 @@ class TestBaseAgent:
         # everything folded, tail empty -> just the summary
         assert len(eff) == 1
         assert "CONVERSATION HISTORY SUMMARY" in eff[0].content[0].text
-

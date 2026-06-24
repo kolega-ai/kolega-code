@@ -43,6 +43,7 @@ from ._app_test_utils import (
     renderable_text,
 )
 
+
 @pytest.mark.asyncio
 async def test_sub_agent_context_update_does_not_stomp_main_dashboard(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -84,6 +85,7 @@ async def test_sub_agent_context_update_does_not_stomp_main_dashboard(
         # The per-agent context shows on its own card.
         assert "ctx 3%" in activities[0].entry.content
 
+
 @pytest.mark.asyncio
 async def test_concurrent_sub_agent_context_updates_keep_main_dashboard_stable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -112,6 +114,7 @@ async def test_concurrent_sub_agent_context_updates_keep_main_dashboard_stable(
 
         assert "50.0%" in app._format_status_dashboard()
         assert len(app._sub_agent_activities) == 3
+
 
 @pytest.mark.asyncio
 async def test_sub_agent_status_update_routes_to_card_not_main_activity(
@@ -147,6 +150,7 @@ async def test_sub_agent_status_update_routes_to_card_not_main_activity(
         activity = next(iter(app._sub_agent_activities.values()))
         assert "Provider overloaded, retrying" in activity.last_activity
 
+
 @pytest.mark.asyncio
 async def test_sub_agent_stream_chunks_group_into_single_entry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
@@ -162,6 +166,7 @@ async def test_sub_agent_stream_chunks_group_into_single_entry(tmp_path: Path, m
         assert "#1" in entries[0].content
         assert "The session store writes JSON records" in entries[0].content
         assert "Task: inspect sessions" in entries[0].content
+
 
 @pytest.mark.asyncio
 async def test_parallel_sub_agents_create_separate_entries(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -179,6 +184,7 @@ async def test_parallel_sub_agents_create_separate_entries(tmp_path: Path, monke
         assert "#1" in entries[0].content and "alpha more" in entries[0].content
         assert "#2" in entries[1].content and "beta" in entries[1].content
         assert "alpha" not in entries[1].content
+
 
 @pytest.mark.asyncio
 async def test_sub_agent_tool_events_update_counters_not_top_level(
@@ -204,6 +210,7 @@ async def test_sub_agent_tool_events_update_counters_not_top_level(
         activity = next(iter(app._sub_agent_activities.values()))
         assert activity.tool_calls == 1
 
+
 @pytest.mark.asyncio
 async def test_sub_agent_status_events_complete_entry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
@@ -219,6 +226,7 @@ async def test_sub_agent_status_events_complete_entry(tmp_path: Path, monkeypatc
         assert activity.entry.complete is True
         assert "completed in" in activity.entry.content
 
+
 @pytest.mark.asyncio
 async def test_sub_agent_error_status_marks_failed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
@@ -230,6 +238,7 @@ async def test_sub_agent_error_status_marks_failed(tmp_path: Path, monkeypatch: 
         activity = next(iter(app._sub_agent_activities.values()))
         assert activity.status == "failed"
         assert "failed after" in activity.entry.content
+
 
 @pytest.mark.asyncio
 async def test_activity_strip_running_sub_agents(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -251,6 +260,7 @@ async def test_activity_strip_running_sub_agents(tmp_path: Path, monkeypatch: py
             _sub_agent_event(agent_id="a2", parent_tool_call_id="tc-2", status="STOPPED", message="Completed")
         )
         assert app._status_state.activity == "Working…"
+
 
 @pytest.mark.asyncio
 async def test_main_agent_tool_events_unaffected_by_sub_agent_routing(
@@ -276,6 +286,7 @@ async def test_main_agent_tool_events_unaffected_by_sub_agent_routing(
         assert len(tool_entries) == 1
         assert not _sub_agent_entries(app)
 
+
 @pytest.mark.asyncio
 async def test_sub_agent_event_without_agent_id_uses_fallback_key(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -293,6 +304,7 @@ async def test_sub_agent_event_without_agent_id_uses_fallback_key(
         assert len(entries) == 1
         assert "part one part two" in entries[0].content
         assert "tc-1" in app._sub_agent_activities
+
 
 @pytest.mark.asyncio
 async def test_sub_agent_tool_streaming_update_routes_to_activity(
@@ -315,6 +327,7 @@ async def test_sub_agent_tool_streaming_update_routes_to_activity(
         assert len(entries) == 1
         assert "run_command_tracked streaming" in entries[0].content
 
+
 @pytest.mark.asyncio
 async def test_cancel_finalizes_running_sub_agents(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
@@ -330,6 +343,7 @@ async def test_cancel_finalizes_running_sub_agents(tmp_path: Path, monkeypatch: 
         assert activity.entry.complete is True
         assert "stopped after" in activity.entry.content
 
+
 @pytest.mark.asyncio
 async def test_thread_reset_clears_sub_agent_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
@@ -343,6 +357,7 @@ async def test_thread_reset_clears_sub_agent_state(tmp_path: Path, monkeypatch: 
         assert app._sub_agent_activities == {}
         assert app._sub_agent_by_tool_call == {}
         assert not _sub_agent_entries(app)
+
 
 @pytest.mark.asyncio
 async def test_sub_agent_steps_capture_full_trajectory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -383,6 +398,7 @@ async def test_sub_agent_steps_capture_full_trajectory(tmp_path: Path, monkeypat
 
         assert cli_messages.SUB_AGENT_INSPECT_HINT in activity.entry.content
 
+
 @pytest.mark.asyncio
 async def test_sub_agent_completion_event_records_tokens(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
@@ -394,6 +410,7 @@ async def test_sub_agent_completion_event_records_tokens(tmp_path: Path, monkeyp
         activity = next(iter(app._sub_agent_activities.values()))
         assert activity.tokens == 3100
         assert "3.1k tok" in activity.entry.content
+
 
 @pytest.mark.asyncio
 async def test_open_sub_agent_inspector_renders_trajectory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -423,6 +440,7 @@ async def test_open_sub_agent_inspector_renders_trajectory(tmp_path: Path, monke
         assert "some response" in contents
         assert "inspect sessions" in contents
 
+
 @pytest.mark.asyncio
 async def test_sub_agent_inspector_switches_agents(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
@@ -441,6 +459,7 @@ async def test_sub_agent_inspector_switches_agents(tmp_path: Path, monkeypatch: 
         screen.action_next_agent()
         await pilot.pause()
         assert screen._selected_key == "a2"
+
 
 @pytest.mark.asyncio
 async def test_sub_agent_inspector_escape_closes_without_cancelling(
@@ -468,6 +487,7 @@ async def test_sub_agent_inspector_escape_closes_without_cancelling(
         assert app._sub_agent_inspector is None
         assert cancelled is False
 
+
 @pytest.mark.asyncio
 async def test_open_sub_agent_inspector_empty_notifies(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
@@ -482,6 +502,7 @@ async def test_open_sub_agent_inspector_empty_notifies(tmp_path: Path, monkeypat
         from kolega_code.cli import messages as cli_messages
 
         assert cli_messages.SUB_AGENT_INSPECTOR_EMPTY in notes
+
 
 @pytest.mark.asyncio
 async def test_sub_agent_tool_error_step_captured(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -507,6 +528,7 @@ async def test_sub_agent_tool_error_step_captured(tmp_path: Path, monkeypatch: p
         assert "boom" in step.full_content
         assert "last: run_command failed" in activity.entry.content
 
+
 @pytest.mark.asyncio
 async def test_sub_agent_tool_steps_without_id_do_not_collide(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # Defensive: two separate executions of the same tool, neither carrying a tool_call_id,
@@ -525,6 +547,7 @@ async def test_sub_agent_tool_steps_without_id_do_not_collide(tmp_path: Path, mo
         assert activity.steps[1].full_content == "result a"
         assert activity.steps[2].full_content == "result b"
 
+
 @pytest.mark.asyncio
 async def test_sub_agent_stream_without_uuid_merges_by_kind(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
@@ -542,6 +565,7 @@ async def test_sub_agent_stream_without_uuid_merges_by_kind(tmp_path: Path, monk
         assert kinds.count("thinking") == 1
         assistant = next(s for s in activity.steps if s.kind == "assistant")
         assert assistant.content == "part one part two"
+
 
 @pytest.mark.asyncio
 async def test_sub_agent_inspector_shows_empty_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -572,6 +596,7 @@ async def test_sub_agent_inspector_shows_empty_state(tmp_path: Path, monkeypatch
         await pilot.pause()
         assert screen._empty_shown is False
         assert len(screen._step_widgets) == 1
+
 
 @pytest.mark.asyncio
 async def test_workflow_card_lifecycle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -621,6 +646,7 @@ async def test_workflow_card_lifecycle(tmp_path: Path, monkeypatch: pytest.Monke
         assert all(p.state == "done" for p in card.phases)
         assert card.entry.complete is True
 
+
 @pytest.mark.asyncio
 async def test_workflow_card_counts_sub_agents_by_phase(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
@@ -651,6 +677,7 @@ async def test_workflow_card_counts_sub_agents_by_phase(tmp_path: Path, monkeypa
         assert verify.agents_done == 1
         assert card.tokens == 500
 
+
 @pytest.mark.asyncio
 async def test_thread_reset_closes_open_inspector(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
@@ -665,6 +692,7 @@ async def test_thread_reset_closes_open_inspector(tmp_path: Path, monkeypatch: p
         await pilot.pause()
 
         assert app._sub_agent_inspector is None
+
 
 @pytest.mark.asyncio
 async def test_sub_agent_inspector_tick_follow_and_copy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

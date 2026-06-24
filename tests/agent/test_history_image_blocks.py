@@ -24,11 +24,14 @@ from kolega_code.llm.models import (
     ToolResult,
 )
 
+
 def _image(media_type: str = "image/png") -> ImageBlock:
     return ImageBlock(image_type="base64", media_type=media_type, data="ZmFrZQ==")
 
+
 def _user(*blocks) -> Message:
     return Message(role="user", content=list(blocks))
+
 
 def _assistant(*blocks, provider: str | None = None) -> Message:
     return Message(
@@ -40,57 +43,85 @@ def _assistant(*blocks, provider: str | None = None) -> Message:
 
 def test_count_image_blocks_empty_history():
     assert count_image_blocks([]) == 0
+
+
 def test_count_image_blocks_no_images():
     history = [_user(TextBlock(text="hi")), _assistant(TextBlock(text="hello"))]
     assert count_image_blocks(history) == 0
+
+
 def test_count_image_blocks_user_message_image():
     history = [_user(TextBlock(text="look"), _image())]
     assert count_image_blocks(history) == 1
+
+
 def test_count_image_blocks_multiple_top_level():
     history = [_user(_image("image/png"), _image("image/jpeg"))]
     assert count_image_blocks(history) == 2
+
+
 def test_count_image_blocks_nested_in_tool_result():
     tr = ToolResult(tool_use_id="t1", name="read_image", content=[_image()], is_error=False)
     history = [_user(tr)]
     assert count_image_blocks(history) == 1
+
+
 def test_count_image_blocks_nested_and_top_level():
     tr = ToolResult(tool_use_id="t1", name="read_image", content=[_image(), TextBlock(text="ok")], is_error=False)
     history = [_user(TextBlock(text="see"), _image()), _user(tr)]
     assert count_image_blocks(history) == 2
+
+
 def test_count_image_blocks_ignores_string_content():
     history = [_user("just a string")]
     assert count_image_blocks(history) == 0
+
+
 def test_has_image_blocks_true_for_user_image():
     conv = Conversation([_user(TextBlock(text="hi"), _image())])
     assert conv.has_image_blocks() is True
+
+
 def test_has_image_blocks_true_for_tool_result_image():
     tr = ToolResult(tool_use_id="t1", name="read_image", content=[_image()], is_error=False)
     conv = Conversation([_user(tr)])
     assert conv.has_image_blocks() is True
+
+
 def test_has_image_blocks_false_for_text_only():
     conv = Conversation([_user(TextBlock(text="hi")), _assistant(TextBlock(text="hello"))])
     assert conv.has_image_blocks() is False
+
+
 def test_has_image_blocks_false_when_folded_into_summary():
     """Images in the compacted prefix are gone from the effective history."""
     conv = Conversation([_user(TextBlock(text="u0"), _image()), _assistant(TextBlock(text="a0"))])
     conv.apply_compaction("SUMMARY", split_point=2)  # fold both messages into the summary
     assert conv.has_image_blocks() is False
+
+
 def test_has_image_blocks_true_when_image_in_verbatim_tail():
     conv = Conversation(
         [_user(TextBlock(text="u0")), _assistant(TextBlock(text="a0")), _user(TextBlock(text="u1"), _image())]
     )
     conv.apply_compaction("SUMMARY", split_point=2)  # keep the image-bearing user message verbatim
     assert conv.has_image_blocks() is True
+
+
 def test_replace_returns_same_object_for_messages_without_images():
     m = _user(TextBlock(text="hi"))
     out = replace_image_blocks_with_placeholders([m], "deepseek-v4-pro")
     assert out[0] is m
+
+
 def test_replace_does_not_mutate_input():
     original = _user(TextBlock(text="look"), _image("image/png"))
     snapshot_content = list(original.content)
     _ = replace_image_blocks_with_placeholders([original], "deepseek-v4-pro")
     assert original.content == snapshot_content
     assert isinstance(original.content[1], ImageBlock)
+
+
 def test_replace_top_level_image_with_placeholder():
     history = [_user(TextBlock(text="look"), _image("image/png"))]
     out = replace_image_blocks_with_placeholders(history, "deepseek-v4-pro")
@@ -103,6 +134,8 @@ def test_replace_top_level_image_with_placeholder():
     assert "image/png" in blocks[1].text
     assert "deepseek-v4-pro" in blocks[1].text
     assert "not visible" in blocks[1].text
+
+
 def test_replace_preserves_message_metadata():
     tool_call = ToolCall(id="call1", name="read_file", input={"path": "a.py"})
     msg = Message(
@@ -120,6 +153,8 @@ def test_replace_preserves_message_metadata():
     assert new_msg.usage_metadata == {"input_tokens": 10}
     # Tool call block survives if present alongside an image in the same message.
     assert any(isinstance(b, ToolCall) for b in new_msg.content)
+
+
 def test_replace_nested_tool_result_image():
     tr = ToolResult(
         tool_use_id="t1",
@@ -143,11 +178,15 @@ def test_replace_nested_tool_result_image():
     assert new_tr.content[1].text == "caption"
     # original untouched
     assert isinstance(tr.content[0], ImageBlock)
+
+
 def test_replace_preserves_string_tool_result():
     tr = ToolResult(tool_use_id="t1", name="read_file", content="plain text result", is_error=False)
     history = [_user(tr)]
     out = replace_image_blocks_with_placeholders(history, "deepseek-v4-pro")
     assert out[0] is history[0]  # no images -> unchanged
+
+
 def test_replace_mixed_history_only_changes_image_messages():
     u_img = _user(TextBlock(text="look"), _image())
     a_text = _assistant(TextBlock(text="ok"))
@@ -158,11 +197,15 @@ def test_replace_mixed_history_only_changes_image_messages():
     assert out[1] is a_text  # unchanged
     assert out[2] is u_text  # unchanged
     assert not any(isinstance(b, ImageBlock) for b in out[0].content)
+
+
 def test_replace_eliminates_all_image_blocks():
     tr = ToolResult(tool_use_id="t1", name="read_image", content=[_image()], is_error=False)
     history = [_user(TextBlock(text="a"), _image()), _user(tr), _assistant(TextBlock(text="b"))]
     out = replace_image_blocks_with_placeholders(history, "deepseek-v4-pro")
     assert count_image_blocks(out) == 0
+
+
 def test_replace_preserves_cache_checkpoint_on_tool_result():
     tr = ToolResult(
         tool_use_id="t1",

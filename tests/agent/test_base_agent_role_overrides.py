@@ -34,13 +34,16 @@ from .compaction_helpers import FakeLLM
 # Load environment variables
 load_dotenv()
 
+
 class _InvestigationRoleAgent(BaseAgent):
     """Minimal BaseAgent carrying the investigation role for resolution tests."""
 
     agent_name = "investigation-agent"
 
+
 class _BuildingRoleAgent(BaseAgent):
     agent_name = "coder"
+
 
 def _role_config():
     return AgentConfig(
@@ -55,6 +58,7 @@ def _role_config():
             )
         },
     )
+
 
 def test_agent_uses_role_override_for_primary_model(tmp_path, mock_connection_manager):
     agent = _InvestigationRoleAgent(
@@ -85,5 +89,3 @@ def test_agent_without_override_inherits_long_context(tmp_path, mock_connection_
     assert agent.primary_model_config.model == "claude-haiku-4-5-20251001"
     assert agent.model_context_length == 200_000
     assert agent.llm.provider_name == "anthropic"
-
-

@@ -9,6 +9,7 @@ from kolega_code.events import AgentConnectionManager
 from kolega_code.llm.models import Message, TextBlock, ThinkingBlock
 from kolega_code.agent.tool_backend.think_hard_tool import ThinkHardTool
 
+
 class MockStreamWrapper:
     """Mock stream wrapper that simulates the AnthropicStreamWrapper behavior."""
 
@@ -44,10 +45,12 @@ class MockStreamWrapper:
             raise RuntimeError("Must use 'async with' before getting final message")
         return self.final_message
 
+
 class MockStreamChunk:
     def __init__(self, thinking: str = "", text: str = ""):
         self.thinking = thinking
         self.text = text
+
 
 @pytest.fixture
 def mock_config():
@@ -62,10 +65,12 @@ def mock_config():
         ),
     )
 
+
 @pytest.fixture
 def mock_connection_manager():
     """Create a mock connection manager."""
     return AsyncMock(spec=AgentConnectionManager)
+
 
 @pytest.fixture
 def mock_caller():
@@ -75,6 +80,7 @@ def mock_caller():
     mock.user_id = "user-123"
     mock.user_email = "user@example.com"
     return mock
+
 
 @pytest.fixture
 def think_hard_tool(mock_config, mock_connection_manager, mock_caller):
@@ -96,6 +102,7 @@ def think_hard_tool(mock_config, mock_connection_manager, mock_caller):
     tool.send_streaming_update = AsyncMock()
 
     return tool
+
 
 @pytest.mark.asyncio
 async def test_think_hard_streaming_error_handling(think_hard_tool, mock_connection_manager):
@@ -122,6 +129,8 @@ async def test_think_hard_streaming_error_handling(think_hard_tool, mock_connect
             assert result == "Error during extended thinking: API Error: Streaming failed"
             think_hard_tool.log_error.assert_called_once()
             assert "API Error" in think_hard_tool.log_error.call_args[0][0]
+
+
 @pytest.mark.asyncio
 async def test_think_hard_stream_context_manager_error(think_hard_tool, mock_connection_manager):
     """Test error handling when stream context manager fails."""

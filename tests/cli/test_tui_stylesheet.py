@@ -16,7 +16,6 @@ EXPECTED_CSS_PATH = "tui/styles.tcss"
 from ._app_test_utils import build_test_config
 
 
-
 def test_tui_uses_external_textual_stylesheet(tmp_path: Path) -> None:
     from kolega_code.cli.app import KolegaCodeApp
 

@@ -19,13 +19,22 @@ def simple_system():
 @pytest.fixture
 def complex_messages():
     """Multi-turn conversation with various content types."""
-    return MessageHistory([
-        Message("user", [TextBlock("Hello! I need help with Python.")]),
-        Message("assistant", [TextBlock("I'd be happy to help you with Python. What would you like to know?")]),
-        Message("user", [TextBlock("Can you explain list comprehensions?")]),
-        Message("assistant", [TextBlock("List comprehensions are a concise way to create lists in Python. Here's the syntax: [expression for item in iterable if condition]")]),
-        Message("user", [TextBlock("Can you give me an example?")]),
-    ])
+    return MessageHistory(
+        [
+            Message("user", [TextBlock("Hello! I need help with Python.")]),
+            Message("assistant", [TextBlock("I'd be happy to help you with Python. What would you like to know?")]),
+            Message("user", [TextBlock("Can you explain list comprehensions?")]),
+            Message(
+                "assistant",
+                [
+                    TextBlock(
+                        "List comprehensions are a concise way to create lists in Python. Here's the syntax: [expression for item in iterable if condition]"
+                    )
+                ],
+            ),
+            Message("user", [TextBlock("Can you give me an example?")]),
+        ]
+    )
 
 
 def calculate_percentage_difference(local_count: int, api_count: int) -> float:

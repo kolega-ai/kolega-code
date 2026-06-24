@@ -34,6 +34,7 @@ from .compaction_helpers import FakeLLM
 # Load environment variables
 load_dotenv()
 
+
 class TestBaseAgent:
     @pytest.mark.asyncio
     async def test_execute_single_tool_uses_execution_id_for_app_events_and_provider_id_for_result(self, base_agent):
@@ -81,4 +82,3 @@ class TestBaseAgent:
         assert base_agent.current_tool_call_id is None
         assert base_agent.current_tool_execution_id is None
         assert base_agent.current_provider_tool_call_id is None
-

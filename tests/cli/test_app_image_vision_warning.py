@@ -24,7 +24,6 @@ from kolega_code.cli.session_store import SessionStore
 from ._app_test_utils import build_test_config
 
 
-
 def _image_attachment(path: str = "clipboard") -> dict:
     return {
         "type": "image",

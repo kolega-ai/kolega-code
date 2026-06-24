@@ -43,6 +43,7 @@ from ._app_test_utils import (
     renderable_text,
 )
 
+
 def test_turn_state_styles_do_not_depend_on_content_text() -> None:
     pytest.importorskip("textual")
 
@@ -55,6 +56,7 @@ def test_turn_state_styles_do_not_depend_on_content_text() -> None:
     assert turn_state_color(TurnState.STOPPING) == theme.Color.WARNING
     assert turn_state_color(TurnState.IDLE) == theme.Color.SUCCESS
     assert turn_state_color(TurnState.GENERATING) == theme.Color.ACCENT  # falls back to accent
+
 
 @pytest.mark.asyncio
 async def test_progress_entry_tone_drives_styling_not_prose(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -111,6 +113,7 @@ async def test_progress_entry_tone_drives_styling_not_prose(tmp_path: Path, monk
         app._finish_turn_progress("Wrapped up without issue", TurnState.STOPPED)
         assert app._status_state.turn_state is TurnState.STOPPED
 
+
 @pytest.mark.asyncio
 async def test_textual_app_keeps_command_c_for_screen_copy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
@@ -149,6 +152,7 @@ async def test_textual_app_keeps_command_c_for_screen_copy(tmp_path: Path, monke
         cancel_binding = next(binding for binding in app.BINDINGS if binding.action == "cancel_generation")
         assert cancel_binding.key == "ctrl+c"
         assert all("super+c" not in binding.key for binding in app.BINDINGS)
+
 
 @pytest.mark.asyncio
 async def test_textual_app_merges_streamed_response_chunks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -206,6 +210,7 @@ async def test_textual_app_merges_streamed_response_chunks(tmp_path: Path, monke
         assert [entry for entry in app.conversation_entries if entry.kind == "progress"] == []
         assert app.query_one("#composer", ChatComposer).placeholder == COMPOSER_PLACEHOLDER
 
+
 @pytest.mark.asyncio
 async def test_textual_app_merges_streamed_thinking_chunks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
@@ -259,6 +264,7 @@ async def test_textual_app_merges_streamed_thinking_chunks(tmp_path: Path, monke
         assert thinking_entries[0].content == "checking context"
         assert thinking_entries[0].complete is True
 
+
 @pytest.mark.asyncio
 async def test_textual_app_formats_thinking_as_italic_chat_entry(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -306,6 +312,7 @@ async def test_textual_app_formats_thinking_as_italic_chat_entry(
         assert "[red]markup[/red]" in rendered
         assert "…" in rendered  # streaming indicator in the header
         assert any("italic" in style and "dim" in style for style in first_text_styles(formatted))
+
 
 @pytest.mark.asyncio
 async def test_textual_app_renders_one_widget_per_chat_entry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -369,6 +376,7 @@ async def test_textual_app_renders_one_widget_per_chat_entry(tmp_path: Path, mon
         assert same_widgets[1] is widgets[1]
         assert "second updated" in renderable_text(same_widgets[1]._formatted)
 
+
 @pytest.mark.asyncio
 async def test_conversation_render_skips_detached_view_during_teardown(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -431,6 +439,7 @@ async def test_conversation_render_skips_detached_view_during_teardown(
         # The detached render was skipped, so nothing new was mounted.
         assert len(app.query(ConversationEntryWidget)) == 1
 
+
 @pytest.mark.asyncio
 async def test_conversation_flush_uses_dirty_entry_fast_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
@@ -464,6 +473,7 @@ async def test_conversation_flush_uses_dirty_entry_fast_path(tmp_path: Path, mon
         assert refreshed == widgets
         assert "message 25 updated" in renderable_text(refreshed[25]._formatted)
 
+
 @pytest.mark.asyncio
 async def test_repeated_progress_updates_refresh_status_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
@@ -493,6 +503,7 @@ async def test_repeated_progress_updates_refresh_status_once(tmp_path: Path, mon
         app._update_progress("Reading response", complete=False, state=TurnState.THINKING)
 
         assert refresh_count == 2
+
 
 @pytest.mark.asyncio
 async def test_tab_activity_label_changes_only_on_state_transitions(
@@ -527,6 +538,7 @@ async def test_tab_activity_label_changes_only_on_state_transitions(
         app._clear_tab_activity("logs_pane")
         assert logs_tab.label is cleared_label
 
+
 @pytest.mark.asyncio
 async def test_conversation_entry_widget_skips_unchanged_updates(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -557,6 +569,7 @@ async def test_conversation_entry_widget_skips_unchanged_updates(
         widget.entry.content = "changed"
         widget.refresh_content()
         assert updates == 1
+
 
 @pytest.mark.asyncio
 async def test_conversation_entry_widget_extracts_plain_selected_text(
@@ -614,6 +627,7 @@ async def test_conversation_entry_widget_extracts_plain_selected_text(
         assert "\x1b" not in text
         assert "[bold]" not in text
 
+
 @pytest.mark.asyncio
 async def test_conversation_entry_supports_mouse_drag_selection(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -669,6 +683,7 @@ async def test_conversation_entry_supports_mouse_drag_selection(
         assert selected_text is not None
         assert selected_text.strip() == "select this text"
 
+
 @pytest.mark.asyncio
 async def test_conversation_entry_selection_styles_rendered_lines(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -704,6 +719,7 @@ async def test_conversation_entry_selection_styles_rendered_lines(
                 and segment.style.meta.get("offset") is not None
                 for segment in strip
             )
+
 
 @pytest.mark.asyncio
 async def test_conversation_entry_selection_preserves_text_foreground(
@@ -768,6 +784,7 @@ async def test_conversation_entry_selection_preserves_text_foreground(
         finally:
             theme.apply_theme(theme.DEFAULT_THEME_NAME)
 
+
 @pytest.mark.asyncio
 async def test_conversation_selection_can_start_in_blank_separator(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -800,6 +817,7 @@ async def test_conversation_selection_can_start_in_blank_separator(
         assert selected_text is not None
         assert "second" in selected_text
 
+
 @pytest.mark.asyncio
 async def test_conversation_selection_can_start_after_line_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
@@ -828,6 +846,7 @@ async def test_conversation_selection_can_start_after_line_end(tmp_path: Path, m
         selected_text = app.screen.get_selected_text()
         assert selected_text is not None
         assert "second" in selected_text
+
 
 @pytest.mark.asyncio
 async def test_conversation_selection_spans_multiple_messages(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -859,6 +878,7 @@ async def test_conversation_selection_spans_multiple_messages(tmp_path: Path, mo
         assert "first message" in selected_text
         assert "second message" in selected_text
         assert selected_text.index("first message") < selected_text.index("second message")
+
 
 @pytest.mark.asyncio
 async def test_collapsed_tool_title_supports_drag_selection_and_toggle(
@@ -908,6 +928,7 @@ async def test_collapsed_tool_title_supports_drag_selection_and_toggle(
         await pilot.pause()
         assert collapsible.collapsed is True
 
+
 @pytest.mark.asyncio
 async def test_expanded_tool_body_line_start_selection_copies(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
@@ -955,6 +976,7 @@ async def test_expanded_tool_body_line_start_selection_copies(tmp_path: Path, mo
 
         await pilot.press("super+c")
         assert copied == ["alpha line\nbeta line"]
+
 
 @pytest.mark.asyncio
 async def test_command_c_copies_selected_chat_text_to_macos_clipboard(
@@ -1019,6 +1041,7 @@ async def test_command_c_copies_selected_chat_text_to_macos_clipboard(
         assert len(pbcopy_calls) == 1
         assert pbcopy_calls[0]["args"] == ["pbcopy"]
         assert pbcopy_calls[0]["input"] == app.clipboard
+
 
 @pytest.mark.asyncio
 async def test_textual_app_formats_agent_and_tool_chat_entries(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1087,6 +1110,7 @@ async def test_textual_app_formats_agent_and_tool_chat_entries(tmp_path: Path, m
         assert "⏺ write_file" in tool_error_text
         assert "· failed" in tool_error_text
 
+
 @pytest.mark.asyncio
 async def test_textual_app_ignores_empty_final_response_without_existing_entry(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1134,6 +1158,7 @@ async def test_textual_app_ignores_empty_final_response_without_existing_entry(
         assert [entry for entry in app.conversation_entries if entry.kind == "assistant"] == []
         assert [entry for entry in app.conversation_entries if entry.kind == "progress"] == []
         assert app.query_one("#composer", ChatComposer).placeholder == COMPOSER_PLACEHOLDER
+
 
 @pytest.mark.asyncio
 async def test_textual_app_shows_working_progress_during_active_turn(
@@ -1218,6 +1243,7 @@ async def test_textual_app_shows_working_progress_during_active_turn(
         assert composer.disabled is False
         assert "Done in 5m 23s" in str(turn_status.render())
 
+
 @pytest.mark.asyncio
 async def test_textual_app_renders_tool_events_in_chat(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
@@ -1298,6 +1324,7 @@ async def test_textual_app_renders_tool_events_in_chat(tmp_path: Path, monkeypat
         assert tool_entries[1].content.endswith("…")
         assert tool_entries[1].tool_call_id == "tool-2"
         assert len(tool_entries[1].content) == TOOL_RESULT_PREVIEW_CHARS + 1
+
 
 @pytest.mark.asyncio
 async def test_textual_app_appends_append_mode_tool_streaming_events_in_chat(
@@ -1401,6 +1428,7 @@ async def test_textual_app_appends_append_mode_tool_streaming_events_in_chat(
         assert tool_entries[0].complete is True
         assert app._tool_stream_buffers == {}
 
+
 @pytest.mark.asyncio
 async def test_textual_app_replaces_default_tool_streaming_events_in_chat(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1468,6 +1496,7 @@ async def test_textual_app_replaces_default_tool_streaming_events_in_chat(
         assert tool_entries[0].kind == "tool_call"
         assert tool_entries[0].content == "Processing content..."
 
+
 @pytest.mark.asyncio
 async def test_textual_app_caps_long_append_mode_tool_streaming_events(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1526,6 +1555,7 @@ async def test_textual_app_caps_long_append_mode_tool_streaming_events(
             f"[stream truncated to the last {TOOL_STREAM_PREVIEW_CHARS} characters]"
         )
         assert tool_entries[0].content.endswith("a" * TOOL_STREAM_PREVIEW_CHARS)
+
 
 @pytest.mark.asyncio
 async def test_textual_app_renders_queued_tool_events_during_active_turn(
@@ -1645,6 +1675,7 @@ async def test_textual_app_renders_queued_tool_events_during_active_turn(
         assert composer.placeholder == COMPOSER_PLACEHOLDER
         assert "Done in 15s" in str(turn_status.render())
 
+
 @pytest.mark.asyncio
 async def test_textual_app_late_tool_result_updates_existing_tool_row(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1714,6 +1745,7 @@ async def test_textual_app_late_tool_result_updates_existing_tool_row(
         assert len(tool_entries) == 1
         assert tool_entries[0].kind == "tool_result"
         assert tool_entries[0].content == "late result"
+
 
 @pytest.mark.asyncio
 async def test_textual_app_cancellation_is_visible_in_chat(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1786,6 +1818,7 @@ async def test_textual_app_cancellation_is_visible_in_chat(tmp_path: Path, monke
         assert progress_entries[0].complete is True
         assert composer.placeholder == COMPOSER_PLACEHOLDER
         assert "Stopped after 42s" in str(turn_status.render())
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
@@ -1908,6 +1941,7 @@ async def test_textual_app_handles_llm_error_without_worker_traceback(
         assert app._status_state.turn_state is TurnState.ERROR
         assert "Errored after" in str(turn_status.render())
 
+
 @pytest.mark.asyncio
 async def test_textual_app_reraises_non_llm_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
@@ -1961,6 +1995,7 @@ async def test_textual_app_reraises_non_llm_error(tmp_path: Path, monkeypatch: p
         assert composer.disabled is False
         assert app._status_state.turn_state is TurnState.ERROR
 
+
 @pytest.mark.asyncio
 async def test_rapid_stream_chunks_coalesce_renders(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
@@ -1990,6 +2025,7 @@ async def test_rapid_stream_chunks_coalesce_renders(tmp_path: Path, monkeypatch:
         assert "word0" in entry.content
         assert "word49" in entry.content
         assert entry.content.endswith("done")
+
 
 @pytest.mark.asyncio
 async def test_conversation_body_renders_rich_markup_tokens_literally(
@@ -2031,6 +2067,7 @@ async def test_conversation_body_renders_rich_markup_tokens_literally(
         assert "[red]task[/red]" in sub_agent_text
         assert "[bold]literal[/bold]\\" in sub_agent_text
 
+
 @pytest.mark.asyncio
 async def test_streaming_assistant_refresh_accepts_literal_markup_tokens(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -2056,6 +2093,7 @@ async def test_streaming_assistant_refresh_accepts_literal_markup_tokens(
         rendered = renderable_text(widget._formatted)
         assert "[/dim]" in rendered
         assert "[bold]literal[/bold]\\" in rendered
+
 
 @pytest.mark.asyncio
 async def test_conversation_scroll_position_survives_streaming(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2096,6 +2134,7 @@ async def test_conversation_scroll_position_survives_streaming(tmp_path: Path, m
         assert view.scroll_y == view.max_scroll_y
         assert app.query_one("#jump_to_bottom", JumpToBottomBar).display is False
 
+
 @pytest.mark.asyncio
 async def test_streaming_growth_stays_pinned_when_following_bottom(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -2130,6 +2169,7 @@ async def test_streaming_growth_stays_pinned_when_following_bottom(
             assert app._entry_widgets[entry.entry_id] is widget
             assert view.is_at_bottom()
             assert app.query_one("#jump_to_bottom", JumpToBottomBar).display is False
+
 
 @pytest.mark.asyncio
 async def test_jump_to_bottom_keeps_following_continued_stream(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2181,6 +2221,7 @@ async def test_jump_to_bottom_keeps_following_continued_stream(tmp_path: Path, m
             assert view.is_at_bottom()
             assert bar.display is False
 
+
 @pytest.mark.asyncio
 async def test_markdown_completion_reflow_after_jump_stays_at_bottom(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -2224,6 +2265,7 @@ async def test_markdown_completion_reflow_after_jump_stays_at_bottom(
         assert view.is_at_bottom()
         assert bar.display is False
 
+
 @pytest.mark.asyncio
 async def test_full_rebuild_preserves_manual_scroll_away(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
@@ -2255,6 +2297,7 @@ async def test_full_rebuild_preserves_manual_scroll_away(tmp_path: Path, monkeyp
         assert view.auto_follow_bottom is False
         assert app.query_one("#jump_to_bottom", JumpToBottomBar).display is True
 
+
 @pytest.mark.asyncio
 async def test_full_rebuild_keeps_following_when_already_at_bottom(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -2283,6 +2326,7 @@ async def test_full_rebuild_keeps_following_when_already_at_bottom(
         assert view.is_at_bottom()
         assert view.auto_follow_bottom is True
         assert app.query_one("#jump_to_bottom", JumpToBottomBar).display is False
+
 
 @pytest.mark.asyncio
 async def test_assistant_entries_render_markdown_when_complete(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2314,6 +2358,7 @@ async def test_assistant_entries_render_markdown_when_complete(tmp_path: Path, m
         )
         assert isinstance(plan, Group)
 
+
 @pytest.mark.asyncio
 async def test_confirmations_surface_as_logs_without_toasts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
@@ -2344,6 +2389,7 @@ async def test_confirmations_surface_as_logs_without_toasts(tmp_path: Path, monk
         await app.action_toggle_interaction_mode()
         assert ("Stop the current turn before switching modes.", "warn") in logged
 
+
 @pytest.mark.asyncio
 async def test_turn_status_strip_shows_spinner_and_outcome_glyph(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -2368,6 +2414,7 @@ async def test_turn_status_strip_shows_spinner_and_outcome_glyph(
         content = app._turn_status_content()
         assert theme.g(theme.Glyph.CHECK) in content
         assert "Done in 12s" in content
+
 
 @pytest.mark.asyncio
 async def test_tool_entries_render_as_collapsibles_with_full_output(
@@ -2408,6 +2455,7 @@ async def test_tool_entries_render_as_collapsibles_with_full_output(
         assert len(entry.content) == TOOL_RESULT_PREVIEW_CHARS + 1  # preview stays truncated
         assert entry.full_content == long_output  # expand-on-demand shows everything
 
+
 @pytest.mark.asyncio
 async def test_log_lines_carry_timestamp_and_level_glyph(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
@@ -2430,6 +2478,7 @@ async def test_log_lines_carry_timestamp_and_level_glyph(tmp_path: Path, monkeyp
         assert len(written) == 1
         assert "[error]" not in written[0].plain  # no raw level prefix
         assert "it [broke]" in written[0].plain  # brackets survive without markup errors
+
 
 @pytest.mark.asyncio
 async def test_terminal_commands_render_as_styled_blocks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2455,6 +2504,7 @@ async def test_terminal_commands_render_as_styled_blocks(tmp_path: Path, monkeyp
         # by a blank separator line.
         assert plains == [f"{theme.g(theme.Glyph.USER)} echo one", "one", "", f"{theme.g(theme.Glyph.USER)} echo two"]
 
+
 @pytest.mark.asyncio
 async def test_terminal_output_is_batched_until_flush(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
@@ -2478,6 +2528,7 @@ async def test_terminal_output_is_batched_until_flush(tmp_path: Path, monkeypatc
         assert written == ["chunk-0\nchunk-1\nchunk-2\nchunk-3\nchunk-4\n"]
         assert app._terminal_output_buffer == []
         assert app._terminal_output_buffer_chars == 0
+
 
 @pytest.mark.asyncio
 async def test_terminal_output_preserves_scrollback_when_user_scrolls_up(
@@ -2521,6 +2572,7 @@ async def test_terminal_output_preserves_scrollback_when_user_scrolls_up(
 
         assert terminal.scroll_y >= terminal.max_scroll_y - terminal.bottom_tolerance
 
+
 @pytest.mark.asyncio
 async def test_terminal_rendered_history_is_capped(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
@@ -2541,6 +2593,7 @@ async def test_terminal_rendered_history_is_capped(tmp_path: Path, monkeypatch: 
         rendered = "\n".join(strip.text for strip in terminal.lines)
         assert len(terminal.lines) <= 5
         assert "line 11" in rendered
+
 
 @pytest.mark.asyncio
 async def test_status_dashboard_context_note_uses_alert_level(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2577,6 +2630,7 @@ async def test_status_dashboard_context_note_uses_alert_level(tmp_path: Path, mo
         err = theme.Color.ERROR
         assert f"[{err}]Context is getting large.[/{err}]" in dashboard
 
+
 @pytest.mark.asyncio
 async def test_planning_sidebar_marks_empty_states(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
@@ -2597,6 +2651,7 @@ async def test_planning_sidebar_marks_empty_states(tmp_path: Path, monkeypatch: 
 
         assert plan_md.source == "# Plan\n\n- do the thing"
         assert not plan_md.has_class("empty-state")
+
 
 @pytest.mark.asyncio
 async def test_logs_tab_hidden_by_default_and_write_log_is_noop(
@@ -2624,6 +2679,7 @@ async def test_logs_tab_hidden_by_default_and_write_log_is_noop(
 
         app._write_log("background activity")
 
+
 @pytest.mark.asyncio
 async def test_logs_tab_can_be_enabled_with_sticky_widget(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
@@ -2639,6 +2695,7 @@ async def test_logs_tab_can_be_enabled_with_sticky_widget(tmp_path: Path, monkey
 
         assert tabs.get_tab("logs_pane") is not None
         assert isinstance(app.query_one("#logs"), LogOutputLog)
+
 
 @pytest.mark.asyncio
 async def test_logs_output_preserves_scrollback_when_user_scrolls_up(
@@ -2678,6 +2735,7 @@ async def test_logs_output_preserves_scrollback_when_user_scrolls_up(
 
         assert logs.scroll_y >= logs.max_scroll_y - logs.bottom_tolerance
 
+
 @pytest.mark.asyncio
 async def test_logs_rendered_history_is_capped(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
@@ -2698,6 +2756,7 @@ async def test_logs_rendered_history_is_capped(tmp_path: Path, monkeypatch: pyte
         rendered = "\n".join(strip.text for strip in logs.lines)
         assert len(logs.lines) <= 5
         assert "line 11" in rendered
+
 
 @pytest.mark.asyncio
 async def test_logs_tab_shows_activity_dot_until_visited(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

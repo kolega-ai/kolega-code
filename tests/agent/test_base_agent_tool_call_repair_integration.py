@@ -34,6 +34,7 @@ from .compaction_helpers import FakeLLM
 # Load environment variables
 load_dotenv()
 
+
 class TestBaseAgent:
     @pytest.mark.slow
     @pytest.mark.integration
@@ -524,4 +525,3 @@ class TestBaseAgent:
             assert response.get_text_content()
         except Exception as e:
             pytest.fail(f"API call failed after fixing history: {str(e)}")
-

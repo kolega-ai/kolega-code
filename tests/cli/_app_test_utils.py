@@ -43,6 +43,7 @@ def extension_by_name(extensions, name: str):
         if getattr(extension, "name", None) == name or getattr(extension, "id", None) == name
     )
 
+
 def question_payload(question, options, *, header="Choice", multi_select=False):
     """Build a structured `questions` list for a single question.
 
@@ -54,6 +55,7 @@ def question_payload(question, options, *, header="Choice", multi_select=False):
         built.append({"label": label, "description": description})
     return [{"question": question, "header": header, "multiSelect": multi_select, "options": built}]
 
+
 def renderable_text(renderable) -> str:
     from rich.console import Console
 
@@ -62,10 +64,12 @@ def renderable_text(renderable) -> str:
         console.print(renderable, soft_wrap=True, end="")
     return capture.get()
 
+
 def first_text_styles(renderable) -> list[str]:
     renderables = list(getattr(renderable, "renderables", [renderable]))
     text = renderables[0]
     return [str(span.style) for span in getattr(text, "spans", [])]
+
 
 def build_test_config(project: Path):
     return build_agent_config(
@@ -75,6 +79,7 @@ def build_test_config(project: Path):
             "KOLEGA_CODE_PROVIDER": "anthropic",
         },
     )
+
 
 def _build_sub_agent_test_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, **app_kwargs):
     pytest.importorskip("textual")
@@ -109,6 +114,7 @@ def _build_sub_agent_test_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *
     session = store.create(project, "code", config_summary(config))
     return KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session, **app_kwargs)
 
+
 def _sub_agent_event(
     agent_id="agent-1",
     agent_name="general-agent",
@@ -133,8 +139,10 @@ def _sub_agent_event(
         **kwargs,
     )
 
+
 def _sub_agent_entries(app):
     return [entry for entry in app.conversation_entries if entry.kind == "sub_agent"]
+
 
 def _sub_agent_context_event(usage_percentage, *, input_tokens=5000, agent_id="agent-1", agent_name="general-agent"):
     return AgentEvent(
@@ -158,6 +166,7 @@ def _sub_agent_context_event(usage_percentage, *, input_tokens=5000, agent_id="a
         },
     )
 
+
 def _workflow_event(message_type, run_id="wf-1", **content):
     return AgentEvent(
         event_type="chat_message",
@@ -169,6 +178,7 @@ def _workflow_event(message_type, run_id="wf-1", **content):
             **content,
         },
     )
+
 
 def _build_mention_test_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     from kolega_code.cli.app import KolegaCodeApp
@@ -215,4 +225,3 @@ def _build_mention_test_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
     return KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
-

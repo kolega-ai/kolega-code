@@ -6,6 +6,7 @@ from pathlib import Path
 
 from kolega_code.services.file_system import LocalFileSystem, FileSystemPath
 
+
 class TestFileSystemPath:
     """Tests for the FileSystemPath wrapper class."""
 

@@ -33,9 +33,11 @@ def agent_config():
         ),
     )
 
+
 @pytest.fixture
 def mock_connection_manager():
     return AsyncMock(spec=AgentConnectionManager)
+
 
 @pytest.fixture
 def base_agent(tmp_path, mock_connection_manager, agent_config):
@@ -46,4 +48,3 @@ def base_agent(tmp_path, mock_connection_manager, agent_config):
         connection_manager=mock_connection_manager,
         config=agent_config,
     )
-

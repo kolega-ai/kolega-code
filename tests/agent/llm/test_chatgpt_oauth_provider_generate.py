@@ -31,11 +31,14 @@ from kolega_code.llm.providers.chatgpt_oauth import (
 )
 from kolega_code.llm.providers.models import GenerationParams
 
+
 def _ns(**kwargs):
     return types.SimpleNamespace(**kwargs)
 
+
 def _tokens():
     return OAuthTokens(access_token="at", refresh_token="rt", expires_at=10**12, account_id="acct_1", plan_type="pro")
+
 
 class _FakeStream:
     def __init__(self, events):
@@ -48,6 +51,7 @@ class _FakeStream:
 
         return gen()
 
+
 class _FakeResponses:
     def __init__(self, result):
         self._result = result
@@ -56,6 +60,7 @@ class _FakeResponses:
     async def create(self, **kwargs):
         self.last_kwargs = kwargs
         return self._result
+
 
 @pytest.mark.asyncio
 async def test_provider_generate_builds_codex_shaped_request():
@@ -96,6 +101,8 @@ async def test_provider_generate_builds_codex_shaped_request():
     # Codex never sends max_output_tokens; sending it triggers a 400.
     assert "max_output_tokens" not in kwargs
     assert kwargs["input"] == [{"role": "user", "content": [{"type": "input_text", "text": "hello"}]}]
+
+
 @pytest.mark.asyncio
 async def test_provider_generate_omits_reasoning_and_include_without_thinking():
     provider = ChatGPTOAuthProvider(token_manager=ChatGPTTokenManager(_tokens()))
@@ -114,6 +121,8 @@ async def test_provider_generate_omits_reasoning_and_include_without_thinking():
     )
     assert "reasoning" not in fake.last_kwargs
     assert "include" not in fake.last_kwargs
+
+
 @pytest.mark.asyncio
 async def test_provider_stream_returns_wrapper():
     provider = ChatGPTOAuthProvider(token_manager=ChatGPTTokenManager(_tokens()))

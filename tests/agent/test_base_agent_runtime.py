@@ -34,6 +34,7 @@ from .compaction_helpers import FakeLLM
 # Load environment variables
 load_dotenv()
 
+
 class TestBaseAgent:
     def test_default_max_iterations_is_uncapped(self, base_agent):
         assert base_agent.max_iterations is None
@@ -202,4 +203,3 @@ class TestBaseAgent:
         seconds = SimpleNamespace(response=SimpleNamespace(headers={"retry-after": "12"}))
         assert BaseAgent._parse_retry_after(seconds) == 12.0
         assert BaseAgent._parse_retry_after(Exception("no header")) is None
-

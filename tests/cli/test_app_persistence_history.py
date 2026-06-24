@@ -43,6 +43,7 @@ from ._app_test_utils import (
     renderable_text,
 )
 
+
 @pytest.mark.asyncio
 async def test_textual_app_startup_entry_updates_incrementally(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
@@ -107,6 +108,7 @@ async def test_textual_app_startup_entry_updates_incrementally(tmp_path: Path, m
         assert app.conversation_entries[0].kind == "startup"
         assert rendered == [True]
 
+
 @pytest.mark.asyncio
 async def test_textual_app_does_not_save_startup_entry_to_history(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -152,6 +154,7 @@ async def test_textual_app_does_not_save_startup_entry_to_history(
         assert session.history == saved_history
         assert all("Kolega Code" not in str(item) for item in session.history)
 
+
 @pytest.mark.asyncio
 async def test_textual_app_history_save_runs_off_event_loop(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
@@ -191,6 +194,7 @@ async def test_textual_app_history_save_runs_off_event_loop(tmp_path: Path, monk
     await save_task
     assert store.load(session.session_id).history == saved_history
 
+
 @pytest.mark.asyncio
 async def test_textual_app_history_save_persists_session_and_compaction(tmp_path: Path) -> None:
     pytest.importorskip("textual")
@@ -222,6 +226,7 @@ async def test_textual_app_history_save_persists_session_and_compaction(tmp_path
     loaded = store.load(session.session_id)
     assert loaded.history == saved_history
     assert loaded.compaction == saved_compaction
+
 
 @pytest.mark.asyncio
 async def test_textual_app_overlapping_saves_preserve_later_state(
@@ -272,6 +277,7 @@ async def test_textual_app_overlapping_saves_preserve_later_state(
     loaded = store.load(session.session_id)
     assert loaded.task_list_markdown == "- [x] later state"
     assert loaded.history == saved_history
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("command", ["/clear", "/reset"])
@@ -370,6 +376,7 @@ async def test_textual_app_reset_command_clears_current_thread(
         assert app.conversation_entries[-1].content == THREAD_RESET_MESSAGE
         assert all(entry.content != command for entry in app.conversation_entries)
 
+
 @pytest.mark.asyncio
 async def test_textual_app_reset_command_waits_for_active_turn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
@@ -427,6 +434,7 @@ async def test_textual_app_reset_command_waits_for_active_turn(tmp_path: Path, m
         hint = app.query_one("#composer_hint", Static)
         assert hint.display is True
         assert "Stop the current turn before resetting the thread." in str(hint.render())
+
 
 @pytest.mark.asyncio
 async def test_textual_app_renders_resumed_history_in_chat(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -497,6 +505,7 @@ async def test_textual_app_renders_resumed_history_in_chat(tmp_path: Path, monke
             ("tool_error", "Permission denied", "write_file"),
             ("assistant", "Done.", None),
         ]
+
 
 @pytest.mark.asyncio
 async def test_textual_app_restore_tool_history_matches_legacy_and_execution_ids(
@@ -614,6 +623,7 @@ async def test_textual_app_restore_tool_history_matches_legacy_and_execution_ids
         assert modern_entry.tool_call_id == "tool_exec_modern"
         pending_entry = next(entry for entry in restored if entry.tool_name == "list_directory")
         assert pending_entry.complete is False
+
 
 @pytest.mark.asyncio
 async def test_textual_app_model_rebuild_rerenders_completed_tool_once(

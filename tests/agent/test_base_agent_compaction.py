@@ -34,6 +34,7 @@ from .compaction_helpers import FakeLLM
 # Load environment variables
 load_dotenv()
 
+
 class TestBaseAgent:
     @pytest.mark.asyncio
     async def testcompress_history(self, base_agent):
@@ -212,4 +213,3 @@ class TestBaseAgent:
             assert last_message in effective
         except Exception as e:
             pytest.fail(f"Test failed with error: {str(e)}")
-

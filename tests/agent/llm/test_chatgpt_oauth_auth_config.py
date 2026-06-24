@@ -31,11 +31,14 @@ from kolega_code.llm.providers.chatgpt_oauth import (
 )
 from kolega_code.llm.providers.models import GenerationParams
 
+
 def _ns(**kwargs):
     return types.SimpleNamespace(**kwargs)
 
+
 def _tokens():
     return OAuthTokens(access_token="at", refresh_token="rt", expires_at=10**12, account_id="acct_1", plan_type="pro")
+
 
 @pytest.mark.asyncio
 async def test_chatgpt_auth_sets_headers():
@@ -46,6 +49,8 @@ async def test_chatgpt_auth_sets_headers():
     assert sent.headers["Authorization"] == "Bearer at"
     assert sent.headers[chatgpt_constants.ACCOUNT_ID_HEADER] == "acct_1"
     await flow.aclose()
+
+
 def test_llmclient_routes_to_chatgpt_provider():
     client = LLMClient(
         provider="openai_chatgpt",
@@ -53,9 +58,13 @@ def test_llmclient_routes_to_chatgpt_provider():
         token_manager=ChatGPTTokenManager(_tokens()),
     )
     assert isinstance(client.provider, ChatGPTOAuthProvider)
+
+
 def test_llmclient_chatgpt_without_manager_raises():
     with pytest.raises(Exception):
         LLMClient(provider="openai_chatgpt", api_key="unused")
+
+
 def test_agent_config_validates_with_chatgpt_tokens():
     config = AgentConfig(
         openai_chatgpt_tokens=_tokens(),
@@ -66,6 +75,8 @@ def test_agent_config_validates_with_chatgpt_tokens():
     assert config.get_api_key(ModelProvider.OPENAI_CHATGPT) == "at"
     manager = config.get_chatgpt_token_manager()
     assert manager is not None
+
+
 def test_agent_config_without_tokens_rejects_chatgpt_provider():
     with pytest.raises(ValueError, match="signed in"):
         AgentConfig(

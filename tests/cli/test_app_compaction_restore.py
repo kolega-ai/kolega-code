@@ -20,6 +20,7 @@ from kolega_code.cli.session_store import SessionStore
 
 from ._app_test_utils import build_test_config
 
+
 def _text_message(role: str, text: str) -> dict:
     return {"role": role, "content": [{"type": "text", "text": text}]}
 
@@ -46,8 +47,6 @@ class _FakeCoderAgent:
 
     async def cleanup(self):
         return None
-
-
 
 
 @pytest.mark.asyncio

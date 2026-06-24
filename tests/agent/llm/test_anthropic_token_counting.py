@@ -59,10 +59,6 @@ def anthropic_provider_api(api_key):
     return provider
 
 
-
-
-
-
 @pytest.fixture
 def real_system_prompt():
     """Get real system prompt from CoderAgent."""
@@ -141,12 +137,6 @@ def real_tools(tmp_path):
     )
 
     return tool_collection.get_tool_list()
-
-
-
-
-
-
 
 
 @pytest.mark.slow

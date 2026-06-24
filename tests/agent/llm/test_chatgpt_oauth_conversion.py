@@ -31,11 +31,14 @@ from kolega_code.llm.providers.chatgpt_oauth import (
 )
 from kolega_code.llm.providers.models import GenerationParams
 
+
 def _ns(**kwargs):
     return types.SimpleNamespace(**kwargs)
 
+
 def _tokens():
     return OAuthTokens(access_token="at", refresh_token="rt", expires_at=10**12, account_id="acct_1", plan_type="pro")
+
 
 def test_to_responses_input_user_and_assistant_text():
     history = MessageHistory(
@@ -49,6 +52,8 @@ def test_to_responses_input_user_and_assistant_text():
         {"role": "user", "content": [{"type": "input_text", "text": "hello"}]},
         {"role": "assistant", "content": [{"type": "output_text", "text": "hi there"}]},
     ]
+
+
 def test_to_responses_input_tool_call_and_result():
     history = MessageHistory(
         [
@@ -67,6 +72,8 @@ def test_to_responses_input_tool_call_and_result():
         "arguments": '{"path": "a.py"}',
     }
     assert items[1] == {"type": "function_call_output", "call_id": "call_1", "output": "file contents"}
+
+
 def test_to_responses_input_image_and_system_skip():
     history = MessageHistory(
         [
@@ -79,6 +86,8 @@ def test_to_responses_input_image_and_system_skip():
     assert items == [
         {"role": "user", "content": [{"type": "input_image", "image_url": "data:image/png;base64,BASE64"}]}
     ]
+
+
 def test_to_responses_input_image_tool_result_adds_followup_user_image():
     history = MessageHistory(
         [
@@ -110,6 +119,8 @@ def test_to_responses_input_image_tool_result_adds_followup_user_image():
         {"type": "input_text", "text": "Image returned by tool read_image for tool call call_1."},
         {"type": "input_image", "image_url": "data:image/png;base64,BASE64"},
     ]
+
+
 def test_to_responses_input_multiple_tool_outputs_before_image_followups():
     history = MessageHistory(
         [
@@ -135,6 +146,8 @@ def test_to_responses_input_multiple_tool_outputs_before_image_followups():
     assert items[1]["call_id"] == "call_2"
     assert items[2]["role"] == "user"
     assert any(part.get("type") == "input_image" for part in items[2]["content"])
+
+
 def test_to_responses_input_resends_reasoning_before_tool_call():
     # A prior assistant turn carrying captured reasoning must resend it as a
     # reasoning item that *precedes* the function_call it belongs to.
@@ -159,6 +172,8 @@ def test_to_responses_input_resends_reasoning_before_tool_call():
     assert "id" not in items[0]
     assert items[1]["type"] == "function_call"
     assert items[1]["call_id"] == "call_1"
+
+
 def test_responses_tools_flattens_function_shape():
     tool = ToolDefinition(
         name="read_file",
@@ -178,6 +193,8 @@ def test_responses_tools_flattens_function_shape():
             },
         }
     ]
+
+
 def test_instructions_from_system_message():
     system = Message(role="system", content=[TextBlock(text="be terse")])
     assert instructions_from(system, MessageHistory([])) == "be terse"

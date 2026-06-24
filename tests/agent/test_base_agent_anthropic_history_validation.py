@@ -34,6 +34,7 @@ from .compaction_helpers import FakeLLM
 # Load environment variables
 load_dotenv()
 
+
 class TestBaseAgent:
     def test_is_history_valid_for_anthropic_valid_history(self, base_agent):
         """Test validation with a valid history containing tool calls and results."""
@@ -116,4 +117,3 @@ class TestBaseAgent:
         )
 
         assert base_agent._is_history_valid_for_anthropic() is False
-

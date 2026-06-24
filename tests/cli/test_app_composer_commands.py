@@ -43,6 +43,7 @@ from ._app_test_utils import (
     renderable_text,
 )
 
+
 @pytest.mark.asyncio
 async def test_textual_app_composer_shift_enter_inserts_line_break_and_enter_submits(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -103,6 +104,7 @@ async def test_textual_app_composer_shift_enter_inserts_line_break_and_enter_sub
         user_entries = [entry for entry in app.conversation_entries if entry.kind == "user"]
         assert user_entries[-1].content == "hi\nthere"
 
+
 @pytest.mark.asyncio
 async def test_textual_app_composer_ctrl_enter_still_inserts_line_break(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -149,6 +151,7 @@ async def test_textual_app_composer_ctrl_enter_still_inserts_line_break(
         await pilot.press("t", "h", "e", "r", "e")
 
         assert composer.text == "hi\nthere"
+
 
 @pytest.mark.asyncio
 async def test_textual_app_composer_preserves_multiline_paste(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -208,6 +211,7 @@ async def test_textual_app_composer_preserves_multiline_paste(tmp_path: Path, mo
         assert app.agent is not None
         assert app.agent.messages == [pasted]
         assert composer.text == ""
+
 
 @pytest.mark.asyncio
 async def test_textual_app_skill_slash_commands_list_and_activate(
@@ -270,6 +274,7 @@ async def test_textual_app_skill_slash_commands_list_and_activate(
         assert '<skill_content name="demo-skill">' in app.agent.history[-1].get_text_content()
         assert '<skill_content name="demo-skill">' in store.load(session.session_id).history[-1]["content"][0]["text"]
 
+
 @pytest.mark.asyncio
 async def test_textual_app_skill_slash_command_with_prompt_starts_turn(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -331,6 +336,7 @@ async def test_textual_app_skill_slash_command_with_prompt_starts_turn(
         assert any(entry.kind == "skill" for entry in app.conversation_entries)
         assert any(entry.kind == "user" and entry.content == "Build the feature" for entry in app.conversation_entries)
 
+
 @pytest.mark.asyncio
 async def test_textual_app_mention_dropdown_opens_and_escape_dismisses(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -356,6 +362,7 @@ async def test_textual_app_mention_dropdown_opens_and_escape_dismisses(
         assert not dropdown.is_open
         assert composer.text == "@alp"
 
+
 @pytest.mark.asyncio
 async def test_textual_app_mention_dropdown_not_opened_by_email_address(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -373,6 +380,7 @@ async def test_textual_app_mention_dropdown_not_opened_by_email_address(
         composer.insert("mail user@example")
         await pilot.pause()
         assert not dropdown.is_open
+
 
 @pytest.mark.asyncio
 async def test_textual_app_mention_dropdown_down_and_tab_completes(
@@ -399,6 +407,7 @@ async def test_textual_app_mention_dropdown_down_and_tab_completes(
         assert composer.text == f"@{expected} "
         assert not dropdown.is_open
 
+
 @pytest.mark.asyncio
 async def test_textual_app_mention_enter_completes_instead_of_submitting(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -423,6 +432,7 @@ async def test_textual_app_mention_enter_completes_instead_of_submitting(
         assert not dropdown.is_open
         # No message was submitted, only the completion was applied.
         assert app.agent.messages == []
+
 
 @pytest.mark.asyncio
 async def test_textual_app_submitting_mention_attaches_file_and_keeps_short_text(
@@ -451,6 +461,7 @@ async def test_textual_app_submitting_mention_attaches_file_and_keeps_short_text
             for entry in app.conversation_entries
         )
 
+
 @pytest.mark.asyncio
 async def test_textual_app_unresolved_mention_clears_hint_and_sends_plain_text(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -476,6 +487,7 @@ async def test_textual_app_unresolved_mention_clears_hint_and_sends_plain_text(
         await pilot.pause()
         assert app.agent.messages == ["look at @does/not/exist.py"]
         assert app.agent.attachments == [None]
+
 
 @pytest.mark.asyncio
 async def test_textual_app_slash_dropdown_opens_filters_and_tab_completes(
@@ -509,6 +521,7 @@ async def test_textual_app_slash_dropdown_opens_filters_and_tab_completes(
         assert composer.text == "/plan "
         assert not dropdown.is_open
 
+
 @pytest.mark.asyncio
 async def test_textual_app_slash_dropdown_lists_skills_with_descriptions(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -540,6 +553,7 @@ async def test_textual_app_slash_dropdown_lists_skills_with_descriptions(
         await pilot.press("tab")
         assert composer.text == "/demo-skill "
 
+
 @pytest.mark.asyncio
 async def test_textual_app_slash_dropdown_enter_completes_instead_of_submitting(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -563,6 +577,7 @@ async def test_textual_app_slash_dropdown_enter_completes_instead_of_submitting(
         assert composer.text == "/version "
         assert not dropdown.is_open
         assert app.agent.messages == []
+
 
 @pytest.mark.asyncio
 async def test_textual_app_slash_dropdown_does_not_open_mid_text_or_after_args(
@@ -595,6 +610,7 @@ async def test_textual_app_slash_dropdown_does_not_open_mid_text_or_after_args(
         await pilot.pause()
         assert not dropdown.is_open
 
+
 @pytest.mark.asyncio
 async def test_chat_composer_active_slash_query(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
@@ -624,6 +640,7 @@ async def test_chat_composer_active_slash_query(tmp_path: Path, monkeypatch: pyt
         composer.load_text("")
         composer.insert("/model kimi")
         assert composer.active_slash_query() is None
+
 
 @pytest.mark.asyncio
 async def test_textual_app_plan_and_build_slash_commands_switch_mode(
@@ -684,6 +701,7 @@ async def test_textual_app_plan_and_build_slash_commands_switch_mode(
         assert app.interaction_mode == "build"
         assert isinstance(app.agent, FakeCoderAgent)
 
+
 @pytest.mark.asyncio
 async def test_textual_app_sidebar_slash_command_toggles_sidebar(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -712,6 +730,7 @@ async def test_textual_app_sidebar_slash_command_toggles_sidebar(
         assert app.sidebar_visible is True
         assert side_panel.display is True
 
+
 @pytest.mark.asyncio
 async def test_textual_app_init_slash_command_starts_agents_md_turn(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -738,6 +757,7 @@ async def test_textual_app_init_slash_command_starts_agents_md_turn(
             entry.kind == "user" and entry.content == "/init focus on test commands"
             for entry in app.conversation_entries
         )
+
 
 @pytest.mark.asyncio
 async def test_textual_app_init_slash_command_switches_from_plan_to_build(
@@ -805,6 +825,7 @@ async def test_textual_app_init_slash_command_switches_from_plan_to_build(
         assert app.agent.messages
         assert "`focus on docs`" in app.agent.messages[0]
 
+
 @pytest.mark.asyncio
 async def test_textual_app_init_slash_command_blocks_during_active_turn(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -826,6 +847,7 @@ async def test_textual_app_init_slash_command_blocks_during_active_turn(
         assert app.agent.messages == []
         assert "Stop the current turn before running /init." in str(app.query_one("#composer_hint", Static).render())
         app._turn_active = False
+
 
 @pytest.mark.asyncio
 async def test_textual_app_model_slash_command_shows_and_switches_model(
@@ -949,6 +971,7 @@ async def test_textual_app_model_slash_command_shows_and_switches_model(
         await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
         assert settings_store.load().active_model == "kimi-k3"
 
+
 @pytest.mark.asyncio
 async def test_textual_app_model_slash_command_selects_from_action_list(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
@@ -1023,6 +1046,7 @@ async def test_textual_app_model_slash_command_selects_from_action_list(
         await pilot.pause()
         assert settings_store.load().active_model == UI_DEFAULT_MODEL
         assert model_actions.display is False
+
 
 @pytest.mark.asyncio
 async def test_textual_app_model_slash_command_accepts_typed_selection_and_rejects_invalid(
@@ -1102,6 +1126,7 @@ async def test_textual_app_model_slash_command_accepts_typed_selection_and_rejec
         assert switched_settings.active_thinking_effort == "auto"
         assert model_actions.display is False
 
+
 @pytest.mark.asyncio
 async def test_textual_app_model_slash_command_blocks_selector_during_active_turn(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
@@ -1163,6 +1188,7 @@ async def test_textual_app_model_slash_command_blocks_selector_during_active_tur
         assert app.query_one("#model_actions", ActionList).display is False
         assert settings_store.load().active_model == UI_DEFAULT_MODEL
         app._turn_active = False
+
 
 @pytest.mark.asyncio
 async def test_textual_app_effort_slash_command_selects_from_action_list(
@@ -1238,6 +1264,7 @@ async def test_textual_app_effort_slash_command_selects_from_action_list(
         await pilot.pause()
         assert settings_store.load().active_thinking_effort == "none"
         assert effort_actions.display is False
+
 
 @pytest.mark.asyncio
 async def test_textual_app_effort_slash_command_accepts_typed_selection_and_rejects_invalid(
@@ -1315,6 +1342,7 @@ async def test_textual_app_effort_slash_command_accepts_typed_selection_and_reje
         assert settings_store.load().active_thinking_effort == "max"
         assert effort_actions.display is False
 
+
 @pytest.mark.asyncio
 async def test_textual_app_effort_slash_command_blocks_selector_during_active_turn(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
@@ -1377,6 +1405,7 @@ async def test_textual_app_effort_slash_command_blocks_selector_during_active_tu
         assert settings_store.load().active_thinking_effort == "high"
         app._turn_active = False
 
+
 @pytest.mark.asyncio
 async def test_textual_app_copy_and_version_slash_commands(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
@@ -1415,6 +1444,7 @@ async def test_textual_app_copy_and_version_slash_commands(tmp_path: Path, monke
         assert kolega_code.__version__ in entry.content
         assert "up to date" in entry.content
 
+
 @pytest.mark.asyncio
 async def test_textual_app_update_slash_command_runs_self_update(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1442,6 +1472,7 @@ async def test_textual_app_update_slash_command_runs_self_update(
         assert "Kolega Code update completed" in entry.content
         assert "installed" in entry.content
 
+
 @pytest.mark.asyncio
 async def test_textual_app_startup_update_check_notifies_when_newer(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1467,6 +1498,7 @@ async def test_textual_app_startup_update_check_notifies_when_newer(
 
         assert any("Update available: 0.2.0 -> 0.3.0" in entry.content for entry in app.conversation_entries)
 
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("command", ["/quit", "/exit"])
 async def test_textual_app_quit_slash_command_exits(
@@ -1486,6 +1518,7 @@ async def test_textual_app_quit_slash_command_exits(
     assert app.return_value is None
     assert not app.is_running
 
+
 @pytest.mark.asyncio
 async def test_textual_app_unknown_slash_command_falls_through_to_agent(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1503,6 +1536,7 @@ async def test_textual_app_unknown_slash_command_falls_through_to_agent(
         await pilot.pause()
 
         assert app.agent.messages == ["/help"]
+
 
 @pytest.mark.asyncio
 async def test_textual_app_prompt_list_recovers_focus_after_drift(
@@ -1576,6 +1610,7 @@ async def test_textual_app_prompt_list_recovers_focus_after_drift(
 
         app._pending_approval = None
         app._set_approval_actions_visible(False)
+
 
 @pytest.mark.asyncio
 async def test_textual_app_question_recovers_focus_but_allows_free_form_answer(

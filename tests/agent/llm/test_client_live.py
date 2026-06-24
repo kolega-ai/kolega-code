@@ -35,6 +35,7 @@ def anthropic_client():
         pytest.skip("ANTHROPIC_API_KEY not set")
     return LLMClient("anthropic", api_key)
 
+
 @pytest.fixture
 def openai_client():
     """Create an OpenAI client with test API key"""
@@ -42,6 +43,7 @@ def openai_client():
     if not api_key:
         pytest.skip("OPENAI_API_KEY not set")
     return LLMClient("openai", api_key)
+
 
 @pytest.fixture
 def google_client():
@@ -51,6 +53,7 @@ def google_client():
         pytest.skip("GOOGLE_API_KEY not set")
     return LLMClient("google", api_key)
 
+
 @pytest.fixture
 def moonshot_client():
     """Create a Moonshot client with test API key"""
@@ -58,6 +61,7 @@ def moonshot_client():
     if not api_key:
         pytest.skip("MOONSHOT_API_KEY not set")
     return LLMClient("moonshot", api_key)
+
 
 @pytest.mark.slow
 @pytest.mark.asyncio
@@ -89,6 +93,8 @@ async def test_anthropic_count_tokens(anthropic_client):
     # Local counting is an approximation, so we allow some variance
     difference_pct = abs(result_local.input_tokens - result_api.input_tokens) / result_api.input_tokens * 100
     assert difference_pct < 20.0, f"Local and API token counts differ by {difference_pct:.2f}% (too much variance)"
+
+
 @pytest.mark.slow
 @pytest.mark.asyncio
 async def test_anthropic_generate(anthropic_client):
@@ -99,6 +105,8 @@ async def test_anthropic_generate(anthropic_client):
     assert len(response.content) > 0
     assert hasattr(response.content[0], "text")
     assert len(response.content[0].text) > 0
+
+
 @pytest.mark.slow
 @pytest.mark.asyncio
 async def test_anthropic_generate_stream(anthropic_client):
@@ -111,6 +119,8 @@ async def test_anthropic_generate_stream(anthropic_client):
     assert len(chunks) > 0
     # Check for either content_block or message attribute
     assert any(hasattr(chunk, "type") for chunk in chunks)
+
+
 @pytest.mark.slow
 @pytest.mark.integration
 @pytest.mark.asyncio
@@ -141,6 +151,8 @@ async def test_moonshot_kimi_generate_real_api(moonshot_client):
     assert response.usage_metadata["output_tokens"] > 0
     assert "prompt_tokens" not in response.usage_metadata
     assert "completion_tokens" not in response.usage_metadata
+
+
 @pytest.mark.slow
 @pytest.mark.integration
 @pytest.mark.asyncio
@@ -172,6 +184,8 @@ async def test_moonshot_kimi_stream_usage_real_api(moonshot_client):
     )
     assert accounted_input_tokens > 0
     assert final_message.usage_metadata["output_tokens"] > 0
+
+
 @pytest.mark.slow
 @pytest.mark.integration
 @pytest.mark.asyncio
@@ -213,6 +227,8 @@ async def test_moonshot_kimi_thinking_round_trip_real_api(moonshot_client):
     assert isinstance(second_response, Message)
     assert second_response.role == "assistant"
     assert second_response.get_text_content().strip()
+
+
 @pytest.mark.slow
 @pytest.mark.asyncio
 async def test_openai_generate(openai_client):
@@ -236,6 +252,8 @@ async def test_openai_generate(openai_client):
     finally:
         # Restore the original method
         openai_client.provider.generate = original_generate
+
+
 @pytest.mark.slow
 @pytest.mark.asyncio
 async def test_openai_generate_stream(openai_client):
@@ -248,6 +266,8 @@ async def test_openai_generate_stream(openai_client):
     assert len(chunks) > 0
     # Change the assertion to verify we got some kind of data
     assert len(chunks) > 0  # If we reached here, we got chunks
+
+
 @pytest.mark.slow
 @pytest.mark.asyncio
 async def test_google_count_tokens(google_client):
@@ -256,6 +276,8 @@ async def test_google_count_tokens(google_client):
     assert isinstance(result, TokenCount)
     assert result.input_tokens > 0
     assert result.output_tokens is None  # Google doesn't provide output tokens in count
+
+
 @pytest.mark.slow
 @pytest.mark.asyncio
 async def test_google_generate(google_client):
@@ -268,6 +290,8 @@ async def test_google_generate(google_client):
     assert len(response.content) > 0
     assert hasattr(response.content[0], "text")
     assert len(response.content[0].text) > 0
+
+
 @pytest.mark.slow
 @pytest.mark.asyncio
 async def test_google_generate_stream(google_client):
@@ -282,6 +306,8 @@ async def test_google_generate_stream(google_client):
     assert len(chunks) > 0
     # Check that chunks have the expected structure
     assert any(hasattr(chunk, "content") or hasattr(chunk, "type") for chunk in chunks)
+
+
 @pytest.mark.slow
 @pytest.mark.asyncio
 async def test_google_with_tools(google_client):

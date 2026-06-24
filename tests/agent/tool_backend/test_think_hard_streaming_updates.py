@@ -9,6 +9,7 @@ from kolega_code.events import AgentConnectionManager
 from kolega_code.llm.models import Message, TextBlock, ThinkingBlock
 from kolega_code.agent.tool_backend.think_hard_tool import ThinkHardTool
 
+
 class MockStreamWrapper:
     """Mock stream wrapper that simulates the AnthropicStreamWrapper behavior."""
 
@@ -44,10 +45,12 @@ class MockStreamWrapper:
             raise RuntimeError("Must use 'async with' before getting final message")
         return self.final_message
 
+
 class MockStreamChunk:
     def __init__(self, thinking: str = "", text: str = ""):
         self.thinking = thinking
         self.text = text
+
 
 @pytest.fixture
 def mock_config():
@@ -62,10 +65,12 @@ def mock_config():
         ),
     )
 
+
 @pytest.fixture
 def mock_connection_manager():
     """Create a mock connection manager."""
     return AsyncMock(spec=AgentConnectionManager)
+
 
 @pytest.fixture
 def mock_caller():
@@ -75,6 +80,7 @@ def mock_caller():
     mock.user_id = "user-123"
     mock.user_email = "user@example.com"
     return mock
+
 
 @pytest.fixture
 def think_hard_tool(mock_config, mock_connection_manager, mock_caller):
@@ -96,6 +102,7 @@ def think_hard_tool(mock_config, mock_connection_manager, mock_caller):
     tool.send_streaming_update = AsyncMock()
 
     return tool
+
 
 @pytest.mark.asyncio
 async def test_think_hard_streaming_with_thinking_and_text(think_hard_tool, mock_connection_manager):
@@ -159,6 +166,8 @@ async def test_think_hard_streaming_with_thinking_and_text(think_hard_tool, mock
             # Verify logging
             think_hard_tool.log_info.assert_called_once()
             assert "Thinking hard about: Test problem statement" in think_hard_tool.log_info.call_args[0][0]
+
+
 @pytest.mark.asyncio
 async def test_think_hard_streaming_updates_use_append_mode_for_live_deltas(think_hard_tool):
     """Test think_hard marks live deltas as append mode and final content as replacement."""
@@ -196,6 +205,8 @@ async def test_think_hard_streaming_updates_use_append_mode_for_live_deltas(thin
     assert all(call.kwargs["stream_mode"] == "append" for call in incomplete_calls)
     assert calls[-1].kwargs["is_complete"] is True
     assert calls[-1].kwargs["stream_mode"] == "replace"
+
+
 @pytest.mark.asyncio
 async def test_think_hard_streaming_only_text(think_hard_tool, mock_connection_manager):
     """Test think_hard with only text content (no thinking blocks)."""

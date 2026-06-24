@@ -34,6 +34,7 @@ from .compaction_helpers import FakeLLM
 # Load environment variables
 load_dotenv()
 
+
 class TestBaseAgent:
     def test_build_prompt_context_loads_agents_md(self, base_agent, tmp_path):
         (tmp_path / "AGENTS.md").write_text("Use AGENTS guidance", encoding="utf-8")
@@ -75,4 +76,3 @@ class TestBaseAgent:
 
         assert context.agent_memory_file == "AGENT_MEMORY.md"
         assert context.agent_memory == "Remember this detail"
-

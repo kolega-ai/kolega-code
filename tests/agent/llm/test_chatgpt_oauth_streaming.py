@@ -31,11 +31,14 @@ from kolega_code.llm.providers.chatgpt_oauth import (
 )
 from kolega_code.llm.providers.models import GenerationParams
 
+
 def _ns(**kwargs):
     return types.SimpleNamespace(**kwargs)
 
+
 def _tokens():
     return OAuthTokens(access_token="at", refresh_token="rt", expires_at=10**12, account_id="acct_1", plan_type="pro")
+
 
 class _FakeStream:
     def __init__(self, events):
@@ -48,6 +51,7 @@ class _FakeStream:
 
         return gen()
 
+
 class _FakeResponses:
     def __init__(self, result):
         self._result = result
@@ -56,6 +60,7 @@ class _FakeResponses:
     async def create(self, **kwargs):
         self.last_kwargs = kwargs
         return self._result
+
 
 @pytest.mark.asyncio
 async def test_responses_stream_wrapper_text_tools_and_usage():
@@ -104,6 +109,8 @@ async def test_responses_stream_wrapper_text_tools_and_usage():
     # Messages must be tagged with the real provider so history adaptation treats
     # them as openai_chatgpt (not the api-key "openai" provider).
     assert message.usage_metadata["provider"] == "openai_chatgpt"
+
+
 @pytest.mark.asyncio
 async def test_responses_stream_wrapper_uses_deltas_when_completed_output_empty():
     # The ChatGPT/Codex backend streams the answer as deltas but sends
@@ -128,6 +135,8 @@ async def test_responses_stream_wrapper_uses_deltas_when_completed_output_empty(
     assert message.get_text_content() == "ready"
     assert message.usage_metadata["completion_tokens"] == 1
     assert message.stop_reason == "end_turn"
+
+
 @pytest.mark.asyncio
 async def test_responses_stream_wrapper_tool_call_from_output_item_done():
     # Tool calls must survive even when args arrive only via output_item.done
@@ -150,6 +159,8 @@ async def test_responses_stream_wrapper_tool_call_from_output_item_done():
     assert tool_calls[0].name == "read_file"
     assert tool_calls[0].input == {"path": "a.py"}
     assert message.stop_reason == "tool_use"
+
+
 @pytest.mark.asyncio
 async def test_provider_always_sends_non_empty_instructions():
     # The backend 400s with "Instructions are required" on an empty instructions.
@@ -162,6 +173,8 @@ async def test_provider_always_sends_non_empty_instructions():
         model="gpt-5.5",
     )
     assert fake.last_kwargs["instructions"]  # present and non-empty
+
+
 @pytest.mark.asyncio
 async def test_responses_stream_wrapper_max_tokens_stop_reason():
     completed = _ns(
@@ -176,6 +189,8 @@ async def test_responses_stream_wrapper_max_tokens_stop_reason():
             pass
     message = await wrapper.get_final_message()
     assert message.stop_reason == "max_tokens"
+
+
 @pytest.mark.asyncio
 async def test_responses_stream_wrapper_captures_reasoning_for_continuity():
     # With include=["reasoning.encrypted_content"], the backend emits a completed
@@ -213,6 +228,8 @@ async def test_responses_stream_wrapper_captures_reasoning_for_continuity():
     assert items[0]["type"] == "reasoning"
     assert items[0]["encrypted_content"] == "ENC"
     assert items[1]["type"] == "function_call"
+
+
 @pytest.mark.asyncio
 async def test_responses_stream_wrapper_reasoning_from_final_output_fallback():
     # Some backends populate reasoning only on the final response output, not via
@@ -234,6 +251,8 @@ async def test_responses_stream_wrapper_reasoning_from_final_output_fallback():
     reasoning = [b for b in message.content if isinstance(b, ResponsesReasoningBlock)]
     assert reasoning and reasoning[0].encrypted_content == "ENC2"
     assert reasoning[0].summary == []
+
+
 @pytest.mark.asyncio
 async def test_responses_stream_wrapper_skips_reasoning_without_encrypted_content():
     # A reasoning item lacking encrypted_content is useless for continuity (and

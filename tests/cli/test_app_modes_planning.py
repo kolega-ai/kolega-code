@@ -43,6 +43,7 @@ from ._app_test_utils import (
     renderable_text,
 )
 
+
 @pytest.mark.asyncio
 async def test_textual_app_context_usage_updates_status_without_raw_json(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -111,6 +112,7 @@ async def test_textual_app_context_usage_updates_status_without_raw_json(
         app._render_event(AgentEvent(event_type="status_update", sender="coder", content={"input_tokens": 5}))
         assert composer.placeholder == COMPOSER_PLACEHOLDER
 
+
 @pytest.mark.asyncio
 async def test_textual_app_status_dashboard_tracks_interaction_mode(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -158,6 +160,7 @@ async def test_textual_app_status_dashboard_tracks_interaction_mode(
         await app._set_interaction_mode("build")
         dashboard = str(app.query_one("#status_dashboard", Static).render())
         assert "Build" in dashboard
+
 
 @pytest.mark.asyncio
 async def test_textual_app_mode_switch_rebuild_skips_transcript_restore(
@@ -236,6 +239,7 @@ async def test_textual_app_mode_switch_rebuild_skips_transcript_restore(
         assert planning_agent.restored_history == history
         assert planning_agent.restored_compaction == compaction
 
+
 @pytest.mark.asyncio
 async def test_textual_app_mode_switch_preserves_transcript_entries(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -299,6 +303,7 @@ async def test_textual_app_mode_switch_preserves_transcript_entries(
         assert app.conversation_entries[2] is assistant
         assert app.conversation_entries[3] is tool
 
+
 @pytest.mark.asyncio
 async def test_textual_app_turn_status_formats_error_duration(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
@@ -344,6 +349,7 @@ async def test_textual_app_turn_status_formats_error_duration(tmp_path: Path, mo
         app._finish_turn_progress("Stopped due to an error: boom", TurnState.ERROR)
 
         assert "Errored after 1m 23s" in str(app.query_one("#turn_status", Static).render())
+
 
 @pytest.mark.asyncio
 async def test_textual_app_shift_tab_toggles_between_build_and_plan_agents(
@@ -436,6 +442,7 @@ async def test_textual_app_shift_tab_toggles_between_build_and_plan_agents(
         assert loaded.latest_plan_markdown == "# Plan\n\nDo it."
         assert loaded.interaction_mode == BUILD_INTERACTION_MODE
 
+
 @pytest.mark.asyncio
 async def test_textual_app_ctrl_p_toggles_permission_mode(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
@@ -502,6 +509,7 @@ async def test_textual_app_ctrl_p_toggles_permission_mode(tmp_path: Path, monkey
         assert store.load(session.session_id).permission_mode == "ask"
         assert SettingsStore(store.root).load().permission_mode == "ask"
 
+
 @pytest.mark.asyncio
 async def test_textual_app_ctrl_o_toggles_sidebar_and_keeps_active_tab(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -565,6 +573,7 @@ async def test_textual_app_ctrl_o_toggles_sidebar_and_keeps_active_tab(
         assert app.sidebar_visible is True
         assert side_panel.display is True
         assert tabs.active == "terminal_pane"
+
 
 @pytest.mark.asyncio
 async def test_textual_app_permission_approval_actions_show_rule_labels_without_descriptions(
@@ -640,6 +649,7 @@ async def test_textual_app_permission_approval_actions_show_rule_labels_without_
         app._pending_approval = None
         app._set_approval_actions_visible(False)
 
+
 @pytest.mark.asyncio
 async def test_textual_app_long_permission_command_keeps_approval_actions_visible_and_selectable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -711,6 +721,7 @@ async def test_textual_app_long_permission_command_keeps_approval_actions_visibl
         assert app._pending_approval is None
         assert approval_actions.display is False
 
+
 @pytest.mark.asyncio
 async def test_textual_app_long_question_keeps_actions_visible_and_selectable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -781,6 +792,7 @@ async def test_textual_app_long_question_keeps_actions_visible_and_selectable(
         assert app._pending_question is None
         assert question_actions.display is False
 
+
 @pytest.mark.asyncio
 async def test_textual_app_restores_saved_plan_and_interaction_mode(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -848,6 +860,7 @@ async def test_textual_app_restores_saved_plan_and_interaction_mode(
         assert [option.id for option in plan_actions.options] == ["implement_plan"]
         assert app.query_one("#composer", ChatComposer).disabled is False
 
+
 @pytest.mark.asyncio
 async def test_textual_app_restores_saved_plan_in_build_mode_without_plan_actions(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -900,6 +913,7 @@ async def test_textual_app_restores_saved_plan_in_build_mode_without_plan_action
         # Even with a pending plan, the action stays hidden outside plan mode.
         assert app.query_one("#plan_actions").display is False
 
+
 @pytest.mark.asyncio
 async def test_textual_app_invalid_saved_interaction_mode_falls_back_to_build(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -943,6 +957,7 @@ async def test_textual_app_invalid_saved_interaction_mode_falls_back_to_build(
         assert app.interaction_mode == BUILD_INTERACTION_MODE
         assert app.session.interaction_mode == BUILD_INTERACTION_MODE
         assert isinstance(app.agent, FakeCoderAgent)
+
 
 @pytest.mark.asyncio
 async def test_textual_app_passes_shared_task_list_tools_to_build_agent_only(
@@ -1026,6 +1041,7 @@ async def test_textual_app_passes_shared_task_list_tools_to_build_agent_only(
         # The task list captured in build mode persists and is untouched by plan mode.
         assert app.session.task_list_markdown == "- [ ] inspect\n- [x] plan"
 
+
 @pytest.mark.asyncio
 async def test_textual_app_passes_skill_extensions_to_build_and_plan_agents(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1087,6 +1103,7 @@ async def test_textual_app_passes_skill_extensions_to_build_and_plan_agents(
 
         planning_skill_tools = extension_by_name(app.agent.kwargs["tool_extensions"], "cli-agent-skills")
         assert "activate_skill" in planning_skill_tools.tools
+
 
 @pytest.mark.asyncio
 async def test_textual_app_planning_question_tool_accepts_option_list_answer(
@@ -1179,6 +1196,7 @@ async def test_textual_app_planning_question_tool_accepts_option_list_answer(
         assert app.conversation_entries[-1].content == "Persist it"
         app._turn_active = False
 
+
 @pytest.mark.asyncio
 async def test_textual_app_planning_question_supports_arrow_and_digit_selection(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1253,6 +1271,7 @@ async def test_textual_app_planning_question_supports_arrow_and_digit_selection(
         await pilot.press("4")
         assert json.loads(await answer_task) == {"Pick": "Delta"}
 
+
 @pytest.mark.asyncio
 async def test_textual_app_planning_question_tool_accepts_custom_text_answer(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1322,6 +1341,7 @@ async def test_textual_app_planning_question_tool_accepts_custom_text_answer(
         assert question_actions.display is False
         assert question_actions.option_count == 0
         assert app.conversation_entries[-1].content == "Start with the small fix, but keep the API extensible."
+
 
 @pytest.mark.asyncio
 async def test_textual_app_planning_question_tool_asks_multiple_questions_sequentially(
@@ -1395,6 +1415,7 @@ async def test_textual_app_planning_question_tool_asks_multiple_questions_sequen
 
         assert json.loads(await answer_task) == {"First": "A1", "Second": "B2"}
         assert app._pending_question is None
+
 
 @pytest.mark.asyncio
 async def test_textual_app_planning_question_tool_rejects_malformed_input(
@@ -1481,6 +1502,7 @@ async def test_textual_app_planning_question_tool_rejects_malformed_input(
 
         assert app._pending_question is None
 
+
 @pytest.mark.asyncio
 async def test_textual_app_blocks_mode_toggle_during_active_turn(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1531,6 +1553,7 @@ async def test_textual_app_blocks_mode_toggle_during_active_turn(
         hint = app.query_one("#composer_hint", Static)
         assert hint.display is True
         assert "Stop the current turn before switching modes." in str(hint.render())
+
 
 @pytest.mark.asyncio
 async def test_textual_app_shows_plan_decision_when_planning_agent_writes_plan(
@@ -1673,6 +1696,7 @@ async def test_textual_app_shows_plan_decision_when_planning_agent_writes_plan(
         assert loaded.latest_plan_markdown == "# Revised plan\n\nBuild planning mode carefully."
         assert loaded.plan_reofferable is True
 
+
 @pytest.mark.asyncio
 async def test_textual_app_implement_plan_switches_to_build_and_sends_plan(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1749,6 +1773,7 @@ async def test_textual_app_implement_plan_switches_to_build_and_sends_plan(
         assert loaded.plan_pending is False
         assert loaded.plan_reofferable is False
         assert loaded.interaction_mode == "build"
+
 
 @pytest.mark.asyncio
 async def test_textual_app_implemented_plan_not_reoffered_on_reentry(
@@ -1828,6 +1853,7 @@ async def test_textual_app_implemented_plan_not_reoffered_on_reentry(
         loaded = store.load(session.session_id)
         assert loaded.plan_pending is False
         assert loaded.plan_reofferable is False
+
 
 @pytest.mark.asyncio
 async def test_textual_app_clear_context_and_implement_plan_starts_build_agent_fresh(
@@ -1916,6 +1942,7 @@ async def test_textual_app_clear_context_and_implement_plan_starts_build_agent_f
             entry.kind == "user" and entry.content == "Implement the approved plan."
             for entry in app.conversation_entries
         )
+
 
 @pytest.mark.asyncio
 async def test_textual_app_discuss_plan_preserves_old_plan_until_new_plan_is_written(

@@ -16,6 +16,7 @@ from kolega_code.llm.instrumented_client import (
 # Check if running in CI environment
 SKIP_IN_CI = bool(os.getenv("CI")) or bool(os.getenv("GITLAB_CI"))
 
+
 class TestStreamWrappers:
     """Test the instrumented stream wrapper classes."""
 
