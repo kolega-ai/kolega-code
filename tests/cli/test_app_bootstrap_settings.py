@@ -418,6 +418,47 @@ async def test_textual_app_does_not_select_model_from_api_key_env(
 
 
 @pytest.mark.asyncio
+async def test_textual_app_ignores_project_dotenv_api_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.widgets import ChatComposer
+
+    class FakeCoderAgent:
+        def __init__(self, **kwargs):
+            raise AssertionError("agent should not be built from a project .env API key")
+
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / ".env").write_text("OPENAI_API_KEY=project-openai-key\n", encoding="utf-8")
+    state_dir = tmp_path / "state"
+    store = SessionStore(state_dir)
+    settings_store = SettingsStore(state_dir)
+    session = store.create(project, "code", {})
+
+    app = KolegaCodeApp(
+        project_path=project,
+        mode="code",
+        store=store,
+        settings_store=settings_store,
+        session=session,
+    )
+
+    async with app.run_test():
+        assert app.agent is None
+        composer = app.query_one("#composer", ChatComposer)
+        assert composer.disabled is True
+        startup = app.conversation_entries[0].content
+        assert "Not connected." in startup
+        assert "Model: not configured" in startup
+        assert "openai" not in startup.lower()
+
+
+@pytest.mark.asyncio
 async def test_textual_app_mounts_with_stored_kimi_settings(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
 ) -> None:
@@ -474,6 +515,72 @@ async def test_textual_app_mounts_with_stored_kimi_settings(
         assert composer.disabled is False
         assert composer.placeholder == "Ask Kolega Code..."
         assert "Not connected." not in app.conversation_entries[0].content
+
+
+@pytest.mark.asyncio
+async def test_textual_app_shows_process_env_model_override_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
+) -> None:
+    pytest.importorskip("textual")
+
+    from textual.widgets import Static
+
+    from kolega_code.cli.app import KolegaCodeApp
+
+    class FakeCoderAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def restore_message_history(self, history):
+            return None
+
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
+
+        def dump_message_history(self):
+            return []
+
+        async def cleanup(self):
+            return None
+
+    monkeypatch.setenv("OPENAI_API_KEY", "process-openai-key")
+    monkeypatch.setenv("KOLEGA_CODE_PROVIDER", ModelProvider.OPENAI.value)
+    monkeypatch.setenv("KOLEGA_CODE_MODEL", "gpt-5.5")
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    state_dir = tmp_path / "state"
+    store = SessionStore(state_dir)
+    settings_store = SettingsStore(state_dir)
+    settings = CliSettings(active_provider=UI_DEFAULT_PROVIDER, active_model=UI_DEFAULT_MODEL)
+    settings.set_api_key(UI_DEFAULT_PROVIDER, "moonshot-key")
+    settings_store.save(settings)
+    session = store.create(project, "code", {})
+
+    app = KolegaCodeApp(
+        project_path=project,
+        mode="code",
+        store=store,
+        settings_store=settings_store,
+        session=session,
+    )
+
+    async with app.run_test():
+        assert isinstance(app.agent, FakeCoderAgent)
+        assert app.agent.kwargs["config"].long_context_config.provider == ModelProvider.OPENAI
+        startup = app.conversation_entries[0].content
+        assert "Model: openai/gpt-5.5" in startup
+        assert (
+            "Environment/CLI override active: using openai/gpt-5.5 instead of saved "
+            f"{UI_DEFAULT_PROVIDER}/{UI_DEFAULT_MODEL}."
+        ) in startup
+        assert "API key: present via OPENAI_API_KEY" in startup
+        status = str(app.query_one("#settings_status", Static).render())
+        assert "Environment/CLI override active" in status
 
 
 @pytest.mark.asyncio
@@ -566,6 +673,7 @@ async def test_textual_app_saves_settings_and_builds_agent(
 
     project = tmp_path / "project"
     project.mkdir()
+    (project / ".env").write_text("OPENAI_API_KEY=project-openai-key\n", encoding="utf-8")
     state_dir = tmp_path / "state"
     store = SessionStore(state_dir)
     settings_store = SettingsStore(state_dir)
@@ -585,6 +693,7 @@ async def test_textual_app_saves_settings_and_builds_agent(
 
         assert isinstance(app.agent, FakeCoderAgent)
         assert app.agent.kwargs["config"].long_context_config.provider == ModelProvider.MOONSHOT
+        assert app.agent.kwargs["config"].openai_api_key is None
         assert settings_store.load().get_api_key(UI_DEFAULT_PROVIDER) == "moonshot-key"
         assert settings_store.load().active_thinking_effort == "auto"
         assert app.query_one("#composer", ChatComposer).disabled is False

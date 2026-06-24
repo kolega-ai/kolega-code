@@ -17,7 +17,7 @@ from kolega_code.agent.tool_backend.search_backends import (
 )
 
 from .. import messages, theme
-from ..config import key_status
+from ..config import active_model_override_message, key_status
 from ..provider_registry import (
     INHERIT_SENTINEL,
     UI_DEFAULT_MODEL,
@@ -334,7 +334,16 @@ class SettingsPanelMixin:
 
         await self._ensure_agent_from_settings(rebuild=True)
         if self.config is not None:
-            self._notify_user(messages.SETTINGS_SAVED)
+            override_message = active_model_override_message(
+                self.config,
+                self.project_path,
+                self.overrides,
+                self.settings,
+            )
+            if override_message:
+                self._notify_user(f"{messages.SETTINGS_SAVED} {override_message}", severity="warning")
+            else:
+                self._notify_user(messages.SETTINGS_SAVED)
 
     def _collect_agent_models_from_ui(self) -> None:
         """Write each per-agent row into settings.agent_models (inherit rows removed)."""
@@ -388,14 +397,22 @@ class SettingsPanelMixin:
         effort = self.settings.active_thinking_effort or default_ui_thinking_effort(provider, model) or "not supported"
         status = key_status(provider, self.project_path, self.settings)
         tone = "warning" if "missing" in status.lower() else "ok"
-        text = "\n".join(
-            [
-                messages.SETTINGS_ACTIVE_MODEL.format(provider=provider, model=model),
-                messages.SETTINGS_THINKING_EFFORT_LINE.format(effort=effort),
-                messages.SETTINGS_API_KEY_LINE.format(status=status),
-            ]
-        )
-        self._set_settings_status(text, tone)
+        lines = [
+            messages.SETTINGS_ACTIVE_MODEL.format(provider=provider, model=model),
+            messages.SETTINGS_THINKING_EFFORT_LINE.format(effort=effort),
+            messages.SETTINGS_API_KEY_LINE.format(status=status),
+        ]
+        if self.config is not None:
+            override_message = active_model_override_message(
+                self.config,
+                self.project_path,
+                self.overrides,
+                self.settings,
+            )
+            if override_message:
+                lines.append(override_message)
+                tone = "warning"
+        self._set_settings_status("\n".join(lines), tone)
         self._refresh_status_dashboard()
 
     def _api_key_placeholder(self, provider: str) -> str:

@@ -7,8 +7,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping, Optional
 
-from dotenv import dotenv_values
-
 from pydantic import ValidationError
 
 from kolega_code.auth.tokens import ChatGPTTokenManager, OAuthTokens
@@ -81,14 +79,14 @@ class CliConfigOverrides:
 
 
 def load_cli_env(project_path: Path, env: Optional[Mapping[str, str]] = None) -> dict[str, str]:
-    """Load process environment over a project-local .env file."""
-    base_env = dict(env if env is not None else os.environ)
-    dotenv_path = project_path / ".env"
-    if not dotenv_path.exists():
-        return base_env
+    """Load Kolega Code's explicit process environment.
 
-    file_env = {key: value for key, value in dotenv_values(dotenv_path).items() if value is not None}
-    return {**file_env, **base_env}
+    ``project_path`` is accepted for backwards-compatible call sites, but project-local
+    ``.env`` files are intentionally ignored: they belong to the project being edited,
+    not to Kolega Code's own provider/model configuration.
+    """
+    _ = project_path
+    return dict(env if env is not None else os.environ)
 
 
 def _provider(value: str) -> ModelProvider:
@@ -97,6 +95,50 @@ def _provider(value: str) -> ModelProvider:
     except ValueError as exc:
         valid = ", ".join(provider.value for provider in ModelProvider)
         raise CliConfigError(f"Unsupported provider '{value}'. Valid providers: {valid}") from exc
+
+
+def _explicit_value(
+    flag_value: Optional[str],
+    env: Mapping[str, str],
+    env_key: str,
+    flag_name: str,
+) -> tuple[Optional[str], Optional[str]]:
+    """Return an explicit CLI/process-env value plus a human-readable source."""
+    if flag_value:
+        return flag_value, flag_name
+    env_value = env.get(env_key)
+    if env_value:
+        return env_value, env_key
+    return None, None
+
+
+def _model_sources(model: str) -> list[str]:
+    return sorted(provider for provider, candidate in MODEL_SPECS if candidate == model)
+
+
+def _ensure_explicit_model_supported(
+    provider: ModelProvider,
+    model: str,
+    *,
+    model_source: Optional[str],
+    provider_source: Optional[str],
+) -> None:
+    """Raise a targeted error when an explicit model is paired with the wrong provider."""
+    if (provider.value, model) in MODEL_SPECS:
+        return
+
+    model_label = f"{model_source}={model}" if model_source else f"Model '{model}'"
+    provider_label = f"{provider_source}={provider.value}" if provider_source else f"provider {provider.value}"
+    sources = _model_sources(model)
+    if sources:
+        preferred = sources[0]
+        if provider_source:
+            suggestion = f"set {provider_source}={preferred} or remove {model_source or 'the model override'}"
+        else:
+            suggestion = f"set the provider to {preferred} or remove {model_source or 'the model override'}"
+    else:
+        suggestion = f"choose a supported model for {provider.value} or remove {model_source or 'the model override'}"
+    raise CliConfigError(f"{model_label} is not available for {provider_label}; {suggestion}.")
 
 
 def _api_key_for_provider(
@@ -177,12 +219,20 @@ def _active_provider_model(
     overrides: CliConfigOverrides,
     settings: Optional[CliSettings],
 ) -> tuple[Optional[ModelProvider], Optional[str]]:
-    provider_value = overrides.provider or env.get("KOLEGA_CODE_PROVIDER")
-    model_value = overrides.model or env.get("KOLEGA_CODE_MODEL")
+    provider_value, provider_source = _explicit_value(overrides.provider, env, "KOLEGA_CODE_PROVIDER", "--provider")
+    model_value, model_source = _explicit_value(overrides.model, env, "KOLEGA_CODE_MODEL", "--model")
 
     if provider_value or model_value:
         provider = _provider(provider_value or DEFAULT_LONG_PROVIDER.value)
-        return provider, model_value or default_model_for_provider(provider)
+        if model_value:
+            _ensure_explicit_model_supported(
+                provider,
+                model_value,
+                model_source=model_source,
+                provider_source=provider_source,
+            )
+            return provider, model_value
+        return provider, default_model_for_provider(provider)
 
     if settings and settings.active_provider and settings.active_model:
         try:
@@ -205,13 +255,31 @@ def _slot_provider_model(
     active_provider: Optional[ModelProvider],
     active_model: Optional[str],
 ) -> tuple[ModelProvider, str]:
-    provider_value = provider_override or env.get(provider_env_key)
-    model_value = model_override or env.get(model_env_key)
+    provider_value, provider_source = _explicit_value(
+        provider_override,
+        env,
+        provider_env_key,
+        f"--{provider_env_key.removeprefix('KOLEGA_CODE_').lower().replace('_', '-')}",
+    )
+    model_value, model_source = _explicit_value(
+        model_override,
+        env,
+        model_env_key,
+        f"--{model_env_key.removeprefix('KOLEGA_CODE_').lower().replace('_', '-')}",
+    )
 
     if provider_value or model_value:
         provider = _provider(provider_value or (active_provider.value if active_provider else default_provider.value))
-        return provider, model_value or (
-            active_model if active_provider == provider and active_model else default_model_for_provider(provider)
+        if model_value:
+            _ensure_explicit_model_supported(
+                provider,
+                model_value,
+                model_source=model_source,
+                provider_source=provider_source,
+            )
+            return provider, model_value
+        return provider, active_model if active_provider == provider and active_model else default_model_for_provider(
+            provider
         )
 
     if active_provider and active_model:
@@ -281,15 +349,27 @@ def _agent_model_overrides(
     for role in AgentRole:
         provider_key, model_key, effort_key = _agent_role_env_keys(role)
         entry = saved.get(role.value) or {}
-        provider_value = env.get(provider_key) or entry.get("provider")
-        model_value = env.get(model_key) or entry.get("model")
-        effort_value = env.get(effort_key) or entry.get("thinking_effort")
+        provider_env_value = env.get(provider_key)
+        model_env_value = env.get(model_key)
+        effort_env_value = env.get(effort_key)
+        provider_value = provider_env_value or entry.get("provider")
+        model_value = model_env_value or entry.get("model")
+        effort_value = effort_env_value or entry.get("thinking_effort")
 
         if not provider_value and not model_value:
             continue
 
         provider = _provider(provider_value or active_provider.value)
         if model_value:
+            if model_env_value:
+                _ensure_explicit_model_supported(
+                    provider,
+                    model_value,
+                    model_source=model_key,
+                    provider_source=provider_key if provider_env_value else None,
+                )
+            elif (provider.value, model_value) not in MODEL_SPECS:
+                model_value = default_model_for_provider(provider)
             model = model_value
         elif active_provider == provider and active_model:
             model = active_model
@@ -438,6 +518,41 @@ def key_status(provider: str, project_path: Path, settings: Optional[CliSettings
     if settings and settings.get_api_key(provider_value.value):
         return "present in local settings"
     return "missing"
+
+
+def active_model_override_message(
+    config: AgentConfig,
+    project_path: Path,
+    overrides: Optional[CliConfigOverrides] = None,
+    settings: Optional[CliSettings] = None,
+    env: Optional[Mapping[str, str]] = None,
+) -> Optional[str]:
+    """Describe an explicit CLI/process-env active-model override, if one is in effect."""
+    overrides = overrides or CliConfigOverrides()
+    loaded_env = load_cli_env(project_path, env)
+    explicit_active_override = any(
+        (
+            overrides.provider,
+            overrides.model,
+            loaded_env.get("KOLEGA_CODE_PROVIDER"),
+            loaded_env.get("KOLEGA_CODE_MODEL"),
+        )
+    )
+    if not explicit_active_override:
+        return None
+    if not settings or not (settings.active_provider and settings.active_model):
+        return None
+
+    effective_provider = config.long_context_config.provider.value
+    effective_model = config.long_context_config.model
+    if settings.active_provider == effective_provider and settings.active_model == effective_model:
+        return None
+
+    return (
+        "Environment/CLI override active: "
+        f"using {effective_provider}/{effective_model} instead of saved "
+        f"{settings.active_provider}/{settings.active_model}."
+    )
 
 
 def config_summary(config: AgentConfig) -> dict[str, object]:
