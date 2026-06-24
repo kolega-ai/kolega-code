@@ -20,21 +20,25 @@ jobs:
     name: Detect changed files
     runs-on: ubuntu-latest
     permissions:
+      contents: read
       pull-requests: read
     outputs:
       coverage-badge-only: ${{ steps.detect.outputs.coverage-badge-only }}
     steps:
-      - name: Detect coverage-badge-only PR
+      - name: Detect coverage-badge-only change
         id: detect
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if [ "${{ github.event_name }}" != "pull_request" ]; then
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            files=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" --paginate --jq '.[].filename')
+          elif [ "${{ github.event_name }}" = "push" ]; then
+            files=$(gh api "repos/${{ github.repository }}/compare/${{ github.event.before }}...${{ github.sha }}" --jq '.files[].filename')
+          else
             echo "coverage-badge-only=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          files=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" --paginate --jq '.[].filename')
           echo "Changed files:"
           echo "$files"
 
@@ -55,9 +59,9 @@ jobs:
         python-version: ["3.11", "3.12"]
 
     steps:
-      - name: Skip coverage-badge-only PR
+      - name: Skip coverage-badge-only change
         if: needs.changes.outputs.coverage-badge-only == 'true'
-        run: echo "Skipping Python checks for coverage badge-only PR."
+        run: echo "Skipping Python checks for coverage badge-only change."
 
       - name: Checkout
         if: needs.changes.outputs.coverage-badge-only != 'true'
@@ -98,8 +102,8 @@ jobs:
 
   coverage-badge:
     name: Update coverage badge
-    needs: tests
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [changes, tests]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.coverage-badge-only != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -164,9 +168,9 @@ jobs:
     needs: changes
     runs-on: ubuntu-latest
     steps:
-      - name: Skip coverage-badge-only PR
+      - name: Skip coverage-badge-only change
         if: needs.changes.outputs.coverage-badge-only == 'true'
-        run: echo "Skipping dependency audit for coverage badge-only PR."
+        run: echo "Skipping dependency audit for coverage badge-only change."
 
       - name: Checkout
         if: needs.changes.outputs.coverage-badge-only != 'true'
