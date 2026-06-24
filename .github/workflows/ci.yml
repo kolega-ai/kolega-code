@@ -142,14 +142,24 @@ jobs:
           badge.write_text(badge.read_text().rstrip("\n") + "\n")
           PY
 
+      - name: Verify coverage badge PR token
+        env:
+          COVERAGE_BADGE_PR_TOKEN: ${{ secrets.COVERAGE_BADGE_PR_TOKEN }}
+        run: |
+          if [ -z "$COVERAGE_BADGE_PR_TOKEN" ]; then
+            echo "::error::Set the COVERAGE_BADGE_PR_TOKEN repository secret to a trusted bot/user token."
+            exit 1
+          fi
+
       - name: Create coverage badge pull request
         id: cpr
         uses: peter-evans/create-pull-request@v8
         with:
+          token: ${{ secrets.COVERAGE_BADGE_PR_TOKEN }}
           add-paths: docs/src/assets/coverage.svg
           commit-message: "chore: update coverage badge"
-          committer: "github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>"
-          author: "github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>"
+          committer: "${{ vars.COVERAGE_BADGE_COMMITTER || 'github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>' }}"
+          author: "${{ vars.COVERAGE_BADGE_AUTHOR || 'github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>' }}"
           branch: chore/update-coverage-badge
           delete-branch: true
           title: "chore: update coverage badge"
@@ -159,7 +169,7 @@ jobs:
       - name: Enable auto-merge for coverage badge PR
         if: steps.cpr.outputs.pull-request-number != '' && steps.cpr.outputs.pull-request-operation != 'none'
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.COVERAGE_BADGE_PR_TOKEN }}
         run: |
           gh pr merge "${{ steps.cpr.outputs.pull-request-number }}" --auto --squash --delete-branch
 
