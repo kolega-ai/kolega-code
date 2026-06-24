@@ -14,6 +14,7 @@ multi-line input, and drives the option lists the agent shows you.
 | `Enter` | Send the prompt |
 | `Shift+Enter` | Insert a newline (keep typing) |
 | `Ctrl+J` | Insert a newline (alternative) |
+| `Ctrl+U` | Delete backward to the start of the line; at line start, delete the previous line |
 
 ## File mentions with `@`
 

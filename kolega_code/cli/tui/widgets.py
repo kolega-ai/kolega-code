@@ -589,6 +589,30 @@ class ChatComposer(TextArea):
     def action_insert_newline(self) -> None:
         self.insert("\n", maintain_selection_offset=False)
 
+    def action_delete_to_start_of_line(self) -> None:
+        """Delete backward with multi-line repeat behavior for chat drafts.
+
+        Textual's default Ctrl+U deletes to the start of the current line and
+        then no-ops when the cursor is already at column 0. In the composer that
+        makes held Ctrl+U get stuck while clearing multi-line prompts, so at the
+        start of a non-first line we consume the previous line and its newline.
+        """
+        if self.read_only:
+            return
+
+        selection = self.selection
+        start, end = selection
+        if not selection.is_empty:
+            self._delete_via_keyboard(start, end)
+            return
+
+        row, col = self.cursor_location
+        if col > 0:
+            self._delete_via_keyboard((row, col), (row, 0))
+            return
+        if row > 0:
+            self._delete_via_keyboard((row - 1, 0), (row, 0))
+
     def action_mention_prev(self) -> None:
         dropdown = self.mention_dropdown()
         if dropdown is not None and dropdown.is_open:

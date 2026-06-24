@@ -154,6 +154,82 @@ async def test_textual_app_composer_ctrl_enter_still_inserts_line_break(
 
 
 @pytest.mark.asyncio
+async def test_textual_app_composer_repeated_ctrl_u_clears_multiline_draft(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.tui.widgets import ChatComposer
+
+    app = _build_mention_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        composer = app.query_one("#composer", ChatComposer)
+        composer.focus()
+        composer.load_text("one\ntwo\nthree")
+        composer.move_cursor(composer.document.end, record_width=False)
+
+        await pilot.press("ctrl+u", "ctrl+u", "ctrl+u")
+
+        assert composer.text == ""
+        assert composer.cursor_location == (0, 0)
+
+
+@pytest.mark.asyncio
+async def test_textual_app_composer_ctrl_u_preserves_within_line_behavior(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.tui.widgets import ChatComposer
+
+    app = _build_mention_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        composer = app.query_one("#composer", ChatComposer)
+        composer.focus()
+
+        composer.load_text("abc def")
+        composer.move_cursor(composer.document.end, record_width=False)
+        await pilot.press("ctrl+u")
+        assert composer.text == ""
+        assert composer.cursor_location == (0, 0)
+
+        composer.load_text("one\ntwo\nthree")
+        composer.move_cursor((1, 2), record_width=False)
+        await pilot.press("ctrl+u")
+        assert composer.text == "one\no\nthree"
+        assert composer.cursor_location == (1, 0)
+
+
+@pytest.mark.asyncio
+async def test_textual_app_composer_ctrl_u_boundaries_and_selection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.tui.widgets import ChatComposer
+
+    app = _build_mention_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        composer = app.query_one("#composer", ChatComposer)
+        composer.focus()
+
+        composer.load_text("abc")
+        composer.move_cursor((0, 0), record_width=False)
+        await pilot.press("ctrl+u")
+        assert composer.text == "abc"
+        assert composer.cursor_location == (0, 0)
+
+        composer.load_text("one\ntwo")
+        composer.selection = composer.selection.__class__((0, 1), (0, 3))
+        await pilot.press("ctrl+u")
+        assert composer.text == "o\ntwo"
+        assert composer.cursor_location == (0, 1)
+
+
+@pytest.mark.asyncio
 async def test_textual_app_composer_preserves_multiline_paste(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
 
