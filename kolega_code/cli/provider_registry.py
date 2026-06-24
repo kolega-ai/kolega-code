@@ -1,7 +1,7 @@
 """Provider and model registry for the CLI settings UI.
 
 The list of models the UI exposes is derived directly from ``MODEL_SPECS`` (the
-single source of truth in ``kolega_code/llm/specs.py``). Adding or removing a
+single source of truth in the ``kolega_code/llm/specs/`` catalog). Adding or removing a
 model there automatically updates the Settings UI and the ``/model`` picker — no
 separate whitelist to maintain.
 """
