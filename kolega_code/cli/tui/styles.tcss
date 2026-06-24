@@ -135,7 +135,10 @@ ToolEntryWidget .tool-body {
 
 #composer {
     dock: bottom;
-    height: 5;
+    height: auto;
+    min-height: 5;
+    max-height: 15;
+    padding: 0 0 0 1;
     border: round $surface;
 }
 
