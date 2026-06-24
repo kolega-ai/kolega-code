@@ -241,9 +241,15 @@ async def test_textual_app_prompt_list_recovers_focus_after_drift(
         await pilot.pause()
         assert app.focused is approval_actions
 
-        # A background (NoWidget) click does set_focus(None); the blur hook restores.
+        # A background (NoWidget) click does set_focus(None); the blur hook restores
+        # via call_after_refresh. On slower CI runs the deferred focus callback can
+        # land one or two refreshes later, so wait for the observable state instead
+        # of assuming a single pause is enough.
         app.screen.set_focus(None)
-        await pilot.pause()
+        for _ in range(5):
+            await pilot.pause()
+            if app.focused is approval_actions:
+                break
         assert app.focused is approval_actions
 
         app._pending_approval = None
