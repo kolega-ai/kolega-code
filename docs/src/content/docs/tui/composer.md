@@ -14,7 +14,15 @@ multi-line input, and drives the option lists the agent shows you.
 | `Enter` | Send the prompt |
 | `Shift+Enter` | Insert a newline (keep typing) |
 | `Ctrl+J` | Insert a newline (alternative) |
+| `Ctrl+L` | Select all composer text |
+| `Cmd+A` / `⌘A` | Select all composer text on macOS, when forwarded by the terminal |
+| `Ctrl+A` | Move to the start of the current line (intentionally not select-all) |
 | `Ctrl+U` | Delete backward to the start of the line; at line start, delete the previous line |
+
+`Ctrl+L` is the portable select-all shortcut because `Ctrl+A` is preserved for
+terminal-style line navigation. Some macOS terminal emulators reserve `Cmd+A` for
+terminal scrollback selection before the TUI can see it; `Ctrl+L` still works in
+the composer.
 
 ## File mentions with `@`
 
