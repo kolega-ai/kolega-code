@@ -184,6 +184,140 @@ async def test_terminal_rendered_history_is_capped(tmp_path: Path, monkeypatch: 
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("command", ["/clear", "/reset"])
+async def test_reset_command_clears_terminal_logs_and_pending_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command: str
+) -> None:
+    pytest.importorskip("textual")
+
+    from textual.widgets import TabbedContent
+
+    from kolega_code.cli import theme
+    from kolega_code.cli.tui.widgets import ChatComposer
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch, show_logs=True)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        tabs = app.query_one("#events", TabbedContent)
+        assert tabs.active == "status_pane"
+
+        terminal = app._terminal
+        logs = app._logs
+        clear_calls = {"terminal": 0, "logs": 0}
+        terminal_clear_output = terminal.clear_output
+        logs_clear_output = logs.clear_output
+
+        def clear_terminal_output() -> None:
+            clear_calls["terminal"] += 1
+            terminal_clear_output()
+
+        def clear_logs_output() -> None:
+            clear_calls["logs"] += 1
+            logs_clear_output()
+
+        monkeypatch.setattr(terminal, "clear_output", clear_terminal_output)
+        monkeypatch.setattr(logs, "clear_output", clear_logs_output)
+
+        tabs.active = "terminal_pane"
+        await pilot.pause()
+        terminal.write_terminal("old terminal output\n")
+        await pilot.pause()
+        assert "old terminal output" in "\n".join(strip.text for strip in terminal.lines)
+
+        tabs.active = "logs_pane"
+        await pilot.pause()
+        logs.write_log("old log entry")
+        await pilot.pause()
+        tabs.active = "status_pane"
+        await pilot.pause()
+        app._queue_terminal_output("stale buffered output\n")
+        app._write_log("background log entry")
+        terminal.auto_follow_bottom = False
+        logs.auto_follow_bottom = False
+
+        assert app._terminal_flush_timer is not None
+        assert app._terminal_output_buffer == ["stale buffered output\n"]
+        assert app._terminal_output_buffer_chars == len("stale buffered output\n")
+        assert app._terminal_has_content is True
+        dot = theme.g(theme.Glyph.STATUS)
+        assert str(tabs.get_tab("terminal_pane").label) == f"Terminal {dot}"
+        assert str(tabs.get_tab("logs_pane").label) == f"Logs {dot}"
+
+        composer = app.query_one("#composer", ChatComposer)
+        composer.load_text(command)
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+        await pilot.pause(0.1)
+
+        assert clear_calls == {"terminal": 1, "logs": 1}
+        assert terminal.lines == []
+        assert logs.lines == []
+        assert app._terminal_output_buffer == []
+        assert app._terminal_output_buffer_chars == 0
+        assert app._terminal_flush_timer is None
+        assert app._terminal_has_content is False
+        assert terminal.auto_follow_bottom is True
+        assert logs.auto_follow_bottom is True
+        assert str(tabs.get_tab("terminal_pane").label) == "Terminal"
+        assert str(tabs.get_tab("logs_pane").label) == "Logs"
+        assert composer.text == ""
+
+        await pilot.pause(0.1)
+        assert terminal.lines == []
+        assert logs.lines == []
+
+
+@pytest.mark.asyncio
+async def test_blocked_reset_command_preserves_terminal_and_logs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from textual.widgets import TabbedContent
+
+    from kolega_code.cli.tui.widgets import ChatComposer
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch, show_logs=True)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        tabs = app.query_one("#events", TabbedContent)
+        terminal = app._terminal
+        logs = app._logs
+
+        def fail_clear_output() -> None:
+            raise AssertionError("blocked reset must not clear runtime output")
+
+        monkeypatch.setattr(terminal, "clear_output", fail_clear_output)
+        monkeypatch.setattr(logs, "clear_output", fail_clear_output)
+
+        tabs.active = "terminal_pane"
+        await pilot.pause()
+        terminal.write_terminal("old terminal output\n")
+        await pilot.pause()
+
+        tabs.active = "logs_pane"
+        await pilot.pause()
+        logs.write_log("old log entry")
+        await pilot.pause()
+
+        tabs.active = "status_pane"
+        await pilot.pause()
+        app._queue_terminal_output("pending output\n")
+
+        composer = app.query_one("#composer", ChatComposer)
+        composer.load_text("/clear")
+        app._turn_active = True
+
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+
+        assert "old terminal output" in "\n".join(strip.text for strip in terminal.lines)
+        assert app._terminal_output_buffer == ["pending output\n"]
+        assert app._terminal_output_buffer_chars == len("pending output\n")
+        assert app._terminal_flush_timer is not None
+        assert app._terminal_has_content is True
+        assert composer.text == "/clear"
+
+
+@pytest.mark.asyncio
 async def test_logs_tab_hidden_by_default_and_write_log_is_noop(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

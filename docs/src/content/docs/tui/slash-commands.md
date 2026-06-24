@@ -22,8 +22,8 @@ These operate on the conversation itself.
 | --- | --- |
 | `/help` | Show the list of available agent commands |
 | `/compress` | Compress the message history to reclaim context |
-| `/clear` | Clear the message history |
-| `/reset` | Clear the message history (alias of `/clear`) |
+| `/clear` | Clear message history; in the TUI, also clears Terminal output and Logs |
+| `/reset` | Clear message history, Terminal output, and Logs (alias of `/clear` in the TUI) |
 | `/context` | Show the current context token count |
 
 ## TUI commands
