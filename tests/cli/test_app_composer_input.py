@@ -7,6 +7,7 @@ import time
 import pytest
 
 from kolega_code.cli.tui import agent_runtime as agent_runtime_module
+from kolega_code.cli.tui import state as tui_state
 
 from kolega_code.config import ModelProvider
 from kolega_code.llm.exceptions import (
@@ -368,6 +369,98 @@ async def test_textual_app_composer_preserves_multiline_paste(tmp_path: Path, mo
         assert app.agent is not None
         assert app.agent.messages == [pasted]
         assert composer.text == ""
+
+
+@pytest.mark.asyncio
+async def test_textual_app_composer_auto_grows_caps_and_shrinks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.tui.widgets import ChatComposer
+
+    app = _build_mention_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        composer = app.query_one("#composer", ChatComposer)
+        conversation = app.query_one("#conversation")
+
+        initial_conversation_height = conversation.region.height
+        assert composer.region.height == 5
+
+        composer.load_text("short draft")
+        await pilot.pause()
+        assert composer.region.height == 5
+        assert conversation.region.height == initial_conversation_height
+
+        composer.load_text("\n".join(f"line {index}" for index in range(6)))
+        await pilot.pause()
+        assert 5 < composer.region.height < 15
+        assert conversation.region.height < initial_conversation_height
+
+        long_draft = "\n".join(f"line {index}" for index in range(50))
+        composer.load_text(long_draft)
+        await pilot.pause()
+        assert composer.region.height == 15
+        assert conversation.region.height > 0
+
+        for index in range(20):
+            app._add_conversation_entry(
+                tui_state.ConversationEntry(
+                    kind="agent",
+                    content=f"transcript entry {index}\nmore content\nmore content",
+                    complete=True,
+                )
+            )
+        await pilot.pause()
+        assert composer.vertical_scrollbar.display is True
+        assert conversation.vertical_scrollbar.display is True
+        assert composer.vertical_scrollbar.region.x == conversation.vertical_scrollbar.region.x
+        assert composer.vertical_scrollbar.region.width == conversation.vertical_scrollbar.region.width
+
+        composer.load_text("")
+        await pilot.pause()
+        assert composer.region.height == 5
+        assert conversation.region.height == initial_conversation_height
+
+        composer.load_text(long_draft)
+        await pilot.pause()
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+        worker = app.agent_worker
+        assert worker is not None
+        await worker.wait()
+        await pilot.pause()
+
+        assert composer.text == ""
+        assert composer.region.height == 5
+        assert conversation.region.height > 0
+
+
+@pytest.mark.asyncio
+async def test_textual_app_composer_auto_grows_for_soft_wrapped_long_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.tui.widgets import ChatComposer
+
+    app = _build_mention_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test(size=(60, 30)) as pilot:
+        composer = app.query_one("#composer", ChatComposer)
+
+        assert composer.region.height == 5
+
+        composer.load_text("x" * 100)
+        await pilot.pause()
+
+        assert composer.virtual_size.height > 3
+        assert composer.region.height > 5
+        assert composer.region.height <= 15
+
+        composer.load_text("")
+        await pilot.pause()
+        assert composer.region.height == 5
 
 
 @pytest.mark.asyncio

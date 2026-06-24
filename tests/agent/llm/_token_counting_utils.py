@@ -44,14 +44,28 @@ def calculate_percentage_difference(local_count: int, api_count: int) -> float:
     return abs(local_count - api_count) / api_count * 100
 
 
-def get_accuracy_threshold(message_complexity: str = "simple") -> float:
-    """Get accuracy threshold based on message complexity."""
-    thresholds = {
-        "simple": 10.0,
-        "system": 15.0,
-        "tools": 20.0,
-        "complex": 15.0,
-        "images": 25.0,
-        "full_context": 20.0,
-    }
-    return thresholds.get(message_complexity, 15.0)
+def get_accuracy_threshold(api_count_or_complexity: int | str = "simple", *, has_tools: bool = False) -> float:
+    """Get allowed local-vs-API token-count variance as a percentage.
+
+    Most integration tests pass the API prompt-token count so the threshold can
+    be stricter for realistic contexts and looser for tiny samples where fixed
+    overhead dominates. Older callers may still pass a named complexity bucket;
+    keep that supported for compatibility.
+    """
+    if isinstance(api_count_or_complexity, str):
+        thresholds = {
+            "simple": 10.0,
+            "system": 15.0,
+            "tools": 20.0,
+            "complex": 15.0,
+            "images": 25.0,
+            "full_context": 20.0,
+        }
+        if has_tools and api_count_or_complexity not in {"images"}:
+            return max(thresholds.get(api_count_or_complexity, 15.0), 20.0)
+        return thresholds.get(api_count_or_complexity, 15.0)
+
+    api_count = api_count_or_complexity
+    if has_tools:
+        return 20.0
+    return 15.0 if api_count < 200 else 10.0
