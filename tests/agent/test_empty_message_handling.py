@@ -24,6 +24,18 @@ def test_append_assistant_message_with_empty_content(caplog):
     assert appended_msg.content[0].text == "[Assistant returned no message content]"
 
 
+def test_append_assistant_message_with_empty_content_preserves_usage_metadata(caplog):
+    """Replacing empty assistant content must not lose provider metadata used for reasoning replay."""
+    conversation = Conversation()
+
+    empty_message = Message(role="assistant", content=[], usage_metadata={"provider": "ollama_cloud"})
+
+    with caplog.at_level(logging.WARNING, logger="kolega_code.agent.conversation"):
+        conversation.append_assistant(empty_message)
+
+    assert conversation.history[0].usage_metadata["provider"] == "ollama_cloud"
+
+
 def test_append_user_message_with_empty_content(caplog):
     """Empty user messages get placeholder text."""
     conversation = Conversation()
