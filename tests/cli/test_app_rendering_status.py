@@ -43,6 +43,7 @@ from ._app_test_utils import (
     renderable_text,
 )
 
+
 def test_turn_state_styles_do_not_depend_on_content_text() -> None:
     pytest.importorskip("textual")
 
@@ -55,6 +56,7 @@ def test_turn_state_styles_do_not_depend_on_content_text() -> None:
     assert turn_state_color(TurnState.STOPPING) == theme.Color.WARNING
     assert turn_state_color(TurnState.IDLE) == theme.Color.SUCCESS
     assert turn_state_color(TurnState.GENERATING) == theme.Color.ACCENT  # falls back to accent
+
 
 @pytest.mark.asyncio
 async def test_progress_entry_tone_drives_styling_not_prose(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -110,6 +112,7 @@ async def test_progress_entry_tone_drives_styling_not_prose(tmp_path: Path, monk
         app._begin_turn_progress()
         app._finish_turn_progress("Wrapped up without issue", TurnState.STOPPED)
         assert app._status_state.turn_state is TurnState.STOPPED
+
 
 @pytest.mark.asyncio
 async def test_textual_app_shows_working_progress_during_active_turn(
@@ -194,6 +197,7 @@ async def test_textual_app_shows_working_progress_during_active_turn(
         assert composer.disabled is False
         assert "Done in 5m 23s" in str(turn_status.render())
 
+
 @pytest.mark.asyncio
 async def test_confirmations_surface_as_logs_without_toasts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
@@ -224,6 +228,7 @@ async def test_confirmations_surface_as_logs_without_toasts(tmp_path: Path, monk
         await app.action_toggle_interaction_mode()
         assert ("Stop the current turn before switching modes.", "warn") in logged
 
+
 @pytest.mark.asyncio
 async def test_turn_status_strip_shows_spinner_and_outcome_glyph(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -248,6 +253,7 @@ async def test_turn_status_strip_shows_spinner_and_outcome_glyph(
         content = app._turn_status_content()
         assert theme.g(theme.Glyph.CHECK) in content
         assert "Done in 12s" in content
+
 
 @pytest.mark.asyncio
 async def test_status_dashboard_context_note_uses_alert_level(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -284,6 +290,7 @@ async def test_status_dashboard_context_note_uses_alert_level(tmp_path: Path, mo
         err = theme.Color.ERROR
         assert f"[{err}]Context is getting large.[/{err}]" in dashboard
 
+
 @pytest.mark.asyncio
 async def test_planning_sidebar_marks_empty_states(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
@@ -304,6 +311,7 @@ async def test_planning_sidebar_marks_empty_states(tmp_path: Path, monkeypatch: 
 
         assert plan_md.source == "# Plan\n\n- do the thing"
         assert not plan_md.has_class("empty-state")
+
 
 @pytest.mark.asyncio
 async def test_tab_activity_label_changes_only_on_state_transitions(
@@ -338,6 +346,7 @@ async def test_tab_activity_label_changes_only_on_state_transitions(
         app._clear_tab_activity("logs_pane")
         assert logs_tab.label is cleared_label
 
+
 @pytest.mark.asyncio
 async def test_repeated_progress_updates_refresh_status_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
@@ -367,4 +376,3 @@ async def test_repeated_progress_updates_refresh_status_once(tmp_path: Path, mon
         app._update_progress("Reading response", complete=False, state=TurnState.THINKING)
 
         assert refresh_count == 2
-

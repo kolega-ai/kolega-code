@@ -43,6 +43,7 @@ from ._app_test_utils import (
     renderable_text,
 )
 
+
 @pytest.mark.asyncio
 async def test_textual_app_skill_slash_commands_list_and_activate(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -104,6 +105,7 @@ async def test_textual_app_skill_slash_commands_list_and_activate(
         assert '<skill_content name="demo-skill">' in app.agent.history[-1].get_text_content()
         assert '<skill_content name="demo-skill">' in store.load(session.session_id).history[-1]["content"][0]["text"]
 
+
 @pytest.mark.asyncio
 async def test_textual_app_skill_slash_command_with_prompt_starts_turn(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -164,4 +166,3 @@ async def test_textual_app_skill_slash_command_with_prompt_starts_turn(
         assert app.agent.messages == ["Build the feature"]
         assert any(entry.kind == "skill" for entry in app.conversation_entries)
         assert any(entry.kind == "user" and entry.content == "Build the feature" for entry in app.conversation_entries)
-

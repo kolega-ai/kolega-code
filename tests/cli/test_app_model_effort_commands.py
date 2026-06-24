@@ -43,6 +43,7 @@ from ._app_test_utils import (
     renderable_text,
 )
 
+
 @pytest.mark.asyncio
 async def test_textual_app_model_slash_command_shows_and_switches_model(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
@@ -165,6 +166,7 @@ async def test_textual_app_model_slash_command_shows_and_switches_model(
         await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
         assert settings_store.load().active_model == "kimi-k3"
 
+
 @pytest.mark.asyncio
 async def test_textual_app_model_slash_command_selects_from_action_list(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
@@ -239,6 +241,7 @@ async def test_textual_app_model_slash_command_selects_from_action_list(
         await pilot.pause()
         assert settings_store.load().active_model == UI_DEFAULT_MODEL
         assert model_actions.display is False
+
 
 @pytest.mark.asyncio
 async def test_textual_app_model_slash_command_accepts_typed_selection_and_rejects_invalid(
@@ -318,6 +321,7 @@ async def test_textual_app_model_slash_command_accepts_typed_selection_and_rejec
         assert switched_settings.active_thinking_effort == "auto"
         assert model_actions.display is False
 
+
 @pytest.mark.asyncio
 async def test_textual_app_model_slash_command_blocks_selector_during_active_turn(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
@@ -379,6 +383,7 @@ async def test_textual_app_model_slash_command_blocks_selector_during_active_tur
         assert app.query_one("#model_actions", ActionList).display is False
         assert settings_store.load().active_model == UI_DEFAULT_MODEL
         app._turn_active = False
+
 
 @pytest.mark.asyncio
 async def test_textual_app_effort_slash_command_selects_from_action_list(
@@ -454,6 +459,7 @@ async def test_textual_app_effort_slash_command_selects_from_action_list(
         await pilot.pause()
         assert settings_store.load().active_thinking_effort == "none"
         assert effort_actions.display is False
+
 
 @pytest.mark.asyncio
 async def test_textual_app_effort_slash_command_accepts_typed_selection_and_rejects_invalid(
@@ -531,6 +537,7 @@ async def test_textual_app_effort_slash_command_accepts_typed_selection_and_reje
         assert settings_store.load().active_thinking_effort == "max"
         assert effort_actions.display is False
 
+
 @pytest.mark.asyncio
 async def test_textual_app_effort_slash_command_blocks_selector_during_active_turn(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
@@ -592,4 +599,3 @@ async def test_textual_app_effort_slash_command_blocks_selector_during_active_tu
         assert app.query_one("#effort_actions", ActionList).display is False
         assert settings_store.load().active_thinking_effort == "high"
         app._turn_active = False
-

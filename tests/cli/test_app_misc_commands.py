@@ -43,6 +43,7 @@ from ._app_test_utils import (
     renderable_text,
 )
 
+
 @pytest.mark.asyncio
 async def test_textual_app_copy_and_version_slash_commands(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
@@ -81,6 +82,7 @@ async def test_textual_app_copy_and_version_slash_commands(tmp_path: Path, monke
         assert kolega_code.__version__ in entry.content
         assert "up to date" in entry.content
 
+
 @pytest.mark.asyncio
 async def test_textual_app_update_slash_command_runs_self_update(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -108,6 +110,7 @@ async def test_textual_app_update_slash_command_runs_self_update(
         assert "Kolega Code update completed" in entry.content
         assert "installed" in entry.content
 
+
 @pytest.mark.asyncio
 async def test_textual_app_startup_update_check_notifies_when_newer(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -133,6 +136,7 @@ async def test_textual_app_startup_update_check_notifies_when_newer(
 
         assert any("Update available: 0.2.0 -> 0.3.0" in entry.content for entry in app.conversation_entries)
 
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("command", ["/quit", "/exit"])
 async def test_textual_app_quit_slash_command_exits(
@@ -152,6 +156,7 @@ async def test_textual_app_quit_slash_command_exits(
     assert app.return_value is None
     assert not app.is_running
 
+
 @pytest.mark.asyncio
 async def test_textual_app_unknown_slash_command_falls_through_to_agent(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -169,6 +174,7 @@ async def test_textual_app_unknown_slash_command_falls_through_to_agent(
         await pilot.pause()
 
         assert app.agent.messages == ["/help"]
+
 
 @pytest.mark.asyncio
 async def test_textual_app_prompt_list_recovers_focus_after_drift(
@@ -243,6 +249,7 @@ async def test_textual_app_prompt_list_recovers_focus_after_drift(
         app._pending_approval = None
         app._set_approval_actions_visible(False)
 
+
 @pytest.mark.asyncio
 async def test_textual_app_question_recovers_focus_but_allows_free_form_answer(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -306,4 +313,3 @@ async def test_textual_app_question_recovers_focus_but_allows_free_form_answer(
 
         app._pending_question = None
         app._set_question_actions_visible(False)
-

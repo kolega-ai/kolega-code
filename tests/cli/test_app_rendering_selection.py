@@ -43,6 +43,7 @@ from ._app_test_utils import (
     renderable_text,
 )
 
+
 @pytest.mark.asyncio
 async def test_textual_app_keeps_command_c_for_screen_copy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
@@ -81,6 +82,7 @@ async def test_textual_app_keeps_command_c_for_screen_copy(tmp_path: Path, monke
         cancel_binding = next(binding for binding in app.BINDINGS if binding.action == "cancel_generation")
         assert cancel_binding.key == "ctrl+c"
         assert all("super+c" not in binding.key for binding in app.BINDINGS)
+
 
 @pytest.mark.asyncio
 async def test_conversation_entry_widget_extracts_plain_selected_text(
@@ -138,6 +140,7 @@ async def test_conversation_entry_widget_extracts_plain_selected_text(
         assert "\x1b" not in text
         assert "[bold]" not in text
 
+
 @pytest.mark.asyncio
 async def test_conversation_entry_supports_mouse_drag_selection(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -193,6 +196,7 @@ async def test_conversation_entry_supports_mouse_drag_selection(
         assert selected_text is not None
         assert selected_text.strip() == "select this text"
 
+
 @pytest.mark.asyncio
 async def test_conversation_entry_selection_styles_rendered_lines(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -228,6 +232,7 @@ async def test_conversation_entry_selection_styles_rendered_lines(
                 and segment.style.meta.get("offset") is not None
                 for segment in strip
             )
+
 
 @pytest.mark.asyncio
 async def test_conversation_entry_selection_preserves_text_foreground(
@@ -292,6 +297,7 @@ async def test_conversation_entry_selection_preserves_text_foreground(
         finally:
             theme.apply_theme(theme.DEFAULT_THEME_NAME)
 
+
 @pytest.mark.asyncio
 async def test_conversation_selection_can_start_in_blank_separator(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -324,6 +330,7 @@ async def test_conversation_selection_can_start_in_blank_separator(
         assert selected_text is not None
         assert "second" in selected_text
 
+
 @pytest.mark.asyncio
 async def test_conversation_selection_can_start_after_line_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
@@ -352,6 +359,7 @@ async def test_conversation_selection_can_start_after_line_end(tmp_path: Path, m
         selected_text = app.screen.get_selected_text()
         assert selected_text is not None
         assert "second" in selected_text
+
 
 @pytest.mark.asyncio
 async def test_conversation_selection_spans_multiple_messages(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -383,6 +391,7 @@ async def test_conversation_selection_spans_multiple_messages(tmp_path: Path, mo
         assert "first message" in selected_text
         assert "second message" in selected_text
         assert selected_text.index("first message") < selected_text.index("second message")
+
 
 @pytest.mark.asyncio
 async def test_collapsed_tool_title_supports_drag_selection_and_toggle(
@@ -432,6 +441,7 @@ async def test_collapsed_tool_title_supports_drag_selection_and_toggle(
         await pilot.pause()
         assert collapsible.collapsed is True
 
+
 @pytest.mark.asyncio
 async def test_expanded_tool_body_line_start_selection_copies(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
@@ -479,6 +489,7 @@ async def test_expanded_tool_body_line_start_selection_copies(tmp_path: Path, mo
 
         await pilot.press("super+c")
         assert copied == ["alpha line\nbeta line"]
+
 
 @pytest.mark.asyncio
 async def test_command_c_copies_selected_chat_text_to_macos_clipboard(
@@ -543,4 +554,3 @@ async def test_command_c_copies_selected_chat_text_to_macos_clipboard(
         assert len(pbcopy_calls) == 1
         assert pbcopy_calls[0]["args"] == ["pbcopy"]
         assert pbcopy_calls[0]["input"] == app.clipboard
-

@@ -43,6 +43,7 @@ from ._app_test_utils import (
     renderable_text,
 )
 
+
 @pytest.mark.asyncio
 async def test_textual_app_merges_streamed_response_chunks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
@@ -99,6 +100,7 @@ async def test_textual_app_merges_streamed_response_chunks(tmp_path: Path, monke
         assert [entry for entry in app.conversation_entries if entry.kind == "progress"] == []
         assert app.query_one("#composer", ChatComposer).placeholder == COMPOSER_PLACEHOLDER
 
+
 @pytest.mark.asyncio
 async def test_textual_app_merges_streamed_thinking_chunks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
@@ -152,6 +154,7 @@ async def test_textual_app_merges_streamed_thinking_chunks(tmp_path: Path, monke
         assert thinking_entries[0].content == "checking context"
         assert thinking_entries[0].complete is True
 
+
 @pytest.mark.asyncio
 async def test_textual_app_formats_thinking_as_italic_chat_entry(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -199,6 +202,7 @@ async def test_textual_app_formats_thinking_as_italic_chat_entry(
         assert "[red]markup[/red]" in rendered
         assert "…" in rendered  # streaming indicator in the header
         assert any("italic" in style and "dim" in style for style in first_text_styles(formatted))
+
 
 @pytest.mark.asyncio
 async def test_textual_app_ignores_empty_final_response_without_existing_entry(
@@ -248,6 +252,7 @@ async def test_textual_app_ignores_empty_final_response_without_existing_entry(
         assert [entry for entry in app.conversation_entries if entry.kind == "progress"] == []
         assert app.query_one("#composer", ChatComposer).placeholder == COMPOSER_PLACEHOLDER
 
+
 @pytest.mark.asyncio
 async def test_rapid_stream_chunks_coalesce_renders(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
@@ -278,6 +283,7 @@ async def test_rapid_stream_chunks_coalesce_renders(tmp_path: Path, monkeypatch:
         assert "word49" in entry.content
         assert entry.content.endswith("done")
 
+
 @pytest.mark.asyncio
 async def test_streaming_assistant_refresh_accepts_literal_markup_tokens(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -303,4 +309,3 @@ async def test_streaming_assistant_refresh_accepts_literal_markup_tokens(
         rendered = renderable_text(widget._formatted)
         assert "[/dim]" in rendered
         assert "[bold]literal[/bold]\\" in rendered
-

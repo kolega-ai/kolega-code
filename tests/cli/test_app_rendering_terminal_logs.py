@@ -43,6 +43,7 @@ from ._app_test_utils import (
     renderable_text,
 )
 
+
 @pytest.mark.asyncio
 async def test_log_lines_carry_timestamp_and_level_glyph(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
@@ -65,6 +66,7 @@ async def test_log_lines_carry_timestamp_and_level_glyph(tmp_path: Path, monkeyp
         assert len(written) == 1
         assert "[error]" not in written[0].plain  # no raw level prefix
         assert "it [broke]" in written[0].plain  # brackets survive without markup errors
+
 
 @pytest.mark.asyncio
 async def test_terminal_commands_render_as_styled_blocks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -90,6 +92,7 @@ async def test_terminal_commands_render_as_styled_blocks(tmp_path: Path, monkeyp
         # by a blank separator line.
         assert plains == [f"{theme.g(theme.Glyph.USER)} echo one", "one", "", f"{theme.g(theme.Glyph.USER)} echo two"]
 
+
 @pytest.mark.asyncio
 async def test_terminal_output_is_batched_until_flush(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
@@ -113,6 +116,7 @@ async def test_terminal_output_is_batched_until_flush(tmp_path: Path, monkeypatc
         assert written == ["chunk-0\nchunk-1\nchunk-2\nchunk-3\nchunk-4\n"]
         assert app._terminal_output_buffer == []
         assert app._terminal_output_buffer_chars == 0
+
 
 @pytest.mark.asyncio
 async def test_terminal_output_preserves_scrollback_when_user_scrolls_up(
@@ -156,6 +160,7 @@ async def test_terminal_output_preserves_scrollback_when_user_scrolls_up(
 
         assert terminal.scroll_y >= terminal.max_scroll_y - terminal.bottom_tolerance
 
+
 @pytest.mark.asyncio
 async def test_terminal_rendered_history_is_capped(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
@@ -176,6 +181,7 @@ async def test_terminal_rendered_history_is_capped(tmp_path: Path, monkeypatch: 
         rendered = "\n".join(strip.text for strip in terminal.lines)
         assert len(terminal.lines) <= 5
         assert "line 11" in rendered
+
 
 @pytest.mark.asyncio
 async def test_logs_tab_hidden_by_default_and_write_log_is_noop(
@@ -203,6 +209,7 @@ async def test_logs_tab_hidden_by_default_and_write_log_is_noop(
 
         app._write_log("background activity")
 
+
 @pytest.mark.asyncio
 async def test_logs_tab_can_be_enabled_with_sticky_widget(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
@@ -218,6 +225,7 @@ async def test_logs_tab_can_be_enabled_with_sticky_widget(tmp_path: Path, monkey
 
         assert tabs.get_tab("logs_pane") is not None
         assert isinstance(app.query_one("#logs"), LogOutputLog)
+
 
 @pytest.mark.asyncio
 async def test_logs_output_preserves_scrollback_when_user_scrolls_up(
@@ -257,6 +265,7 @@ async def test_logs_output_preserves_scrollback_when_user_scrolls_up(
 
         assert logs.scroll_y >= logs.max_scroll_y - logs.bottom_tolerance
 
+
 @pytest.mark.asyncio
 async def test_logs_rendered_history_is_capped(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
@@ -277,6 +286,7 @@ async def test_logs_rendered_history_is_capped(tmp_path: Path, monkeypatch: pyte
         rendered = "\n".join(strip.text for strip in logs.lines)
         assert len(logs.lines) <= 5
         assert "line 11" in rendered
+
 
 @pytest.mark.asyncio
 async def test_logs_tab_shows_activity_dot_until_visited(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -303,4 +313,3 @@ async def test_logs_tab_shows_activity_dot_until_visited(tmp_path: Path, monkeyp
         # Writing while the tab is active does not re-add the dot
         app._write_log("foreground activity")
         assert str(tabs.get_tab("logs_pane").label) == "Logs"
-

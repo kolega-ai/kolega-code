@@ -43,6 +43,7 @@ from ._app_test_utils import (
     renderable_text,
 )
 
+
 @pytest.mark.asyncio
 async def test_textual_app_renders_one_widget_per_chat_entry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
@@ -104,6 +105,7 @@ async def test_textual_app_renders_one_widget_per_chat_entry(tmp_path: Path, mon
         assert len(same_widgets) == 3
         assert same_widgets[1] is widgets[1]
         assert "second updated" in renderable_text(same_widgets[1]._formatted)
+
 
 @pytest.mark.asyncio
 async def test_conversation_render_skips_detached_view_during_teardown(
@@ -167,6 +169,7 @@ async def test_conversation_render_skips_detached_view_during_teardown(
         # The detached render was skipped, so nothing new was mounted.
         assert len(app.query(ConversationEntryWidget)) == 1
 
+
 @pytest.mark.asyncio
 async def test_conversation_flush_uses_dirty_entry_fast_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
@@ -200,6 +203,7 @@ async def test_conversation_flush_uses_dirty_entry_fast_path(tmp_path: Path, mon
         assert refreshed == widgets
         assert "message 25 updated" in renderable_text(refreshed[25]._formatted)
 
+
 @pytest.mark.asyncio
 async def test_conversation_entry_widget_skips_unchanged_updates(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -230,6 +234,7 @@ async def test_conversation_entry_widget_skips_unchanged_updates(
         widget.entry.content = "changed"
         widget.refresh_content()
         assert updates == 1
+
 
 @pytest.mark.asyncio
 async def test_textual_app_formats_agent_and_tool_chat_entries(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -298,6 +303,7 @@ async def test_textual_app_formats_agent_and_tool_chat_entries(tmp_path: Path, m
         assert "⏺ write_file" in tool_error_text
         assert "· failed" in tool_error_text
 
+
 @pytest.mark.asyncio
 async def test_conversation_body_renders_rich_markup_tokens_literally(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -338,6 +344,7 @@ async def test_conversation_body_renders_rich_markup_tokens_literally(
         assert "[red]task[/red]" in sub_agent_text
         assert "[bold]literal[/bold]\\" in sub_agent_text
 
+
 @pytest.mark.asyncio
 async def test_assistant_entries_render_markdown_when_complete(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
@@ -367,4 +374,3 @@ async def test_assistant_entries_render_markdown_when_complete(tmp_path: Path, m
             ConversationEntry(kind="plan", content="- step one\n- step two", complete=True)
         )
         assert isinstance(plan, Group)
-

@@ -43,6 +43,7 @@ from ._app_test_utils import (
     renderable_text,
 )
 
+
 @pytest.mark.asyncio
 async def test_textual_app_renders_tool_events_in_chat(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
@@ -123,6 +124,7 @@ async def test_textual_app_renders_tool_events_in_chat(tmp_path: Path, monkeypat
         assert tool_entries[1].content.endswith("…")
         assert tool_entries[1].tool_call_id == "tool-2"
         assert len(tool_entries[1].content) == TOOL_RESULT_PREVIEW_CHARS + 1
+
 
 @pytest.mark.asyncio
 async def test_textual_app_appends_append_mode_tool_streaming_events_in_chat(
@@ -226,6 +228,7 @@ async def test_textual_app_appends_append_mode_tool_streaming_events_in_chat(
         assert tool_entries[0].complete is True
         assert app._tool_stream_buffers == {}
 
+
 @pytest.mark.asyncio
 async def test_textual_app_replaces_default_tool_streaming_events_in_chat(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -293,6 +296,7 @@ async def test_textual_app_replaces_default_tool_streaming_events_in_chat(
         assert tool_entries[0].kind == "tool_call"
         assert tool_entries[0].content == "Processing content..."
 
+
 @pytest.mark.asyncio
 async def test_textual_app_caps_long_append_mode_tool_streaming_events(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -351,6 +355,7 @@ async def test_textual_app_caps_long_append_mode_tool_streaming_events(
             f"[stream truncated to the last {TOOL_STREAM_PREVIEW_CHARS} characters]"
         )
         assert tool_entries[0].content.endswith("a" * TOOL_STREAM_PREVIEW_CHARS)
+
 
 @pytest.mark.asyncio
 async def test_textual_app_renders_queued_tool_events_during_active_turn(
@@ -470,6 +475,7 @@ async def test_textual_app_renders_queued_tool_events_during_active_turn(
         assert composer.placeholder == COMPOSER_PLACEHOLDER
         assert "Done in 15s" in str(turn_status.render())
 
+
 @pytest.mark.asyncio
 async def test_textual_app_late_tool_result_updates_existing_tool_row(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -540,6 +546,7 @@ async def test_textual_app_late_tool_result_updates_existing_tool_row(
         assert tool_entries[0].kind == "tool_result"
         assert tool_entries[0].content == "late result"
 
+
 @pytest.mark.asyncio
 async def test_tool_entries_render_as_collapsibles_with_full_output(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -578,4 +585,3 @@ async def test_tool_entries_render_as_collapsibles_with_full_output(
         entry = widget.entry
         assert len(entry.content) == TOOL_RESULT_PREVIEW_CHARS + 1  # preview stays truncated
         assert entry.full_content == long_output  # expand-on-demand shows everything
-

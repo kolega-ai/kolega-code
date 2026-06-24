@@ -43,6 +43,7 @@ from ._app_test_utils import (
     renderable_text,
 )
 
+
 @pytest.mark.asyncio
 async def test_textual_app_context_usage_updates_status_without_raw_json(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -111,6 +112,7 @@ async def test_textual_app_context_usage_updates_status_without_raw_json(
         app._render_event(AgentEvent(event_type="status_update", sender="coder", content={"input_tokens": 5}))
         assert composer.placeholder == COMPOSER_PLACEHOLDER
 
+
 @pytest.mark.asyncio
 async def test_textual_app_status_dashboard_tracks_interaction_mode(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -158,6 +160,7 @@ async def test_textual_app_status_dashboard_tracks_interaction_mode(
         await app._set_interaction_mode("build")
         dashboard = str(app.query_one("#status_dashboard", Static).render())
         assert "Build" in dashboard
+
 
 @pytest.mark.asyncio
 async def test_textual_app_mode_switch_rebuild_skips_transcript_restore(
@@ -236,6 +239,7 @@ async def test_textual_app_mode_switch_rebuild_skips_transcript_restore(
         assert planning_agent.restored_history == history
         assert planning_agent.restored_compaction == compaction
 
+
 @pytest.mark.asyncio
 async def test_textual_app_mode_switch_preserves_transcript_entries(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -299,6 +303,7 @@ async def test_textual_app_mode_switch_preserves_transcript_entries(
         assert app.conversation_entries[2] is assistant
         assert app.conversation_entries[3] is tool
 
+
 @pytest.mark.asyncio
 async def test_textual_app_turn_status_formats_error_duration(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
@@ -344,6 +349,7 @@ async def test_textual_app_turn_status_formats_error_duration(tmp_path: Path, mo
         app._finish_turn_progress("Stopped due to an error: boom", TurnState.ERROR)
 
         assert "Errored after 1m 23s" in str(app.query_one("#turn_status", Static).render())
+
 
 @pytest.mark.asyncio
 async def test_textual_app_shift_tab_toggles_between_build_and_plan_agents(
@@ -436,6 +442,7 @@ async def test_textual_app_shift_tab_toggles_between_build_and_plan_agents(
         assert loaded.latest_plan_markdown == "# Plan\n\nDo it."
         assert loaded.interaction_mode == BUILD_INTERACTION_MODE
 
+
 @pytest.mark.asyncio
 async def test_textual_app_ctrl_p_toggles_permission_mode(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
@@ -502,6 +509,7 @@ async def test_textual_app_ctrl_p_toggles_permission_mode(tmp_path: Path, monkey
         assert store.load(session.session_id).permission_mode == "ask"
         assert SettingsStore(store.root).load().permission_mode == "ask"
 
+
 @pytest.mark.asyncio
 async def test_textual_app_ctrl_o_toggles_sidebar_and_keeps_active_tab(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -566,6 +574,7 @@ async def test_textual_app_ctrl_o_toggles_sidebar_and_keeps_active_tab(
         assert side_panel.display is True
         assert tabs.active == "terminal_pane"
 
+
 @pytest.mark.asyncio
 async def test_textual_app_blocks_mode_toggle_during_active_turn(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -616,4 +625,3 @@ async def test_textual_app_blocks_mode_toggle_during_active_turn(
         hint = app.query_one("#composer_hint", Static)
         assert hint.display is True
         assert "Stop the current turn before switching modes." in str(hint.render())
-

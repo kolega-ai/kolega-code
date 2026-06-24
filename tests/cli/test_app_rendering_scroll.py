@@ -43,6 +43,7 @@ from ._app_test_utils import (
     renderable_text,
 )
 
+
 @pytest.mark.asyncio
 async def test_conversation_scroll_position_survives_streaming(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
@@ -82,6 +83,7 @@ async def test_conversation_scroll_position_survives_streaming(tmp_path: Path, m
         assert view.scroll_y == view.max_scroll_y
         assert app.query_one("#jump_to_bottom", JumpToBottomBar).display is False
 
+
 @pytest.mark.asyncio
 async def test_streaming_growth_stays_pinned_when_following_bottom(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -116,6 +118,7 @@ async def test_streaming_growth_stays_pinned_when_following_bottom(
             assert app._entry_widgets[entry.entry_id] is widget
             assert view.is_at_bottom()
             assert app.query_one("#jump_to_bottom", JumpToBottomBar).display is False
+
 
 @pytest.mark.asyncio
 async def test_jump_to_bottom_keeps_following_continued_stream(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -167,6 +170,7 @@ async def test_jump_to_bottom_keeps_following_continued_stream(tmp_path: Path, m
             assert view.is_at_bottom()
             assert bar.display is False
 
+
 @pytest.mark.asyncio
 async def test_markdown_completion_reflow_after_jump_stays_at_bottom(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -210,6 +214,7 @@ async def test_markdown_completion_reflow_after_jump_stays_at_bottom(
         assert view.is_at_bottom()
         assert bar.display is False
 
+
 @pytest.mark.asyncio
 async def test_full_rebuild_preserves_manual_scroll_away(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
@@ -241,6 +246,7 @@ async def test_full_rebuild_preserves_manual_scroll_away(tmp_path: Path, monkeyp
         assert view.auto_follow_bottom is False
         assert app.query_one("#jump_to_bottom", JumpToBottomBar).display is True
 
+
 @pytest.mark.asyncio
 async def test_full_rebuild_keeps_following_when_already_at_bottom(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -269,4 +275,3 @@ async def test_full_rebuild_keeps_following_when_already_at_bottom(
         assert view.is_at_bottom()
         assert view.auto_follow_bottom is True
         assert app.query_one("#jump_to_bottom", JumpToBottomBar).display is False
-

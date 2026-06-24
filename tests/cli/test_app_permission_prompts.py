@@ -43,6 +43,7 @@ from ._app_test_utils import (
     renderable_text,
 )
 
+
 @pytest.mark.asyncio
 async def test_textual_app_permission_approval_actions_show_rule_labels_without_descriptions(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -117,6 +118,7 @@ async def test_textual_app_permission_approval_actions_show_rule_labels_without_
         app._pending_approval = None
         app._set_approval_actions_visible(False)
 
+
 @pytest.mark.asyncio
 async def test_textual_app_long_permission_command_keeps_approval_actions_visible_and_selectable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -188,6 +190,7 @@ async def test_textual_app_long_permission_command_keeps_approval_actions_visibl
         assert app._pending_approval is None
         assert approval_actions.display is False
 
+
 @pytest.mark.asyncio
 async def test_textual_app_long_question_keeps_actions_visible_and_selectable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -257,4 +260,3 @@ async def test_textual_app_long_question_keeps_actions_visible_and_selectable(
         assert answer == "Use bounded prompt header"
         assert app._pending_question is None
         assert question_actions.display is False
-

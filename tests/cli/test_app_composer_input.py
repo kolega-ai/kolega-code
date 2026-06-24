@@ -43,6 +43,7 @@ from ._app_test_utils import (
     renderable_text,
 )
 
+
 @pytest.mark.asyncio
 async def test_textual_app_composer_shift_enter_inserts_line_break_and_enter_submits(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -103,6 +104,7 @@ async def test_textual_app_composer_shift_enter_inserts_line_break_and_enter_sub
         user_entries = [entry for entry in app.conversation_entries if entry.kind == "user"]
         assert user_entries[-1].content == "hi\nthere"
 
+
 @pytest.mark.asyncio
 async def test_textual_app_composer_ctrl_enter_still_inserts_line_break(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -149,6 +151,7 @@ async def test_textual_app_composer_ctrl_enter_still_inserts_line_break(
         await pilot.press("t", "h", "e", "r", "e")
 
         assert composer.text == "hi\nthere"
+
 
 @pytest.mark.asyncio
 async def test_textual_app_composer_preserves_multiline_paste(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -209,6 +212,7 @@ async def test_textual_app_composer_preserves_multiline_paste(tmp_path: Path, mo
         assert app.agent.messages == [pasted]
         assert composer.text == ""
 
+
 @pytest.mark.asyncio
 async def test_chat_composer_active_slash_query(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
@@ -238,4 +242,3 @@ async def test_chat_composer_active_slash_query(tmp_path: Path, monkeypatch: pyt
         composer.load_text("")
         composer.insert("/model kimi")
         assert composer.active_slash_query() is None
-

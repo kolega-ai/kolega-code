@@ -43,6 +43,7 @@ from ._app_test_utils import (
     renderable_text,
 )
 
+
 @pytest.mark.asyncio
 async def test_textual_app_passes_shared_task_list_tools_to_build_agent_only(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -125,6 +126,7 @@ async def test_textual_app_passes_shared_task_list_tools_to_build_agent_only(
         # The task list captured in build mode persists and is untouched by plan mode.
         assert app.session.task_list_markdown == "- [ ] inspect\n- [x] plan"
 
+
 @pytest.mark.asyncio
 async def test_textual_app_passes_skill_extensions_to_build_and_plan_agents(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -186,4 +188,3 @@ async def test_textual_app_passes_skill_extensions_to_build_and_plan_agents(
 
         planning_skill_tools = extension_by_name(app.agent.kwargs["tool_extensions"], "cli-agent-skills")
         assert "activate_skill" in planning_skill_tools.tools
-

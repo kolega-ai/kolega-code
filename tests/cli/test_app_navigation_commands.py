@@ -43,6 +43,7 @@ from ._app_test_utils import (
     renderable_text,
 )
 
+
 @pytest.mark.asyncio
 async def test_textual_app_plan_and_build_slash_commands_switch_mode(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -102,6 +103,7 @@ async def test_textual_app_plan_and_build_slash_commands_switch_mode(
         assert app.interaction_mode == "build"
         assert isinstance(app.agent, FakeCoderAgent)
 
+
 @pytest.mark.asyncio
 async def test_textual_app_sidebar_slash_command_toggles_sidebar(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -130,6 +132,7 @@ async def test_textual_app_sidebar_slash_command_toggles_sidebar(
         assert app.sidebar_visible is True
         assert side_panel.display is True
 
+
 @pytest.mark.asyncio
 async def test_textual_app_init_slash_command_starts_agents_md_turn(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -156,6 +159,7 @@ async def test_textual_app_init_slash_command_starts_agents_md_turn(
             entry.kind == "user" and entry.content == "/init focus on test commands"
             for entry in app.conversation_entries
         )
+
 
 @pytest.mark.asyncio
 async def test_textual_app_init_slash_command_switches_from_plan_to_build(
@@ -223,6 +227,7 @@ async def test_textual_app_init_slash_command_switches_from_plan_to_build(
         assert app.agent.messages
         assert "`focus on docs`" in app.agent.messages[0]
 
+
 @pytest.mark.asyncio
 async def test_textual_app_init_slash_command_blocks_during_active_turn(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -244,4 +249,3 @@ async def test_textual_app_init_slash_command_blocks_during_active_turn(
         assert app.agent.messages == []
         assert "Stop the current turn before running /init." in str(app.query_one("#composer_hint", Static).render())
         app._turn_active = False
-

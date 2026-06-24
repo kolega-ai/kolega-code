@@ -43,6 +43,7 @@ from ._app_test_utils import (
     renderable_text,
 )
 
+
 @pytest.mark.asyncio
 async def test_textual_app_planning_question_tool_accepts_option_list_answer(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -134,6 +135,7 @@ async def test_textual_app_planning_question_tool_accepts_option_list_answer(
         assert app.conversation_entries[-1].content == "Persist it"
         app._turn_active = False
 
+
 @pytest.mark.asyncio
 async def test_textual_app_planning_question_supports_arrow_and_digit_selection(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -208,6 +210,7 @@ async def test_textual_app_planning_question_supports_arrow_and_digit_selection(
         await pilot.press("4")
         assert json.loads(await answer_task) == {"Pick": "Delta"}
 
+
 @pytest.mark.asyncio
 async def test_textual_app_planning_question_tool_accepts_custom_text_answer(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -277,6 +280,7 @@ async def test_textual_app_planning_question_tool_accepts_custom_text_answer(
         assert question_actions.display is False
         assert question_actions.option_count == 0
         assert app.conversation_entries[-1].content == "Start with the small fix, but keep the API extensible."
+
 
 @pytest.mark.asyncio
 async def test_textual_app_planning_question_tool_asks_multiple_questions_sequentially(
@@ -350,6 +354,7 @@ async def test_textual_app_planning_question_tool_asks_multiple_questions_sequen
 
         assert json.loads(await answer_task) == {"First": "A1", "Second": "B2"}
         assert app._pending_question is None
+
 
 @pytest.mark.asyncio
 async def test_textual_app_planning_question_tool_rejects_malformed_input(
@@ -435,4 +440,3 @@ async def test_textual_app_planning_question_tool_rejects_malformed_input(
             )
 
         assert app._pending_question is None
-

@@ -43,6 +43,7 @@ from ._app_test_utils import (
     renderable_text,
 )
 
+
 @pytest.mark.asyncio
 async def test_textual_app_mention_dropdown_opens_and_escape_dismisses(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -68,6 +69,7 @@ async def test_textual_app_mention_dropdown_opens_and_escape_dismisses(
         assert not dropdown.is_open
         assert composer.text == "@alp"
 
+
 @pytest.mark.asyncio
 async def test_textual_app_mention_dropdown_not_opened_by_email_address(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -85,6 +87,7 @@ async def test_textual_app_mention_dropdown_not_opened_by_email_address(
         composer.insert("mail user@example")
         await pilot.pause()
         assert not dropdown.is_open
+
 
 @pytest.mark.asyncio
 async def test_textual_app_mention_dropdown_down_and_tab_completes(
@@ -111,6 +114,7 @@ async def test_textual_app_mention_dropdown_down_and_tab_completes(
         assert composer.text == f"@{expected} "
         assert not dropdown.is_open
 
+
 @pytest.mark.asyncio
 async def test_textual_app_mention_enter_completes_instead_of_submitting(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -135,6 +139,7 @@ async def test_textual_app_mention_enter_completes_instead_of_submitting(
         assert not dropdown.is_open
         # No message was submitted, only the completion was applied.
         assert app.agent.messages == []
+
 
 @pytest.mark.asyncio
 async def test_textual_app_submitting_mention_attaches_file_and_keeps_short_text(
@@ -163,6 +168,7 @@ async def test_textual_app_submitting_mention_attaches_file_and_keeps_short_text
             for entry in app.conversation_entries
         )
 
+
 @pytest.mark.asyncio
 async def test_textual_app_unresolved_mention_clears_hint_and_sends_plain_text(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -188,4 +194,3 @@ async def test_textual_app_unresolved_mention_clears_hint_and_sends_plain_text(
         await pilot.pause()
         assert app.agent.messages == ["look at @does/not/exist.py"]
         assert app.agent.attachments == [None]
-

@@ -43,6 +43,7 @@ from ._app_test_utils import (
     renderable_text,
 )
 
+
 @pytest.mark.asyncio
 async def test_textual_app_slash_dropdown_opens_filters_and_tab_completes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -75,6 +76,7 @@ async def test_textual_app_slash_dropdown_opens_filters_and_tab_completes(
         assert composer.text == "/plan "
         assert not dropdown.is_open
 
+
 @pytest.mark.asyncio
 async def test_textual_app_slash_dropdown_lists_skills_with_descriptions(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -106,6 +108,7 @@ async def test_textual_app_slash_dropdown_lists_skills_with_descriptions(
         await pilot.press("tab")
         assert composer.text == "/demo-skill "
 
+
 @pytest.mark.asyncio
 async def test_textual_app_slash_dropdown_enter_completes_instead_of_submitting(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -129,6 +132,7 @@ async def test_textual_app_slash_dropdown_enter_completes_instead_of_submitting(
         assert composer.text == "/version "
         assert not dropdown.is_open
         assert app.agent.messages == []
+
 
 @pytest.mark.asyncio
 async def test_textual_app_slash_dropdown_does_not_open_mid_text_or_after_args(
@@ -160,4 +164,3 @@ async def test_textual_app_slash_dropdown_does_not_open_mid_text_or_after_args(
         composer.insert("/skills extra")
         await pilot.pause()
         assert not dropdown.is_open
-

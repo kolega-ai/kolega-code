@@ -43,6 +43,7 @@ from ._app_test_utils import (
     renderable_text,
 )
 
+
 @pytest.mark.asyncio
 async def test_textual_app_shows_plan_decision_when_planning_agent_writes_plan(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -184,6 +185,7 @@ async def test_textual_app_shows_plan_decision_when_planning_agent_writes_plan(
         assert loaded.latest_plan_markdown == "# Revised plan\n\nBuild planning mode carefully."
         assert loaded.plan_reofferable is True
 
+
 @pytest.mark.asyncio
 async def test_textual_app_implement_plan_switches_to_build_and_sends_plan(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -260,6 +262,7 @@ async def test_textual_app_implement_plan_switches_to_build_and_sends_plan(
         assert loaded.plan_pending is False
         assert loaded.plan_reofferable is False
         assert loaded.interaction_mode == "build"
+
 
 @pytest.mark.asyncio
 async def test_textual_app_implemented_plan_not_reoffered_on_reentry(
@@ -339,6 +342,7 @@ async def test_textual_app_implemented_plan_not_reoffered_on_reentry(
         loaded = store.load(session.session_id)
         assert loaded.plan_pending is False
         assert loaded.plan_reofferable is False
+
 
 @pytest.mark.asyncio
 async def test_textual_app_clear_context_and_implement_plan_starts_build_agent_fresh(
@@ -427,6 +431,7 @@ async def test_textual_app_clear_context_and_implement_plan_starts_build_agent_f
             entry.kind == "user" and entry.content == "Implement the approved plan."
             for entry in app.conversation_entries
         )
+
 
 @pytest.mark.asyncio
 async def test_textual_app_discuss_plan_preserves_old_plan_until_new_plan_is_written(
@@ -520,4 +525,3 @@ async def test_textual_app_discuss_plan_preserves_old_plan_until_new_plan_is_wri
         loaded = store.load(session.session_id)
         assert loaded.latest_plan_markdown == "# New plan\n\nBuild this instead."
         assert loaded.plan_reofferable is False
-

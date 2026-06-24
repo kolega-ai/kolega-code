@@ -43,6 +43,7 @@ from ._app_test_utils import (
     renderable_text,
 )
 
+
 @pytest.mark.asyncio
 async def test_textual_app_cancellation_is_visible_in_chat(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
@@ -114,6 +115,7 @@ async def test_textual_app_cancellation_is_visible_in_chat(tmp_path: Path, monke
         assert progress_entries[0].complete is True
         assert composer.placeholder == COMPOSER_PLACEHOLDER
         assert "Stopped after 42s" in str(turn_status.render())
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
@@ -236,6 +238,7 @@ async def test_textual_app_handles_llm_error_without_worker_traceback(
         assert app._status_state.turn_state is TurnState.ERROR
         assert "Errored after" in str(turn_status.render())
 
+
 @pytest.mark.asyncio
 async def test_textual_app_reraises_non_llm_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
@@ -288,4 +291,3 @@ async def test_textual_app_reraises_non_llm_error(tmp_path: Path, monkeypatch: p
         assert progress_entries[0].tone == "error"
         assert composer.disabled is False
         assert app._status_state.turn_state is TurnState.ERROR
-

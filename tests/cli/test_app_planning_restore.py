@@ -43,6 +43,7 @@ from ._app_test_utils import (
     renderable_text,
 )
 
+
 @pytest.mark.asyncio
 async def test_textual_app_restores_saved_plan_and_interaction_mode(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -110,6 +111,7 @@ async def test_textual_app_restores_saved_plan_and_interaction_mode(
         assert [option.id for option in plan_actions.options] == ["implement_plan"]
         assert app.query_one("#composer", ChatComposer).disabled is False
 
+
 @pytest.mark.asyncio
 async def test_textual_app_restores_saved_plan_in_build_mode_without_plan_actions(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -162,6 +164,7 @@ async def test_textual_app_restores_saved_plan_in_build_mode_without_plan_action
         # Even with a pending plan, the action stays hidden outside plan mode.
         assert app.query_one("#plan_actions").display is False
 
+
 @pytest.mark.asyncio
 async def test_textual_app_invalid_saved_interaction_mode_falls_back_to_build(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -205,4 +208,3 @@ async def test_textual_app_invalid_saved_interaction_mode_falls_back_to_build(
         assert app.interaction_mode == BUILD_INTERACTION_MODE
         assert app.session.interaction_mode == BUILD_INTERACTION_MODE
         assert isinstance(app.agent, FakeCoderAgent)
-
