@@ -24,15 +24,6 @@ terminal-style line navigation. Some macOS terminal emulators reserve `Cmd+A` fo
 terminal scrollback selection before the TUI can see it; `Ctrl+L` still works in
 the composer.
 
-Ghostty on macOS binds `Cmd+A` to terminal scrollback selection by default. To
-forward it to Kolega Code instead, add this to your Ghostty config:
-
-```ini
-keybind = cmd+a=csi:97;9u
-```
-
-That emits the enhanced keyboard sequence Textual reads as `super+a`.
-
 ## File mentions with `@`
 
 Type `@` to reference a file. A fuzzy-searchable dropdown of project files appears
