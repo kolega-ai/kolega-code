@@ -489,6 +489,8 @@ class ChatComposer(TextArea):
         Binding(
             "shift+enter,ctrl+enter,ctrl+j", "insert_newline", "New line", key_display="Shift+Enter", priority=True
         ),
+        Binding("ctrl+l", "select_all", "Select all", key_display="Ctrl+L", priority=True),
+        Binding("super+a", "select_all", "Select all", show=False, key_display="Cmd+A", priority=True),
         Binding("up", "mention_prev", "Previous match", show=False, priority=True),
         Binding("down", "mention_next", "Next match", show=False, priority=True),
         Binding("tab", "mention_accept", "Complete path", show=False, priority=True),
