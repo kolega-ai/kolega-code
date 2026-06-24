@@ -133,7 +133,7 @@ def test_build_agent_config_requires_api_key(tmp_path: Path) -> None:
 
 
 def test_build_agent_config_rejects_unknown_model(tmp_path: Path) -> None:
-    with pytest.raises(CliConfigError, match="not supported"):
+    with pytest.raises(CliConfigError, match="not available"):
         build_agent_config(tmp_path, CliConfigOverrides(model="claude-not-real"), env={"ANTHROPIC_API_KEY": "key"})
 
 
@@ -151,6 +151,106 @@ def test_config_summary_excludes_api_keys(tmp_path: Path) -> None:
     assert summary["long_model"] == DEFAULT_LONG_MODEL
     assert "secret-value" not in str(summary)
     assert "api_key" not in str(summary).lower()
+
+
+def test_project_dotenv_openai_key_is_ignored_when_settings_choose_moonshot(tmp_path: Path) -> None:
+    (tmp_path / ".env").write_text("OPENAI_API_KEY=project-openai-key\n", encoding="utf-8")
+    settings = CliSettings(active_provider=UI_DEFAULT_PROVIDER, active_model=UI_DEFAULT_MODEL)
+    settings.set_api_key(UI_DEFAULT_PROVIDER, "moonshot-key")
+
+    config = build_agent_config(tmp_path, settings=settings, env={})
+
+    assert config.long_context_config.provider == ModelProvider.MOONSHOT
+    assert config.long_context_config.model == UI_DEFAULT_MODEL
+    assert config.openai_api_key is None
+    assert config.moonshot_api_key == "moonshot-key"
+
+
+def test_project_dotenv_api_key_alone_does_not_configure_model(tmp_path: Path) -> None:
+    (tmp_path / ".env").write_text("OPENAI_API_KEY=project-openai-key\n", encoding="utf-8")
+
+    with pytest.raises(CliConfigError, match="No provider/model configured"):
+        build_agent_config(tmp_path, env={})
+
+
+def test_project_dotenv_model_selection_is_ignored(tmp_path: Path) -> None:
+    (tmp_path / ".env").write_text(
+        "OPENAI_API_KEY=project-openai-key\nKOLEGA_CODE_PROVIDER=openai\nKOLEGA_CODE_MODEL=gpt-5.5\n",
+        encoding="utf-8",
+    )
+    settings = CliSettings(active_provider=UI_DEFAULT_PROVIDER, active_model=UI_DEFAULT_MODEL)
+    settings.set_api_key(UI_DEFAULT_PROVIDER, "moonshot-key")
+
+    config = build_agent_config(tmp_path, settings=settings, env={})
+
+    assert config.long_context_config.provider == ModelProvider.MOONSHOT
+    assert config.long_context_config.model == UI_DEFAULT_MODEL
+    assert config.openai_api_key is None
+
+
+def test_project_dotenv_model_selection_without_settings_is_unconfigured(tmp_path: Path) -> None:
+    (tmp_path / ".env").write_text(
+        "OPENAI_API_KEY=project-openai-key\nKOLEGA_CODE_PROVIDER=openai\nKOLEGA_CODE_MODEL=gpt-5.5\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(CliConfigError, match="No provider/model configured"):
+        build_agent_config(tmp_path, env={})
+
+
+def test_process_openai_key_and_model_selection_still_work(tmp_path: Path) -> None:
+    config = build_agent_config(
+        tmp_path,
+        env={
+            "OPENAI_API_KEY": "process-openai-key",
+            "KOLEGA_CODE_PROVIDER": ModelProvider.OPENAI.value,
+            "KOLEGA_CODE_MODEL": "gpt-5.5",
+        },
+    )
+
+    assert config.long_context_config.provider == ModelProvider.OPENAI
+    assert config.long_context_config.model == "gpt-5.5"
+    assert config.openai_api_key == "process-openai-key"
+
+
+def test_explicit_model_override_rejects_mismatched_provider(tmp_path: Path) -> None:
+    settings = CliSettings(active_provider=UI_DEFAULT_PROVIDER, active_model=UI_DEFAULT_MODEL)
+    settings.set_api_key(UI_DEFAULT_PROVIDER, "moonshot-key")
+
+    with pytest.raises(CliConfigError, match=r"KOLEGA_CODE_MODEL=gpt-5\.5 is not available"):
+        build_agent_config(tmp_path, settings=settings, env={"KOLEGA_CODE_MODEL": "gpt-5.5"})
+
+
+@pytest.mark.parametrize(
+    ("provider_key", "model_key"),
+    [
+        ("KOLEGA_CODE_FAST_PROVIDER", "KOLEGA_CODE_FAST_MODEL"),
+        ("KOLEGA_CODE_THINKING_PROVIDER", "KOLEGA_CODE_THINKING_MODEL"),
+    ],
+)
+def test_explicit_slot_model_override_rejects_mismatched_provider(
+    tmp_path: Path, provider_key: str, model_key: str
+) -> None:
+    settings = CliSettings(active_provider=UI_DEFAULT_PROVIDER, active_model=UI_DEFAULT_MODEL)
+    settings.set_api_key(UI_DEFAULT_PROVIDER, "moonshot-key")
+
+    with pytest.raises(CliConfigError, match=rf"{model_key}=gpt-5\.5 is not available"):
+        build_agent_config(tmp_path, settings=settings, env={provider_key: UI_DEFAULT_PROVIDER, model_key: "gpt-5.5"})
+
+
+def test_explicit_agent_model_override_rejects_mismatched_provider(tmp_path: Path) -> None:
+    settings = CliSettings(active_provider=UI_DEFAULT_PROVIDER, active_model=UI_DEFAULT_MODEL)
+    settings.set_api_key(UI_DEFAULT_PROVIDER, "moonshot-key")
+
+    with pytest.raises(CliConfigError, match=r"KOLEGA_CODE_INVESTIGATION_MODEL=gpt-5\.5 is not available"):
+        build_agent_config(
+            tmp_path,
+            settings=settings,
+            env={
+                "KOLEGA_CODE_INVESTIGATION_PROVIDER": UI_DEFAULT_PROVIDER,
+                "KOLEGA_CODE_INVESTIGATION_MODEL": "gpt-5.5",
+            },
+        )
 
 
 def test_build_agent_config_uses_stored_kimi_for_model_slots(tmp_path: Path) -> None:

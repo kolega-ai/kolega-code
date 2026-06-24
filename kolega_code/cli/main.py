@@ -30,6 +30,7 @@ from .config import (
     DEPRECATED_THINKING_TOKENS_MESSAGE,
     CliConfigError,
     CliConfigOverrides,
+    active_model_override_message,
     build_agent_config,
     config_summary,
 )
@@ -812,6 +813,9 @@ def _run_doctor(args: argparse.Namespace) -> int:
 
     summary = config_summary(config)
     _print_styled(f"{theme.g(Glyph.CHECK)} Configuration: valid", style="success")
+    override_message = active_model_override_message(config, project_path, _overrides_from_args(args), settings)
+    if override_message:
+        line("Override", override_message, "warning")
     line("Long model", f"{summary['long_provider']}/{summary['long_model']}")
     line("Fast model", f"{summary['fast_provider']}/{summary['fast_model']}")
     line("Thinking model", f"{summary['thinking_provider']}/{summary['thinking_model']}")

@@ -3,25 +3,29 @@ title: Environment Variables
 description: Every environment variable Kolega Code reads, and how precedence works.
 ---
 
-Kolega Code reads configuration from environment variables and from a project-local
-`.env` file. This page lists everything it understands.
+Kolega Code reads configuration from CLI flags, exported environment variables,
+and saved Settings. It does **not** automatically load the target project's
+`.env` file for its own provider/model/API-key configuration. This page lists the
+environment variables it understands when they are explicitly present in the
+Kolega Code process environment.
 
 ## Precedence
 
 For any given setting, the first available source wins:
 
 1. **CLI flags** (e.g. `--provider`, `--model`)
-2. **Shell environment variables**
-3. **Project `.env` file** (in the project directory)
-4. **Saved Settings** (`settings.json`)
+2. **Exported process environment variables**
+3. **Saved Settings** (`settings.json`)
 
-Kolega Code requires an explicit provider/model selection from flags,
-environment variables, a project `.env` file, or saved settings. API key
-variables alone are not a model selection source.
+Kolega Code requires an explicit provider/model selection from flags, exported
+environment variables, or saved settings. API key variables alone are not a model
+selection source.
 
 :::note
-Within the env layer, your **shell environment takes priority over the `.env`
-file** — values exported in your shell override the same key in `.env`.
+A project `.env` file is treated as part of the project being edited. Kolega Code
+will not read it for its own LLM configuration. For persistent credentials, use
+Settings. For automation, export environment variables in the shell or CI process
+that launches Kolega Code.
 :::
 
 ## API keys
@@ -111,42 +115,26 @@ Optional [Langfuse](https://langfuse.com/) tracing of LLM usage.
 | `LANGFUSE_PUBLIC_KEY` | Langfuse public key |
 | `LANGFUSE_SECRET_KEY` | Langfuse secret key |
 
-## Using a `.env` file
+## About project `.env` files
 
-Kolega Code automatically loads a `.env` file from the project directory. A good
-starting point:
+Kolega Code does not automatically load a `.env` file from the project directory.
+That file commonly belongs to the app being edited, so consuming it as Kolega
+Code configuration can accidentally pick up unrelated application secrets such as
+`OPENAI_API_KEY`.
 
-```bash title=".env"
-# Pick one provider's key (or several)
-MOONSHOT_API_KEY=
-DEEPSEEK_API_KEY=
-FIREWORKS_API_KEY=
-ANTHROPIC_API_KEY=
-OLLAMA_API_KEY=
+Use one of these instead:
 
-# Optional: choose models per role
-KOLEGA_CODE_PROVIDER=moonshot
-KOLEGA_CODE_MODEL=kimi-k2.7-code
-KOLEGA_CODE_THINKING_EFFORT=auto
-
-# Fireworks example:
-# KOLEGA_CODE_PROVIDER=fireworks
-# KOLEGA_CODE_MODEL=accounts/fireworks/models/glm-5p2
-
-# Ollama Cloud example:
-# KOLEGA_CODE_PROVIDER=ollama_cloud
-# KOLEGA_CODE_MODEL=glm-5.2
-
-# Optional: web search
-KOLEGA_CODE_WEB_SEARCH_BACKEND=duckduckgo
-
-# Optional: Langfuse tracing
-LANGFUSE_HOST=https://us.cloud.langfuse.com
-LANGFUSE_PUBLIC_KEY=
-LANGFUSE_SECRET_KEY=
+```bash title="one-off shell configuration"
+export MOONSHOT_API_KEY=...
+export KOLEGA_CODE_PROVIDER=moonshot
+export KOLEGA_CODE_MODEL=kimi-k2.7-code
+kolega-code
 ```
 
+Or save the provider, model, and API key in the TUI Settings tab. Settings are
+the recommended persistent configuration path for interactive use.
+
 :::caution
-Keep `.env` out of version control — it holds secrets. Add it to your
-`.gitignore`.
+Keep project `.env` files out of version control — they often hold application
+secrets. Add them to your `.gitignore`.
 :::

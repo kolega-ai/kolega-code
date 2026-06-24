@@ -47,7 +47,7 @@ from kolega_code.permissions import (
 )
 
 from . import messages, theme
-from .config import CliConfigOverrides, key_status
+from .config import CliConfigOverrides, active_model_override_message, key_status
 from .connection import CliConnectionManager
 from .file_index import WorkspaceFileIndex
 from .mentions import build_file_attachments
@@ -1467,6 +1467,11 @@ class KolegaCodeApp(
             if model
             else "not checked until a model is configured"
         )
+        override_message = (
+            active_model_override_message(self.config, self.project_path, self.overrides, self.settings)
+            if self.config is not None
+            else None
+        )
         startup_lines = [*tui_constants.STARTUP_WORDMARK, ""]
         if self.config is None:
             startup_lines.extend(
@@ -1486,6 +1491,7 @@ class KolegaCodeApp(
                 f"Interaction: {self.interaction_mode}",
                 f"Permissions: {self.permission_mode.value}",
                 f"Model: {model_display}",
+                *([override_message] if override_message else []),
                 f"Thinking effort: {effort}",
                 f"API key: {api_key}",
                 "",
