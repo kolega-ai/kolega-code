@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass
 from typing import Callable, Optional
 
+from rich.markdown import Markdown as RichMarkdown
 from rich.segment import Segment
 from rich.style import Style
 from rich.text import Text
@@ -20,6 +21,7 @@ from textual.widgets import Collapsible, OptionList, RichLog, Static, TextArea
 from textual.widgets._collapsible import CollapsibleTitle
 from textual.widgets.option_list import Option
 
+from .. import theme as cli_theme
 from ..file_index import IndexEntry
 from ..slash_commands import SlashCommandEntry
 from .state import ConversationEntry
@@ -156,6 +158,53 @@ def _with_selection_style(strip: Strip, selection: Selection | None, y: int, sel
             selected_segments.append(Segment(text[selected_end:], segment.style, segment.control))
 
     return Strip(selected_segments, strip.cell_length)
+
+
+class PlanningMarkdown(Static):
+    """Single-widget Markdown renderer for the Planning sidebar.
+
+    Textual's ``Markdown`` widget parses a document into many child widgets. That is
+    useful for rich document navigation, but expensive for the sidebar's long,
+    read-only plan/task-list reference. This widget keeps the public ``source``
+    property expected by tests and callers while rendering the document as one Rich
+    renderable and skipping identical updates entirely.
+    """
+
+    def __init__(
+        self,
+        markdown: str = "",
+        *,
+        empty_source: str | None = None,
+        **kwargs,
+    ) -> None:
+        classes = kwargs.pop("classes", None)
+        combined_classes = "planning-markdown" if not classes else f"planning-markdown {classes}"
+        self.source = ""
+        self._empty_sources = {empty_source} if empty_source is not None else set()
+        super().__init__("", markup=False, classes=combined_classes, **kwargs)
+        self.update(markdown)
+
+    def update(self, markdown: str = "", *, layout: bool = True, force: bool = False) -> None:
+        """Render ``markdown`` unless it is unchanged.
+
+        Args:
+            markdown: New source text for the sidebar section.
+            layout: Passed through to ``Static.update`` when content changes.
+            force: Re-render even if the source text is unchanged.
+        """
+        if not force and markdown == self.source:
+            return
+        self.source = markdown
+        renderable: object
+        if markdown in self._empty_sources or not markdown.strip():
+            renderable = Text(markdown)
+        else:
+            renderable = RichMarkdown(markdown, code_theme=cli_theme.markdown_code_theme())
+        super().update(renderable, layout=layout)
+
+    def render_line(self, y: int) -> Strip:
+        strip = _with_selection_style(super().render_line(y), self.text_selection, y, self.selection_style)
+        return _with_selection_offsets(strip, y)
 
 
 class SelectableCollapsibleTitle(CollapsibleTitle):

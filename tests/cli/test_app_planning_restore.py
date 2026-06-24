@@ -50,7 +50,7 @@ async def test_textual_app_restores_saved_plan_and_interaction_mode(
 ) -> None:
     pytest.importorskip("textual")
 
-    from textual.widgets import Markdown
+    from kolega_code.cli.tui.widgets import PlanningMarkdown
 
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.widgets import ActionList, ChatComposer
@@ -105,7 +105,7 @@ async def test_textual_app_restores_saved_plan_and_interaction_mode(
         assert app._latest_plan == saved_plan
         assert app._plan_pending is True
         assert app._plan_decision_active is False
-        assert app.query_one("#planning_plan_markdown", Markdown).source == saved_plan
+        assert app.query_one("#planning_plan_markdown", PlanningMarkdown).source == saved_plan
         plan_actions = app.query_one("#plan_actions", ActionList)
         assert plan_actions.display is True
         assert [option.id for option in plan_actions.options] == ["implement_plan"]
@@ -118,7 +118,7 @@ async def test_textual_app_restores_saved_plan_in_build_mode_without_plan_action
 ) -> None:
     pytest.importorskip("textual")
 
-    from textual.widgets import Markdown
+    from kolega_code.cli.tui.widgets import PlanningMarkdown
 
     from kolega_code.cli.app import KolegaCodeApp
 
@@ -160,7 +160,7 @@ async def test_textual_app_restores_saved_plan_in_build_mode_without_plan_action
         assert app.interaction_mode == "build"
         assert isinstance(app.agent, FakeCoderAgent)
         assert app._latest_plan == saved_plan
-        assert app.query_one("#planning_plan_markdown", Markdown).source == saved_plan
+        assert app.query_one("#planning_plan_markdown", PlanningMarkdown).source == saved_plan
         # Even with a pending plan, the action stays hidden outside plan mode.
         assert app.query_one("#plan_actions").display is False
 

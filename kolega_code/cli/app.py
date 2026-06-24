@@ -21,7 +21,6 @@ from textual.widgets import (
     Footer,
     Input,
     Label,
-    Markdown,
     OptionList,
     Select,
     Static,
@@ -274,9 +273,17 @@ class KolegaCodeApp(
                     with TabPane("Planning", id="planning_pane"):
                         with VerticalScroll(id="planning_form"):
                             with Collapsible(title="Plan", collapsed=False, id="planning_plan"):
-                                yield Markdown(messages.PLAN_EMPTY_MESSAGE, id="planning_plan_markdown")
+                                yield tui_widgets.PlanningMarkdown(
+                                    messages.PLAN_EMPTY_MESSAGE,
+                                    id="planning_plan_markdown",
+                                    empty_source=messages.PLAN_EMPTY_MESSAGE,
+                                )
                             with Collapsible(title="Task List", collapsed=False, id="planning_task_list"):
-                                yield Markdown(messages.TASK_LIST_EMPTY_MESSAGE, id="planning_task_list_markdown")
+                                yield tui_widgets.PlanningMarkdown(
+                                    messages.TASK_LIST_EMPTY_MESSAGE,
+                                    id="planning_task_list_markdown",
+                                    empty_source=messages.TASK_LIST_EMPTY_MESSAGE,
+                                )
                     with TabPane("Settings", id="settings_pane"):
                         with VerticalScroll(id="settings_form"):
                             with Vertical(classes="settings-section", id="settings_model") as model_section:
@@ -1102,10 +1109,28 @@ class KolegaCodeApp(
         self.screen.set_focus(composer)
 
     def _schedule_primary_focus_restore(self) -> None:
-        """Restore focus now and after refresh to beat Textual focus churn."""
+        """Restore focus now and after refresh to beat Textual focus churn.
+
+        The deferred restore is only a re-assertion of the focus we just set. If
+        focus moves before the next refresh (for example, a user clicks or a test
+        deliberately focuses the transcript), do not yank it back to the composer.
+        """
         self._restore_primary_focus()
         try:
-            self.call_after_refresh(self._restore_primary_focus)
+            scheduled_focus = self.screen.focused
+        except Exception:
+            scheduled_focus = None
+
+        def restore_if_unchanged() -> None:
+            try:
+                current_focus = self.screen.focused
+            except Exception:
+                return
+            if current_focus is None or current_focus is scheduled_focus:
+                self._restore_primary_focus()
+
+        try:
+            self.call_after_refresh(restore_if_unchanged)
         except Exception:
             pass
 
@@ -1279,8 +1304,8 @@ class KolegaCodeApp(
         plan_content = self._latest_plan or messages.PLAN_EMPTY_MESSAGE
         task_list_content = self.session.task_list_markdown or messages.TASK_LIST_EMPTY_MESSAGE
         try:
-            plan_markdown = self.query_one("#planning_plan_markdown", Markdown)
-            task_list_markdown = self.query_one("#planning_task_list_markdown", Markdown)
+            plan_markdown = self.query_one("#planning_plan_markdown", tui_widgets.PlanningMarkdown)
+            task_list_markdown = self.query_one("#planning_task_list_markdown", tui_widgets.PlanningMarkdown)
             plan_markdown.update(plan_content)
             task_list_markdown.update(task_list_content)
             plan_markdown.set_class(plan_content == messages.PLAN_EMPTY_MESSAGE, "empty-state")

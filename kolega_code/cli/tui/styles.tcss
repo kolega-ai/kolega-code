@@ -129,7 +129,11 @@ ToolEntryWidget .tool-body {
     margin-top: 1;
 }
 
-#planning_form Markdown.empty-state {
+#planning_form PlanningMarkdown {
+    height: auto;
+}
+
+#planning_form PlanningMarkdown.empty-state {
     color: $text-muted;
 }
 

@@ -49,9 +49,10 @@ async def test_textual_app_mounts_with_fake_agent(tmp_path: Path, monkeypatch: p
     pytest.importorskip("textual")
 
     from textual.containers import VerticalScroll
-    from textual.widgets import Collapsible, Header, Markdown
+    from textual.widgets import Collapsible, Header
 
     from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.widgets import PlanningMarkdown
 
     class FakeCoderAgent:
         def __init__(self, **kwargs):
@@ -102,8 +103,8 @@ async def test_textual_app_mounts_with_fake_agent(tmp_path: Path, monkeypatch: p
         assert app.query_one("#planning_form", VerticalScroll) is not None
         assert app.query_one("#planning_plan", Collapsible).collapsed is False
         assert app.query_one("#planning_task_list", Collapsible).collapsed is False
-        assert app.query_one("#planning_plan_markdown", Markdown).source == "No plan captured yet."
-        assert app.query_one("#planning_task_list_markdown", Markdown).source == "No task list has been set."
+        assert app.query_one("#planning_plan_markdown", PlanningMarkdown).source == "No plan captured yet."
+        assert app.query_one("#planning_task_list_markdown", PlanningMarkdown).source == "No task list has been set."
         assert app.conversation_entries[0].kind == "startup"
         startup = app.conversation_entries[0].content
         assert "____          _" in startup
