@@ -10,7 +10,7 @@ from kolega_code.llm.models import (
     ToolResult,
     TextBlock,
 )
-from kolega_code.llm.providers.openai import OpenAIStreamWrapper
+from kolega_code.llm.providers.openai import OpenAIProvider, OpenAIStreamWrapper
 
 
 def _image() -> ImageBlock:
@@ -241,3 +241,40 @@ def test_openai_stream_wrapper_accumulates_reasoning_field_in_final_message():
     assert message.content[1].text == "final answer"
     assert message.stop_reason == "end_turn"
     assert message.usage_metadata["provider"] == "ollama_cloud"
+
+
+def test_openai_provider_generate_stamps_ollama_cloud_provider_name_without_usage():
+    class OpenAIMessage:
+        content = "final answer"
+        reasoning = "ollama reasoning"
+        tool_calls = None
+
+    class Choice:
+        message = OpenAIMessage()
+
+    class Response:
+        choices = [Choice()]
+        usage = None
+
+    class FakeCompletions:
+        async def create(self, **kwargs):
+            return Response()
+
+    class FakeChat:
+        completions = FakeCompletions()
+
+    class FakeAsyncClient:
+        chat = FakeChat()
+
+    async def run_generate():
+        provider = OpenAIProvider(api_key="sk-test", provider_name="ollama_cloud")
+        provider.async_client = FakeAsyncClient()
+        return await provider.generate(MessageHistory([]), model="gpt-oss:20b")
+
+    message = asyncio.run(run_generate())
+
+    assert message.usage_metadata["provider"] == "ollama_cloud"
+    assert isinstance(message.content[0], ThinkingBlock)
+    assert message.content[0].thinking == "ollama reasoning"
+    assert isinstance(message.content[1], TextBlock)
+    assert message.content[1].text == "final answer"

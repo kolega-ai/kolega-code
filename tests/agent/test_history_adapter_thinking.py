@@ -121,6 +121,51 @@ def test_adapt_preserves_fireworks_thinking_when_targeting_fireworks():
     assert out[0].content[0].thinking == "native reasoning"
 
 
+def test_adapt_preserves_ollama_cloud_thinking_when_targeting_ollama_cloud():
+    history = [_assistant(ThinkingBlock(thinking="ollama reasoning"), provider="ollama_cloud")]
+
+    out = adapt_history_for_provider(
+        history,
+        target_provider="ollama_cloud",
+        target_model="gpt-oss:20b",
+        supports_vision=False,
+    )
+
+    assert out is history
+    assert isinstance(out[0].content[0], ThinkingBlock)
+    assert out[0].content[0].thinking == "ollama reasoning"
+
+
+def test_adapt_converts_ollama_cloud_thinking_when_targeting_foreign_provider():
+    history = [_assistant(ThinkingBlock(thinking="ollama reasoning"), provider="ollama_cloud")]
+
+    out = adapt_history_for_provider(
+        history,
+        target_provider="anthropic",
+        target_model="claude-opus-4-8",
+        supports_vision=True,
+    )
+
+    assert out[0] is not history[0]
+    assert isinstance(out[0].content[0], TextBlock)
+    assert "Prior reasoning from ollama_cloud omitted" in out[0].content[0].text
+
+
+def test_adapt_converts_ollama_cloud_thinking_without_source_provider():
+    history = [_assistant(ThinkingBlock(thinking="ollama reasoning"))]
+
+    out = adapt_history_for_provider(
+        history,
+        target_provider="ollama_cloud",
+        target_model="gpt-oss:20b",
+        supports_vision=False,
+    )
+
+    assert out[0] is not history[0]
+    assert isinstance(out[0].content[0], TextBlock)
+    assert "Prior reasoning from unknown provider omitted" in out[0].content[0].text
+
+
 def test_adapt_converts_thinking_without_source_provider():
     history = [_assistant(ThinkingBlock(thinking="unknown-source reasoning"))]
 
@@ -196,6 +241,21 @@ def test_adapt_does_not_mutate_stored_history():
     assert isinstance(history[1].content[0], ThinkingBlock)
     assert history[1].content[0] is thinking
     assert isinstance(out[1].content[0], TextBlock)
+
+
+def test_repaired_preserves_usage_metadata_when_rebuilding_tool_result_message():
+    conversation = Conversation()
+    tool_call = ToolCall(id="tool1", name="read_file", input={"path": "README.md"})
+    tool_result = ToolResult(tool_use_id="tool1", name="read_file", content="ok", is_error=False)
+    messages = [
+        _assistant(tool_call, provider="ollama_cloud"),
+        Message(role="user", content=[tool_result], usage_metadata={"provider": "tool_runner"}),
+    ]
+
+    repaired = conversation.repaired(messages)
+
+    assert repaired[0].usage_metadata["provider"] == "ollama_cloud"
+    assert repaired[1].usage_metadata["provider"] == "tool_runner"
 
 
 def test_adapted_kimi_thinking_is_not_serialized_as_anthropic_thinking():

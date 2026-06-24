@@ -343,7 +343,11 @@ class Conversation:
 
                         if replaced_any:
                             self.history[i] = Message(
-                                role=msg.role, content=updated_content, stop_reason=msg.stop_reason
+                                role=msg.role,
+                                content=updated_content,
+                                stop_reason=msg.stop_reason,
+                                tool_calls=msg.tool_calls,
+                                usage_metadata=msg.usage_metadata,
                             )
 
                 # Add any remaining new tool results along with other blocks
@@ -368,6 +372,7 @@ class Conversation:
                 content=[TextBlock(text="[Assistant returned no message content]")],
                 stop_reason=message.stop_reason,
                 tool_calls=message.tool_calls,
+                usage_metadata=message.usage_metadata,
             )
 
         self.history.append(message)
@@ -541,7 +546,11 @@ class Conversation:
                                     if remaining_content:
                                         # Message has other content - keep it but remove tool results
                                         updated_msg = Message(
-                                            role=msg.role, content=remaining_content, stop_reason=msg.stop_reason
+                                            role=msg.role,
+                                            content=remaining_content,
+                                            stop_reason=msg.stop_reason,
+                                            tool_calls=msg.tool_calls,
+                                            usage_metadata=msg.usage_metadata,
                                         )
                                         messages[j] = updated_msg
                                     else:
@@ -572,6 +581,8 @@ class Conversation:
                             role="user",
                             content=all_content,
                             stop_reason=next_user_message.stop_reason if next_user_message else None,
+                            tool_calls=next_user_message.tool_calls if next_user_message else None,
+                            usage_metadata=next_user_message.usage_metadata if next_user_message else None,
                         )
                         fixed_messages.append(complete_user_message)
 
