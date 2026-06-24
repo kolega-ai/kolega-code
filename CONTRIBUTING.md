@@ -101,6 +101,31 @@ npm run build
 
 Use `npm run dev` from `docs/` for local documentation development.
 
+## Maintainer automation
+
+The CI workflow updates `docs/src/assets/coverage.svg` by opening an automated pull
+request. Configure the repository secret `COVERAGE_BADGE_PR_TOKEN` with a trusted
+bot or maintainer token instead of `GITHUB_TOKEN`; GitHub requires manual approval
+before workflows run on pull requests opened by `github-actions[bot]`.
+
+Use a fine-grained personal access token or GitHub App token scoped to this
+repository with:
+
+- Contents: read and write
+- Pull requests: read and write
+- Metadata: read-only, included automatically
+
+The token owner should be a trusted repository member or bot account. Do not use
+a first-time external contributor account, and never commit the token value.
+
+Optional repository variables can customize the Git commit identity used for the
+badge update commit:
+
+- `COVERAGE_BADGE_AUTHOR`
+- `COVERAGE_BADGE_COMMITTER`
+
+Use values like `Name <email@example.com>`.
+
 ## Pull Requests
 
 - Keep changes focused and avoid unrelated refactors.
