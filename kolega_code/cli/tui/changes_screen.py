@@ -19,7 +19,6 @@ from textual.widgets import Static
 from .. import messages, theme
 from ..theme import Color, Glyph
 from .session_diff import SessionDiffFile
-from .state import SessionFileChange
 
 if TYPE_CHECKING:
     from ..app import KolegaCodeApp
@@ -89,7 +88,7 @@ class ChangesInspectorScreen(ModalScreen):
 
     # ---- live updates ---------------------------------------------------------
 
-    def note_change_updated(self, change: Optional[SessionFileChange] = None) -> None:
+    def note_change_updated(self, change: Optional[object] = None) -> None:
         """Called by the owner when net diff state or edit-event history changes."""
         if self._follow:
             self._selected_path = self._owner._default_changes_path() or self._selected_path
@@ -125,9 +124,6 @@ class ChangesInspectorScreen(ModalScreen):
             if change.path == path:
                 return change
         return None
-
-    def _events_for_path(self, path: str) -> list[SessionFileChange]:
-        return [change for change in self._owner._session_file_changes if change.path == path]
 
     # ---- selection ------------------------------------------------------------
 
@@ -251,16 +247,6 @@ class ChangesInspectorScreen(ModalScreen):
         else:
             net_widget.update(self._net_diff_renderable(change))
 
-        event_changes = self._events_for_path(change.path)
-        for event_change in event_changes:
-            widget_key = event_change.change_id
-            widget = self._preview_widgets.get(widget_key)
-            if widget is None:
-                widget = Static(self._event_renderable(event_change), markup=False, classes="change-preview")
-                self._preview_widgets[widget_key] = widget
-                widgets.append(widget)
-            else:
-                widget.update(self._event_renderable(event_change))
         if widgets:
             view.mount(*widgets)
         if self._follow:
@@ -269,8 +255,7 @@ class ChangesInspectorScreen(ModalScreen):
     def _render_key(self, change: Optional[SessionDiffFile]) -> str:
         if change is None:
             return ""
-        event_ids = ",".join(event.change_id for event in self._events_for_path(change.path))
-        return f"{change.path}:{change.status}:{change.adds}:{change.dels}:{repr(change.preview)}:{event_ids}"
+        return f"{change.path}:{change.status}:{change.adds}:{change.dels}:{repr(change.preview)}"
 
     def _net_diff_renderable(self, change: SessionDiffFile) -> Group:
         if change.message:
@@ -295,21 +280,6 @@ class ChangesInspectorScreen(ModalScreen):
                 return Group(body, footer)
             return body
         return self._owner._build_edit_preview(preview)
-
-    def _event_renderable(self, change: SessionFileChange) -> Group:
-        sep = theme.g(Glyph.BULLET_SEP)
-        title = Text()
-        title.append(f"Captured edit #{change.index} ", style="bold")
-        title.append(change.source_label or "Agent", style=Color.ACCENT)
-        if change.tool_name:
-            title.append(f" {sep} {change.tool_name}", style="dim")
-        if change.tool_call_id:
-            title.append(f" {sep} {change.tool_call_id}", style="dim")
-        try:
-            preview = self._owner._build_edit_preview(change.preview)
-        except Exception:
-            preview = Text("Preview unavailable", style="dim")
-        return Group(title, Padding(preview, (0, 0, 1, theme.INSET_WIDTH)))
 
     def _scroll_previews_end(self) -> None:
         def _do() -> None:
@@ -373,14 +343,4 @@ class ChangesInspectorScreen(ModalScreen):
                 lines.append(f"… +{more} more lines")
             lines.append("")
 
-        events = self._events_for_path(change.path)
-        if events:
-            lines.append("Captured edit events:")
-            for event in events:
-                header = f"#{event.index} {event.source_label or 'Agent'}"
-                if event.tool_name:
-                    header += f" · {event.tool_name}"
-                if event.tool_call_id:
-                    header += f" · {event.tool_call_id}"
-                lines.append(header)
         return "\n".join(lines).rstrip() + "\n"

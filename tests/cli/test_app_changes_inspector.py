@@ -252,5 +252,5 @@ async def test_copy_selected_changes_includes_net_diff_lines(tmp_path: Path, mon
         assert "+1 -1" in text
         assert "-old a" in text
         assert "+new a" in text
-        assert "Captured edit events:" in text
-        assert "#1 Agent · search_and_replace · a1" in text
+        assert "Captured edit events:" not in text
+        assert "#1 Agent · search_and_replace · a1" not in text
