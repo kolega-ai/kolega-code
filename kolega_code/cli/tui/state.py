@@ -79,6 +79,16 @@ class ConversationEntry:
 
 
 @dataclass
+class QueuedMessage:
+    """One UI-local follow-up queued while the current turn is running."""
+
+    queue_id: str
+    text: str
+    attachments: list[dict] | None
+    entry: ConversationEntry
+
+
+@dataclass
 class SessionFileChange:
     """One UI-only file edit preview captured during the live TUI session."""
 

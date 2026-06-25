@@ -24,7 +24,15 @@ Screen {
     height: 100%;
 }
 
-#conversation, #logs, #terminal {
+#conversation {
+    height: 1fr;
+    border: none;
+    background: $surface;
+    color: $text;
+    overflow-x: hidden;
+}
+
+#logs, #terminal {
     height: 1fr;
     border: round $surface;
     background: $surface;
@@ -147,13 +155,70 @@ ToolEntryWidget .tool-body {
     color: $text-muted;
 }
 
+#queued_messages {
+    display: none;
+    height: auto;
+    max-height: 8;
+    padding: 0 1;
+    border-top: solid $surface-lighten-2;
+    background: $surface;
+    color: $warning;
+}
+
 #composer {
     dock: bottom;
     height: auto;
     min-height: 5;
     max-height: 15;
     padding: 0 0 0 1;
-    border: round $surface;
+    border: none;
+    border-top: solid $surface-lighten-2;
+    background: $surface;
+    color: $text;
+}
+
+#composer:focus,
+#composer:disabled,
+#composer:disabled:focus {
+    opacity: 1;
+    color: $text;
+    background: $surface;
+    background-tint: transparent;
+    border: none;
+    border-top: solid $surface-lighten-2;
+}
+
+#composer:disabled .text-area--cursor {
+    background: $surface-lighten-2;
+    color: $text-muted;
+}
+
+#composer .text-area--selection,
+#composer:disabled .text-area--selection {
+    background: $surface-lighten-2;
+    color: $text;
+}
+
+#composer .text-area--cursor-line,
+#composer:disabled .text-area--cursor-line {
+    background: transparent;
+}
+
+#composer .text-area--gutter,
+#composer:disabled .text-area--gutter {
+    color: $text;
+    background: $surface;
+}
+
+#composer .text-area--cursor-gutter,
+#composer:disabled .text-area--cursor-gutter {
+    color: $text;
+    background: $surface;
+}
+
+#composer .text-area--placeholder,
+#composer:disabled .text-area--placeholder {
+    color: $text 40%;
 }
 
 #turn_status {
@@ -212,23 +277,23 @@ ToolEntryWidget .tool-body {
     color: $text-muted;
 }
 
-#composer:disabled {
-    color: $text-muted;
+#plan_actions,
+#plan_actions:focus {
+    display: none;
+    height: auto;
+    max-height: 12;
+    border: none;
     background: $surface;
-    border: round $surface;
+    background-tint: transparent;
+    padding: 0;
+    margin: 0;
 }
 
-#composer:disabled .text-area--cursor {
-    background: $surface-lighten-2;
-    color: $text-muted;
+#plan_actions > .option-list--option {
+    padding: 0 1;
 }
 
-#composer:disabled .text-area--selection {
-    background: $surface-lighten-2;
-    color: $text;
-}
-
-#plan_actions, #model_actions, #effort_actions, #theme_actions {
+#model_actions, #effort_actions, #theme_actions {
     display: none;
     height: auto;
     max-height: 12;
@@ -236,18 +301,17 @@ ToolEntryWidget .tool-body {
     background: $surface;
 }
 
-/* Question / approval prompts: the question is folded into the panel header
-   (the border title) above its options, so the whole prompt reads as one
-   bordered unit. The inner ActionList drops its own border. */
+/* Question / approval prompts align flush with the transcript/composer edges.
+   The prompt text and choices should not add their own box/border chrome; the
+   active row highlight is enough to show selection. */
 #question_prompt, #approval_prompt {
     display: none;
     height: auto;
     max-height: 14;
-    border: round $surface;
+    border: none;
     background: $surface;
-    border-title-color: $text;
-    border-title-style: bold;
-    padding: 0 1;
+    padding: 0;
+    margin: 0;
 }
 
 #question_prompt > .prompt-header-scroll, #approval_prompt > .prompt-header-scroll {
@@ -255,11 +319,14 @@ ToolEntryWidget .tool-body {
     max-height: 6;
     overflow-y: auto;
     background: $surface;
+    margin-bottom: 1;
 }
 
-#question_prompt > ActionList, #approval_prompt > ActionList {
+#question_prompt > ActionList, #approval_prompt > ActionList,
+#question_prompt > ActionList:focus, #approval_prompt > ActionList:focus {
     border: none;
     background: $surface;
+    background-tint: transparent;
     height: auto;
     max-height: 6;
     padding: 0;
@@ -267,8 +334,13 @@ ToolEntryWidget .tool-body {
 
 .prompt-header {
     height: auto;
-    padding: 0 0 1 0;
+    padding: 0 1 1 1;
     background: $surface;
+}
+
+#question_prompt > ActionList > .option-list--option,
+#approval_prompt > ActionList > .option-list--option {
+    padding: 0 1;
 }
 
 /* Neutralize the selected-row highlight on every choice list. Textual paints

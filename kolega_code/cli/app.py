@@ -193,6 +193,8 @@ class KolegaCodeApp(
         self._pending_question: Optional[tui_state.PendingQuestion] = None
         self._pending_approval: Optional[tui_state.PendingApproval] = None
         self._pending_image_attachments: list[dict] = []
+        self._queued_messages: list[tui_state.QueuedMessage] = []
+        self._queued_message_seq = 0
         # Dedup flag: one vision-mismatch system message per non-vision model
         # session. Reset in _switch_model so a new model gets a fresh warning.
         self._vision_warning_shown = False
@@ -259,6 +261,7 @@ class KolegaCodeApp(
                 yield tui_widgets.ActionList(id="effort_actions")
                 yield tui_widgets.ActionList(id="theme_actions")
                 yield Static("", id="turn_status", markup=True)
+                yield Static("", id="queued_messages", markup=False)
                 with Horizontal(id="composer_hint_row"):
                     yield Static("", id="composer_hint", markup=False)
                     yield Button(theme.g(Glyph.CROSS), id="detach_btn", classes="hint-detach")
@@ -792,10 +795,13 @@ class KolegaCodeApp(
                 self._show_composer_hint(messages.MODEL_NON_VISION_IMAGE_BLOCKED, tone="warning")
                 return
         # Safe to consume — clear the composer, pending attachments, and the
-        # attach hint (which would otherwise linger during generation).
+        # attach hint (which would otherwise linger during generation or queueing).
         event.composer.load_text("")
         self._pending_image_attachments.clear()
         self._clear_composer_hint()
+        if self._turn_active or self.agent_worker is not None:
+            self._queue_user_message(text, attachments)
+            return
         self._add_conversation_entry(tui_state.ConversationEntry(kind="user", content=text))
         self.agent_worker = self.run_worker(
             self._process_message(text, attachments), name="kolega-turn", group="turns", exclusive=True
@@ -1096,11 +1102,13 @@ class KolegaCodeApp(
         self._plan_decision_active = False
         await self._save_session_async()
         self._restore_plan_action_visibility()
+        self._refresh_input_area_visibility()
         self._cancel_pending_question()
         self._cancel_pending_approval()
         self._cancel_pending_model_selection()
         self._cancel_pending_effort_selection()
         self._cancel_pending_theme_selection()
+        self._clear_queued_messages()
 
         if self.config is not None:
             await self._build_agent(self.config, rebuild=True, restore_transcript=False)
@@ -1152,6 +1160,7 @@ class KolegaCodeApp(
         self._set_plan_actions_visible(True, allow_discuss=True)
         self._set_composer_status(messages.PLAN_READY_PLACEHOLDER)
         self._set_chat_enabled(False)
+        self._refresh_input_area_visibility()
         self._notify_user(notification)
 
     async def _implement_pending_plan(self, *, clear_context: bool = False) -> None:
@@ -1172,6 +1181,7 @@ class KolegaCodeApp(
         await self._set_interaction_mode(tui_constants.BUILD_INTERACTION_MODE)
         self._refresh_planning_sidebar()
         self._set_plan_actions_visible(False)
+        self._refresh_input_area_visibility()
 
         prompt = build_implement_plan_prompt(plan, gigacode_enabled=self._gigacode_enabled)
         self._add_conversation_entry(tui_state.ConversationEntry(kind="user", content="Implement the approved plan."))
@@ -1189,6 +1199,7 @@ class KolegaCodeApp(
         await self._save_session_async()
         self._refresh_planning_sidebar()
         self._set_plan_actions_visible(False)
+        self._refresh_input_area_visibility()
         self._restore_composer_placeholder()
         self._set_chat_enabled(self.agent is not None)
         self._schedule_primary_focus_restore()
@@ -1454,6 +1465,24 @@ class KolegaCodeApp(
         except Exception:
             pass
 
+    def _refresh_input_area_visibility(self) -> None:
+        prompt_or_decision_pending = (
+            self._pending_approval is not None or self._pending_question is not None or self._plan_decision_active
+        )
+        try:
+            composer = self.query_one("#composer", tui_widgets.ChatComposer)
+            composer.display = True
+        except Exception:
+            pass
+        try:
+            queued_panel = self.query_one("#queued_messages")
+        except Exception:
+            return
+        if prompt_or_decision_pending:
+            queued_panel.display = False
+        else:
+            self._refresh_queued_messages_panel()
+
     def _set_chat_enabled(self, enabled: bool) -> None:
         composer = self.query_one("#composer", tui_widgets.ChatComposer)
         composer.disabled = not enabled or self._plan_decision_active or self._pending_approval is not None
@@ -1466,7 +1495,11 @@ class KolegaCodeApp(
         self.query_one("#composer", tui_widgets.ChatComposer).placeholder = status
 
     def _restore_composer_placeholder(self) -> None:
-        self.query_one("#composer", tui_widgets.ChatComposer).placeholder = messages.COMPOSER_PLACEHOLDER
+        try:
+            composer = self.query_one("#composer", tui_widgets.ChatComposer)
+        except Exception:
+            return
+        composer.placeholder = messages.COMPOSER_PLACEHOLDER
         self._clear_composer_hint()
 
     def _show_composer_hint(self, text: str, tone: str = "warning") -> None:
@@ -1506,6 +1539,7 @@ class KolegaCodeApp(
             self.agent.last_compression_index = None
         self.session.history = []
         self.session.compaction = {}
+        self._clear_queued_messages()
 
     async def _reset_current_thread(self) -> None:
         self._close_sub_agent_inspector()
@@ -1523,6 +1557,7 @@ class KolegaCodeApp(
         self._sub_agent_seq = 0
         self._workflow_activities = {}
         self._active_progress_entry = None
+        self._clear_queued_messages()
         self._latest_plan = None
         self._plan_pending = False
         self._plan_reofferable = False

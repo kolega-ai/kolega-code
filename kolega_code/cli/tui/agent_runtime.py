@@ -18,33 +18,35 @@ from . import state as tui_state
 
 
 class AgentRuntimeMixin:
-    async def _process_message(self, message: str, attachments: list[dict] | None = None) -> None:
-        if self.agent is None:
-            return
+    def _agent_turn_stream(self, message: str, attachments: list[dict] | None = None):
+        if attachments:
+            return self.agent.process_message_stream(message, attachments)
+        return self.agent.process_message_stream(message)
+
+    async def _consume_agent_stream(self, stream) -> None:
+        async for chunk in stream:
+            if chunk.get("type") == "response":
+                if chunk.get("content"):
+                    self._update_progress(
+                        messages.READING_RESPONSE, complete=False, state=tui_state.TurnState.GENERATING
+                    )
+                self._apply_stream_chunk(chunk, kind="assistant")
+                continue
+
+            content = chunk.get("content")
+            if chunk.get("type") == "thinking":
+                self._update_progress(messages.THINKING, complete=False, state=tui_state.TurnState.THINKING)
+                self._apply_stream_chunk(chunk, kind="thinking")
+                if content and self.show_logs:
+                    self._write_log(content, "debug")
+
+    async def _run_turn_stream(self, stream_factory) -> bool:
+        """Run one agent stream and return whether it was cancelled by the user."""
         cancelled_by_user = False
         self._begin_turn_progress()
         self._log_status(messages.GENERATING, "ok")
         try:
-            stream = (
-                self.agent.process_message_stream(message, attachments)
-                if attachments
-                else self.agent.process_message_stream(message)
-            )
-            async for chunk in stream:
-                if chunk.get("type") == "response":
-                    if chunk.get("content"):
-                        self._update_progress(
-                            messages.READING_RESPONSE, complete=False, state=tui_state.TurnState.GENERATING
-                        )
-                    self._apply_stream_chunk(chunk, kind="assistant")
-                    continue
-
-                content = chunk.get("content")
-                if chunk.get("type") == "thinking":
-                    self._update_progress(messages.THINKING, complete=False, state=tui_state.TurnState.THINKING)
-                    self._apply_stream_chunk(chunk, kind="thinking")
-                    if content and self.show_logs:
-                        self._write_log(content, "debug")
+            await self._consume_agent_stream(stream_factory())
             await self._drain_pending_events()
             self._refresh_session_diff()
             self._finalize_sub_agent_activities()
@@ -101,6 +103,124 @@ class AgentRuntimeMixin:
             self._set_chat_enabled(self.agent is not None and not self._plan_decision_active)
             if cancelled_by_user:
                 self._schedule_primary_focus_restore()
+        return cancelled_by_user
+
+    async def _process_message(self, message: str, attachments: list[dict] | None = None) -> None:
+        if self.agent is None:
+            return
+        cancelled_by_user = await self._run_turn_stream(lambda: self._agent_turn_stream(message, attachments))
+        if not cancelled_by_user:
+            self._schedule_maybe_start_queued_message()
+
+    def _queue_user_message(self, text: str, attachments: list[dict] | None = None) -> None:
+        self._queued_message_seq += 1
+        entry = tui_state.ConversationEntry(kind="queued", content=text)
+        queued = tui_state.QueuedMessage(
+            queue_id=f"queued-{self._queued_message_seq}",
+            text=text,
+            attachments=[dict(item) for item in attachments] if attachments else None,
+            entry=entry,
+        )
+        self._queued_messages.append(queued)
+        self._add_conversation_entry(entry)
+        self._refresh_queued_messages_panel()
+        self._log_status(messages.QUEUED_MESSAGE, "info")
+
+    def _queued_messages_preview(self) -> str:
+        if not self._queued_messages:
+            return messages.QUEUE_EMPTY
+        lines = [f"{messages.QUEUE_LIST_TITLE} {len(self._queued_messages)}"]
+        for index, queued in enumerate(self._queued_messages, start=1):
+            preview = " ".join(queued.text.strip().split()) or "(empty)"
+            if len(preview) > 120:
+                preview = preview[:117] + "…"
+            suffix = ""
+            if queued.attachments:
+                suffix = f" ({len(queued.attachments)} attachment(s))"
+            lines.append(f"{index}. {preview}{suffix}")
+        return "\n".join(lines)
+
+    def _refresh_queued_messages_panel(self) -> None:
+        try:
+            panel = self.query_one("#queued_messages")
+        except Exception:
+            return
+        if not self._queued_messages:
+            panel.update("")
+            panel.display = False
+            return
+        panel.update(self._queued_messages_preview())
+        panel.display = (
+            self._pending_approval is None and self._pending_question is None and not self._plan_decision_active
+        )
+
+    def _remove_queued_entries_from_transcript(self, queued: list[tui_state.QueuedMessage]) -> None:
+        entry_ids = {item.entry.entry_id for item in queued}
+        before = len(self.conversation_entries)
+        self.conversation_entries = [entry for entry in self.conversation_entries if entry.entry_id not in entry_ids]
+        if len(self.conversation_entries) != before:
+            self._render_conversation()
+
+    def _clear_queued_messages(self) -> int:
+        queued = list(self._queued_messages)
+        self._queued_messages.clear()
+        self._remove_queued_entries_from_transcript(queued)
+        self._refresh_queued_messages_panel()
+        return len(queued)
+
+    def _restore_queued_messages_to_composer(self) -> int:
+        queued = list(self._queued_messages)
+        if not queued:
+            return 0
+
+        queued_text = "\n\n".join(item.text for item in queued)
+        try:
+            composer = self.query_one("#composer")
+            existing_text = getattr(composer, "text", "") or ""
+            restored_text = f"{queued_text}\n\n{existing_text}" if existing_text else queued_text
+            composer.load_text(restored_text)
+        except Exception:
+            pass
+
+        self._queued_messages.clear()
+        self._remove_queued_entries_from_transcript(queued)
+        self._refresh_queued_messages_panel()
+        return len(queued)
+
+    def _schedule_maybe_start_queued_message(self) -> None:
+        try:
+            self.set_timer(0.01, self._maybe_start_queued_message, name="queued-message-drain")
+        except Exception:
+            self._maybe_start_queued_message()
+
+    def _maybe_start_queued_message(self) -> bool:
+        if not self._queued_messages or self.agent is None:
+            return False
+        if self._turn_active or self.agent_worker is not None:
+            return False
+        if (
+            self._pending_question is not None
+            or self._pending_approval is not None
+            or self._pending_model_selection is not None
+            or self._pending_effort_selection is not None
+            or self._pending_theme_selection is not None
+            or self._plan_decision_active
+        ):
+            return False
+
+        queued = self._queued_messages.pop(0)
+        queued.entry.kind = "user"
+        queued.entry.tone = None
+        if queued.entry not in self.conversation_entries:
+            self._add_conversation_entry(queued.entry)
+        else:
+            self._render_conversation()
+        self._refresh_queued_messages_panel()
+        self._clear_composer_hint()
+        self.agent_worker = self.run_worker(
+            self._process_message(queued.text, queued.attachments), name="kolega-turn", group="turns", exclusive=True
+        )
+        return True
 
     async def _consume_events(self) -> None:
         while True:
@@ -199,6 +319,7 @@ class AgentRuntimeMixin:
             self._update_progress(messages.STOP_REQUESTED, complete=False, state=tui_state.TurnState.STOPPING)
             self._cancel_pending_question()
             self._cancel_pending_approval()
+            self._restore_queued_messages_to_composer()
             self.agent_worker.cancel()
             self._notify_user(messages.CANCEL_REQUESTED, severity="warning")
 
@@ -233,6 +354,8 @@ class AgentRuntimeMixin:
     ) -> None:
         history = self.session.history
         compaction = self.session.compaction
+        if rebuild:
+            self._clear_queued_messages()
         if self.agent is not None:
             await self._save_session_history_async()
             history = self.session.history

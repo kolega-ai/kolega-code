@@ -252,7 +252,8 @@ class TranscriptRenderingMixin:
         self._workflow_activities = {}
         self._active_progress_entry = None
         self._turn_active = True
-        self._set_chat_enabled(False)
+        self._set_chat_enabled(True)
+        self._set_composer_status(messages.QUEUE_PLACEHOLDER)
         self._start_turn_timer(messages.WORKING)
         self._set_status_activity(messages.WORKING, turn_state=TurnState.GENERATING)
         self._update_progress(messages.WORKING, complete=False, state=TurnState.GENERATING)
@@ -1289,6 +1290,9 @@ class TranscriptRenderingMixin:
             color = Color.ERROR if entry.tone == "error" else Color.WARNING
             header = theme.role_header(Glyph.STATUS, "Status", color, state=streaming)
             return self._entry_renderable(header, entry.content)
+        if entry.kind == "queued":
+            header = theme.role_header(Glyph.STATUS, "Queued", Color.ACCENT)
+            return self._entry_renderable(header, entry.content, body_style="dim")
         if entry.kind == "plan":
             header = theme.role_header(Glyph.PLAN, "Plan", Color.SUCCESS)
             if entry.content.strip():

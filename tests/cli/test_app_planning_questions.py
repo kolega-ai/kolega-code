@@ -54,7 +54,7 @@ async def test_textual_app_planning_question_tool_accepts_option_list_answer(
 
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.widgets import ActionList, ChatComposer
-    from kolega_code.cli.messages import COMPOSER_PLACEHOLDER
+    from kolega_code.cli.messages import COMPOSER_PLACEHOLDER, QUEUE_PLACEHOLDER
 
     class FakeBaseAgent:
         def __init__(self, **kwargs):
@@ -126,8 +126,8 @@ async def test_textual_app_planning_question_tool_accepts_option_list_answer(
         assert json.loads(await answer_task) == {"Approach": "Persist it"}
         assert app._pending_question is None
         assert app.query_one("#question_actions").display is False
-        assert app.query_one("#composer", ChatComposer).disabled is True
-        assert app.query_one("#composer", ChatComposer).placeholder == COMPOSER_PLACEHOLDER
+        assert app.query_one("#composer", ChatComposer).disabled is False
+        assert app.query_one("#composer", ChatComposer).placeholder == QUEUE_PLACEHOLDER
         # After answering, the question is recorded followed by the chosen answer.
         assert app.conversation_entries[-2].kind == "question"
         assert app.conversation_entries[-2].content == "Which approach should we use?"

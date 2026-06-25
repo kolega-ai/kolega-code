@@ -194,6 +194,7 @@ class PromptFlowMixin:
         self._show_question_options(question, options, descriptions)
         self._set_composer_status(messages.QUESTION_PLACEHOLDER)
         self._set_chat_enabled(True)
+        self._refresh_input_area_visibility()
         self._update_activity_progress(messages.WAITING_FOR_ANSWER, state=TurnState.WAITING_FOR_USER)
 
         try:
@@ -202,6 +203,7 @@ class PromptFlowMixin:
             if self._pending_question is not None and self._pending_question.future is future:
                 self._pending_question = None
                 self._set_question_actions_visible(False)
+                self._refresh_input_area_visibility()
 
     async def _answer_question_option(self, option_index: int) -> None:
         if self._pending_question is None:
@@ -222,14 +224,16 @@ class PromptFlowMixin:
 
         self._pending_question = None
         self._set_question_actions_visible(False)
+        self._refresh_input_area_visibility()
         self._add_conversation_entry(ConversationEntry(kind="question", content=pending_question.question))
         self._add_conversation_entry(ConversationEntry(kind="user", content=clean_answer))
         if not pending_question.future.done():
             pending_question.future.set_result(clean_answer)
 
         if self._turn_active:
-            self._restore_composer_placeholder()
-            self._set_chat_enabled(False)
+            self._set_composer_status(messages.QUEUE_PLACEHOLDER)
+            self._clear_composer_hint()
+            self._set_chat_enabled(True)
             self._update_progress(messages.WORKING, complete=False, state=TurnState.GENERATING)
         else:
             self._restore_composer_placeholder()
@@ -277,6 +281,7 @@ class PromptFlowMixin:
         self._show_approval_options(rule_options)
         self._set_composer_status(messages.APPROVAL_PLACEHOLDER)
         self._set_chat_enabled(False)
+        self._refresh_input_area_visibility()
         self._update_activity_progress(messages.WAITING_FOR_PERMISSION, state=TurnState.WAITING_FOR_USER)
 
         try:
@@ -285,6 +290,7 @@ class PromptFlowMixin:
             if self._pending_approval is not None and self._pending_approval.future is future:
                 self._pending_approval = None
                 self._set_approval_actions_visible(False)
+                self._refresh_input_area_visibility()
 
     def _show_approval_options(self, rule_options: list[PermissionRuleOption]) -> None:
         self._set_approval_actions_visible(True)
@@ -317,6 +323,7 @@ class PromptFlowMixin:
 
         self._pending_approval = None
         self._set_approval_actions_visible(False)
+        self._refresh_input_area_visibility()
         self._add_conversation_entry(
             ConversationEntry(kind="question", content=self._format_permission_content(pending.request))
         )
@@ -325,8 +332,9 @@ class PromptFlowMixin:
             pending.future.set_result(decision)
 
         if self._turn_active:
-            self._restore_composer_placeholder()
-            self._set_chat_enabled(False)
+            self._set_composer_status(messages.QUEUE_PLACEHOLDER)
+            self._clear_composer_hint()
+            self._set_chat_enabled(True)
             self._update_progress(messages.WORKING, complete=False, state=TurnState.GENERATING)
         else:
             self._restore_composer_placeholder()
@@ -384,6 +392,7 @@ class PromptFlowMixin:
             pending_question.future.cancel()
         self._pending_question = None
         self._set_question_actions_visible(False)
+        self._refresh_input_area_visibility()
 
     def _cancel_pending_approval(self) -> None:
         pending_approval = self._pending_approval
@@ -391,6 +400,7 @@ class PromptFlowMixin:
             pending_approval.future.cancel()
         self._pending_approval = None
         self._set_approval_actions_visible(False)
+        self._refresh_input_area_visibility()
 
     def _question_option_label(self, index: int, option: str, description: str = "") -> str:
         if description:

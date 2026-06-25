@@ -6,6 +6,7 @@ import time
 
 import pytest
 
+from kolega_code.cli import messages
 from kolega_code.cli.tui import agent_runtime as agent_runtime_module
 from kolega_code.cli.tui import state as tui_state
 
@@ -492,3 +493,260 @@ async def test_chat_composer_active_slash_query(tmp_path: Path, monkeypatch: pyt
         composer.load_text("")
         composer.insert("/model kimi")
         assert composer.active_slash_query() is None
+
+
+@pytest.mark.asyncio
+async def test_textual_app_queues_multiple_active_turn_messages_fifo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.widgets import ChatComposer
+
+    first_started = asyncio.Event()
+    release_first = asyncio.Event()
+
+    class FakeCoderAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.messages: list[str] = []
+
+        def restore_message_history(self, history):
+            return None
+
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
+
+        def dump_message_history(self):
+            return []
+
+        async def cleanup(self):
+            return None
+
+        async def process_message_stream(self, message, attachments=None):
+            self.messages.append(message)
+            first_started.set()
+            await release_first.wait()
+            yield {"type": "response", "content": "first done", "complete": True, "uuid": "response-1"}
+
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test() as pilot:
+        composer = app.query_one("#composer", ChatComposer)
+        composer.focus()
+
+        composer.load_text("first")
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+        first_worker = app.agent_worker
+        assert first_worker is not None
+        await asyncio.wait_for(first_started.wait(), timeout=2)
+
+        composer.load_text("second")
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+        composer.load_text("third")
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+        await pilot.pause()
+
+        assert [item.text for item in app._queued_messages] == ["second", "third"]
+        assert [entry.kind for entry in app.conversation_entries if entry.content in {"second", "third"}] == [
+            "queued",
+            "queued",
+        ]
+        queued_panel = app.query_one("#queued_messages")
+        assert queued_panel.display is True
+        queued_text = renderable_text(queued_panel.render())
+        assert "second" in queued_text
+        assert "third" in queued_text
+
+        release_first.set()
+        await first_worker.wait()
+        for _ in range(20):
+            await pilot.pause()
+            if (
+                app.agent is not None
+                and app.agent.messages == ["first", "second", "third"]
+                and app.agent_worker is None
+            ):
+                break
+        if app.agent_worker is not None:
+            await app.agent_worker.wait()
+        await pilot.pause()
+
+        assert app.agent is not None
+        assert app.agent.messages == ["first", "second", "third"]
+        assert [entry.kind for entry in app.conversation_entries if entry.content in {"second", "third"}] == [
+            "user",
+            "user",
+        ]
+        user_contents = [entry.content for entry in app.conversation_entries if entry.kind == "user"]
+        assert user_contents.count("second") == 1
+        assert user_contents.count("third") == 1
+
+
+@pytest.mark.asyncio
+async def test_textual_app_queue_clear_command_discards_active_turn_followups(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.widgets import ChatComposer
+
+    first_started = asyncio.Event()
+    release_first = asyncio.Event()
+
+    class FakeCoderAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.messages: list[str] = []
+
+        def restore_message_history(self, history):
+            return None
+
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
+
+        def dump_message_history(self):
+            return []
+
+        async def cleanup(self):
+            return None
+
+        async def process_message_stream(self, message, attachments=None):
+            self.messages.append(message)
+            first_started.set()
+            await release_first.wait()
+            yield {"type": "response", "content": "first done", "complete": True, "uuid": "response-1"}
+
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test() as pilot:
+        composer = app.query_one("#composer", ChatComposer)
+        composer.focus()
+
+        composer.load_text("first")
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+        first_worker = app.agent_worker
+        assert first_worker is not None
+        await asyncio.wait_for(first_started.wait(), timeout=2)
+
+        for text in ("second", "third"):
+            composer.load_text(text)
+            await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+        assert len(app._queued_messages) == 2
+
+        composer.load_text("/queue-clear")
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+        assert app._queued_messages == []
+
+        release_first.set()
+        await first_worker.wait()
+        await pilot.pause()
+        if app.agent_worker is not None:
+            await app.agent_worker.wait()
+
+        assert app.agent is not None
+        assert app.agent.messages == ["first"]
+        assert app.query_one("#queued_messages").display is False
+        assert not [entry for entry in app.conversation_entries if entry.content in {"second", "third"}]
+        assert any(messages.QUEUE_CLEARED.format(count=2) in entry.content for entry in app.conversation_entries)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("draft", "expected_text"),
+    [
+        ("draft", "second\n\nthird\n\ndraft"),
+        ("", "second\n\nthird"),
+    ],
+)
+async def test_textual_app_cancel_restores_queued_followups_to_composer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, draft: str, expected_text: str
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.widgets import ChatComposer
+
+    first_started = asyncio.Event()
+
+    class FakeCoderAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def restore_message_history(self, history):
+            return None
+
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
+
+        def dump_message_history(self):
+            return []
+
+        async def cleanup(self):
+            return None
+
+        async def process_message_stream(self, message, attachments=None):
+            first_started.set()
+            await asyncio.Event().wait()
+            yield {"type": "response", "content": "unreachable", "complete": True, "uuid": "response-1"}
+
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test() as pilot:
+        composer = app.query_one("#composer", ChatComposer)
+
+        composer.load_text("first")
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+        assert app.agent_worker is not None
+        await asyncio.wait_for(first_started.wait(), timeout=2)
+
+        for text in ("second", "third"):
+            composer.load_text(text)
+            await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+        assert [item.text for item in app._queued_messages] == ["second", "third"]
+        assert app.query_one("#queued_messages").display is True
+
+        composer.load_text(draft)
+        app.action_cancel_generation()
+        for _ in range(10):
+            await pilot.pause()
+            if app.agent_worker is None:
+                break
+
+        assert app.agent_worker is None
+        assert app._queued_messages == []
+        assert app.query_one("#queued_messages").display is False
+        assert composer.text == expected_text
+        assert not [entry for entry in app.conversation_entries if entry.content in {"second", "third"}]
