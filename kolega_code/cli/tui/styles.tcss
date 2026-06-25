@@ -370,3 +370,58 @@ SubAgentInspectorScreen #inspector_footer {
     background: $surface;
     color: $text-muted;
 }
+
+ChangesInspectorScreen {
+    align: center middle;
+}
+
+ChangesInspectorScreen #changes_body {
+    width: 100%;
+    height: 1fr;
+}
+
+ChangesInspectorScreen #changes_roster {
+    width: 44;
+    height: 100%;
+    border: round $surface;
+    padding: 0 1;
+}
+
+ChangesInspectorScreen #changes_main {
+    width: 1fr;
+    height: 100%;
+}
+
+ChangesInspectorScreen #changes_header {
+    height: auto;
+    border: round $surface;
+    padding: 0 1;
+}
+
+ChangesInspectorScreen #changes_previews {
+    height: 1fr;
+    border: round $surface;
+    padding: 0 1;
+}
+
+ChangeFileRosterRow {
+    height: auto;
+    padding: 0 0 1 0;
+}
+
+ChangesInspectorScreen .changes-empty {
+    color: $text-muted;
+    padding: 1;
+}
+
+ChangesInspectorScreen .change-preview {
+    height: auto;
+    padding-bottom: 1;
+}
+
+ChangesInspectorScreen #changes_footer {
+    height: 1;
+    padding: 0 1;
+    background: $surface;
+    color: $text-muted;
+}

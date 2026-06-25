@@ -20,6 +20,7 @@ from .constants import QUESTION_TOOL_NAME, STARTUP_WORDMARK
 from .state import (
     ConversationEntry,
     PhaseState,
+    SessionFileChange,
     SubAgentActivity,
     TurnState,
     WorkflowActivity,
@@ -418,6 +419,70 @@ class TranscriptRenderingMixin:
         entry.edit_preview = content
         self._invalidate_conversation(entry)
 
+    def _record_file_change_event(self, event: AgentEvent) -> Optional[SessionFileChange]:
+        """Capture a UI-only edit preview in the live session changes list."""
+        content = event.content or {}
+        path = str(content.get("path") or "").strip()
+        kind = str(content.get("kind") or "").strip()
+        if not path or kind not in {"diff", "head"}:
+            return None
+
+        agent_id = ""
+        agent_name = ""
+        source_label = "Agent"
+        if event.sub_agent_info:
+            activity = self._ensure_sub_agent_activity(event)
+            agent_id = activity.agent_id
+            agent_name = activity.agent_name
+            source_label = f"Sub-agent {activity.agent_name} #{activity.index}"
+        elif event.sender:
+            agent_name = str(event.sender)
+
+        index = len(self._session_file_changes) + 1
+        change = SessionFileChange(
+            change_id=f"change-{index}",
+            index=index,
+            path=path,
+            preview=dict(content),
+            tool_name=str(content.get("tool_name") or ""),
+            tool_call_id=str(content.get("tool_call_id") or ""),
+            agent_id=agent_id,
+            agent_name=agent_name,
+            source_label=source_label,
+            created_at=self._now(),
+        )
+        self._session_file_changes.append(change)
+        self._invalidate_changes_detail(change)
+        return change
+
+    def _apply_sub_agent_edit_preview(self, event: AgentEvent) -> None:
+        """Attach a file edit preview to the matching sub-agent tool step."""
+        content = event.content or {}
+        tool_call_id = str(content.get("tool_call_id") or "").strip()
+        if not tool_call_id:
+            return
+        activity = self._ensure_sub_agent_activity(event)
+        step = activity.tool_steps.get(tool_call_id)
+        if step is None:
+            activity.pending_edit_previews[tool_call_id] = dict(content)
+        else:
+            step.edit_preview = dict(content)
+        self._invalidate_sub_agent_detail(activity)
+
+    def _attach_pending_sub_agent_edit_preview(self, activity: SubAgentActivity, step: ConversationEntry) -> None:
+        tool_call_id = step.tool_call_id or ""
+        if not tool_call_id:
+            return
+        preview = activity.pending_edit_previews.pop(tool_call_id, None)
+        if preview:
+            step.edit_preview = preview
+
+    def _invalidate_changes_detail(self, change: Optional[SessionFileChange] = None) -> None:
+        """Refresh the open changes inspector if present (no-op when closed)."""
+        screen = getattr(self, "_changes_inspector", None)
+        if screen is not None:
+            screen.note_change_updated(change)
+
     def _find_tool_entry(self, tool_call_id: str, tool_name: str) -> Optional[ConversationEntry]:
         if tool_call_id and tool_call_id in self._tool_entries:
             return self._tool_entries[tool_call_id]
@@ -565,12 +630,14 @@ class TranscriptRenderingMixin:
             activity.steps.append(step)
             if tool_call_id:
                 activity.tool_steps[tool_call_id] = step
+            self._attach_pending_sub_agent_edit_preview(activity, step)
             return
         step.kind = message_type
         step.content = entry_content
         step.complete = complete
         step.tool_name = tool_name
         step.full_content = full_content or step.full_content
+        self._attach_pending_sub_agent_edit_preview(activity, step)
 
     def _last_unpaired_sub_agent_tool_step(
         self, activity: SubAgentActivity, tool_name: str

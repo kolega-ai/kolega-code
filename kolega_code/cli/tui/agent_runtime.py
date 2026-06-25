@@ -46,6 +46,7 @@ class AgentRuntimeMixin:
                     if content and self.show_logs:
                         self._write_log(content, "debug")
             await self._drain_pending_events()
+            self._refresh_session_diff()
             self._finalize_sub_agent_activities()
             self._finalize_workflow_activities()
             await self._save_session_history_async()
@@ -57,6 +58,7 @@ class AgentRuntimeMixin:
             self._cancel_pending_question()
             self._cancel_pending_approval()
             await self._drain_pending_events()
+            self._refresh_session_diff()
             self._finalize_sub_agent_activities()
             self._finalize_workflow_activities()
             await self._save_session_history_async()
@@ -66,6 +68,7 @@ class AgentRuntimeMixin:
             self._cancel_pending_question()
             self._cancel_pending_approval()
             await self._drain_pending_events()
+            self._refresh_session_diff()
             self._finalize_sub_agent_activities()
             self._finalize_workflow_activities()
             await self._save_session_history_async()
@@ -77,6 +80,7 @@ class AgentRuntimeMixin:
             self._cancel_pending_question()
             self._cancel_pending_approval()
             await self._drain_pending_events()
+            self._refresh_session_diff()
             self._finalize_sub_agent_activities()
             self._finalize_workflow_activities()
             await self._save_session_history_async()
@@ -123,6 +127,7 @@ class AgentRuntimeMixin:
             if output is None:
                 output = event.content.get("output", "")
             self._queue_terminal_output(str(output))
+            self._refresh_session_diff()
         elif event.event_type == "terminal_command":
             command = str(event.content.get("command") or "")
             self._write_terminal_command(command)
@@ -154,9 +159,15 @@ class AgentRuntimeMixin:
             else:
                 self._apply_tool_streaming_update(event.content)
         elif event.event_type == "file_edit_preview":
-            # UI-only inline diff/head preview. Sub-agent edits are not shown inline (v1).
-            if not event.sub_agent_info:
+            # UI-only diff/head preview. Main-agent edits stay inline; every edit is
+            # also captured in the session changes inspector. Sub-agent previews attach
+            # to their trajectory steps so Ctrl+G and Ctrl+R can both reveal them.
+            self._record_file_change_event(event)
+            if event.sub_agent_info:
+                self._apply_sub_agent_edit_preview(event)
+            else:
                 self._apply_edit_preview(event.content)
+            self._refresh_session_diff()
         elif event.event_type == "llm_context_update":
             if event.sub_agent_info:
                 self._note_sub_agent_context(event)

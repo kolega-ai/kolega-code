@@ -79,9 +79,11 @@ from .theme import Color, Glyph
 from .updater import check_for_update, update_status_message
 from .tui import constants as tui_constants
 from .tui import agent_runtime as tui_agent_runtime
+from .tui import changes_screen as tui_changes
 from .tui import command_handlers as tui_command_handlers
 from .tui import prompt_flows as tui_prompt_flows
 from .tui import settings_panel as tui_settings_panel
+from .tui import session_diff as tui_session_diff
 from .tui import status_dashboard as tui_status_dashboard
 from .tui import state as tui_state
 from .tui import sub_agent_screen as tui_sub_agents
@@ -118,6 +120,7 @@ class KolegaCodeApp(
         Binding("ctrl+p", "toggle_permission_mode", "Permissions", show=True, key_display="Ctrl+P", priority=True),
         Binding("ctrl+o", "toggle_sidebar", "Sidebar", show=True, key_display="Ctrl+O", priority=True),
         Binding("ctrl+g", "open_sub_agent", "Agents", show=True, key_display="Ctrl+G", priority=True),
+        Binding("ctrl+r", "open_changes", "Changes", show=True, key_display="Ctrl+R", priority=True),
         Binding("ctrl+c", "cancel_generation", "Cancel", show=True),
         Binding("escape", "cancel_generation", "Cancel", show=False),
         Binding("ctrl+q", "quit", "Quit", show=True),
@@ -172,6 +175,9 @@ class KolegaCodeApp(
         self._sub_agent_activities: dict[str, tui_state.SubAgentActivity] = {}
         self._sub_agent_by_tool_call: dict[str, str] = {}
         self._sub_agent_seq = 0
+        self._session_file_changes: list[tui_state.SessionFileChange] = []
+        self._session_diff_tracker: Optional[tui_session_diff.GitSessionDiffTracker] = None
+        self._session_diff_files: list[tui_session_diff.SessionDiffFile] = []
         self._workflow_activities: dict[str, tui_state.WorkflowActivity] = {}
         self._render_pending = False
         self._conversation_anchor_pending = False
@@ -216,6 +222,7 @@ class KolegaCodeApp(
         self._spinner_frame = 0
         self._last_sub_agent_tick = 0.0
         self._sub_agent_inspector: Optional[tui_sub_agents.SubAgentInspectorScreen] = None
+        self._changes_inspector: Optional[tui_changes.ChangesInspectorScreen] = None
         self._terminal_has_content = False
         self._terminal_output_buffer: list[str] = []
         self._terminal_output_buffer_chars = 0
@@ -394,6 +401,7 @@ class KolegaCodeApp(
         except Exception:
             pass
         self._populate_settings_controls()
+        self._initialize_session_diff_tracker()
         self._refresh_status_dashboard()
         self._restore_plan_action_visibility()
         self._set_question_actions_visible(False)
@@ -974,6 +982,50 @@ class KolegaCodeApp(
         self._sub_agent_inspector = screen
         self.push_screen(screen)
 
+    def action_open_changes(self, path: Optional[str] = None) -> None:
+        """Open the full-screen git session changes inspector."""
+        if not self._changes_available() or self._changes_inspector is not None:
+            return
+        self._refresh_session_diff()
+        paths = {change.path for change in self._session_diff_files}
+        if path is None or path not in paths:
+            path = self._default_changes_path() or ""
+        screen = tui_changes.ChangesInspectorScreen(self, path)
+        self._changes_inspector = screen
+        self.push_screen(screen)
+
+    def _initialize_session_diff_tracker(self) -> None:
+        """Set up git-only net diff tracking for the Changes inspector."""
+        self._session_diff_tracker = tui_session_diff.GitSessionDiffTracker.create(self.project_path)
+        self._session_diff_files = []
+        if self._session_diff_tracker is None:
+            return
+        try:
+            self._session_diff_tracker.capture_baseline()
+        except Exception:
+            self._session_diff_tracker = None
+            self._session_diff_files = []
+
+    def _changes_available(self) -> bool:
+        return self._session_diff_tracker is not None
+
+    def _refresh_session_diff(self) -> None:
+        tracker = self._session_diff_tracker
+        if tracker is None:
+            self._session_diff_files = []
+            return
+        try:
+            event_paths = [change.path for change in self._session_file_changes]
+            self._session_diff_files = tracker.refresh(event_paths=event_paths)
+        except Exception:
+            self._session_diff_files = []
+        self._invalidate_changes_detail()
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        if action == "open_changes":
+            return self._changes_available()
+        return True
+
     def _default_sub_agent_key(self) -> Optional[str]:
         """Most-recently-started running agent, else the most recent overall."""
         pool = self._running_sub_agents() or list(self._sub_agent_activities.values())
@@ -981,11 +1033,27 @@ class KolegaCodeApp(
             return None
         return max(pool, key=lambda a: a.index).agent_id
 
+    def _default_changes_path(self) -> Optional[str]:
+        """Most recent net-changed file in the live TUI session."""
+        if not self._session_diff_files:
+            return None
+        return self._session_diff_files[-1].path
+
     def _close_sub_agent_inspector(self) -> None:
         screen = self._sub_agent_inspector
         if screen is None:
             return
         self._sub_agent_inspector = None
+        try:
+            screen.dismiss()
+        except Exception:
+            pass
+
+    def _close_changes_inspector(self) -> None:
+        screen = self._changes_inspector
+        if screen is None:
+            return
+        self._changes_inspector = None
         try:
             screen.dismiss()
         except Exception:
