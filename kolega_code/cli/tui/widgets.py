@@ -313,11 +313,13 @@ class ToolEntryWidget(Vertical):
                 if not self._preview_visible:
                     self._preview.display = True
                     self._preview_visible = True
+                    self._preview.refresh(layout=True)
             else:
                 if self._preview_visible:
                     self._preview.update("")
                     self._preview.display = False
                     self._preview_visible = False
+                    self._preview.refresh(layout=True)
 
 
 class ConversationView(VerticalScroll):

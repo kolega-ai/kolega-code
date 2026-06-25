@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 from typing import Optional
 
+from rich.console import Group
 from rich.text import Text
 from textual import events
 from textual.app import App, ComposeResult
@@ -83,6 +84,7 @@ from .tui import settings_panel as tui_settings_panel
 from .tui import status_dashboard as tui_status_dashboard
 from .tui import state as tui_state
 from .tui import sub_agent_screen as tui_sub_agents
+from .tui import terminal_display as tui_terminal_display
 from .tui import transcript as tui_transcript
 from .tui import widgets as tui_widgets
 
@@ -91,6 +93,8 @@ LOG_MAX_LINES = 2_000
 TERMINAL_MAX_LINES = 2_000
 TERMINAL_FLUSH_INTERVAL = 0.04
 TERMINAL_IMMEDIATE_FLUSH_CHARS = 64 * 1024
+LOG_FLUSH_INTERVAL = 0.05
+LOG_IMMEDIATE_FLUSH_ITEMS = 100
 
 
 class KolegaCodeApp(
@@ -169,6 +173,7 @@ class KolegaCodeApp(
         self._sub_agent_seq = 0
         self._workflow_activities: dict[str, tui_state.WorkflowActivity] = {}
         self._render_pending = False
+        self._conversation_anchor_pending = False
         self._entry_widgets: dict[str, tui_widgets.ConversationEntryWidget | tui_widgets.ToolEntryWidget] = {}
         self._dirty_entry_ids: set[str] = set()
         self._active_progress_entry: Optional[tui_state.ConversationEntry] = None
@@ -214,6 +219,9 @@ class KolegaCodeApp(
         self._terminal_output_buffer: list[str] = []
         self._terminal_output_buffer_chars = 0
         self._terminal_flush_timer: Optional[Timer] = None
+        self._terminal_display_normalizer = tui_terminal_display.TerminalDisplayNormalizer()
+        self._log_output_buffer: list[object] = []
+        self._log_flush_timer: Optional[Timer] = None
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="body"):
@@ -425,7 +433,8 @@ class KolegaCodeApp(
         )
 
     def _queue_terminal_output(self, output: str) -> None:
-        """Buffer terminal chunks so high-volume output renders in batches."""
+        """Buffer display-safe terminal chunks so high-volume output renders in batches."""
+        output = self._terminal_display_normalizer.feed(output)
         if not output:
             return
 
@@ -468,6 +477,7 @@ class KolegaCodeApp(
         terminal.write_terminal(output)
 
     def _write_terminal_command(self, command: str) -> None:
+        self._terminal_display_normalizer.reset()
         self._flush_terminal_output()
         try:
             terminal = self._terminal
@@ -484,10 +494,15 @@ class KolegaCodeApp(
         if self._terminal_flush_timer is not None:
             self._terminal_flush_timer.stop()
             self._terminal_flush_timer = None
+        if self._log_flush_timer is not None:
+            self._log_flush_timer.stop()
+            self._log_flush_timer = None
 
+        self._terminal_display_normalizer.reset()
         self._terminal_output_buffer.clear()
         self._terminal_output_buffer_chars = 0
         self._terminal_has_content = False
+        self._log_output_buffer.clear()
 
         try:
             self._terminal.clear_output()
@@ -516,12 +531,42 @@ class KolegaCodeApp(
         """Single write path into the optional Logs tab."""
         if not self.show_logs:
             return
+        self._queue_log_output(self._format_log_line(text, level))
+
+    def _queue_log_output(self, renderable: object) -> None:
+        buffer_was_empty = not self._log_output_buffer
+        self._log_output_buffer.append(renderable)
+
+        if buffer_was_empty:
+            self._mark_tab_activity("logs_pane")
+
+        if len(self._log_output_buffer) >= LOG_IMMEDIATE_FLUSH_ITEMS:
+            self._flush_log_output()
+            return
+
+        if self._log_flush_timer is None:
+            self._log_flush_timer = self.set_timer(
+                LOG_FLUSH_INTERVAL,
+                self._flush_log_output,
+                name="log-output-flush",
+            )
+
+    def _flush_log_output(self) -> None:
+        """Write any buffered log lines as one RichLog append."""
+        if self._log_flush_timer is not None:
+            self._log_flush_timer.stop()
+            self._log_flush_timer = None
+
+        if not self._log_output_buffer:
+            return
+
+        entries = list(self._log_output_buffer)
+        self._log_output_buffer.clear()
         try:
             logs = self._logs
         except Exception:
             return
-        logs.write_log(self._format_log_line(text, level))
-        self._mark_tab_activity("logs_pane")
+        logs.write_log(entries[0] if len(entries) == 1 else Group(*entries))
 
     def _mark_tab_activity(self, pane_id: str) -> None:
         """Add an activity dot to a background tab's label."""

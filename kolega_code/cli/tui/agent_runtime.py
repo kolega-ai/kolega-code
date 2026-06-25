@@ -84,6 +84,8 @@ class AgentRuntimeMixin:
             self._log_status(messages.STOPPED_WITH_ERROR.format(error=exc), "error")
             raise
         finally:
+            self._flush_terminal_output()
+            self._flush_log_output()
             self._flush_conversation_render()
             self._active_progress_entry = None
             self._turn_active = False
@@ -109,6 +111,7 @@ class AgentRuntimeMixin:
                 break
             self._render_event(event)
         self._flush_terminal_output()
+        self._flush_log_output()
 
     def _render_event(self, event: AgentEvent) -> None:
         if event.event_type == "log_message":
@@ -116,7 +119,10 @@ class AgentRuntimeMixin:
                 level = str(event.content.get("level", "info"))
                 self._write_log(self._display_text_from_event(event), level)
         elif event.event_type == "terminal_output":
-            self._queue_terminal_output(event.content.get("output", ""))
+            output = event.content.get("display_output")
+            if output is None:
+                output = event.content.get("output", "")
+            self._queue_terminal_output(str(output))
         elif event.event_type == "terminal_command":
             command = str(event.content.get("command") or "")
             self._write_terminal_command(command)

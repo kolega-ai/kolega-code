@@ -9,6 +9,8 @@ not carry across separate ``exec_command`` calls (use ``cd x && ...`` or pass a
 """
 
 import asyncio
+import codecs
+import contextlib
 import fcntl
 import os
 import pty
@@ -102,6 +104,9 @@ class PtySession:
         self.exited = asyncio.Event()
         self._new_output = asyncio.Event()
         self._buffer = HeadTailBuffer()  # output since the last read (delta)
+        self._display_decoder = codecs.getincrementaldecoder("utf-8")("replace")
+        self._broadcast_queue: asyncio.Queue[tuple[str, str] | None] = asyncio.Queue()
+        self._broadcast_task: Optional[asyncio.Task] = None
         self._reader_added = False
         self._closed = False
 
@@ -143,6 +148,8 @@ class PtySession:
                 pass
             flags = fcntl.fcntl(master_fd, fcntl.F_GETFL)
             fcntl.fcntl(master_fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+            if self.connection_manager:
+                self._broadcast_task = asyncio.create_task(self._broadcast_worker())
             asyncio.get_event_loop().add_reader(master_fd, self._on_readable)
             self._reader_added = True
 
@@ -173,6 +180,7 @@ class PtySession:
 
     def _handle_eof(self) -> None:
         self._remove_reader()
+        self._flush_display_decoder()
         self._reap()
         self._new_output.set()
         if not self.exited.is_set():
@@ -202,18 +210,42 @@ class PtySession:
     def _broadcast(self, data: bytes) -> None:
         if not self.connection_manager:
             return
-        text = data.decode("utf-8", errors="replace")
-        event = AgentEvent(
-            event_type="terminal_output",
-            sender="agent",
-            content={
-                "output": text,
-                "terminal_id": self.session_id,
-                "session_id": self.session_id,
-                "thread_id": self.thread_id,
-            },
-        )
-        asyncio.ensure_future(self._safe_broadcast(event))
+        raw_text = data.decode("utf-8", errors="replace")
+        display_text = self._display_decoder.decode(data, final=False)
+        self._enqueue_broadcast(raw_text, display_text)
+
+    def _flush_display_decoder(self) -> None:
+        if not self.connection_manager:
+            return
+        display_text = self._display_decoder.decode(b"", final=True)
+        self._enqueue_broadcast(display_text, display_text)
+
+    def _enqueue_broadcast(self, raw_text: str, display_text: str) -> None:
+        if not raw_text and not display_text:
+            return
+        self._broadcast_queue.put_nowait((raw_text, display_text))
+
+    async def _broadcast_worker(self) -> None:
+        while True:
+            item = await self._broadcast_queue.get()
+            try:
+                if item is None:
+                    return
+                raw_text, display_text = item
+                event = AgentEvent(
+                    event_type="terminal_output",
+                    sender="agent",
+                    content={
+                        "output": raw_text,
+                        "display_output": display_text,
+                        "terminal_id": self.session_id,
+                        "session_id": self.session_id,
+                        "thread_id": self.thread_id,
+                    },
+                )
+                await self._safe_broadcast(event)
+            finally:
+                self._broadcast_queue.task_done()
 
     async def _safe_broadcast(self, event: AgentEvent) -> None:
         try:
@@ -283,6 +315,13 @@ class PtySession:
             except OSError:
                 pass
             self.master_fd = None
+        if self._broadcast_task is not None:
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(self._broadcast_queue.join(), timeout=0.5)
+            self._broadcast_queue.put_nowait(None)
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await asyncio.wait_for(self._broadcast_task, timeout=0.5)
+            self._broadcast_task = None
 
     @property
     def running(self) -> bool:

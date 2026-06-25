@@ -79,3 +79,41 @@ async def test_tui_external_stylesheet_loads_in_textual_app(
         assert app.agent.kwargs["agent_mode"] == AgentMode.CLI
         assert app.query_one("#conversation") is not None
         assert app.query_one("#composer") is not None
+
+
+def test_tui_stylesheet_themes_scrollbars_and_avoids_disabled_opacity() -> None:
+    stylesheet = Path(__file__).parents[2] / "kolega_code" / "cli" / EXPECTED_CSS_PATH
+    css = stylesheet.read_text()
+
+    for property_name in (
+        "scrollbar-background:",
+        "scrollbar-background-hover:",
+        "scrollbar-background-active:",
+        "scrollbar-color:",
+        "scrollbar-color-hover:",
+        "scrollbar-color-active:",
+        "scrollbar-corner-color:",
+    ):
+        assert property_name in css
+
+    disabled_block = css.split("#composer:disabled", 1)[1].split("}", 1)[0]
+    assert "opacity" not in disabled_block
+    assert "background: $surface" in disabled_block
+    assert "color: $text-muted" in disabled_block
+
+
+def test_tui_stylesheet_explicitly_themes_footer_select_overlay_and_output_scrollbars() -> None:
+    stylesheet = Path(__file__).parents[2] / "kolega_code" / "cli" / EXPECTED_CSS_PATH
+    css = stylesheet.read_text()
+
+    output_block = css.split("#conversation, #logs, #terminal", 1)[1].split("}", 1)[0]
+    assert "overflow-x: hidden" in output_block
+    assert "background: $surface" in output_block
+
+    footer_block = css.split("Footer {", 1)[1].split("}", 1)[0]
+    assert "background: $surface" in footer_block
+    assert "color: $text-muted" in footer_block
+
+    select_overlay_block = css.split("Select > SelectOverlay", 1)[1].split("}", 1)[0]
+    assert "background: $surface" in select_overlay_block
+    assert "color: $text" in select_overlay_block

@@ -1,6 +1,8 @@
+import asyncio
+
 import pytest
 
-from kolega_code.services.terminal import LocalTerminalManager
+from kolega_code.services.terminal import LocalTerminalManager, PtySession
 
 
 @pytest.fixture
@@ -137,3 +139,43 @@ async def test_close_all_terminates_sessions(manager):
     assert len(manager.sessions) == 2
     await manager.close_all()
     assert len(manager.sessions) == 0
+
+
+class _RecordingConnectionManager:
+    def __init__(self):
+        self.events = []
+
+    async def broadcast_event(self, event, workspace_id, thread_id):
+        self.events.append(event)
+
+
+@pytest.mark.asyncio
+async def test_pty_display_broadcast_decodes_split_utf8_without_replacement(tmp_path):
+    connection = _RecordingConnectionManager()
+    session = PtySession("s_test", "echo", str(tmp_path), connection, "workspace", "thread")
+    session._broadcast_task = asyncio.create_task(session._broadcast_worker())
+
+    session._broadcast("€".encode("utf-8")[:1])
+    session._broadcast("€".encode("utf-8")[1:])
+    await session._broadcast_queue.join()
+    session._broadcast_queue.put_nowait(None)
+    await session._broadcast_task
+
+    display = "".join(event.content.get("display_output", "") for event in connection.events)
+    assert display == "€"
+    assert "�" not in display
+
+
+@pytest.mark.asyncio
+async def test_pty_display_broadcast_preserves_chunk_order(tmp_path):
+    connection = _RecordingConnectionManager()
+    session = PtySession("s_test", "echo", str(tmp_path), connection, "workspace", "thread")
+    session._broadcast_task = asyncio.create_task(session._broadcast_worker())
+
+    for chunk in (b"a", b"b", b"c"):
+        session._broadcast(chunk)
+    await session._broadcast_queue.join()
+    session._broadcast_queue.put_nowait(None)
+    await session._broadcast_task
+
+    assert "".join(event.content.get("display_output", "") for event in connection.events) == "abc"

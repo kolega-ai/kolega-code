@@ -63,6 +63,8 @@ async def test_log_lines_carry_timestamp_and_level_glyph(tmp_path: Path, monkeyp
         app._render_event(
             AgentEvent(event_type="log_message", sender="coder", content={"level": "error", "message": "it [broke]"})
         )
+        assert written == []
+        app._flush_log_output()
         assert len(written) == 1
         assert "[error]" not in written[0].plain  # no raw level prefix
         assert "it [broke]" in written[0].plain  # brackets survive without markup errors
@@ -454,3 +456,93 @@ async def test_logs_tab_shows_activity_dot_until_visited(tmp_path: Path, monkeyp
         # Writing while the tab is active does not re-add the dot
         app._write_log("foreground activity")
         assert str(tabs.get_tab("logs_pane").label) == "Logs"
+
+
+@pytest.mark.asyncio
+async def test_terminal_output_is_sanitized_before_rendering(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.agent import AgentEvent
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        written: list[object] = []
+        monkeypatch.setattr(app._terminal, "write_terminal", written.append)
+
+        app._render_event(
+            AgentEvent(
+                event_type="terminal_output",
+                sender="coder",
+                content={
+                    "output": "raw \x1b[31mred\x1b[0m\x1b]8;;https://example.com\x1b\\link\x1b]8;;\x1b\\\rnext\b!\x07\n"
+                },
+            )
+        )
+        app._flush_terminal_output()
+
+        rendered = "".join(str(item) for item in written)
+        assert "\x1b" not in rendered
+        assert "https://example.com" not in rendered
+        assert rendered == "raw redlink\nnex!\n"
+
+
+@pytest.mark.asyncio
+async def test_terminal_output_uses_display_output_when_present(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.agent import AgentEvent
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        written: list[object] = []
+        monkeypatch.setattr(app._terminal, "write_terminal", written.append)
+
+        app._render_event(
+            AgentEvent(
+                event_type="terminal_output",
+                sender="coder",
+                content={"output": "\ufffd", "display_output": "€"},
+            )
+        )
+        app._flush_terminal_output()
+
+        assert written == ["€"]
+
+
+@pytest.mark.asyncio
+async def test_terminal_and_logs_hide_horizontal_scrollbars_when_wrapping(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch, show_logs=True)
+
+    async with app.run_test():
+        assert app._terminal.styles.overflow_x == "hidden"
+        assert app._logs.styles.overflow_x == "hidden"
+
+
+@pytest.mark.asyncio
+async def test_log_output_is_batched_until_flush(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("textual")
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch, show_logs=True)
+
+    async with app.run_test():
+        written: list[object] = []
+        monkeypatch.setattr(app._logs, "write_log", written.append)
+
+        for index in range(5):
+            app._write_log(f"line {index}")
+
+        assert written == []
+        app._flush_log_output()
+
+        assert len(written) == 1
+        rendered = renderable_text(written[0])
+        assert "line 0" in rendered
+        assert "line 4" in rendered
