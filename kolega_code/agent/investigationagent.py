@@ -119,13 +119,6 @@ class InvestigationAgent(BaseAgent):
         self._initialize_system_prompt()
 
     def _initialize_system_prompt(self):
-        """Initialize system prompt using PromptProvider."""
-        # Generate prompt using the shared prompt provider
-        prompt_text = self.prompt_provider.get_system_prompt(
-            agent_type=AgentType.INVESTIGATION,
-            mode=self.agent_mode,
-            template_slug=self.project_template_slug,
-            prompt_extensions=self.prompt_extensions,
-            context=self.build_prompt_context(),
-        )
+        """Initialize system prompt using PromptProvider and project overrides."""
+        prompt_text = self.build_agent_system_prompt(AgentType.INVESTIGATION, self.agent_mode)
         self.system_prompt = Message(role="system", content=[TextBlock(text=prompt_text)])

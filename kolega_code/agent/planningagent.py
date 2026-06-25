@@ -5,8 +5,7 @@ from .baseagent import BaseAgent
 from kolega_code.config import AgentConfig
 from kolega_code.events import AgentConnectionManager
 from kolega_code.llm.models import Message, TextBlock
-from .prompt_provider import AgentMode, PromptExtension
-from .prompts import build_planning_agent_system_prompt
+from .prompt_provider import AgentMode, AgentType, PromptExtension
 from .tools import ToolCollection, ToolCollectionConfig, ToolExtension
 from .utils.commands import CommandProcessor
 
@@ -105,33 +104,7 @@ class PlanningAgent(BaseAgent):
         self._initialize_system_prompt()
 
     def _initialize_system_prompt(self) -> None:
-        context = self.build_prompt_context()
-        prompt = build_planning_agent_system_prompt(
-            system_name=context.system_name,
-            project_path=context.project_path,
-            is_git_repo=context.is_git_repo,
-            platform=context.platform,
-            date_today=context.date_today,
-            model_name=context.model_name,
-        )
-        if context.project_guidance:
-            prompt += (
-                "\n\n## Project Instructions\n\n"
-                f"The project directory contains `{context.project_guidance_file}`. "
-                "Treat it as local project guidance:\n\n"
-                f"```markdown\n{context.project_guidance}\n```"
-            )
-        if context.agent_memory:
-            prompt += (
-                "\n\n## Agent Memory\n\n"
-                f"The project directory contains `{context.agent_memory_file}`. "
-                "Treat it as persistent agent memory:\n\n"
-                f"```markdown\n{context.agent_memory}\n```"
-            )
-        if self.prompt_extensions:
-            prompt += "\n\n## Additional Context\n"
-            for extension in self.prompt_extensions:
-                prompt += f"\n### {extension.title}\n\n{extension.markdown}\n"
+        prompt = self.build_agent_system_prompt(AgentType.PLANNING, self.agent_mode)
         self.system_prompt = Message(role="system", content=[TextBlock(text=prompt)])
 
     async def write_plan(self, plan_markdown: str) -> str:

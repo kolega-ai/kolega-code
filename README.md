@@ -134,6 +134,10 @@ The `web_search` tool uses DuckDuckGo by default without a key. To choose anothe
 set it in **Settings** or export `KOLEGA_CODE_WEB_SEARCH_BACKEND` as `firecrawl`, `tavily`,
 or `searxng`; use `FIRECRAWL_API_KEY`, `TAVILY_API_KEY`, or `SEARXNG_BASE_URL` as needed.
 
+Projects can also override Kolega Code's base prompts with uppercase Markdown files in
+`.kolega/prompts/`. Generate editable starters with `/prompts dump` in the TUI or
+`kolega-code prompts dump --project .` in a terminal.
+
 ## Requirements
 
 - **Python 3.11+**

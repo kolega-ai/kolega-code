@@ -61,6 +61,24 @@ async def test_summarize_happy_path_records_summary():
 
 
 @pytest.mark.asyncio
+async def test_summarize_uses_override_system_prompt_without_changing_user_prompt():
+    conv = Conversation(list(long_history(6)))
+    llm = FakeLLM(summary_text="SUMMARY: earlier turns")
+
+    result = await HistoryCompressor().summarize(
+        conv,
+        llm=llm,
+        system_prompt_text="Custom compaction system prompt",
+        **SUMMARIZE_KW,
+    )
+
+    assert result.ok is True
+    kwargs = llm.stream.await_args.kwargs
+    assert kwargs["system"].get_text_content() == "Custom compaction system prompt"
+    assert "user turn 0" in kwargs["messages"].get_markdown_conversation()
+
+
+@pytest.mark.asyncio
 async def test_summarize_keeps_recent_messages_verbatim():
     history = long_history(6)  # 12 messages
     conv = Conversation(list(history))

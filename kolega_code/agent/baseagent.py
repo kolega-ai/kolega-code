@@ -43,7 +43,8 @@ from kolega_code.permissions import (
     normalize_permission_mode,
     permission_request_for_tool,
 )
-from .prompt_provider import PromptProvider, AgentMode, PromptContext, PromptExtension
+from .prompt_provider import PromptProvider, AgentMode, AgentType, PromptContext, PromptExtension
+from .prompt_overrides import ProjectPromptOverrides
 from kolega_code.services.base import TerminalManager, BrowserManager
 from kolega_code.services.file_system import FileSystem
 from .tools import ToolCollection  # noqa: F401 - kept for tests and downstream monkeypatch compatibility
@@ -253,6 +254,7 @@ class BaseAgent(LogMixin):
             raise ValueError(f"Project path is not a directory: {self.project_path}")
 
         self.prompt_provider = context.prompt_provider or PromptProvider()
+        self.prompt_overrides = ProjectPromptOverrides(self.filesystem)
 
         self.conversation = Conversation(max_tool_result_chars=self.max_tool_result_chars_in_history)
         self.conversation.skill_content_pattern = self.skill_content_pattern
@@ -502,6 +504,45 @@ class BaseAgent(LogMixin):
             memories=self.workspace_memories,
         )
 
+    def build_agent_system_prompt(self, agent_type: AgentType, mode: Optional[AgentMode] = None) -> str:
+        """Build the final system prompt for an agent, honoring project overrides."""
+        context = self.build_prompt_context()
+        override = self.prompt_overrides.load_agent_system_prompt(agent_type)
+        if override is not None:
+            base = override.content.strip()
+            dynamic = self.prompt_provider.render_dynamic_sections(
+                agent_type,
+                mode,
+                self.prompt_extensions,
+                context,
+            )
+            return "\n\n".join(part for part in (base, dynamic) if part)
+
+        prompt = self.prompt_provider.get_system_prompt(
+            agent_type=agent_type,
+            mode=mode,
+            template_slug=self.project_template_slug,
+            prompt_extensions=self.prompt_extensions,
+            context=context,
+        )
+        # The bundled planning template is intentionally base-only; append the
+        # same dynamic sections that override prompts receive.
+        if agent_type == AgentType.PLANNING:
+            dynamic = self.prompt_provider.render_dynamic_sections(
+                agent_type,
+                mode,
+                self.prompt_extensions,
+                context,
+            )
+            prompt = "\n\n".join(part for part in (prompt.strip(), dynamic) if part)
+        return prompt
+
+    def refresh_system_prompt(self) -> None:
+        """Refresh this agent's system prompt after prompt files or extensions change."""
+        initialize = getattr(self, "_initialize_system_prompt", None)
+        if callable(initialize):
+            initialize()
+
     # ------------------------------------------------------------------
     # Attachments
     # ------------------------------------------------------------------
@@ -604,6 +645,7 @@ class BaseAgent(LogMixin):
 
         await self.emitter.compaction_status("started", "Compacting conversation…")
         try:
+            compaction_override = self.prompt_overrides.load_compaction_system_prompt()
             result = await self.compressor.summarize(
                 self.conversation,
                 llm=self.llm,
@@ -614,6 +656,7 @@ class BaseAgent(LogMixin):
                 thinking=None,
                 on_info=on_info,
                 on_error=on_error,
+                system_prompt_text=compaction_override.content if compaction_override is not None else None,
             )
         finally:
             # Recount + emit so the context gauge reflects post-compaction reality

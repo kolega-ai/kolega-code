@@ -11,6 +11,12 @@ from pathlib import Path
 from typing import Iterable, Optional
 
 from kolega_code.agent import CoderAgent
+from kolega_code.agent.prompt_dump import (
+    dump_prompt_overrides,
+    format_prompt_dump_result,
+    format_prompt_list_result,
+    list_prompt_overrides,
+)
 from kolega_code.hooks import HookDispatcher, HookEvent, load_hook_config
 from kolega_code.llm.exceptions import LLMBillingError, billing_error_message
 from kolega_code.llm.models import TextBlock
@@ -48,7 +54,7 @@ from .skills import (
 )
 from .updater import check_for_update, run_self_update, update_status_message
 
-SUBCOMMANDS = {"ask", "sessions", "doctor", "update"}
+SUBCOMMANDS = {"ask", "sessions", "doctor", "update", "prompts"}
 RESUME_LATEST = "__latest__"
 CLI_AGENT_MODE = AgentMode.CLI.value
 ASK_DEFAULT_PERMISSION_MODE = PermissionMode.AUTO.value
@@ -77,6 +83,8 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
             return _run_sessions(args)
         if args.command == "doctor":
             return _run_doctor(args)
+        if args.command == "prompts":
+            return _run_prompts(args)
         if args.command == "update":
             return _run_update()
         return _run_tui(args)
@@ -224,6 +232,14 @@ def _build_subcommand_parser() -> argparse.ArgumentParser:
     doctor.add_argument("--project", default=".", type=Path, help="Project directory to check.")
     doctor.add_argument("--state-dir", type=Path, help="Directory for CLI session state.")
     _add_common_model_args(doctor)
+
+    prompts = subparsers.add_parser("prompts", help="Manage project prompt override files.")
+    prompts_sub = prompts.add_subparsers(dest="prompts_command", required=True)
+    prompts_dump = prompts_sub.add_parser("dump", help="Dump editable prompt override starter files.")
+    prompts_dump.add_argument("--project", default=".", type=Path, help="Project directory to write prompts into.")
+    prompts_dump.add_argument("--force", action="store_true", help="Overwrite existing prompt override files.")
+    prompts_list = prompts_sub.add_parser("list", help="List supported prompt override files.")
+    prompts_list.add_argument("--project", default=".", type=Path, help="Project directory to inspect.")
 
     subparsers.add_parser("update", help="Update Kolega Code to the latest version.")
 
@@ -769,6 +785,19 @@ def _run_sessions(args: argparse.Namespace) -> int:
             print(payload, end="")
         return 0
     raise ValueError(f"Unknown sessions command: {args.sessions_command}")
+
+
+def _run_prompts(args: argparse.Namespace) -> int:
+    project_path = _validate_project(args.project)
+    if args.prompts_command == "dump":
+        result = dump_prompt_overrides(project_path, force=bool(args.force))
+        print(format_prompt_dump_result(result))
+        return 0 if result.ok else 1
+    if args.prompts_command == "list":
+        result = list_prompt_overrides(project_path)
+        print(format_prompt_list_result(result))
+        return 0
+    raise ValueError(f"Unknown prompts command: {args.prompts_command}")
 
 
 def _run_doctor(args: argparse.Namespace) -> int:

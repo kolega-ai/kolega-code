@@ -138,6 +138,38 @@ def test_parse_update_subcommand() -> None:
     assert args.command == "update"
 
 
+def test_parse_prompts_dump_subcommand() -> None:
+    args = parse_args(["prompts", "dump", "--project", "/tmp/project", "--force"])
+
+    assert args.command == "prompts"
+    assert args.prompts_command == "dump"
+    assert args.project == Path("/tmp/project")
+    assert args.force is True
+
+
+def test_prompts_dump_subcommand_writes_prompt_files(tmp_path: Path, capsys) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+
+    exit_code = main(["prompts", "dump", "--project", str(project)])
+
+    assert exit_code == 0
+    assert (project / ".kolega" / "prompts" / "CODER.md").is_file()
+    assert "Written:" in capsys.readouterr().out
+
+
+def test_prompts_list_subcommand_reports_prompt_files(tmp_path: Path, capsys) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+
+    exit_code = main(["prompts", "list", "--project", str(project)])
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "CODER.md" in output
+    assert "missing" in output
+
+
 def test_update_subcommand_runs_self_update(capsys, monkeypatch: pytest.MonkeyPatch) -> None:
     from kolega_code.cli import main as main_module
 
