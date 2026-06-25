@@ -79,6 +79,22 @@ class ConversationEntry:
 
 
 @dataclass
+class SessionFileChange:
+    """One UI-only file edit preview captured during the live TUI session."""
+
+    change_id: str
+    index: int
+    path: str
+    preview: dict
+    tool_name: str = ""
+    tool_call_id: str = ""
+    agent_id: str = ""
+    agent_name: str = ""
+    source_label: str = "Agent"
+    created_at: float = 0.0
+
+
+@dataclass
 class SubAgentActivity:
     """Live display state for one dispatched sub-agent."""
 
@@ -101,6 +117,7 @@ class SubAgentActivity:
     steps: list[ConversationEntry] = field(default_factory=list)
     tool_steps: dict[str, ConversationEntry] = field(default_factory=dict)  # tool_call_id/name -> step
     stream_steps: dict[str, ConversationEntry] = field(default_factory=dict)  # chunk uuid -> step
+    pending_edit_previews: dict[str, dict] = field(default_factory=dict)  # tool_call_id -> preview payload
     tokens: Optional[int] = None  # cumulative tokens consumed, from lifecycle events
     # Context-window occupancy (how full this sub-agent's own context is right now),
     # from llm_context_update events. Distinct from cumulative `tokens` above.

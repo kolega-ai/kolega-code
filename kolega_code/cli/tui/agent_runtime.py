@@ -154,8 +154,13 @@ class AgentRuntimeMixin:
             else:
                 self._apply_tool_streaming_update(event.content)
         elif event.event_type == "file_edit_preview":
-            # UI-only inline diff/head preview. Sub-agent edits are not shown inline (v1).
-            if not event.sub_agent_info:
+            # UI-only diff/head preview. Main-agent edits stay inline; every edit is
+            # also captured in the session changes inspector. Sub-agent previews attach
+            # to their trajectory steps so Ctrl+G and Ctrl+R can both reveal them.
+            self._record_file_change_event(event)
+            if event.sub_agent_info:
+                self._apply_sub_agent_edit_preview(event)
+            else:
                 self._apply_edit_preview(event.content)
         elif event.event_type == "llm_context_update":
             if event.sub_agent_info:

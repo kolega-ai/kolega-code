@@ -79,6 +79,7 @@ from .theme import Color, Glyph
 from .updater import check_for_update, update_status_message
 from .tui import constants as tui_constants
 from .tui import agent_runtime as tui_agent_runtime
+from .tui import changes_screen as tui_changes
 from .tui import command_handlers as tui_command_handlers
 from .tui import prompt_flows as tui_prompt_flows
 from .tui import settings_panel as tui_settings_panel
@@ -118,6 +119,7 @@ class KolegaCodeApp(
         Binding("ctrl+p", "toggle_permission_mode", "Permissions", show=True, key_display="Ctrl+P", priority=True),
         Binding("ctrl+o", "toggle_sidebar", "Sidebar", show=True, key_display="Ctrl+O", priority=True),
         Binding("ctrl+g", "open_sub_agent", "Agents", show=True, key_display="Ctrl+G", priority=True),
+        Binding("ctrl+r", "open_changes", "Changes", show=True, key_display="Ctrl+R", priority=True),
         Binding("ctrl+c", "cancel_generation", "Cancel", show=True),
         Binding("escape", "cancel_generation", "Cancel", show=False),
         Binding("ctrl+q", "quit", "Quit", show=True),
@@ -172,6 +174,7 @@ class KolegaCodeApp(
         self._sub_agent_activities: dict[str, tui_state.SubAgentActivity] = {}
         self._sub_agent_by_tool_call: dict[str, str] = {}
         self._sub_agent_seq = 0
+        self._session_file_changes: list[tui_state.SessionFileChange] = []
         self._workflow_activities: dict[str, tui_state.WorkflowActivity] = {}
         self._render_pending = False
         self._conversation_anchor_pending = False
@@ -216,6 +219,7 @@ class KolegaCodeApp(
         self._spinner_frame = 0
         self._last_sub_agent_tick = 0.0
         self._sub_agent_inspector: Optional[tui_sub_agents.SubAgentInspectorScreen] = None
+        self._changes_inspector: Optional[tui_changes.ChangesInspectorScreen] = None
         self._terminal_has_content = False
         self._terminal_output_buffer: list[str] = []
         self._terminal_output_buffer_chars = 0
@@ -974,6 +978,22 @@ class KolegaCodeApp(
         self._sub_agent_inspector = screen
         self.push_screen(screen)
 
+    def action_open_changes(self, path: Optional[str] = None) -> None:
+        """Open the full-screen session changes inspector."""
+        if self._changes_inspector is not None:
+            return
+        if not self._session_file_changes:
+            self._notify_user(messages.CHANGES_INSPECTOR_EMPTY, severity="information")
+            return
+        paths = {change.path for change in self._session_file_changes}
+        if path is None or path not in paths:
+            path = self._default_changes_path()
+        if path is None:
+            return
+        screen = tui_changes.ChangesInspectorScreen(self, path)
+        self._changes_inspector = screen
+        self.push_screen(screen)
+
     def _default_sub_agent_key(self) -> Optional[str]:
         """Most-recently-started running agent, else the most recent overall."""
         pool = self._running_sub_agents() or list(self._sub_agent_activities.values())
@@ -981,11 +1001,27 @@ class KolegaCodeApp(
             return None
         return max(pool, key=lambda a: a.index).agent_id
 
+    def _default_changes_path(self) -> Optional[str]:
+        """Most recently changed file in the live TUI session."""
+        if not self._session_file_changes:
+            return None
+        return self._session_file_changes[-1].path
+
     def _close_sub_agent_inspector(self) -> None:
         screen = self._sub_agent_inspector
         if screen is None:
             return
         self._sub_agent_inspector = None
+        try:
+            screen.dismiss()
+        except Exception:
+            pass
+
+    def _close_changes_inspector(self) -> None:
+        screen = self._changes_inspector
+        if screen is None:
+            return
+        self._changes_inspector = None
         try:
             screen.dismiss()
         except Exception:
