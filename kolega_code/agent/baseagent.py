@@ -4,6 +4,7 @@ import logging
 import os
 import random
 import re
+import sys
 import uuid
 from email.utils import parsedate_to_datetime
 from datetime import datetime
@@ -504,6 +505,11 @@ class BaseAgent(LogMixin):
             memories=self.workspace_memories,
         )
 
+    def _report_prompt_override_render_error(self, path: str, exc: Exception) -> None:
+        message = f"Could not render prompt override {path}: {exc}. Falling back to the default prompt."
+        logger.warning(message)
+        print(f"kolega-code: {message}", file=sys.stderr)
+
     def build_agent_system_prompt(self, agent_type: AgentType, mode: Optional[AgentMode] = None) -> str:
         """Build the final system prompt for an agent, honoring project overrides."""
         context = self.build_prompt_context()
@@ -518,7 +524,7 @@ class BaseAgent(LogMixin):
                     prompt_provider=self.prompt_provider,
                 )
             except Exception as exc:  # noqa: BLE001 - bad project prompts should fall back safely
-                logger.warning("Could not render prompt override %s: %s", override.path, exc)
+                self._report_prompt_override_render_error(override.path, exc)
             else:
                 dynamic = self.prompt_provider.render_dynamic_sections(
                     agent_type,
@@ -667,7 +673,7 @@ class BaseAgent(LogMixin):
                         prompt_provider=self.prompt_provider,
                     )
                 except Exception as exc:  # noqa: BLE001 - fall back to the bundled compaction prompt
-                    logger.warning("Could not render prompt override %s: %s", compaction_override.path, exc)
+                    self._report_prompt_override_render_error(compaction_override.path, exc)
             result = await self.compressor.summarize(
                 self.conversation,
                 llm=self.llm,

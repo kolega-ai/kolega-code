@@ -146,7 +146,7 @@ def test_coder_override_renders_jinja_context_and_aliases(tmp_path):
     assert "Mode: cli" in prompt
 
 
-def test_malformed_coder_override_falls_back_to_default_prompt(tmp_path, caplog):
+def test_malformed_coder_override_falls_back_to_default_prompt(tmp_path, caplog, capsys):
     prompt_dir = tmp_path / ".kolega" / "prompts"
     prompt_dir.mkdir(parents=True)
     (prompt_dir / "CODER.md").write_text("{{ missing_variable }}", encoding="utf-8")
@@ -161,8 +161,11 @@ def test_malformed_coder_override_falls_back_to_default_prompt(tmp_path, caplog)
     )
 
     prompt = agent.system_prompt.content[0].text
+    captured = capsys.readouterr()
     assert "powerful AI coding assistant" in prompt
     assert "missing_variable" in caplog.text
+    assert "Could not render prompt override .kolega/prompts/CODER.md" in captured.err
+    assert "Falling back to the default prompt" in captured.err
 
 
 def test_coder_override_satisfies_hosted_mode_without_private_template(tmp_path):

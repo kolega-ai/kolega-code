@@ -96,7 +96,7 @@ async def test_agent_compaction_override_renders_jinja_context(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_agent_compaction_malformed_override_falls_back_to_default(tmp_path, caplog):
+async def test_agent_compaction_malformed_override_falls_back_to_default(tmp_path, caplog, capsys):
     prompt_dir = tmp_path / ".kolega" / "prompts"
     prompt_dir.mkdir(parents=True)
     (prompt_dir / "COMPACTION.md").write_text("{{ missing_variable }}", encoding="utf-8")
@@ -106,10 +106,13 @@ async def test_agent_compaction_malformed_override_falls_back_to_default(tmp_pat
 
     result = await agent.compress_history()
 
+    captured = capsys.readouterr()
     assert result.ok is True
     kwargs = fake.stream.await_args.kwargs
     assert kwargs["system"].get_text_content() == COMPRESSION_SUMMARY_SYSTEM_PROMPT
     assert "missing_variable" in caplog.text
+    assert "Could not render prompt override .kolega/prompts/COMPACTION.md" in captured.err
+    assert "Falling back to the default prompt" in captured.err
 
 
 @pytest.mark.asyncio
