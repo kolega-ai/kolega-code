@@ -246,6 +246,8 @@ class BaseAgent(LogMixin):
         # toggling takes effect on the next turn without rebuilding the agent.
         self.gigacode_enabled = False
 
+        self.prompt_override_errors: List[str] = []
+
         self.available_ports = "9001-9999"
 
         # Validate that the project path exists and is a directory using the filesystem
@@ -507,6 +509,7 @@ class BaseAgent(LogMixin):
 
     def _report_prompt_override_render_error(self, path: str, exc: Exception) -> None:
         message = f"Could not render prompt override {path}: {exc}. Falling back to the default prompt."
+        self.prompt_override_errors.append(message)
         logger.warning(message)
         print(f"kolega-code: {message}", file=sys.stderr)
 

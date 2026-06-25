@@ -117,6 +117,57 @@ async def test_textual_app_mounts_with_fake_agent(tmp_path: Path, monkeypatch: p
 
 
 @pytest.mark.asyncio
+async def test_textual_app_startup_shows_prompt_overrides_and_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.app import KolegaCodeApp
+
+    class FakeCoderAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.prompt_override_errors = [
+                "Could not render prompt override .kolega/prompts/CODER.md: boom. Falling back to the default prompt."
+            ]
+
+        def restore_message_history(self, history):
+            return None
+
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
+
+        def dump_message_history(self):
+            return []
+
+        async def cleanup(self):
+            return None
+
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    prompt_dir = project / ".kolega" / "prompts"
+    prompt_dir.mkdir(parents=True)
+    (prompt_dir / "CODER.md").write_text("custom", encoding="utf-8")
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test():
+        startup = app.conversation_entries[0].content
+        assert "Prompt overrides: CODER.md" in startup
+        assert "Prompt override errors:" in startup
+        assert "Could not render prompt override .kolega/prompts/CODER.md" in startup
+        assert "Falling back to the default prompt" in startup
+
+
+@pytest.mark.asyncio
 async def test_textual_app_status_tab_is_default_dashboard(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
 

@@ -32,6 +32,7 @@ from textual.widgets import (
 from textual.widgets.option_list import Option
 
 from kolega_code.agent import AgentConfig
+from kolega_code.agent.prompt_dump import list_prompt_overrides
 from kolega_code.agent.prompt_provider import AgentMode
 from kolega_code.agent.prompts import (
     build_implement_plan_prompt,
@@ -1502,6 +1503,18 @@ class KolegaCodeApp(
         if render:
             self._render_conversation()
 
+    def _startup_prompt_override_lines(self) -> list[str]:
+        lines: list[str] = []
+        existing = list_prompt_overrides(self.project_path).existing
+        if existing:
+            filenames = ", ".join(item.path.name for item in existing)
+            lines.append(f"Prompt overrides: {filenames}")
+        errors = list(getattr(self.agent, "prompt_override_errors", []) or [])
+        if errors:
+            lines.append("Prompt override errors:")
+            lines.extend(f"- {error}" for error in errors)
+        return lines
+
     def _startup_content(self) -> str:
         session_id = str(self.session.session_id)[:8]
         provider, model = self._startup_model()
@@ -1537,6 +1550,7 @@ class KolegaCodeApp(
                 f"Permissions: {self.permission_mode.value}",
                 f"Model: {model_display}",
                 *([override_message] if override_message else []),
+                *self._startup_prompt_override_lines(),
                 f"Thinking effort: {effort}",
                 f"API key: {api_key}",
                 "",

@@ -164,6 +164,8 @@ def test_malformed_coder_override_falls_back_to_default_prompt(tmp_path, caplog,
     captured = capsys.readouterr()
     assert "powerful AI coding assistant" in prompt
     assert "missing_variable" in caplog.text
+    assert agent.prompt_override_errors
+    assert "Could not render prompt override .kolega/prompts/CODER.md" in agent.prompt_override_errors[0]
     assert "Could not render prompt override .kolega/prompts/CODER.md" in captured.err
     assert "Falling back to the default prompt" in captured.err
 
