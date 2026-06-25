@@ -1,4 +1,4 @@
-"""Session file changes inspector screen for the CLI TUI."""
+"""Session net-diff inspector screen for the CLI TUI."""
 
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ from textual.widgets import Static
 
 from .. import messages, theme
 from ..theme import Color, Glyph
+from .session_diff import SessionDiffFile
 from .state import SessionFileChange
 
 if TYPE_CHECKING:
@@ -40,11 +41,11 @@ class ChangeFileRosterRow(Static):
 
 
 class ChangesInspectorScreen(ModalScreen):
-    """Full-screen view of file edit previews captured in this TUI session.
+    """Full-screen view of net git changes since the TUI session began.
 
-    Left: a roster of changed files. Right: chronological edit previews for the
-    selected file, with source/tool attribution. The screen updates live while
-    the agent runs and new ``file_edit_preview`` events arrive.
+    Left: a roster of files whose current disk state differs from the session
+    baseline. Right: the selected file's net diff, followed by any captured edit
+    events for attribution/history.
     """
 
     BINDINGS = [
@@ -63,7 +64,7 @@ class ChangesInspectorScreen(ModalScreen):
         self._follow = True
         self._rows: dict[str, ChangeFileRosterRow] = {}
         self._preview_widgets: dict[str, Static] = {}
-        self._rendered_path: Optional[str] = None
+        self._rendered_key = ""
         self._empty_shown = False
         self._flush_pending = False
 
@@ -89,8 +90,10 @@ class ChangesInspectorScreen(ModalScreen):
     # ---- live updates ---------------------------------------------------------
 
     def note_change_updated(self, change: Optional[SessionFileChange] = None) -> None:
-        """Called by the owner when a new file edit preview is captured."""
-        if self._follow and change is not None:
+        """Called by the owner when net diff state or edit-event history changes."""
+        if self._follow:
+            self._selected_path = self._owner._default_changes_path() or self._selected_path
+        elif change is not None and self._diff_for_path(self._selected_path) is None:
             self._selected_path = change.path
         self._schedule_flush()
 
@@ -111,20 +114,20 @@ class ChangesInspectorScreen(ModalScreen):
 
     # ---- data helpers ---------------------------------------------------------
 
+    def _ordered_diffs(self) -> list[SessionDiffFile]:
+        return list(self._owner._session_diff_files)
+
     def _ordered_paths(self) -> list[str]:
-        paths: list[str] = []
-        seen: set[str] = set()
-        for change in self._owner._session_file_changes:
-            if change.path not in seen:
-                seen.add(change.path)
-                paths.append(change.path)
-        return paths
+        return [change.path for change in self._ordered_diffs()]
 
-    def _changes_for_path(self, path: str) -> list[SessionFileChange]:
+    def _diff_for_path(self, path: str) -> Optional[SessionDiffFile]:
+        for change in self._owner._session_diff_files:
+            if change.path == path:
+                return change
+        return None
+
+    def _events_for_path(self, path: str) -> list[SessionFileChange]:
         return [change for change in self._owner._session_file_changes if change.path == path]
-
-    def _selected_changes(self) -> list[SessionFileChange]:
-        return self._changes_for_path(self._selected_path)
 
     # ---- selection ------------------------------------------------------------
 
@@ -153,7 +156,7 @@ class ChangesInspectorScreen(ModalScreen):
     def _select_changed(self) -> None:
         self._sync_roster()
         self._refresh_header()
-        self._sync_previews()
+        self._sync_previews(force=True)
         row = self._rows.get(self._selected_path)
         if row is not None:
             try:
@@ -181,23 +184,22 @@ class ChangesInspectorScreen(ModalScreen):
                 rows.append(row)
             if rows:
                 roster.mount(*rows)
-        for path in paths:
-            row = self._rows.get(path)
+        for change in self._ordered_diffs():
+            row = self._rows.get(change.path)
             if row is not None:
-                row.update(self._roster_row(path, selected=path == self._selected_path))
+                row.update(self._roster_row(change, selected=change.path == self._selected_path))
 
-    def _roster_row(self, path: str, *, selected: bool) -> Text:
-        changes = self._changes_for_path(path)
-        adds = sum(int(change.preview.get("adds") or 0) for change in changes)
-        dels = sum(int(change.preview.get("dels") or 0) for change in changes)
+    def _roster_row(self, change: SessionDiffFile, *, selected: bool) -> Text:
         row_style = "bold" if selected else ""
         line = Text()
         line.append("> " if selected else "  ", style=row_style)
         line.append(f"{theme.g(Glyph.TOOL)} ", style=Color.ACCENT)
-        line.append(path, style=row_style)
-        meta = f"\n    {len(changes)} edit{'' if len(changes) == 1 else 's'}"
-        if adds or dels:
-            meta += f"  +{adds} -{dels}"
+        line.append(change.path, style=row_style)
+        meta = f"\n    {change.status}"
+        if change.adds or change.dels:
+            meta += f"  +{change.adds} -{change.dels}"
+        if change.message:
+            meta += "  diff unavailable"
         line.append(meta, style="dim")
         return line
 
@@ -206,72 +208,86 @@ class ChangesInspectorScreen(ModalScreen):
             header = self.query_one("#changes_header", Static)
         except Exception:
             return
-        changes = self._selected_changes()
-        if not changes:
+        change = self._diff_for_path(self._selected_path)
+        if change is None:
             header.update(messages.CHANGES_INSPECTOR_NO_SELECTION)
             return
-        adds = sum(int(change.preview.get("adds") or 0) for change in changes)
-        dels = sum(int(change.preview.get("dels") or 0) for change in changes)
         sep = theme.g(Glyph.BULLET_SEP)
-        line = theme.role_header(Glyph.TOOL, escape(self._selected_path), Color.ACCENT, state="session changes")
-        line += theme.styled(
-            f" {sep} {len(changes)} edit{'' if len(changes) == 1 else 's'} {sep} +{adds} -{dels}",
-            "dim",
-        )
+        line = theme.role_header(Glyph.TOOL, escape(change.path), Color.ACCENT, state=change.status)
+        line += theme.styled(f" {sep} +{change.adds} -{change.dels}", "dim")
         header.update(Text.from_markup(line))
 
-    def _sync_previews(self) -> None:
+    def _sync_previews(self, *, force: bool = False) -> None:
         try:
             view = self.query_one("#changes_previews", VerticalScroll)
         except Exception:
             return
         if not view.is_attached:
             return
-        changes = self._selected_changes()
-        if self._rendered_path != self._selected_path:
+        change = self._diff_for_path(self._selected_path)
+        key = self._render_key(change)
+        if force or key != self._rendered_key:
             view.remove_children()
             self._preview_widgets = {}
             self._empty_shown = False
-            self._rendered_path = self._selected_path
-        if not changes:
+            self._rendered_key = key
+        if change is None:
             if not self._empty_shown:
                 view.remove_children()
                 self._preview_widgets = {}
                 view.mount(Static(messages.CHANGES_INSPECTOR_NO_SELECTION, classes="changes-empty"))
                 self._empty_shown = True
             return
-        if self._empty_shown:
-            view.remove_children()
-            self._preview_widgets = {}
-            self._empty_shown = False
 
-        rendered_ids = list(self._preview_widgets)
-        current_ids = [change.change_id for change in changes]
-        if current_ids[: len(rendered_ids)] != rendered_ids:
-            view.remove_children()
-            self._preview_widgets = {}
-            rendered_ids = []
+        widgets = []
+        net_widget = self._preview_widgets.get("net")
+        if net_widget is None:
+            net_widget = Static(self._net_diff_renderable(change), markup=False, classes="change-preview")
+            self._preview_widgets["net"] = net_widget
+            widgets.append(net_widget)
+        else:
+            net_widget.update(self._net_diff_renderable(change))
 
-        for change_id, widget in self._preview_widgets.items():
-            change = next((item for item in changes if item.change_id == change_id), None)
-            if change is not None:
-                widget.update(self._preview_renderable(change))
-
-        new_changes = changes[len(rendered_ids) :]
-        if new_changes:
-            widgets = []
-            for change in new_changes:
-                widget = Static(self._preview_renderable(change), markup=False, classes="change-preview")
-                self._preview_widgets[change.change_id] = widget
+        event_changes = self._events_for_path(change.path)
+        for event_change in event_changes:
+            widget_key = event_change.change_id
+            widget = self._preview_widgets.get(widget_key)
+            if widget is None:
+                widget = Static(self._event_renderable(event_change), markup=False, classes="change-preview")
+                self._preview_widgets[widget_key] = widget
                 widgets.append(widget)
+            else:
+                widget.update(self._event_renderable(event_change))
+        if widgets:
             view.mount(*widgets)
         if self._follow:
             self._scroll_previews_end()
 
-    def _preview_renderable(self, change: SessionFileChange) -> Group:
+    def _render_key(self, change: Optional[SessionDiffFile]) -> str:
+        if change is None:
+            return ""
+        event_ids = ",".join(event.change_id for event in self._events_for_path(change.path))
+        return f"{change.path}:{change.status}:{change.adds}:{change.dels}:{repr(change.preview)}:{event_ids}"
+
+    def _net_diff_renderable(self, change: SessionDiffFile) -> Group:
+        title = Text()
+        title.append("Net session diff", style="bold")
+        title.append(f"  {theme.g(Glyph.BULLET_SEP)}  {change.status}", style="dim")
+        if change.message:
+            body = Text(change.message, style="dim")
+        elif change.preview:
+            try:
+                body = self._owner._build_edit_preview(change.preview)
+            except Exception:
+                body = Text("Preview unavailable", style="dim")
+        else:
+            body = Text("Preview unavailable", style="dim")
+        return Group(title, Padding(body, (0, 0, 1, theme.INSET_WIDTH)))
+
+    def _event_renderable(self, change: SessionFileChange) -> Group:
         sep = theme.g(Glyph.BULLET_SEP)
         title = Text()
-        title.append(f"#{change.index} ", style="bold")
+        title.append(f"Captured edit #{change.index} ", style="bold")
         title.append(change.source_label or "Agent", style=Color.ACCENT)
         if change.tool_name:
             title.append(f" {sep} {change.tool_name}", style="dim")
@@ -315,38 +331,44 @@ class ChangesInspectorScreen(ModalScreen):
         self._follow = not self._follow
         self._refresh_footer()
         if self._follow:
-            self._sync_previews()
+            self._sync_previews(force=True)
 
     def action_copy_changes(self) -> None:
-        changes = self._selected_changes()
-        if not changes:
+        change = self._diff_for_path(self._selected_path)
+        if change is None:
             return
-        self._owner.copy_to_clipboard(self._changes_text(self._selected_path, changes))
+        self._owner.copy_to_clipboard(self._changes_text(change))
         try:
             self._owner._notify_user(messages.CHANGES_COPIED, severity="information")
         except Exception:
             pass
 
-    def _changes_text(self, path: str, changes: list[SessionFileChange]) -> str:
-        lines = [f"Changes for {path}", ""]
-        for change in changes:
-            header = f"#{change.index} {change.source_label or 'Agent'}"
-            if change.tool_name:
-                header += f" · {change.tool_name}"
-            if change.tool_call_id:
-                header += f" · {change.tool_call_id}"
-            lines.append(header)
-            preview = change.preview
-            kind = str(preview.get("kind") or "")
-            if kind == "diff":
-                lines.append(f"+{int(preview.get('adds') or 0)} -{int(preview.get('dels') or 0)}")
-            for row in preview.get("lines") or []:
+    def _changes_text(self, change: SessionDiffFile) -> str:
+        lines = [f"Changes for {change.path}", f"Status: {change.status}", ""]
+        if change.message:
+            lines.append(change.message)
+            lines.append("")
+        elif change.preview:
+            if str(change.preview.get("kind") or "") == "diff":
+                lines.append(f"+{int(change.preview.get('adds') or 0)} -{int(change.preview.get('dels') or 0)}")
+            for row in change.preview.get("lines") or []:
                 if isinstance(row, (list, tuple)) and len(row) >= 2:
                     lines.append(str(row[1]))
                 else:
                     lines.append(str(row))
-            more = int(preview.get("more") or 0)
+            more = int(change.preview.get("more") or 0)
             if more > 0:
                 lines.append(f"… +{more} more lines")
             lines.append("")
+
+        events = self._events_for_path(change.path)
+        if events:
+            lines.append("Captured edit events:")
+            for event in events:
+                header = f"#{event.index} {event.source_label or 'Agent'}"
+                if event.tool_name:
+                    header += f" · {event.tool_name}"
+                if event.tool_call_id:
+                    header += f" · {event.tool_call_id}"
+                lines.append(header)
         return "\n".join(lines).rstrip() + "\n"

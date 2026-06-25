@@ -57,7 +57,7 @@ SUB_AGENT_INSPECTOR_EMPTY = "No sub-agents have run in this turn yet."
 SUB_AGENT_INSPECTOR_NO_SELECTION = "No sub-agent selected."
 SUB_AGENT_INSPECTOR_NO_STEPS = "No trajectory captured yet…"
 SUB_AGENT_TRAJECTORY_COPIED = "Copied the sub-agent trajectory to the clipboard."
-CHANGES_INSPECTOR_EMPTY = "No file changes have been captured in this session yet."
+CHANGES_INSPECTOR_EMPTY = "No file changes since this session started."
 CHANGES_INSPECTOR_NO_SELECTION = "No file selected."
 CHANGES_COPIED = "Copied file changes to the clipboard."
 

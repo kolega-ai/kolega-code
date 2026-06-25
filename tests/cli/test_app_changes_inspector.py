@@ -1,3 +1,4 @@
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -7,6 +8,21 @@ from kolega_code.events import AgentEvent
 from kolega_code.cli.tui.widgets import ChatComposer
 
 from ._app_test_utils import _build_sub_agent_test_app, _sub_agent_event
+
+
+def _git(project: Path, *args: str) -> None:
+    subprocess.run(["git", *args], cwd=project, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+
+def _init_git_project(project: Path) -> None:
+    _git(project, "init")
+    _git(project, "config", "user.email", "test@example.com")
+    _git(project, "config", "user.name", "Test User")
+    (project / "src").mkdir(exist_ok=True)
+    (project / "src" / "a.py").write_text("old a\n", encoding="utf-8")
+    (project / "src" / "b.py").write_text("old b\n", encoding="utf-8")
+    _git(project, "add", ".")
+    _git(project, "commit", "-m", "initial")
 
 
 def _binding_keys(bindings) -> set[str]:
@@ -123,17 +139,17 @@ async def test_sub_agent_preview_is_recorded_and_attached_to_trajectory(
 
 
 @pytest.mark.asyncio
-async def test_changes_inspector_opens_and_renders_grouped_changes(
+async def test_changes_inspector_opens_and_renders_git_shell_changes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from kolega_code.cli.tui.changes_screen import ChangesInspectorScreen
 
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+    _init_git_project(app.project_path)
 
     async with app.run_test() as pilot:
-        app._render_event(_file_edit_preview_event("src/a.py", tool_call_id="a1"))
-        app._render_event(_file_edit_preview_event("src/b.py", tool_call_id="b1"))
-        app._render_event(_file_edit_preview_event("src/a.py", tool_call_id="a2"))
+        (app.project_path / "src" / "a.py").write_text("new a\n", encoding="utf-8")
+        (app.project_path / "src" / "b.py").unlink()
 
         app.action_open_changes()
         await pilot.pause()
@@ -141,28 +157,34 @@ async def test_changes_inspector_opens_and_renders_grouped_changes(
         assert isinstance(app._changes_inspector, ChangesInspectorScreen)
         screen = app._changes_inspector
         assert len(screen._rows) == 2
-        assert screen._selected_path == "src/a.py"
-        assert len(screen._preview_widgets) == 2
+        assert {change.path: change.status for change in app._session_diff_files} == {
+            "src/a.py": "modified",
+            "src/b.py": "deleted",
+        }
+        assert screen._selected_path in {"src/a.py", "src/b.py"}
+        assert "net" in screen._preview_widgets
 
 
 @pytest.mark.asyncio
-async def test_empty_changes_inspector_action_does_not_open(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_non_git_project_disables_changes_inspector(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
 
     async with app.run_test():
+        assert app._session_diff_tracker is None
+        assert app.check_action("open_changes", ()) is False
         app.action_open_changes()
         assert app._changes_inspector is None
 
 
 @pytest.mark.asyncio
-async def test_copy_selected_changes_includes_metadata_and_preview_lines(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_copy_selected_changes_includes_net_diff_lines(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+    _init_git_project(app.project_path)
     copied: list[str] = []
     monkeypatch.setattr(app, "copy_to_clipboard", lambda text: copied.append(text))
 
     async with app.run_test() as pilot:
+        (app.project_path / "src" / "a.py").write_text("new a\n", encoding="utf-8")
         app._render_event(_file_edit_preview_event("src/a.py", tool_call_id="a1"))
         app.action_open_changes("src/a.py")
         await pilot.pause()
@@ -174,8 +196,9 @@ async def test_copy_selected_changes_includes_metadata_and_preview_lines(
         assert copied
         text = copied[0]
         assert "Changes for src/a.py" in text
-        assert "#1 Agent · search_and_replace · a1" in text
+        assert "Status: modified" in text
         assert "+1 -1" in text
-        assert "@@ -1 +1 @@" in text
-        assert "-old" in text
-        assert "+new" in text
+        assert "-old a" in text
+        assert "+new a" in text
+        assert "Captured edit events:" in text
+        assert "#1 Agent · search_and_replace · a1" in text
