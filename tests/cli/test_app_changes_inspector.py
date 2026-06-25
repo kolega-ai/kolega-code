@@ -7,7 +7,7 @@ from textual.widgets import TextArea
 from kolega_code.events import AgentEvent
 from kolega_code.cli.tui.widgets import ChatComposer
 
-from ._app_test_utils import _build_sub_agent_test_app, _sub_agent_event
+from ._app_test_utils import _build_sub_agent_test_app, _sub_agent_event, renderable_text
 
 
 def _git(project: Path, *args: str) -> None:
@@ -163,6 +163,37 @@ async def test_changes_inspector_opens_and_renders_git_shell_changes(
         }
         assert screen._selected_path in {"src/a.py", "src/b.py"}
         assert "net" in screen._preview_widgets
+
+
+@pytest.mark.asyncio
+async def test_changes_inspector_header_owns_path_and_counts_body_is_just_diff(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from textual.widgets import Static
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+    _init_git_project(app.project_path)
+
+    async with app.run_test() as pilot:
+        (app.project_path / "src" / "a.py").write_text("new a\n", encoding="utf-8")
+        app.action_open_changes("src/a.py")
+        await pilot.pause()
+
+        screen = app._changes_inspector
+        assert screen is not None
+        change = screen._diff_for_path("src/a.py")
+        assert change is not None
+
+        body_text = renderable_text(screen._net_diff_renderable(change))
+        assert "src/a.py" not in body_text
+        assert "+1 -1" not in body_text
+        assert "-old a" in body_text
+        assert "+new a" in body_text
+
+        header_text = screen.query_one("#changes_header", Static).render()
+        spans = {str(span.style) for span in getattr(header_text, "spans", [])}
+        assert any("green" in style for style in spans)
+        assert any("red" in style for style in spans)
 
 
 @pytest.mark.asyncio

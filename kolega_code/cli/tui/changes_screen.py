@@ -213,9 +213,12 @@ class ChangesInspectorScreen(ModalScreen):
             header.update(messages.CHANGES_INSPECTOR_NO_SELECTION)
             return
         sep = theme.g(Glyph.BULLET_SEP)
-        line = theme.role_header(Glyph.TOOL, escape(change.path), Color.ACCENT, state=change.status)
-        line += theme.styled(f" {sep} +{change.adds} -{change.dels}", "dim")
-        header.update(Text.from_markup(line))
+        line = Text.from_markup(theme.role_header(Glyph.TOOL, escape(change.path), Color.ACCENT, state=change.status))
+        line.append(f" {sep} ", style="dim")
+        line.append(f"+{change.adds}", style=Color.SUCCESS)
+        line.append(" ", style="dim")
+        line.append(f"-{change.dels}", style=Color.ERROR)
+        header.update(line)
 
     def _sync_previews(self, *, force: bool = False) -> None:
         try:
@@ -274,12 +277,24 @@ class ChangesInspectorScreen(ModalScreen):
             body = Text(change.message, style="dim")
         elif change.preview:
             try:
-                body = self._owner._build_edit_preview(change.preview)
+                body = self._preview_body_without_meta(change.preview)
             except Exception:
                 body = Text("Preview unavailable", style="dim")
         else:
             body = Text("Preview unavailable", style="dim")
         return Group(Padding(body, (0, 0, 1, 0)))
+
+    def _preview_body_without_meta(self, preview: dict):
+        """Render only the diff body; the selected file and +/- counts are in the header."""
+        kind = str(preview.get("kind") or "")
+        if kind == "diff":
+            body = self._owner._edit_preview_diff(preview.get("lines") or [])
+            more = int(preview.get("more") or 0)
+            if more > 0:
+                footer = Text(f"{theme.g(Glyph.ELLIPSIS)} +{more} more lines", style="dim")
+                return Group(body, footer)
+            return body
+        return self._owner._build_edit_preview(preview)
 
     def _event_renderable(self, change: SessionFileChange) -> Group:
         sep = theme.g(Glyph.BULLET_SEP)
