@@ -124,7 +124,7 @@ async def test_textual_app_shows_working_progress_during_active_turn(
 
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.widgets import ChatComposer
-    from kolega_code.cli.messages import COMPOSER_PLACEHOLDER
+    from kolega_code.cli.messages import COMPOSER_PLACEHOLDER, QUEUE_PLACEHOLDER
 
     started = asyncio.Event()
     release = asyncio.Event()
@@ -174,8 +174,8 @@ async def test_textual_app_shows_working_progress_during_active_turn(
 
         progress_entries = [entry for entry in app.conversation_entries if entry.kind == "progress"]
         assert progress_entries == []
-        assert composer.placeholder == COMPOSER_PLACEHOLDER
-        assert composer.disabled is True
+        assert composer.placeholder == QUEUE_PLACEHOLDER
+        assert composer.disabled is False
         assert "Working…" in str(turn_status.render())
         assert "0s" in str(turn_status.render())
 
@@ -183,7 +183,7 @@ async def test_textual_app_shows_working_progress_during_active_turn(
         app._render_event(
             AgentEvent(event_type="status_update", sender="coder", content={"text": "Indexing workspace"})
         )
-        assert composer.placeholder == COMPOSER_PLACEHOLDER
+        assert composer.placeholder == QUEUE_PLACEHOLDER
         app._refresh_turn_status_strip()
         assert "Indexing workspace" in str(turn_status.render())
         assert "3s" in str(turn_status.render())

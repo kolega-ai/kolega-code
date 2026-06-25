@@ -1495,7 +1495,11 @@ class KolegaCodeApp(
         self.query_one("#composer", tui_widgets.ChatComposer).placeholder = status
 
     def _restore_composer_placeholder(self) -> None:
-        self.query_one("#composer", tui_widgets.ChatComposer).placeholder = messages.COMPOSER_PLACEHOLDER
+        try:
+            composer = self.query_one("#composer", tui_widgets.ChatComposer)
+        except Exception:
+            return
+        composer.placeholder = messages.COMPOSER_PLACEHOLDER
         self._clear_composer_hint()
 
     def _show_composer_hint(self, text: str, tone: str = "warning") -> None:

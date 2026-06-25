@@ -52,7 +52,7 @@ async def test_textual_app_cancellation_is_visible_in_chat(tmp_path: Path, monke
 
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.widgets import ChatComposer
-    from kolega_code.cli.messages import COMPOSER_PLACEHOLDER
+    from kolega_code.cli.messages import COMPOSER_PLACEHOLDER, QUEUE_PLACEHOLDER
 
     started = asyncio.Event()
 
@@ -101,7 +101,8 @@ async def test_textual_app_cancellation_is_visible_in_chat(tmp_path: Path, monke
 
         app.screen.set_focus(app.query_one("#conversation"))
         await pilot.pause()
-        assert composer.disabled is True
+        assert composer.disabled is False
+        assert composer.placeholder == QUEUE_PLACEHOLDER
 
         now = 52.0
         await pilot.press("ctrl+c")

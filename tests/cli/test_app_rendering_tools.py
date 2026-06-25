@@ -367,7 +367,7 @@ async def test_textual_app_renders_queued_tool_events_during_active_turn(
 
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.widgets import ChatComposer
-    from kolega_code.cli.messages import COMPOSER_PLACEHOLDER
+    from kolega_code.cli.messages import COMPOSER_PLACEHOLDER, QUEUE_PLACEHOLDER
 
     started = asyncio.Event()
     release = asyncio.Event()
@@ -461,7 +461,7 @@ async def test_textual_app_renders_queued_tool_events_during_active_turn(
         tool_entries = await asyncio.wait_for(wait_for_tool_entries(app, 1), timeout=1)
         assert tool_entries[0].kind == "tool_call"
         assert tool_entries[0].content == "Calling read_file"
-        assert composer.placeholder == COMPOSER_PLACEHOLDER
+        assert composer.placeholder == QUEUE_PLACEHOLDER
         assert "Running read_file…" in str(turn_status.render())
 
         now = 25.0
