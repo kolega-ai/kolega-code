@@ -4,10 +4,10 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from kolega_code.agent.compression import CompactionResult, HistoryCompressor
+from kolega_code.agent.compression import COMPRESSION_SUMMARY_SYSTEM_PROMPT, CompactionResult, HistoryCompressor
 from kolega_code.agent.conversation import Conversation
 
-from .compaction_helpers import FakeLLM, long_history, tool_pair, text_msg
+from .compaction_helpers import FakeLLM, build_agent, long_history, tool_pair, text_msg
 from kolega_code.llm.models import MessageHistory
 
 
@@ -58,6 +58,61 @@ async def test_summarize_happy_path_records_summary():
     kwargs = llm.stream.await_args.kwargs
     assert kwargs["model"] == SUMMARIZE_KW["model"]
     assert kwargs["max_completion_tokens"] <= HistoryCompressor.SUMMARY_MAX_TOKENS
+
+
+@pytest.mark.asyncio
+async def test_summarize_uses_override_system_prompt_without_changing_user_prompt():
+    conv = Conversation(list(long_history(6)))
+    llm = FakeLLM(summary_text="SUMMARY: earlier turns")
+
+    result = await HistoryCompressor().summarize(
+        conv,
+        llm=llm,
+        system_prompt_text="Custom compaction system prompt",
+        **SUMMARIZE_KW,
+    )
+
+    assert result.ok is True
+    kwargs = llm.stream.await_args.kwargs
+    assert kwargs["system"].get_text_content() == "Custom compaction system prompt"
+    assert "user turn 0" in kwargs["messages"].get_markdown_conversation()
+
+
+@pytest.mark.asyncio
+async def test_agent_compaction_override_renders_jinja_context(tmp_path):
+    prompt_dir = tmp_path / ".kolega" / "prompts"
+    prompt_dir.mkdir(parents=True)
+    (prompt_dir / "COMPACTION.md").write_text("Compact project {{ context.project_path }}", encoding="utf-8")
+    fake = FakeLLM(summary_text="SUMMARY: earlier turns")
+    agent, _ = build_agent(tmp_path, llm=fake)
+    agent.history = MessageHistory(list(long_history(6)))
+
+    result = await agent.compress_history()
+
+    assert result.ok is True
+    kwargs = fake.stream.await_args.kwargs
+    assert kwargs["system"].get_text_content() == f"Compact project {tmp_path}"
+    assert "user turn 0" in kwargs["messages"].get_markdown_conversation()
+
+
+@pytest.mark.asyncio
+async def test_agent_compaction_malformed_override_falls_back_to_default(tmp_path, caplog, capsys):
+    prompt_dir = tmp_path / ".kolega" / "prompts"
+    prompt_dir.mkdir(parents=True)
+    (prompt_dir / "COMPACTION.md").write_text("{{ missing_variable }}", encoding="utf-8")
+    fake = FakeLLM(summary_text="SUMMARY: earlier turns")
+    agent, _ = build_agent(tmp_path, llm=fake)
+    agent.history = MessageHistory(list(long_history(6)))
+
+    result = await agent.compress_history()
+
+    captured = capsys.readouterr()
+    assert result.ok is True
+    kwargs = fake.stream.await_args.kwargs
+    assert kwargs["system"].get_text_content() == COMPRESSION_SUMMARY_SYSTEM_PROMPT
+    assert "missing_variable" in caplog.text
+    assert "Could not render prompt override .kolega/prompts/COMPACTION.md" in captured.err
+    assert "Falling back to the default prompt" in captured.err
 
 
 @pytest.mark.asyncio

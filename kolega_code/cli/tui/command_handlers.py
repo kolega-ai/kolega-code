@@ -7,6 +7,14 @@ from typing import Awaitable, Callable, Optional
 
 
 from kolega_code.agent import PromptExtension
+from kolega_code.agent.prompt_dump import (
+    dump_prompt_overrides,
+    format_prompt_dump_result,
+    format_prompt_list_result,
+    format_prompt_validation_result,
+    list_prompt_overrides,
+    validate_prompt_overrides,
+)
 from kolega_code.agent.prompts import build_init_agents_prompt
 from kolega_code.auth import constants as chatgpt_constants
 from kolega_code.auth.chatgpt_oauth import run_login_flow
@@ -43,6 +51,7 @@ class CommandHandlersMixin:
             "/login": self._command_login,
             "/logout": self._command_logout,
             "/gigacode": self._command_gigacode,
+            "/prompts": self._command_prompts,
             "/theme": self._command_theme,
             "/copy": self._command_copy,
             "/version": self._command_version,
@@ -228,6 +237,87 @@ class CommandHandlersMixin:
             # so the authoring guide is just prompt bloat for a sub-agent.
             propagate_to_sub_agents=False,
         )
+
+    async def _command_prompts(self, args: str) -> None:
+        clean_args = args.strip()
+        parts = clean_args.split() if clean_args else []
+        usage = "Usage: /prompts list | /prompts validate | /prompts dump [--force] [prompt ...]"
+        if not parts:
+            self._add_conversation_entry(tui_state.ConversationEntry(kind="system", content=usage))
+            return
+
+        command = parts[0].lower()
+        if command == "list" and len(parts) == 1:
+            result = list_prompt_overrides(self.project_path)
+            self._add_conversation_entry(
+                tui_state.ConversationEntry(kind="system", content=format_prompt_list_result(result))
+            )
+            return
+
+        if command == "validate" and len(parts) == 1:
+            context = self.agent.build_prompt_context() if self.agent is not None else None
+            prompt_provider = getattr(self.agent, "prompt_provider", None) if self.agent is not None else None
+            mode = getattr(self.agent, "agent_mode", None) if self.agent is not None else None
+            project_template_slug = (
+                getattr(self.agent, "project_template_slug", None) if self.agent is not None else None
+            )
+            result = validate_prompt_overrides(
+                self.project_path,
+                context=context,
+                mode=mode,
+                project_template_slug=project_template_slug,
+                prompt_provider=prompt_provider,
+            )
+            self._add_conversation_entry(
+                tui_state.ConversationEntry(kind="system", content=format_prompt_validation_result(result))
+            )
+            if not result.ok:
+                self._notify_user("Some prompt override files are invalid.", severity="error")
+            return
+
+        if command == "dump":
+            force = False
+            selectors: list[str] = []
+            for part in parts[1:]:
+                if part == "--force":
+                    force = True
+                elif part.startswith("--"):
+                    self._add_conversation_entry(
+                        tui_state.ConversationEntry(kind="system", content=f"Unknown option: {part}\n\n{usage}")
+                    )
+                    return
+                else:
+                    selectors.append(part)
+
+            if self._turn_active or self.agent_worker is not None:
+                message = "Stop the current turn before dumping prompt overrides."
+                self._show_composer_hint(message)
+                self._notify_user(message, severity="warning")
+                return
+            base_context = self.agent.build_prompt_context() if self.agent is not None else None
+            prompt_provider = getattr(self.agent, "prompt_provider", None) if self.agent is not None else None
+            try:
+                result = dump_prompt_overrides(
+                    self.project_path,
+                    force=force,
+                    selectors=selectors,
+                    base_context=base_context,
+                    prompt_provider=prompt_provider,
+                )
+            except ValueError as exc:
+                self._add_conversation_entry(tui_state.ConversationEntry(kind="system", content=str(exc)))
+                self._notify_user(str(exc), severity="warning")
+                return
+            if self.agent is not None and result.written:
+                self.agent.refresh_system_prompt()
+            self._add_conversation_entry(
+                tui_state.ConversationEntry(kind="system", content=format_prompt_dump_result(result))
+            )
+            if result.errors:
+                self._notify_user("Some prompt override files could not be written.", severity="error")
+            return
+
+        self._add_conversation_entry(tui_state.ConversationEntry(kind="system", content=usage))
 
     async def _command_sidebar(self, args: str) -> None:
         await self.action_toggle_sidebar()

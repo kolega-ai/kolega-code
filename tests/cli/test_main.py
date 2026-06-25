@@ -18,6 +18,7 @@ from kolega_code.cli.provider_registry import DEEPSEEK_DEFAULT_MODEL, UI_DEFAULT
 from kolega_code.cli.session_store import SessionStore, SessionStoreError
 from kolega_code.cli.settings import CliSettings, SettingsStore
 from kolega_code.cli.updater import UpdateCheckResult, UpdateRunResult
+from kolega_code.agent.prompt_overrides import PROMPT_OVERRIDE_DIR
 from kolega_code.llm.exceptions import LLMBillingError
 from kolega_code.llm.models import Message
 
@@ -45,6 +46,39 @@ def test_parse_default_command_as_tui() -> None:
     assert args.mode == CLI_AGENT_MODE
     assert args.permission_mode is None
     assert args.show_logs is False
+
+
+def test_parse_explicit_tui_subcommand() -> None:
+    args = parse_args(["tui", "/tmp/project"])
+
+    assert args.command == "tui"
+    assert args.project_path == Path("/tmp/project")
+    assert args.mode == CLI_AGENT_MODE
+
+
+@pytest.mark.parametrize("flag", ["--help", "-h"])
+def test_root_help_uses_generated_command_help(flag: str, capsys) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        main([flag])
+
+    assert exc_info.value.code == 0
+    output = capsys.readouterr().out
+    assert "usage: kolega-code" in output
+    assert "commands:" in output
+    for command in ["ask", "sessions", "doctor", "prompts", "update", "tui"]:
+        assert command in output
+
+
+def test_explicit_tui_help_shows_tui_arguments(capsys) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        main(["tui", "--help"])
+
+    assert exc_info.value.code == 0
+    output = capsys.readouterr().out
+    assert "usage: kolega-code tui" in output
+    assert "project_path" in output
+    assert "--resume" in output
+    assert "--permission-mode" in output
 
 
 def test_parse_tui_show_logs_flag() -> None:
@@ -136,6 +170,85 @@ def test_parse_update_subcommand() -> None:
     args = parse_args(["update"])
 
     assert args.command == "update"
+
+
+def test_parse_prompts_dump_subcommand() -> None:
+    args = parse_args(["prompts", "dump", "coder", "planning", "--project", "/tmp/project", "--force"])
+
+    assert args.command == "prompts"
+    assert args.prompts_command == "dump"
+    assert args.prompt_selectors == ["coder", "planning"]
+    assert args.project == Path("/tmp/project")
+    assert args.force is True
+
+
+def test_parse_prompts_validate_subcommand() -> None:
+    args = parse_args(["prompts", "validate", "--project", "/tmp/project"])
+
+    assert args.command == "prompts"
+    assert args.prompts_command == "validate"
+    assert args.project == Path("/tmp/project")
+
+
+def test_prompts_dump_subcommand_writes_prompt_files(tmp_path: Path, capsys) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+
+    exit_code = main(["prompts", "dump", "--project", str(project)])
+
+    assert exit_code == 0
+    assert (project / ".kolega" / "prompts" / "CODER.md").is_file()
+    assert "Written:" in capsys.readouterr().out
+
+
+def test_prompts_dump_subcommand_writes_only_selected_prompt_files(tmp_path: Path, capsys) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+
+    exit_code = main(["prompts", "dump", "coder", "compaction", "--project", str(project)])
+
+    assert exit_code == 0
+    assert (project / PROMPT_OVERRIDE_DIR / "CODER.md").is_file()
+    assert (project / PROMPT_OVERRIDE_DIR / "COMPACTION.md").is_file()
+    assert not (project / PROMPT_OVERRIDE_DIR / "PLANNING.md").exists()
+    assert "Written:" in capsys.readouterr().out
+
+
+def test_prompts_validate_subcommand_reports_valid_or_missing_prompts(tmp_path: Path, capsys) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+
+    exit_code = main(["prompts", "validate", "--project", str(project)])
+
+    assert exit_code == 0
+    assert "nothing to validate" in capsys.readouterr().out
+
+
+def test_prompts_validate_subcommand_returns_one_for_malformed_prompt(tmp_path: Path, capsys) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    prompt_dir = project / PROMPT_OVERRIDE_DIR
+    prompt_dir.mkdir(parents=True)
+    (prompt_dir / "GENERAL.md").write_text("{{ missing_variable }}", encoding="utf-8")
+
+    exit_code = main(["prompts", "validate", "--project", str(project)])
+
+    assert exit_code == 1
+    output = capsys.readouterr().out
+    assert "Could not render prompt override .kolega/prompts/GENERAL.md" in output
+    assert "Falling back to the default prompt" in output
+
+
+def test_prompts_list_subcommand_reports_prompt_files(tmp_path: Path, capsys) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+
+    exit_code = main(["prompts", "list", "--project", str(project)])
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "CODER.md" in output
+    assert "missing" in output
 
 
 def test_update_subcommand_runs_self_update(capsys, monkeypatch: pytest.MonkeyPatch) -> None:

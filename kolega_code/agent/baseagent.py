@@ -4,6 +4,7 @@ import logging
 import os
 import random
 import re
+import sys
 import uuid
 from email.utils import parsedate_to_datetime
 from datetime import datetime
@@ -43,7 +44,8 @@ from kolega_code.permissions import (
     normalize_permission_mode,
     permission_request_for_tool,
 )
-from .prompt_provider import PromptProvider, AgentMode, PromptContext, PromptExtension
+from .prompt_provider import PromptProvider, AgentMode, AgentType, PromptContext, PromptExtension
+from .prompt_overrides import ProjectPromptOverrides, format_prompt_override_error, render_prompt_override_source
 from kolega_code.services.base import TerminalManager, BrowserManager
 from kolega_code.services.file_system import FileSystem
 from .tools import ToolCollection  # noqa: F401 - kept for tests and downstream monkeypatch compatibility
@@ -244,6 +246,8 @@ class BaseAgent(LogMixin):
         # toggling takes effect on the next turn without rebuilding the agent.
         self.gigacode_enabled = False
 
+        self.prompt_override_errors: List[str] = []
+
         self.available_ports = "9001-9999"
 
         # Validate that the project path exists and is a directory using the filesystem
@@ -253,6 +257,7 @@ class BaseAgent(LogMixin):
             raise ValueError(f"Project path is not a directory: {self.project_path}")
 
         self.prompt_provider = context.prompt_provider or PromptProvider()
+        self.prompt_overrides = ProjectPromptOverrides(self.filesystem)
 
         self.conversation = Conversation(max_tool_result_chars=self.max_tool_result_chars_in_history)
         self.conversation.skill_content_pattern = self.skill_content_pattern
@@ -502,6 +507,90 @@ class BaseAgent(LogMixin):
             memories=self.workspace_memories,
         )
 
+    def _prompt_override_error_message(self, path: str, detail: object) -> str:
+        return format_prompt_override_error(path, detail)
+
+    def _add_prompt_override_error(self, message: str, *, emit_stderr: bool = False) -> None:
+        if message in self.prompt_override_errors:
+            return
+        self.prompt_override_errors.append(message)
+        logger.warning(message)
+        if emit_stderr:
+            print(f"kolega-code: {message}", file=sys.stderr)
+
+    def _report_prompt_override_render_error(self, path: str, exc: Exception) -> None:
+        self._add_prompt_override_error(
+            self._prompt_override_error_message(path, exc),
+            emit_stderr=True,
+        )
+
+    def validate_prompt_overrides(
+        self,
+        *,
+        context: Optional[PromptContext] = None,
+        mode: Optional[AgentMode] = None,
+    ) -> None:
+        """Validate all supported project prompt override files and collect diagnostics."""
+        prompt_context = context or self.build_prompt_context()
+        for diagnostic in self.prompt_overrides.validate_all(
+            context=prompt_context,
+            mode=mode or self.agent_mode,
+            project_template_slug=self.project_template_slug,
+            prompt_provider=self.prompt_provider,
+        ):
+            self._add_prompt_override_error(self._prompt_override_error_message(diagnostic.path, diagnostic.message))
+
+    def build_agent_system_prompt(self, agent_type: AgentType, mode: Optional[AgentMode] = None) -> str:
+        """Build the final system prompt for an agent, honoring project overrides."""
+        context = self.build_prompt_context()
+        override = self.prompt_overrides.load_agent_system_prompt(agent_type)
+        if override is not None:
+            try:
+                base = render_prompt_override_source(
+                    override.content,
+                    context=context,
+                    mode=mode,
+                    project_template_slug=self.project_template_slug,
+                    prompt_provider=self.prompt_provider,
+                )
+            except Exception as exc:  # noqa: BLE001 - bad project prompts should fall back safely
+                self._report_prompt_override_render_error(override.path, exc)
+            else:
+                dynamic = self.prompt_provider.render_dynamic_sections(
+                    agent_type,
+                    mode,
+                    self.prompt_extensions,
+                    context,
+                )
+                self.validate_prompt_overrides(context=context, mode=mode)
+                return "\n\n".join(part for part in (base, dynamic) if part)
+
+        prompt = self.prompt_provider.get_system_prompt(
+            agent_type=agent_type,
+            mode=mode,
+            template_slug=self.project_template_slug,
+            prompt_extensions=self.prompt_extensions,
+            context=context,
+        )
+        # The bundled planning template is intentionally base-only; append the
+        # same dynamic sections that override prompts receive.
+        if agent_type == AgentType.PLANNING:
+            dynamic = self.prompt_provider.render_dynamic_sections(
+                agent_type,
+                mode,
+                self.prompt_extensions,
+                context,
+            )
+            prompt = "\n\n".join(part for part in (prompt.strip(), dynamic) if part)
+        self.validate_prompt_overrides(context=context, mode=mode)
+        return prompt
+
+    def refresh_system_prompt(self) -> None:
+        """Refresh this agent's system prompt after prompt files or extensions change."""
+        initialize = getattr(self, "_initialize_system_prompt", None)
+        if callable(initialize):
+            initialize()
+
     # ------------------------------------------------------------------
     # Attachments
     # ------------------------------------------------------------------
@@ -604,6 +693,19 @@ class BaseAgent(LogMixin):
 
         await self.emitter.compaction_status("started", "Compacting conversation…")
         try:
+            compaction_system_prompt = None
+            compaction_override = self.prompt_overrides.load_compaction_system_prompt()
+            if compaction_override is not None:
+                try:
+                    compaction_system_prompt = render_prompt_override_source(
+                        compaction_override.content,
+                        context=self.build_prompt_context(),
+                        mode=self.agent_mode,
+                        project_template_slug=self.project_template_slug,
+                        prompt_provider=self.prompt_provider,
+                    )
+                except Exception as exc:  # noqa: BLE001 - fall back to the bundled compaction prompt
+                    self._report_prompt_override_render_error(compaction_override.path, exc)
             result = await self.compressor.summarize(
                 self.conversation,
                 llm=self.llm,
@@ -614,6 +716,7 @@ class BaseAgent(LogMixin):
                 thinking=None,
                 on_info=on_info,
                 on_error=on_error,
+                system_prompt_text=compaction_system_prompt,
             )
         finally:
             # Recount + emit so the context gauge reflects post-compaction reality

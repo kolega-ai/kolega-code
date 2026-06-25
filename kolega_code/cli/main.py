@@ -11,6 +11,14 @@ from pathlib import Path
 from typing import Iterable, Optional
 
 from kolega_code.agent import CoderAgent
+from kolega_code.agent.prompt_dump import (
+    dump_prompt_overrides,
+    format_prompt_dump_result,
+    format_prompt_list_result,
+    format_prompt_validation_result,
+    list_prompt_overrides,
+    validate_prompt_overrides,
+)
 from kolega_code.hooks import HookDispatcher, HookEvent, load_hook_config
 from kolega_code.llm.exceptions import LLMBillingError, billing_error_message
 from kolega_code.llm.models import TextBlock
@@ -48,7 +56,7 @@ from .skills import (
 )
 from .updater import check_for_update, run_self_update, update_status_message
 
-SUBCOMMANDS = {"ask", "sessions", "doctor", "update"}
+SUBCOMMANDS = {"ask", "sessions", "doctor", "update", "prompts", "tui"}
 RESUME_LATEST = "__latest__"
 CLI_AGENT_MODE = AgentMode.CLI.value
 ASK_DEFAULT_PERMISSION_MODE = PermissionMode.AUTO.value
@@ -77,8 +85,12 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
             return _run_sessions(args)
         if args.command == "doctor":
             return _run_doctor(args)
+        if args.command == "prompts":
+            return _run_prompts(args)
         if args.command == "update":
             return _run_update()
+        if args.command == "tui":
+            return _run_tui(args)
         return _run_tui(args)
     except (CliConfigError, SessionStoreError, SettingsStoreError, ValueError) as exc:
         _print_styled(f"kolega-code: {exc}", style="error", stderr=True)
@@ -118,6 +130,8 @@ def _print_styled(text: str, style: Optional[str] = None, stderr: bool = False) 
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
+    if argv and argv[0] in {"--help", "-h"}:
+        return _build_subcommand_parser().parse_args(argv)
     if argv and argv[0] in SUBCOMMANDS:
         return _build_subcommand_parser().parse_args(argv)
     return _build_tui_parser().parse_args(argv)
@@ -140,9 +154,7 @@ def _add_session_args(parser: argparse.ArgumentParser, session_help: str = "Sess
     parser.add_argument("--session", help=session_help)
 
 
-def _build_tui_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="kolega-code", description="Run the Kolega Code Textual CLI.")
-    parser.set_defaults(command="tui")
+def _add_tui_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--version", action="store_true", help="Show the Kolega Code version.")
     parser.add_argument("project_path", nargs="?", default=".", type=Path, help="Project directory to work in.")
     parser.add_argument(
@@ -170,12 +182,26 @@ def _build_tui_parser() -> argparse.ArgumentParser:
     )
     _add_session_args(parser, session_help="Legacy alias for --resume THREAD_ID.")
     _add_common_model_args(parser)
+
+
+def _build_tui_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="kolega-code", description="Run the Kolega Code Textual CLI.")
+    parser.set_defaults(command="tui")
+    _add_tui_args(parser)
     return parser
 
 
 def _build_subcommand_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="kolega-code", description="Kolega Code CLI.")
-    subparsers = parser.add_subparsers(dest="command", required=True)
+    parser = argparse.ArgumentParser(
+        prog="kolega-code",
+        description="Kolega Code CLI. Run without a command to start the interactive TUI.",
+    )
+    parser.add_argument("--version", action="store_true", help="Show the Kolega Code version.")
+    subparsers = parser.add_subparsers(dest="command", required=True, title="commands", metavar="command")
+
+    tui = subparsers.add_parser("tui", help="Run the interactive Textual CLI.")
+    tui.set_defaults(command="tui")
+    _add_tui_args(tui)
 
     ask = subparsers.add_parser("ask", help="Run a single prompt and print the answer.")
     ask.add_argument("prompt", help="Prompt to send to Kolega Code.")
@@ -224,6 +250,22 @@ def _build_subcommand_parser() -> argparse.ArgumentParser:
     doctor.add_argument("--project", default=".", type=Path, help="Project directory to check.")
     doctor.add_argument("--state-dir", type=Path, help="Directory for CLI session state.")
     _add_common_model_args(doctor)
+
+    prompts = subparsers.add_parser("prompts", help="Manage project prompt override files.")
+    prompts_sub = prompts.add_subparsers(dest="prompts_command", required=True)
+    prompts_dump = prompts_sub.add_parser("dump", help="Dump editable prompt override starter files.")
+    prompts_dump.add_argument(
+        "prompt_selectors",
+        nargs="*",
+        metavar="prompt",
+        help="Prompts to dump (coder, planning, general, investigation, browser, compaction, or all).",
+    )
+    prompts_dump.add_argument("--project", default=".", type=Path, help="Project directory to write prompts into.")
+    prompts_dump.add_argument("--force", action="store_true", help="Overwrite existing prompt override files.")
+    prompts_list = prompts_sub.add_parser("list", help="List supported prompt override files.")
+    prompts_list.add_argument("--project", default=".", type=Path, help="Project directory to inspect.")
+    prompts_validate = prompts_sub.add_parser("validate", help="Validate existing prompt override files.")
+    prompts_validate.add_argument("--project", default=".", type=Path, help="Project directory to inspect.")
 
     subparsers.add_parser("update", help="Update Kolega Code to the latest version.")
 
@@ -769,6 +811,27 @@ def _run_sessions(args: argparse.Namespace) -> int:
             print(payload, end="")
         return 0
     raise ValueError(f"Unknown sessions command: {args.sessions_command}")
+
+
+def _run_prompts(args: argparse.Namespace) -> int:
+    project_path = _validate_project(args.project)
+    if args.prompts_command == "dump":
+        result = dump_prompt_overrides(
+            project_path,
+            force=bool(args.force),
+            selectors=getattr(args, "prompt_selectors", None),
+        )
+        print(format_prompt_dump_result(result))
+        return 0 if result.ok else 1
+    if args.prompts_command == "list":
+        result = list_prompt_overrides(project_path)
+        print(format_prompt_list_result(result))
+        return 0
+    if args.prompts_command == "validate":
+        result = validate_prompt_overrides(project_path)
+        print(format_prompt_validation_result(result))
+        return 0 if result.ok else 1
+    raise ValueError(f"Unknown prompts command: {args.prompts_command}")
 
 
 def _run_doctor(args: argparse.Namespace) -> int:

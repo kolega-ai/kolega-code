@@ -1,4 +1,4 @@
-from typing import Optional, List, Dict, Sequence
+from typing import Any, Optional, List, Dict, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -16,6 +16,7 @@ class MissingPromptTemplateError(RuntimeError):
 
 class AgentType(Enum):
     CODER = "coder"
+    PLANNING = "planning"
     INVESTIGATION = "investigation"
     BROWSER = "browser"
     GENERAL = "general"
@@ -100,6 +101,31 @@ class PromptProvider:
             lstrip_blocks=True,
         )
 
+    def template_vars(
+        self,
+        *,
+        context: PromptContext,
+        mode: Optional[AgentMode | str],
+        template_slug: Optional[str],
+        prompt_extensions: Optional[List[PromptExtension]] = None,
+    ) -> Dict[str, Any]:
+        """Return template variables shared by bundled and project override prompts."""
+        mode_value = mode.value if isinstance(mode, AgentMode) else mode
+        return {
+            "context": context,
+            "mode": mode_value,
+            "project_template_slug": template_slug,
+            "prompt_extensions": prompt_extensions or [],
+            "system_name": context.system_name,
+            "project_path": context.project_path,
+            "is_git_repo": context.is_git_repo,
+            "platform": context.platform,
+            "date_today": context.date_today,
+            "model_name": context.model_name,
+            "available_ports": context.available_ports,
+            "workspace_id": context.workspace_id,
+        }
+
     def get_system_prompt(
         self,
         agent_type: AgentType,
@@ -135,13 +161,15 @@ class PromptProvider:
             logger.error(message)
             raise MissingPromptTemplateError(message)
 
-        # Prepare template variables
-        template_vars = {
-            "context": context,
-            "mode": mode.value if isinstance(mode, AgentMode) else mode,
-            "project_template_slug": template_slug,
-            "prompt_extensions": matching_extensions,
-        }
+        # Prepare template variables. The ``context`` object is the canonical
+        # surface; planning.md.j2 also has legacy top-level names for backward
+        # compatibility with tests and host templates.
+        template_vars = self.template_vars(
+            context=context,
+            mode=mode,
+            template_slug=template_slug,
+            prompt_extensions=matching_extensions,
+        )
 
         # Render the prompt
         try:
@@ -149,6 +177,57 @@ class PromptProvider:
         except Exception as e:
             logger.error(f"Error rendering template {template_name}: {e}")
             raise
+
+    def render_dynamic_sections(
+        self,
+        agent_type: AgentType,
+        mode: Optional[AgentMode],
+        prompt_extensions: Optional[List[PromptExtension]],
+        context: PromptContext,
+    ) -> str:
+        """Render dynamic project/runtime sections appended to raw overrides.
+
+        Bundled agent templates already include these sections themselves (except
+        for the planning template, whose caller appends this output). Project
+        override files are Markdown templates, so they receive the same dynamic
+        information through this centralized suffix.
+        """
+        sections: List[str] = []
+        matching_extensions = self._filter_prompt_extensions(agent_type, mode, prompt_extensions or [])
+
+        if context.memories:
+            body = "\n".join(f"- {memory}" for memory in context.memories)
+            sections.append(
+                f"## Workspace Memories\n\nYou have access to the following information about this workspace:\n\n{body}"
+            )
+
+        if matching_extensions:
+            body_parts = ["## Additional Context"]
+            for extension in matching_extensions:
+                body_parts.append(f"### {extension.title}\n\n{extension.markdown}")
+            sections.append("\n\n".join(body_parts))
+
+        if context.project_guidance:
+            sections.append(
+                "## Project Instructions\n\n"
+                f"The project directory contains `{context.project_guidance_file}`. "
+                "Treat it as local project guidance:\n\n"
+                "```markdown\n"
+                f"{context.project_guidance}\n"
+                "```"
+            )
+
+        if context.agent_memory:
+            sections.append(
+                "## Agent Memory\n\n"
+                f"The project directory contains `{context.agent_memory_file}`. "
+                "Treat it as persistent agent memory:\n\n"
+                "```markdown\n"
+                f"{context.agent_memory}\n"
+                "```"
+            )
+
+        return "\n\n".join(section.strip() for section in sections if section.strip())
 
     def _filter_prompt_extensions(
         self,
@@ -194,6 +273,8 @@ class PromptProvider:
                 raise ValueError(
                     f"CODER agent requires a valid mode ('cli', 'vibe', 'code', or 'fix'), got: {mode_value}"
                 )
+        if agent_type == AgentType.PLANNING:
+            return "system/agents/planning.md.j2"
 
         return f"system/agents/{agent_type.value}.md.j2"
 

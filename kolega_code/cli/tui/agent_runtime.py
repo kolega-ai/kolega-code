@@ -281,6 +281,7 @@ class AgentRuntimeMixin:
             if restore_transcript:
                 self._restore_conversation_history(history)
         self._update_mode_chrome()
+        self._ensure_startup_entry()
         await self._fire_session_start_once()
 
     def _session_hook_dispatcher(self) -> HookDispatcher:

@@ -56,6 +56,7 @@ TUI_COMMAND_ENTRIES: tuple[SlashCommandEntry, ...] = (
     SlashCommandEntry("login", "Sign in to a provider, e.g. /login chatgpt", CommandScope.TUI),
     SlashCommandEntry("logout", "Sign out of a provider, e.g. /logout chatgpt", CommandScope.TUI),
     SlashCommandEntry("gigacode", "Toggle gigacode workflow orchestration on or off", CommandScope.TUI),
+    SlashCommandEntry("prompts", "Dump, list, or validate project prompt override files", CommandScope.TUI),
     SlashCommandEntry("theme", "Show or switch the color theme", CommandScope.TUI),
     SlashCommandEntry("copy", "Copy the last response to the clipboard", CommandScope.TUI),
     SlashCommandEntry("version", "Show the Kolega Code version", CommandScope.TUI),

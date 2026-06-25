@@ -59,6 +59,7 @@ class HistoryCompressor:
         thinking,
         on_info: Optional[LogCallback] = None,
         on_error: Optional[LogCallback] = None,
+        system_prompt_text: Optional[str] = None,
     ) -> CompactionResult:
         """
         Non-destructively summarize the aged-out prefix while keeping the most
@@ -102,7 +103,8 @@ class HistoryCompressor:
             )
 
             messages = MessageHistory([Message(role="user", content=[TextBlock(text=user_prompt_filled)])])
-            system_message = Message(role="system", content=[TextBlock(text=COMPRESSION_SUMMARY_SYSTEM_PROMPT)])
+            system_text = system_prompt_text or COMPRESSION_SUMMARY_SYSTEM_PROMPT
+            system_message = Message(role="system", content=[TextBlock(text=system_text)])
 
             # Stream and drain rather than calling generate(): the Anthropic SDK
             # rejects non-streaming requests whose max_tokens is large enough to risk
