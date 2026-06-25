@@ -1,22 +1,18 @@
-"""Live provider integration tests for the whole model catalog.
+"""Live provider integration tests for provider smoke coverage.
 
 These hit the real provider APIs, so they are marked ``integration`` and are
 skipped for any provider whose API key is not present in the environment (loaded
-from the repo ``.env`` by ``conftest.py``). They are the authoritative check that
-every model ID in ``MODEL_SPECS`` actually resolves at the provider — a renamed or
-retired ID surfaces here as a 4xx instead of silently shipping.
+from the repo ``.env`` by ``conftest.py``). They intentionally smoke-test one
+model per key-based provider instead of exhaustively exercising large provider
+catalogs.
 
 Run them explicitly with the relevant keys set, e.g.::
 
     pytest -m integration tests/agent/llm/test_live_providers.py -v
-
-The provider/model matrix is derived from the catalog itself, so new models are
-covered automatically.
 """
 
 import os
 
-import httpx
 import pytest
 
 from kolega_code.cli.config import API_KEY_ENV, OAUTH_PROVIDERS
@@ -43,6 +39,10 @@ SYSTEM = Message(
     content=[TextBlock(text="You are a concise math assistant. Answer with as few tokens as possible.")],
 )
 
+# Ollama Cloud has a large, mixed-access catalog. Keep live coverage to one
+# non-subscription smoke model so all-test runs avoid expensive/flaky/gated calls.
+OLLAMA_CLOUD_SMOKE_MODEL = "gpt-oss:20b"
+
 
 def _messages() -> MessageHistory:
     return MessageHistory(
@@ -50,8 +50,8 @@ def _messages() -> MessageHistory:
     )
 
 
-def _provider_default_models() -> list[tuple[str, str]]:
-    """One (provider, recommended-default-model) pair per provider in the catalog."""
+def _provider_smoke_models() -> list[tuple[str, str]]:
+    """One (provider, smoke-model) pair per key-based provider in the catalog."""
     seen: list[tuple[str, str]] = []
     added: set[str] = set()
     for provider_value, _model in MODEL_SPECS:
@@ -62,19 +62,22 @@ def _provider_default_models() -> list[tuple[str, str]]:
         if ModelProvider(provider_value) in OAUTH_PROVIDERS:
             continue
         added.add(provider_value)
-        model = default_model_for_provider(ModelProvider(provider_value))
+        if provider_value == ModelProvider.OLLAMA_CLOUD.value:
+            model = OLLAMA_CLOUD_SMOKE_MODEL
+        else:
+            model = default_model_for_provider(ModelProvider(provider_value))
         seen.append((provider_value, model))
     return seen
 
 
-PROVIDER_DEFAULT_MODELS = _provider_default_models()
-OLLAMA_CLOUD_MODELS = [model for provider, model in MODEL_SPECS if provider == ModelProvider.OLLAMA_CLOUD.value]
+PROVIDER_SMOKE_MODELS = _provider_smoke_models()
 
-# Subset whose default model exposes a thinking/reasoning-effort control.
+# Subset whose smoke model exposes a thinking/reasoning-effort control. Ollama
+# Cloud is intentionally excluded to keep live Ollama coverage to one smoke call.
 PROVIDER_THINKING_MODELS = [
     (provider, model)
-    for provider, model in PROVIDER_DEFAULT_MODELS
-    if get_thinking_effort_spec(provider, model) is not None
+    for provider, model in PROVIDER_SMOKE_MODELS
+    if provider != ModelProvider.OLLAMA_CLOUD.value and get_thinking_effort_spec(provider, model) is not None
 ]
 
 
@@ -88,81 +91,14 @@ def _require_key(provider_value: str) -> str:
     return api_key
 
 
-def test_live_ollama_cloud_model_catalog_contains_specs() -> None:
-    """Ollama Cloud advertises every model ID in our supported catalog.
-
-    The provider may advertise additional IDs that are not usable through chat
-    completions yet; those should not force us to expose a broken model.
-    """
-    api_key = _require_key(ModelProvider.OLLAMA_CLOUD.value)
-    response = httpx.get(
-        "https://ollama.com/v1/models",
-        headers={"Authorization": f"Bearer {api_key}"},
-        timeout=30,
-    )
-    response.raise_for_status()
-
-    api_models = {model["id"] for model in response.json()["data"]}
-
-    assert set(OLLAMA_CLOUD_MODELS) <= api_models
-
-
-@pytest.mark.parametrize("model", OLLAMA_CLOUD_MODELS)
-def test_live_ollama_cloud_model_metadata_matches_specs(model: str) -> None:
-    """Ollama Cloud metadata agrees with our context/capability flags."""
-    api_key = _require_key(ModelProvider.OLLAMA_CLOUD.value)
-    response = httpx.post(
-        "https://ollama.com/api/show",
-        headers={"Authorization": f"Bearer {api_key}"},
-        json={"model": model},
-        timeout=30,
-    )
-    response.raise_for_status()
-
-    metadata = response.json()
-    capabilities = set(metadata.get("capabilities") or [])
-    model_info = metadata.get("model_info") or {}
-    context_lengths = [value for key, value in model_info.items() if key.endswith(".context_length")]
-    specs = get_model_specs(ModelProvider.OLLAMA_CLOUD.value, model)
-
-    assert context_lengths == [specs["context_length"]]
-    assert ("thinking" in capabilities) == (
-        get_thinking_effort_spec(ModelProvider.OLLAMA_CLOUD.value, model) is not None
-    )
-    assert ("vision" in capabilities) == bool(specs.get("supports_vision"))
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("model", OLLAMA_CLOUD_MODELS)
-async def test_live_ollama_cloud_model_generate(model: str) -> None:
-    """Every supported Ollama Cloud model accepts our configured generation params."""
-    api_key = _require_key(ModelProvider.OLLAMA_CLOUD.value)
-    client = LLMClient(provider=ModelProvider.OLLAMA_CLOUD.value, api_key=api_key)
-    specs = get_model_specs(ModelProvider.OLLAMA_CLOUD.value, model)
-
-    response = await client.generate(
-        messages=MessageHistory(
-            [Message(role="user", content=[TextBlock(text="Reply with exactly OK and no other text.")])]
-        ),
-        model=model,
-        max_completion_tokens=specs["max_completion_tokens"],
-        temperature=specs["default_temperature"],
-        thinking=default_thinking_effort(ModelProvider.OLLAMA_CLOUD.value, model),
-    )
-
-    assert response is not None
-    assert response.role == "assistant"
-    assert response.get_text_content(), f"empty response from ollama_cloud/{model}"
-
-
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "provider_value,model",
-    PROVIDER_DEFAULT_MODELS,
-    ids=[p for p, _ in PROVIDER_DEFAULT_MODELS],
+    PROVIDER_SMOKE_MODELS,
+    ids=[p for p, _ in PROVIDER_SMOKE_MODELS],
 )
 async def test_live_provider_generate(provider_value: str, model: str) -> None:
-    """The provider's default model resolves and returns a non-empty assistant reply.
+    """The provider's smoke model resolves and returns a non-empty assistant reply.
 
     Uses the model's default thinking effort, mirroring how the agent calls each
     model — some models (e.g. Moonshot kimi-k2.7-code) force thinking on and reject
