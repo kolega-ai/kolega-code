@@ -1,10 +1,14 @@
-"""Utilities for creating and listing project prompt override files."""
+"""Utilities for creating, listing, and validating project prompt override files."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
-from typing import Optional
+import platform as platform_module
+from typing import Iterable, Optional
+
+from kolega_code.services.file_system import LocalFileSystem
 
 from .prompt_overrides import (
     BROWSER_PROMPT_FILE,
@@ -14,6 +18,9 @@ from .prompt_overrides import (
     INVESTIGATION_PROMPT_FILE,
     PLANNING_PROMPT_FILE,
     PROMPT_OVERRIDE_DIR,
+    ProjectPromptOverrides,
+    PromptOverrideDiagnostic,
+    format_prompt_override_error,
 )
 from .prompt_provider import AgentMode, AgentType, PromptContext, PromptProvider
 from .prompts import COMPRESSION_SUMMARY_SYSTEM_PROMPT
@@ -74,6 +81,60 @@ class PromptListResult:
         return tuple(item for item in self.files if not item.exists)
 
 
+@dataclass(frozen=True)
+class PromptValidationResult:
+    project_path: Path
+    files: tuple[PromptFileStatus, ...]
+    diagnostics: tuple[PromptOverrideDiagnostic, ...]
+
+    @property
+    def ok(self) -> bool:
+        return not self.diagnostics
+
+    @property
+    def checked(self) -> tuple[PromptFileStatus, ...]:
+        return tuple(item for item in self.files if item.exists)
+
+
+def _valid_prompt_selector_message() -> str:
+    keys = ", ".join(spec.key for spec in PROMPT_DUMP_SPECS)
+    return f"Valid prompt selectors: {keys}, all (filename aliases such as CODER.md are also accepted)."
+
+
+def select_prompt_dump_specs(selectors: Iterable[str] | None = None) -> tuple[PromptDumpSpec, ...]:
+    """Normalize prompt dump selectors into canonical specs.
+
+    Selectors are matched case-insensitively against prompt keys, filenames, and
+    filename stems. Repeated selectors are de-duplicated while preserving the
+    canonical ``PROMPT_DUMP_SPECS`` order.
+    """
+    raw_selectors = [selector.strip() for selector in selectors or () if selector.strip()]
+    if not raw_selectors:
+        return PROMPT_DUMP_SPECS
+
+    aliases: dict[str, PromptDumpSpec] = {}
+    for spec in PROMPT_DUMP_SPECS:
+        aliases[spec.key.lower()] = spec
+        aliases[spec.filename.lower()] = spec
+        aliases[Path(spec.filename).stem.lower()] = spec
+
+    selected_keys: set[str] = set()
+    all_requested = False
+    for selector in raw_selectors:
+        normalized = selector.lower()
+        if normalized == "all":
+            all_requested = True
+            continue
+        spec = aliases.get(normalized)
+        if spec is None:
+            raise ValueError(f"Unknown prompt selector: {selector}. {_valid_prompt_selector_message()}")
+        selected_keys.add(spec.key)
+
+    if all_requested:
+        return PROMPT_DUMP_SPECS
+    return tuple(spec for spec in PROMPT_DUMP_SPECS if spec.key in selected_keys)
+
+
 def placeholder_dump_context(project_path: str | Path, base_context: Optional[PromptContext] = None) -> PromptContext:
     """Build context for starter prompts with Jinja tags instead of concrete values."""
     return PromptContext(
@@ -94,48 +155,83 @@ def placeholder_dump_context(project_path: str | Path, base_context: Optional[Pr
     )
 
 
+def _prompt_dump_content_for_spec(
+    spec: PromptDumpSpec,
+    *,
+    project_path: str | Path,
+    base_context: Optional[PromptContext],
+    prompt_provider: PromptProvider,
+) -> str:
+    context = placeholder_dump_context(project_path, base_context=base_context)
+    if spec.filename == CODER_PROMPT_FILE:
+        return (
+            prompt_provider.get_system_prompt(
+                agent_type=AgentType.CODER,
+                mode=AgentMode.CLI,
+                context=context,
+                prompt_extensions=[],
+            ).strip()
+            + "\n"
+        )
+    if spec.filename == PLANNING_PROMPT_FILE:
+        return (
+            prompt_provider.get_system_prompt(
+                agent_type=AgentType.PLANNING,
+                context=context,
+                prompt_extensions=[],
+            ).strip()
+            + "\n"
+        )
+    if spec.filename == GENERAL_PROMPT_FILE:
+        return (
+            prompt_provider.get_system_prompt(
+                agent_type=AgentType.GENERAL,
+                context=context,
+                prompt_extensions=[],
+            ).strip()
+            + "\n"
+        )
+    if spec.filename == INVESTIGATION_PROMPT_FILE:
+        return (
+            prompt_provider.get_system_prompt(
+                agent_type=AgentType.INVESTIGATION,
+                context=context,
+                prompt_extensions=[],
+            ).strip()
+            + "\n"
+        )
+    if spec.filename == BROWSER_PROMPT_FILE:
+        return (
+            prompt_provider.get_system_prompt(
+                agent_type=AgentType.BROWSER,
+                context=context,
+                prompt_extensions=[],
+            ).strip()
+            + "\n"
+        )
+    if spec.filename == COMPACTION_PROMPT_FILE:
+        return COMPRESSION_SUMMARY_SYSTEM_PROMPT.strip() + "\n"
+    raise ValueError(f"Unsupported prompt dump spec: {spec.key}")
+
+
 def prompt_dump_contents(
     project_path: str | Path,
     *,
+    selectors: Iterable[str] | None = None,
     base_context: Optional[PromptContext] = None,
     prompt_provider: Optional[PromptProvider] = None,
 ) -> dict[str, str]:
-    """Render starter contents for every supported prompt override file."""
+    """Render starter contents for selected supported prompt override files."""
     provider = prompt_provider or PromptProvider()
-    context = placeholder_dump_context(project_path, base_context=base_context)
+    specs = select_prompt_dump_specs(selectors)
     return {
-        CODER_PROMPT_FILE: provider.get_system_prompt(
-            agent_type=AgentType.CODER,
-            mode=AgentMode.CLI,
-            context=context,
-            prompt_extensions=[],
-        ).strip()
-        + "\n",
-        PLANNING_PROMPT_FILE: provider.get_system_prompt(
-            agent_type=AgentType.PLANNING,
-            context=context,
-            prompt_extensions=[],
-        ).strip()
-        + "\n",
-        GENERAL_PROMPT_FILE: provider.get_system_prompt(
-            agent_type=AgentType.GENERAL,
-            context=context,
-            prompt_extensions=[],
-        ).strip()
-        + "\n",
-        INVESTIGATION_PROMPT_FILE: provider.get_system_prompt(
-            agent_type=AgentType.INVESTIGATION,
-            context=context,
-            prompt_extensions=[],
-        ).strip()
-        + "\n",
-        BROWSER_PROMPT_FILE: provider.get_system_prompt(
-            agent_type=AgentType.BROWSER,
-            context=context,
-            prompt_extensions=[],
-        ).strip()
-        + "\n",
-        COMPACTION_PROMPT_FILE: COMPRESSION_SUMMARY_SYSTEM_PROMPT.strip() + "\n",
+        spec.filename: _prompt_dump_content_for_spec(
+            spec,
+            project_path=project_path,
+            base_context=base_context,
+            prompt_provider=provider,
+        )
+        for spec in specs
     }
 
 
@@ -143,10 +239,12 @@ def dump_prompt_overrides(
     project_path: str | Path,
     *,
     force: bool = False,
+    selectors: Iterable[str] | None = None,
     base_context: Optional[PromptContext] = None,
     prompt_provider: Optional[PromptProvider] = None,
 ) -> PromptDumpResult:
-    """Create prompt override starter files under ``.kolega/prompts``."""
+    """Create selected prompt override starter files under ``.kolega/prompts``."""
+    specs = select_prompt_dump_specs(selectors)
     project = Path(project_path).expanduser().resolve()
     result = PromptDumpResult(project_path=project)
     target_dir = project / PROMPT_OVERRIDE_DIR
@@ -157,12 +255,17 @@ def dump_prompt_overrides(
         return result
 
     try:
-        contents = prompt_dump_contents(project, base_context=base_context, prompt_provider=prompt_provider)
+        contents = prompt_dump_contents(
+            project,
+            selectors=[spec.key for spec in specs],
+            base_context=base_context,
+            prompt_provider=prompt_provider,
+        )
     except Exception as exc:  # noqa: BLE001
         result.errors.append(f"Could not render prompt templates: {exc}")
         return result
 
-    for spec in PROMPT_DUMP_SPECS:
+    for spec in specs:
         path = project / spec.relative_path
         if path.exists() and not force:
             result.skipped.append(path)
@@ -193,6 +296,67 @@ def list_prompt_overrides(project_path: str | Path) -> PromptListResult:
     )
 
 
+def _read_first_existing_project_file(project: Path, filenames: tuple[str, ...]) -> tuple[str, str]:
+    for filename in filenames:
+        path = project / filename
+        if not path.exists():
+            continue
+        try:
+            return filename, path.read_text(encoding="utf-8")
+        except Exception:  # noqa: BLE001 - match BaseAgent's non-fatal context loading
+            return filename, ""
+    return "", ""
+
+
+def standalone_validation_context(project_path: str | Path) -> PromptContext:
+    """Build offline prompt context for prompt validation commands."""
+    project = Path(project_path).expanduser().resolve()
+    project_guidance_file, project_guidance = _read_first_existing_project_file(project, ("AGENTS.md", "KOLEGA.md"))
+    agent_memory_file, agent_memory = _read_first_existing_project_file(project, ("AGENT_MEMORY.md",))
+    return PromptContext(
+        system_name="Kolega Code",
+        project_path=str(project),
+        is_git_repo=(project / ".git").is_dir(),
+        platform=platform_module.system(),
+        date_today=datetime.now().strftime("%Y-%m-%d"),
+        model_name="",
+        available_ports="9001-9999",
+        project_guidance=project_guidance,
+        project_guidance_file=project_guidance_file,
+        agent_memory=agent_memory,
+        agent_memory_file=agent_memory_file,
+        kolega_md=project_guidance,
+        workspace_id="",
+        workspace_environment_variables={},
+        memories=[],
+    )
+
+
+def validate_prompt_overrides(
+    project_path: str | Path,
+    *,
+    context: Optional[PromptContext] = None,
+    mode: AgentMode | str | None = AgentMode.CLI,
+    project_template_slug: Optional[str] = None,
+    prompt_provider: Optional[PromptProvider] = None,
+) -> PromptValidationResult:
+    """Validate existing supported project prompt override templates offline."""
+    project = Path(project_path).expanduser().resolve()
+    prompt_context = context or standalone_validation_context(project)
+    overrides = ProjectPromptOverrides(LocalFileSystem(project))
+    diagnostics = overrides.validate_all(
+        context=prompt_context,
+        mode=mode,
+        project_template_slug=project_template_slug,
+        prompt_provider=prompt_provider,
+    )
+    return PromptValidationResult(
+        project_path=project,
+        files=list_prompt_overrides(project).files,
+        diagnostics=tuple(diagnostics),
+    )
+
+
 def format_prompt_dump_result(result: PromptDumpResult) -> str:
     """Human-readable summary for TUI/CLI output."""
     lines = [f"Prompt override directory: `{result.project_path / PROMPT_OVERRIDE_DIR}`"]
@@ -216,4 +380,28 @@ def format_prompt_list_result(result: PromptListResult) -> str:
     for item in result.files:
         marker = "present" if item.exists else "missing"
         lines.append(f"- `{item.path}` — {marker}; {item.description}")
+    return "\n".join(lines)
+
+
+def format_prompt_validation_result(result: PromptValidationResult) -> str:
+    """Human-readable prompt override validation result."""
+    lines = [f"Prompt override validation for `{result.project_path}`:"]
+    checked = result.checked
+    if not checked:
+        lines.append(
+            f"\nNo supported prompt override files found under `{result.project_path / PROMPT_OVERRIDE_DIR}`; nothing to validate."
+        )
+        return "\n".join(lines)
+
+    lines.append("\nChecked:")
+    lines.extend(f"- `{item.path}`" for item in checked)
+
+    if result.diagnostics:
+        lines.append("\nErrors:")
+        lines.extend(
+            f"- {format_prompt_override_error(diagnostic.path, diagnostic.message)}"
+            for diagnostic in result.diagnostics
+        )
+    else:
+        lines.append("\nAll existing prompt overrides are valid.")
     return "\n".join(lines)

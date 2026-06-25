@@ -136,7 +136,10 @@ or `searxng`; use `FIRECRAWL_API_KEY`, `TAVILY_API_KEY`, or `SEARXNG_BASE_URL` a
 
 Projects can also override Kolega Code's base prompts with uppercase Markdown templates in
 `.kolega/prompts/`. Generate editable starters with Jinja replacement tags using `/prompts dump`
-in the TUI or `kolega-code prompts dump --project .` in a terminal.
+in the TUI or `kolega-code prompts dump --project .` in a terminal. To dump only selected
+starters, pass prompt names such as `coder`, `planning`, or `compaction` (filename aliases
+like `CODER.md` work too). Validate existing overrides with `/prompts validate` or
+`kolega-code prompts validate --project .`.
 
 ## Requirements
 

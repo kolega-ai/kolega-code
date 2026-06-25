@@ -38,6 +38,18 @@ kolega-code prompts dump --project .
 
 Both commands create any missing files in `.kolega/prompts/` from Kolega Code's current bundled/base prompts. Existing files are skipped by default so local edits are not overwritten.
 
+To dump only specific starter files, pass one or more prompt selectors:
+
+```text
+/prompts dump coder compaction
+```
+
+```bash
+kolega-code prompts dump coder compaction --project .
+```
+
+Supported selectors are `coder`, `planning`, `general`, `investigation`, `browser`, `compaction`, and `all`. Filename aliases are also accepted case-insensitively, so `CODER.md`, `coder.md`, and `CODER` all select the coder prompt.
+
 To overwrite existing files:
 
 ```text
@@ -46,6 +58,12 @@ To overwrite existing files:
 
 ```bash
 kolega-code prompts dump --project . --force
+```
+
+`--force` also works with selective dumps:
+
+```bash
+kolega-code prompts dump compaction --project . --force
 ```
 
 To see which overrides exist:
@@ -57,6 +75,18 @@ To see which overrides exist:
 ```bash
 kolega-code prompts list --project .
 ```
+
+To validate existing overrides before restarting or sharing a repository:
+
+```text
+/prompts validate
+```
+
+```bash
+kolega-code prompts validate --project .
+```
+
+Validation uses the same strict Jinja rendering check that runs during startup. Missing optional files are not errors. The terminal command exits `0` when all existing supported overrides are valid (or no overrides exist), and exits `1` when any override cannot render.
 
 Dumped files are editable Markdown templates. Environment values are written as Jinja tags, not frozen current values. For example:
 

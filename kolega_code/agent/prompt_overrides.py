@@ -47,6 +47,19 @@ class PromptOverride:
     content: str
 
 
+@dataclass(frozen=True)
+class PromptOverrideDiagnostic:
+    """A non-fatal validation problem found in a project-local prompt override."""
+
+    path: str
+    message: str
+
+
+def format_prompt_override_error(path: str, detail: object) -> str:
+    """Return the startup/validation message for a prompt override render error."""
+    return f"Could not render prompt override {path}: {detail}. Falling back to the default prompt."
+
+
 _OVERRIDE_ENV = SandboxedEnvironment(
     loader=None,
     undefined=jinja2.StrictUndefined,
@@ -94,6 +107,40 @@ class ProjectPromptOverrides:
     def load_compaction_system_prompt(self) -> Optional[PromptOverride]:
         """Return the Markdown template override for conversation compaction, if present."""
         return self._load(COMPACTION_PROMPT_FILE)
+
+    def validate_all(
+        self,
+        *,
+        context: PromptContext,
+        mode: AgentMode | str | None,
+        project_template_slug: Optional[str],
+        prompt_provider: Optional[PromptProvider] = None,
+    ) -> list[PromptOverrideDiagnostic]:
+        """Validate every supported prompt override template that exists.
+
+        Missing files, unreadable files, oversized files, and non-files follow
+        the same behavior as normal loading: they are ignored after any loader
+        warning. Existing supported files are rendered with the same strict
+        sandboxed Jinja environment used at runtime, and render failures are
+        returned as non-fatal diagnostics.
+        """
+        diagnostics: list[PromptOverrideDiagnostic] = []
+        filenames = tuple(AGENT_PROMPT_FILENAMES.values()) + (COMPACTION_PROMPT_FILE,)
+        for filename in dict.fromkeys(filenames):
+            override = self._load(filename)
+            if override is None:
+                continue
+            try:
+                render_prompt_override_source(
+                    override.content,
+                    context=context,
+                    mode=mode,
+                    project_template_slug=project_template_slug,
+                    prompt_provider=prompt_provider,
+                )
+            except Exception as exc:  # noqa: BLE001 - validation must never block startup
+                diagnostics.append(PromptOverrideDiagnostic(path=override.path, message=str(exc)))
+        return diagnostics
 
     def _load(self, filename: str) -> Optional[PromptOverride]:
         path = f"{PROMPT_OVERRIDE_DIR}/{filename}"

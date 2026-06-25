@@ -165,9 +165,70 @@ def test_malformed_coder_override_falls_back_to_default_prompt(tmp_path, caplog,
     assert "powerful AI coding assistant" in prompt
     assert "missing_variable" in caplog.text
     assert agent.prompt_override_errors
+    assert len(agent.prompt_override_errors) == 1
     assert "Could not render prompt override .kolega/prompts/CODER.md" in agent.prompt_override_errors[0]
     assert "Could not render prompt override .kolega/prompts/CODER.md" in captured.err
     assert "Falling back to the default prompt" in captured.err
+
+
+def test_inactive_prompt_override_syntax_error_is_reported_on_startup(tmp_path):
+    prompt_dir = tmp_path / ".kolega" / "prompts"
+    prompt_dir.mkdir(parents=True)
+    (prompt_dir / "GENERAL.md").write_text("{% if true %}missing endif", encoding="utf-8")
+
+    agent = CoderAgent(
+        project_path=tmp_path,
+        workspace_id="workspace-123",
+        thread_id="thread-123",
+        connection_manager=make_connection_manager(),
+        config=make_config(),
+        agent_mode=AgentMode.CLI,
+    )
+
+    prompt = agent.system_prompt.content[0].text
+    assert "powerful AI coding assistant" in prompt
+    assert len(agent.prompt_override_errors) == 1
+    assert "Could not render prompt override .kolega/prompts/GENERAL.md" in agent.prompt_override_errors[0]
+    assert "endif" in agent.prompt_override_errors[0]
+    assert "Falling back to the default prompt" in agent.prompt_override_errors[0]
+
+
+def test_inactive_prompt_override_unknown_variable_is_reported_on_startup(tmp_path):
+    prompt_dir = tmp_path / ".kolega" / "prompts"
+    prompt_dir.mkdir(parents=True)
+    (prompt_dir / "INVESTIGATION.md").write_text("{{ missing_variable }}", encoding="utf-8")
+
+    agent = CoderAgent(
+        project_path=tmp_path,
+        workspace_id="workspace-123",
+        thread_id="thread-123",
+        connection_manager=make_connection_manager(),
+        config=make_config(),
+        agent_mode=AgentMode.CLI,
+    )
+
+    assert len(agent.prompt_override_errors) == 1
+    assert "Could not render prompt override .kolega/prompts/INVESTIGATION.md" in agent.prompt_override_errors[0]
+    assert "missing_variable" in agent.prompt_override_errors[0]
+
+
+def test_literal_non_jinja_mangling_renders_without_validation_error(tmp_path):
+    prompt_dir = tmp_path / ".kolega" / "prompts"
+    prompt_dir.mkdir(parents=True)
+    (prompt_dir / "CODER.md").write_text("Project literal: { { context.project_path } }", encoding="utf-8")
+
+    agent = CoderAgent(
+        project_path=tmp_path,
+        workspace_id="workspace-123",
+        thread_id="thread-123",
+        connection_manager=make_connection_manager(),
+        config=make_config(),
+        agent_mode=AgentMode.CLI,
+    )
+
+    prompt = agent.system_prompt.content[0].text
+    assert "Project literal: { { context.project_path } }" in prompt
+    assert agent.prompt_override_errors == []
 
 
 def test_coder_override_satisfies_hosted_mode_without_private_template(tmp_path):

@@ -18,7 +18,8 @@ from kolega_code.llm.exceptions import (
 )
 from kolega_code.llm.models import Message, TextBlock, ToolCall, ToolResult
 from kolega_code.events import AgentEvent
-from kolega_code.agent.prompt_provider import AgentMode
+from kolega_code.agent.prompt_overrides import PROMPT_OVERRIDE_DIR
+from kolega_code.agent.prompt_provider import AgentMode, PromptContext, PromptProvider
 from kolega_code.cli.config import build_agent_config, config_summary
 from kolega_code.cli.provider_registry import (
     DEEPSEEK_DEFAULT_MODEL,
@@ -319,3 +320,103 @@ async def test_textual_app_question_recovers_focus_but_allows_free_form_answer(
 
         app._pending_question = None
         app._set_question_actions_visible(False)
+
+
+class PromptCommandFakeAgent:
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+        self.prompt_provider = PromptProvider()
+        self.agent_mode = AgentMode.CLI
+        self.project_template_slug = None
+        self.refresh_count = 0
+
+    def restore_message_history(self, history):
+        return None
+
+    def dump_compaction_state(self):
+        return {}
+
+    def restore_compaction_state(self, data):
+        pass
+
+    def dump_message_history(self):
+        return []
+
+    def build_prompt_context(self):
+        return PromptContext(
+            project_path=str(self.kwargs["project_path"]),
+            platform="TestOS",
+            date_today="2026-06-25",
+            model_name="test-model",
+        )
+
+    def refresh_system_prompt(self):
+        self.refresh_count += 1
+
+    async def cleanup(self):
+        return None
+
+
+@pytest.mark.asyncio
+async def test_textual_app_prompts_validate_posts_validation_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.widgets import ChatComposer
+
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", PromptCommandFakeAgent)
+    project = tmp_path / "project"
+    project.mkdir()
+    prompt_dir = project / PROMPT_OVERRIDE_DIR
+    prompt_dir.mkdir(parents=True)
+    (prompt_dir / "GENERAL.md").write_text("{{ missing_variable }}", encoding="utf-8")
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test():
+        composer = app.query_one("#composer", ChatComposer)
+        composer.load_text("/prompts validate")
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+
+        entry = app.conversation_entries[-1]
+        assert entry.kind == "system"
+        assert "Prompt override validation" in entry.content
+        assert "Could not render prompt override .kolega/prompts/GENERAL.md" in entry.content
+
+
+@pytest.mark.asyncio
+async def test_textual_app_prompts_dump_accepts_selected_prompts_and_force(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.widgets import ChatComposer
+
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", PromptCommandFakeAgent)
+    project = tmp_path / "project"
+    project.mkdir()
+    prompt_dir = project / PROMPT_OVERRIDE_DIR
+    prompt_dir.mkdir(parents=True)
+    coder = prompt_dir / "CODER.md"
+    coder.write_text("custom coder", encoding="utf-8")
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test():
+        composer = app.query_one("#composer", ChatComposer)
+        composer.load_text("/prompts dump coder --force")
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+
+        entry = app.conversation_entries[-1]
+        assert entry.kind == "system"
+        assert "Written:" in entry.content
+        assert "powerful AI coding assistant" in coder.read_text(encoding="utf-8")
+        assert not (prompt_dir / "PLANNING.md").exists()
+        assert app.agent.refresh_count == 1

@@ -45,7 +45,7 @@ from kolega_code.permissions import (
     permission_request_for_tool,
 )
 from .prompt_provider import PromptProvider, AgentMode, AgentType, PromptContext, PromptExtension
-from .prompt_overrides import ProjectPromptOverrides, render_prompt_override_source
+from .prompt_overrides import ProjectPromptOverrides, format_prompt_override_error, render_prompt_override_source
 from kolega_code.services.base import TerminalManager, BrowserManager
 from kolega_code.services.file_system import FileSystem
 from .tools import ToolCollection  # noqa: F401 - kept for tests and downstream monkeypatch compatibility
@@ -507,11 +507,38 @@ class BaseAgent(LogMixin):
             memories=self.workspace_memories,
         )
 
-    def _report_prompt_override_render_error(self, path: str, exc: Exception) -> None:
-        message = f"Could not render prompt override {path}: {exc}. Falling back to the default prompt."
+    def _prompt_override_error_message(self, path: str, detail: object) -> str:
+        return format_prompt_override_error(path, detail)
+
+    def _add_prompt_override_error(self, message: str, *, emit_stderr: bool = False) -> None:
+        if message in self.prompt_override_errors:
+            return
         self.prompt_override_errors.append(message)
         logger.warning(message)
-        print(f"kolega-code: {message}", file=sys.stderr)
+        if emit_stderr:
+            print(f"kolega-code: {message}", file=sys.stderr)
+
+    def _report_prompt_override_render_error(self, path: str, exc: Exception) -> None:
+        self._add_prompt_override_error(
+            self._prompt_override_error_message(path, exc),
+            emit_stderr=True,
+        )
+
+    def validate_prompt_overrides(
+        self,
+        *,
+        context: Optional[PromptContext] = None,
+        mode: Optional[AgentMode] = None,
+    ) -> None:
+        """Validate all supported project prompt override files and collect diagnostics."""
+        prompt_context = context or self.build_prompt_context()
+        for diagnostic in self.prompt_overrides.validate_all(
+            context=prompt_context,
+            mode=mode or self.agent_mode,
+            project_template_slug=self.project_template_slug,
+            prompt_provider=self.prompt_provider,
+        ):
+            self._add_prompt_override_error(self._prompt_override_error_message(diagnostic.path, diagnostic.message))
 
     def build_agent_system_prompt(self, agent_type: AgentType, mode: Optional[AgentMode] = None) -> str:
         """Build the final system prompt for an agent, honoring project overrides."""
@@ -535,6 +562,7 @@ class BaseAgent(LogMixin):
                     self.prompt_extensions,
                     context,
                 )
+                self.validate_prompt_overrides(context=context, mode=mode)
                 return "\n\n".join(part for part in (base, dynamic) if part)
 
         prompt = self.prompt_provider.get_system_prompt(
@@ -554,6 +582,7 @@ class BaseAgent(LogMixin):
                 context,
             )
             prompt = "\n\n".join(part for part in (prompt.strip(), dynamic) if part)
+        self.validate_prompt_overrides(context=context, mode=mode)
         return prompt
 
     def refresh_system_prompt(self) -> None:

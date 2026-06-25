@@ -15,7 +15,9 @@ from kolega_code.agent.prompt_dump import (
     dump_prompt_overrides,
     format_prompt_dump_result,
     format_prompt_list_result,
+    format_prompt_validation_result,
     list_prompt_overrides,
+    validate_prompt_overrides,
 )
 from kolega_code.hooks import HookDispatcher, HookEvent, load_hook_config
 from kolega_code.llm.exceptions import LLMBillingError, billing_error_message
@@ -236,10 +238,18 @@ def _build_subcommand_parser() -> argparse.ArgumentParser:
     prompts = subparsers.add_parser("prompts", help="Manage project prompt override files.")
     prompts_sub = prompts.add_subparsers(dest="prompts_command", required=True)
     prompts_dump = prompts_sub.add_parser("dump", help="Dump editable prompt override starter files.")
+    prompts_dump.add_argument(
+        "prompt_selectors",
+        nargs="*",
+        metavar="prompt",
+        help="Prompts to dump (coder, planning, general, investigation, browser, compaction, or all).",
+    )
     prompts_dump.add_argument("--project", default=".", type=Path, help="Project directory to write prompts into.")
     prompts_dump.add_argument("--force", action="store_true", help="Overwrite existing prompt override files.")
     prompts_list = prompts_sub.add_parser("list", help="List supported prompt override files.")
     prompts_list.add_argument("--project", default=".", type=Path, help="Project directory to inspect.")
+    prompts_validate = prompts_sub.add_parser("validate", help="Validate existing prompt override files.")
+    prompts_validate.add_argument("--project", default=".", type=Path, help="Project directory to inspect.")
 
     subparsers.add_parser("update", help="Update Kolega Code to the latest version.")
 
@@ -790,13 +800,21 @@ def _run_sessions(args: argparse.Namespace) -> int:
 def _run_prompts(args: argparse.Namespace) -> int:
     project_path = _validate_project(args.project)
     if args.prompts_command == "dump":
-        result = dump_prompt_overrides(project_path, force=bool(args.force))
+        result = dump_prompt_overrides(
+            project_path,
+            force=bool(args.force),
+            selectors=getattr(args, "prompt_selectors", None),
+        )
         print(format_prompt_dump_result(result))
         return 0 if result.ok else 1
     if args.prompts_command == "list":
         result = list_prompt_overrides(project_path)
         print(format_prompt_list_result(result))
         return 0
+    if args.prompts_command == "validate":
+        result = validate_prompt_overrides(project_path)
+        print(format_prompt_validation_result(result))
+        return 0 if result.ok else 1
     raise ValueError(f"Unknown prompts command: {args.prompts_command}")
 
 
