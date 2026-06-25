@@ -48,6 +48,39 @@ def test_parse_default_command_as_tui() -> None:
     assert args.show_logs is False
 
 
+def test_parse_explicit_tui_subcommand() -> None:
+    args = parse_args(["tui", "/tmp/project"])
+
+    assert args.command == "tui"
+    assert args.project_path == Path("/tmp/project")
+    assert args.mode == CLI_AGENT_MODE
+
+
+@pytest.mark.parametrize("flag", ["--help", "-h"])
+def test_root_help_uses_generated_command_help(flag: str, capsys) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        main([flag])
+
+    assert exc_info.value.code == 0
+    output = capsys.readouterr().out
+    assert "usage: kolega-code" in output
+    assert "commands:" in output
+    for command in ["ask", "sessions", "doctor", "prompts", "update", "tui"]:
+        assert command in output
+
+
+def test_explicit_tui_help_shows_tui_arguments(capsys) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        main(["tui", "--help"])
+
+    assert exc_info.value.code == 0
+    output = capsys.readouterr().out
+    assert "usage: kolega-code tui" in output
+    assert "project_path" in output
+    assert "--resume" in output
+    assert "--permission-mode" in output
+
+
 def test_parse_tui_show_logs_flag() -> None:
     args = parse_args(["/tmp/project", "--show-logs"])
 

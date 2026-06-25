@@ -56,7 +56,7 @@ from .skills import (
 )
 from .updater import check_for_update, run_self_update, update_status_message
 
-SUBCOMMANDS = {"ask", "sessions", "doctor", "update", "prompts"}
+SUBCOMMANDS = {"ask", "sessions", "doctor", "update", "prompts", "tui"}
 RESUME_LATEST = "__latest__"
 CLI_AGENT_MODE = AgentMode.CLI.value
 ASK_DEFAULT_PERMISSION_MODE = PermissionMode.AUTO.value
@@ -89,6 +89,8 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
             return _run_prompts(args)
         if args.command == "update":
             return _run_update()
+        if args.command == "tui":
+            return _run_tui(args)
         return _run_tui(args)
     except (CliConfigError, SessionStoreError, SettingsStoreError, ValueError) as exc:
         _print_styled(f"kolega-code: {exc}", style="error", stderr=True)
@@ -128,6 +130,8 @@ def _print_styled(text: str, style: Optional[str] = None, stderr: bool = False) 
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
+    if argv and argv[0] in {"--help", "-h"}:
+        return _build_subcommand_parser().parse_args(argv)
     if argv and argv[0] in SUBCOMMANDS:
         return _build_subcommand_parser().parse_args(argv)
     return _build_tui_parser().parse_args(argv)
@@ -150,9 +154,7 @@ def _add_session_args(parser: argparse.ArgumentParser, session_help: str = "Sess
     parser.add_argument("--session", help=session_help)
 
 
-def _build_tui_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="kolega-code", description="Run the Kolega Code Textual CLI.")
-    parser.set_defaults(command="tui")
+def _add_tui_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--version", action="store_true", help="Show the Kolega Code version.")
     parser.add_argument("project_path", nargs="?", default=".", type=Path, help="Project directory to work in.")
     parser.add_argument(
@@ -180,12 +182,26 @@ def _build_tui_parser() -> argparse.ArgumentParser:
     )
     _add_session_args(parser, session_help="Legacy alias for --resume THREAD_ID.")
     _add_common_model_args(parser)
+
+
+def _build_tui_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="kolega-code", description="Run the Kolega Code Textual CLI.")
+    parser.set_defaults(command="tui")
+    _add_tui_args(parser)
     return parser
 
 
 def _build_subcommand_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="kolega-code", description="Kolega Code CLI.")
-    subparsers = parser.add_subparsers(dest="command", required=True)
+    parser = argparse.ArgumentParser(
+        prog="kolega-code",
+        description="Kolega Code CLI. Run without a command to start the interactive TUI.",
+    )
+    parser.add_argument("--version", action="store_true", help="Show the Kolega Code version.")
+    subparsers = parser.add_subparsers(dest="command", required=True, title="commands", metavar="command")
+
+    tui = subparsers.add_parser("tui", help="Run the interactive Textual CLI.")
+    tui.set_defaults(command="tui")
+    _add_tui_args(tui)
 
     ask = subparsers.add_parser("ask", help="Run a single prompt and print the answer.")
     ask.add_argument("prompt", help="Prompt to send to Kolega Code.")
