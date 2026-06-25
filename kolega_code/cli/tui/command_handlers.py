@@ -52,6 +52,7 @@ class CommandHandlersMixin:
             "/logout": self._command_logout,
             "/gigacode": self._command_gigacode,
             "/prompts": self._command_prompts,
+            "/queue-clear": self._command_queue_clear,
             "/theme": self._command_theme,
             "/copy": self._command_copy,
             "/version": self._command_version,
@@ -806,6 +807,12 @@ class CommandHandlersMixin:
         content = "\n".join(lines)
         self._add_conversation_entry(tui_state.ConversationEntry(kind="system", content=content))
         self._notify_user(lines[0], severity=severity)
+
+    async def _command_queue_clear(self, args: str) -> None:
+        count = self._clear_queued_messages()
+        message = messages.QUEUE_CLEARED.format(count=count)
+        self._add_conversation_entry(tui_state.ConversationEntry(kind="system", content=message))
+        self._notify_user(message)
 
     async def _command_quit(self, args: str) -> None:
         await self.action_quit()
