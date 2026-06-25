@@ -6,6 +6,28 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.10.0 - 2026-06-25
+
+### Added
+
+- Added a session changes inspector to the TUI that shows git diffs for the
+  current session, renders added files as diffs, presents an empty state, and
+  hides captured edit events.
+- Added project prompt overrides, including variable rendering, override status
+  shown at startup, validation, and selective dump support.
+
+### Fixed
+
+- Preserved Ollama Cloud reasoning provider metadata.
+- Ignored project `.dotenv` files when loading model config.
+- Stabilized terminal rendering artifacts in the TUI.
+- Restored the generated root CLI help.
+- Surfaced prompt override render errors.
+
+### Changed
+
+- Split the LLM specs module into a package for maintainability.
+
 ## 0.9.0 - 2026-06-24
 
 ### Added
