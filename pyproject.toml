@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "kolega-code"
 version = "0.10.0"
-description = "Local-first AI coding agent for the terminal"
+description = "Multi-agent coding in the terminal"
 readme = "README.md"
 license = {file = "LICENSE"}
 requires-python = ">=3.11"

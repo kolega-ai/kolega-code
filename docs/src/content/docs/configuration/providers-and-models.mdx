@@ -8,6 +8,10 @@ import { Aside, Steps } from '@astrojs/starlight/components';
 Kolega Code is provider-agnostic. You choose which LLM provider to use and which
 model to use for each of several **roles**.
 
+Provider breadth is table stakes; Kolega Code's extra control is assigning models by
+operational role and by agent role, so cheap/fast models can investigate while
+stronger models plan, build, or think.
+
 ## Supported providers
 
 The agent runtime recognizes these providers:
@@ -51,7 +55,7 @@ with thinking effort `auto` (enabled) requests route to **K2.7 Code**, and with 
 OpenAI-compatible API at `https://ollama.com/v1` with `OLLAMA_API_KEY`. Kolega
 Code uses the direct API model IDs returned by Ollama, such as **`glm-5.2`** and
 **`gpt-oss:120b`**, rather than local Ollama aliases such as `:cloud` or
-`-cloud`. Ollama may deprecate or retire older cloud models, so the supported
+`-cloud`. Ollama may deprecate or retire older cloud models, so Kolega Code's supported
 model catalog should be refreshed periodically from Ollama's model library/API.
 </Aside>
 
@@ -165,7 +169,7 @@ Thinking effort is model-specific. Kolega Code validates the selected value
 against the active model and resets it to the new model's default when you switch
 models in the TUI.
 
-| Provider/model | Values | Kolega default |
+| Provider/model | Values | Kolega Code default |
 | --- | --- | --- |
 | Anthropic `claude-opus-4-7` | `low`, `medium`, `high`, `xhigh`, `max` | `medium` |
 | DeepSeek `deepseek-v4-pro` | `none`, `high`, `max` | `high` |

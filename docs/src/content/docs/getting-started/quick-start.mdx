@@ -5,7 +5,9 @@ description: Launch Kolega Code, pick a model, and run your first session.
 
 import { Steps, Aside } from '@astrojs/starlight/components';
 
-This walks you from a fresh install to a working session in a few minutes.
+This gets a repo into a working Kolega Code session: pick a provider, verify local
+permissions, try a normal turn, then use Plan mode or Gigacode when the task is
+broad enough to benefit from fan-out.
 
 <Steps>
 
@@ -49,18 +51,31 @@ This walks you from a fresh install to a working session in a few minutes.
    - Run a command with `/` — e.g. `/help`, `/model`, `/context`.
    - Insert a newline without sending with `Shift+Enter`.
 
-4. **Plan before a bigger change.**
+4. **Turn on Gigacode for broad work.**
+
+   For tasks that are too wide for one serial agent pass — audits across many
+   packages, large migrations, adversarial reviews, or independent implementation
+   chunks — enable orchestration:
+
+   ```text
+   /gigacode on
+   ```
+
+   Once enabled, Kolega Code decides when a request is broad enough to fan out into a
+   workflow. Focused edits still run directly.
+
+5. **Use Plan mode when you want a read-only pass first.**
 
    Press `Shift+Tab` to switch to **Plan mode**. The agent works read-only and
    proposes a plan in the **Planning** tab. When it submits a complete plan,
    choose whether to implement it or keep discussing.
 
-5. **Build it.**
+6. **Build it.**
 
    Press `Shift+Tab` again to return to **Build mode** and let the agent
    implement the plan, updating the shared task list as it goes.
 
-6. **Save and exit.**
+7. **Save and exit.**
 
    Press `Ctrl+Q` (or run `/quit`) to save the session and exit. Resume later
    with:
@@ -84,6 +99,7 @@ Add `--save` to keep the session, or `--json` for machine-readable output. See
 
 ## Where to go next
 
+- [Gigacode](../../gigacode/) — multi-agent workflow orchestration for fan-out work.
 - [Build & Plan Modes](../../tui/modes/) — how the two modes differ.
 - [Chat Composer](../../tui/composer/) — `@` mentions, `/` commands, and keys.
 - [Slash Commands](../../tui/slash-commands/) — the full command reference.

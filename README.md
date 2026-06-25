@@ -1,6 +1,6 @@
 # Kolega Code
 
-**An AI coding agent that runs in your terminal — local-first, model-agnostic, plan-then-build.**
+**Multi-agent coding in the terminal.**
 
 [![PyPI version](https://img.shields.io/pypi/v/kolega-code)](https://pypi.org/project/kolega-code/)
 [![Python versions](https://img.shields.io/pypi/pyversions/kolega-code)](https://pypi.org/project/kolega-code/)
@@ -10,41 +10,64 @@
 [![Docs](https://img.shields.io/badge/docs-kolega--ai.github.io-blue)](https://kolega-ai.github.io/kolega-code/)
 [![Changelog](https://img.shields.io/badge/changelog-keep%20up-blue)](CHANGELOG.md)
 
-Point Kolega Code at a project directory and it opens an interactive UI where you talk to an
-agent that can read and edit your code, run shell commands, search the codebase, browse the
-web, and dispatch specialized sub-agents to get work done.
-
-It's **local-first**: the agent operates on your actual filesystem and terminal, and your
-sessions, settings, and API keys stay on your own machine.
+Kolega Code is a local-first terminal coding agent built for work that is too wide
+for one loop: fan out specialized sub-agents with **Gigacode**, route different
+models to different jobs, search the web, drive a browser, and keep sessions,
+settings, permissions, and credentials on your machine.
 
 ![Kolega Code in action](docs/src/assets/demo.gif)
 
-## Why Kolega Code
+## Built for work one agent cannot cover
 
-- **Plans before it builds.** A read-only **Plan mode** produces a reviewable plan and a
-  shared task list before anything changes; **Build mode** implements it. Toggle with `Shift+Tab`.
-- **Orchestrates many agents.** For larger jobs, the main agent dispatches specialized
-  sub-agents (investigation, browser, coding, general) and can fan them out in parallel for
-  broad audits, large migrations, or implementing a plan's independent parts at once.
-- **Local-first by design.** It works on your real files and terminal; sessions, settings,
-  and credentials live on your machine, not in someone else's cloud.
-- **Bring your own model.** Talks to a range of providers and lets you assign different models
-  to different roles.
+Most terminal agents are strongest when one model can reason through one task at a
+time. Kolega Code keeps that familiar workflow, then adds orchestration for broad work:
+large audits, sweeping migrations, cross-file checks, adversarial reviews, and
+implementation plans whose pieces can run independently.
 
-## What it does
+With [Gigacode](https://kolega-ai.github.io/kolega-code/gigacode/), Kolega Code can:
 
-- **Reads and edits your code.** Opens files, searches across the codebase, creates new files,
-  and applies precise edits.
-- **Runs commands.** Executes shell commands and watches their output in a dedicated terminal view.
-- **Plans before it builds.** Plan mode investigates and proposes; Build mode executes.
-- **Searches and browses the web.** The agent can search for relevant pages, fetch URLs
-  directly, or use the built-in browser agent (powered by Playwright) when a task needs
-  site interaction.
-- **Dispatches sub-agents.** Hands work off to specialized agents and tracks their activity live.
-- **Orchestrates workflows.** With [gigacode](https://kolega-ai.github.io/kolega-code/gigacode/),
-  it fans out many sub-agents in parallel.
-- **Works non-interactively too.** Run a single prompt with `kolega-code ask`, get JSON output,
-  and save or resume sessions.
+- **Fan out many sub-agents at once.** Split a wide codebase review by package,
+  assign independent implementation tasks, or run checks across many directories in
+  parallel.
+- **Use real workflow shapes.** The agent can generate parallel phases, pipelines,
+  loops, judge panels, and synthesis steps instead of only delegating one task at a
+  time.
+- **Keep orchestration visible.** Workflow phase headers and progress lines appear
+  in the transcript; the sub-agent inspector shows each agent's live trajectory.
+- **Save inspectable artifacts.** Each run keeps the generated workflow script,
+  result files, a Markdown transcript, raw JSONL, a resume journal, and debug
+  sub-agent transcripts under Kolega Code's state directory.
+- **Run in either mode.** In Plan mode, workflow sub-agents stay read-only for
+  parallel investigation. In Build mode, they can use the full coding toolset.
+- **Resume interrupted runs.** Finished workflow steps are journaled so a deliberate
+  resume does not have to restart the whole fan-out.
+
+Use normal chat for focused changes. Turn on Gigacode when the problem is broad
+enough that one serial agent pass would be the bottleneck.
+
+## Features
+
+- **Gigacode orchestration:** parallel, pipelined, looped, judged, and synthesized
+  multi-agent workflows with saved artifacts and resume support.
+- **Specialized sub-agents:** planning, building/coder, investigation, general, and
+  browser agents, with live activity tracking in the TUI.
+- **Repo tools:** read and search code, create files, apply precise edits, and inspect
+  session changes/diffs.
+- **Terminal execution:** run shell commands with streamed output and project-level
+  permission controls.
+- **Plan/build workflow:** use read-only Plan mode for investigation and a reviewable
+  task list, then Build mode to implement.
+- **Web search and browsing:** DuckDuckGo works by default with no key; Firecrawl,
+  Tavily, and SearXNG are configurable search backends. Kolega Code can also fetch URLs
+  directly and use a Playwright-powered browser agent for interactive sites.
+- **Model routing:** choose provider/model combinations, set thinking effort, split
+  long-context/fast/thinking roles, and override models per agent role.
+- **Interactive or scriptable:** use the Textual TUI, run `kolega-code ask`, request
+  JSON output, list/export/resume sessions, and diagnose setup with `doctor`.
+- **Extensibility:** add agent skills, override prompts with project templates, run
+  lifecycle hooks, and persist project permission rules.
+- **Local-first state:** sessions, settings, permissions, OAuth tokens, and API-key
+  settings stay on your machine with restrictive permissions where applicable.
 
 ## Quick start
 
@@ -73,8 +96,9 @@ kolega-code --version
 kolega-code .
 ```
 
-**3. Add a provider key.** Open the **Settings** tab to pick a provider and model and save your
-API key. Then press `Shift+Tab` anytime to switch between **Plan** and **Build** mode.
+**3. Add a provider key.** Open the **Settings** tab to pick a provider/model and
+save your API key. Use `Shift+Tab` to switch between **Plan** and **Build** mode,
+or run `/gigacode on` when a task is broad enough for fan-out.
 
 Resume a previous conversation:
 
@@ -87,7 +111,7 @@ kolega-code . --resume <id>       # a specific thread or session
 
 | Mode | Command | Best for |
 | --- | --- | --- |
-| **Interactive TUI** | `kolega-code .` | Day-to-day development, exploration, pair-programming |
+| **Interactive TUI** | `kolega-code .` | Day-to-day development, exploration, orchestration |
 | **One-shot** | `kolega-code ask "…"` | Scripting, automation, quick questions, CI |
 
 There are also helper commands for managing sessions and checking your setup:
@@ -98,25 +122,60 @@ kolega-code sessions list --project .
 kolega-code doctor --project .
 ```
 
-## Bring your own model
+## Supported providers
 
-Kolega Code talks to a range of LLM providers — including Anthropic, OpenAI, Google, Moonshot,
-and DeepSeek — and lets you assign **different models to different roles**: a strong
-long-context model for coding, a fast cheap model for small utility calls, and one for extended
-"thinking". See [Providers & Models](https://kolega-ai.github.io/kolega-code/configuration/providers-and-models/).
+Kolega Code supports a broad model-provider catalog and lets you route models by
+role instead of forcing one model to do every job.
+
+Supported model providers:
+
+- Anthropic
+- OpenAI API
+- OpenAI via ChatGPT subscription sign-in
+- Google
+- Groq
+- Together.ai
+- Fireworks.ai
+- xAI / Grok
+- DashScope / Qwen
+- Moonshot / Kimi
+- DeepSeek
+- Z.AI / GLM Coding Plan
+- Kimi Coding Plan
+- Ollama Cloud
+- local Llama
+
+Supported web-search backends:
+
+- DuckDuckGo — default, no key required
+- Firecrawl
+- Tavily
+- SearXNG — self-hosted option
+
+See [Providers & Models](https://kolega-ai.github.io/kolega-code/configuration/providers-and-models/)
+for model IDs, role configuration, API-key variables, and thinking-effort options.
+
+## Model routing
+
+Kolega Code can assign different models to different operational roles: a strong
+long-context model for the main coding loop, a faster model for utility calls, and
+a dedicated model for extended thinking. You can also override models per agent
+role — planning, building, investigation, general, and browser — so wide workflows
+can use cheaper models where they fit and stronger models where they matter.
 
 ## Sign in with ChatGPT
 
-If you have a paid **ChatGPT** plan (Plus, Pro, or Business), you can use it to run OpenAI models
-instead of a separate API key. Run `/login chatgpt` in the TUI, complete the browser sign-in, and
-Kolega Code switches to the **OpenAI (ChatGPT subscription)** provider (default `gpt-5.5`). Tokens are
-stored locally (chmod `600`) and refreshed automatically; `/logout chatgpt` removes them. See
+If you have a paid **ChatGPT** plan (Plus, Pro, or Business), you can use it to run
+OpenAI models instead of a separate API key. Run `/login chatgpt` in the TUI,
+complete the browser sign-in, and Kolega Code switches to the **OpenAI (ChatGPT
+subscription)** provider (default `gpt-5.5`). Tokens are stored locally (chmod
+`600`) and refreshed automatically; `/logout chatgpt` removes them. See
 [Sign in with ChatGPT](https://kolega-ai.github.io/kolega-code/configuration/sign-in-with-chatgpt/).
 
 ## Configuration
 
-Set your provider, model, and API keys from the **Settings** tab in the UI, or via environment
-variables and flags for non-interactive use:
+Set your provider, model, and API keys from the **Settings** tab in the UI, or via
+environment variables and flags for non-interactive use:
 
 ```bash
 export KOLEGA_CODE_PROVIDER=deepseek
@@ -124,27 +183,28 @@ export DEEPSEEK_API_KEY=...
 kolega-code ask "summarize this repository" --project . --provider deepseek --model deepseek-v4-pro
 ```
 
-API key variables only provide credentials — pick a provider/model explicitly or save one in
-Settings. Local session state lives under your platform's state directory unless
-`KOLEGA_CODE_STATE_DIR` is set. See the
+API key variables only provide credentials — pick a provider/model explicitly or
+save one in Settings. Local session state lives under your platform's state
+directory unless `KOLEGA_CODE_STATE_DIR` is set. See the
 [Configuration docs](https://kolega-ai.github.io/kolega-code/configuration/settings-and-api-keys/)
 for the full story.
 
-The `web_search` tool uses DuckDuckGo by default without a key. To choose another backend,
-set it in **Settings** or export `KOLEGA_CODE_WEB_SEARCH_BACKEND` as `firecrawl`, `tavily`,
-or `searxng`; use `FIRECRAWL_API_KEY`, `TAVILY_API_KEY`, or `SEARXNG_BASE_URL` as needed.
+The `web_search` tool uses DuckDuckGo by default without a key. To choose another
+backend, set it in **Settings** or export `KOLEGA_CODE_WEB_SEARCH_BACKEND` as
+`firecrawl`, `tavily`, or `searxng`; use `FIRECRAWL_API_KEY`, `TAVILY_API_KEY`, or
+`SEARXNG_BASE_URL` as needed.
 
-Projects can also override Kolega Code's base prompts with uppercase Markdown templates in
-`.kolega/prompts/`. Generate editable starters with Jinja replacement tags using `/prompts dump`
-in the TUI or `kolega-code prompts dump --project .` in a terminal. To dump only selected
-starters, pass prompt names such as `coder`, `planning`, or `compaction` (filename aliases
-like `CODER.md` work too). Validate existing overrides with `/prompts validate` or
-`kolega-code prompts validate --project .`.
+Projects can override Kolega Code's base prompts with uppercase Markdown templates
+in `.kolega/prompts/`. Generate editable starters with Jinja replacement tags using
+`/prompts dump` in the TUI or `kolega-code prompts dump --project .` in a terminal.
+To dump only selected starters, pass prompt names such as `coder`, `planning`, or
+`compaction` (filename aliases like `CODER.md` work too). Validate existing
+overrides with `/prompts validate` or `kolega-code prompts validate --project .`.
 
 ## Requirements
 
 - **Python 3.11+**
-- An **API key** for at least one supported provider
+- An **API key**, ChatGPT sign-in, or local model for at least one supported model provider
 - A terminal that supports a modern TUI (most do)
 
 ## Documentation
@@ -167,9 +227,9 @@ Full documentation lives at **[kolega-ai.github.io/kolega-code](https://kolega-a
 
 ## Contributing
 
-Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for local setup, running the
-test suite, and building the docs site. Please report security issues privately per
-[SECURITY.md](SECURITY.md).
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for local setup,
+running the test suite, and building the docs site. Please report security issues
+privately per [SECURITY.md](SECURITY.md).
 
 ## License
 
