@@ -1,60 +1,90 @@
 ---
 title: Introduction
-description: What Kolega Code is, what it does, and who it's for.
+description: Multi-agent terminal coding with local state, model routing, web search, and browser automation.
 ---
 
-**Kolega Code** is an AI coding agent that runs in your terminal. You point it at
-a project directory, and it opens an interactive UI where you can talk to an agent
-that can read and edit your code, run shell commands, search the codebase, browse
-the web, and dispatch specialized sub-agents to get work done.
+**Multi-agent coding in the terminal.**
 
-It's **local-first**: the agent operates on your actual filesystem and terminal,
-and your sessions, settings, and API keys are stored on your own machine.
+Kolega Code is for developers who already know the terminal-agent workflow and
+want more control when the work gets wide: Gigacode fan-out, observable
+sub-agents, local sessions and credentials, per-role model routing, web search,
+and browser automation.
 
-## What it does
+Point it at a project and use it like a normal coding agent for focused work. When
+a task needs breadth — auditing many packages, migrating a large surface area,
+running competing reviews, or implementing independent chunks — Kolega Code can split
+that work across specialized agents and synthesize the results.
 
-- **Reads and edits your code.** The agent can open files, search across the
-  codebase, create new files, and apply precise edits.
-- **Runs commands.** It can execute shell commands and watch their output, with a
-  dedicated terminal view in the UI.
-- **Plans before it builds.** A read-only **Plan mode** produces a reviewable plan
-  and a shared task list; **Build mode** implements it.
-- **Searches and browses the web.** The agent can search for relevant pages,
-  fetch URLs directly, or use the built-in browser agent (powered by Playwright)
-  when a task needs site interaction.
-- **Dispatches sub-agents.** For larger tasks, the main agent can hand off to
-  specialized agents (investigation, browser, coding, general) and track their
-  activity live.
-- **Orchestrates workflows.** With [gigacode](gigacode/), the agent can fan out
-  many sub-agents in parallel — for broad audits, large migrations, or
-  implementing a plan's independent parts at once.
-- **Works non-interactively too.** Run a single prompt with
-  [`kolega-code ask`](cli/ask/), get JSON output, and save or resume
-  sessions.
+## Built for fan-out work
+
+[Gigacode](gigacode/) is Kolega Code's multi-agent workflow layer. When enabled, the
+agent can write and run small workflows that launch many sub-agents in parallel,
+pipe work through phases, loop over sets of files or modules, and collect the
+results into a final answer.
+
+Use it for work such as:
+
+- Auditing every package, module, or service area in parallel.
+- Running migration checks across many directories.
+- Assigning independent implementation tasks after a plan is agreed.
+- Running several review agents against the same change and synthesizing
+  disagreements.
+- Pairing browser or investigation agents with code agents when external research
+  and repo inspection both matter.
+
+Workflow runs are visible in the TUI, produce saved artifacts, and can be resumed
+instead of restarted when intentionally continuing an interrupted run.
+
+## Feature map
+
+- **Gigacode orchestration:** parallel phases, pipelines, loops, judge panels,
+  synthesis, saved artifacts, and resume support.
+- **Specialized sub-agents:** planning, building/coder, investigation, general,
+  and browser agents with live activity tracking.
+- **Repo and terminal tools:** read/search/edit files, create files, inspect
+  diffs/session changes, and run shell commands with streamed output.
+- **Web search and browsing:** DuckDuckGo works by default with no key; Firecrawl,
+  Tavily, and SearXNG are configurable backends. Kolega Code can fetch URLs directly or
+  drive a Playwright browser for interactive sites.
+- **Provider and model routing:** choose supported providers/models, configure
+  thinking effort, split long-context/fast/thinking roles, and override models per
+  agent role.
+- **Local-first state:** sessions, settings, project permissions, OAuth tokens, and
+  API-key settings stay on your machine.
+- **Plan/build workflow:** use read-only Plan mode for investigation and a
+  reviewable task list, then Build mode to edit and test.
+- **Interactive or scriptable:** use the TUI for day-to-day work or
+  [`kolega-code ask`](cli/ask/) with JSON output for automation.
+- **Extensibility:** package reusable workflows as [Agent Skills](skills/), adjust
+  prompts with project overrides, and run lifecycle hooks.
 
 ## Two ways to use it
 
 | Mode | Command | Best for |
 | --- | --- | --- |
-| **Interactive TUI** | `kolega-code .` | Day-to-day development, exploration, pair-programming |
+| **Interactive TUI** | `kolega-code .` | Day-to-day development, exploration, orchestration |
 | **One-shot** | `kolega-code ask "…"` | Scripting, automation, quick questions, CI |
 
 There are also helper commands for managing
 [sessions](cli/sessions/) and checking your
 [configuration](cli/doctor/).
 
-## Bring your own model
+## Supported providers
 
-Kolega Code talks to a range of LLM providers — including Anthropic, OpenAI,
-Google, Moonshot, and DeepSeek — and lets you assign **different models to
-different roles** (a strong long-context model for coding, a fast cheap model for
-small utility calls, and one for extended "thinking"). See
+Kolega Code supports Anthropic, OpenAI API, OpenAI via ChatGPT subscription
+sign-in, Google, Groq, Together.ai, Fireworks.ai, xAI/Grok, DashScope/Qwen,
+Moonshot/Kimi, DeepSeek, Z.AI/GLM Coding Plan, Kimi Coding Plan, Ollama Cloud, and
+local Llama.
+
+Provider breadth is only part of the control surface: Kolega Code can assign different
+models to the long-context, fast, and thinking roles, and can also override models
+for planning, building, investigation, general, and browser agents. See
 [Providers & Models](configuration/providers-and-models/).
 
 ## What you need
 
 - **Python 3.11+**
-- An **API key** for at least one supported provider
+- An **API key**, ChatGPT sign-in, or local model for at least one supported model provider
 - A terminal that supports a modern TUI (most do)
 
 ## Install
@@ -83,5 +113,6 @@ methods, and upgrade/uninstall commands.
 
 ## Next steps
 
-Once you're installed and have a provider key set, head to the
-[Quick Start](getting-started/quick-start/) to run your first session.
+Once you're installed and have a provider configured, head to the
+[Quick Start](getting-started/quick-start/) to run your first session and try a
+Gigacode-ready workflow.

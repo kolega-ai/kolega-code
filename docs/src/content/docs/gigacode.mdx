@@ -5,21 +5,41 @@ description: Dynamic multi-agent workflow orchestration — fan out many sub-age
 
 import { Aside } from '@astrojs/starlight/components';
 
-**Gigacode** lets the agent take on work that's too big for a single pass by
-**orchestrating many sub-agents at once**. When it's enabled and a task calls for
-it, the agent writes a small workflow that fans sub-agents out in parallel,
-pipelines them, or loops over them — then collects the results.
+**Gigacode** is Kolega Code's answer to coding work that is too wide for a single agent
+loop. Instead of asking one model to serially inspect a whole repo, Kolega Code can
+launch many focused sub-agents, run them in phases, and synthesize their results.
 
-It's built for work that's wide rather than deep:
+It's built for work where breadth matters:
 
-- Broad audits and multi-file reviews.
-- Large migrations or mechanical changes spread across many files.
-- Judge panels and adversarial verification, where several agents cross-check each
-  other.
-- Implementing a plan whose parts are independent, in parallel.
+- Audit every package, module, or service area in parallel.
+- Run migration checks across many directories.
+- Assign independent implementation tasks after a plan is agreed.
+- Run several review agents against the same change and synthesize disagreements.
+- Use browser or investigation agents for external research while code agents
+  inspect the repo.
 
 For a quick question or a small, focused edit, the agent just does it directly —
-gigacode is for genuine fan-out.
+Gigacode is for genuine fan-out.
+
+## What Gigacode adds
+
+When it's enabled and a task calls for it, the agent writes a small workflow that
+can:
+
+- **Run parallel phases** — launch many sub-agents at once, wait for their results,
+  then synthesize.
+- **Pipeline work** — send each package, directory, or topic through a sequence of
+  stages independently.
+- **Loop over broad surfaces** — repeat a focused agent task across a list of files,
+  modules, services, issues, or review targets.
+- **Run judge panels** — ask several agents to evaluate a change or plan from
+  different angles, then reconcile disagreements.
+- **Preserve artifacts** — save the workflow script, result files, transcripts, raw
+  JSONL, and resume journal so the run is inspectable after the fact.
+
+This is the main difference from ordinary one-off delegation: the agent can design
+a workflow, execute the wide parts concurrently, and return with the aggregate
+result.
 
 ## Turning it on
 
@@ -49,6 +69,7 @@ The `run_workflow` result is a compact artifact manifest. It includes paths like
 should read those main files and avoid reading individual sub-agent transcripts.
 Raw and per-agent debug artifacts may exist under the run directory for explicit
 workflow debugging.
+
 The agent should read those paths first — not re-run the workflow just to recover
 output text.
 

@@ -3,9 +3,13 @@ title: Architecture
 description: A high-level look at how Kolega Code works under the hood.
 ---
 
-You don't need to know the internals to use Kolega Code, but a mental model helps
-when you're debugging behavior or extending it. This is a light overview — not an
-API reference.
+A terminal agent loop with tools is the baseline. Kolega Code keeps that loop, then
+adds the pieces that matter for wider work: mode boundaries, evented local
+execution, specialized sub-agent dispatch, role-specific models, and
+[Gigacode](../../gigacode/) workflow orchestration.
+
+You don't need the internals for everyday use, but this mental model helps when
+you're debugging behavior, choosing models, or deciding when a task should fan out.
 
 ## The agent loop
 
@@ -38,12 +42,31 @@ work — investigating the codebase, driving a browser, or handling a self-conta
 coding task — and track their progress. Different agent types expose different
 toolsets. See [Agents](../agents/).
 
+Sub-agents are useful one at a time, but they become more powerful when a task can
+be split across independent workstreams. That's what Gigacode automates.
+
+## Gigacode workflows
+
+With [Gigacode](../../gigacode/) enabled, Kolega Code can write a small workflow that
+launches many sub-agents, organizes them into phases, and synthesizes their
+results. Workflows can run broad audits, migration checks, implementation batches,
+or review panels without forcing one model to do every step serially.
+
+Workflow runs are evented like normal agent work, so the TUI can show phase
+progress and sub-agent activity. They also save artifacts — result files,
+transcripts, raw JSONL, and a resume journal — under Kolega Code's state directory.
+
 ## Models per role
 
 A single turn may use more than one model. The main reasoning runs on the
 **long-context** model, small utility calls use the **fast** model, and extended
 reasoning uses the **thinking** model. You control each independently — see
 [Providers & Models](../../configuration/providers-and-models/).
+
+Kolega Code can also override models per agent role: planning, building, investigation,
+general, and browser. This lets wide workflows put cheaper or faster models on
+routine investigation while reserving stronger models for implementation or
+synthesis.
 
 ## Local execution
 
@@ -53,5 +76,6 @@ Kolega Code runs against your real environment:
 - **Terminal** — runs shell commands and streams their output.
 - **Browser** — automates a real browser (via Playwright) for web tasks.
 
-Sessions and settings are persisted locally. This local-first design is what makes
-the agent useful for real development work rather than a sandboxed demo.
+Sessions, settings, permissions, and credentials are persisted locally. That local
+state is what lets Kolega Code operate on a real development workspace while preserving
+resumable sessions and project-specific controls.

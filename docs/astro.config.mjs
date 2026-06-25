@@ -13,8 +13,8 @@ export default defineConfig({
     starlight({
       title: "Kolega Code",
       description:
-        "A local-first, terminal AI coding agent. Plan, build, and ship from your CLI.",
-      // The Kolega "</>" mark, alongside the "Kolega Code" wordmark in the nav.
+        "Multi-agent terminal coding with local state, model routing, web search, and browser automation.",
+      // The company "</>" mark, alongside the "Kolega Code" wordmark in the nav.
       logo: {
         light: "./src/assets/kolega-light.svg",
         dark: "./src/assets/kolega-dark.svg",
