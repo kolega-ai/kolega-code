@@ -197,6 +197,27 @@ async def test_changes_inspector_header_owns_path_and_counts_body_is_just_diff(
 
 
 @pytest.mark.asyncio
+async def test_git_project_opens_empty_changes_inspector_when_no_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from kolega_code.cli import messages as cli_messages
+    from textual.widgets import Static
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+    _init_git_project(app.project_path)
+
+    async with app.run_test() as pilot:
+        app.action_open_changes()
+        await pilot.pause()
+
+        screen = app._changes_inspector
+        assert screen is not None
+        assert screen._rows == {}
+        assert cli_messages.CHANGES_INSPECTOR_EMPTY in str(screen.query_one("#changes_header", Static).render())
+        assert cli_messages.CHANGES_INSPECTOR_EMPTY in str(screen.query_one(".changes-empty", Static).render())
+
+
+@pytest.mark.asyncio
 async def test_non_git_project_disables_changes_inspector(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
 

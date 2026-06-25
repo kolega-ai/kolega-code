@@ -987,14 +987,9 @@ class KolegaCodeApp(
         if not self._changes_available() or self._changes_inspector is not None:
             return
         self._refresh_session_diff()
-        if not self._session_diff_files:
-            self._notify_user(messages.CHANGES_INSPECTOR_EMPTY, severity="information")
-            return
         paths = {change.path for change in self._session_diff_files}
         if path is None or path not in paths:
-            path = self._default_changes_path()
-        if path is None:
-            return
+            path = self._default_changes_path() or ""
         screen = tui_changes.ChangesInspectorScreen(self, path)
         self._changes_inspector = screen
         self.push_screen(screen)

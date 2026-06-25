@@ -210,7 +210,7 @@ class ChangesInspectorScreen(ModalScreen):
             return
         change = self._diff_for_path(self._selected_path)
         if change is None:
-            header.update(messages.CHANGES_INSPECTOR_NO_SELECTION)
+            header.update(messages.CHANGES_INSPECTOR_EMPTY)
             return
         sep = theme.g(Glyph.BULLET_SEP)
         line = Text.from_markup(theme.role_header(Glyph.TOOL, escape(change.path), Color.ACCENT, state=change.status))
@@ -238,7 +238,7 @@ class ChangesInspectorScreen(ModalScreen):
             if not self._empty_shown:
                 view.remove_children()
                 self._preview_widgets = {}
-                view.mount(Static(messages.CHANGES_INSPECTOR_NO_SELECTION, classes="changes-empty"))
+                view.mount(Static(messages.CHANGES_INSPECTOR_EMPTY, classes="changes-empty"))
                 self._empty_shown = True
             return
 
