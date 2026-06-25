@@ -1,8 +1,8 @@
 """Project-local prompt override discovery.
 
-Overrides are intentionally simple raw Markdown files under ``.kolega/prompts``.
-The filenames are fixed and uppercase so a cloned repository cannot steer the
-loader to arbitrary paths.
+Overrides are Markdown-with-Jinja templates under ``.kolega/prompts``. The
+filenames are fixed and uppercase so a cloned repository cannot steer the loader
+to arbitrary paths.
 """
 
 from __future__ import annotations
@@ -11,9 +11,12 @@ from dataclasses import dataclass
 import logging
 from typing import Any, Optional
 
+import jinja2
+from jinja2.sandbox import SandboxedEnvironment
+
 from kolega_code.services.file_system import FileSystem
 
-from .prompt_provider import AgentType
+from .prompt_provider import AgentMode, AgentType, PromptContext, PromptProvider
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +47,36 @@ class PromptOverride:
     content: str
 
 
+_OVERRIDE_ENV = SandboxedEnvironment(
+    loader=None,
+    undefined=jinja2.StrictUndefined,
+    trim_blocks=True,
+    lstrip_blocks=True,
+    keep_trailing_newline=True,
+)
+
+
+def render_prompt_override_source(
+    source: str,
+    *,
+    context: PromptContext,
+    mode: AgentMode | str | None,
+    project_template_slug: Optional[str],
+    prompt_provider: Optional[PromptProvider] = None,
+) -> str:
+    """Render a project-local prompt override using a limited Jinja context."""
+    provider = prompt_provider or PromptProvider()
+    template = _OVERRIDE_ENV.from_string(source)
+    return template.render(
+        **provider.template_vars(
+            context=context,
+            mode=mode,
+            template_slug=project_template_slug,
+            prompt_extensions=[],
+        )
+    ).strip()
+
+
 class ProjectPromptOverrides:
     """Load fixed prompt override files from a project filesystem."""
 
@@ -51,7 +84,7 @@ class ProjectPromptOverrides:
         self.filesystem = filesystem
 
     def load_agent_system_prompt(self, agent_type: AgentType | str) -> Optional[PromptOverride]:
-        """Return the raw Markdown override for ``agent_type``, if present."""
+        """Return the Markdown template override for ``agent_type``, if present."""
         agent_type_value = agent_type.value if isinstance(agent_type, AgentType) else str(agent_type)
         filename = AGENT_PROMPT_FILENAMES.get(agent_type_value)
         if filename is None:
@@ -59,7 +92,7 @@ class ProjectPromptOverrides:
         return self._load(filename)
 
     def load_compaction_system_prompt(self) -> Optional[PromptOverride]:
-        """Return the raw Markdown override for conversation compaction, if present."""
+        """Return the Markdown template override for conversation compaction, if present."""
         return self._load(COMPACTION_PROMPT_FILE)
 
     def _load(self, filename: str) -> Optional[PromptOverride]:

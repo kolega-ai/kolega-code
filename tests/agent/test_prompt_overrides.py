@@ -1,3 +1,4 @@
+from datetime import datetime
 from unittest.mock import AsyncMock, Mock
 
 from kolega_code.agent.coder import CoderAgent
@@ -112,6 +113,58 @@ def test_coder_override_replaces_base_prompt_and_keeps_dynamic_sections(tmp_path
     assert "Workspace fact" in prompt
 
 
+def test_coder_override_renders_jinja_context_and_aliases(tmp_path):
+    prompt_dir = tmp_path / ".kolega" / "prompts"
+    prompt_dir.mkdir(parents=True)
+    (prompt_dir / "CODER.md").write_text(
+        "\n".join(
+            [
+                "Project via context: {{ context.project_path }}",
+                "Project via alias: {{ project_path }}",
+                "Today: {{ context.date_today }}",
+                "Model: {{ context.model_name }}",
+                "Mode: {{ mode }}",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    agent = CoderAgent(
+        project_path=tmp_path,
+        workspace_id="workspace-123",
+        thread_id="thread-123",
+        connection_manager=make_connection_manager(),
+        config=make_config(),
+        agent_mode=AgentMode.CLI,
+    )
+
+    prompt = agent.system_prompt.content[0].text
+    assert f"Project via context: {tmp_path}" in prompt
+    assert f"Project via alias: {tmp_path}" in prompt
+    assert f"Today: {datetime.now().strftime('%Y-%m-%d')}" in prompt
+    assert "Model: claude-haiku-4-5-20251001" in prompt
+    assert "Mode: cli" in prompt
+
+
+def test_malformed_coder_override_falls_back_to_default_prompt(tmp_path, caplog):
+    prompt_dir = tmp_path / ".kolega" / "prompts"
+    prompt_dir.mkdir(parents=True)
+    (prompt_dir / "CODER.md").write_text("{{ missing_variable }}", encoding="utf-8")
+
+    agent = CoderAgent(
+        project_path=tmp_path,
+        workspace_id="workspace-123",
+        thread_id="thread-123",
+        connection_manager=make_connection_manager(),
+        config=make_config(),
+        agent_mode=AgentMode.CLI,
+    )
+
+    prompt = agent.system_prompt.content[0].text
+    assert "powerful AI coding assistant" in prompt
+    assert "missing_variable" in caplog.text
+
+
 def test_coder_override_satisfies_hosted_mode_without_private_template(tmp_path):
     prompt_dir = tmp_path / ".kolega" / "prompts"
     prompt_dir.mkdir(parents=True)
@@ -132,7 +185,9 @@ def test_coder_override_satisfies_hosted_mode_without_private_template(tmp_path)
 def test_planning_override_uses_dynamic_sections(tmp_path):
     prompt_dir = tmp_path / ".kolega" / "prompts"
     prompt_dir.mkdir(parents=True)
-    (prompt_dir / "PLANNING.md").write_text("# Custom planning prompt", encoding="utf-8")
+    (prompt_dir / "PLANNING.md").write_text(
+        "# Custom planning prompt for {{ context.project_path }} on {{ platform }}", encoding="utf-8"
+    )
     (tmp_path / "AGENTS.md").write_text("Planning guidance", encoding="utf-8")
 
     agent = PlanningAgent(
@@ -153,7 +208,7 @@ def test_planning_override_uses_dynamic_sections(tmp_path):
     )
 
     prompt = agent.system_prompt.content[0].text
-    assert "# Custom planning prompt" in prompt
+    assert f"# Custom planning prompt for {tmp_path}" in prompt
     assert "Planning Context" in prompt
     assert "Plan carefully." in prompt
     assert "Planning guidance" in prompt

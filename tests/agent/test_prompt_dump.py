@@ -12,7 +12,14 @@ def test_dump_prompt_overrides_creates_all_uppercase_files(tmp_path):
     for filename in expected:
         assert (tmp_path / PROMPT_OVERRIDE_DIR / filename).is_file()
 
-    assert "powerful AI coding assistant" in (tmp_path / PROMPT_OVERRIDE_DIR / "CODER.md").read_text(encoding="utf-8")
+    coder_text = (tmp_path / PROMPT_OVERRIDE_DIR / "CODER.md").read_text(encoding="utf-8")
+    assert "powerful AI coding assistant" in coder_text
+    assert "- Working directory: {{ context.project_path }}" in coder_text
+    assert "- Is directory a git repo: {{ context.is_git_repo }}" in coder_text
+    assert "- Platform: {{ context.platform }}" in coder_text
+    assert "- Today's date: {{ context.date_today }}" in coder_text
+    assert "- Model: {{ context.model_name }}" in coder_text
+    assert str(tmp_path) not in coder_text
     assert "continuity briefing" in (tmp_path / PROMPT_OVERRIDE_DIR / "COMPACTION.md").read_text(encoding="utf-8")
 
 
@@ -31,6 +38,19 @@ def test_dump_prompt_overrides_skips_existing_by_default_and_force_overwrites(tm
 
     assert coder in forced.written
     assert "powerful AI coding assistant" in coder.read_text(encoding="utf-8")
+
+
+def test_prompt_dump_contents_use_placeholders_for_agent_environment(tmp_path):
+    contents = prompt_dump_contents(tmp_path)
+
+    for filename in ["CODER.md", "PLANNING.md", "GENERAL.md", "INVESTIGATION.md", "BROWSER.md"]:
+        text = contents[filename]
+        assert "{{ context.project_path }}" in text
+        assert "{{ context.is_git_repo }}" in text
+        assert "{{ context.platform }}" in text
+        assert "{{ context.date_today }}" in text
+        assert "{{ context.model_name }}" in text
+        assert str(tmp_path) not in text
 
 
 def test_prompt_dump_contents_do_not_include_dynamic_project_files(tmp_path):

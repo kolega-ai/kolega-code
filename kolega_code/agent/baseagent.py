@@ -44,7 +44,7 @@ from kolega_code.permissions import (
     permission_request_for_tool,
 )
 from .prompt_provider import PromptProvider, AgentMode, AgentType, PromptContext, PromptExtension
-from .prompt_overrides import ProjectPromptOverrides
+from .prompt_overrides import ProjectPromptOverrides, render_prompt_override_source
 from kolega_code.services.base import TerminalManager, BrowserManager
 from kolega_code.services.file_system import FileSystem
 from .tools import ToolCollection  # noqa: F401 - kept for tests and downstream monkeypatch compatibility
@@ -509,14 +509,24 @@ class BaseAgent(LogMixin):
         context = self.build_prompt_context()
         override = self.prompt_overrides.load_agent_system_prompt(agent_type)
         if override is not None:
-            base = override.content.strip()
-            dynamic = self.prompt_provider.render_dynamic_sections(
-                agent_type,
-                mode,
-                self.prompt_extensions,
-                context,
-            )
-            return "\n\n".join(part for part in (base, dynamic) if part)
+            try:
+                base = render_prompt_override_source(
+                    override.content,
+                    context=context,
+                    mode=mode,
+                    project_template_slug=self.project_template_slug,
+                    prompt_provider=self.prompt_provider,
+                )
+            except Exception as exc:  # noqa: BLE001 - bad project prompts should fall back safely
+                logger.warning("Could not render prompt override %s: %s", override.path, exc)
+            else:
+                dynamic = self.prompt_provider.render_dynamic_sections(
+                    agent_type,
+                    mode,
+                    self.prompt_extensions,
+                    context,
+                )
+                return "\n\n".join(part for part in (base, dynamic) if part)
 
         prompt = self.prompt_provider.get_system_prompt(
             agent_type=agent_type,
@@ -645,7 +655,19 @@ class BaseAgent(LogMixin):
 
         await self.emitter.compaction_status("started", "Compacting conversation…")
         try:
+            compaction_system_prompt = None
             compaction_override = self.prompt_overrides.load_compaction_system_prompt()
+            if compaction_override is not None:
+                try:
+                    compaction_system_prompt = render_prompt_override_source(
+                        compaction_override.content,
+                        context=self.build_prompt_context(),
+                        mode=self.agent_mode,
+                        project_template_slug=self.project_template_slug,
+                        prompt_provider=self.prompt_provider,
+                    )
+                except Exception as exc:  # noqa: BLE001 - fall back to the bundled compaction prompt
+                    logger.warning("Could not render prompt override %s: %s", compaction_override.path, exc)
             result = await self.compressor.summarize(
                 self.conversation,
                 llm=self.llm,
@@ -656,7 +678,7 @@ class BaseAgent(LogMixin):
                 thinking=None,
                 on_info=on_info,
                 on_error=on_error,
-                system_prompt_text=compaction_override.content if compaction_override is not None else None,
+                system_prompt_text=compaction_system_prompt,
             )
         finally:
             # Recount + emit so the context gauge reflects post-compaction reality

@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
 from pathlib import Path
-import platform
 from typing import Optional
 
 from .prompt_overrides import (
@@ -76,32 +74,18 @@ class PromptListResult:
         return tuple(item for item in self.files if not item.exists)
 
 
-def default_dump_context(project_path: str | Path, base_context: Optional[PromptContext] = None) -> PromptContext:
-    """Build context for rendered starter prompts, without dynamic project sections."""
-    project = Path(project_path).expanduser().resolve()
-    if base_context is None:
-        system_name = "Kolega Code"
-        model_name = ""
-        available_ports = "9001-9999"
-        workspace_id = ""
-        workspace_environment_variables = {}
-    else:
-        system_name = base_context.system_name
-        model_name = base_context.model_name
-        available_ports = base_context.available_ports
-        workspace_id = base_context.workspace_id
-        workspace_environment_variables = dict(base_context.workspace_environment_variables)
-
+def placeholder_dump_context(project_path: str | Path, base_context: Optional[PromptContext] = None) -> PromptContext:
+    """Build context for starter prompts with Jinja tags instead of concrete values."""
     return PromptContext(
-        system_name=system_name,
-        project_path=str(project),
-        is_git_repo=(project / ".git").is_dir(),
-        platform=platform.system(),
-        date_today=datetime.now().strftime("%Y-%m-%d"),
-        model_name=model_name,
-        available_ports=available_ports,
-        workspace_id=workspace_id,
-        workspace_environment_variables=workspace_environment_variables,
+        system_name="{{ context.system_name }}",
+        project_path="{{ context.project_path }}",
+        is_git_repo="{{ context.is_git_repo }}",  # type: ignore[arg-type]
+        platform="{{ context.platform }}",
+        date_today="{{ context.date_today }}",
+        model_name="{{ context.model_name }}",
+        available_ports="{{ context.available_ports }}",
+        workspace_id="{{ context.workspace_id }}",
+        workspace_environment_variables={},
         project_guidance="",
         project_guidance_file="",
         agent_memory="",
@@ -118,7 +102,7 @@ def prompt_dump_contents(
 ) -> dict[str, str]:
     """Render starter contents for every supported prompt override file."""
     provider = prompt_provider or PromptProvider()
-    context = default_dump_context(project_path, base_context=base_context)
+    context = placeholder_dump_context(project_path, base_context=base_context)
     return {
         CODER_PROMPT_FILE: provider.get_system_prompt(
             agent_type=AgentType.CODER,

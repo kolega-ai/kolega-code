@@ -1,4 +1,4 @@
-from typing import Optional, List, Dict, Sequence
+from typing import Any, Optional, List, Dict, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -101,6 +101,31 @@ class PromptProvider:
             lstrip_blocks=True,
         )
 
+    def template_vars(
+        self,
+        *,
+        context: PromptContext,
+        mode: Optional[AgentMode | str],
+        template_slug: Optional[str],
+        prompt_extensions: Optional[List[PromptExtension]] = None,
+    ) -> Dict[str, Any]:
+        """Return template variables shared by bundled and project override prompts."""
+        mode_value = mode.value if isinstance(mode, AgentMode) else mode
+        return {
+            "context": context,
+            "mode": mode_value,
+            "project_template_slug": template_slug,
+            "prompt_extensions": prompt_extensions or [],
+            "system_name": context.system_name,
+            "project_path": context.project_path,
+            "is_git_repo": context.is_git_repo,
+            "platform": context.platform,
+            "date_today": context.date_today,
+            "model_name": context.model_name,
+            "available_ports": context.available_ports,
+            "workspace_id": context.workspace_id,
+        }
+
     def get_system_prompt(
         self,
         agent_type: AgentType,
@@ -139,18 +164,12 @@ class PromptProvider:
         # Prepare template variables. The ``context`` object is the canonical
         # surface; planning.md.j2 also has legacy top-level names for backward
         # compatibility with tests and host templates.
-        template_vars = {
-            "context": context,
-            "mode": mode.value if isinstance(mode, AgentMode) else mode,
-            "project_template_slug": template_slug,
-            "prompt_extensions": matching_extensions,
-            "system_name": context.system_name,
-            "project_path": context.project_path,
-            "is_git_repo": context.is_git_repo,
-            "platform": context.platform,
-            "date_today": context.date_today,
-            "model_name": context.model_name,
-        }
+        template_vars = self.template_vars(
+            context=context,
+            mode=mode,
+            template_slug=template_slug,
+            prompt_extensions=matching_extensions,
+        )
 
         # Render the prompt
         try:
@@ -170,7 +189,7 @@ class PromptProvider:
 
         Bundled agent templates already include these sections themselves (except
         for the planning template, whose caller appends this output). Project
-        override files are raw Markdown, so they receive the same dynamic
+        override files are Markdown templates, so they receive the same dynamic
         information through this centralized suffix.
         """
         sections: List[str] = []
