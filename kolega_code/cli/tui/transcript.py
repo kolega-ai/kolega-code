@@ -227,15 +227,15 @@ class TranscriptRenderingMixin:
         chunk_uuid = str(chunk.get("uuid") or "")
         content = str(chunk.get("content") or "")
         complete = bool(chunk.get("complete"))
+        cache_key = chunk_uuid or f"__nouuid__:{kind}"
 
-        entry = self._stream_entries.get(chunk_uuid) if chunk_uuid else None
-        if entry is None:
+        entry = self._stream_entries.get(cache_key)
+        if entry is None or (not chunk_uuid and entry.complete):
             if not content:
                 return
             entry = ConversationEntry(kind=kind, content="", complete=complete, uuid=chunk_uuid or None)
             self.conversation_entries.append(entry)
-            if chunk_uuid:
-                self._stream_entries[chunk_uuid] = entry
+            self._stream_entries[cache_key] = entry
 
         entry.content += content
         entry.complete = complete
@@ -1165,8 +1165,12 @@ class TranscriptRenderingMixin:
         if not view.is_attached:
             return
         view.set_auto_follow(True)
+        if getattr(self, "_conversation_anchor_pending", False):
+            return
+        self._conversation_anchor_pending = True
 
         def anchor_after_refresh() -> None:
+            self._conversation_anchor_pending = False
             if not view.is_attached:
                 return
             view.set_auto_follow(True)

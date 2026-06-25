@@ -309,3 +309,47 @@ async def test_streaming_assistant_refresh_accepts_literal_markup_tokens(
         rendered = renderable_text(widget._formatted)
         assert "[/dim]" in rendered
         assert "[bold]literal[/bold]\\" in rendered
+
+
+@pytest.mark.asyncio
+async def test_uuidless_stream_chunks_are_coalesced_by_kind(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        app._apply_stream_chunk({"content": "hello ", "complete": False}, kind="assistant")
+        app._apply_stream_chunk({"content": "world", "complete": False}, kind="assistant")
+        app._apply_stream_chunk({"content": "", "complete": True}, kind="assistant")
+
+        assistant_entries = [entry for entry in app.conversation_entries if entry.kind == "assistant"]
+        assert len(assistant_entries) == 1
+        assert assistant_entries[0].content == "hello world"
+        assert assistant_entries[0].complete is True
+        assert app._stream_entries["__nouuid__:assistant"] is assistant_entries[0]
+
+        app._apply_stream_chunk({"content": "next", "complete": True}, kind="assistant")
+        assistant_entries = [entry for entry in app.conversation_entries if entry.kind == "assistant"]
+        assert [entry.content for entry in assistant_entries] == ["hello world", "next"]
+
+
+@pytest.mark.asyncio
+async def test_conversation_bottom_anchor_is_single_flight(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        callbacks = []
+
+        def capture_callback(callback):
+            callbacks.append(callback)
+
+        monkeypatch.setattr(app, "call_after_refresh", capture_callback)
+        app._conversation_anchor_pending = False
+
+        app._schedule_conversation_bottom_anchor()
+        app._schedule_conversation_bottom_anchor()
+        app._schedule_conversation_bottom_anchor()
+
+        assert len(callbacks) == 1
+        assert app._conversation_anchor_pending is True
+
+        callbacks.pop()()
+        assert app._conversation_anchor_pending is False

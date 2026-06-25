@@ -1,5 +1,6 @@
 from kolega_code.cli.provider_registry import default_model_for_provider, ui_model_options
 from kolega_code.config import ModelProvider
+from kolega_code.llm.specs import get_model_specs
 
 
 def test_fireworks_ui_model_options_include_serverless_catalog():
@@ -17,3 +18,11 @@ def test_fireworks_ui_model_options_include_serverless_catalog():
 
 def test_fireworks_default_model_is_glm_52():
     assert default_model_for_provider(ModelProvider.FIREWORKS) == "accounts/fireworks/models/glm-5p2"
+
+
+def test_ollama_cloud_smoke_model_is_available_without_live_call():
+    options = dict(ui_model_options("ollama_cloud"))
+
+    assert options["GPT-OSS 20B"] == "gpt-oss:20b"
+    assert default_model_for_provider(ModelProvider.OLLAMA_CLOUD) == "gpt-oss:20b"
+    assert get_model_specs(ModelProvider.OLLAMA_CLOUD.value, "gpt-oss:20b")["max_completion_tokens"] > 0

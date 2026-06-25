@@ -1,5 +1,12 @@
 Screen {
     layout: vertical;
+    scrollbar-background: $surface;
+    scrollbar-background-hover: $surface;
+    scrollbar-background-active: $surface-lighten-2;
+    scrollbar-color: $surface-lighten-2;
+    scrollbar-color-hover: $text-muted;
+    scrollbar-color-active: $text;
+    scrollbar-corner-color: $surface;
 }
 
 #body {
@@ -20,6 +27,9 @@ Screen {
 #conversation, #logs, #terminal {
     height: 1fr;
     border: round $surface;
+    background: $surface;
+    color: $text;
+    overflow-x: hidden;
 }
 
 ConversationEntryWidget {
@@ -203,7 +213,19 @@ ToolEntryWidget .tool-body {
 }
 
 #composer:disabled {
-    opacity: 0.6;
+    color: $text-muted;
+    background: $surface;
+    border: round $surface;
+}
+
+#composer:disabled .text-area--cursor {
+    background: $surface-lighten-2;
+    color: $text-muted;
+}
+
+#composer:disabled .text-area--selection {
+    background: $surface-lighten-2;
+    color: $text;
 }
 
 #plan_actions, #model_actions, #effort_actions, #theme_actions {
@@ -269,6 +291,12 @@ OptionList > .option-list--option-highlighted {
 
 Footer {
     background: $surface;
+    color: $text-muted;
+}
+
+Footer > .footer--highlight {
+    background: $surface-lighten-2;
+    color: $text;
 }
 
 Input {
@@ -289,6 +317,8 @@ Select:focus > SelectCurrent {
 
 Select > SelectOverlay {
     border: round $surface;
+    background: $surface;
+    color: $text;
 }
 
 SubAgentInspectorScreen {
