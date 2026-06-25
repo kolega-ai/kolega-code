@@ -80,7 +80,8 @@ def test_new_untracked_file_after_baseline(tmp_path: Path) -> None:
 
     assert change.status == "added"
     assert change.adds == 1
-    assert change.preview["kind"] == "head"
+    assert change.preview["kind"] == "diff"
+    assert any(row[1] == "+print('new')" for row in change.preview["lines"])
 
 
 def test_pre_existing_dirty_file_is_session_baseline(tmp_path: Path) -> None:

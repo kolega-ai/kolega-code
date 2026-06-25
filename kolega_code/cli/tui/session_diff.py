@@ -7,7 +7,7 @@ from pathlib import Path, PurePosixPath
 from subprocess import DEVNULL, PIPE, run as subprocess_run
 from typing import Iterable, Literal, Optional
 
-from kolega_code.agent.tool_backend.edit_preview import build_diff_preview, build_head_preview
+from kolega_code.agent.tool_backend.edit_preview import build_diff_preview
 
 
 @dataclass
@@ -239,9 +239,7 @@ class GitSessionDiffTracker:
 
         old = baseline.content or ""
         new = current.content or ""
-        preview = (
-            build_head_preview(new, display_path) if status == "added" else build_diff_preview(old, new, display_path)
-        )
+        preview = build_diff_preview(old, new, display_path)
         if preview is None and old != new:
             message = "File changed; textual diff unavailable."
         else:

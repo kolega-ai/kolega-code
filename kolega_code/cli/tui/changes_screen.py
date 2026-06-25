@@ -270,9 +270,6 @@ class ChangesInspectorScreen(ModalScreen):
         return f"{change.path}:{change.status}:{change.adds}:{change.dels}:{repr(change.preview)}:{event_ids}"
 
     def _net_diff_renderable(self, change: SessionDiffFile) -> Group:
-        title = Text()
-        title.append("Net session diff", style="bold")
-        title.append(f"  {theme.g(Glyph.BULLET_SEP)}  {change.status}", style="dim")
         if change.message:
             body = Text(change.message, style="dim")
         elif change.preview:
@@ -282,7 +279,7 @@ class ChangesInspectorScreen(ModalScreen):
                 body = Text("Preview unavailable", style="dim")
         else:
             body = Text("Preview unavailable", style="dim")
-        return Group(title, Padding(body, (0, 0, 1, theme.INSET_WIDTH)))
+        return Group(Padding(body, (0, 0, 1, 0)))
 
     def _event_renderable(self, change: SessionFileChange) -> Group:
         sep = theme.g(Glyph.BULLET_SEP)
