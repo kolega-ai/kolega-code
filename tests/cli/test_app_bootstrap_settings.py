@@ -219,7 +219,7 @@ async def test_textual_app_status_tab_is_default_dashboard(tmp_path: Path, monke
         assert str(dashboard_widget.styles.border) == "Edges()"
         assert str(app.query_one("#status_summary_section", Vertical).styles.border) != "Edges()"
         assert str(app.query_one("#status_task_list_section", Vertical).styles.border) != "Edges()"
-        assert str(app.query_one("#terminal").styles.border) != "Edges()"
+        assert str(app.query_one("#terminal").styles.border) == "Edges()"
         assert list(app.query("#logs")) == []
         assert list(app.query("#status")) == []
 
