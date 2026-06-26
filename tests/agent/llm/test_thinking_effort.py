@@ -53,21 +53,31 @@ def test_anthropic_opus_effort_uses_adaptive_thinking_without_budget_tokens() ->
     assert "budget_tokens" not in generation_params["thinking"]
 
 
+def test_deepseek_routes_to_openai_v1_endpoint() -> None:
+    # DeepSeek's Anthropic-compatible endpoint stalls during reasoning (idle-connection
+    # drop). Route through the OpenAI-compatible /v1 endpoint, which streams reasoning
+    # continuously (matches opencode/openclaw).
+    client = LLMClient(provider="deepseek", api_key="test-key")
+    assert isinstance(client.provider, OpenAIProvider)
+    assert "api.deepseek.com/v1" in str(client.provider.async_client.base_url)
+
+
 def test_deepseek_thinking_effort_serialization() -> None:
-    provider = AnthropicProvider(api_key="test-key", provider_name="deepseek")
+    # DeepSeek routes through the OpenAI-compatible /v1 endpoint, so reasoning is graded via
+    # the standard reasoning_effort param, and "none" disables it via extra_body.
+    provider = OpenAIProvider(api_key="test-key", provider_name="deepseek")
 
     disabled_params = {"model": "deepseek-v4-pro"}
     provider._apply_thinking_params(disabled_params, GenerationParams(thinking="none"))
-    assert disabled_params == {"model": "deepseek-v4-pro", "thinking": {"type": "disabled"}}
+    assert disabled_params == {"model": "deepseek-v4-pro", "extra_body": {"thinking": {"type": "disabled"}}}
 
     high_params = {"model": "deepseek-v4-pro"}
     provider._apply_thinking_params(high_params, GenerationParams(thinking="high"))
-    assert high_params["thinking"] == {"type": "enabled"}
-    assert high_params["output_config"] == {"effort": "high"}
+    assert high_params["reasoning_effort"] == "high"
 
     max_params = {"model": "deepseek-v4-pro"}
     provider._apply_thinking_params(max_params, GenerationParams(thinking="max"))
-    assert max_params["output_config"] == {"effort": "max"}
+    assert max_params["reasoning_effort"] == "max"
 
 
 def test_zai_glm52_thinking_effort_serialization() -> None:

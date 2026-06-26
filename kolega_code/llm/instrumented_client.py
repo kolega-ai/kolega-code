@@ -89,12 +89,22 @@ class InstrumentedLLMClient(LLMClient):
 
         provider = usage_metadata.get("provider", self.provider_name)
 
-        if provider in ["anthropic", "moonshot", "deepseek", "kimi_coding"]:
+        if provider in ["anthropic", "moonshot", "kimi_coding"]:
             input_tokens = usage_metadata.get("input_tokens", 0)
             output_tokens = usage_metadata.get("output_tokens", 0)
             cache_read_tokens = usage_metadata.get("cache_read_input_tokens", 0)
             cache_write_tokens = usage_metadata.get("cache_write_input_tokens", 0)
-        elif provider in ["openai", "openai_chatgpt", "together", "groq", "fireworks", "llama", "xai", "dashscope"]:
+        elif provider in [
+            "openai",
+            "openai_chatgpt",
+            "together",
+            "groq",
+            "fireworks",
+            "llama",
+            "xai",
+            "dashscope",
+            "deepseek",
+        ]:
             input_tokens = usage_metadata.get("prompt_tokens", 0)
             output_tokens = usage_metadata.get("completion_tokens", 0)
             cache_read_tokens = usage_metadata.get("cache_read_input_tokens", 0)
@@ -246,7 +256,7 @@ class InstrumentedLLMClient(LLMClient):
             normalized_usage = None
             if usage_details:
                 provider = usage_details.get("provider", self.provider_name)
-                if provider in ["anthropic", "moonshot", "deepseek", "kimi_coding"]:
+                if provider in ["anthropic", "moonshot", "kimi_coding"]:
                     normalized_usage = {
                         "input": usage_details.get("input_tokens", 0),
                         "output": usage_details.get("output_tokens", 0),
@@ -254,7 +264,7 @@ class InstrumentedLLMClient(LLMClient):
                         "cache_read_input_tokens": usage_details.get("cache_read_input_tokens", 0),
                         "cache_creation_input_tokens": usage_details.get("cache_write_input_tokens", 0),
                     }
-                elif provider in ["openai", "openai_chatgpt", "fireworks"]:
+                elif provider in ["openai", "openai_chatgpt", "fireworks", "deepseek"]:
                     normalized_usage = {
                         "input": usage_details.get("prompt_tokens", 0),
                         "output": usage_details.get("completion_tokens", 0),
@@ -495,7 +505,7 @@ class MinimalLangfuseStreamWrapper:
         usage_metadata = message.usage_metadata
         provider = usage_metadata.get("provider", "")
 
-        if provider in ["anthropic", "moonshot", "deepseek", "kimi_coding"]:
+        if provider in ["anthropic", "moonshot", "kimi_coding"]:
             return {
                 "input": usage_metadata.get("input_tokens", 0),
                 "output": usage_metadata.get("output_tokens", 0),
@@ -503,7 +513,7 @@ class MinimalLangfuseStreamWrapper:
                 "cache_read_input_tokens": usage_metadata.get("cache_read_input_tokens", 0),
                 "cache_creation_input_tokens": usage_metadata.get("cache_write_input_tokens", 0),
             }
-        elif provider in ["openai", "openai_chatgpt", "fireworks"]:
+        elif provider in ["openai", "openai_chatgpt", "fireworks", "deepseek"]:
             return {
                 "input": usage_metadata.get("prompt_tokens", 0),
                 "output": usage_metadata.get("completion_tokens", 0),

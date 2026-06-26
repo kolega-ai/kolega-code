@@ -167,11 +167,13 @@ class TestInstrumentedLLMClient:
         assert usage["total_token_count"] == 150
 
     def test_normalize_usage_data_deepseek(self, instrumented_client):
+        # DeepSeek uses the OpenAI-compatible endpoint → OpenAI-shaped usage keys.
         usage = instrumented_client._normalize_usage_data(
             {
                 "provider": "deepseek",
-                "input_tokens": 100,
-                "output_tokens": 50,
+                "prompt_tokens": 100,
+                "completion_tokens": 50,
+                "total_tokens": 150,
                 "cache_read_input_tokens": 25,
                 "cache_write_input_tokens": 5,
             },

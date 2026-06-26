@@ -27,13 +27,16 @@ def test_langfuse_normalizes_openai_cache_tokens():
 
 
 def test_langfuse_normalizes_deepseek_usage():
+    # DeepSeek now uses the OpenAI-compatible endpoint, so its usage is OpenAI-shaped
+    # (prompt_tokens/completion_tokens).
     msg = Message(
         role="assistant",
         content="ok",
         usage_metadata={
             "provider": "deepseek",
-            "input_tokens": 10,
-            "output_tokens": 2,
+            "prompt_tokens": 10,
+            "completion_tokens": 2,
+            "total_tokens": 12,
             "cache_read_input_tokens": 3,
             "cache_write_input_tokens": 4,
         },

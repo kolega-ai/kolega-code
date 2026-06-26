@@ -21,12 +21,13 @@ def test_llm_client_maps_moonshot_to_anthropic_provider():
     assert thinking == "auto"
 
 
-def test_llm_client_maps_deepseek_to_anthropic_provider():
+def test_llm_client_maps_deepseek_to_openai_v1_provider():
+    # DeepSeek's Anthropic-compatible endpoint stalls during reasoning; route through the
+    # OpenAI-compatible /v1 endpoint (matches opencode/openclaw, which work).
     client = LLMClient(provider="deepseek", api_key="sk-test")
-    assert isinstance(client.provider, AnthropicProvider)
-    assert client.provider.base_url == "https://api.deepseek.com/anthropic"
+    assert isinstance(client.provider, OpenAIProvider)
+    assert client.provider.base_url == "https://api.deepseek.com/v1"
     assert client.provider.provider_name == "deepseek"
-    assert client.provider.use_local_token_counting is True
 
     thinking = client._prepare_thinking_param("max", model="deepseek-v4-pro")
     assert thinking == "max"
