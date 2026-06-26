@@ -48,8 +48,8 @@ from ._app_test_utils import (
 async def test_textual_app_mounts_with_fake_agent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
 
-    from textual.containers import VerticalScroll
-    from textual.widgets import Collapsible, Header
+    from textual.containers import Vertical, VerticalScroll
+    from textual.widgets import Header
 
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.widgets import PlanningMarkdown
@@ -101,10 +101,12 @@ async def test_textual_app_mounts_with_fake_agent(tmp_path: Path, monkeypatch: p
         assert app.query_one("#composer") is not None
         assert app.query_one("#planning_pane") is not None
         assert app.query_one("#planning_form", VerticalScroll) is not None
-        assert app.query_one("#planning_plan", Collapsible).collapsed is False
-        assert app.query_one("#planning_task_list", Collapsible).collapsed is False
+        assert app.query_one("#planning_plan", Vertical) is not None
+        assert app.query_one("#status_form", VerticalScroll) is not None
+        assert app.query_one("#status_summary_section", Vertical) is not None
+        assert app.query_one("#status_task_list_section", Vertical) is not None
         assert app.query_one("#planning_plan_markdown", PlanningMarkdown).source == "No plan captured yet."
-        assert app.query_one("#planning_task_list_markdown", PlanningMarkdown).source == "No task list has been set."
+        assert app.query_one("#status_task_list_markdown", PlanningMarkdown).source == "No task list has been set."
         assert app.conversation_entries[0].kind == "startup"
         startup = app.conversation_entries[0].content
         assert "____          _" in startup
@@ -171,6 +173,7 @@ async def test_textual_app_startup_shows_prompt_overrides_and_errors(
 async def test_textual_app_status_tab_is_default_dashboard(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
 
+    from textual.containers import Vertical
     from textual.widgets import Static, TabbedContent
 
     from kolega_code.cli.app import KolegaCodeApp
@@ -213,7 +216,10 @@ async def test_textual_app_status_tab_is_default_dashboard(tmp_path: Path, monke
         assert "Build" in dashboard
         assert "Idle" in dashboard
         assert "Waiting for first context count" in dashboard
-        assert dashboard_widget.styles.border == app.query_one("#terminal").styles.border
+        assert str(dashboard_widget.styles.border) == "Edges()"
+        assert str(app.query_one("#status_summary_section", Vertical).styles.border) != "Edges()"
+        assert str(app.query_one("#status_task_list_section", Vertical).styles.border) != "Edges()"
+        assert str(app.query_one("#terminal").styles.border) == "Edges()"
         assert list(app.query("#logs")) == []
         assert list(app.query("#status")) == []
 

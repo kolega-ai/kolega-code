@@ -22,6 +22,48 @@ Screen {
     width: 1fr;
     min-width: 34;
     height: 100%;
+    background: $background;
+}
+
+#events {
+    background: $background;
+    color: $text;
+}
+
+#events > ContentTabs,
+#events ContentTabs > #tabs-scroll,
+#events ContentTabs #tabs-list-bar,
+#events ContentTabs #tabs-list {
+    background: $background;
+    color: $text;
+}
+
+#events ContentTabs Tab,
+#events ContentTabs Tab:hover,
+#events ContentTabs Tab.-active,
+#events ContentTabs:focus Tab,
+#events ContentTabs:focus Tab.-active {
+    background: $background;
+    background-tint: transparent;
+}
+
+#events ContentTabs Tab {
+    color: $text-muted;
+}
+
+#events ContentTabs Tab:hover,
+#events ContentTabs Tab.-active,
+#events ContentTabs:focus Tab.-active {
+    color: $text;
+}
+
+#events ContentTabs Tab.-active,
+#events ContentTabs:focus Tab.-active {
+    text-style: bold;
+}
+
+#events ContentTabs:focus .underline--bar {
+    background: $surface-lighten-2;
 }
 
 #conversation {
@@ -34,8 +76,8 @@ Screen {
 
 #logs, #terminal {
     height: 1fr;
-    border: round $surface;
-    background: $surface;
+    border: none;
+    background: $background;
     color: $text;
     overflow-x: hidden;
 }
@@ -74,29 +116,50 @@ ToolEntryWidget .tool-body {
     text-align: center;
 }
 
-#status_container {
+#status_form, #settings_form, #planning_form {
     height: 1fr;
+    background: $background;
+    color: $text;
+    padding: 1;
 }
 
 #status_dashboard {
-    height: 1fr;
+    height: auto;
     min-height: 15;
-    border: round $surface;
-    padding: 1;
+    border: none;
+    background: $background;
+    color: $text;
+    padding: 0;
 }
 
-#settings_form, #planning_form {
-    height: 1fr;
-    padding: 1;
-}
-
+.status-section,
+.planning-section,
 .settings-section {
     height: auto;
-    border: round $surface;
+    border: round $surface-lighten-2;
     border-title-color: $text;
     border-title-style: bold;
+    background: $background;
     padding: 0 1;
     margin-bottom: 1;
+}
+
+#settings_form Select > SelectCurrent {
+    background: $panel;
+    border: round $surface-lighten-2;
+    color: $text;
+}
+
+#settings_form Select:focus > SelectCurrent {
+    background: $panel;
+    border: round $surface-lighten-2;
+    background-tint: transparent;
+}
+
+#settings_form Select > SelectOverlay {
+    background: $panel;
+    border: round $surface-lighten-2;
+    color: $text;
 }
 
 #settings_status {
@@ -147,10 +210,12 @@ ToolEntryWidget .tool-body {
     margin-top: 1;
 }
 
+#status_form PlanningMarkdown,
 #planning_form PlanningMarkdown {
     height: auto;
 }
 
+#status_form PlanningMarkdown.empty-state,
 #planning_form PlanningMarkdown.empty-state {
     color: $text-muted;
 }
@@ -361,8 +426,13 @@ OptionList > .option-list--option-highlighted {
     color: $text-muted;
 }
 
+#session_meta {
+    background: $background;
+    color: $text-muted;
+}
+
 Footer {
-    background: $surface;
+    background: $background;
     color: $text-muted;
 }
 
