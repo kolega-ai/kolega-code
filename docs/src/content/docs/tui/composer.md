@@ -24,6 +24,27 @@ terminal-style line navigation. Some macOS terminal emulators reserve `Cmd+A` fo
 terminal scrollback selection before the TUI can see it; `Ctrl+L` still works in
 the composer.
 
+## Queuing follow-up prompts
+
+You can keep typing while the agent is still generating. Pressing `Enter` during
+an active turn does **not** interrupt the current response — it queues your text as
+a follow-up prompt. While a turn is active, the composer status changes to
+`Queue a follow-up…` to make this clear.
+
+Queued follow-ups appear in the transcript as `Queued` entries and are summarized
+in a small queued-messages panel above the composer. When the current turn
+finishes, Kolega Code sends queued prompts automatically in FIFO order, and each
+queued entry becomes a normal user message as it is sent.
+
+File mentions and image attachments submitted with a queued prompt stay attached
+to that prompt. Interactive prompts still take precedence: explicit questions,
+tool approval prompts, and planning decisions must be answered before queued
+follow-ups can drain.
+
+If you cancel the active turn with `Ctrl+C` or `Escape`, queued follow-ups are
+restored into the composer instead of being silently sent. To discard pending
+follow-ups without stopping the active turn, run [`/queue-clear`](../slash-commands/).
+
 ## File mentions with `@`
 
 Type `@` to reference a file. A fuzzy-searchable dropdown of project files appears

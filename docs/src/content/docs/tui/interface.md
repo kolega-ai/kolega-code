@@ -18,7 +18,9 @@ The screen is split into two columns:
   and settings. Toggle it with `Ctrl+O` or `/sidebar`. The diagnostic Logs tab is
   opt-in; launch with `--show-logs` when you want it.
 
-At the bottom sits the **composer** — the text box where you type prompts. See
+At the bottom sits the **composer** — the text box where you type prompts. When
+you submit follow-ups while the agent is working, a small queued-messages panel
+appears above the composer until those prompts are sent. See
 [Chat Composer](../composer/) for everything it can do.
 
 ## Side-panel tabs
@@ -36,6 +38,9 @@ At the bottom sits the **composer** — the text box where you type prompts. See
 - **Streaming** — the view stays anchored to the bottom while the agent is
   responding. When you scroll up, a **jump-to-bottom** affordance appears so you
   can return to the live edge.
+- **Queued follow-ups** — prompts submitted while the agent is still running show
+  as `Queued` transcript entries. When the active turn finishes, they are sent
+  automatically in FIFO order and become normal user messages.
 - **Tool results** — shown as collapsible blocks with a state indicator
   (running / done / failed). Expand to see the full result.
 - **Sub-agents** — when the main agent dispatches a sub-agent, a live card tracks

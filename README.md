@@ -62,8 +62,9 @@ enough that one serial agent pass would be the bottleneck.
   directly and use a Playwright-powered browser agent for interactive sites.
 - **Model routing:** choose provider/model combinations, set thinking effort, split
   long-context/fast/thinking roles, and override models per agent role.
-- **Interactive or scriptable:** use the Textual TUI, run `kolega-code ask`, request
-  JSON output, list/export/resume sessions, and diagnose setup with `doctor`.
+- **Interactive or scriptable:** use the Textual TUI, queue follow-up prompts
+  while the agent is working, run `kolega-code ask`, request JSON output,
+  list/export/resume sessions, and diagnose setup with `doctor`.
 - **Extensibility:** add agent skills, override prompts with project templates, run
   lifecycle hooks, and persist project permission rules.
 - **Local-first state:** sessions, settings, permissions, OAuth tokens, and API-key
