@@ -9,6 +9,7 @@ from openai import AsyncOpenAI, OpenAI
 
 from ..models import ImageBlock, Message, MessageChunk, MessageHistory, ToolCall, ToolDefinition, ToolResult
 from ..specs import build_thinking_request_params
+from ..timeouts import streaming_timeout
 from ..tool_execution_ids import ToolExecutionIdRegistry
 from .base import BaseLLMProvider
 from .models import GenerationParams, TokenCount
@@ -432,8 +433,13 @@ class OpenAIProvider(BaseLLMProvider):
 
         await self.rate_limiter.acquire()
 
+        # Per-request streaming timeout bounds the inter-chunk read wait (see
+        # kolega_code/llm/timeouts.py): a stalled connection fails in minutes and is
+        # retried, instead of hanging on the SDK's 600s default.
         return OpenAIStreamWrapper(
-            await self.async_client.chat.completions.create(messages=messages.to_openai(), **generation_params),
+            await self.async_client.chat.completions.create(
+                messages=messages.to_openai(), timeout=streaming_timeout(), **generation_params
+            ),
             requested_include_usage=True,
             provider_name=self.provider_name,
         )

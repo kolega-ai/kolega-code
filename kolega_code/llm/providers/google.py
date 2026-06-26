@@ -155,6 +155,12 @@ class GoogleProvider(BaseLLMProvider):
 
         await self.rate_limiter.acquire()
 
+        # NOTE: no per-request streaming read timeout here. Unlike the httpx-based
+        # providers (see kolega_code/llm/timeouts.py), google-genai's HttpOptions exposes
+        # only a single *total-request* timeout, not a per-read (inter-chunk) one. A total
+        # bound would wrongly cut legitimately long streams, so bounding a silent stall on
+        # Google would require an inactivity watchdog around the loop instead. Left as-is
+        # until a Google stall is actually observed.
         return GoogleStreamWrapper(
             await self.async_client.aio.models.generate_content_stream(
                 model=model, contents=messages.to_google(), config=config

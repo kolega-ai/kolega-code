@@ -23,6 +23,7 @@ from typing import Any, AsyncIterator, Dict, List, Optional
 
 from kolega_code.auth import constants as chatgpt_constants
 
+from ..timeouts import streaming_timeout
 from ..models import (
     ImageBlock,
     Message,
@@ -551,7 +552,9 @@ class ResponsesProviderBase(OpenAIProvider):
     ) -> ResponsesStreamWrapper:
         request = self._build_request(messages, system, params, kwargs)
         await self.rate_limiter.acquire()
-        responses_stream = await self.async_client.responses.create(**request)
+        # Per-request streaming timeout bounds the inter-chunk read wait (see
+        # kolega_code/llm/timeouts.py) instead of the SDK's 600s default.
+        responses_stream = await self.async_client.responses.create(timeout=streaming_timeout(), **request)
         return ResponsesStreamWrapper(responses_stream, provider_name=self.provider_name)
 
     async def generate(

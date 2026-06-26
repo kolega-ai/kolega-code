@@ -16,6 +16,7 @@ from kolega_code.llm.client import LLMClient
 from kolega_code.llm.exceptions import (
     LLMBillingError,
     LLMAuthenticationError,
+    LLMConnectionError,
     LLMContextWindowExceededError,
     LLMError,
     LLMInternalServerError,
@@ -61,10 +62,11 @@ class TestErrorMapping:
         assert isinstance(mapped, LLMTimeout)
 
     def test_connection_error_mapping(self):
-        """Test that ConnectionError maps to LLMInternalServerError."""
+        """Test that ConnectionError maps to LLMConnectionError (a transport failure, not a 5xx)."""
         error = ConnectionError("Connection failed")
         mapped = map_to_llm_error(error, "test_provider")
-        assert isinstance(mapped, LLMInternalServerError)
+        assert isinstance(mapped, LLMConnectionError)
+        assert not isinstance(mapped, LLMInternalServerError)
         assert "Connection error" in str(mapped)
 
     def test_key_error_mapping(self):
@@ -102,7 +104,7 @@ class TestErrorMapping:
         assert mapped.provider == "test_provider"
 
     def test_httpx_remote_protocol_error_mapping(self):
-        """Test that httpx.RemoteProtocolError maps to LLMInternalServerError."""
+        """httpx.RemoteProtocolError (a TransportError) maps to the retryable LLMConnectionError."""
         try:
             import httpx  # type: ignore
         except Exception:
@@ -112,8 +114,8 @@ class TestErrorMapping:
             "peer closed connection without sending complete message body (incomplete chunked read)"
         )
         mapped = map_to_llm_error(error, "anthropic")
-        assert isinstance(mapped, LLMInternalServerError)
-        assert "HTTPX protocol error" in str(mapped)
+        assert isinstance(mapped, LLMConnectionError)
+        assert "HTTPX transport error" in str(mapped)
 
     def test_provider_error_mapping(self):
         """Test that provider-specific errors are mapped correctly."""
@@ -170,9 +172,9 @@ class TestLLMClientErrorBoundary:
         assert "Invalid parameter" in str(exc_info.value)
         assert exc_info.value.provider == "openai"
 
-        # Test ConnectionError
+        # Test ConnectionError (a transport failure → retryable LLMConnectionError, not a 5xx)
         client.provider.generate = AsyncMock(side_effect=ConnectionError("Connection lost"))
-        with pytest.raises(LLMInternalServerError) as exc_info:
+        with pytest.raises(LLMConnectionError) as exc_info:
             await client.generate(messages)
         assert "Connection error" in str(exc_info.value)
 

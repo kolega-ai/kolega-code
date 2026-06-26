@@ -39,11 +39,17 @@ import asyncio
 
 from anthropic import (
     AnthropicError,
+    APIConnectionError as AnthropicAPIConnectionError,
     APIStatusError as AnthropicAPIStatusError,
+    APITimeoutError as AnthropicAPITimeoutError,
     InternalServerError as AnthropicInternalServerError,
 )
 from google.genai.errors import APIError as GoogleAPIError
-from openai import OpenAIError
+from openai import (
+    APIConnectionError as OpenAIAPIConnectionError,
+    APITimeoutError as OpenAIAPITimeoutError,
+    OpenAIError,
+)
 
 try:
     import aiohttp
@@ -99,8 +105,15 @@ class LLMNotFoundError(LLMError):
     """Raised when the requested resource is not found."""
 
 
-class LLMTimeout(LLMError):
-    """Raised when the request to the LLM service times out."""
+class LLMConnectionError(LLMError):
+    """Raised when the transport layer fails — a connection that couldn't be established,
+    was dropped/reset, or stalled. Distinct from LLMInternalServerError (a provider 5xx):
+    nothing reached the model, or the connection died mid-stream. Transient and retryable."""
+
+
+class LLMTimeout(LLMConnectionError):
+    """Raised when a request to the LLM service times out (a stalled connection). A
+    specific kind of LLMConnectionError, e.g. a streaming read exceeding its timeout."""
 
 
 class LLMUnprocessableEntityError(LLMError):
@@ -191,6 +204,9 @@ def llm_error_message(error: LLMError, model: str | None = None) -> str:
     if isinstance(error, LLMTimeout):
         return f"{provider_model} timed out while processing this request. Please try again."
 
+    if isinstance(error, LLMConnectionError):
+        return f"{provider_model} could not be reached (connection error). Please try again."
+
     if isinstance(error, LLMContentPolicyViolationError):
         return f"{provider_model} blocked this request due to the provider's content policy."
 
@@ -247,6 +263,14 @@ def map_openai_errors(error: OpenAIError) -> LLMError:
             return LLMRateLimitError(message=f"OpenAI APIError: {str(error)}", provider=ModelProvider.OPENAI.value)
         elif error.status_code == 500:
             return LLMInternalServerError(message=f"OpenAI APIError: {str(error)}", provider=ModelProvider.OPENAI.value)
+
+    # Transport failures (a stalled streaming read hitting the per-request timeout, a
+    # dropped/reset connection) are retryable. APITimeoutError subclasses APIConnectionError,
+    # so check the timeout case first for the more specific error/message.
+    if isinstance(error, OpenAIAPITimeoutError):
+        return LLMTimeout(message=f"OpenAI APIError: {str(error)}", provider=ModelProvider.OPENAI.value)
+    if isinstance(error, OpenAIAPIConnectionError):
+        return LLMConnectionError(message=f"OpenAI APIError: {str(error)}", provider=ModelProvider.OPENAI.value)
 
     return LLMError(message=f"OpenAI APIError: {str(error)}", provider=ModelProvider.OPENAI.value)
 
@@ -333,6 +357,14 @@ def map_anthropic_errors(error: AnthropicError, provider: str | None = None) -> 
         if error.status_code == 529:
             return LLMInternalServerError(message=f"AnthropicError: {str(error)}", provider=provider)
 
+    # Transport failures (a stalled streaming read hitting the per-request timeout, a
+    # dropped/reset connection) are retryable. APITimeoutError subclasses APIConnectionError,
+    # so check the timeout case first for the more specific error/message.
+    if isinstance(error, AnthropicAPITimeoutError):
+        return LLMTimeout(message=f"AnthropicError: {str(error)}", provider=provider)
+    if isinstance(error, AnthropicAPIConnectionError):
+        return LLMConnectionError(message=f"AnthropicError: {str(error)}", provider=provider)
+
     return LLMError(message=f"AnthropicError: {str(error)}", provider=provider)
 
 
@@ -365,14 +397,20 @@ def map_to_llm_error(error: Exception, provider: str = None) -> LLMError:
     # Map common Python exceptions
     if isinstance(error, ValueError):
         return LLMInvalidRequestError(message=f"Invalid parameter: {str(error)}", provider=provider)
+    elif httpx and isinstance(error, httpx.TimeoutException):
+        # Read/connect/pool/write timeouts (e.g. a stalled streaming read). Check before
+        # the broader TransportError below; LLMTimeout is an LLMConnectionError subclass.
+        return LLMTimeout(message=f"Request timeout: {str(error)}", provider=provider)
     elif isinstance(error, (TimeoutError, asyncio.TimeoutError)):
         return LLMTimeout(message=f"Request timeout: {str(error)}", provider=provider)
     elif isinstance(error, ConnectionError):
-        return LLMInternalServerError(message=f"Connection error: {str(error)}", provider=provider)
+        return LLMConnectionError(message=f"Connection error: {str(error)}", provider=provider)
     elif aiohttp and isinstance(error, aiohttp.ClientError):
-        return LLMInternalServerError(message=f"HTTP client error: {str(error)}", provider=provider)
-    elif httpx and isinstance(error, httpx.RemoteProtocolError):
-        return LLMInternalServerError(message=f"HTTPX protocol error: {str(error)}", provider=provider)
+        return LLMConnectionError(message=f"HTTP client error: {str(error)}", provider=provider)
+    elif httpx and isinstance(error, httpx.TransportError):
+        # Connect/read/protocol/reset errors — transient transport failures (e.g. a dropped
+        # streaming connection), so retryable.
+        return LLMConnectionError(message=f"HTTPX transport error: {str(error)}", provider=provider)
     elif isinstance(error, KeyError):
         return LLMInvalidRequestError(message=f"Missing required parameter: {str(error)}", provider=provider)
     elif isinstance(error, TypeError):

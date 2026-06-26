@@ -94,7 +94,12 @@ class ChatGPTOAuthProvider(ResponsesProviderBase):
             base_url=self.base_url,
             max_retries=max_retries,
             default_headers=default_headers,
-            http_client=httpx.AsyncClient(auth=ChatGPTAuth(token_manager), timeout=600.0),
+            # Bound connect (the flat 600.0 also meant a 600s *connect* timeout); the
+            # per-request streaming timeout in responses_common.stream() caps the read.
+            http_client=httpx.AsyncClient(
+                auth=ChatGPTAuth(token_manager),
+                timeout=httpx.Timeout(connect=10.0, read=600.0, write=30.0, pool=10.0),
+            ),
         )
         # The Responses path is async-only; the sync client is unused.
         self.sync_client = None
