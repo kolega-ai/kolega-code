@@ -71,6 +71,43 @@ async def test_textual_app_mention_dropdown_opens_and_escape_dismisses(
 
 
 @pytest.mark.asyncio
+async def test_mention_dropdown_uses_cached_search_not_blocking_walk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.tui.widgets import ChatComposer, CompletionDropdown
+
+    app = _build_mention_test_app(tmp_path, monkeypatch)
+
+    # The keystroke path must read the cached snapshot only — never the blocking
+    # search()/refresh() (which os.walks and would freeze the UI on a slow FS).
+    calls = {"cached": 0}
+    real_cached = app.file_index.cached_search
+
+    def spy_cached(query, limit=8):
+        calls["cached"] += 1
+        return real_cached(query, limit)
+
+    def blocking_search_must_not_be_called(*args, **kwargs):
+        raise AssertionError("completion must use cached_search, not the blocking search()")
+
+    monkeypatch.setattr(app.file_index, "cached_search", spy_cached)
+    monkeypatch.setattr(app.file_index, "search", blocking_search_must_not_be_called)
+
+    async with app.run_test() as pilot:
+        composer = app.query_one("#composer", ChatComposer)
+        dropdown = app.query_one("#completion_dropdown", CompletionDropdown)
+        composer.focus()
+        composer.insert("@alp")
+        await pilot.pause()
+
+        assert calls["cached"] >= 1  # keystroke used the non-blocking cached search
+        assert dropdown.is_open
+        assert dropdown.option_count > 0
+
+
+@pytest.mark.asyncio
 async def test_textual_app_mention_dropdown_not_opened_by_email_address(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

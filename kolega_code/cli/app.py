@@ -158,6 +158,7 @@ class KolegaCodeApp(
         self.settings: CliSettings = CliSettings()
         self.skill_catalog: SkillCatalog = discover_skills(self.project_path)
         self.file_index = WorkspaceFileIndex(self.project_path)
+        self._file_index_refreshing = False
         self.browser_visible = browser_visible
         self.sidebar_visible = True
         self.check_for_updates = check_for_updates
@@ -419,6 +420,9 @@ class KolegaCodeApp(
         self._update_detach_button()
         if self.check_for_updates:
             self.run_worker(self._check_for_update_on_startup(), name="kolega-update-check", group="updates")
+        # Warm the @-mention file index off the event loop so the first mention has
+        # results without blocking the UI on os.walk (slow on iCloud/large trees).
+        self._maybe_refresh_file_index()
         self._schedule_conversation_bottom_anchor()
         self.run_worker(self._consume_events(), name="kolega-events", group="events")
         if self.config is not None:
@@ -832,11 +836,29 @@ class KolegaCodeApp(
         if active is None:
             dropdown.close()
             return
-        entries = self.file_index.search(active[0], limit=8)
+        # Search the cached snapshot only — never block the keystroke on os.walk. A
+        # stale/empty cache triggers a background refresh that re-runs this when done.
+        self._maybe_refresh_file_index()
+        entries = self.file_index.cached_search(active[0], limit=8)
         if not entries:
             dropdown.close()
             return
         dropdown.open_with([tui_widgets.file_completion_item(entry) for entry in entries])
+
+    def _maybe_refresh_file_index(self) -> None:
+        """Refresh the file index on a worker thread if it's stale and not already running."""
+        if self._file_index_refreshing or not self.file_index.is_stale():
+            return
+        self._file_index_refreshing = True
+        self.run_worker(self._refresh_file_index(), name="kolega-file-index", group="file-index")
+
+    async def _refresh_file_index(self) -> None:
+        try:
+            await asyncio.to_thread(self.file_index.refresh)
+        finally:
+            self._file_index_refreshing = False
+        # Surface freshly-walked results if an @-mention is still being typed.
+        self._refresh_completion_dropdown()
 
     def on_descendant_focus(self, event: events.DescendantFocus) -> None:
         # Fires after screen.focused settles. Catches AUTO_FOCUS landing on the
