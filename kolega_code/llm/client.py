@@ -132,7 +132,11 @@ class LLMClient:
                 "xai": OpenAIProvider,
                 "dashscope": OpenAIProvider,
                 "moonshot": AnthropicProvider,
-                "deepseek": AnthropicProvider,
+                # DeepSeek's OpenAI-compatible /v1 endpoint streams reasoning_content
+                # continuously; its Anthropic-compatible endpoint goes silent during
+                # reasoning, so an idle-connection drop hangs streaming turns. Route
+                # through the OpenAI Chat path (matches opencode/openclaw, which work).
+                "deepseek": OpenAIProvider,
                 "zai": AnthropicProvider,
                 "kimi_coding": AnthropicProvider,
                 "ollama_cloud": OpenAIProvider,
@@ -148,7 +152,7 @@ class LLMClient:
                 "xai": "https://api.x.ai/v1",
                 "dashscope": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
                 "moonshot": "https://api.moonshot.ai/anthropic",
-                "deepseek": "https://api.deepseek.com/anthropic",
+                "deepseek": "https://api.deepseek.com/v1",
                 "zai": "https://api.z.ai/api/anthropic",
                 "kimi_coding": "https://api.kimi.com/coding",
                 "ollama_cloud": "https://ollama.com/v1",

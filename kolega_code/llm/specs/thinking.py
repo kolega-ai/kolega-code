@@ -54,12 +54,13 @@ def build_thinking_request_params(provider: str, model_name: str, effort: Option
         }
 
     if spec.mode == "deepseek_effort":
+        # DeepSeek's OpenAI-compatible /v1 endpoint: reasoning is on by default and graded
+        # via the standard reasoning_effort param (high/max; it also accepts low/medium/xhigh,
+        # collapsing low/medium->high and xhigh->max). There is no reasoning_effort=none, so
+        # "none" disables thinking via the documented extra_body toggle instead.
         if normalized == "none":
-            return {"thinking": {"type": "disabled"}}
-        return {
-            "thinking": {"type": "enabled"},
-            "output_config": {"effort": normalized},
-        }
+            return {"extra_body": {"thinking": {"type": "disabled"}}}
+        return {"reasoning_effort": normalized}
 
     if spec.mode == "zai_effort":
         # Z.AI GLM toggles thinking via {"thinking": {"type": "enabled"|"disabled"}}.
