@@ -188,20 +188,30 @@ def test_tui_stylesheet_keeps_sidebar_tabs_consistent_and_restores_card_contrast
     stylesheet = Path(__file__).parents[2] / "kolega_code" / "cli" / EXPECTED_CSS_PATH
     css = stylesheet.read_text()
 
+    conversation_block = css.split("#conversation {", 1)[1].split("}", 1)[0]
+    assert "background: $surface" in conversation_block
+    assert "background: $background" not in conversation_block
+
+    side_panel_block = css.split("#side_panel {", 1)[1].split("}", 1)[0]
+    assert "background: $background" in side_panel_block
+
     events_block = css.split("#events {", 1)[1].split("}", 1)[0]
-    assert "background: $surface" in events_block
+    assert "background: $background" in events_block
+    assert "background: $surface" not in events_block
     assert "color: $text" in events_block
 
     tab_container_block = css.split("#events > ContentTabs,", 1)[1].split("}", 1)[0]
     assert "#events ContentTabs > #tabs-scroll" in tab_container_block
     assert "#events ContentTabs #tabs-list-bar" in tab_container_block
     assert "#events ContentTabs #tabs-list" in tab_container_block
-    assert "background: $surface" in tab_container_block
+    assert "background: $background" in tab_container_block
+    assert "background: $surface" not in tab_container_block
     assert "color: $text" in tab_container_block
 
     tab_background_block = css.split("#events ContentTabs Tab,", 1)[1].split("}", 1)[0]
     assert "#events ContentTabs:focus Tab.-active" in tab_background_block
-    assert "background: $surface" in tab_background_block
+    assert "background: $background" in tab_background_block
+    assert "background: $surface" not in tab_background_block
     assert "background-tint: transparent" in tab_background_block
     assert "$block-cursor-background" not in tab_background_block
 
@@ -222,7 +232,8 @@ def test_tui_stylesheet_keeps_sidebar_tabs_consistent_and_restores_card_contrast
 
     sidebar_form_block = css.split("#status_form, #settings_form, #planning_form", 1)[1].split("}", 1)[0]
     assert "height: 1fr" in sidebar_form_block
-    assert "background: $surface" in sidebar_form_block
+    assert "background: $background" in sidebar_form_block
+    assert "background: $surface" not in sidebar_form_block
     assert "color: $text" in sidebar_form_block
     assert "padding: 1" in sidebar_form_block
     assert "#logs" not in sidebar_form_block
@@ -231,7 +242,8 @@ def test_tui_stylesheet_keeps_sidebar_tabs_consistent_and_restores_card_contrast
     status_dashboard_block = css.split("#status_dashboard {", 1)[1].split("}", 1)[0]
     assert "height: auto" in status_dashboard_block
     assert "border: none" in status_dashboard_block
-    assert "background: $surface" in status_dashboard_block
+    assert "background: $background" in status_dashboard_block
+    assert "background: $surface" not in status_dashboard_block
     assert "color: $text" in status_dashboard_block
     assert "padding: 0" in status_dashboard_block
     assert "border: round" not in status_dashboard_block
@@ -240,7 +252,8 @@ def test_tui_stylesheet_keeps_sidebar_tabs_consistent_and_restores_card_contrast
     assert ".planning-section" in section_block
     assert ".settings-section" in section_block
     assert "border: round $surface-lighten-2" in section_block
-    assert "background: $surface" in section_block
+    assert "background: $background" in section_block
+    assert "background: $surface" not in section_block
     assert "padding: 0 1" in section_block
     assert "margin-bottom: 1" in section_block
     assert "border: none" not in section_block
@@ -264,8 +277,10 @@ def test_tui_stylesheet_keeps_sidebar_tabs_consistent_and_restores_card_contrast
 
     sidebar_output_block = css.split("#logs, #terminal", 1)[1].split("}", 1)[0]
     assert "height: 1fr" in sidebar_output_block
-    assert "border: round $surface" in sidebar_output_block
-    assert "background: $surface" in sidebar_output_block
+    assert "border: none" in sidebar_output_block
+    assert "border: round" not in sidebar_output_block
+    assert "background: $background" in sidebar_output_block
+    assert "background: $surface" not in sidebar_output_block
     assert "overflow-x: hidden" in sidebar_output_block
 
 
@@ -339,6 +354,7 @@ async def test_sidebar_tab_and_settings_planning_computed_styles_keep_contrast(
         assert app.query_one("#status_form").styles.padding.left == 1
         assert app.query_one("#planning_form").styles.padding.left == 1
         assert str(app.query_one("#status_dashboard").styles.border) == "Edges()"
+        assert app.query_one("#status_dashboard").styles.background == app.query_one("#status_form").styles.background
         assert app.query_one("#status_dashboard").styles.padding.left == 0
         assert app.query_one("#status_task_list_markdown") is not None
 
@@ -350,19 +366,22 @@ async def test_sidebar_tab_and_settings_planning_computed_styles_keep_contrast(
             assert str(current.styles.border) != "Edges()"
 
         for section in app.query(".status-section"):
+            assert section.styles.background == app.query_one("#status_form").styles.background
             assert str(section.styles.border) != "Edges()"
         for section in app.query(".planning-section"):
+            assert section.styles.background == app.query_one("#planning_form").styles.background
             assert str(section.styles.border) != "Edges()"
         for section in app.query(".settings-section"):
+            assert section.styles.background == settings_background
             assert str(section.styles.border) != "Edges()"
 
         terminal_block = app.query_one("#terminal").styles
         assert terminal_block.padding.left == 0
-        assert str(terminal_block.border) != "Edges()"
+        assert str(terminal_block.border) == "Edges()"
         if show_logs:
             logs_block = app.query_one("#logs").styles
             assert logs_block.padding.left == 0
-            assert str(logs_block.border) != "Edges()"
+            assert str(logs_block.border) == "Edges()"
 
 
 def test_tui_stylesheet_explicitly_themes_footer_select_overlay_and_output_scrollbars() -> None:
@@ -373,13 +392,16 @@ def test_tui_stylesheet_explicitly_themes_footer_select_overlay_and_output_scrol
     assert "height: 1fr" in conversation_block
     assert "border: none" in conversation_block
     assert "background: $surface" in conversation_block
+    assert "background: $background" not in conversation_block
     assert "color: $text" in conversation_block
     assert "overflow-x: hidden" in conversation_block
 
     sidebar_output_block = css.split("#logs, #terminal", 1)[1].split("}", 1)[0]
     assert "height: 1fr" in sidebar_output_block
-    assert "border: round $surface" in sidebar_output_block
-    assert "background: $surface" in sidebar_output_block
+    assert "border: none" in sidebar_output_block
+    assert "border: round" not in sidebar_output_block
+    assert "background: $background" in sidebar_output_block
+    assert "background: $surface" not in sidebar_output_block
     assert "overflow-x: hidden" in sidebar_output_block
 
     footer_block = css.split("Footer {", 1)[1].split("}", 1)[0]

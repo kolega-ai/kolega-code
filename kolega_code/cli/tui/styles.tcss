@@ -22,10 +22,11 @@ Screen {
     width: 1fr;
     min-width: 34;
     height: 100%;
+    background: $background;
 }
 
 #events {
-    background: $surface;
+    background: $background;
     color: $text;
 }
 
@@ -33,7 +34,7 @@ Screen {
 #events ContentTabs > #tabs-scroll,
 #events ContentTabs #tabs-list-bar,
 #events ContentTabs #tabs-list {
-    background: $surface;
+    background: $background;
     color: $text;
 }
 
@@ -42,7 +43,7 @@ Screen {
 #events ContentTabs Tab.-active,
 #events ContentTabs:focus Tab,
 #events ContentTabs:focus Tab.-active {
-    background: $surface;
+    background: $background;
     background-tint: transparent;
 }
 
@@ -75,8 +76,8 @@ Screen {
 
 #logs, #terminal {
     height: 1fr;
-    border: round $surface;
-    background: $surface;
+    border: none;
+    background: $background;
     color: $text;
     overflow-x: hidden;
 }
@@ -117,7 +118,7 @@ ToolEntryWidget .tool-body {
 
 #status_form, #settings_form, #planning_form {
     height: 1fr;
-    background: $surface;
+    background: $background;
     color: $text;
     padding: 1;
 }
@@ -126,7 +127,7 @@ ToolEntryWidget .tool-body {
     height: auto;
     min-height: 15;
     border: none;
-    background: $surface;
+    background: $background;
     color: $text;
     padding: 0;
 }
@@ -138,7 +139,7 @@ ToolEntryWidget .tool-body {
     border: round $surface-lighten-2;
     border-title-color: $text;
     border-title-style: bold;
-    background: $surface;
+    background: $background;
     padding: 0 1;
     margin-bottom: 1;
 }
