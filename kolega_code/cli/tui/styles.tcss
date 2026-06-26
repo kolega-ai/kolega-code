@@ -426,8 +426,13 @@ OptionList > .option-list--option-highlighted {
     color: $text-muted;
 }
 
+#session_meta {
+    background: $background;
+    color: $text-muted;
+}
+
 Footer {
-    background: $surface;
+    background: $background;
     color: $text-muted;
 }
 

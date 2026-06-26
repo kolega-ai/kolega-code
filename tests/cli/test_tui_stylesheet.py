@@ -100,6 +100,7 @@ def test_tui_stylesheet_themes_scrollbars_and_avoids_disabled_opacity() -> None:
     assert "border: none" in composer_block
     assert "border-top: solid $surface-lighten-2" in composer_block
     assert "background: $surface" in composer_block
+    assert "background: $background" not in composer_block
     assert "color: $text" in composer_block
     assert "border: round" not in composer_block
     assert "margin-top" not in composer_block
@@ -194,6 +195,11 @@ def test_tui_stylesheet_keeps_sidebar_tabs_consistent_and_restores_card_contrast
 
     side_panel_block = css.split("#side_panel {", 1)[1].split("}", 1)[0]
     assert "background: $background" in side_panel_block
+
+    session_meta_block = css.split("#session_meta {", 1)[1].split("}", 1)[0]
+    assert "background: $background" in session_meta_block
+    assert "background: $surface" not in session_meta_block
+    assert "color: $text-muted" in session_meta_block
 
     events_block = css.split("#events {", 1)[1].split("}", 1)[0]
     assert "background: $background" in events_block
@@ -351,6 +357,7 @@ async def test_sidebar_tab_and_settings_planning_computed_styles_keep_contrast(
         assert active_tabs[0].styles.background == rendered_tabs[0].styles.background
         assert str(active_tabs[0].styles.text_style) == "bold"
 
+        assert app.query_one("#session_meta").styles.background == app.query_one("#side_panel").styles.background
         assert app.query_one("#status_form").styles.padding.left == 1
         assert app.query_one("#planning_form").styles.padding.left == 1
         assert str(app.query_one("#status_dashboard").styles.border) == "Edges()"
@@ -404,9 +411,19 @@ def test_tui_stylesheet_explicitly_themes_footer_select_overlay_and_output_scrol
     assert "background: $surface" not in sidebar_output_block
     assert "overflow-x: hidden" in sidebar_output_block
 
+    session_meta_block = css.split("#session_meta {", 1)[1].split("}", 1)[0]
+    assert "background: $background" in session_meta_block
+    assert "background: $surface" not in session_meta_block
+    assert "color: $text-muted" in session_meta_block
+
     footer_block = css.split("Footer {", 1)[1].split("}", 1)[0]
-    assert "background: $surface" in footer_block
+    assert "background: $background" in footer_block
+    assert "background: $surface" not in footer_block
     assert "color: $text-muted" in footer_block
+
+    footer_highlight_block = css.split("Footer > .footer--highlight", 1)[1].split("}", 1)[0]
+    assert "background: $surface-lighten-2" in footer_highlight_block
+    assert "color: $text" in footer_highlight_block
 
     select_overlay_block = css.rsplit("\nSelect > SelectOverlay", 1)[1].split("}", 1)[0]
     assert "background: $surface" in select_overlay_block
