@@ -76,6 +76,24 @@ class ConversationEntry:
     full_content: str = ""  # untruncated tool output for expand-on-demand (capped)
     edit_preview: Optional[dict] = None  # UI-only structured diff/head preview for edit tools (not persisted)
     entry_id: str = field(default_factory=_next_entry_id)  # UI-only widget key, not persisted
+    # Streaming buffers (UI-only, excluded from equality/repr). Deltas accumulate in
+    # stream_parts and are joined into content once per render flush, not per chunk, to
+    # avoid O(n^2) attribute concatenation. render_cache holds the incrementally-built
+    # inset renderable so each flush appends only the new text rather than re-splitting
+    # the whole buffer. See transcript._apply_stream_chunk / _streaming_inset_renderable.
+    stream_parts: list[str] = field(default_factory=list, compare=False, repr=False)
+    render_cache: object = field(default=None, compare=False, repr=False)
+
+    def materialize(self) -> str:
+        """Fold any deferred stream deltas into ``content`` and return it.
+
+        Streaming appends land in ``stream_parts`` (O(1)); they are joined into
+        ``content`` once here — on each render flush and when the segment completes —
+        rather than on every chunk, so growth stays O(n) instead of O(n^2)."""
+        if self.stream_parts:
+            self.content += "".join(self.stream_parts)
+            self.stream_parts.clear()
+        return self.content
 
 
 @dataclass
