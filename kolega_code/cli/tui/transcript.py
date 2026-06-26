@@ -31,6 +31,29 @@ from .sub_agent_screen import SubAgentEntryWidget
 from .widgets import ConversationEntryWidget, JumpToBottomBar, ToolEntryWidget
 
 
+class _InsetRenderState:
+    """Incremental render cache for a streaming inset body (assistant/thinking).
+
+    Holds the Rich ``Text`` built so far plus enough state to append only newly
+    arrived characters on each flush, instead of re-splitting the whole growing
+    buffer. The output matches ``_format_inset_text`` for ``\\n``-delimited content
+    (the common case); completion does a canonical full reformat as a safety net.
+    """
+
+    __slots__ = ("text", "length", "started", "open_has_content", "deferred_newline", "style")
+
+    def __init__(self, style):
+        self.text = Text()
+        self.length = 0  # chars of entry.content already folded into `text`
+        self.started = False  # has the first line's inset bar been emitted?
+        self.open_has_content = False  # has the current (last) line emitted its " " + text?
+        # One pending line break: a "\n" defers its new line until either more content or
+        # another "\n" arrives, so a *trailing* terminator leaves no empty inset line
+        # (matching str.splitlines, which drops only the final terminator).
+        self.deferred_newline = False
+        self.style = style
+
+
 class TranscriptRenderingMixin:
     def _restore_conversation_history(self, history: list[dict]) -> None:
         self.conversation_entries = []
@@ -238,8 +261,14 @@ class TranscriptRenderingMixin:
             self.conversation_entries.append(entry)
             self._stream_entries[cache_key] = entry
 
-        entry.content += content
+        # Defer concatenation to the next render flush (see ConversationEntryWidget.
+        # refresh_content): per-chunk `content += content` is O(n^2) over the stream.
+        # On completion, materialize now so entry.content is current the moment the
+        # segment ends (one O(n) join), without waiting for the flush.
+        entry.stream_parts.append(content)
         entry.complete = complete
+        if complete:
+            entry.materialize()
         self._invalidate_conversation(entry)
 
     def _begin_turn_progress(self) -> None:
@@ -1112,15 +1141,33 @@ class TranscriptRenderingMixin:
         if self._render_pending:
             return
         self._render_pending = True
+        interval = self._render_coalesce_interval(entry)
         try:
             self.set_timer(
-                theme.RENDER_COALESCE_INTERVAL,
+                interval,
                 self._flush_conversation_render,
                 name="conversation-render",
             )
         except Exception:
             # Timers are unavailable before the app is running; render directly.
             self._flush_conversation_render()
+
+    def _render_coalesce_interval(self, entry: Optional[ConversationEntry]) -> float:
+        """Back off the flush cadence for very large live entries.
+
+        Each flush makes Textual re-measure the auto-height streaming widget (O(height)),
+        so for big reasoning streams fewer, larger flushes beat ~20/sec full re-measures.
+        Length lags one flush (deltas materialize at flush time), which is fine: the entry
+        only grows, so the cadence steps up within one interval of crossing a threshold.
+        """
+        if entry is None:
+            return theme.RENDER_COALESCE_INTERVAL
+        size = len(entry.content)
+        if size >= theme.RENDER_COALESCE_LARGE_CHARS:
+            return theme.RENDER_COALESCE_INTERVAL_LARGE
+        if size >= theme.RENDER_COALESCE_MEDIUM_CHARS:
+            return theme.RENDER_COALESCE_INTERVAL_MEDIUM
+        return theme.RENDER_COALESCE_INTERVAL
 
     def _flush_conversation_render(self) -> None:
         if not self._render_pending:
@@ -1280,11 +1327,15 @@ class TranscriptRenderingMixin:
             header = theme.role_header(Glyph.AGENT, "Agent", Color.AGENT, state=streaming)
             if entry.complete and entry.content.strip():
                 return self._markdown_entry(header, entry.content)
+            if not entry.complete:
+                return self._streaming_inset_renderable(entry, header)
             return self._entry_renderable(header, entry.content)
         if entry.kind == "thinking":
             header = theme.role_header(
                 Glyph.STATUS, "Thinking", Color.THINKING, label_style="dim italic", state=streaming
             )
+            if not entry.complete:
+                return self._streaming_inset_renderable(entry, header, body_style="italic dim")
             return self._entry_renderable(header, entry.content, body_style="italic dim")
         if entry.kind == "progress":
             color = Color.ERROR if entry.tone == "error" else Color.WARNING
@@ -1335,6 +1386,63 @@ class TranscriptRenderingMixin:
         if body is None:
             return header_text
         return Group(header_text, self._format_inset_text(body, style=body_style))
+
+    def _streaming_inset_renderable(self, entry, header: str, *, body_style: Optional[str] = None) -> Group:
+        """Inset body for a still-streaming entry, built incrementally (O(delta) per flush).
+
+        Caches the rendered Text on the entry so each flush only appends the newly
+        arrived characters instead of re-splitting and re-rendering the whole buffer
+        (the O(n^2) cliff). The header is small and rebuilt each call. On completion the
+        dispatcher routes to the canonical _entry_renderable/_markdown_entry instead.
+        """
+        state = entry.render_cache
+        content = entry.content
+        if not isinstance(state, _InsetRenderState) or state.style != body_style or state.length > len(content):
+            # First render for this entry, a body-style change, or a defensive shrink:
+            # fold the whole current buffer once.
+            state = _InsetRenderState(body_style)
+            entry.render_cache = state
+            self._extend_inset(state, content)
+        elif state.length < len(content):
+            self._extend_inset(state, content[state.length :])
+        return Group(Text.from_markup(header), state.text)
+
+    def _extend_inset(self, state: "_InsetRenderState", delta: str) -> None:
+        """Append ``delta`` to the cached inset Text, matching _format_inset_text for "\\n".
+
+        A pending newline is flushed (its new line materialized) as soon as another
+        newline *or* content follows it; only a still-pending terminator at the very end
+        is left unrendered, so the result equals ``_format_inset_text`` over the buffer.
+        """
+        if not delta and state.started:
+            return
+        bar = f"  {theme.g(Glyph.INSET_BAR)}"
+        text = state.text
+
+        def flush_deferred() -> None:
+            if state.deferred_newline:
+                text.append("\n")
+                text.append(bar, style="dim")
+                state.deferred_newline = False
+                state.open_has_content = False
+
+        if not state.started:
+            text.append(bar, style="dim")
+            state.started = True
+            state.open_has_content = False
+
+        for index, segment in enumerate(delta.split("\n")):
+            if index > 0:
+                # A "\n" boundary confirms any prior deferred line, then defers its own.
+                flush_deferred()
+                state.deferred_newline = True
+            if segment:
+                flush_deferred()
+                if not state.open_has_content:
+                    text.append(" ")
+                    state.open_has_content = True
+                text.append(segment, style=state.style)
+        state.length += len(delta)
 
     def _markdown_entry(self, header: str, content: str) -> Group:
         return Group(

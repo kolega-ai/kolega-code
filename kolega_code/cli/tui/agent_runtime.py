@@ -214,7 +214,10 @@ class AgentRuntimeMixin:
         if queued.entry not in self.conversation_entries:
             self._add_conversation_entry(queued.entry)
         else:
-            self._render_conversation()
+            # The entry is already mounted (added when queued); just re-render that one
+            # widget for the queued->user transition instead of rebuilding the whole
+            # transcript, which on a long thread is a synchronous O(entries) hitch.
+            self._invalidate_conversation(queued.entry)
         self._refresh_queued_messages_panel()
         self._clear_composer_hint()
         self.agent_worker = self.run_worker(

@@ -40,6 +40,10 @@ class ConversationEntryWidget(Static):
         self.refresh_content()
 
     def refresh_content(self) -> None:
+        # Join any streamed deltas into content once here (per flush) rather than on
+        # every chunk, so growth stays O(n) instead of O(n^2) attribute concatenation.
+        self.entry.materialize()
+
         kind_class = f"entry-{self.entry.kind}"
         if kind_class != self._kind_class:
             if self._kind_class:
@@ -55,13 +59,16 @@ class ConversationEntryWidget(Static):
         self.update(self._formatted)
 
     def _entry_snapshot(self) -> tuple[object, ...]:
+        # Use content lengths, not the full strings: streaming only appends, so length
+        # is a strictly-monotonic change signal and the comparison stays O(1) instead of
+        # an O(n) string compare on every coalesced flush.
         return (
             self.entry.kind,
-            self.entry.content,
+            len(self.entry.content),
             self.entry.complete,
             self.entry.tool_name,
             self.entry.tone,
-            self.entry.full_content,
+            len(self.entry.full_content),
             repr(self.entry.edit_preview),
         )
 

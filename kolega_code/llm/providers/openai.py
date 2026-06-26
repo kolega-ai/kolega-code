@@ -1,4 +1,5 @@
 from typing import Any, AsyncContextManager, Dict, List, Optional
+from weakref import WeakKeyDictionary
 import json
 import logging
 import math
@@ -151,6 +152,15 @@ class OpenAIProvider(BaseLLMProvider):
         # honors retry-after and retries 429/5xx + connection errors) is actually used.
         self.async_client = AsyncOpenAI(api_key=api_key, base_url=base_url, max_retries=max_retries)
         self.sync_client = OpenAI(api_key=api_key, base_url=base_url, max_retries=max_retries)
+        # Per-message / per-tool token-count memos. count_tokens runs every agent-loop
+        # iteration over the whole history; without this it re-encodes the entire
+        # conversation each time (O(history) on the event loop, the streaming-turn
+        # freeze on slow machines). Keyed by object identity so unchanged messages are
+        # counted once; a cheap length fingerprint catches in-place edits (e.g. an
+        # oversized tool result being truncated). Compaction/adaptation/repair produce
+        # new objects, which miss naturally.
+        self._message_token_memo: "WeakKeyDictionary[Message, tuple]" = WeakKeyDictionary()
+        self._tool_token_memo: "WeakKeyDictionary[ToolDefinition, int]" = WeakKeyDictionary()
 
     @property
     def retry_decorator(self):
@@ -210,80 +220,153 @@ class OpenAIProvider(BaseLLMProvider):
             TokenCount object with input token count
         """
         encoding = tiktoken.get_encoding("cl100k_base")
-        num_tokens = 0
+        self._ensure_token_memos()
 
         # Combine system message with messages if provided
         all_messages = ([system] + list(messages)) if system else list(messages)
 
-        # Count tokens for each message
-        for message in all_messages:
-            # Base tokens for message formatting
-            num_tokens += 4  # Every message follows <im_start>{role/name}\n{content}<im_end>\n format
+        # Sum memoized per-message counts: only new or changed messages are re-encoded.
+        num_tokens = sum(self._memoized_message_tokens(encoding, message) for message in all_messages)
 
-            # Add tokens for role
-            if hasattr(message, "role") and message.role:
-                num_tokens += len(encoding.encode(message.role))
-
-            # Add tokens for content
-            if hasattr(message, "content"):
-                if isinstance(message.content, str):
-                    num_tokens += len(encoding.encode(message.content))
-                elif isinstance(message.content, list):
-                    for item in message.content:
-                        # Handle text blocks
-                        if hasattr(item, "text") and item.text:
-                            num_tokens += len(encoding.encode(item.text))
-                        elif isinstance(item, dict) and "text" in item:
-                            num_tokens += len(encoding.encode(item["text"]))
-                        # Handle image blocks
-                        elif isinstance(item, ImageBlock):
-                            num_tokens += self._estimate_image_tokens(len(item.data))
-                        elif hasattr(item, "data") and hasattr(item, "media_type"):
-                            # ImageBlock - estimate tokens based on base64 data size
-                            num_tokens += self._estimate_image_tokens(len(item.data))
-                        # Handle tool calls. OpenAI's prompt accounting uses a compact
-                        # internal representation for assistant tool calls rather than
-                        # charging the full Chat Completions JSON wrapper. Counting the
-                        # stable fields (id, function name, serialized arguments) tracks
-                        # the API much more closely for resumed/provider-shaped history.
-                        elif isinstance(item, ToolCall):
-                            tool_call_payload = item.to_openai()
-                            function_payload = tool_call_payload.get("function", {})
-                            arguments = str(function_payload.get("arguments") or "")
-                            num_tokens += len(encoding.encode(str(tool_call_payload.get("id") or "")))
-                            num_tokens += len(encoding.encode(str(function_payload.get("name") or item.name)))
-                            num_tokens += len(encoding.encode(arguments))
-                            num_tokens += 1  # Compact formatting overhead for tool calls
-                        # Handle tool results
-                        elif isinstance(item, ToolResult):
-                            # Tool results contain content that needs to be counted.
-                            # OpenAI tool messages are text-only, but image-bearing
-                            # tool results are serialized as a follow-up user image
-                            # message, so nested images contribute image tokens.
-                            if isinstance(item.content, str):
-                                num_tokens += len(encoding.encode(item.content))
-                            elif isinstance(item.content, list):
-                                for result_item in item.content:
-                                    if isinstance(result_item, ImageBlock):
-                                        num_tokens += self._estimate_image_tokens(len(result_item.data))
-                                    elif hasattr(result_item, "data") and hasattr(result_item, "media_type"):
-                                        num_tokens += self._estimate_image_tokens(len(result_item.data))
-                                    elif hasattr(result_item, "text") and result_item.text:
-                                        num_tokens += len(encoding.encode(result_item.text))
-                            num_tokens += 2  # Minimal formatting overhead for tool results
-
-        # Count tool definition tokens
+        # Tool definitions don't mutate within a session, so memoize per definition by identity.
         if tools:
-            for tool in tools:
-                tool_json = json.dumps(tool.to_openai())
-                # Count JSON tokens
-                json_tokens = len(encoding.encode(tool_json))
-                # OpenAI uses highly optimized internal format (not JSON)
-                # Empirically, their token count is ~79% of raw JSON token count
-                # Apply scaling factor to match API behavior
-                num_tokens += int(json_tokens * 0.79)
+            num_tokens += sum(self._memoized_tool_tokens(encoding, tool) for tool in tools)
 
         return TokenCount(input_tokens=num_tokens)
+
+    def _ensure_token_memos(self) -> None:
+        # Instances built via __new__ (benchmarks/tests) skip __init__, so create lazily.
+        if getattr(self, "_message_token_memo", None) is None:
+            self._message_token_memo = WeakKeyDictionary()
+        if getattr(self, "_tool_token_memo", None) is None:
+            self._tool_token_memo = WeakKeyDictionary()
+
+    def _memoized_message_tokens(self, encoding, message) -> int:
+        fingerprint = self._message_fingerprint(message)
+        try:
+            cached = self._message_token_memo.get(message)
+        except TypeError:  # message not weak-referenceable / hashable
+            cached = None
+        if cached is not None and cached[0] == fingerprint:
+            return cached[1]
+        value = self._count_message_tokens(encoding, message)
+        try:
+            self._message_token_memo[message] = (fingerprint, value)
+        except TypeError:
+            pass
+        return value
+
+    def _memoized_tool_tokens(self, encoding, tool) -> int:
+        try:
+            cached = self._tool_token_memo.get(tool)
+        except TypeError:
+            cached = None
+        if cached is not None:
+            return cached
+        # OpenAI uses a highly optimized internal format (not JSON); empirically their
+        # token count is ~79% of the raw JSON token count.
+        value = int(len(encoding.encode(json.dumps(tool.to_openai()))) * 0.79)
+        try:
+            self._tool_token_memo[tool] = value
+        except TypeError:
+            pass
+        return value
+
+    def _count_message_tokens(self, encoding, message) -> int:
+        """Token count for one message (role + content blocks). Memoized by the caller."""
+        num_tokens = 4  # Every message follows <im_start>{role/name}\n{content}<im_end>\n format
+        if hasattr(message, "role") and message.role:
+            num_tokens += len(encoding.encode(message.role))
+        if hasattr(message, "content"):
+            if isinstance(message.content, str):
+                num_tokens += len(encoding.encode(message.content))
+            elif isinstance(message.content, list):
+                for item in message.content:
+                    # Handle text blocks
+                    if hasattr(item, "text") and item.text:
+                        num_tokens += len(encoding.encode(item.text))
+                    elif isinstance(item, dict) and "text" in item:
+                        num_tokens += len(encoding.encode(item["text"]))
+                    # Handle image blocks
+                    elif isinstance(item, ImageBlock):
+                        num_tokens += self._estimate_image_tokens(len(item.data))
+                    elif hasattr(item, "data") and hasattr(item, "media_type"):
+                        # ImageBlock - estimate tokens based on base64 data size
+                        num_tokens += self._estimate_image_tokens(len(item.data))
+                    # Handle tool calls. OpenAI's prompt accounting uses a compact
+                    # internal representation for assistant tool calls rather than
+                    # charging the full Chat Completions JSON wrapper. Counting the
+                    # stable fields (id, function name, serialized arguments) tracks
+                    # the API much more closely for resumed/provider-shaped history.
+                    elif isinstance(item, ToolCall):
+                        tool_call_payload = item.to_openai()
+                        function_payload = tool_call_payload.get("function", {})
+                        arguments = str(function_payload.get("arguments") or "")
+                        num_tokens += len(encoding.encode(str(tool_call_payload.get("id") or "")))
+                        num_tokens += len(encoding.encode(str(function_payload.get("name") or item.name)))
+                        num_tokens += len(encoding.encode(arguments))
+                        num_tokens += 1  # Compact formatting overhead for tool calls
+                    # Handle tool results
+                    elif isinstance(item, ToolResult):
+                        # Tool results contain content that needs to be counted.
+                        # OpenAI tool messages are text-only, but image-bearing
+                        # tool results are serialized as a follow-up user image
+                        # message, so nested images contribute image tokens.
+                        if isinstance(item.content, str):
+                            num_tokens += len(encoding.encode(item.content))
+                        elif isinstance(item.content, list):
+                            for result_item in item.content:
+                                if isinstance(result_item, ImageBlock):
+                                    num_tokens += self._estimate_image_tokens(len(result_item.data))
+                                elif hasattr(result_item, "data") and hasattr(result_item, "media_type"):
+                                    num_tokens += self._estimate_image_tokens(len(result_item.data))
+                                elif hasattr(result_item, "text") and result_item.text:
+                                    num_tokens += len(encoding.encode(result_item.text))
+                        num_tokens += 2  # Minimal formatting overhead for tool results
+        return num_tokens
+
+    def _message_fingerprint(self, message):
+        """Cheap (lengths-only) signature mirroring _count_message_tokens' inputs.
+
+        The token count for a fixed message structure changes only when an encoded
+        length changes, so a change in this fingerprint is necessary and sufficient to
+        invalidate a memoized count for the same object (e.g. in-place truncation of an
+        oversized tool result). Structural/type changes arrive as new objects (identity
+        miss), so they need not be captured here."""
+        role = getattr(message, "role", "") or ""
+        content = getattr(message, "content", None)
+        if isinstance(content, str):
+            return (role, len(content))
+        if isinstance(content, list):
+            return (role, tuple(self._block_fingerprint(item) for item in content))
+        return (role, None)
+
+    def _block_fingerprint(self, item):
+        # Branch order mirrors _count_message_tokens so classification stays aligned.
+        if hasattr(item, "text") and getattr(item, "text", None):
+            return ("txt", len(item.text))
+        if isinstance(item, dict) and "text" in item:
+            return ("dtxt", len(item.get("text") or ""))
+        if isinstance(item, ImageBlock):
+            return ("img", len(item.data))
+        if hasattr(item, "data") and hasattr(item, "media_type"):
+            return ("img", len(item.data))
+        if isinstance(item, ToolCall):
+            payload = item.to_openai()
+            function_payload = payload.get("function", {})
+            return (
+                "tc",
+                len(str(payload.get("id") or "")),
+                len(str(function_payload.get("name") or item.name)),
+                len(str(function_payload.get("arguments") or "")),
+            )
+        if isinstance(item, ToolResult):
+            if isinstance(item.content, str):
+                return ("tr", len(item.content))
+            if isinstance(item.content, list):
+                return ("tr", tuple(self._block_fingerprint(ri) for ri in item.content))
+            return ("tr", None)
+        return ("?",)
 
     def _estimate_image_tokens(self, base64_data_length: int) -> int:
         """Estimate image token cost based on base64 data length.
