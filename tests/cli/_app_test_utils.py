@@ -224,4 +224,9 @@ def _build_mention_test_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     config = build_test_config(project)
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
-    return KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+    # Pre-warm the @-mention index so cached_search is populated deterministically in tests.
+    # In production the app warms it off-thread on mount; the completion dropdown reads the
+    # cached snapshot only (never walks on a keystroke).
+    app.file_index.refresh()
+    return app

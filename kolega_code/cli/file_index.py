@@ -11,6 +11,7 @@ from typing import List, Optional
 import pathspec
 
 from kolega_code.agent.tool_backend.glob_tool import GlobTool
+from kolega_code.utils.images import image_media_type
 
 
 @dataclass(frozen=True)
@@ -31,10 +32,15 @@ class WorkspaceFileIndex:
         self._refreshed_at: Optional[float] = None
 
     def entries(self) -> List[IndexEntry]:
-        now = time.monotonic()
-        if self._refreshed_at is None or now - self._refreshed_at > self.TTL_SECONDS:
+        if self.is_stale():
             self.refresh()
         return self._entries
+
+    def is_stale(self) -> bool:
+        """Whether the cache is empty or older than the TTL (a refresh is due)."""
+        if self._refreshed_at is None:
+            return True
+        return time.monotonic() - self._refreshed_at > self.TTL_SECONDS
 
     def refresh(self) -> None:
         gitignore = self._load_gitignore_spec()
@@ -54,7 +60,10 @@ class WorkspaceFileIndex:
             dirnames[:] = kept_dirs
 
             for name in sorted(filenames):
-                if Path(name).suffix.lower() in GlobTool.BINARY_EXTENSIONS:
+                # Exclude binaries, but keep attachable images: @-mentioning an image
+                # attaches it (build_file_attachments handles it via the same
+                # image_media_type), so it belongs in completions for vision models.
+                if Path(name).suffix.lower() in GlobTool.BINARY_EXTENSIONS and image_media_type(name) is None:
                     continue
                 rel = self._posix(rel_dir / name)
                 if gitignore is not None and gitignore.match_file(rel):
@@ -69,8 +78,21 @@ class WorkspaceFileIndex:
         self._refreshed_at = time.monotonic()
 
     def search(self, query: str, limit: int = 8) -> List[IndexEntry]:
+        """Search, refreshing the cache first if stale (may block on os.walk)."""
+        return self._rank(self.entries(), query, limit)
+
+    def cached_search(self, query: str, limit: int = 8) -> List[IndexEntry]:
+        """Search the current cached entries WITHOUT refreshing.
+
+        The UI uses this so a keystroke never blocks on ``os.walk``; a background
+        refresh (see ``app._refresh_file_index``) updates the cache out-of-band.
+        """
+        return self._rank(self._entries, query, limit)
+
+    @staticmethod
+    def _rank(entries: List[IndexEntry], query: str, limit: int) -> List[IndexEntry]:
         scored = []
-        for entry in self.entries():
+        for entry in entries:
             score = fuzzy_score(query, entry.path)
             if score is not None:
                 scored.append((score, entry))

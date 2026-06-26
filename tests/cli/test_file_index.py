@@ -42,13 +42,25 @@ def test_index_respects_gitignore(tmp_path: Path) -> None:
     assert all(not path.startswith("secrets") for path in paths)
 
 
-def test_index_skips_binary_extensions(tmp_path: Path) -> None:
-    (tmp_path / "image.png").write_bytes(b"png")
+def test_index_skips_non_image_binaries(tmp_path: Path) -> None:
+    (tmp_path / "archive.zip").write_bytes(b"zip")
+    (tmp_path / "vector.svg").write_text("<svg/>", encoding="utf-8")  # not an attachable raster image
     (tmp_path / "code.py").write_text("", encoding="utf-8")
     index = WorkspaceFileIndex(tmp_path)
     paths = _paths(index.entries())
     assert "code.py" in paths
-    assert "image.png" not in paths
+    assert "archive.zip" not in paths
+    assert "vector.svg" not in paths
+
+
+def test_index_includes_attachable_images(tmp_path: Path) -> None:
+    # Images are @-mentionable (build_file_attachments attaches them), so they belong in completions.
+    (tmp_path / "logo.png").write_bytes(b"png")
+    (tmp_path / "photo.JPG").write_bytes(b"jpg")  # case-insensitive
+    index = WorkspaceFileIndex(tmp_path)
+    paths = _paths(index.entries())
+    assert "logo.png" in paths
+    assert "photo.JPG" in paths
 
 
 def test_index_caps_total_entries(tmp_path: Path, monkeypatch) -> None:
@@ -65,6 +77,24 @@ def test_index_refreshes_after_ttl(tmp_path: Path, monkeypatch) -> None:
     assert index.entries() == []
     (tmp_path / "late.txt").write_text("", encoding="utf-8")
     assert _paths(index.entries()) == ["late.txt"]
+
+
+def test_cached_search_does_not_walk_until_refreshed(tmp_path: Path) -> None:
+    (tmp_path / "main.py").write_text("", encoding="utf-8")
+    index = WorkspaceFileIndex(tmp_path)
+    # No refresh yet: cached_search must not trigger a walk, so it returns nothing.
+    assert index.cached_search("main") == []
+    index.refresh()
+    assert _paths(index.cached_search("main")) == ["main.py"]
+
+
+def test_is_stale_tracks_refresh_and_ttl(tmp_path: Path, monkeypatch) -> None:
+    index = WorkspaceFileIndex(tmp_path)
+    assert index.is_stale() is True  # never refreshed
+    index.refresh()
+    assert index.is_stale() is False  # just refreshed, within TTL
+    monkeypatch.setattr(WorkspaceFileIndex, "TTL_SECONDS", 0.0)
+    assert index.is_stale() is True  # past (zero) TTL
 
 
 def test_search_ranks_substring_above_subsequence(tmp_path: Path) -> None:
