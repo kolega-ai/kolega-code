@@ -6,6 +6,19 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.11.0 - 2026-06-26
+
+### Added
+
+- Added queued follow-up messages in the TUI so users can submit additional
+  prompts while an active turn is still running.
+
+### Changed
+
+- Moved task-list status into the sidebar and refined sidebar presentation.
+- Updated documentation and positioning copy for gigacode and queued follow-up
+  messages.
+
 ## 0.10.0 - 2026-06-25
 
 ### Added
