@@ -43,6 +43,7 @@ These control the app and your session.
 | `/login` | Sign in to a provider, e.g. `/login chatgpt` |
 | `/logout` | Sign out of a provider, e.g. `/logout chatgpt` |
 | `/gigacode` | Toggle [gigacode](../../gigacode/) workflow orchestration on or off |
+| `/queue-clear` | Clear queued follow-up messages |
 | `/copy` | Copy the last response to the clipboard |
 | `/version` | Show the Kolega Code version |
 | `/update` | Update Kolega Code to the latest version |
@@ -58,6 +59,10 @@ active model. You can also switch directly with `/effort <level>`.
 Run `/login chatgpt` to sign in with a ChatGPT subscription and use OpenAI models
 without an API key; `/logout chatgpt` removes the stored credentials. See
 [Sign in with ChatGPT](../../configuration/sign-in-with-chatgpt/).
+
+Run `/queue-clear` to discard follow-up prompts that you queued while the current
+turn is running. It removes their `Queued` transcript entries, but it does not
+cancel or otherwise stop the active agent turn.
 
 Run `/init` to have the agent inspect the repository and create or update a
 concise root `AGENTS.md`. Extra text after the command is passed as focus or
