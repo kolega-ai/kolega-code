@@ -297,20 +297,26 @@ async def test_planning_sidebar_marks_empty_states(tmp_path: Path, monkeypatch: 
 
     from kolega_code.cli.tui.widgets import PlanningMarkdown
 
-    from kolega_code.cli.messages import PLAN_EMPTY_MESSAGE
+    from kolega_code.cli.messages import PLAN_EMPTY_MESSAGE, TASK_LIST_EMPTY_MESSAGE
 
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
 
     async with app.run_test():
         plan_md = app.query_one("#planning_plan_markdown", PlanningMarkdown)
+        task_list_md = app.query_one("#status_task_list_markdown", PlanningMarkdown)
         assert plan_md.source == PLAN_EMPTY_MESSAGE
         assert plan_md.has_class("empty-state")
+        assert task_list_md.source == TASK_LIST_EMPTY_MESSAGE
+        assert task_list_md.has_class("empty-state")
 
         app._latest_plan = "# Plan\n\n- do the thing"
+        app.session.task_list_markdown = "- [ ] do the task"
         app._refresh_planning_sidebar()
 
         assert plan_md.source == "# Plan\n\n- do the thing"
         assert not plan_md.has_class("empty-state")
+        assert task_list_md.source == "- [ ] do the task"
+        assert not task_list_md.has_class("empty-state")
 
 
 @pytest.mark.asyncio

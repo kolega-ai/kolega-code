@@ -18,7 +18,6 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.timer import Timer
 from textual.widgets import (
     Button,
-    Collapsible,
     Footer,
     Input,
     Label,
@@ -270,8 +269,17 @@ class KolegaCodeApp(
             with Vertical(id="side_panel"):
                 with TabbedContent(id="events"):
                     with TabPane("Status", id="status_pane"):
-                        with Vertical(id="status_container"):
-                            yield Static("", id="status_dashboard", markup=True)
+                        with VerticalScroll(id="status_form"):
+                            with Vertical(classes="status-section", id="status_summary_section") as status_section:
+                                status_section.border_title = "Status"
+                                yield Static("", id="status_dashboard", markup=True)
+                            with Vertical(classes="status-section", id="status_task_list_section") as task_section:
+                                task_section.border_title = "Task List"
+                                yield tui_widgets.PlanningMarkdown(
+                                    messages.TASK_LIST_EMPTY_MESSAGE,
+                                    id="status_task_list_markdown",
+                                    empty_source=messages.TASK_LIST_EMPTY_MESSAGE,
+                                )
                     if self.show_logs:
                         with TabPane("Logs", id="logs_pane"):
                             yield tui_widgets.LogOutputLog(
@@ -289,19 +297,14 @@ class KolegaCodeApp(
                             markup=False,
                             max_lines=TERMINAL_MAX_LINES,
                         )
-                    with TabPane("Planning", id="planning_pane"):
+                    with TabPane("Plan", id="planning_pane"):
                         with VerticalScroll(id="planning_form"):
-                            with Collapsible(title="Plan", collapsed=False, id="planning_plan"):
+                            with Vertical(classes="planning-section", id="planning_plan") as plan_section:
+                                plan_section.border_title = "Plan"
                                 yield tui_widgets.PlanningMarkdown(
                                     messages.PLAN_EMPTY_MESSAGE,
                                     id="planning_plan_markdown",
                                     empty_source=messages.PLAN_EMPTY_MESSAGE,
-                                )
-                            with Collapsible(title="Task List", collapsed=False, id="planning_task_list"):
-                                yield tui_widgets.PlanningMarkdown(
-                                    messages.TASK_LIST_EMPTY_MESSAGE,
-                                    id="planning_task_list_markdown",
-                                    empty_source=messages.TASK_LIST_EMPTY_MESSAGE,
                                 )
                     with TabPane("Settings", id="settings_pane"):
                         with VerticalScroll(id="settings_form"):
@@ -1457,7 +1460,7 @@ class KolegaCodeApp(
         task_list_content = self.session.task_list_markdown or messages.TASK_LIST_EMPTY_MESSAGE
         try:
             plan_markdown = self.query_one("#planning_plan_markdown", tui_widgets.PlanningMarkdown)
-            task_list_markdown = self.query_one("#planning_task_list_markdown", tui_widgets.PlanningMarkdown)
+            task_list_markdown = self.query_one("#status_task_list_markdown", tui_widgets.PlanningMarkdown)
             plan_markdown.update(plan_content)
             task_list_markdown.update(task_list_content)
             plan_markdown.set_class(plan_content == messages.PLAN_EMPTY_MESSAGE, "empty-state")

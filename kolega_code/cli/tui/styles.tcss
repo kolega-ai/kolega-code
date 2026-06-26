@@ -24,6 +24,47 @@ Screen {
     height: 100%;
 }
 
+#events {
+    background: $surface;
+    color: $text;
+}
+
+#events > ContentTabs,
+#events ContentTabs > #tabs-scroll,
+#events ContentTabs #tabs-list-bar,
+#events ContentTabs #tabs-list {
+    background: $surface;
+    color: $text;
+}
+
+#events ContentTabs Tab,
+#events ContentTabs Tab:hover,
+#events ContentTabs Tab.-active,
+#events ContentTabs:focus Tab,
+#events ContentTabs:focus Tab.-active {
+    background: $surface;
+    background-tint: transparent;
+}
+
+#events ContentTabs Tab {
+    color: $text-muted;
+}
+
+#events ContentTabs Tab:hover,
+#events ContentTabs Tab.-active,
+#events ContentTabs:focus Tab.-active {
+    color: $text;
+}
+
+#events ContentTabs Tab.-active,
+#events ContentTabs:focus Tab.-active {
+    text-style: bold;
+}
+
+#events ContentTabs:focus .underline--bar {
+    background: $surface-lighten-2;
+}
+
 #conversation {
     height: 1fr;
     border: none;
@@ -74,29 +115,50 @@ ToolEntryWidget .tool-body {
     text-align: center;
 }
 
-#status_container {
+#status_form, #settings_form, #planning_form {
     height: 1fr;
+    background: $surface;
+    color: $text;
+    padding: 1;
 }
 
 #status_dashboard {
-    height: 1fr;
+    height: auto;
     min-height: 15;
-    border: round $surface;
-    padding: 1;
+    border: none;
+    background: $surface;
+    color: $text;
+    padding: 0;
 }
 
-#settings_form, #planning_form {
-    height: 1fr;
-    padding: 1;
-}
-
+.status-section,
+.planning-section,
 .settings-section {
     height: auto;
-    border: round $surface;
+    border: round $surface-lighten-2;
     border-title-color: $text;
     border-title-style: bold;
+    background: $surface;
     padding: 0 1;
     margin-bottom: 1;
+}
+
+#settings_form Select > SelectCurrent {
+    background: $panel;
+    border: round $surface-lighten-2;
+    color: $text;
+}
+
+#settings_form Select:focus > SelectCurrent {
+    background: $panel;
+    border: round $surface-lighten-2;
+    background-tint: transparent;
+}
+
+#settings_form Select > SelectOverlay {
+    background: $panel;
+    border: round $surface-lighten-2;
+    color: $text;
 }
 
 #settings_status {
@@ -147,10 +209,12 @@ ToolEntryWidget .tool-body {
     margin-top: 1;
 }
 
+#status_form PlanningMarkdown,
 #planning_form PlanningMarkdown {
     height: auto;
 }
 
+#status_form PlanningMarkdown.empty-state,
 #planning_form PlanningMarkdown.empty-state {
     color: $text-muted;
 }
