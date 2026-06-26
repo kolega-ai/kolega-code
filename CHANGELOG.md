@@ -6,6 +6,19 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.11.1 - 2026-06-26
+
+### Added
+
+- Made images `@`-mentionable in the TUI and moved file-index walking off the
+  event loop.
+
+### Fixed
+
+- Routed DeepSeek through the OpenAI-compatible `/v1` endpoint.
+- Bounded LLM streaming timeouts and added retry handling for transport errors.
+- Prevented DeepSeek stream freezes in the TUI.
+
 ## 0.11.0 - 2026-06-26
 
 ### Added
