@@ -1,12 +1,14 @@
 import json
 import os
 from typing import Any, AsyncContextManager, Dict, List, Optional
+from weakref import WeakKeyDictionary
 
 import tiktoken
 from anthropic import Anthropic, AsyncAnthropic
 
 from ..models import Message, MessageChunk, MessageHistory, ToolDefinition
 from ..specs import build_thinking_request_params, get_model_specs
+from ..timeouts import streaming_timeout
 from ..tool_execution_ids import ToolExecutionIdRegistry
 from .base import BaseLLMProvider
 from .models import GenerationParams, TokenCount
@@ -120,6 +122,15 @@ class AnthropicProvider(BaseLLMProvider):
             or os.getenv("ANTHROPIC_USE_LOCAL_TOKEN_COUNTING", "false").lower() == "true"
         )
 
+        # Per-message / per-tool memos for local token counting. _count_tokens_local runs
+        # every agent-loop iteration over the whole history; without this it re-encodes the
+        # entire conversation each time (O(history) on the event loop). Keyed by object
+        # identity so unchanged messages are counted once; a recursive length fingerprint
+        # catches in-place edits (an oversized tool result being truncated). Compaction /
+        # adaptation / repair produce new objects, which miss naturally.
+        self._local_token_memo: "WeakKeyDictionary[Message, tuple]" = WeakKeyDictionary()
+        self._local_tool_token_memo: "WeakKeyDictionary[ToolDefinition, int]" = WeakKeyDictionary()
+
     @property
     def retry_decorator(self):
         """Get retry decorator with configured max retries"""
@@ -223,22 +234,102 @@ class AnthropicProvider(BaseLLMProvider):
             TokenCount object with estimated input token count
         """
         encoding = tiktoken.get_encoding("p50k_base")
-        num_tokens = 0
+        self._ensure_local_token_memos()
         tools = tools or []
 
+        # Sum memoized per-message content counts: only new or changed messages are
+        # re-encoded each iteration (system is a Message too).
+        num_tokens = 0
         if system:
-            num_tokens += self.SYSTEM_OVERHEAD
-            num_tokens += self._count_message_content_tokens(encoding, system.content)
-
+            num_tokens += self.SYSTEM_OVERHEAD + self._memoized_content_tokens(encoding, system)
         for message in messages:
-            num_tokens += self.MESSAGE_OVERHEAD
-            num_tokens += self._count_message_content_tokens(encoding, message.content)
-
+            num_tokens += self.MESSAGE_OVERHEAD + self._memoized_content_tokens(encoding, message)
         for tool in tools:
-            num_tokens += self._count_value_tokens(encoding, tool.to_anthropic())
-            num_tokens += self.TOOL_DEFINITION_OVERHEAD
+            num_tokens += self._memoized_tool_tokens(encoding, tool)
 
         return TokenCount(input_tokens=num_tokens, output_tokens=None)
+
+    def _ensure_local_token_memos(self) -> None:
+        # Instances built via __new__ (tests) skip __init__, so create lazily.
+        if getattr(self, "_local_token_memo", None) is None:
+            self._local_token_memo = WeakKeyDictionary()
+        if getattr(self, "_local_tool_token_memo", None) is None:
+            self._local_tool_token_memo = WeakKeyDictionary()
+
+    def _memoized_content_tokens(self, encoding, message) -> int:
+        fingerprint = self._content_fingerprint(message.content)
+        try:
+            cached = self._local_token_memo.get(message)
+        except TypeError:  # message not weak-referenceable / hashable
+            cached = None
+        if cached is not None and cached[0] == fingerprint:
+            return cached[1]
+        value = self._count_message_content_tokens(encoding, message.content)
+        try:
+            self._local_token_memo[message] = (fingerprint, value)
+        except TypeError:
+            pass
+        return value
+
+    def _memoized_tool_tokens(self, encoding, tool) -> int:
+        try:
+            cached = self._local_tool_token_memo.get(tool)
+        except TypeError:
+            cached = None
+        if cached is not None:
+            return cached
+        value = self._count_value_tokens(encoding, tool.to_anthropic()) + self.TOOL_DEFINITION_OVERHEAD
+        try:
+            self._local_tool_token_memo[tool] = value
+        except TypeError:
+            pass
+        return value
+
+    # Cheap (lengths-only) signatures mirroring _count_*_tokens branch-for-branch. The
+    # count for a fixed message structure changes only when an encoded length changes, so
+    # a fingerprint change is necessary and sufficient to invalidate a memoized count for
+    # the same object (e.g. in-place truncation of an oversized tool result). Structural /
+    # type changes arrive as new objects (identity miss), so need not be captured here.
+    def _content_fingerprint(self, content: Any):
+        if isinstance(content, str):
+            return len(content)
+        if isinstance(content, list):
+            return tuple(self._block_fingerprint(block) for block in content)
+        return self._value_fingerprint(content)
+
+    def _block_fingerprint(self, block: Any):
+        if hasattr(block, "text"):
+            return ("text", len(block.text))
+        if getattr(block, "type", None) == "image_url":
+            data = getattr(block, "data", None)
+            return ("image_url", len(data) if isinstance(data, str) else None)
+        if getattr(block, "type", None) == "tool_result":
+            return ("tool_result", self._content_fingerprint(getattr(block, "content", "")))
+        if hasattr(block, "thinking"):
+            return ("thinking", len(block.thinking))
+        if hasattr(block, "data"):
+            return ("data", len(str(block.data)))
+        if hasattr(block, "to_anthropic"):
+            return ("to_anthropic", self._value_fingerprint(block.to_anthropic()))
+        return ("value", self._value_fingerprint(block))
+
+    def _value_fingerprint(self, value: Any):
+        if value is None:
+            return None
+        if isinstance(value, str):
+            return len(value)
+        if isinstance(value, (int, float, bool)):
+            return ("scalar", str(value))
+        if isinstance(value, list):
+            return tuple(self._value_fingerprint(item) for item in value)
+        if isinstance(value, dict):
+            if value.get("type") == "image":
+                source = value.get("source") or {}
+                data = source.get("data")
+                if isinstance(data, str):
+                    return ("image", len(data))
+            return tuple((str(key), self._value_fingerprint(item)) for key, item in value.items())
+        return ("other",)
 
     def _count_message_content_tokens(self, encoding, content: Any) -> int:
         if isinstance(content, str):
@@ -356,11 +447,14 @@ class AnthropicProvider(BaseLLMProvider):
 
         await self.rate_limiter.acquire()
 
-        # Return the stream context manager
+        # Return the stream context manager. A per-request streaming timeout bounds the
+        # inter-chunk read wait (see kolega_code/llm/timeouts.py) so a stalled connection
+        # fails in minutes and is retried, instead of hanging on the SDK's 600s default.
         return AnthropicStreamWrapper(
             self.async_client.messages.stream(
                 messages=messages.to_anthropic(),
                 system=[c.to_anthropic() for c in system.content],
+                timeout=streaming_timeout(),
                 **generation_params,
             ),
             provider_name=self.provider_name,

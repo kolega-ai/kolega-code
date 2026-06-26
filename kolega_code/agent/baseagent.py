@@ -28,6 +28,7 @@ from kolega_code.hooks import (
     LifecycleEvent,
 )
 from kolega_code.llm.exceptions import (
+    LLMConnectionError,
     LLMError,
     LLMInternalServerError,
     LLMRateLimitError,
@@ -1257,8 +1258,10 @@ class BaseAgent(LogMixin):
         retry_after = self._parse_retry_after(error)
         error = map_to_llm_error(error, provider=self.primary_model_config.provider.value)
 
-        # LLMInternalServerError covers 500/529 overloaded plus connection/transport errors.
-        if isinstance(error, (LLMRateLimitError, LLMInternalServerError)):
+        # Retry transient failures: rate limits, provider 5xx/overload, and transport-layer
+        # failures (LLMConnectionError, incl. its LLMTimeout subclass — e.g. a stalled
+        # streaming read hitting the per-request timeout, or a dropped connection).
+        if isinstance(error, (LLMRateLimitError, LLMInternalServerError, LLMConnectionError)):
             cap = self.primary_model_config.rate_limits.loop_max_retries
             self._consecutive_llm_retries += 1
             if self._consecutive_llm_retries > cap:
@@ -1276,6 +1279,12 @@ class BaseAgent(LogMixin):
             await self.log_warning(
                 f"Transient LLM error ({error}); retry {self._consecutive_llm_retries}/{cap} in {delay:.1f}s.",
                 sender=self.agent_name,
+            )
+            # Surface the retry in the UI so a stalled stream (which now fails fast on the
+            # per-request timeout instead of hanging) reads as "retrying", not a freeze.
+            await self.emitter.llm_status(
+                "info",
+                f"Connection issue — retrying ({self._consecutive_llm_retries}/{cap}) in {delay:.0f}s…",
             )
             await asyncio.sleep(delay)
             await self.log_info("Resuming after backoff.", sender=self.agent_name)
