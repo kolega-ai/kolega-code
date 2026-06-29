@@ -265,9 +265,8 @@ def write_crash_log(
         path = directory / f"crash-{stamp}.log"
         tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
         scrubbed = scrub_secrets(f"{header}\n\n{tb}", secret_values)
-        path.write_text(
-            scrubbed, encoding="utf-8"
-        )  # codeql[py/clear-text-storage-sensitive-data] -- scrubbed by scrub_secrets above
+        # codeql[py/clear-text-storage-sensitive-data] -- scrubbed by scrub_secrets above
+        path.write_text(scrubbed, encoding="utf-8")
         ensure_private_file(path)
         return path
     except OSError:
