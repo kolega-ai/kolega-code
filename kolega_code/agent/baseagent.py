@@ -1267,7 +1267,7 @@ class BaseAgent(LogMixin):
             await self.emitter.llm_error(
                 provider=self.primary_model_config.provider.value,
                 model=self.primary_model_config.model,
-                endpoint=getattr(getattr(self, "llm", None) and self.llm.provider, "base_url", None),
+                endpoint=self.llm.provider.base_url,
                 http_status=status_code,
                 error_type=type(error).__name__,
                 raw_type=raw_type,
@@ -1482,7 +1482,7 @@ class BaseAgent(LogMixin):
                     "start",
                     provider=self.primary_model_config.provider.value,
                     model=self.primary_model_config.model,
-                    endpoint=getattr(getattr(self, "llm", None) and self.llm.provider, "base_url", None),
+                    endpoint=self.llm.provider.base_url,
                 )
 
                 async with await self.llm.stream(
