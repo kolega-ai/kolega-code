@@ -5,7 +5,7 @@ import logging
 import math
 
 import tiktoken
-from openai import AsyncOpenAI, OpenAI
+from openai import AsyncOpenAI
 
 from ..models import ImageBlock, Message, MessageChunk, MessageHistory, ToolCall, ToolDefinition, ToolResult
 from ..specs import build_thinking_request_params
@@ -152,7 +152,6 @@ class OpenAIProvider(BaseLLMProvider):
         # Forward max_retries so the SDK's built-in exponential backoff + jitter (which
         # honors retry-after and retries 429/5xx + connection errors) is actually used.
         self.async_client = AsyncOpenAI(api_key=api_key, base_url=base_url, max_retries=max_retries)
-        self.sync_client = OpenAI(api_key=api_key, base_url=base_url, max_retries=max_retries)
         # Per-message / per-tool token-count memos. count_tokens runs every agent-loop
         # iteration over the whole history; without this it re-encodes the entire
         # conversation each time (O(history) on the event loop, the streaming-turn

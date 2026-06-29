@@ -10,7 +10,7 @@ import uuid
 from email.utils import parsedate_to_datetime
 from datetime import datetime
 from pathlib import Path
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional
 
 from .common import LogMixin
 from .compression import CompactionResult, HistoryCompressor
@@ -53,7 +53,11 @@ from kolega_code.services.file_system import FileSystem
 from .tools import ToolCollection  # noqa: F401 - kept for tests and downstream monkeypatch compatibility
 from kolega_code.tools import ToolError
 from .utils.commands import CommandProcessor
-from langfuse import Langfuse
+
+if TYPE_CHECKING:
+    # Type hints only — langfuse is a heavy optional dependency kept off the
+    # startup import path. Agents receive a Langfuse *instance* via the context.
+    from langfuse import Langfuse
 
 
 logger = logging.getLogger(__name__)
@@ -107,7 +111,7 @@ class BaseAgent(LogMixin):
         filesystem: Optional[FileSystem] = None,
         terminal_manager: Optional[TerminalManager] = None,
         browser_manager: Optional[BrowserManager] = None,
-        langfuse_client: Optional[Langfuse] = None,
+        langfuse_client: Optional["Langfuse"] = None,
         user_id: Optional[str] = None,
         user_email: Optional[str] = None,
         project_template_slug: Optional[str] = None,

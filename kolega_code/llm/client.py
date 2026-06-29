@@ -31,18 +31,21 @@ The module also provides supporting classes and types for working with messages,
 tools, and provider-specific parameters in a standardized way.
 """
 
-from typing import Any, AsyncContextManager, Coroutine, Dict, List, Optional, Type, Union
+from typing import TYPE_CHECKING, Any, AsyncContextManager, Coroutine, Dict, List, Optional, Union
 
 from .exceptions import map_to_llm_error
 from .models import Message, MessageHistory, ToolDefinition
-from .providers.anthropic import AnthropicProvider
-from .providers.google import GoogleProvider
 from .providers.models import GenerationParams, TokenCount
 from .specs import validate_thinking_effort
-from .providers.openai import OpenAIProvider
-from .providers.openai_responses import OpenAIResponsesProvider
-from .providers.chatgpt_oauth import ChatGPTOAuthProvider
 from kolega_code.auth import constants as chatgpt_constants
+
+if TYPE_CHECKING:
+    # Provider classes are imported lazily in _initialize_provider so a session
+    # only loads the vendor SDK for the provider it actually uses (each provider
+    # module imports its own SDK at module load).
+    from .providers.anthropic import AnthropicProvider
+    from .providers.google import GoogleProvider
+    from .providers.openai import OpenAIProvider
 
 
 class LLMClient:
@@ -82,13 +85,43 @@ class LLMClient:
             tokens_per_minute=tokens_per_minute,
         )
 
+    @staticmethod
+    def _provider_class(provider: str):
+        """Import and return the provider class for ``provider`` (lazy).
+
+        Each provider module imports its own vendor SDK at module load, so we
+        import only the one this session uses. This keeps the unused vendor SDKs
+        (each tens of MB) out of the process. Returns ``None`` for an unknown
+        provider so the caller can raise a clear error.
+        """
+        p = provider.lower()
+        if p in ("anthropic", "moonshot", "zai", "kimi_coding"):
+            from .providers.anthropic import AnthropicProvider
+
+            return AnthropicProvider
+        if p == "openai":
+            # api-key OpenAI uses the Responses API (gpt-5.x reject tools +
+            # reasoning_effort on Chat Completions).
+            from .providers.openai_responses import OpenAIResponsesProvider
+
+            return OpenAIResponsesProvider
+        if p in ("together", "groq", "fireworks", "llama", "xai", "dashscope", "deepseek", "ollama_cloud"):
+            from .providers.openai import OpenAIProvider
+
+            return OpenAIProvider
+        if p == "google":
+            from .providers.google import GoogleProvider
+
+            return GoogleProvider
+        return None
+
     def _initialize_provider(
         self,
         provider: str,
         max_retries: int = 3,
         requests_per_minute: Optional[int] = None,
         tokens_per_minute: Optional[int] = None,
-    ) -> Union[AnthropicProvider, OpenAIProvider, GoogleProvider]:
+    ) -> "Union[AnthropicProvider, OpenAIProvider, GoogleProvider]":
         """Initialize the appropriate LLM provider based on the provider name.
 
         Args:
@@ -109,6 +142,8 @@ class LLMClient:
             if provider.lower() == chatgpt_constants.PROVIDER_KEY:
                 if self._token_manager is None:
                     raise ValueError("ChatGPT provider requires sign-in; run /login chatgpt to sign in.")
+                from .providers.chatgpt_oauth import ChatGPTOAuthProvider
+
                 return ChatGPTOAuthProvider(
                     token_manager=self._token_manager,
                     max_retries=max_retries,
@@ -117,30 +152,6 @@ class LLMClient:
                     base_url=chatgpt_constants.INFERENCE_BASE_URL,
                     provider_name=chatgpt_constants.PROVIDER_KEY,
                 )
-
-            providers: Dict[str, Type[Union[AnthropicProvider, OpenAIProvider, GoogleProvider]]] = {
-                "anthropic": AnthropicProvider,
-                # api-key OpenAI uses the Responses API (gpt-5.x reject
-                # tools+reasoning_effort on Chat Completions). The OpenAI-compatible
-                # providers below keep the Chat Completions OpenAIProvider.
-                "openai": OpenAIResponsesProvider,
-                "together": OpenAIProvider,
-                "groq": OpenAIProvider,
-                "fireworks": OpenAIProvider,
-                "llama": OpenAIProvider,
-                "google": GoogleProvider,
-                "xai": OpenAIProvider,
-                "dashscope": OpenAIProvider,
-                "moonshot": AnthropicProvider,
-                # DeepSeek's OpenAI-compatible /v1 endpoint streams reasoning_content
-                # continuously; its Anthropic-compatible endpoint goes silent during
-                # reasoning, so an idle-connection drop hangs streaming turns. Route
-                # through the OpenAI Chat path (matches opencode/openclaw, which work).
-                "deepseek": OpenAIProvider,
-                "zai": AnthropicProvider,
-                "kimi_coding": AnthropicProvider,
-                "ollama_cloud": OpenAIProvider,
-            }
 
             base_urls: Dict[str, str] = {
                 "openai": "https://api.openai.com/v1/",
@@ -158,14 +169,17 @@ class LLMClient:
                 "ollama_cloud": "https://ollama.com/v1",
             }
 
-            provider_class = providers.get(provider.lower())
+            provider_class = self._provider_class(provider)
             if not provider_class:
                 raise ValueError(f"Unsupported provider: {provider}")
 
             base_url = base_urls.get(provider.lower())
 
+            # Every provider class except GoogleProvider takes a provider_name (the
+            # Anthropic/OpenAI/OpenAIResponses families share a class across several
+            # provider keys and need it to disambiguate behavior).
             provider_kwargs = {}
-            if provider_class in (AnthropicProvider, OpenAIProvider, OpenAIResponsesProvider):
+            if provider.lower() != "google":
                 provider_kwargs["provider_name"] = provider.lower()
 
             return provider_class(

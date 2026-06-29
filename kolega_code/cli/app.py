@@ -1642,6 +1642,10 @@ class KolegaCodeApp(
         self.session.compaction = {}
         self.session.task_list_markdown = ""
         self.conversation_entries = []
+        # Per-session file-edit log used by the diff view. It is appended to on every
+        # file-edit preview and otherwise never cleared, so reset it on thread reset to
+        # stop it growing for the life of the process.
+        self._session_file_changes = []
         self._stream_entries = {}
         self._tool_entries = {}
         self._tool_stream_buffers = {}

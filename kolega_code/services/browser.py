@@ -7,8 +7,6 @@ import uuid
 from typing import List, Optional
 import asyncio
 
-from playwright.async_api import async_playwright
-
 from .html import extract_interactive_elements_from_html
 from .base import BrowserManager
 
@@ -103,6 +101,11 @@ class PlaywrightBrowserManager(BrowserManager):
         return f"wss://production-sfo.browserless.io?token={self.browserless_api_key}&timeout={timeout}"
 
     async def launch_browser(self, url: str) -> str:
+        # Imported here, not at module load: playwright.async_api pulls in ~5-15MB
+        # and most sessions never drive a browser. An import error now surfaces when
+        # the browser tool is first used, which is the right place for it.
+        from playwright.async_api import async_playwright
+
         try:
             playwright = await async_playwright().start()
 

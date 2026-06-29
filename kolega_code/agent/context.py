@@ -7,9 +7,13 @@ remains supported on BaseAgent and converts to an AgentContext internally.
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
-from langfuse import Langfuse
+if TYPE_CHECKING:
+    # Imported for type hints only; langfuse is a heavy (~tens of MB) optional
+    # dependency, so we avoid importing it at module load. The runtime only ever
+    # receives a Langfuse *instance* via Telemetry.langfuse_client.
+    from langfuse import Langfuse
 
 from kolega_code.config import AgentConfig
 from kolega_code.events import AgentConnectionManager
@@ -63,7 +67,7 @@ class AgentServices:
 class Telemetry:
     """Observability and usage-recording hooks provided by the host."""
 
-    langfuse_client: Optional[Langfuse] = None
+    langfuse_client: Optional["Langfuse"] = None
     user_id: Optional[str] = None
     user_email: Optional[str] = None
     usage_recorder: Optional[Any] = None
