@@ -36,20 +36,17 @@ Error Mapping:
 """
 
 import asyncio
+import sys
+from typing import TYPE_CHECKING
 
-from anthropic import (
-    AnthropicError,
-    APIConnectionError as AnthropicAPIConnectionError,
-    APIStatusError as AnthropicAPIStatusError,
-    APITimeoutError as AnthropicAPITimeoutError,
-    InternalServerError as AnthropicInternalServerError,
-)
-from google.genai.errors import APIError as GoogleAPIError
-from openai import (
-    APIConnectionError as OpenAIAPIConnectionError,
-    APITimeoutError as OpenAIAPITimeoutError,
-    OpenAIError,
-)
+if TYPE_CHECKING:
+    # Type hints only. Vendor SDK exception classes are imported lazily inside the
+    # mapping functions so a session only loads the SDK for the provider it uses
+    # (each provider module imports its own SDK). Error mapping runs on the error
+    # path; by then the active provider's SDK is already loaded.
+    from anthropic import AnthropicError
+    from google.genai.errors import APIError as GoogleAPIError
+    from openai import OpenAIError
 
 try:
     import aiohttp
@@ -243,7 +240,12 @@ def _anthropic_body_error_message(error: Exception) -> str:
     return str(error_info.get("message") or "").strip()
 
 
-def map_openai_errors(error: OpenAIError) -> LLMError:
+def map_openai_errors(error: "OpenAIError") -> LLMError:
+    from openai import (
+        APIConnectionError as OpenAIAPIConnectionError,
+        APITimeoutError as OpenAIAPITimeoutError,
+    )
+
     if hasattr(error, "status_code"):
         if error.status_code == 400:
             return LLMInvalidRequestError(message=f"OpenAI APIError: {str(error)}", provider=ModelProvider.OPENAI.value)
@@ -275,7 +277,7 @@ def map_openai_errors(error: OpenAIError) -> LLMError:
     return LLMError(message=f"OpenAI APIError: {str(error)}", provider=ModelProvider.OPENAI.value)
 
 
-def map_google_errors(error: GoogleAPIError) -> LLMError:
+def map_google_errors(error: "GoogleAPIError") -> LLMError:
     if hasattr(error, "status"):
         if error.status == 400:
             return LLMInvalidRequestError(message=f"GoogleAPIError: {str(error)}", provider=ModelProvider.GOOGLE.value)
@@ -291,7 +293,14 @@ def map_google_errors(error: GoogleAPIError) -> LLMError:
     return LLMError(message=f"Google APIError: {str(error)}", provider=ModelProvider.GOOGLE.value)
 
 
-def map_anthropic_errors(error: AnthropicError, provider: str | None = None) -> LLMError:
+def map_anthropic_errors(error: "AnthropicError", provider: str | None = None) -> LLMError:
+    from anthropic import (
+        APIConnectionError as AnthropicAPIConnectionError,
+        APIStatusError as AnthropicAPIStatusError,
+        APITimeoutError as AnthropicAPITimeoutError,
+        InternalServerError as AnthropicInternalServerError,
+    )
+
     provider = provider or ModelProvider.ANTHROPIC.value
     context_window_phrases = (
         "exceeded model token limit",
@@ -386,13 +395,27 @@ def map_to_llm_error(error: Exception, provider: str = None) -> LLMError:
     if isinstance(error, LLMError):
         return error
 
-    # Map provider-specific errors using existing functions
-    if isinstance(error, OpenAIError):
-        return map_openai_errors(error)
-    elif isinstance(error, GoogleAPIError):
-        return map_google_errors(error)
-    elif isinstance(error, AnthropicError):
-        return map_anthropic_errors(error, provider=provider)
+    # Map provider-specific errors using existing functions. An error can only be
+    # an instance of a vendor SDK's exception type if that SDK has been imported
+    # (i.e. that provider is in use), so gate each check on sys.modules. This keeps
+    # the error path from importing SDKs the session never loaded.
+    if "openai" in sys.modules:
+        from openai import OpenAIError
+
+        if isinstance(error, OpenAIError):
+            return map_openai_errors(error)
+    if "google.genai" in sys.modules:
+        try:
+            from google.genai.errors import APIError as GoogleAPIError
+        except ImportError:
+            GoogleAPIError = None
+        if GoogleAPIError is not None and isinstance(error, GoogleAPIError):
+            return map_google_errors(error)
+    if "anthropic" in sys.modules:
+        from anthropic import AnthropicError
+
+        if isinstance(error, AnthropicError):
+            return map_anthropic_errors(error, provider=provider)
 
     # Map common Python exceptions
     if isinstance(error, ValueError):

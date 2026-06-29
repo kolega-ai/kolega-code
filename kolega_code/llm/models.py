@@ -1,15 +1,47 @@
+# Annotations are lazy strings (PEP 563) so the genai_types references in
+# to_google()/from_google() signatures don't trigger the heavy google.genai
+# import at module load. These classes do no runtime annotation introspection.
+from __future__ import annotations
+
 import base64
+import importlib
 import json
 import logging
-from typing import Any, Dict, List, Optional, Union
-
-from google.genai import types as genai_types
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 from kolega_code.utils.images import ascii_thumbnail_from_base64
 
 from .specs.accessors import _provider_value
 from .specs.thinking import reasoning_replay_field
 from .tool_execution_ids import ToolExecutionIdRegistry, new_tool_execution_id
+
+
+class _LazyModule:
+    """Proxy that imports the wrapped module on first attribute access.
+
+    google.genai is a heavy (~45-75MB) optional dependency that is only needed
+    when (de)serializing the Google provider format. Routing all ``genai_types``
+    references through this proxy keeps google.genai out of sessions that never
+    use the Google provider, while leaving every call site unchanged.
+    """
+
+    def __init__(self, module_name: str):
+        self._module_name = module_name
+        self._module = None
+
+    def __getattr__(self, name):
+        if self._module is None:
+            self._module = importlib.import_module(self._module_name)
+        return getattr(self._module, name)
+
+
+if TYPE_CHECKING:
+    # Static analyzers see the real module so genai_types.X annotations resolve.
+    from google.genai import types as genai_types
+else:
+    # At runtime genai_types is the lazy proxy; combined with PEP 563 (the
+    # __future__ import above) the annotations are strings and never trigger it.
+    genai_types = _LazyModule("google.genai.types")
 
 # Mapping from type string to class
 CONTENT_BLOCK_CLASSES = {}

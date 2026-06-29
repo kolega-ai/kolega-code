@@ -4,7 +4,7 @@ from typing import Any, AsyncContextManager, Dict, List, Optional
 from weakref import WeakKeyDictionary
 
 import tiktoken
-from anthropic import Anthropic, AsyncAnthropic
+from anthropic import AsyncAnthropic
 
 from ..models import Message, MessageChunk, MessageHistory, ToolDefinition
 from ..specs import build_thinking_request_params, get_model_specs
@@ -112,7 +112,6 @@ class AnthropicProvider(BaseLLMProvider):
         # Forward max_retries so the SDK's built-in exponential backoff + jitter (which
         # honors retry-after and retries 429/5xx/529 + connection errors) is actually used.
         self.async_client = AsyncAnthropic(api_key=api_key, base_url=base_url, max_retries=max_retries)
-        self.sync_client = Anthropic(api_key=api_key, base_url=base_url, max_retries=max_retries)
 
         # Anthropic-shaped compatible APIs generally do not expose messages/count_tokens,
         # so local counting is only a preflight context-size estimate for those models.

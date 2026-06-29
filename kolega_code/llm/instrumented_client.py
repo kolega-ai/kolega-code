@@ -3,11 +3,14 @@ Instrumented LLM client that adds Langfuse tracing to all LLM operations.
 """
 
 import os
-from typing import Any, Optional, List, Dict, Union, AsyncContextManager, Coroutine
+from typing import TYPE_CHECKING, Any, Optional, List, Dict, Union, AsyncContextManager, Coroutine
 from datetime import datetime, timezone
 import logging
 
-from langfuse import Langfuse
+if TYPE_CHECKING:
+    # Type hints only — langfuse is a heavy optional dependency. The instrumented
+    # client operates on a Langfuse *instance* passed in as langfuse_client.
+    from langfuse import Langfuse
 
 from .client import LLMClient
 from .models import Message, MessageHistory
@@ -26,7 +29,7 @@ class InstrumentedLLMClient(LLMClient):
         max_retries: int = 3,
         requests_per_minute: Optional[int] = None,
         tokens_per_minute: Optional[int] = None,
-        langfuse_client: Optional[Langfuse] = None,
+        langfuse_client: Optional["Langfuse"] = None,
         workspace_id: Optional[str] = None,
         thread_id: Optional[str] = None,
         agent_type: Optional[str] = None,

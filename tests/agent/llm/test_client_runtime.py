@@ -83,11 +83,12 @@ async def test_retry_on_error():
     assert isinstance(client.provider.max_retries, int)
     assert client.provider.max_retries == 3
 
-    # Regression guard: max_retries must actually reach the underlying SDK clients,
+    # Regression guard: max_retries must actually reach the underlying SDK client,
     # whose built-in exponential backoff is the primary retry mechanism. (Previously
     # the value was stored but never forwarded, so the SDK silently used its default.)
+    # Only the async client exists — the unused sync client was removed to drop its
+    # redundant httpx connection pool / SSL context.
     assert client.provider.async_client.max_retries == 3
-    assert client.provider.sync_client.max_retries == 3
 
 
 @pytest.mark.slow

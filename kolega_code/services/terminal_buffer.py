@@ -96,27 +96,6 @@ class HeadTailBuffer:
 
 # --- token capping ---------------------------------------------------------
 
-_ENCODING_NAME = "o200k_base"
-_encoder = None
-_encoder_failed = False
-
-
-def _get_encoder():
-    """Lazily load the tiktoken encoder, falling back to None if unavailable."""
-    global _encoder, _encoder_failed
-    if _encoder is not None or _encoder_failed:
-        return _encoder
-    try:
-        import tiktoken
-
-        _encoder = tiktoken.get_encoding(_ENCODING_NAME)
-    except Exception:
-        # tiktoken may need to download the encoding on first use; if that
-        # fails (e.g. offline), fall back to a character heuristic.
-        _encoder_failed = True
-        _encoder = None
-    return _encoder
-
 
 @dataclass
 class CappedOutput:
@@ -133,32 +112,24 @@ def cap_tokens(text: str, max_tokens: int) -> CappedOutput:
     """Cap ``text`` to ``max_tokens``, dropping the middle if needed.
 
     Returns the (possibly truncated) text, whether truncation happened, and the
-    original token count so callers can tell the model there is more output.
+    estimated original token count so callers can tell the model there is more
+    output.
+
+    Token counts here are estimated with a ~4-chars/token heuristic rather than a
+    tiktoken encoding. This is a soft budget for fitting shell output into the
+    context window — not billing — so the approximation is fine, and it avoids
+    loading the o200k_base encoding (~76MB resident, and the only tiktoken table a
+    typical session would otherwise load). Truncation drops the middle and the
+    marker signals to the model that output was elided.
     """
     if max_tokens <= 0:
         max_tokens = 1
 
-    encoder = _get_encoder()
-    if encoder is None:
-        # Heuristic fallback: ~4 characters per token.
-        approx = max(1, (len(text) + 3) // 4)
-        if approx <= max_tokens:
-            return CappedOutput(text, False, approx)
-        budget_chars = max_tokens * 4
-        head = budget_chars // 2
-        tail = budget_chars - head
-        capped = text[:head] + _truncation_marker(max_tokens) + (text[-tail:] if tail else "")
-        return CappedOutput(capped, True, approx)
-
-    tokens = encoder.encode(text)
-    original = len(tokens)
-    if original <= max_tokens:
-        return CappedOutput(text, False, original)
-    head = max_tokens // 2
-    tail = max_tokens - head
-    capped = (
-        encoder.decode(tokens[:head])
-        + _truncation_marker(max_tokens)
-        + (encoder.decode(tokens[-tail:]) if tail else "")
-    )
-    return CappedOutput(capped, True, original)
+    approx = max(1, (len(text) + 3) // 4)
+    if approx <= max_tokens:
+        return CappedOutput(text, False, approx)
+    budget_chars = max_tokens * 4
+    head = budget_chars // 2
+    tail = budget_chars - head
+    capped = text[:head] + _truncation_marker(max_tokens) + (text[-tail:] if tail else "")
+    return CappedOutput(capped, True, approx)

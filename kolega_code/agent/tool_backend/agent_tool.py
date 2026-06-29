@@ -235,6 +235,11 @@ class AgentTool(BaseTool):
                 if self.caller
                 else None,
                 workspace_memories=getattr(self.caller, "workspace_memories", None) if self.caller else None,
+                # Share the parent's PromptProvider so each sub-agent doesn't build its
+                # own Jinja2 Environment + loaders + template cache over the same bundled
+                # templates. Environments are designed to be shared; per-agent prompt
+                # extensions are passed as render args, not stored on the provider.
+                prompt_provider=getattr(self.caller, "prompt_provider", None) if self.caller else None,
                 prompt_extensions=self._sub_agent_extensions(getattr(self.caller, "prompt_extensions", None)),
                 tool_extensions=self._sub_agent_extensions(getattr(self.caller, "tool_extensions", None)),
                 permission_mode=getattr(self.caller, "permission_mode", None) if self.caller else None,
@@ -548,6 +553,9 @@ class AgentTool(BaseTool):
             if self.caller
             else None,
             workspace_memories=getattr(self.caller, "workspace_memories", None) if self.caller else None,
+            # Share the parent's PromptProvider (see _dispatch_agent) to avoid a
+            # per-sub-agent Jinja2 Environment over the same bundled templates.
+            prompt_provider=getattr(self.caller, "prompt_provider", None) if self.caller else None,
             prompt_extensions=self._sub_agent_extensions(getattr(self.caller, "prompt_extensions", None)),
             tool_extensions=tool_extensions,
             # Workflow sub-agents run unattended in parallel, so they default to AUTO
