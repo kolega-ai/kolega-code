@@ -53,6 +53,9 @@ class FakeLLM:
         self._summary_text = summary_text
         self._proxy = proxy
         self._final_message = final_message
+        # Mirror the LLMClient surface: a provider object exposing base_url, which
+        # the diagnostics layer reads (agent.llm.provider.base_url).
+        self.provider = MagicMock(base_url="https://api.test.example/v1")
         self.count_tokens = AsyncMock(side_effect=self._count_tokens)
         self.generate = AsyncMock(side_effect=self._generate)
         self.stream = AsyncMock(side_effect=self._stream)
