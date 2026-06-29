@@ -102,6 +102,15 @@ export default defineConfig({
           items: [{ label: "Workflow Orchestration", slug: "gigacode" }],
         },
         {
+          label: "Troubleshooting",
+          items: [
+            {
+              label: "Diagnostics & Bug Reports",
+              slug: "troubleshooting/diagnostics",
+            },
+          ],
+        },
+        {
           label: "How It Works",
           items: [
             { label: "Architecture", slug: "concepts/how-it-works" },
