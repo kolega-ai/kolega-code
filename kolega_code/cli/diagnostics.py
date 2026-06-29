@@ -17,12 +17,12 @@ import faulthandler
 import json
 import os
 import re
-import shutil
 import signal
 import sys
 import threading
 import time
 import traceback
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Optional
@@ -279,28 +279,33 @@ def write_crash_log(
 
 
 def assemble_bug_bundle(diag: DiagnosticsLog, *, summary: str, session_json: Optional[Path]) -> Optional[Path]:
-    """Build a shareable bundle dir: summary + diagnostics timeline + crash/stall dumps +
-    the (full, unredacted-content) session JSON. Secrets are scrubbed throughout. Returns
-    the bundle directory path, or None if diagnostics are disabled / on error."""
+    """Build a shareable zip: summary + diagnostics timeline + crash/stall dumps + the
+    (full, unredacted-content) session JSON. Secrets are scrubbed throughout. Returns the
+    zip path, or None if diagnostics are disabled / on error.
+
+    Entries are written flat at the archive root (same layout the old bundle directory
+    had). Diagnostics artifacts are already scrubbed at write time, so they are added
+    verbatim; the summary and session JSON are scrubbed here."""
     if not diag.enabled:
         return None
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    bundle = diag.dir / f"bug-{stamp}"
+    zip_path = diag.dir / f"bug-{stamp}.zip"
     try:
-        ensure_private_dir(bundle)
-        (bundle / "summary.md").write_text(scrub_secrets(summary, diag._secret_values), encoding="utf-8")
-        # Diagnostics artifacts already scrubbed at write time; copy as-is.
-        for artifact in list(diag.dir.glob("session-*.jsonl")) + list(diag.dir.glob("*.log")):
-            try:
-                shutil.copy2(artifact, bundle / artifact.name)
-            except OSError:
-                pass
-        if session_json and session_json.exists():
-            try:
-                scrubbed = scrub_secrets(session_json.read_text(encoding="utf-8"), diag._secret_values)
-                (bundle / "session.json").write_text(scrubbed, encoding="utf-8")
-            except OSError:
-                pass
-        return bundle  # the bundle dir is already owner-only (0700) via ensure_private_dir
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("summary.md", scrub_secrets(summary, diag._secret_values))
+            # Diagnostics artifacts already scrubbed at write time; add as-is.
+            for artifact in list(diag.dir.glob("session-*.jsonl")) + list(diag.dir.glob("*.log")):
+                try:
+                    zf.write(artifact, artifact.name)
+                except OSError:
+                    pass
+            if session_json and session_json.exists():
+                try:
+                    scrubbed = scrub_secrets(session_json.read_text(encoding="utf-8"), diag._secret_values)
+                    zf.writestr("session.json", scrubbed)
+                except OSError:
+                    pass
+        ensure_private_file(zip_path)
+        return zip_path
     except OSError:
         return None

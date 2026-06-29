@@ -3,6 +3,7 @@ watchdog (which captures *where* the event loop is blocked when the UI goes unre
 
 import json
 import time
+import zipfile
 from pathlib import Path
 
 from kolega_code.cli.diagnostics import (
@@ -134,11 +135,14 @@ def test_assemble_bug_bundle_scrubs_secrets_keeps_content(tmp_path: Path):
         encoding="utf-8",
     )
     bundle = assemble_bug_bundle(diag, summary="kolega diag\nkey sk-deadbeef-secret-9999", session_json=session_json)
-    assert bundle is not None and bundle.is_dir()
+    assert bundle is not None and bundle.is_file()
+    assert bundle.suffix == ".zip"
 
-    summary = (bundle / "summary.md").read_text(encoding="utf-8")
-    session = (bundle / "session.json").read_text(encoding="utf-8")
+    with zipfile.ZipFile(bundle) as zf:
+        names = zf.namelist()
+        summary = zf.read("summary.md").decode("utf-8")
+        session = zf.read("session.json").decode("utf-8")
     assert "sk-deadbeef-secret-9999" not in summary and "sk-deadbeef-secret-9999" not in session
     # Ordinary conversation content is preserved (unredacted):
     assert "fix my bug" in session
-    assert (bundle / "session-sess5.jsonl").exists()
+    assert "session-sess5.jsonl" in names

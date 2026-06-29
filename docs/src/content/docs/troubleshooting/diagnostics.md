@@ -30,7 +30,7 @@ owner-only (`0700`/`0600`) where the platform supports it.
 | `stalls.log` | Full thread-stack dumps taken automatically whenever the UI stops responding |
 | `manual-dump.log` | Stacks captured on demand with the `SIGUSR1` escape hatch (below) |
 | `crash-<ts>.log` | The traceback from an unhandled exception, if the app ever exits with one |
-| `bug-<ts>/` | A bundle assembled by `/bug` for sharing |
+| `bug-<ts>.zip` | A zip assembled by `/bug` for sharing |
 
 The most recent sessions are kept (older `session-*.jsonl` files are pruned), and a
 single session file is capped in size, so the folder does not grow without bound.
@@ -79,14 +79,14 @@ the transcript:
 
 ## `/bug`
 
-Run `/bug` to package everything into a shareable bundle under
-`diagnostics/bug-<timestamp>/`:
+Run `/bug` to package everything into a single shareable zip at
+`diagnostics/bug-<timestamp>.zip`:
 
 - `summary.md` — the `/diagnostics` snapshot;
 - the session timeline(s) and any stack dumps / crash logs;
 - `session.json` — the full conversation for this session.
 
-The bundle path is copied to your clipboard, and Kolega Code prints a link to open a
+The zip path is copied to your clipboard, and Kolega Code prints a link to open a
 new GitHub issue.
 
 ## Privacy model

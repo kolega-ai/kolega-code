@@ -2,6 +2,7 @@
 """App-level diagnostics: the event tee persists structured LLM errors, and /bug bundles them."""
 
 import json
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -56,13 +57,15 @@ async def test_diagnostics_and_bug_commands(tmp_path: Path, monkeypatch: pytest.
         await app._command_bug("")
         diag_dir = app._diag.dir
 
-    # /bug wrote a shareable bundle with the summary + the full session JSON.
-    bundles = list(diag_dir.glob("bug-*"))
-    assert bundles, "/bug did not write a bundle"
+    # /bug wrote a shareable zip with the summary + the full session JSON.
+    bundles = list(diag_dir.glob("bug-*.zip"))
+    assert bundles, "/bug did not write a zip"
     bundle = bundles[0]
-    assert (bundle / "summary.md").exists()
-    assert (bundle / "session.json").exists()
+    with zipfile.ZipFile(bundle) as zf:
+        names = zf.namelist()
+    assert "summary.md" in names
+    assert "session.json" in names
 
     system_entries = [e.content for e in app.conversation_entries if e.kind == "system"]
     assert any("Diagnostics log" in c for c in system_entries)  # /diagnostics summary
-    assert any("bundle written to" in c for c in system_entries)  # /bug output
+    assert any("written to" in c for c in system_entries)  # /bug output

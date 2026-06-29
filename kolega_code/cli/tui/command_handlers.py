@@ -836,7 +836,7 @@ class CommandHandlersMixin:
         except Exception:
             copied = ""
         content = (
-            f"Bug report bundle written to:\n  {bundle}{copied}\n\n"
+            f"Bug report written to:\n  {bundle}{copied}\n\n"
             "It contains this session's conversation and file contents (API keys are scrubbed) — "
             "review before posting publicly.\n"
             "Open an issue: https://github.com/kolega-ai/kolega-code/issues/new"
