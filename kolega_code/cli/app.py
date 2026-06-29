@@ -116,6 +116,11 @@ class KolegaCodeApp(
     """Interactive terminal UI for Kolega Code."""
 
     CSS_PATH = "tui/styles.tcss"
+    # kolega-code uses its own / slash-command system, so disable Textual's
+    # command palette. Its default binding is ctrl+p, which collides with the
+    # toggle_permission_mode binding below and made "Ctrl+P Permissions" render
+    # twice in the footer.
+    ENABLE_COMMAND_PALETTE = False
 
     BINDINGS = [
         Binding(
