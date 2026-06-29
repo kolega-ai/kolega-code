@@ -478,7 +478,10 @@ def _run_tui(args: argparse.Namespace) -> int:
     try:
         app.run()
     except Exception as exc:  # noqa: BLE001 — last-resort crash capture before re-raising
-        path = write_crash_log(store.root, exc=exc, header=f"kolega-code crash | session {session.session_id}")
+        _secrets = [v for v in getattr(settings, "api_keys", {}).values() if v]
+        path = write_crash_log(
+            store.root, exc=exc, header=f"kolega-code crash | session {session.session_id}", secret_values=_secrets
+        )
         if path is not None:
             _print_styled(
                 f"\nKolega Code hit an unexpected error. Diagnostics (no API keys) saved to:\n  {path}\n"

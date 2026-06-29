@@ -112,6 +112,19 @@ def test_write_crash_log_captures_scrubbed_traceback(tmp_path: Path):
     assert "sk-deadbeef12345678" not in text  # secrets scrubbed even in crash logs
 
 
+def test_write_crash_log_scrubs_configured_secret_values(tmp_path: Path):
+    """Configured API keys passed via secret_values are scrubbed, not just pattern-matched ones."""
+    custom_key = "my-custom-provider-key-abcdef123456"  # no built-in pattern matches this
+    try:
+        raise RuntimeError(f"auth failed for key {custom_key}")
+    except RuntimeError as exc:
+        path = write_crash_log(tmp_path, exc=exc, header="hdr", secret_values=[custom_key])
+    assert path is not None and path.exists()
+    text = path.read_text(encoding="utf-8")
+    assert custom_key not in text
+    assert "auth failed for key" in text  # content preserved, only the key removed
+
+
 def test_assemble_bug_bundle_scrubs_secrets_keeps_content(tmp_path: Path):
     diag = DiagnosticsLog(tmp_path, "sess5", secret_values=["sk-deadbeef-secret-9999"])
     diag.record("session_start", version="0.11.1", provider="deepseek", term="xterm-ghostty")

@@ -244,11 +244,18 @@ class ResponsivenessWatchdog:
             pass
 
 
-def write_crash_log(state_dir: Path, *, exc: BaseException, header: str = "") -> Optional[Path]:
+def write_crash_log(
+    state_dir: Path,
+    *,
+    exc: BaseException,
+    header: str = "",
+    secret_values: Optional[Iterable[str]] = None,
+) -> Optional[Path]:
     """Persist an unhandled-exception traceback (secrets scrubbed) for a true crash.
 
     Standalone (no app/DiagnosticsLog needed) so the top-level handler in main.py can call
-    it even if the app never finished starting."""
+    it even if the app never finished starting.  Pass configured API keys via
+    ``secret_values`` so they are scrubbed verbatim in addition to pattern matching."""
     if os.environ.get(DIAGNOSTICS_DISABLED_ENV):
         return None
     try:
@@ -257,7 +264,10 @@ def write_crash_log(state_dir: Path, *, exc: BaseException, header: str = "") ->
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         path = directory / f"crash-{stamp}.log"
         tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
-        path.write_text(scrub_secrets(f"{header}\n\n{tb}"), encoding="utf-8")
+        # scrub_secrets is the sanitizer; CodeQL can't model regex-based custom
+        # sanitizers, so this is a verified false positive.
+        scrubbed = scrub_secrets(f"{header}\n\n{tb}", secret_values)  # lgtm [py/clear-text-storage-sensitive-data]
+        path.write_text(scrubbed, encoding="utf-8")
         ensure_private_file(path)
         return path
     except OSError:
