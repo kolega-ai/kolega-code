@@ -511,6 +511,90 @@ async def test_textual_app_ctrl_p_toggles_permission_mode(tmp_path: Path, monkey
 
 
 @pytest.mark.asyncio
+async def test_footer_renders_ctrl_p_permissions_exactly_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression: "Ctrl+P Permissions" must appear once, not twice, in the footer.
+
+    Textual's command palette defaults to ctrl+p, which collided with the
+    toggle_permission_mode binding and rendered "Ctrl+P Permissions" twice.
+    Disabling the command palette on KolegaCodeApp resolves the collision.
+    """
+    pytest.importorskip("textual")
+
+    from textual.widgets import Footer
+    from textual.widgets._footer import FooterKey
+
+    from kolega_code.cli.app import KolegaCodeApp
+
+    # The command palette (default ctrl+p) is disabled to avoid the collision.
+    assert KolegaCodeApp.ENABLE_COMMAND_PALETTE is False
+
+    class FakeCoderAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.permission_mode = kwargs["permission_mode"]
+
+        def restore_message_history(self, history):
+            return None
+
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
+
+        def dump_message_history(self):
+            return []
+
+        def set_permission_mode(self, permission_mode):
+            self.permission_mode = permission_mode
+
+        def set_permission_callback(self, permission_callback):
+            self.permission_callback = permission_callback
+
+        async def cleanup(self):
+            return None
+
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.pause()
+
+        footer = app.query_one(Footer)
+        ctrl_p_keys = [key for key in footer.query(FooterKey) if key.key == "ctrl+p"]
+
+        assert len(ctrl_p_keys) == 1
+        assert ctrl_p_keys[0].key_display == "Ctrl+P"
+        assert ctrl_p_keys[0].description == "Permissions"
+
+
+def test_app_ctrl_bindings_use_explicit_key_display() -> None:
+    """Every Ctrl binding must set a ``Ctrl+X`` key_display.
+
+    Without an explicit key_display, Textual falls back to caret notation
+    (e.g. ctrl+q renders as "^q"), which is inconsistent with the other
+    Ctrl bindings. This guards against that regression at the source.
+    """
+    from kolega_code.cli.app import KolegaCodeApp
+
+    ctrl_bindings = [binding for binding in KolegaCodeApp.BINDINGS if binding.key.startswith("ctrl+")]
+    assert ctrl_bindings, "expected at least one ctrl binding"
+
+    for binding in ctrl_bindings:
+        expected = "Ctrl+" + binding.key.split("+", 1)[1].upper()
+        assert binding.key_display == expected, (
+            f"binding {binding.key!r} ({binding.action}) should display as {expected!r}, got {binding.key_display!r}"
+        )
+
+
+@pytest.mark.asyncio
 async def test_textual_app_ctrl_o_toggles_sidebar_and_keeps_active_tab(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
