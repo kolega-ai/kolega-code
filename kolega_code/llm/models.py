@@ -7,6 +7,8 @@ from google.genai import types as genai_types
 
 from kolega_code.utils.images import ascii_thumbnail_from_base64
 
+from .specs.accessors import _provider_value
+from .specs.thinking import reasoning_replay_field
 from .tool_execution_ids import ToolExecutionIdRegistry, new_tool_execution_id
 
 # Mapping from type string to class
@@ -1011,25 +1013,68 @@ class Message:
 
         return {"role": self.role, "content": content}
 
-    def to_openai(self) -> Dict[str, Any]:
+    def to_openai(self, provider: Optional[str] = None, model: Optional[str] = None) -> Dict[str, Any]:
         """
         Converts the Message instance to an OpenAI-compatible dictionary format.
+
+        When ``provider``/``model`` identify a Chat-Completions reasoning model
+        (see ``reasoning_replay_field``), prior ThinkingBlocks on a same-provider
+        assistant message are replayed via the provider-native reasoning field
+        (e.g. ``reasoning_content``) instead of being rendered as visible
+        ``*Thinking:*`` text. With no provider/model (the default), behavior is
+        unchanged.
 
         Returns:
             Dict[str, Any]: A dictionary in OpenAI's expected format
         """
+        # Native reasoning replay applies only when the target is a configured
+        # reasoning model AND this assistant message was produced by that same
+        # provider. adapt_history_for_provider already converts foreign reasoning
+        # to text upstream; this source==target check is defense-in-depth so
+        # foreign reasoning can never serialize as native replay metadata.
+        reasoning_field: Optional[str] = None
+        source_provider = (self.usage_metadata or {}).get("provider")
+        if (
+            provider
+            and model
+            and self.role == "assistant"
+            and source_provider is not None
+            and _provider_value(source_provider) == _provider_value(provider)
+        ):
+            reasoning_field = reasoning_replay_field(provider, model)
+
+        reasoning_text: Optional[str] = None
         if isinstance(self.content, str):
             content = self.content
         elif isinstance(self.content, list):
             # Exclude tool call and tool result blocks from assistant content; they are handled separately
             non_tool_blocks = [item for item in self.content if not isinstance(item, (ToolCall, ToolResult))]
+            if reasoning_field is not None:
+                thinking_blocks = [b for b in non_tool_blocks if isinstance(b, ThinkingBlock)]
+                rest_blocks = [b for b in non_tool_blocks if not isinstance(b, ThinkingBlock)]
+                has_tool_calls = any(isinstance(item, ToolCall) for item in self.content)
+                # Only replay reasoning natively if the message still has answer
+                # content or tool calls afterwards; otherwise keep the visible-text
+                # fallback so a reasoning-only message isn't dropped by the
+                # empty-content guard in MessageHistory.to_openai.
+                if thinking_blocks and (rest_blocks or has_tool_calls):
+                    reasoning_text = "\n\n".join(b.thinking for b in thinking_blocks)
+                    non_tool_blocks = rest_blocks
             content = [item.to_openai() for item in non_tool_blocks]
+            # Strict OpenAI-compatible servers (e.g. DeepSeek) prefer an empty
+            # string over an empty list when an assistant message carries only
+            # tool_calls and/or native reasoning.
+            if not content:
+                content = ""
         else:
             # Fallback for unexpected content type
             content = ""
 
         # Handle tool calls if present
-        result = {"role": self.role, "content": content}
+        result: Dict[str, Any] = {"role": self.role, "content": content}
+
+        if reasoning_field is not None and reasoning_text is not None:
+            result[reasoning_field] = reasoning_text
 
         # Extract tool calls from content if they exist
         tool_calls = (
@@ -1462,7 +1507,7 @@ class MessageHistory(list):
     def to_anthropic(self) -> list:
         return [m.to_anthropic() for m in self]
 
-    def to_openai(self) -> list:
+    def to_openai(self, provider: Optional[str] = None, model: Optional[str] = None) -> list:
         processed_messages = []
         consumed_tool_result_ids = set()
         messages = list(self)
@@ -1495,7 +1540,7 @@ class MessageHistory(list):
         for index, message in enumerate(messages):
             # No list content: pass through
             if not isinstance(message.content, list):
-                processed_messages.append(message.to_openai())
+                processed_messages.append(message.to_openai(provider, model))
                 continue
 
             # Partition ToolResult blocks so they become separate 'tool' messages
@@ -1515,7 +1560,7 @@ class MessageHistory(list):
                     tool_calls=message.tool_calls,
                     usage_metadata=message.usage_metadata,
                 )
-                temp_payload = temp_message.to_openai()
+                temp_payload = temp_message.to_openai(provider, model)
 
                 # Avoid emitting empty assistant/user messages with neither content nor tool_calls
                 if payload_has_content(temp_payload) or temp_payload.get("tool_calls"):
@@ -1550,7 +1595,7 @@ class MessageHistory(list):
                     continue
 
                 # No ToolResult in this message. If it has tool_calls, ensure immediate tool responses.
-                temp_payload = message.to_openai()
+                temp_payload = message.to_openai(provider, model)
                 if payload_has_content(temp_payload) or temp_payload.get("tool_calls"):
                     processed_messages.append(temp_payload)
 
