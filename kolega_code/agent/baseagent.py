@@ -5,6 +5,7 @@ import os
 import random
 import re
 import sys
+import time
 import uuid
 from email.utils import parsedate_to_datetime
 from datetime import datetime
@@ -1254,9 +1255,27 @@ class BaseAgent(LogMixin):
         lets the turn loop re-issue the identical request. Other LLM errors and non-LLM
         errors are terminal.
         """
-        # Extract retry-after from the raw exception before mapping strips the headers.
+        # Extract retry-after + HTTP status from the raw exception before mapping strips them.
         retry_after = self._parse_retry_after(error)
+        status_code = getattr(error, "status_code", None) or getattr(error, "status", None)
+        raw_type = type(error).__name__
         error = map_to_llm_error(error, provider=self.primary_model_config.provider.value)
+
+        # Diagnostic-only structured record (the CLI persists it; the UI still uses
+        # llm_status for the user-facing message). Makes a failed turn debuggable.
+        try:
+            await self.emitter.llm_error(
+                provider=self.primary_model_config.provider.value,
+                model=self.primary_model_config.model,
+                endpoint=getattr(getattr(self, "llm", None) and self.llm.provider, "base_url", None),
+                http_status=status_code,
+                error_type=type(error).__name__,
+                raw_type=raw_type,
+                attempt=self._consecutive_llm_retries + 1,
+                message=str(error)[:1000],
+            )
+        except Exception:
+            pass
 
         # Retry transient failures: rate limits, provider 5xx/overload, and transport-layer
         # failures (LLMConnectionError, incl. its LLMTimeout subclass — e.g. a stalled
@@ -1456,6 +1475,16 @@ class BaseAgent(LogMixin):
                 # models, stripped of image blocks carried over from earlier turns.
                 fixed_history = self._history_for_llm()
 
+                # Diagnostics: bracket the request so a stall is visible in the timeline
+                # (start↔end, or start↔llm_error if it fails) with the actual endpoint.
+                _req_start = time.monotonic()
+                await self.emitter.llm_request(
+                    "start",
+                    provider=self.primary_model_config.provider.value,
+                    model=self.primary_model_config.model,
+                    endpoint=getattr(getattr(self, "llm", None) and self.llm.provider, "base_url", None),
+                )
+
                 async with await self.llm.stream(
                     system=self.system_prompt,
                     max_completion_tokens=self.model_completion_tokens,
@@ -1506,6 +1535,13 @@ class BaseAgent(LogMixin):
 
                 assistant_message = await stream.get_final_message()
                 stop_reason = assistant_message.stop_reason
+                await self.emitter.llm_request(
+                    "end",
+                    provider=self.primary_model_config.provider.value,
+                    model=self.primary_model_config.model,
+                    elapsed_s=round(time.monotonic() - _req_start, 2),
+                    stop_reason=stop_reason,
+                )
 
                 self.append_assistant_message(assistant_message)
                 # A clean stream resets the transient-failure budget, so the cap measures

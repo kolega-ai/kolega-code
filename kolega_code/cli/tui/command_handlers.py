@@ -30,7 +30,8 @@ from ..provider_registry import (
 )
 from ..skills import activated_skill_names
 from ..slash_commands import SKILLS_LIST_COMMAND, TUI_COMMAND_NAMES, agent_command_names
-from ..updater import check_for_update, run_self_update, update_status_message
+from ..diagnostics import assemble_bug_bundle
+from ..updater import check_for_update, current_version, run_self_update, update_status_message
 from . import constants as tui_constants
 from . import state as tui_state
 from . import widgets as tui_widgets
@@ -55,6 +56,8 @@ class CommandHandlersMixin:
             "/queue-clear": self._command_queue_clear,
             "/theme": self._command_theme,
             "/copy": self._command_copy,
+            "/diagnostics": self._command_diagnostics,
+            "/bug": self._command_bug,
             "/version": self._command_version,
             "/update": self._command_update,
             "/quit": self._command_quit,
@@ -773,6 +776,72 @@ class CommandHandlersMixin:
             return
         self.copy_to_clipboard(entry.content)
         self._notify_user(messages.COPY_LAST_RESPONSE)
+
+    def _diagnostics_summary_lines(self) -> list[str]:
+        """Human-readable snapshot reused by /diagnostics and the /bug bundle."""
+        header: dict = {}
+        try:
+            header = self._diagnostics_header()
+        except Exception:
+            pass
+        lines = [
+            f"Kolega Code {header.get('kolega_version') or current_version()}",
+            f"Platform: {header.get('platform', '?')}  |  terminal: {header.get('term_program') or header.get('term') or '?'}",
+            f"Python: {header.get('python', '?')}",
+        ]
+        if header.get("provider"):
+            lines.append(f"Model: {header['provider']}/{header.get('model')} (effort: {header.get('thinking_effort')})")
+        lines.append(f"Permission: {header.get('permission_mode')}  |  mode: {header.get('interaction_mode')}")
+        if header.get("providers_with_keys"):
+            lines.append(f"Providers with keys: {', '.join(header['providers_with_keys'])}")
+        diag = getattr(self, "_diag", None)
+        if diag is not None and diag.enabled:
+            lines.append(f"Diagnostics log: {diag.path}")
+            try:
+                text = diag.path.read_text(encoding="utf-8") if diag.path.exists() else ""
+                stalls = text.count('"kind": "event_loop_stalled"')
+                errors = text.count('"kind": "llm_error"')
+                lines.append(f"This session: {stalls} loop stall(s), {errors} LLM error(s) recorded")
+            except OSError:
+                pass
+        else:
+            lines.append("Diagnostics: disabled (KOLEGA_CODE_NO_DIAGNOSTICS)")
+        return lines
+
+    async def _command_diagnostics(self, args: str) -> None:
+        self._add_conversation_entry(
+            tui_state.ConversationEntry(kind="system", content="\n".join(self._diagnostics_summary_lines()))
+        )
+
+    async def _command_bug(self, args: str) -> None:
+        diag = getattr(self, "_diag", None)
+        if diag is None or not diag.enabled:
+            self._add_conversation_entry(
+                tui_state.ConversationEntry(
+                    kind="system", content="Diagnostics are disabled, so there is nothing to bundle."
+                )
+            )
+            return
+        summary = "\n".join(self._diagnostics_summary_lines())
+        session_json = self.store.path_for(self.session.session_id)
+        bundle = await asyncio.to_thread(assemble_bug_bundle, diag, summary=summary, session_json=session_json)
+        if bundle is None:
+            self._add_conversation_entry(
+                tui_state.ConversationEntry(kind="system", content="Could not assemble the bug bundle.")
+            )
+            return
+        try:
+            self.copy_to_clipboard(str(bundle))
+            copied = " (path copied to clipboard)"
+        except Exception:
+            copied = ""
+        content = (
+            f"Bug report bundle written to:\n  {bundle}{copied}\n\n"
+            "It contains this session's conversation and file contents (API keys are scrubbed) — "
+            "review before posting publicly.\n"
+            "Open an issue: https://github.com/kolega-ai/kolega-code/issues/new"
+        )
+        self._add_conversation_entry(tui_state.ConversationEntry(kind="system", content=content))
 
     async def _command_version(self, args: str) -> None:
         result = await asyncio.to_thread(check_for_update)

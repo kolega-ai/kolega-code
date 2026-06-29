@@ -60,6 +60,8 @@ TUI_COMMAND_ENTRIES: tuple[SlashCommandEntry, ...] = (
     SlashCommandEntry("queue-clear", "Clear queued follow-up messages", CommandScope.TUI),
     SlashCommandEntry("theme", "Show or switch the color theme", CommandScope.TUI),
     SlashCommandEntry("copy", "Copy the last response to the clipboard", CommandScope.TUI),
+    SlashCommandEntry("diagnostics", "Show version, model/endpoint, and the diagnostics log path", CommandScope.TUI),
+    SlashCommandEntry("bug", "Bundle local diagnostics into a shareable file for a bug report", CommandScope.TUI),
     SlashCommandEntry("version", "Show the Kolega Code version", CommandScope.TUI),
     SlashCommandEntry("update", "Update Kolega Code to the latest version", CommandScope.TUI),
     SlashCommandEntry("quit", "Save the session and exit", CommandScope.TUI),
