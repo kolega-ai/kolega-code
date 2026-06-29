@@ -103,8 +103,9 @@ class TestBrowserManagerParity:
     @pytest.mark.asyncio
     async def test_launch_browser_interface(self, local_browser_manager, browserstack_browser_manager):
         """Test that launch_browser has the same interface for both managers."""
-        # Mock the playwright async_playwright
-        with patch("kolega_code.services.browser.async_playwright") as mock_playwright:
+        # Mock the playwright async_playwright. launch_browser imports it lazily from
+        # playwright.async_api, so patch it at its source module.
+        with patch("playwright.async_api.async_playwright") as mock_playwright:
             # Setup mock playwright - fix the async mock issue
             mock_pw_instance = MagicMock()
             mock_async_playwright = AsyncMock()
@@ -147,8 +148,9 @@ class TestBrowserManagerParity:
     @pytest.mark.asyncio
     async def test_browser_info_structure(self, local_browser_manager, browserstack_browser_manager):
         """Test that browser info structure is identical for both managers."""
-        # Mock the playwright async_playwright
-        with patch("kolega_code.services.browser.async_playwright") as mock_playwright:
+        # Mock the playwright async_playwright. launch_browser imports it lazily from
+        # playwright.async_api, so patch it at its source module.
+        with patch("playwright.async_api.async_playwright") as mock_playwright:
             # Setup mock playwright - fix the async mock issue
             mock_pw_instance = MagicMock()
             mock_async_playwright = AsyncMock()

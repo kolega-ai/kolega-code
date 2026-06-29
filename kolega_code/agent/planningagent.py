@@ -5,7 +5,7 @@ from .baseagent import BaseAgent
 from kolega_code.config import AgentConfig
 from kolega_code.events import AgentConnectionManager
 from kolega_code.llm.models import Message, TextBlock
-from .prompt_provider import AgentMode, AgentType, PromptExtension
+from .prompt_provider import AgentMode, AgentType, PromptExtension, PromptProvider
 from .tools import ToolCollection, ToolCollectionConfig, ToolExtension
 from .utils.commands import CommandProcessor
 
@@ -36,6 +36,7 @@ class PlanningAgent(BaseAgent):
         agent_mode: Optional[AgentMode] = None,
         workspace_env_var_descriptions: Optional[Dict[str, str]] = None,
         workspace_memories: Optional[List[str]] = None,
+        prompt_provider: Optional[PromptProvider] = None,
         prompt_extensions: Optional[List[PromptExtension]] = None,
         tool_extensions: Optional[List[Any]] = None,
         permission_mode: Optional[Any] = None,
@@ -63,6 +64,7 @@ class PlanningAgent(BaseAgent):
             agent_mode=agent_mode,
             workspace_env_var_descriptions=workspace_env_var_descriptions,
             workspace_memories=workspace_memories,
+            prompt_provider=prompt_provider,
             prompt_extensions=prompt_extensions,
             tool_extensions=tool_extensions,
             permission_mode=permission_mode,
