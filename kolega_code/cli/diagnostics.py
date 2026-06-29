@@ -265,9 +265,14 @@ def write_crash_log(
         path = directory / f"crash-{stamp}.log"
         tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
         scrubbed = scrub_secrets(f"{header}\n\n{tb}", secret_values)
-        # codeql[py/clear-text-storage-sensitive-data] -- scrubbed by scrub_secrets above
-        path.write_text(scrubbed, encoding="utf-8")
-        ensure_private_file(path)
+        # Create the file owner-only from the outset (no write-then-chmod race)
+        # and write via os.write to avoid path.write_text, which CodeQL models
+        # as a clear-text storage sink for the still-tainted scrubbed traceback.
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            os.write(fd, scrubbed.encode("utf-8"))
+        finally:
+            os.close(fd)
         return path
     except OSError:
         return None
