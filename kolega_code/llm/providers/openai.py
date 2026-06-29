@@ -438,7 +438,9 @@ class OpenAIProvider(BaseLLMProvider):
         # retried, instead of hanging on the SDK's 600s default.
         return OpenAIStreamWrapper(
             await self.async_client.chat.completions.create(
-                messages=messages.to_openai(), timeout=streaming_timeout(), **generation_params
+                messages=messages.to_openai(provider=self.provider_name, model=generation_params["model"]),
+                timeout=streaming_timeout(),
+                **generation_params,
             ),
             requested_include_usage=True,
             provider_name=self.provider_name,
@@ -468,7 +470,10 @@ class OpenAIProvider(BaseLLMProvider):
             messages = MessageHistory([system] + messages)
 
         await self.rate_limiter.acquire()
-        response = await self.async_client.chat.completions.create(messages=messages.to_openai(), **generation_params)
+        response = await self.async_client.chat.completions.create(
+            messages=messages.to_openai(provider=self.provider_name, model=generation_params["model"]),
+            **generation_params,
+        )
 
         # Extract message and add usage data
         message = Message.from_openai(response.choices[0].message)
