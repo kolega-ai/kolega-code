@@ -264,10 +264,10 @@ def write_crash_log(
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         path = directory / f"crash-{stamp}.log"
         tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
-        # scrub_secrets is the sanitizer; CodeQL can't model regex-based custom
-        # sanitizers, so this is a verified false positive.
-        scrubbed = scrub_secrets(f"{header}\n\n{tb}", secret_values)  # lgtm [py/clear-text-storage-sensitive-data]
-        path.write_text(scrubbed, encoding="utf-8")
+        scrubbed = scrub_secrets(f"{header}\n\n{tb}", secret_values)
+        path.write_text(
+            scrubbed, encoding="utf-8"
+        )  # codeql[py/clear-text-storage-sensitive-data] -- scrubbed by scrub_secrets above
         ensure_private_file(path)
         return path
     except OSError:
