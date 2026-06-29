@@ -575,6 +575,25 @@ async def test_footer_renders_ctrl_p_permissions_exactly_once(tmp_path: Path, mo
         assert ctrl_p_keys[0].description == "Permissions"
 
 
+def test_app_ctrl_bindings_use_explicit_key_display() -> None:
+    """Every Ctrl binding must set a ``Ctrl+X`` key_display.
+
+    Without an explicit key_display, Textual falls back to caret notation
+    (e.g. ctrl+q renders as "^q"), which is inconsistent with the other
+    Ctrl bindings. This guards against that regression at the source.
+    """
+    from kolega_code.cli.app import KolegaCodeApp
+
+    ctrl_bindings = [binding for binding in KolegaCodeApp.BINDINGS if binding.key.startswith("ctrl+")]
+    assert ctrl_bindings, "expected at least one ctrl binding"
+
+    for binding in ctrl_bindings:
+        expected = "Ctrl+" + binding.key.split("+", 1)[1].upper()
+        assert binding.key_display == expected, (
+            f"binding {binding.key!r} ({binding.action}) should display as {expected!r}, got {binding.key_display!r}"
+        )
+
+
 @pytest.mark.asyncio
 async def test_textual_app_ctrl_o_toggles_sidebar_and_keeps_active_tab(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch

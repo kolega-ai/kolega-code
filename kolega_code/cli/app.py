@@ -130,9 +130,9 @@ class KolegaCodeApp(
         Binding("ctrl+o", "toggle_sidebar", "Sidebar", show=True, key_display="Ctrl+O", priority=True),
         Binding("ctrl+g", "open_sub_agent", "Agents", show=True, key_display="Ctrl+G", priority=True),
         Binding("ctrl+r", "open_changes", "Changes", show=True, key_display="Ctrl+R", priority=True),
-        Binding("ctrl+c", "cancel_generation", "Cancel", show=True),
+        Binding("ctrl+c", "cancel_generation", "Cancel", show=True, key_display="Ctrl+C"),
         Binding("escape", "cancel_generation", "Cancel", show=False),
-        Binding("ctrl+q", "quit", "Quit", show=True),
+        Binding("ctrl+q", "quit", "Quit", show=True, key_display="Ctrl+Q"),
     ]
 
     def __init__(
