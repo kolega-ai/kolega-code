@@ -46,7 +46,7 @@ These control the app and your session.
 | `/queue-clear` | Clear queued follow-up messages |
 | `/copy` | Copy the last response to the clipboard |
 | `/diagnostics` | Show version, model/endpoint, and the local diagnostics log path |
-| `/bug` | Bundle local diagnostics into a shareable file for a bug report |
+| `/bug` | Package local diagnostics into a shareable zip for a bug report |
 | `/version` | Show the Kolega Code version |
 | `/update` | Update Kolega Code to the latest version |
 | `/quit` | Save the session and exit |
@@ -70,7 +70,7 @@ Run `/diagnostics` to print a snapshot of this session — version, platform and
 terminal, active model and endpoint, which providers have keys, and how many
 event-loop stalls or LLM errors have been recorded — followed by the path to the
 local diagnostics log. Run `/bug` to package that log, any captured stack dumps,
-and the current session into a shareable bundle for a bug report (API keys are
+and the current session into a single shareable zip for a bug report (API keys are
 scrubbed; the conversation and file contents are kept). See
 [Diagnostics & Bug Reports](../../troubleshooting/diagnostics/) for what gets
 captured, where it lives, and the privacy model.

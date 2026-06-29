@@ -105,8 +105,8 @@ The guiding rule: **content is kept, credentials are removed.**
   never the values.
 
 :::caution
-A `/bug` bundle contains your conversation and file contents. Credentials are
-scrubbed, but review the bundle before posting it somewhere public.
+A `/bug` zip contains your conversation and file contents. Credentials are
+scrubbed, but review the zip before posting it somewhere public.
 :::
 
 ## Turning it off
@@ -121,7 +121,7 @@ KOLEGA_CODE_NO_DIAGNOSTICS=1 kolega-code .
 
 1. Reproduce the problem (or capture stacks with `SIGUSR1` if it is wedged).
 2. Run `/bug` — or, if the app has exited, grab the `diagnostics/` folder directly.
-3. Skim the bundle to confirm there is nothing private you would rather not share.
+3. Skim the zip to confirm there is nothing private you would rather not share.
 4. Attach it to a [new issue](https://github.com/kolega-ai/kolega-code/issues/new)
    with a short note on what you were doing.
 
