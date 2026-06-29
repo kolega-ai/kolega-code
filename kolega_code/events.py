@@ -29,6 +29,8 @@ class AgentEvent(BaseModel):
         "browser_closed",
         "status_update",
         "llm_status_update",
+        "llm_error",
+        "llm_request",
         "credit_alert",
         "llm_context_update",
         "compaction_status",
@@ -221,6 +223,38 @@ class AgentEventEmitter:
                 sender=self.sender,
                 event_type="llm_status_update",
                 content={"status": status, "message": message},
+                timestamp=datetime.now().isoformat(),
+                is_streaming=False,
+                sub_agent_info=sub_agent_info,
+            )
+        )
+
+    async def llm_error(self, **fields: Any) -> None:
+        """Structured LLM error for the diagnostics timeline (provider/model/endpoint/status/…).
+
+        Diagnostic-only: the UI surfaces user-facing errors via llm_status; this carries the
+        machine-readable detail the CLI persists so a failed turn is debuggable."""
+        sub_agent_info = self._sub_agent_info_provider() if self._sub_agent_info_provider else None
+        await self.emit(
+            AgentEvent(
+                sender=self.sender,
+                event_type="llm_error",
+                content=dict(fields),
+                timestamp=datetime.now().isoformat(),
+                is_streaming=False,
+                sub_agent_info=sub_agent_info,
+            )
+        )
+
+    async def llm_request(self, phase: str, **fields: Any) -> None:
+        """Mark an LLM request boundary (phase="start"|"end") for the diagnostics timeline,
+        so a long-open request (network stall) is visible while the loop watchdog stays quiet."""
+        sub_agent_info = self._sub_agent_info_provider() if self._sub_agent_info_provider else None
+        await self.emit(
+            AgentEvent(
+                sender=self.sender,
+                event_type="llm_request",
+                content={"phase": phase, **fields},
                 timestamp=datetime.now().isoformat(),
                 is_streaming=False,
                 sub_agent_info=sub_agent_info,

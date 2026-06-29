@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import faulthandler
 import importlib.util
 import json
 import sys
@@ -34,6 +35,7 @@ from kolega_code.permissions import (
 from kolega_code.services.browser import PlaywrightBrowserManager
 from kolega_code.utils.images import encode_image_file
 
+from .diagnostics import write_crash_log
 from .config import (
     DEPRECATED_THINKING_TOKENS_MESSAGE,
     CliConfigError,
@@ -75,6 +77,11 @@ CLI_BILLING_ERROR_PAYLOAD = {
 
 
 def main(argv: Optional[Iterable[str]] = None) -> int:
+    # Dump native stacks on a hard fault (segfault, etc.); idempotent, no overhead.
+    try:
+        faulthandler.enable()
+    except (OSError, ValueError, RuntimeError):
+        pass
     args = parse_args(list(argv) if argv is not None else sys.argv[1:])
     try:
         if getattr(args, "version", False):
@@ -468,7 +475,21 @@ def _run_tui(args: argparse.Namespace) -> int:
         check_for_updates=True,
         show_logs=args.show_logs,
     )
-    app.run()
+    try:
+        app.run()
+    except Exception as exc:  # noqa: BLE001 — last-resort crash capture before re-raising
+        _secrets = [v for v in getattr(settings, "api_keys", {}).values() if v]
+        path = write_crash_log(
+            store.root, exc=exc, header=f"kolega-code crash | session {session.session_id}", secret_values=_secrets
+        )
+        if path is not None:
+            _print_styled(
+                f"\nKolega Code hit an unexpected error. Diagnostics (no API keys) saved to:\n  {path}\n"
+                "Please share that file when reporting this.",
+                style="error",
+                stderr=True,
+            )
+        raise
     return 0
 
 

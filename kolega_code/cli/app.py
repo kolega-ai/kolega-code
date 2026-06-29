@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import platform
 import subprocess
 import sys
 import time
+import traceback
 from pathlib import Path
 from typing import Optional
 
@@ -16,6 +19,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.timer import Timer
+from textual.worker import WorkerState
 from textual.widgets import (
     Button,
     Footer,
@@ -50,6 +54,7 @@ from kolega_code.permissions import (
 from . import messages, theme
 from .config import CliConfigOverrides, active_model_override_message, key_status
 from .connection import CliConnectionManager
+from .diagnostics import DiagnosticsLog, ResponsivenessWatchdog
 from .file_index import WorkspaceFileIndex
 from .mentions import build_file_attachments
 from .provider_registry import (
@@ -75,7 +80,7 @@ from .slash_commands import (
     search_commands,
 )
 from .theme import Color, Glyph
-from .updater import check_for_update, update_status_message
+from .updater import check_for_update, current_version, update_status_message
 from .tui import constants as tui_constants
 from .tui import agent_runtime as tui_agent_runtime
 from .tui import changes_screen as tui_changes
@@ -159,6 +164,9 @@ class KolegaCodeApp(
         self.skill_catalog: SkillCatalog = discover_skills(self.project_path)
         self.file_index = WorkspaceFileIndex(self.project_path)
         self._file_index_refreshing = False
+        # Local diagnostics (constructed on mount, once settings/secrets are loaded).
+        self._diag: Optional[DiagnosticsLog] = None
+        self._watchdog: Optional[ResponsivenessWatchdog] = None
         self.browser_visible = browser_visible
         self.sidebar_visible = True
         self.check_for_updates = check_for_updates
@@ -393,8 +401,45 @@ class KolegaCodeApp(
                                 yield Static("", id="settings_status")
         yield Footer()
 
+    def _diagnostics_header(self) -> dict:
+        """One-shot environment/config snapshot for the diagnostics timeline."""
+        header: dict = {
+            "kolega_version": current_version(),
+            "python": sys.version.split()[0],
+            "platform": platform.platform(),
+            "term": os.environ.get("TERM", ""),
+            "term_program": os.environ.get("TERM_PROGRAM", ""),  # captures ghostty/iTerm/etc.
+            "interaction_mode": self.interaction_mode,
+            "permission_mode": self.permission_mode.value,
+        }
+        try:
+            if self.config is not None:
+                lc = self.config.long_context_config
+                header["provider"] = getattr(lc.provider, "value", str(lc.provider))
+                header["model"] = lc.model
+                header["thinking_effort"] = getattr(lc, "thinking_effort", None)
+        except Exception:
+            pass
+        try:
+            header["providers_with_keys"] = sorted(k for k, v in self.settings.api_keys.items() if v)
+        except Exception:
+            pass
+        return header
+
     async def on_mount(self) -> None:
         self.settings = self.settings_store.load()
+        # Local diagnostics: a per-turn timeline + a responsiveness watchdog that dumps the
+        # blocking stack if the UI goes unresponsive. Local-only (shared only via /bug);
+        # never let diagnostics setup break mount.
+        try:
+            secret_values = [v for v in getattr(self.settings, "api_keys", {}).values() if v]
+            self._diag = DiagnosticsLog(self.store.root, self.session.session_id, secret_values=secret_values)
+            self._diag.record("session_start", **self._diagnostics_header())
+            self._watchdog = ResponsivenessWatchdog(self._diag)
+            self._watchdog.start()
+            self.set_interval(1.0, self._watchdog.beat)
+        except Exception:
+            self._diag, self._watchdog = None, None
         # Register all themes and apply the persisted one before the first paint,
         # so the splash and settings controls render already themed. In non-truecolor
         # terminals (e.g. macOS Terminal.app) the chrome is neutralized to gray so it
@@ -1095,7 +1140,30 @@ class KolegaCodeApp(
         if activity is not None:
             self.action_open_sub_agent(activity.agent_id)
 
+    def on_unmount(self) -> None:
+        # Stop the watchdog thread on shutdown (also keeps test apps from leaking threads).
+        if self._watchdog is not None:
+            self._watchdog.stop()
+
+    def on_worker_state_changed(self, event) -> None:
+        # Capture worker (e.g. agent-turn) crashes that Textual otherwise only logs to stderr.
+        try:
+            if event.state is WorkerState.ERROR and self._diag is not None:
+                worker = event.worker
+                err = getattr(worker, "error", None)
+                self._diag.record(
+                    "worker_error",
+                    worker=getattr(worker, "name", None),
+                    group=getattr(worker, "group", None),
+                    error_type=type(err).__name__ if err else None,
+                    traceback="".join(traceback.format_exception(type(err), err, err.__traceback__)) if err else None,
+                )
+        except Exception:
+            pass
+
     async def action_quit(self) -> None:
+        if self._watchdog is not None:
+            self._watchdog.stop()
         if self.agent is not None:
             fire = getattr(self.agent, "fire_hook", None)
             if fire is not None:

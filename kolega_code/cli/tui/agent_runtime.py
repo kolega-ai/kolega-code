@@ -240,7 +240,83 @@ class AgentRuntimeMixin:
         self._flush_terminal_output()
         self._flush_log_output()
 
+    def _diag_tee(self, event: AgentEvent) -> None:
+        """Persist a curated, secret-scrubbed slice of the event stream to the diagnostics
+        timeline so a hang/error report shows what the turn was doing. Never raises."""
+        diag = getattr(self, "_diag", None)
+        if diag is None:
+            return
+        et = event.event_type
+        content = event.content or {}
+        agent = "sub_agent" if event.sub_agent_info else None
+        try:
+            if et == "log_message":
+                level = str(content.get("level", "info"))
+                if level in ("warning", "error"):
+                    diag.record("log", level=level, text=content.get("text") or content.get("message"), agent=agent)
+            elif et in ("llm_status_update", "status_update"):
+                diag.record(
+                    "llm_status",
+                    status=content.get("status"),
+                    message=content.get("message") or content.get("text"),
+                    agent=agent,
+                )
+            elif et == "llm_error":
+                diag.record(
+                    "llm_error",
+                    provider=content.get("provider"),
+                    model=content.get("model"),
+                    endpoint=content.get("endpoint"),
+                    http_status=content.get("http_status"),
+                    error_type=content.get("error_type"),
+                    raw_type=content.get("raw_type"),
+                    attempt=content.get("attempt"),
+                    message=content.get("message"),
+                    agent=agent,
+                )
+            elif et == "llm_request":
+                diag.record(
+                    "llm_request",
+                    phase=content.get("phase"),
+                    provider=content.get("provider"),
+                    model=content.get("model"),
+                    endpoint=content.get("endpoint"),
+                    elapsed_s=content.get("elapsed_s"),
+                    stop_reason=content.get("stop_reason"),
+                    agent=agent,
+                )
+            elif et == "llm_context_update":
+                diag.record(
+                    "context",
+                    input_tokens=content.get("input_tokens"),
+                    max_tokens=content.get("max_tokens"),
+                    usage_percentage=content.get("usage_percentage"),
+                    alert_level=content.get("alert_level"),
+                    agent=agent,
+                )
+            elif et == "compaction_status":
+                diag.record(
+                    "compaction",
+                    phase=content.get("phase") or content.get("status"),
+                    message=content.get("message"),
+                    agent=agent,
+                )
+            elif et == "chat_message" and content.get("message_type") in ("tool_call", "tool_error"):
+                diag.record(
+                    "tool",
+                    message_type=content.get("message_type"),
+                    tool=content.get("tool_description") or content.get("tool_name"),
+                    tool_call_id=content.get("tool_call_id"),
+                    text=content.get("text"),
+                    agent=agent,
+                )
+        except Exception:
+            pass
+
     def _render_event(self, event: AgentEvent) -> None:
+        self._diag_tee(event)
+        if event.event_type in ("llm_error", "llm_request"):
+            return  # diagnostics-only events; persisted by the tee, nothing to render
         if event.event_type == "log_message":
             if self.show_logs:
                 level = str(event.content.get("level", "info"))
