@@ -1,5 +1,7 @@
+import asyncio
 import json
 import os
+import threading
 from typing import Any, AsyncContextManager, Dict, List, Optional
 from weakref import WeakKeyDictionary
 
@@ -129,6 +131,8 @@ class AnthropicProvider(BaseLLMProvider):
         # adaptation / repair produce new objects, which miss naturally.
         self._local_token_memo: "WeakKeyDictionary[Message, tuple]" = WeakKeyDictionary()
         self._local_tool_token_memo: "WeakKeyDictionary[ToolDefinition, int]" = WeakKeyDictionary()
+        # Guards the memos when local counting is offloaded to a worker thread.
+        self._local_token_memo_lock = threading.Lock()
 
     @property
     def retry_decorator(self):
@@ -192,7 +196,9 @@ class AnthropicProvider(BaseLLMProvider):
         if self.use_local_token_counting:
             # Use local tiktoken-based counting (no API call). This is an
             # estimate for context management, not authoritative billing usage.
-            return self._count_tokens_local(messages, system, model, tools)
+            # Offload the pure-CPU encode to a worker thread so it never blocks the
+            # Textual/asyncio event loop (the remote branch already yields on I/O).
+            return await asyncio.to_thread(self._count_tokens_local, messages, system, model, tools)
         else:
             # Use Anthropic API for token counting
             await self.rate_limiter.acquire()
@@ -236,15 +242,16 @@ class AnthropicProvider(BaseLLMProvider):
         self._ensure_local_token_memos()
         tools = tools or []
 
-        # Sum memoized per-message content counts: only new or changed messages are
-        # re-encoded each iteration (system is a Message too).
-        num_tokens = 0
-        if system:
-            num_tokens += self.SYSTEM_OVERHEAD + self._memoized_content_tokens(encoding, system)
-        for message in messages:
-            num_tokens += self.MESSAGE_OVERHEAD + self._memoized_content_tokens(encoding, message)
-        for tool in tools:
-            num_tokens += self._memoized_tool_tokens(encoding, tool)
+        with self._local_token_memo_lock:
+            # Sum memoized per-message content counts: only new or changed messages are
+            # re-encoded each iteration (system is a Message too).
+            num_tokens = 0
+            if system:
+                num_tokens += self.SYSTEM_OVERHEAD + self._memoized_content_tokens(encoding, system)
+            for message in messages:
+                num_tokens += self.MESSAGE_OVERHEAD + self._memoized_content_tokens(encoding, message)
+            for tool in tools:
+                num_tokens += self._memoized_tool_tokens(encoding, tool)
 
         return TokenCount(input_tokens=num_tokens, output_tokens=None)
 
@@ -254,6 +261,8 @@ class AnthropicProvider(BaseLLMProvider):
             self._local_token_memo = WeakKeyDictionary()
         if getattr(self, "_local_tool_token_memo", None) is None:
             self._local_tool_token_memo = WeakKeyDictionary()
+        if getattr(self, "_local_token_memo_lock", None) is None:
+            self._local_token_memo_lock = threading.Lock()
 
     def _memoized_content_tokens(self, encoding, message) -> int:
         fingerprint = self._content_fingerprint(message.content)

@@ -1,26 +1,64 @@
 from typing import Any, AsyncContextManager, Dict, List, Optional
 from weakref import WeakKeyDictionary
+import asyncio
 import json
 import logging
 import math
+import threading
 
 import tiktoken
 from openai import AsyncOpenAI
 
-from ..models import ImageBlock, Message, MessageChunk, MessageHistory, ToolCall, ToolDefinition, ToolResult
+from ..models import (
+    ImageBlock,
+    Message,
+    MessageChunk,
+    MessageHistory,
+    RedactedThinkingBlock,
+    ResponsesReasoningBlock,
+    ThinkingBlock,
+    ToolCall,
+    ToolDefinition,
+    ToolResult,
+)
 from ..specs import build_thinking_request_params
 from ..timeouts import streaming_timeout
 from ..tool_execution_ids import ToolExecutionIdRegistry
 from .base import BaseLLMProvider
 from .models import GenerationParams, TokenCount
 
+# tiktoken caches Encoding objects in a module-level registry after the first
+# (BPE-table-loading) call, but we also hold our own reference so the hot
+# count_tokens path never does even a registry dict lookup. cl100k_base is the
+# de-facto encoding for every OpenAI-compatible provider (DeepSeek, xAI, Fireworks,
+# ... have no native tiktoken table); the count is an estimate for context
+# management, not billing.
+_ENCODING_NAME = "cl100k_base"
+_encoding = None
+
+
+def _get_encoding():
+    global _encoding
+    if _encoding is None:
+        _encoding = tiktoken.get_encoding(_ENCODING_NAME)
+    return _encoding
+
 
 class OpenAIStreamWrapper:
     def __init__(self, openai_stream, requested_include_usage: bool = False, provider_name: str = "openai"):
         self.openai_stream = openai_stream
-        self.final_content = ""
-        self.final_reasoning_content = ""
+        # Accumulate streamed deltas into lists and ''.join once at finalize. A
+        # running ``str += delta`` is O(n^2) here because the buffer is an instance
+        # attribute (CPython's in-place concat optimization only fires for locals
+        # with refcount 1), and DeepSeek max-effort reasoning streams build enormous
+        # buffers over thousands of tiny chunks. Lists make accumulation O(n).
+        self._content_parts: List[str] = []
+        self._reasoning_parts: List[str] = []
+        # Per-index tool-call: the first delta's object (kept for id/name/index) plus
+        # its argument fragments collected separately so the JSON arg string (which can
+        # be large, e.g. a file-writing tool) is also joined once instead of grown.
         self.final_tool_calls = {}
+        self._tool_call_arg_parts: Dict[int, List[str]] = {}
         self.stop_reason = None
         self.usage_data = None
         self.tool_execution_ids = ToolExecutionIdRegistry()
@@ -28,6 +66,14 @@ class OpenAIStreamWrapper:
 
         self._closed = False
         self._requested_include_usage = requested_include_usage
+
+    @property
+    def final_content(self) -> str:
+        return "".join(self._content_parts)
+
+    @property
+    def final_reasoning_content(self) -> str:
+        return "".join(self._reasoning_parts)
 
     async def __aenter__(self):
         return self
@@ -56,25 +102,27 @@ class OpenAIStreamWrapper:
                 if delta is not None:
                     content = getattr(delta, "content", None) or ""
                     if content:
-                        self.final_content += content
+                        self._content_parts.append(content)
 
                     reasoning_content = (
                         getattr(delta, "reasoning_content", None) or getattr(delta, "reasoning", None) or ""
                     )
                     if reasoning_content:
-                        self.final_reasoning_content += reasoning_content
+                        self._reasoning_parts.append(reasoning_content)
 
                     for tool_call in getattr(delta, "tool_calls", []) or []:
                         index = tool_call.index
 
                         if index not in self.final_tool_calls:
+                            # Keep the first delta's object for id/name/index; seed its
+                            # argument fragments and clear the live attribute (the joined
+                            # value is written back in get_final_message).
                             self.final_tool_calls[index] = tool_call
-
-                        if self.final_tool_calls[index].function.arguments != tool_call.function.arguments:
-                            if self.final_tool_calls[index].function.arguments is None:
-                                self.final_tool_calls[index].function.arguments = ""
-
-                            self.final_tool_calls[index].function.arguments += tool_call.function.arguments
+                            self._tool_call_arg_parts[index] = [tool_call.function.arguments or ""]
+                        else:
+                            fragment = tool_call.function.arguments
+                            if fragment:
+                                self._tool_call_arg_parts[index].append(fragment)
 
                 # Capture stop reason if present
                 self.stop_reason = getattr(choice0, "finish_reason", self.stop_reason)
@@ -106,6 +154,13 @@ class OpenAIStreamWrapper:
             raise
 
     async def get_final_message(self):
+        # Materialize the accumulated tool-call argument fragments into each delta
+        # object exactly once (the O(n) join the per-chunk path deliberately avoided).
+        for index, parts in self._tool_call_arg_parts.items():
+            tool_call = self.final_tool_calls.get(index)
+            if tool_call is not None:
+                tool_call.function.arguments = "".join(parts)
+
         message = Message.from_openai_stream(
             role="assistant",
             content=self.final_content,
@@ -161,6 +216,8 @@ class OpenAIProvider(BaseLLMProvider):
         # new objects, which miss naturally.
         self._message_token_memo: "WeakKeyDictionary[Message, tuple]" = WeakKeyDictionary()
         self._tool_token_memo: "WeakKeyDictionary[ToolDefinition, int]" = WeakKeyDictionary()
+        # Guards the memos when count_tokens is offloaded to a worker thread.
+        self._token_memo_lock = threading.Lock()
 
     @property
     def retry_decorator(self):
@@ -219,20 +276,28 @@ class OpenAIProvider(BaseLLMProvider):
         Returns:
             TokenCount object with input token count
         """
-        encoding = tiktoken.get_encoding("cl100k_base")
-        self._ensure_token_memos()
-
         # Combine system message with messages if provided
         all_messages = ([system] + list(messages)) if system else list(messages)
 
-        # Sum memoized per-message counts: only new or changed messages are re-encoded.
-        num_tokens = sum(self._memoized_message_tokens(encoding, message) for message in all_messages)
-
-        # Tool definitions don't mutate within a session, so memoize per definition by identity.
-        if tools:
-            num_tokens += sum(self._memoized_tool_tokens(encoding, tool) for tool in tools)
-
+        # tiktoken encoding is pure-CPU work. The agent loop runs on the Textual/asyncio
+        # event loop, so encoding inline freezes the UI — worst on memo-cold passes
+        # (compaction, /model switch) that re-encode the whole history at once. Offload
+        # to a worker thread so a count never blocks rendering. The per-instance lock
+        # keeps the (non-thread-safe) WeakKeyDictionary memos consistent if two agents
+        # share this provider and count concurrently from different threads.
+        num_tokens = await asyncio.to_thread(self._count_tokens_sync, all_messages, tools)
         return TokenCount(input_tokens=num_tokens)
+
+    def _count_tokens_sync(self, all_messages: List[Message], tools: Optional[List[ToolDefinition]]) -> int:
+        encoding = _get_encoding()
+        self._ensure_token_memos()
+        with self._token_memo_lock:
+            # Sum memoized per-message counts: only new or changed messages are re-encoded.
+            num_tokens = sum(self._memoized_message_tokens(encoding, message) for message in all_messages)
+            # Tool definitions don't mutate within a session, so memoize per definition by identity.
+            if tools:
+                num_tokens += sum(self._memoized_tool_tokens(encoding, tool) for tool in tools)
+        return num_tokens
 
     def _ensure_token_memos(self) -> None:
         # Instances built via __new__ (benchmarks/tests) skip __init__, so create lazily.
@@ -240,6 +305,8 @@ class OpenAIProvider(BaseLLMProvider):
             self._message_token_memo = WeakKeyDictionary()
         if getattr(self, "_tool_token_memo", None) is None:
             self._tool_token_memo = WeakKeyDictionary()
+        if getattr(self, "_token_memo_lock", None) is None:
+            self._token_memo_lock = threading.Lock()
 
     def _memoized_message_tokens(self, encoding, message) -> int:
         fingerprint = self._message_fingerprint(message)
@@ -293,6 +360,21 @@ class OpenAIProvider(BaseLLMProvider):
                     elif hasattr(item, "data") and hasattr(item, "media_type"):
                         # ImageBlock - estimate tokens based on base64 data size
                         num_tokens += self._estimate_image_tokens(len(item.data))
+                    # Handle reasoning blocks. DeepSeek (and other reasoning models)
+                    # replay prior reasoning back to the same provider, so it counts
+                    # toward the input budget. Without these branches ThinkingBlocks
+                    # (.thinking, not .text) scored 0, the gauge undercounted, and
+                    # auto-compaction fired late while payloads stayed large.
+                    elif isinstance(item, ThinkingBlock):
+                        num_tokens += len(encoding.encode(item.thinking or ""))
+                        if item.signature:
+                            num_tokens += len(encoding.encode(str(item.signature)))
+                    elif isinstance(item, RedactedThinkingBlock):
+                        num_tokens += len(encoding.encode(str(item.data)))
+                    elif isinstance(item, ResponsesReasoningBlock):
+                        num_tokens += len(encoding.encode(str(item.encrypted_content or "")))
+                        for part in item.summary:
+                            num_tokens += len(encoding.encode(str(part)))
                     # Handle tool calls. OpenAI's prompt accounting uses a compact
                     # internal representation for assistant tool calls rather than
                     # charging the full Chat Completions JSON wrapper. Counting the
@@ -351,6 +433,12 @@ class OpenAIProvider(BaseLLMProvider):
             return ("img", len(item.data))
         if hasattr(item, "data") and hasattr(item, "media_type"):
             return ("img", len(item.data))
+        if isinstance(item, ThinkingBlock):
+            return ("think", len(item.thinking or ""), len(str(item.signature or "")))
+        if isinstance(item, RedactedThinkingBlock):
+            return ("rthink", len(str(item.data)))
+        if isinstance(item, ResponsesReasoningBlock):
+            return ("rreason", len(str(item.encrypted_content or "")), tuple(len(str(p)) for p in item.summary))
         if isinstance(item, ToolCall):
             payload = item.to_openai()
             function_payload = payload.get("function", {})
