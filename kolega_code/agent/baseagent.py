@@ -642,11 +642,21 @@ class BaseAgent(LogMixin):
     # Context budget
     # ------------------------------------------------------------------
 
-    async def count_current_context(self) -> TokenCount:
-        self._sanitize_oversized_tool_results()
-        # History sent to the LLM (and to token counting): tool-call-repaired and,
-        # for non-vision models, stripped of image blocks from earlier turns.
-        fixed_history = self._history_for_llm()
+    async def count_current_context(self, fixed_history: Optional[MessageHistory] = None) -> TokenCount:
+        """Count the current context's tokens and emit a context-budget update.
+
+        Building the request history (``_history_for_llm``: tool-call repair +
+        provider adaptation, and image stripping for non-vision models) is an
+        O(history) pass that runs on the event loop. The agent loop already builds
+        that history for the request, so it passes it in here as ``fixed_history`` to
+        avoid rebuilding it a second time per iteration. Callers that only need a
+        count (``/context``, ``/compact``) omit it and the history is built here.
+        """
+        if fixed_history is None:
+            self._sanitize_oversized_tool_results()
+            # History sent to the LLM (and to token counting): tool-call-repaired and,
+            # for non-vision models, stripped of image blocks from earlier turns.
+            fixed_history = self._history_for_llm()
         token_count = await self.llm.count_tokens(
             system=self.system_prompt,
             messages=fixed_history,
@@ -1432,7 +1442,12 @@ class BaseAgent(LogMixin):
             self.mark_cache_checkpoint()
 
             try:
-                token_count = await self.count_current_context()
+                # Build the request history once and reuse it for both the token
+                # count and the request below — the repair+adapt+image-strip pass is
+                # O(history) and ran twice per iteration before.
+                self._sanitize_oversized_tool_results()
+                fixed_history = self._history_for_llm()
+                token_count = await self.count_current_context(fixed_history)
                 logger.debug("Input token count: %s", token_count)
 
                 if self.compressor.over_budget(token_count.input_tokens, self.model_context_length):
@@ -1447,7 +1462,12 @@ class BaseAgent(LogMixin):
                         },
                     )
                     result = await self.compress_history()
-                    token_count = await self.count_current_context()
+                    # Rebuild after compaction (history changed) and re-mark the cache
+                    # checkpoint before re-counting so the reused history reflects it.
+                    self.mark_cache_checkpoint()
+                    self._sanitize_oversized_tool_results()
+                    fixed_history = self._history_for_llm()
+                    token_count = await self.count_current_context(fixed_history)
 
                     # PostCompact hooks (advisory): observe the outcome. There is no
                     # destructive fallback — a bounded summary plus capped tool results
@@ -1466,18 +1486,12 @@ class BaseAgent(LogMixin):
                         },
                     )
 
-                    self.mark_cache_checkpoint()
-
                 current_response = ""
                 current_thinking = ""
                 thinking_started = False
                 # Use the same UUID for each segment of the response
                 response_uuid = str(uuid.uuid4())
                 thinking_uuid = str(uuid.uuid4())
-
-                # History sent to the LLM: tool-call-repaired and, for non-vision
-                # models, stripped of image blocks carried over from earlier turns.
-                fixed_history = self._history_for_llm()
 
                 # Diagnostics: bracket the request so a stall is visible in the timeline
                 # (start↔end, or start↔llm_error if it fails) with the actual endpoint.
