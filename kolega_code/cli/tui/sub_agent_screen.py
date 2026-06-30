@@ -362,6 +362,8 @@ class SubAgentInspectorScreen(ModalScreen):
                 continue
             label = step.tool_name or step.kind
             lines.append(f"[{step.kind}] {label}")
+            # Fold any deferred stream deltas so a copy mid-stream isn't missing the tail.
+            step.materialize()
             body = step.full_content or step.content
             if body:
                 lines.append(body)

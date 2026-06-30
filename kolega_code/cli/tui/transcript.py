@@ -390,7 +390,13 @@ class TranscriptRenderingMixin:
             entry_content = self._tool_result_preview(text)
             full_content = self._capped_tool_text(text)
         elif stream_mode == "append":
-            buffer_text = self._tool_stream_buffers.get(buffer_key, "") + text
+            # Bound the live buffer to the full-content cap window. The preview is the
+            # tail and the live expand view is capped to this many chars anyway, and on
+            # completion the entry is recomputed from the complete text. Storing the
+            # whole stream via `get()+text` per delta is O(n^2) and stalled the UI on
+            # long streamed tool output.
+            cap = theme.TOOL_FULL_CONTENT_CAP_CHARS
+            buffer_text = (self._tool_stream_buffers.get(buffer_key, "") + text)[-cap:]
             self._tool_stream_buffers[buffer_key] = buffer_text
             entry_content = self._tool_stream_preview(buffer_text)
             full_content = self._capped_tool_text(buffer_text)
@@ -611,7 +617,13 @@ class TranscriptRenderingMixin:
         else:  # streamed response text - accumulate by chunk uuid
             activity.current_action = "responding"
             if event.uuid and text:
-                buffer = activity.stream_buffers.get(event.uuid, "") + text
+                # Keep only a bounded tail. The card shows just the last
+                # SUB_AGENT_TAIL_CHARS (whitespace-collapsed), so storing the whole
+                # response via `get()+text` per delta was pure O(n^2) waste that froze
+                # the UI on long reasoning streams. A small multiple of the display
+                # window preserves the truncation/ellipsis behavior at O(1) per delta.
+                tail_cap = theme.SUB_AGENT_TAIL_CHARS * 4
+                buffer = (activity.stream_buffers.get(event.uuid, "") + text)[-tail_cap:]
                 activity.stream_buffers[event.uuid] = buffer
                 activity.active_stream_uuid = event.uuid
             self._accumulate_sub_agent_stream(activity, "assistant", event, text)
@@ -696,8 +708,16 @@ class TranscriptRenderingMixin:
             step = ConversationEntry(kind=kind, content="", complete=complete, uuid=chunk_uuid or None)
             activity.steps.append(step)
             activity.stream_steps[cache_key] = step
-        step.content += text
+        # Defer concatenation: deltas land in stream_parts (O(1)) and are folded into
+        # content once on completion (and at render time by ConversationEntryWidget.
+        # refresh_content), mirroring _apply_stream_chunk. A per-delta `step.content +=
+        # text` is O(n^2) over a long reasoning stream — on DeepSeek-class sub-agents it
+        # grew to seconds of event-loop CPU and froze scrolling while sub-agents ran.
+        if text:
+            step.stream_parts.append(text)
         step.complete = complete
+        if complete:
+            step.materialize()
 
     def _note_sub_agent_tool_stream(self, event: AgentEvent) -> None:
         activity = self._ensure_sub_agent_activity(event)
