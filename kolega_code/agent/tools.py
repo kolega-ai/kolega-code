@@ -1310,16 +1310,22 @@ class ToolCollection(LogMixin):
         return await self.memory_tool.write_memory(memory_content)
 
     async def search_codebase(
-        self, pattern: str, file_pattern: str = "*", case_sensitive: bool = False, literal: bool = True
+        self, pattern: str, file_pattern: str = "*", case_sensitive: bool = False, literal: bool = False
     ) -> str:
         """
-        Search the codebase for files containing a specific pattern (grep functionality).
+        Search the codebase for lines matching a regular expression (grep/ripgrep).
+
+        The pattern is treated as a regular expression by default, so `|` is
+        alternation: search for `TODO|FIXME|HACK` to match any of the three. Use
+        ripgrep/POSIX-ERE syntax (alternation, character classes `[...]`, anchors
+        `^ $`, quantifiers `* + ? {n,m}`, groups `(...)`). Set `literal=True` to match
+        the pattern as plain text instead (e.g. to find `arr[0]` or `a||b` verbatim).
 
         Args:
-            pattern: The pattern to search for in files
-            file_pattern: Optional glob pattern to filter which files to search (default: all files)
-            case_sensitive: Whether the search should be case-sensitive (default: False)
-            literal: Whether to treat the pattern as literal text (True) or as a regular expression (False) (default: True)
+            pattern: The regular expression to search for (use `literal=True` to match it as plain text)
+            file_pattern: Optional glob to filter which files to search (default: all files)
+            case_sensitive: Whether the search is case-sensitive (default: False)
+            literal: Treat the pattern as plain text instead of a regular expression (default: False)
 
         Returns:
             Markdown formatted list of files and matches, limited to 128 results
