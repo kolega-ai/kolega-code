@@ -35,6 +35,64 @@ install_uv() {
     have uv || fail "uv was installed, but it is not available on PATH"
 }
 
+sudo_run() {
+    if [ "$(id -u 2>/dev/null || echo 0)" -eq 0 ]; then
+        "$@"
+    elif have sudo; then
+        sudo "$@"
+    else
+        return 1
+    fi
+}
+
+# ripgrep powers fast code search. It is optional — the search tool falls back to
+# grep when it is missing — so every step here is best-effort and must never abort
+# the installer (it is invoked as `ensure_ripgrep || true`).
+ensure_ripgrep() {
+    if have rg; then
+        info "ripgrep found: $(rg --version 2>/dev/null | head -n 1)"
+        return 0
+    fi
+
+    info "Installing ripgrep (optional; speeds up code search)..."
+
+    case "$(uname -s 2>/dev/null || printf unknown)" in
+        Darwin)
+            if have brew; then
+                brew install ripgrep || info "Could not install ripgrep; code search will use grep."
+            else
+                info "Homebrew not found; skipping ripgrep (code search will use grep). Install later with: brew install ripgrep"
+            fi
+            ;;
+        Linux)
+            if have apt-get; then
+                sudo_run apt-get update >/dev/null 2>&1 || true
+                sudo_run apt-get install -y ripgrep || true
+            elif have dnf; then
+                sudo_run dnf install -y ripgrep || true
+            elif have yum; then
+                sudo_run yum install -y ripgrep || true
+            elif have zypper; then
+                sudo_run zypper install -y ripgrep || true
+            elif have pacman; then
+                sudo_run pacman -Sy --noconfirm ripgrep || true
+            elif have apk; then
+                sudo_run apk add ripgrep || true
+            elif have cargo; then
+                cargo install ripgrep || true
+            else
+                info "No supported package manager found; skipping ripgrep (code search will use grep)."
+            fi
+            ;;
+    esac
+
+    if have rg; then
+        info "ripgrep installed: $(rg --version 2>/dev/null | head -n 1)"
+    else
+        info "Continuing without ripgrep; code search will use grep."
+    fi
+}
+
 case "$(uname -s 2>/dev/null || printf unknown)" in
     Darwin|Linux)
         ;;
@@ -76,6 +134,8 @@ Then restart your shell and run:
 EOF
     exit 1
 fi
+
+ensure_ripgrep || true
 
 "$PACKAGE_NAME" --version
 info "Kolega Code is installed. Run: kolega-code ."

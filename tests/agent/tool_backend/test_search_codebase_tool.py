@@ -1,3 +1,5 @@
+import shutil
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -5,6 +7,42 @@ import uuid
 
 from kolega_code.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
 from kolega_code.agent.tool_backend.search_codebase_tool import SearchCodebaseTool
+
+_WHICH_PATH = "kolega_code.agent.tool_backend.search_codebase_tool.shutil.which"
+
+
+def _which_factory(available):
+    """Patch shutil.which so only the named binaries resolve, to force a tier."""
+    real = shutil.which
+
+    def fake(name, *args, **kwargs):
+        return real(name) if name in available else None
+
+    return fake
+
+
+async def _boom(*args, **kwargs):
+    raise AssertionError("a fallback engine ran when it should not have")
+
+
+class _FakeCommands:
+    """Stands in for the e2b sandbox command runner; `responses(cmd)` returns stdout."""
+
+    def __init__(self, responses):
+        self._responses = responses
+        self.calls = []
+
+    async def run(self, cmd, *args, **kwargs):
+        self.calls.append(cmd)
+        return SimpleNamespace(stdout=self._responses(cmd), stderr="", exit_code=0)
+
+
+class _FakeSandboxFS:
+    """A filesystem with a `sandbox` attribute so the tool takes the sandbox path."""
+
+    def __init__(self, root, responses):
+        self.root_path = root
+        self.sandbox = SimpleNamespace(commands=_FakeCommands(responses))
 
 
 @pytest.fixture
@@ -197,10 +235,10 @@ def func():
         assert "code.py" in result
         assert 'Line 7: print("Testing [](){}")' in result
 
-        # Test 4: Verify default is literal=True
+        # Test 4: Verify the default is now regex (literal=False), so an unbalanced
+        # ")" is rejected as an invalid regular expression rather than matched literally.
         result = await search_codebase_tool.search_codebase("])")
-        assert "code.py" in result
-        assert "Line 3: value = arr[0])" in result
+        assert "Error: Invalid regular expression" in result
 
     async def test_search_codebase_long_line_truncation(self, search_codebase_tool, project_path):
         """Test that long lines are truncated to 200 characters"""
@@ -228,3 +266,84 @@ def func():
                     assert len(content) == 203, f"Expected 203 chars, got {len(content)}"
                     assert content.endswith("...")
                 break
+
+    async def test_search_codebase_regex_alternation(self, search_codebase_tool, project_path):
+        """Default (regex) mode treats `|` as alternation, like ripgrep/grep -E."""
+        (project_path / "a.py").write_text("alpha value\nbravo value\ncharlie value\n")
+
+        result = await search_codebase_tool.search_codebase("alpha|bravo")
+        assert "a.py" in result
+        assert "Line 1: alpha value" in result
+        assert "Line 2: bravo value" in result
+        # charlie is not one of the alternatives, so it is not shown
+        assert "charlie" not in result
+
+    async def test_search_codebase_literal_pipe(self, search_codebase_tool, project_path):
+        """literal=True treats the `|` as plain text, so alternation does NOT apply."""
+        (project_path / "a.py").write_text("alpha value\nbravo value\n")
+
+        result = await search_codebase_tool.search_codebase("alpha|bravo", literal=True)
+        assert "No matches found for pattern 'alpha|bravo'" in result
+
+    @pytest.mark.parametrize("available", [{"grep"}, set()], ids=["grep_tier", "python_tier"])
+    async def test_search_codebase_fallback_tiers(self, search_codebase_tool, sample_files, monkeypatch, available):
+        """The grep and Python fallback tiers produce the same results (incl. exclusions
+        and regex alternation) as the preferred ripgrep tier."""
+        monkeypatch.setattr(_WHICH_PATH, _which_factory(available))
+        # For the grep tier, make the Python fallback explode so a silent fall-through
+        # (e.g. an unsupported grep flag) is caught instead of masked.
+        if available == {"grep"}:
+            monkeypatch.setattr(search_codebase_tool, "_run_python", _boom)
+
+        # Basic match + exact formatting
+        result = await search_codebase_tool.search_codebase("print")
+        assert "src/main.py" in result
+        assert 'Line 2: print("Hello World")' in result
+
+        # Exclusions still apply (.git dir, >10MB file)
+        assert "No matches found for pattern" in await search_codebase_tool.search_codebase("git config")
+        assert "large.txt" not in await search_codebase_tool.search_codebase("x")
+
+        # Regex alternation works on this tier too
+        alt = await search_codebase_tool.search_codebase("def|return")
+        assert "src/main.py" in alt
+        assert "src/utils.py" in alt
+
+    async def test_search_codebase_sandbox_ripgrep(self, search_codebase_tool):
+        """Sandbox path: probe finds rg, parse rg --json, format identically."""
+        rg_json = (
+            '{"type":"begin","data":{"path":{"text":"src/main.py"}}}\n'
+            '{"type":"match","data":{"path":{"text":"src/main.py"},'
+            '"lines":{"text":"    print(\\"Hello World\\")\\n"},"line_number":2,'
+            '"submatches":[{"match":{"text":"print"},"start":4,"end":9}]}}\n'
+        )
+
+        def responses(cmd):
+            if "command -v rg" in cmd:
+                return "__KOLEGA_RG_RC=0"
+            if " rg " in cmd:
+                return rg_json + "__KOLEGA_RG_RC=0"
+            return "__KOLEGA_RG_RC=1"
+
+        search_codebase_tool.filesystem = _FakeSandboxFS("/work", responses)
+        result = await search_codebase_tool.search_codebase("print")
+        assert "Search Results for 'print'" in result
+        assert "src/main.py" in result
+        assert 'Line 2: print("Hello World")' in result
+        assert "(1 matches)" in result
+
+    async def test_search_codebase_sandbox_grep_fallback(self, search_codebase_tool):
+        """Sandbox path: when rg is absent, fall back to grep and parse its output."""
+
+        def responses(cmd):
+            if "command -v rg" in cmd:
+                return "__KOLEGA_RG_RC=1"  # ripgrep not installed in the sandbox
+            if "grep " in cmd:
+                return './src/main.py:2:    print("Hello World")\n__KOLEGA_RG_RC=0'
+            return "__KOLEGA_RG_RC=1"
+
+        search_codebase_tool.filesystem = _FakeSandboxFS("/work", responses)
+        result = await search_codebase_tool.search_codebase("print")
+        assert "src/main.py" in result
+        assert 'Line 2: print("Hello World")' in result
+        assert "(1 matches)" in result

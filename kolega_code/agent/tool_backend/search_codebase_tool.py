@@ -1,8 +1,35 @@
+import asyncio
+import json
+import os
 import re
+import shlex
+import shutil
+from base64 import b64decode
 from pathlib import Path
-from typing import List, Tuple
+from typing import Any, List, Optional, Tuple, cast
 
 from .base_tool import BaseTool
+
+# Marker appended to sandbox shell commands so the shell always exits 0 (the E2B
+# command runner may raise on a non-zero exit). We recover the real exit code by
+# parsing this line out of stdout.
+_RC_MARKER = "__KOLEGA_RG_RC"
+
+# Display caps (shared by every engine via the single formatter).
+_MAX_FILES = 128
+_MAX_LINES_PER_FILE = 5
+_MAX_LINE_LENGTH = 200
+_MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
+
+
+class _EngineUnavailable(Exception):
+    """Raised by an engine runner when it cannot run (binary missing, unknown
+    flag, non-regex error) so the caller falls back to the next engine tier."""
+
+
+# One normalized match line, shared currency between every engine and the formatter.
+# (relative_path, line_number, raw_line_text)
+Record = Tuple[str, int, str]
 
 
 class SearchCodebaseTool(BaseTool):
@@ -65,20 +92,34 @@ class SearchCodebaseTool(BaseTool):
         "coverage",
     }
 
+    @property
+    def _fs_root(self) -> str:
+        """Filesystem root as a string (LocalFileSystem and SandboxFileSystem both
+        set ``root_path``; it is not on the base ``FileSystem`` type)."""
+        return str(cast(Any, self.filesystem).root_path)
+
+    @property
+    def _fs_sandbox(self) -> Any:
+        """The sandbox handle (only present on sandbox filesystems)."""
+        return cast(Any, self.filesystem).sandbox
+
     async def search_codebase(
-        self, pattern: str, file_pattern: str = "*", case_sensitive: bool = False, literal: bool = True
+        self, pattern: str, file_pattern: str = "*", case_sensitive: bool = False, literal: bool = False
     ) -> str:
         """
-        Search the codebase for files containing a specific pattern (grep functionality).
+        Search the codebase for lines matching a regular expression (grep/ripgrep).
 
-        Uses grep command in sandbox environments for maximum efficiency (single command).
-        Uses optimized Python implementation for local filesystems.
+        The pattern is treated as a regular expression by default, so `|` is
+        alternation: search for `TODO|FIXME|HACK` to match any of the three. Use
+        ripgrep/POSIX-ERE syntax (alternation, character classes `[...]`, anchors
+        `^ $`, quantifiers `* + ? {n,m}`, groups `(...)`). Set `literal=True` to match
+        the pattern as plain text instead (e.g. to find `arr[0]` or `a||b` verbatim).
 
         Args:
-            pattern: The pattern to search for in files
-            file_pattern: Optional glob pattern to filter which files to search (default: all files)
-            case_sensitive: Whether the search should be case-sensitive (default: False)
-            literal: Whether to treat the pattern as literal text (True) or as a regular expression (False) (default: True)
+            pattern: The regular expression to search for (use `literal=True` to match it as plain text)
+            file_pattern: Optional glob to filter which files to search (default: all files)
+            case_sensitive: Whether the search is case-sensitive (default: False)
+            literal: Treat the pattern as plain text instead of a regular expression (default: False)
 
         Returns:
             Markdown formatted list of files and matches, limited to 128 results
@@ -89,10 +130,16 @@ class SearchCodebaseTool(BaseTool):
         try:
             await self.log_info(f"Searching codebase for pattern: '{pattern}'", sender=self.caller.agent_name)
 
-            # If literal search, escape special regex characters
+            # A NUL byte can never appear in searchable text and would break the
+            # subprocess argv / shell command, so short-circuit to no-match.
+            if "\x00" in pattern:
+                return f"No matches found for pattern '{pattern}'"
+
+            # If literal search, escape special regex characters for the validator
+            # and the in-process Python fallback engine.
             search_pattern = re.escape(pattern) if literal else pattern
 
-            # Compile the regex pattern to validate it
+            # Compile the pattern to validate it (and to drive the Python fallback).
             flags = 0 if case_sensitive else re.IGNORECASE
             try:
                 regex = re.compile(search_pattern, flags)
@@ -101,209 +148,360 @@ class SearchCodebaseTool(BaseTool):
                 await self.log_error(error_msg, sender=self.caller.agent_name)
                 return f"Error: {error_msg}"
 
-            # Use grep for sandbox environments (single command execution)
-            if hasattr(self.filesystem, "sandbox"):
-                return await self._search_with_grep_sandbox(
-                    search_pattern, file_pattern, case_sensitive, pattern, literal
-                )
-            else:
-                # Use optimized Python implementation for local filesystem
-                return await self._search_with_python(search_pattern, file_pattern, case_sensitive, regex, pattern)
+            # Run the first available engine; fall back down the tiers on failure.
+            for runner in await self._engine_chain():
+                try:
+                    records = await runner(pattern, file_pattern, case_sensitive, literal, regex)
+                except _EngineUnavailable:
+                    continue
+                return self._format_results(records, pattern)
+
+            # The Python tier never raises _EngineUnavailable, so this is unreachable.
+            return f"No matches found for pattern '{pattern}'"
 
         except Exception as e:
             error_msg = f"Error searching codebase: {str(e)}"
             await self.log_error(error_msg, sender=self.caller.agent_name)
             return f"Error: {error_msg}"
 
-    async def _search_with_grep_sandbox(
-        self, pattern: str, file_pattern: str, case_sensitive: bool, original_pattern: str, literal: bool
-    ) -> str:
-        """Use single grep command for sandbox environments - most efficient approach"""
+    # ------------------------------------------------------------------
+    # Engine selection
+    # ------------------------------------------------------------------
 
-        # Build grep command
-        grep_flags = [
-            "-r",  # Recursive
-            "-n",  # Show line numbers
-            "--binary-files=without-match",  # Skip binary files
+    async def _engine_chain(self):
+        """Ordered list of engine runners to try: ripgrep (preferred) -> grep
+        -> in-process Python `re` (always succeeds)."""
+        if hasattr(self.filesystem, "sandbox"):
+            chain = []
+            if await self._sandbox_has_rg():
+                chain.append(self._run_rg_sandbox)
+            chain.append(self._run_grep_sandbox)
+            chain.append(self._run_python)
+            return chain
+
+        chain = []
+        if shutil.which("rg"):
+            chain.append(self._run_rg_local)
+        if shutil.which("grep"):
+            chain.append(self._run_grep_local)
+        chain.append(self._run_python)
+        return chain
+
+    async def _sandbox_has_rg(self) -> bool:
+        """Probe (once per sandbox) whether ripgrep is installed in the sandbox."""
+        sandbox = self._fs_sandbox
+        if getattr(self, "_rg_probe_sandbox", None) is sandbox:
+            return self._rg_probe_result
+        available = False
+        try:
+            result = await sandbox.commands.run(f"command -v rg >/dev/null 2>&1 ; echo {_RC_MARKER}=$?")
+            rc, _ = self._split_rc(result.stdout or "")
+            available = rc == 0
+        except Exception:
+            available = False
+        self._rg_probe_sandbox = sandbox
+        self._rg_probe_result = available
+        return available
+
+    # ------------------------------------------------------------------
+    # ripgrep engine
+    # ------------------------------------------------------------------
+
+    def _rg_args(self, pattern: str, file_pattern: str, case_sensitive: bool, literal: bool) -> List[str]:
+        args = [
+            "--json",
+            "--hidden",
+            "--no-config",
+            "--no-ignore-parent",
+            "--no-ignore-global",
+            "--glob-case-insensitive",
+            "--max-filesize",
+            "10M",
         ]
-
-        # Case sensitivity
         if not case_sensitive:
-            grep_flags.append("-i")
-
-        # Use fixed string matching for literal searches, extended regex otherwise
+            args.append("-i")
         if literal:
-            grep_flags.append("-F")  # Fixed string matching
-        else:
-            grep_flags.append("-E")  # Extended regex
-
-        # File pattern
+            args.append("-F")
+        # --hidden re-includes .git etc., so explicitly re-exclude the dirs.
+        for exclude_dir in sorted(self.EXCLUDE_DIRS):
+            args += ["-g", f"!{exclude_dir}/"]
+        # Also drop a *file* literally named .env (the glob above only excludes dirs).
+        args += ["-g", "!.env"]
+        # ripgrep does not skip by extension, so reproduce the binary-extension skip.
+        for ext in sorted(self.BINARY_EXTENSIONS):
+            args += ["-g", f"!*{ext}"]
         if file_pattern != "*":
-            grep_flags.append(f"--include={file_pattern}")
+            glob = file_pattern if "/" not in file_pattern else f"**/{file_pattern}"
+            args += ["-g", glob]
+        # Pattern as its own argv element (after -e) and an explicit search path so
+        # ripgrep never reads stdin in a headless context.
+        args += ["-e", pattern, "."]
+        return args
 
-        # Exclude directories
-        for exclude_dir in self.EXCLUDE_DIRS:
-            grep_flags.append(f"--exclude-dir={exclude_dir}")
+    async def _run_rg_local(
+        self, pattern: str, file_pattern: str, case_sensitive: bool, literal: bool, regex
+    ) -> List[Record]:
+        if shutil.which("rg") is None:
+            raise _EngineUnavailable()
+        args = self._rg_args(pattern, file_pattern, case_sensitive, literal)
+        env = {**os.environ, "RIPGREP_CONFIG_FILE": ""}
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "rg",
+                *args,
+                cwd=self._fs_root,
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=env,
+            )
+            stdout, _stderr = await proc.communicate()
+        except (OSError, ValueError):
+            raise _EngineUnavailable()
+        # 0 = matches, 1 = no matches; anything else (2 = usage/regex error on an
+        # old rg, etc.) falls back to the next tier.
+        if proc.returncode not in (0, 1):
+            raise _EngineUnavailable()
+        return self._parse_rg_json(stdout.decode("utf-8", "replace"))
 
-        # Exclude binary extensions
-        for ext in self.BINARY_EXTENSIONS:
-            grep_flags.append(f"--exclude=*{ext}")
+    async def _run_rg_sandbox(
+        self, pattern: str, file_pattern: str, case_sensitive: bool, literal: bool, regex
+    ) -> List[Record]:
+        args = self._rg_args(pattern, file_pattern, case_sensitive, literal)
+        cmd = "RIPGREP_CONFIG_FILE= rg " + " ".join(shlex.quote(a) for a in args)
+        full_cmd = f"cd {shlex.quote(self._fs_root)} && {cmd} ; echo {_RC_MARKER}=$?"
+        try:
+            result = await self._fs_sandbox.commands.run(full_cmd)
+        except Exception:
+            raise _EngineUnavailable()
+        rc, out = self._split_rc(result.stdout or "")
+        if rc not in (0, 1):
+            raise _EngineUnavailable()
+        return self._parse_rg_json(out)
 
-        # Build command with awk processing for formatting
-        # Use the original pattern for grep when literal=True (no escaping needed with -F flag)
-        grep_pattern = original_pattern if literal else pattern
-        grep_cmd = f"grep {' '.join(grep_flags)} '{grep_pattern}' . 2>/dev/null"
-
-        # AWK script to format output exactly like the original
-        awk_script = r"""| awk '
-        BEGIN {
-            file_count = 0;
-            current_file = "";
-            match_count = 0;
-            lines = "";
-            lines_shown = 0;
-            max_lines_per_file = 5;
-            max_files = 128;
-            max_line_length = 200;
-        }
-        {
-            # Parse grep output: filename:line_number:content
-            colon1 = index($0, ":");
-            colon2 = index(substr($0, colon1 + 1), ":") + colon1;
-
-            file = substr($0, 1, colon1 - 1);
-            line_num = substr($0, colon1 + 1, colon2 - colon1 - 1);
-            line_content = substr($0, colon2 + 1);
-
-            # Remove leading/trailing whitespace from content
-            gsub(/^[ \t]+|[ \t]+$/, "", line_content);
-
-            # Truncate long lines to 200 characters
-            if (length(line_content) > max_line_length) {
-                line_content = substr(line_content, 1, max_line_length) "...";
-            }
-
-            if (file != current_file) {
-                # Print previous file results if any
-                if (current_file != "") {
-                    print "- **" current_file "** (" match_count " matches)";
-                    print substr(lines, 1, length(lines)-1);  # Remove trailing newline
-                    if (lines_shown < match_count && lines_shown >= max_lines_per_file) {
-                        print "  ... and " (match_count - max_lines_per_file) " more matches";
-                    }
-                    print "";
-                }
-
-                # Check if we reached the file limit
-                file_count++;
-                if (file_count > max_files) {
-                    reached_limit = 1;
-                    exit;
-                }
-
-                # Start new file
-                current_file = file;
-                match_count = 0;
-                lines = "";
-                lines_shown = 0;
-            }
-
-            match_count++;
-            if (lines_shown < max_lines_per_file) {
-                lines = lines "  Line " line_num ": " line_content "\n";
-                lines_shown++;
-            }
-        }
-        END {
-            # Print last file
-            if (current_file != "" && file_count <= max_files) {
-                print "- **" current_file "** (" match_count " matches)";
-                print substr(lines, 1, length(lines)-1);  # Remove trailing newline
-                if (lines_shown < match_count && lines_shown >= max_lines_per_file) {
-                    print "  ... and " (match_count - max_lines_per_file) " more matches";
-                }
-            }
-
-            # Add warning if limit reached
-            if (file_count > max_files || reached_limit) {
-                print "";
-                print "⚠️ **Note:** Showing only the first " max_files " results. There are more matches in the codebase.";
-            }
-        }'
-        """
-
-        full_cmd = f"cd {self.filesystem.root_path} && {grep_cmd} {awk_script}"
-
-        # Execute the single command - sandbox is always async
-        result = await self.filesystem.sandbox.commands.run(full_cmd)
-
-        if result.exit_code != 0 or not result.stdout.strip():
-            return f"No matches found for pattern '{original_pattern}'"
-
-        # Format the final output
-        output = f"# Search Results for '{original_pattern}'\n\n"
-        output += result.stdout.strip()
-
-        return output
-
-    async def _search_with_python(
-        self, pattern: str, file_pattern: str, case_sensitive: bool, regex, original_pattern: str
-    ) -> str:
-        """Optimized Python implementation for local filesystems"""
-
-        # Get files with their info
-        files_with_info = await self._get_files_batch_local(file_pattern)
-
-        # Search through files
-        results = []
-        total_matches = 0
-        max_results = 128
-        max_file_size = 10 * 1024 * 1024  # 10MB
-
-        for file_path, file_size in files_with_info:
-            # Skip files that are too large
-            if file_size > max_file_size:
+    def _parse_rg_json(self, stdout_text: str) -> List[Record]:
+        records: List[Record] = []
+        for line in stdout_text.splitlines():
+            line = line.strip()
+            if not line.startswith("{"):
+                continue  # skip the RC marker / any shell noise
+            try:
+                obj = json.loads(line)
+            except ValueError:
                 continue
+            if obj.get("type") != "match":
+                continue
+            data = obj.get("data", {})
+            path = self._json_text(data.get("path"))
+            raw = self._json_text(data.get("lines"))
+            line_num = data.get("line_number")
+            if path is None or line_num is None:
+                continue
+            records.append((self._normalize_path(path), int(line_num), raw or ""))
+        return records
 
-            # Skip binary files by extension
+    @staticmethod
+    def _json_text(node) -> Optional[str]:
+        """ripgrep --json fields are {"text": ...} or, for non-UTF8 data,
+        {"bytes": "<base64>"}. Decode either defensively."""
+        if not isinstance(node, dict):
+            return None
+        if "text" in node:
+            return node["text"]
+        if "bytes" in node:
+            try:
+                return b64decode(node["bytes"]).decode("utf-8", "replace")
+            except Exception:
+                return None
+        return None
+
+    # ------------------------------------------------------------------
+    # grep engine
+    # ------------------------------------------------------------------
+
+    def _grep_argv(self, pattern: str, file_pattern: str, case_sensitive: bool, literal: bool) -> List[str]:
+        argv = ["grep", "-r", "-n", "--binary-files=without-match"]
+        if not case_sensitive:
+            argv.append("-i")
+        argv.append("-F" if literal else "-E")
+        if file_pattern != "*":
+            argv.append(f"--include={file_pattern}")
+        for exclude_dir in sorted(self.EXCLUDE_DIRS):
+            argv.append(f"--exclude-dir={exclude_dir}")
+        for ext in sorted(self.BINARY_EXTENSIONS):
+            argv.append(f"--exclude=*{ext}")
+        # -e guards a pattern that starts with '-'; '.' is the search root.
+        argv += ["-e", pattern, "."]
+        return argv
+
+    async def _run_grep_local(
+        self, pattern: str, file_pattern: str, case_sensitive: bool, literal: bool, regex
+    ) -> List[Record]:
+        if shutil.which("grep") is None:
+            raise _EngineUnavailable()
+        argv = self._grep_argv(pattern, file_pattern, case_sensitive, literal)
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *argv,
+                cwd=self._fs_root,
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, _stderr = await proc.communicate()
+        except (OSError, ValueError):
+            raise _EngineUnavailable()
+        if proc.returncode not in (0, 1):
+            raise _EngineUnavailable()
+        records = self._parse_grep(stdout.decode("utf-8", "replace"))
+        # grep has no --max-filesize; reproduce the 10MB skip via stat (local only).
+        return self._drop_oversize_local(records)
+
+    async def _run_grep_sandbox(
+        self, pattern: str, file_pattern: str, case_sensitive: bool, literal: bool, regex
+    ) -> List[Record]:
+        argv = self._grep_argv(pattern, file_pattern, case_sensitive, literal)
+        cmd = " ".join(shlex.quote(a) for a in argv)
+        full_cmd = f"cd {shlex.quote(self._fs_root)} && {cmd} ; echo {_RC_MARKER}=$?"
+        try:
+            result = await self._fs_sandbox.commands.run(full_cmd)
+        except Exception:
+            raise _EngineUnavailable()
+        rc, out = self._split_rc(result.stdout or "")
+        if rc not in (0, 1):
+            raise _EngineUnavailable()
+        return self._parse_grep(out)
+
+    def _parse_grep(self, stdout_text: str) -> List[Record]:
+        """Parse `grep -rn` output lines of the form `<path>:<lineno>:<content>`.
+
+        Splits on the first two colons (line numbers are always digits) — the same
+        approach the previous awk formatter used, and identical across GNU grep (the
+        e2b sandbox) and BSD grep (macOS), neither of which emits a NUL separator for
+        matching lines. Paths containing a ':' are rare and skipped."""
+        records: List[Record] = []
+        for line in stdout_text.split("\n"):
+            colon1 = line.find(":")
+            if colon1 < 0:
+                continue
+            colon2 = line.find(":", colon1 + 1)
+            if colon2 < 0:
+                continue
+            num_str = line[colon1 + 1 : colon2]
+            if not num_str.isdigit():
+                continue
+            path = line[:colon1]
+            content = line[colon2 + 1 :]
+            records.append((self._normalize_path(path), int(num_str), content))
+        return records
+
+    def _drop_oversize_local(self, records: List[Record]) -> List[Record]:
+        sizes: dict = {}
+        kept: List[Record] = []
+        for path, line_num, raw in records:
+            if path not in sizes:
+                try:
+                    sizes[path] = self.filesystem.get_path(path).stat().st_size
+                except Exception:
+                    sizes[path] = 0
+            if sizes[path] <= _MAX_FILE_SIZE:
+                kept.append((path, line_num, raw))
+        return kept
+
+    # ------------------------------------------------------------------
+    # Python (in-process) engine — the no-binary fallback (e.g. Windows)
+    # ------------------------------------------------------------------
+
+    async def _run_python(
+        self, pattern: str, file_pattern: str, case_sensitive: bool, literal: bool, regex
+    ) -> List[Record]:
+        files_with_info = await self._get_files_batch_local(file_pattern)
+        records: List[Record] = []
+        for file_path, file_size in files_with_info:
+            if file_size > _MAX_FILE_SIZE:
+                continue
             if self._is_likely_binary_by_extension(file_path):
                 continue
-
             try:
-                # Read file content once
                 content = self.filesystem.read_text(file_path)
-
-                # Quick binary check on content (first 1024 bytes)
                 if "\x00" in content[:1024]:
                     continue
-
-                # Search for matches
-                matches = list(regex.finditer(content))
-
-                if matches:
-                    # Get matching lines with context
-                    matching_lines = self._extract_matching_lines(content, matches, max_lines=5)
-
-                    # Add to results
-                    results.append(f"- **{file_path}** ({len(matches)} matches)\n" + "\n".join(matching_lines))
-
-                    total_matches += 1
-                    if total_matches >= max_results:
-                        break
-
             except Exception:
-                # Skip files that can't be read
                 continue
+            norm = self._normalize_path(file_path)
+            for line_num, line in enumerate(content.splitlines(), start=1):
+                if regex.search(line):
+                    records.append((norm, line_num, line))
+        return records
 
-        # Format results
-        if results:
-            result_text = f"# Search Results for '{original_pattern}'\n\n"
-            if total_matches >= max_results:
-                result_text += f"⚠️ **Note:** Showing only the first {max_results} results. There are more matches in the codebase.\n\n"
-            result_text += "\n\n".join(results)
-            return result_text
-        else:
+    # ------------------------------------------------------------------
+    # Shared output formatting
+    # ------------------------------------------------------------------
+
+    def _format_results(self, records: List[Record], original_pattern: str) -> str:
+        """Group records by file (first-seen order), apply the display caps, and
+        render the markdown output. `(N matches)` is the matching-line count."""
+        files: dict = {}
+        limit_hit = False
+        for path, line_num, raw in records:
+            if path in files:
+                files[path].append((line_num, raw))
+            elif len(files) < _MAX_FILES:
+                files[path] = [(line_num, raw)]
+            else:
+                limit_hit = True
+
+        if not files:
             return f"No matches found for pattern '{original_pattern}'"
+
+        blocks = []
+        for path, hits in files.items():
+            count = len(hits)
+            shown = []
+            for line_num, raw in hits[:_MAX_LINES_PER_FILE]:
+                content = raw.strip()
+                if len(content) > _MAX_LINE_LENGTH:
+                    content = content[:_MAX_LINE_LENGTH] + "..."
+                shown.append(f"  Line {line_num}: {content}")
+            block = f"- **{path}** ({count} matches)\n" + "\n".join(shown)
+            if count > _MAX_LINES_PER_FILE:
+                block += f"\n  ... and {count - _MAX_LINES_PER_FILE} more matches"
+            blocks.append(block)
+
+        output = f"# Search Results for '{original_pattern}'\n\n"
+        if limit_hit:
+            output += (
+                f"⚠️ **Note:** Showing only the first {_MAX_FILES} results. There are more matches in the codebase.\n\n"
+            )
+        output += "\n\n".join(blocks)
+        return output
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _split_rc(stdout_text: str) -> Tuple[Optional[int], str]:
+        """Split the trailing `__KOLEGA_RG_RC=N` marker line off sandbox output."""
+        marker = _RC_MARKER + "="
+        rc: Optional[int] = None
+        kept = []
+        for line in stdout_text.split("\n"):
+            if line.startswith(marker):
+                try:
+                    rc = int(line[len(marker) :].strip())
+                except ValueError:
+                    rc = None
+            else:
+                kept.append(line)
+        return rc, "\n".join(kept)
+
+    @staticmethod
+    def _normalize_path(path: str) -> str:
+        path = path.replace("\\", "/")
+        if path.startswith("./"):
+            path = path[2:]
+        return path
 
     async def _get_files_batch_local(self, file_pattern: str) -> List[Tuple[str, int]]:
         """
@@ -354,31 +552,3 @@ class SearchCodebaseTool(BaseTool):
         Quick binary check based on file extension.
         """
         return Path(file_path).suffix.lower() in self.BINARY_EXTENSIONS
-
-    def _extract_matching_lines(self, content: str, matches: List, max_lines: int = 5) -> List[str]:
-        """
-        Extract lines containing matches with line numbers.
-        """
-        lines = content.splitlines()
-        line_matches = {}
-
-        # Find which lines have matches
-        for match in matches:
-            line_num = content[: match.start()].count("\n") + 1
-            if line_num not in line_matches:
-                line_content = lines[line_num - 1].strip()
-                # Truncate long lines to 200 characters
-                if len(line_content) > 200:
-                    line_content = line_content[:200] + "..."
-                line_matches[line_num] = line_content
-
-        # Format output - matching original format exactly
-        matching_lines = []
-        for line_num in sorted(line_matches.keys())[:max_lines]:
-            matching_lines.append(f"  Line {line_num}: {line_matches[line_num]}")
-
-        # Important: show total matches minus shown lines, not line count
-        if len(line_matches) > max_lines:
-            matching_lines.append(f"  ... and {len(matches) - max_lines} more matches")
-
-        return matching_lines

@@ -17,7 +17,7 @@ Read, search, and edit your project:
 - `list_directory` — list files in a directory.
 - `read_entire_file`, `read_file_section` — read file contents.
 - `find_files_by_pattern` — glob-based file search.
-- `search_codebase` — search across the codebase.
+- `search_codebase` — search the codebase by regular expression (ripgrep/grep), e.g. `foo|bar`.
 - Create and edit files — create new files and apply precise edits.
 
 ### Terminal
