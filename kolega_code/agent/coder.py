@@ -113,7 +113,6 @@ class CoderAgent(BaseAgent, LogMixin):
             "read_memory",
             "write_memory",
             "execute_terminal_command",
-            "replace_lines",
             "get_tool_list",
             "log_error",
             "log_info",

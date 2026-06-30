@@ -178,21 +178,21 @@ class TestParallelToolCalls:
             def get_tool_list(self):
                 return [
                     SimpleNamespace(name="dispatch_general_agent"),
-                    SimpleNamespace(name="create_file"),
+                    SimpleNamespace(name="write"),
                 ]
 
             async def dispatch_general_agent(self, task: str):
                 await tracker.run()
                 return "dispatched"
 
-            async def create_file(self, task: str):
+            async def write(self, task: str):
                 await tracker.run()
                 return "created"
 
         base_agent.tool_collection = Tools()
         blocks = [
             make_tool_call("dispatch_general_agent", 0),
-            make_tool_call("create_file", 1),
+            make_tool_call("write", 1),
         ]
 
         results = await base_agent.process_tool_calls(blocks)

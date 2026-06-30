@@ -14,17 +14,12 @@ from kolega_code.services.terminal import LocalTerminalManager
 from kolega_code.services.browser import PlaywrightBrowserManager
 from .tool_backend.agent_tool import AgentTool
 from .tool_backend.browser_tool import BrowserTool
-from .tool_backend.create_file_tool import CreateFileTool
+from .tool_backend.edit_tool import EditTool
 from .tool_backend.glob_tool import GlobTool
 from .tool_backend.list_directory_tool import ListDirectoryTool
 from .tool_backend.memory_tool import MemoryTool
 from .tool_backend.read_file_tool import ReadFileTool
 from .tool_backend.read_image_tool import ReadImageTool
-from .tool_backend.replace_entire_file_tool import (
-    ReplaceEntireFileTool,
-)
-from .tool_backend.replace_lines_tool import ReplaceLinesTool
-from .tool_backend.search_and_replace_tool import SearchAndReplaceTool
 from .tool_backend.search_codebase_tool import SearchCodebaseTool
 from .tool_backend.web_fetch_tool import WebFetchTool
 from .tool_backend.web_search_tool import WebSearchTool
@@ -249,7 +244,6 @@ class ToolCollection(LogMixin):
             "read_memory",
             "write_memory",
             "execute_terminal_command",
-            "replace_lines",
             "get_tool_list",
             "log_error",
             "log_warning",
@@ -291,7 +285,7 @@ class ToolCollection(LogMixin):
             self.caller,
             self.filesystem,
         )
-        self.search_and_replace_tool = SearchAndReplaceTool(
+        self.edit_tool = EditTool(
             self.project_path,
             self.workspace_id,
             self.thread_id,
@@ -374,33 +368,6 @@ class ToolCollection(LogMixin):
             self.filesystem,
         )
         self.read_image_tool = ReadImageTool(
-            self.project_path,
-            self.workspace_id,
-            self.thread_id,
-            self.connection_manager,
-            self.config,
-            self.caller,
-            self.filesystem,
-        )
-        self.create_file_tool = CreateFileTool(
-            self.project_path,
-            self.workspace_id,
-            self.thread_id,
-            self.connection_manager,
-            self.config,
-            self.caller,
-            self.filesystem,
-        )
-        self.replace_entire_file_tool = ReplaceEntireFileTool(
-            self.project_path,
-            self.workspace_id,
-            self.thread_id,
-            self.connection_manager,
-            self.config,
-            self.caller,
-            self.filesystem,
-        )
-        self.replace_lines_tool = ReplaceLinesTool(
             self.project_path,
             self.workspace_id,
             self.thread_id,
@@ -1006,9 +973,9 @@ class ToolCollection(LogMixin):
         else:
             return f"✅ Paused execution for {seconds} seconds"
 
-    async def search_and_replace(self, path: str, block: str) -> str:
+    async def edit(self, path: str, block: str) -> str:
         """
-        Edit a file using a search and replace block.
+        Edit a file using one search and replace block.
 
         The block should be formatted as follows:
         ```
@@ -1021,13 +988,17 @@ class ToolCollection(LogMixin):
 
         Before using this tool:
 
-        1. Use the read_entire_file tool to understand the file's contents and context
+        1. Use the read_entire_file tool to understand the file's contents and context.
 
         To make a file edit, provide the following:
-        1. The path to the file to modify (relative to the project root preferred; an absolute path is also accepted)
-        2. block: The search and replace block, as specified above. The text to replace (must be unique within the file, and must match the file contents exactly, including all whitespace and indentation)
+        1. The path to the file to modify.
+        2. block: A single search and replace block.
 
-        The tool will replace ONE occurrence of old_string with new_string in the specified file.
+        The tool replaces one uniquely matched occurrence. Matching is attempted in this order:
+        1. Exact match.
+        2. Per-line stripped match for indentation and trailing whitespace differences.
+        3. Normalized line endings.
+        4. Normalized smart quotes.
 
         CRITICAL REQUIREMENTS FOR USING THIS TOOL:
 
@@ -1037,30 +1008,27 @@ class ToolCollection(LogMixin):
         - Include all whitespace, indentation, and surrounding code exactly as it appears in the file
 
         2. SINGLE INSTANCE: This tool can only change ONE instance at a time. If you need to change multiple instances:
-        - Make separate calls to this tool for each instance
-        - Each call must uniquely identify its specific instance using extensive context
+        - Use multi_edit when all replacements are in the same file.
+        - Each block must uniquely identify its specific instance using extensive context.
 
         3. VERIFICATION: Before using this tool:
         - Check how many instances of the target text exist in the file
         - If multiple instances exist, gather enough context to uniquely identify each one
-        - Plan separate tool calls for each instance
 
         WARNING: If you do not follow these requirements:
         - The tool will fail if block matches multiple locations
-        - The tool will fail if block doesn't match exactly (including whitespace)
+        - The tool will fail if block doesn't match after all fallback passes
         - You may change the wrong instance if you don't include enough context
 
         When making edits:
         - Ensure the edit results in idiomatic, correct code
         - Do not leave the code in a broken state
 
-        If you want to create a new file, use the create_file tool.
-
-        THE INDENTATION IN THE SEARCH BLOCK MUST BE IDENTICAL TO THE EXISTING FILE.
+        If you want to create or overwrite a file, use the write tool.
 
         Args:
             path: Path to the file to edit. Relative to the project root is preferred; an absolute path is also accepted.
-            block: A single search and replace blocks formatted as shown above
+            block: A single search and replace block formatted as shown above
 
         Returns:
             A summary of the update made to the file
@@ -1072,7 +1040,48 @@ class ToolCollection(LogMixin):
             ValueError: If the block matches more than one place in the file
             PermissionError: If the file cannot be written to
         """
-        return await self.search_and_replace_tool.search_and_replace(path, block)
+        return await self.edit_tool.edit(path, block)
+
+    async def multi_edit(self, path: str, blocks: str) -> str:
+        """
+        Edit a file using one or more search and replace blocks.
+
+        Each block should be formatted as follows:
+        ```
+        <<<<<<< SEARCH
+        [original code to find]
+        =======
+        [new code to replace with]
+        >>>>>>> REPLACE
+        ```
+
+        All blocks are resolved against the original file contents before any changes are written.
+        The tool fails without writing if any block is malformed, does not match, matches multiple locations,
+        or overlaps with another block. Resolved replacements are applied from the end of the file toward
+        the start to avoid offset shifts.
+
+        Matching is attempted in this order for each block:
+        1. Exact match.
+        2. Per-line stripped match for indentation and trailing whitespace differences.
+        3. Normalized line endings.
+        4. Normalized smart quotes.
+
+        Args:
+            path: Path to the file to edit. Relative to the project root is preferred; an absolute path is also accepted.
+            blocks: One or more search and replace blocks formatted as shown above
+
+        Returns:
+            A summary of the update made to the file
+
+        Raises:
+            FileNotFoundError: If the file doesn't exist
+            ValueError: If any search block doesn't match any content in the file
+            ValueError: If any block is malformed or incorrectly formatted
+            ValueError: If any block matches more than one place in the file
+            ValueError: If resolved blocks overlap
+            PermissionError: If the file cannot be written to
+        """
+        return await self.edit_tool.multi_edit(path, blocks)
 
     async def list_directory(self, path: str = "") -> str:
         """
@@ -1224,60 +1233,24 @@ class ToolCollection(LogMixin):
         """
         return await self.read_file_tool.read_file_section(path, start_line, end_line)
 
-    async def create_file(self, path: str, content: str) -> str:
+    async def write(self, path: str, content: str) -> str:
         """
-        Create a new file in the project with the given content.
+        Write content to a file in the project.
+
+        This tool creates the file if it does not exist and replaces the entire file if it does.
+        For small edits to existing files, prefer edit or multi_edit.
 
         Args:
-            path: Path to the file to create. Relative to the project root is preferred; an absolute path is also accepted.
-            content: Content to write to the new file
+            path: Path to the file to write. Relative to the project root is preferred; an absolute path is also accepted.
+            content: Content to write to the file
 
         Returns:
-            The contents of the created file as a string formatted as markdown
+            A summary of the write
 
         Raises:
-            FileExistsError: If the file already exists
-            ValueError: If the parent directory doesn't exist
-            PermissionError: If the file cannot be created due to permissions
-        """
-        return await self.create_file_tool.create_file(path, content)
-
-    async def replace_entire_file(self, path: str, content: str) -> str:
-        """
-        Replace the entire contents of a file in the project.
-
-        Args:
-            path: Path to the file. Relative to the project root is preferred; an absolute path is also accepted.
-            content: New content to write to the file
-
-        Returns:
-            The updated contents of the file as a string formatted as markdown
-
-        Raises:
-            FileNotFoundError: If the file doesn't exist
             PermissionError: If the file cannot be written to
         """
-        return await self.replace_entire_file_tool.replace_entire_file(path, content)
-
-    async def replace_lines(self, path: str, start_line: int, end_line: int, new_content: str) -> str:
-        """
-        Replace a range of lines in a file with new content.
-
-        Args:
-            path: Path to the file. Relative to the project root is preferred; an absolute path is also accepted.
-            start_line: The starting line number (1-indexed)
-            end_line: The ending line number (1-indexed, inclusive)
-            new_content: The new content to replace the specified lines with
-
-        Returns:
-            The updated contents of the file as a string formatted as markdown
-
-        Raises:
-            FileNotFoundError: If the file doesn't exist
-            ValueError: If the line range is invalid
-            PermissionError: If the file cannot be written to
-        """
-        return await self.replace_lines_tool.replace_lines(path, start_line, end_line, new_content)
+        return await self.edit_tool.write(path, content)
 
     async def read_memory(self) -> str:
         """

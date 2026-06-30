@@ -36,10 +36,9 @@ COMMAND_PERMISSION_TOOLS = frozenset(
 )
 EDIT_PERMISSION_TOOLS = frozenset(
     {
-        "create_file",
-        "replace_entire_file",
-        "replace_lines",
-        "search_and_replace",
+        "edit",
+        "multi_edit",
+        "write",
     }
 )
 
