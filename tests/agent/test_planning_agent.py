@@ -111,8 +111,9 @@ async def test_planning_agent_uses_host_task_list_extension(tmp_path, mock_conne
     assert task_list == "- [ ] inspect CLI\n- [x] choose tool shape"
     assert await agent.tool_collection.get_task_list() == task_list
     assert {"write_plan", "get_task_list", "update_task_list"}.issubset(tool_names)
-    assert "replace_entire_file" not in tool_names
-    assert "create_file" not in tool_names
+    assert "edit" not in tool_names
+    assert "multi_edit" not in tool_names
+    assert "write" not in tool_names
 
 
 def test_planning_agent_only_exposes_write_plan_without_host_task_tools(
@@ -150,13 +151,13 @@ async def test_planning_agent_rejects_unavailable_file_edit_tool(tmp_path, mock_
     result = await agent.execute_single_tool(
         ToolCall(
             id="tool-call-1",
-            name="replace_entire_file",
+            name="write",
             input={"path": "notes.txt", "content": "mutated\n"},
         )
     )
 
     assert result.is_error is True
-    assert result.content == "Tool 'replace_entire_file' is not available in this mode."
+    assert result.content == "Tool 'write' is not available in this mode."
     assert target.read_text(encoding="utf-8") == "original\n"
 
 
@@ -235,9 +236,8 @@ def test_planning_agent_exposes_command_tools_but_not_file_edits(tmp_path, mock_
     tool_names = {tool.name for tool in agent.tool_collection.get_tool_list()}
 
     assert {"exec_command", "write_stdin", "kill_command", "list_sessions"} <= tool_names
-    assert "create_file" not in tool_names
-    assert "replace_entire_file" not in tool_names
-    assert "replace_lines" not in tool_names
-    assert "search_and_replace" not in tool_names
+    assert "edit" not in tool_names
+    assert "multi_edit" not in tool_names
+    assert "write" not in tool_names
     # read_only stays True so gigacode workflow sub-agents are still forced read-only.
     assert agent.tool_collection.read_only is True

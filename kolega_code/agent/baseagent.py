@@ -96,7 +96,7 @@ class BaseAgent(LogMixin):
     # Cap on how many times a Stop hook may force the agent to keep working in one
     # turn, so a misbehaving "don't stop until X" hook cannot loop forever.
     MAX_STOP_HOOK_OVERRIDES = 5
-    long_content_tool_calls = ["create_file", "replace_entire_file"]
+    long_content_tool_calls = ["write"]
     max_tool_result_chars_in_history = 100_000
     skill_content_pattern = re.compile(r'<skill_content name="[^"]+">')
 

@@ -137,8 +137,8 @@ def test_local_anthropic_token_counting_includes_tool_result_content():
 async def test_anthropic_stream_tool_use_start_execution_id_matches_final_tool_call():
     class ContentBlock:
         type = "tool_use"
-        id = "toolu_create_file"
-        name = "create_file"
+        id = "toolu_write"
+        name = "write"
         input = {"path": "hello.txt", "content": "hello"}
 
     class StartChunk:
@@ -180,8 +180,8 @@ async def test_anthropic_stream_tool_use_start_execution_id_matches_final_tool_c
 
     execution_id = start_chunk.tool_call_delta["execution_id"]
 
-    assert start_chunk.tool_call_delta["id"] == "toolu_create_file"
+    assert start_chunk.tool_call_delta["id"] == "toolu_write"
     assert execution_id.startswith("tool_exec_")
-    assert final_message.tool_calls[0].id == "toolu_create_file"
+    assert final_message.tool_calls[0].id == "toolu_write"
     assert final_message.tool_calls[0].execution_id == execution_id
     assert final_message.content[0].execution_id == execution_id

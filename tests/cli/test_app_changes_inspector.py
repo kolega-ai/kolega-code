@@ -34,7 +34,7 @@ def _binding_keys(bindings) -> set[str]:
     return keys
 
 
-def _preview(path: str, *, tool_call_id: str = "t1", tool_name: str = "search_and_replace") -> dict:
+def _preview(path: str, *, tool_call_id: str = "t1", tool_name: str = "edit") -> dict:
     return {
         "tool_call_id": tool_call_id,
         "tool_name": tool_name,
@@ -84,7 +84,7 @@ async def test_main_agent_preview_is_recorded_and_still_attaches_inline(
                 content={
                     "message_type": "tool_call",
                     "tool_call_id": "t1",
-                    "tool_name": "search_and_replace",
+                    "tool_name": "edit",
                     "text": "Editing src/a.py",
                 },
             )
@@ -113,7 +113,7 @@ async def test_sub_agent_preview_is_recorded_and_attached_to_trajectory(
             _sub_agent_event(
                 message_type="tool_call",
                 text="Editing",
-                tool_description="search_and_replace",
+                tool_description="edit",
                 tool_call_id="t1",
             )
         )
@@ -253,4 +253,4 @@ async def test_copy_selected_changes_includes_net_diff_lines(tmp_path: Path, mon
         assert "-old a" in text
         assert "+new a" in text
         assert "Captured edit events:" not in text
-        assert "#1 Agent · search_and_replace · a1" not in text
+        assert "#1 Agent · edit · a1" not in text

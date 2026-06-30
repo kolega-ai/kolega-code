@@ -63,14 +63,13 @@ def tool_collection(
 
     # Mock all tool methods
     collection.think_hard_tool.think_hard = AsyncMock()
-    collection.search_and_replace_tool.search_and_replace = AsyncMock()
+    collection.edit_tool.edit = AsyncMock()
+    collection.edit_tool.multi_edit = AsyncMock()
+    collection.edit_tool.write = AsyncMock()
     collection.list_directory_tool.list_directory = AsyncMock()
     collection.terminal_tool.execute_terminal_command = AsyncMock()
     collection.read_file_tool.read_entire_file = AsyncMock()
     collection.read_file_tool.read_file_section = AsyncMock()
-    collection.create_file_tool.create_file = AsyncMock()
-    collection.replace_entire_file_tool.replace_entire_file = AsyncMock()
-    collection.replace_lines_tool.replace_lines = AsyncMock()
     collection.memory_tool.read_memory = AsyncMock()
     collection.memory_tool.write_memory = AsyncMock()
     collection.search_codebase_tool.search_codebase = AsyncMock()
