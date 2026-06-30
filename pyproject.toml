@@ -16,7 +16,7 @@ keywords = ["ai", "agent", "cli", "coding-agent", "developer-tools"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: Apache Software License",
     "Operating System :: MacOS",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
