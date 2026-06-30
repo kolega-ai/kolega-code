@@ -4,7 +4,7 @@
 
 [![PyPI version](https://img.shields.io/pypi/v/kolega-code)](https://pypi.org/project/kolega-code/)
 [![Python versions](https://img.shields.io/pypi/pyversions/kolega-code)](https://pypi.org/project/kolega-code/)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 [![CI](https://github.com/kolega-ai/kolega-code/actions/workflows/ci.yml/badge.svg)](https://github.com/kolega-ai/kolega-code/actions/workflows/ci.yml)
 [![Coverage](docs/src/assets/coverage.svg)](https://github.com/kolega-ai/kolega-code/actions/workflows/ci.yml)
 [![Docs](https://img.shields.io/badge/docs-kolega--ai.github.io-blue)](https://kolega-ai.github.io/kolega-code/)
@@ -234,4 +234,4 @@ privately per [SECURITY.md](SECURITY.md).
 
 ## License
 
-Released under the [MIT License](LICENSE).
+Released under the [Apache License 2.0](LICENSE).
