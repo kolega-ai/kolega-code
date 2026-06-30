@@ -6,6 +6,30 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.12.0 - 2026-06-30
+
+### Added
+
+- Added local always-on diagnostics and watchdog support, including `/bug` output
+  packaged as a single zip for issue reports.
+- Made `search_codebase` regex-by-default and backed it with ripgrep for more
+  capable code searches.
+
+### Changed
+
+- Consolidated file-editing tools into a single edit tool interface.
+- Reduced per-session memory usage by deferring heavy LLM imports.
+- Relicensed the project under the Apache License 2.0.
+
+### Fixed
+
+- Prevented token counting from freezing the UI during LLM activity.
+- Improved sub-agent stream handling so long streams accumulate efficiently.
+- Replayed reasoning through native provider fields for OpenAI-compatible
+  providers.
+- Cleaned up duplicate/conflicting footer shortcuts in the TUI.
+- Hardened diagnostics crash-log handling and secret scrubbing.
+
 ## 0.11.1 - 2026-06-26
 
 ### Added
