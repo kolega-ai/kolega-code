@@ -3,9 +3,11 @@ from kolega_code.llm.specs.types import ThinkingEffortSpec
 # OpenAI via ChatGPT subscription (Responses API, OAuth). Model slugs mirror
 # the Codex model picker; context/output limits mirror the API gpt-5.x specs
 # and are server-enforced (we never send max_output_tokens).
+# Note: Codex backend caps GPT-5.5 at 400K context with 128K reserved for
+# output, giving an effective max input of ~272K tokens.
 OPENAI_CHATGPT_SPECS = {
     ("openai_chatgpt", "gpt-5.5"): {
-        "context_length": 1050000,
+        "context_length": 272000,
         "max_completion_tokens": 128000,
         "default_temperature": 1.0,
         "supports_temperature": False,

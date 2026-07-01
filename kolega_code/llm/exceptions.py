@@ -248,6 +248,10 @@ def map_openai_errors(error: "OpenAIError") -> LLMError:
 
     if hasattr(error, "status_code"):
         if error.status_code == 400:
+            if getattr(error, "code", None) == "context_length_exceeded":
+                return LLMContextWindowExceededError(
+                    message=f"OpenAI APIError: {str(error)}", provider=ModelProvider.OPENAI.value
+                )
             return LLMInvalidRequestError(message=f"OpenAI APIError: {str(error)}", provider=ModelProvider.OPENAI.value)
         elif error.status_code == 401:
             return LLMAuthenticationError(message=f"OpenAI APIError: {str(error)}", provider=ModelProvider.OPENAI.value)
