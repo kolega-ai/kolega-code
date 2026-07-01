@@ -65,6 +65,10 @@ export default defineConfig({
               slug: "configuration/settings-and-api-keys",
             },
             {
+              label: "MCP Servers",
+              slug: "configuration/mcp",
+            },
+            {
               label: "Environment Variables",
               slug: "configuration/environment-variables",
             },

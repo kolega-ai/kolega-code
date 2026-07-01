@@ -343,6 +343,15 @@ class PromptFlowMixin:
     def _format_permission_content(self, request: PermissionRequest) -> str:
         if request.kind.value == "command":
             return "\n".join(["Allow the agent to run this command?", "", request.command])
+        if request.kind.value == "mcp":
+            return "\n".join(
+                [
+                    "Allow the agent to call this MCP tool?",
+                    "",
+                    f"Server: {request.mcp_server}",
+                    f"Tool: {request.mcp_tool}",
+                ]
+            )
         target = f" on {request.path}" if request.path else ""
         return f"Allow the agent to run {request.tool_name}{target}?"
 

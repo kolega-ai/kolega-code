@@ -9,7 +9,7 @@ import importlib.util
 import json
 import sys
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Any, Iterable, Optional
 
 from kolega_code.agent import CoderAgent
 from kolega_code.agent.prompt_dump import (
@@ -23,6 +23,18 @@ from kolega_code.agent.prompt_dump import (
 from kolega_code.hooks import HookDispatcher, HookEvent, load_hook_config
 from kolega_code.llm.exceptions import LLMBillingError, billing_error_message
 from kolega_code.llm.models import TextBlock
+from kolega_code.mcp.config import (
+    MCPConfigError,
+    MCPServerConfig,
+    global_mcp_config_path,
+    load_mcp_config,
+    project_mcp_config_path,
+    remove_server_config,
+    set_server_enabled,
+    upsert_server_config,
+)
+from kolega_code.mcp.service import MCPService
+from kolega_code.mcp.tools import build_mcp_tool_extension
 from kolega_code.agent.prompt_provider import AgentMode
 from kolega_code.permissions import (
     PermissionDecision,
@@ -58,7 +70,7 @@ from .skills import (
 )
 from .updater import check_for_update, run_self_update, update_status_message
 
-SUBCOMMANDS = {"ask", "sessions", "doctor", "update", "prompts", "tui"}
+SUBCOMMANDS = {"ask", "sessions", "doctor", "update", "prompts", "mcp", "tui"}
 RESUME_LATEST = "__latest__"
 CLI_AGENT_MODE = AgentMode.CLI.value
 ASK_DEFAULT_PERMISSION_MODE = PermissionMode.AUTO.value
@@ -94,6 +106,8 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
             return _run_doctor(args)
         if args.command == "prompts":
             return _run_prompts(args)
+        if args.command == "mcp":
+            return asyncio.run(_run_mcp(args))
         if args.command == "update":
             return _run_update()
         if args.command == "tui":
@@ -187,6 +201,11 @@ def _add_tui_args(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Trust and enable this project's .kolega/hooks.json (persisted for future runs).",
     )
+    parser.add_argument(
+        "--trust-mcp",
+        action="store_true",
+        help="Trust and enable this project's .kolega/mcp_servers.json (persisted for future runs).",
+    )
     _add_session_args(parser, session_help="Legacy alias for --resume THREAD_ID.")
     _add_common_model_args(parser)
 
@@ -231,6 +250,11 @@ def _build_subcommand_parser() -> argparse.ArgumentParser:
         help="Trust and enable this project's .kolega/hooks.json (persisted for future runs).",
     )
     ask.add_argument(
+        "--trust-mcp",
+        action="store_true",
+        help="Trust and enable this project's .kolega/mcp_servers.json (persisted for future runs).",
+    )
+    ask.add_argument(
         "--image",
         action="append",
         default=[],
@@ -273,6 +297,49 @@ def _build_subcommand_parser() -> argparse.ArgumentParser:
     prompts_list.add_argument("--project", default=".", type=Path, help="Project directory to inspect.")
     prompts_validate = prompts_sub.add_parser("validate", help="Validate existing prompt override files.")
     prompts_validate.add_argument("--project", default=".", type=Path, help="Project directory to inspect.")
+
+    mcp = subparsers.add_parser("mcp", help="Manage MCP servers and verification state.")
+    mcp.add_argument(
+        "--project", default=".", type=Path, help="Project directory to use for trusted project MCP config."
+    )
+    mcp.add_argument("--state-dir", type=Path, help="Directory for CLI state and global MCP config.")
+    mcp.add_argument(
+        "--trust-mcp",
+        action="store_true",
+        help="Trust this project's .kolega/mcp_servers.json before running the command.",
+    )
+    mcp_sub = mcp.add_subparsers(dest="mcp_command", required=True)
+    mcp_sub.add_parser("list", help="List configured MCP servers and verification status.")
+    verify = mcp_sub.add_parser("verify", help="Verify one MCP server, or all enabled servers with --all.")
+    verify.add_argument("server_id", nargs="?", help="MCP server id to verify.")
+    verify.add_argument("--all", action="store_true", help="Verify all enabled MCP servers.")
+    verify.add_argument("--yes", action="store_true", help="Confirm starting stdio MCP commands without prompting.")
+    verify.add_argument("--no-browser", action="store_true", help="Print OAuth URL without opening a browser.")
+    verify.add_argument("--json", action="store_true", help="Print verification results as JSON.")
+    add = mcp_sub.add_parser("add", help="Add or update an MCP server in global config (or project config).")
+    add.add_argument("server_id")
+    add.add_argument("--project-config", action="store_true", help="Write to <project>/.kolega/mcp_servers.json.")
+    add.add_argument("--name")
+    add.add_argument("--transport", choices=["streamable_http", "sse", "stdio"], required=True)
+    add.add_argument("--url", help="HTTP MCP endpoint for streamable_http or sse transports.")
+    add.add_argument("--header", action="append", default=[], help="HTTP header as Name=Value (repeatable).")
+    add.add_argument("--command", dest="stdio_command", help="Command for stdio transport.")
+    add.add_argument("--arg", action="append", default=[], help="Argument for stdio command (repeatable).")
+    add.add_argument("--env", action="append", default=[], help="Environment variable as NAME=VALUE (repeatable).")
+    add.add_argument("--cwd", help="Working directory for stdio command; relative paths resolve under project.")
+    add.add_argument("--oauth", action="store_true", help="Enable OAuth for this HTTP MCP server.")
+    add.add_argument("--oauth-scope", help="OAuth scopes to request.")
+    add.add_argument("--redirect-uri", help="OAuth redirect URI; defaults to an ephemeral localhost callback.")
+    add.add_argument("--disabled", action="store_true", help="Add the server disabled.")
+    remove = mcp_sub.add_parser("remove", help="Remove an MCP server from global or project config.")
+    remove.add_argument("server_id")
+    remove.add_argument("--project-config", action="store_true", help="Remove from <project>/.kolega/mcp_servers.json.")
+    enable = mcp_sub.add_parser("enable", help="Enable an MCP server in global or project config.")
+    enable.add_argument("server_id")
+    enable.add_argument("--project-config", action="store_true", help="Update <project>/.kolega/mcp_servers.json.")
+    disable = mcp_sub.add_parser("disable", help="Disable an MCP server in global or project config.")
+    disable.add_argument("server_id")
+    disable.add_argument("--project-config", action="store_true", help="Update <project>/.kolega/mcp_servers.json.")
 
     subparsers.add_parser("update", help="Update Kolega Code to the latest version.")
 
@@ -432,12 +499,20 @@ def _run_tui(args: argparse.Namespace) -> int:
     store = _store_from_args(args)
     settings_store = _settings_store_from_args(args)
     settings = settings_store.load()
+    settings_changed = False
     if getattr(args, "trust_hooks", False):
         settings.trust_hook_project(project_path)
+        settings_changed = True
+    if getattr(args, "trust_mcp", False):
+        settings.trust_mcp_project(project_path)
+        settings_changed = True
+    if settings_changed:
         settings_store.save(settings)
     summary = {}
     try:
-        config = build_agent_config(project_path, _overrides_from_args(args), settings=settings)
+        config = build_agent_config(
+            project_path, _overrides_from_args(args), settings=settings, settings_store=settings_store
+        )
         summary = config_summary(config)
     except CliConfigError as exc:
         if str(exc) == DEPRECATED_THINKING_TOKENS_MESSAGE:
@@ -479,6 +554,21 @@ def _run_tui(args: argparse.Namespace) -> int:
         app.run()
     except Exception as exc:  # noqa: BLE001 — last-resort crash capture before re-raising
         _secrets = [v for v in getattr(settings, "api_keys", {}).values() if v]
+        try:
+            from kolega_code.mcp.config import load_mcp_config, mcp_secret_values
+            from kolega_code.mcp.state import MCPOAuthTokenStore
+
+            mcp_config = getattr(config, "mcp_config", None) if config is not None else None
+            if mcp_config is None:
+                mcp_config = load_mcp_config(
+                    project_path,
+                    settings_store.root,
+                    project_trusted=settings.is_mcp_project_trusted(project_path),
+                )
+            _secrets.extend(mcp_secret_values(mcp_config))
+            _secrets.extend(MCPOAuthTokenStore(settings_store.root).secret_values())
+        except Exception:
+            pass
         path = write_crash_log(
             store.root, exc=exc, header=f"kolega-code crash | session {session.session_id}", secret_values=_secrets
         )
@@ -516,6 +606,10 @@ def _permission_callback_for_ask(project_path: Path):
         if request.kind.value == "command":
             print("Allow the agent to run this command?", file=sys.stderr)
             print(f"  {request.command}", file=sys.stderr)
+        elif request.kind.value == "mcp":
+            print("Allow the agent to call this MCP tool?", file=sys.stderr)
+            print(f"  server: {request.mcp_server}", file=sys.stderr)
+            print(f"  tool:   {request.mcp_tool}", file=sys.stderr)
         else:
             target = f" on {request.path}" if request.path else ""
             print(f"Allow the agent to run {request.tool_name}{target}?", file=sys.stderr)
@@ -588,10 +682,18 @@ async def _run_ask(args: argparse.Namespace) -> int:
     store = _store_from_args(args)
     settings_store = _settings_store_from_args(args)
     settings = settings_store.load()
+    settings_changed = False
     if getattr(args, "trust_hooks", False):
         settings.trust_hook_project(project_path)
+        settings_changed = True
+    if getattr(args, "trust_mcp", False):
+        settings.trust_mcp_project(project_path)
+        settings_changed = True
+    if settings_changed:
         settings_store.save(settings)
-    config = build_agent_config(project_path, _overrides_from_args(args), settings=settings)
+    config = build_agent_config(
+        project_path, _overrides_from_args(args), settings=settings, settings_store=settings_store
+    )
     summary = config_summary(config)
 
     hook_config = load_hook_config(
@@ -625,6 +727,18 @@ async def _run_ask(args: argparse.Namespace) -> int:
         prompt_extensions.append(skill_prompt_extension)
     if skill_tool_extension is not None:
         tool_extensions.append(skill_tool_extension)
+    mcp_config = getattr(config, "mcp_config", None)
+    if not args.json and mcp_config is not None:
+        for diagnostic in getattr(mcp_config, "diagnostics", []) or []:
+            print(f"mcp: {diagnostic}", file=sys.stderr)
+    mcp_extension = build_mcp_tool_extension(
+        project_path,
+        settings_store.root,
+        project_trusted=settings.is_mcp_project_trusted(project_path),
+        loaded_config=mcp_config,
+    )
+    if mcp_extension is not None:
+        tool_extensions.append(mcp_extension)
     permission_mode = normalize_permission_mode(
         getattr(args, "permission_mode", ASK_DEFAULT_PERMISSION_MODE),
         default=PermissionMode.AUTO,
@@ -855,6 +969,182 @@ def _run_prompts(args: argparse.Namespace) -> int:
     raise ValueError(f"Unknown prompts command: {args.prompts_command}")
 
 
+async def _run_mcp(args: argparse.Namespace) -> int:
+    project_path = _validate_project(args.project)
+    settings_store = _settings_store_from_args(args)
+    settings = settings_store.load()
+    if getattr(args, "trust_mcp", False):
+        settings.trust_mcp_project(project_path)
+        settings_store.save(settings)
+
+    config = load_mcp_config(
+        project_path,
+        settings_store.root,
+        project_trusted=settings.is_mcp_project_trusted(project_path),
+    )
+    service = MCPService(config, state_dir=settings_store.root, project_path=project_path)
+
+    if args.mcp_command == "list":
+        _print_mcp_list(config, service)
+        return 0
+
+    if args.mcp_command == "verify":
+        server_ids = _mcp_verify_server_ids(args, config)
+        if not server_ids:
+            raise ValueError("No MCP servers to verify.")
+        if not _confirm_stdio_verification(args, config, server_ids):
+            return 2
+        results = []
+        for server_id in server_ids:
+            results.append(
+                await service.verify_server(
+                    server_id,
+                    interactive_oauth=True,
+                    open_browser=not getattr(args, "no_browser", False),
+                    output=sys.stderr,
+                )
+            )
+        if getattr(args, "json", False):
+            print(json.dumps([result.__dict__ for result in results], default=str))
+        else:
+            for result in results:
+                glyph = "✓" if result.ok else "✗"
+                print(f"{glyph} {result.server_id}: {result.message}")
+        return 0 if all(result.ok for result in results) else 1
+
+    if args.mcp_command == "add":
+        path, source = _mcp_mutation_target(args, project_path, settings_store.root)
+        server = _server_config_from_add_args(args)
+        try:
+            upsert_server_config(path, server, source=source)
+        except MCPConfigError as exc:
+            raise ValueError(str(exc)) from exc
+        print(f"Saved MCP server {server.id} to {path}")
+        if source == "project" and not settings.is_mcp_project_trusted(project_path):
+            print("Project MCP config is not trusted yet. Re-run with --trust-mcp to enable it.", file=sys.stderr)
+        return 0
+
+    if args.mcp_command == "remove":
+        path, source = _mcp_mutation_target(args, project_path, settings_store.root)
+        try:
+            removed = remove_server_config(path, args.server_id, source=source)
+        except MCPConfigError as exc:
+            raise ValueError(str(exc)) from exc
+        if not removed:
+            raise ValueError(f"MCP server not found in {path}: {args.server_id}")
+        service.status_store.clear(args.server_id)
+        service.oauth_store.clear(args.server_id)
+        print(f"Removed MCP server {args.server_id} from {path}")
+        return 0
+
+    if args.mcp_command in {"enable", "disable"}:
+        path, source = _mcp_mutation_target(args, project_path, settings_store.root)
+        enabled = args.mcp_command == "enable"
+        try:
+            changed = set_server_enabled(path, args.server_id, enabled, source=source)
+        except MCPConfigError as exc:
+            raise ValueError(str(exc)) from exc
+        if not changed:
+            raise ValueError(f"MCP server not found in {path}: {args.server_id}")
+        print(f"{'Enabled' if enabled else 'Disabled'} MCP server {args.server_id} in {path}")
+        return 0
+
+    raise ValueError(f"Unknown mcp command: {args.mcp_command}")
+
+
+def _print_mcp_list(config, service: MCPService) -> None:
+    for diagnostic in config.diagnostics:
+        print(f"mcp: {diagnostic}", file=sys.stderr)
+    if not config.servers:
+        print("No MCP servers configured.")
+        print(f"Global config: {config.global_path}")
+        if config.project_config_path:
+            print(
+                f"Project config: {config.project_config_path} ({'trusted' if config.project_trusted else 'untrusted'})"
+            )
+        return
+    print("ID\tSOURCE\tTRANSPORT\tENABLED\tOAUTH\tSTATUS\tTOOLS\tMESSAGE")
+    for row in service.list_status_rows():
+        print(
+            f"{row['id']}\t{row['source']}\t{row['transport']}\t{row['enabled']}\t{row['oauth']}\t"
+            f"{row['status']}\t{row['tool_count']}\t{row['message']}"
+        )
+
+
+def _mcp_verify_server_ids(args: argparse.Namespace, config) -> list[str]:
+    if args.all and args.server_id:
+        raise ValueError("Use either `mcp verify SERVER_ID` or `mcp verify --all`, not both.")
+    if args.all:
+        return [server.id for server in config.enabled_servers]
+    if not args.server_id:
+        raise ValueError("Specify an MCP server id or --all.")
+    return [args.server_id]
+
+
+def _confirm_stdio_verification(args: argparse.Namespace, config, server_ids: list[str]) -> bool:
+    stdio_servers = [
+        config.servers[server_id]
+        for server_id in server_ids
+        if config.servers.get(server_id) and config.servers[server_id].transport == "stdio"
+    ]
+    if not stdio_servers:
+        return True
+    if getattr(args, "yes", False):
+        return True
+    if not sys.stdin.isatty():
+        print("Refusing to start stdio MCP server command(s) without --yes in non-interactive mode.", file=sys.stderr)
+        return False
+    print("Verifying stdio MCP servers starts local commands:", file=sys.stderr)
+    for server in stdio_servers:
+        command = " ".join([server.command or "", *server.args]).strip()
+        print(f"  {server.id}: {command}", file=sys.stderr)
+    print("Continue? [y/N] ", end="", file=sys.stderr, flush=True)
+    answer = sys.stdin.readline().strip().lower()
+    return answer in {"y", "yes"}
+
+
+def _mcp_mutation_target(args: argparse.Namespace, project_path: Path, state_dir: Path) -> tuple[Path, str]:
+    if getattr(args, "project_config", False):
+        return project_mcp_config_path(project_path), "project"
+    return global_mcp_config_path(state_dir), "global"
+
+
+def _server_config_from_add_args(args: argparse.Namespace) -> MCPServerConfig:
+    headers = _parse_key_value_options(getattr(args, "header", []) or [], "--header")
+    env = _parse_key_value_options(getattr(args, "env", []) or [], "--env")
+    payload: dict[str, Any] = {
+        "id": args.server_id,
+        "name": args.name,
+        "transport": args.transport,
+        "enabled": not bool(args.disabled),
+        "url": args.url,
+        "headers": headers,
+        "command": getattr(args, "stdio_command", None),
+        "args": getattr(args, "arg", []) or [],
+        "env": env,
+        "cwd": args.cwd,
+        "oauth": {
+            "enabled": bool(args.oauth),
+            "scope": args.oauth_scope,
+            "redirect_uri": args.redirect_uri,
+        },
+    }
+    return MCPServerConfig.model_validate(payload)
+
+
+def _parse_key_value_options(values: list[str], flag_name: str) -> dict[str, str]:
+    parsed: dict[str, str] = {}
+    for item in values:
+        if "=" not in item:
+            raise ValueError(f"{flag_name} values must be NAME=VALUE")
+        key, value = item.split("=", 1)
+        key = key.strip()
+        if not key:
+            raise ValueError(f"{flag_name} values must include a non-empty name")
+        parsed[key] = value
+    return parsed
+
+
 def _run_doctor(args: argparse.Namespace) -> int:
     from . import theme
     from .theme import Glyph
@@ -890,7 +1180,9 @@ def _run_doctor(args: argparse.Namespace) -> int:
         line("Stored active model", "not configured", "warning")
 
     try:
-        config = build_agent_config(project_path, _overrides_from_args(args), settings=settings)
+        config = build_agent_config(
+            project_path, _overrides_from_args(args), settings=settings, settings_store=settings_store
+        )
     except CliConfigError as exc:
         _print_styled(f"{theme.g(Glyph.CROSS)} Configuration: invalid ({exc})", style="error")
         return 2

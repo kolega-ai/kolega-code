@@ -60,6 +60,8 @@ enough that one serial agent pass would be the bottleneck.
 - **Web search and browsing:** DuckDuckGo works by default with no key; Firecrawl,
   Tavily, and SearXNG are configurable search backends. Kolega Code can also fetch URLs
   directly and use a Playwright-powered browser agent for interactive sites.
+- **MCP servers:** connect verified `streamable_http`, `sse`, and `stdio` MCP servers
+  (including OAuth-enabled HTTP servers) as permission-gated tools.
 - **Model routing:** choose provider/model combinations, set thinking effort, split
   long-context/fast/thinking roles, and override models per agent role.
 - **Interactive or scriptable:** use the Textual TUI, queue follow-up prompts

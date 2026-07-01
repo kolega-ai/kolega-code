@@ -189,6 +189,10 @@ class AgentConfig(BaseModel):
         description="Per-agent-role model overrides keyed by AgentRole value",
     )
 
+    # Host-loaded MCP configuration. Excluded from serialized model config because
+    # it can contain local paths, headers/env secrets, and non-Pydantic dataclasses.
+    mcp_config: Optional[Any] = Field(default=None, exclude=True, description="Loaded MCP server configuration")
+
     def model_config_for_agent(self, agent_name: Optional[str]) -> ModelConfig:
         """Return the model configuration an agent should use for its main loop.
 
