@@ -42,6 +42,7 @@ def test_session_store_create_load_list_export_delete(tmp_path: Path) -> None:
     record.plan_reofferable = True
     record.interaction_mode = "plan"
     record.permission_mode = "auto"
+    record.gigacode_enabled = True
     store.save(record)
 
     loaded = store.load(record.session_id)
@@ -53,6 +54,7 @@ def test_session_store_create_load_list_export_delete(tmp_path: Path) -> None:
     assert loaded.plan_reofferable is True
     assert loaded.interaction_mode == "plan"
     assert loaded.permission_mode == "auto"
+    assert loaded.gigacode_enabled is True
     assert store.latest_for_project(project).session_id == record.session_id
     exported = store.export(record.session_id)
     assert record.session_id in exported
@@ -62,6 +64,7 @@ def test_session_store_create_load_list_export_delete(tmp_path: Path) -> None:
     assert "plan_reofferable" in exported
     assert "interaction_mode" in exported
     assert "permission_mode" in exported
+    assert "gigacode_enabled" in exported
 
     store.delete(record.session_id)
     with pytest.raises(SessionStoreError):
@@ -81,6 +84,7 @@ def test_session_store_loads_old_sessions_without_planning_state(tmp_path: Path)
     payload.pop("plan_reofferable")
     payload.pop("interaction_mode")
     payload.pop("permission_mode")
+    payload.pop("gigacode_enabled")
     store.path_for(record.session_id).write_text(json.dumps(payload), encoding="utf-8")
 
     loaded = store.load(record.session_id)
@@ -91,6 +95,7 @@ def test_session_store_loads_old_sessions_without_planning_state(tmp_path: Path)
     assert loaded.plan_reofferable is False
     assert loaded.interaction_mode == "build"
     assert loaded.permission_mode == "ask"
+    assert loaded.gigacode_enabled is False
 
 
 def test_session_store_old_pending_plan_is_reofferable(tmp_path: Path) -> None:

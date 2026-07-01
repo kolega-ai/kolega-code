@@ -163,6 +163,158 @@ async def test_textual_app_status_dashboard_tracks_interaction_mode(
 
 
 @pytest.mark.asyncio
+async def test_textual_app_resumes_gigacode_enabled_across_mode_rebuilds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from textual.widgets import Static
+
+    from kolega_code.cli.app import KolegaCodeApp
+
+    class FakeBaseAgent:
+        instances = []
+
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.prompt_extensions = kwargs.get("prompt_extensions") or []
+            self.gigacode_enabled = False
+            self.cleaned = False
+            self.__class__.instances.append(self)
+
+        def restore_message_history(self, history):
+            return None
+
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
+
+        def dump_message_history(self):
+            return []
+
+        async def cleanup(self):
+            self.cleaned = True
+
+    class FakeCoderAgent(FakeBaseAgent):
+        instances = []
+
+    class FakePlanningAgent(FakeBaseAgent):
+        instances = []
+
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "PlanningAgent", FakePlanningAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    session.gigacode_enabled = True
+    store.save(session)
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test():
+        assert app._gigacode_enabled is True
+        assert FakeCoderAgent.instances
+        coder = FakeCoderAgent.instances[-1]
+        assert coder.gigacode_enabled is True
+        assert extension_by_name(coder.prompt_extensions, "gigacode").title == "gigacode — workflow orchestration"
+        assert "Gigacode: on" in app.conversation_entries[0].content
+        assert "gigacode on" in str(app.query_one("#session_meta", Static).render())
+        dashboard = str(app.query_one("#status_dashboard", Static).render())
+        assert "Gigacode" in dashboard
+        assert "On" in dashboard
+
+        await app._set_interaction_mode("plan")
+
+        assert FakePlanningAgent.instances
+        planning = FakePlanningAgent.instances[-1]
+        assert app._gigacode_enabled is True
+        assert planning.gigacode_enabled is True
+        assert extension_by_name(planning.prompt_extensions, "gigacode").title == "gigacode — workflow orchestration"
+        assert store.load(session.session_id).gigacode_enabled is True
+
+        await app._set_interaction_mode("build")
+
+        rebuilt = FakeCoderAgent.instances[-1]
+        assert rebuilt.gigacode_enabled is True
+        assert extension_by_name(rebuilt.prompt_extensions, "gigacode").title == "gigacode — workflow orchestration"
+
+
+@pytest.mark.asyncio
+async def test_textual_app_gigacode_command_persists_and_updates_status(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from textual.widgets import Static
+
+    from kolega_code.cli.app import KolegaCodeApp
+
+    class FakeCoderAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.gigacode_enabled = False
+            self.prompt_extensions = kwargs.get("prompt_extensions") or []
+            self.apply_calls = []
+
+        def restore_message_history(self, history):
+            return None
+
+        def dump_compaction_state(self):
+            return {}
+
+        def restore_compaction_state(self, data):
+            pass
+
+        def dump_message_history(self):
+            return []
+
+        def apply_gigacode(self, enabled, prompt_extension=None):
+            self.apply_calls.append((enabled, prompt_extension))
+            self.gigacode_enabled = enabled
+            self.prompt_extensions = [
+                extension for extension in self.prompt_extensions if getattr(extension, "id", None) != "gigacode"
+            ]
+            if enabled and prompt_extension is not None:
+                self.prompt_extensions.append(prompt_extension)
+
+        async def cleanup(self):
+            return None
+
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test():
+        await app._command_gigacode("on")
+
+        assert app._gigacode_enabled is True
+        assert app.agent.apply_calls[-1][0] is True
+        assert app.agent.apply_calls[-1][1].id == "gigacode"
+        assert store.load(session.session_id).gigacode_enabled is True
+        assert "Gigacode: on" in app.conversation_entries[0].content
+        dashboard = str(app.query_one("#status_dashboard", Static).render())
+        assert "Gigacode" in dashboard
+        assert "On" in dashboard
+
+        await app._command_gigacode("off")
+
+        assert app._gigacode_enabled is False
+        assert app.agent.apply_calls[-1] == (False, None)
+        assert store.load(session.session_id).gigacode_enabled is False
+        assert "Gigacode: off" in app.conversation_entries[0].content
+        assert "gigacode off" in str(app.query_one("#session_meta", Static).render())
+
+
+@pytest.mark.asyncio
 async def test_textual_app_mode_switch_rebuild_skips_transcript_restore(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

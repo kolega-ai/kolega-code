@@ -52,9 +52,11 @@ Gigacode is **off by default**. Toggle it with the `/gigacode`
 | `/gigacode on` | Enable workflow orchestration for the session |
 | `/gigacode off` | Disable it |
 
-Once on, it stays on for the session, and the agent decides when a task is worth
-orchestrating. It works in both [Build and Plan modes](../tui/modes/) — see
-[Behavior and safety](#behavior-and-safety) for how each differs.
+Once on, it stays on for that resumable session — if you quit and resume the same
+session, the setting is restored. New sessions still start with Gigacode off. The
+agent decides when a task is worth orchestrating. It works in both
+[Build and Plan modes](../tui/modes/) — see [Behavior and safety](#behavior-and-safety)
+for how each differs.
 
 ## What you'll see
 

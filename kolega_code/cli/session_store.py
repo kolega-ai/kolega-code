@@ -39,6 +39,7 @@ class SessionRecord:
     plan_reofferable: bool = False
     interaction_mode: str = "build"
     permission_mode: str = "ask"
+    gigacode_enabled: bool = False
     schema_version: int = SCHEMA_VERSION
 
     @classmethod
@@ -92,6 +93,7 @@ class SessionRecord:
             plan_reofferable=bool(latest_plan_markdown and data.get("plan_reofferable", plan_pending)),
             interaction_mode=data.get("interaction_mode") or "build",
             permission_mode=data.get("permission_mode") or "ask",
+            gigacode_enabled=bool(data.get("gigacode_enabled", False)),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -114,6 +116,7 @@ class SessionRecord:
             "plan_reofferable": self.plan_reofferable,
             "interaction_mode": self.interaction_mode,
             "permission_mode": self.permission_mode,
+            "gigacode_enabled": self.gigacode_enabled,
         }
 
 

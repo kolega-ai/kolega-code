@@ -215,6 +215,7 @@ class CommandHandlersMixin:
 
         self._gigacode_enabled = new_state
         self.agent.apply_gigacode(new_state, self._gigacode_prompt_extension() if new_state else None)
+        await self._save_session_async()
 
         if new_state:
             note = (
@@ -791,7 +792,12 @@ class CommandHandlersMixin:
         ]
         if header.get("provider"):
             lines.append(f"Model: {header['provider']}/{header.get('model')} (effort: {header.get('thinking_effort')})")
-        lines.append(f"Permission: {header.get('permission_mode')}  |  mode: {header.get('interaction_mode')}")
+        gigacode = "on" if header.get("gigacode_enabled") else "off"
+        session_modes = (
+            f"Permission: {header.get('permission_mode')}  |  "
+            f"mode: {header.get('interaction_mode')}  |  gigacode: {gigacode}"
+        )
+        lines.append(session_modes)
         if header.get("providers_with_keys"):
             lines.append(f"Providers with keys: {', '.join(header['providers_with_keys'])}")
         diag = getattr(self, "_diag", None)

@@ -202,7 +202,7 @@ class KolegaCodeApp(
         self._plan_pending: bool = bool(self._latest_plan and self.session.plan_pending)
         self._plan_reofferable: bool = bool(self._latest_plan and (self.session.plan_reofferable or self._plan_pending))
         self._plan_decision_active = False
-        self._gigacode_enabled = False
+        self._gigacode_enabled = bool(self.session.gigacode_enabled)
         self._pending_question: Optional[tui_state.PendingQuestion] = None
         self._pending_approval: Optional[tui_state.PendingApproval] = None
         self._pending_image_attachments: list[dict] = []
@@ -227,6 +227,7 @@ class KolegaCodeApp(
             model=model,
             mode=self.interaction_mode,
             permission_mode=self.permission_mode.value,
+            gigacode_enabled=self._gigacode_enabled,
         )
         self._turn_started_at: Optional[float] = None
         self._turn_finished_duration: Optional[float] = None
@@ -416,6 +417,7 @@ class KolegaCodeApp(
             "term_program": os.environ.get("TERM_PROGRAM", ""),  # captures ghostty/iTerm/etc.
             "interaction_mode": self.interaction_mode,
             "permission_mode": self.permission_mode.value,
+            "gigacode_enabled": self._gigacode_enabled,
         }
         try:
             if self.config is not None:
@@ -697,6 +699,7 @@ class KolegaCodeApp(
     def _sync_planning_state_to_session(self) -> None:
         self.session.interaction_mode = self.interaction_mode
         self.session.permission_mode = self.permission_mode.value
+        self.session.gigacode_enabled = self._gigacode_enabled
         self.session.latest_plan_markdown = self._latest_plan or ""
         self.session.plan_pending = bool(self._latest_plan and self._plan_pending)
         self.session.plan_reofferable = bool(self._latest_plan and self._plan_reofferable)
@@ -729,6 +732,7 @@ class KolegaCodeApp(
             plan_reofferable=record.plan_reofferable,
             interaction_mode=record.interaction_mode,
             permission_mode=record.permission_mode,
+            gigacode_enabled=record.gigacode_enabled,
         )
 
     async def _save_session_async(self) -> None:
@@ -1536,9 +1540,11 @@ class KolegaCodeApp(
             return
 
     def _meta_content(self) -> str:
+        gigacode = "on" if self._gigacode_enabled else "off"
         return (
             f"{self.project_path} | session {self.session.session_id} | "
-            f"agent {self.mode} | {self.interaction_mode} | permissions {self.permission_mode.value}"
+            f"agent {self.mode} | {self.interaction_mode} | permissions {self.permission_mode.value} | "
+            f"gigacode {gigacode}"
         )
 
     def _update_mode_chrome(self) -> None:
@@ -1753,6 +1759,7 @@ class KolegaCodeApp(
                 f"Mode: {self.mode}",
                 f"Interaction: {self.interaction_mode}",
                 f"Permissions: {self.permission_mode.value}",
+                f"Gigacode: {'on' if self._gigacode_enabled else 'off'}",
                 f"Model: {model_display}",
                 *([override_message] if override_message else []),
                 *self._startup_prompt_override_lines(),
