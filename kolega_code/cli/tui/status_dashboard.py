@@ -31,6 +31,7 @@ class StatusDashboardMixin:
         self._status_state.thinking_effort = self._startup_thinking_effort()
         self._status_state.mode = self.interaction_mode
         self._status_state.permission_mode = self.permission_mode.value
+        self._status_state.gigacode_enabled = self._gigacode_enabled
         try:
             self._status_dashboard.update(self._format_status_dashboard())
         except Exception:
@@ -47,6 +48,7 @@ class StatusDashboardMixin:
         effort = state.thinking_effort or "not supported"
         mode = state.mode.title()
         permission_mode = state.permission_mode.title()
+        gigacode = "On" if state.gigacode_enabled else "Off"
         turn_style = tui_state.turn_state_color(state.turn_state)
         context_style = self._context_style(state.usage_percentage, state.compression_threshold)
 
@@ -84,6 +86,7 @@ class StatusDashboardMixin:
             f"{label('Thinking effort')} [bold]{escape(effort)}[/bold]\n"
             f"{label('Mode')} [bold]{mode}[/bold]\n"
             f"{label('Permissions')} [bold]{permission_mode}[/bold]\n"
+            f"{label('Gigacode')} [bold]{gigacode}[/bold]\n"
             f"{turn_line}\n\n"
             f"{label('Context')}\n"
             f"{context_lines}\n\n"
