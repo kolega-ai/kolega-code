@@ -46,6 +46,8 @@ from kolega_code.agent.tool_backend.search_backends import (
 )
 from kolega_code.hooks import HookDispatcher, HookEvent
 from kolega_code.llm.models import MessageHistory
+from kolega_code.mcp.config import load_mcp_config, mcp_secret_values
+from kolega_code.mcp.state import MCPOAuthTokenStore
 from kolega_code.permissions import (
     PermissionMode,
     normalize_permission_mode,
@@ -393,6 +395,75 @@ class KolegaCodeApp(
                                     id="web_search_base_url_input",
                                     placeholder="https://searxng.example.com",
                                 )
+                            with Vertical(classes="settings-section", id="settings_mcp") as mcp_section:
+                                mcp_section.border_title = "MCP Servers"
+                                yield Static(
+                                    "Manage global MCP servers and trust project MCP configs. Verify before tools are "
+                                    "exposed; stdio verification executes the configured command.",
+                                    classes="settings-hint",
+                                )
+                                yield Static("", id="mcp_status")
+                                yield Label("Server")
+                                yield Select(
+                                    [("New user server", tui_settings_panel.MCP_NEW_SERVER_VALUE)],
+                                    id="mcp_server_select",
+                                    allow_blank=False,
+                                    value=tui_settings_panel.MCP_NEW_SERVER_VALUE,
+                                )
+                                yield Static("", id="mcp_source_hint", classes="settings-hint")
+                                yield Label("ID")
+                                yield Input(id="mcp_server_id_input", placeholder="github")
+                                yield Label("Display name")
+                                yield Input(id="mcp_name_input", placeholder="GitHub MCP")
+                                yield Label("Transport")
+                                yield Select(
+                                    tui_settings_panel.MCP_TRANSPORT_OPTIONS,
+                                    id="mcp_transport_select",
+                                    allow_blank=False,
+                                    value="streamable_http",
+                                )
+                                yield Label("Enabled")
+                                yield Select(
+                                    tui_settings_panel.MCP_ENABLED_OPTIONS,
+                                    id="mcp_enabled_select",
+                                    allow_blank=False,
+                                    value="true",
+                                )
+                                yield Label("HTTP URL", id="mcp_url_label")
+                                yield Input(id="mcp_url_input", placeholder="https://example.com/mcp")
+                                yield Label("HTTP headers JSON", id="mcp_headers_label")
+                                yield Input(
+                                    id="mcp_headers_input",
+                                    placeholder='{"Authorization":"Bearer ..."}',
+                                    password=True,
+                                )
+                                yield Label("OAuth", id="mcp_oauth_label")
+                                yield Select(
+                                    [("Disabled", "false"), ("Enabled", "true")],
+                                    id="mcp_oauth_select",
+                                    allow_blank=False,
+                                    value="false",
+                                )
+                                yield Label("Command", id="mcp_command_label")
+                                yield Input(id="mcp_command_input", placeholder="npx")
+                                yield Label("Arguments", id="mcp_args_label")
+                                yield Input(id="mcp_args_input", placeholder="-y @vendor/mcp-server")
+                                yield Label("Environment JSON", id="mcp_env_label")
+                                yield Input(id="mcp_env_input", placeholder='{"TOKEN":"..."}', password=True)
+                                yield Label("Working directory", id="mcp_cwd_label")
+                                yield Input(id="mcp_cwd_input", placeholder="optional project-relative path")
+                                with Horizontal(classes="settings-button-row"):
+                                    yield Button("Refresh", id="mcp_refresh")
+                                    yield Button("Trust Project MCP", id="mcp_trust_project")
+                                with Horizontal(classes="settings-button-row"):
+                                    yield Button("Save Server", variant="primary", id="mcp_save_server")
+                                    yield Button("Delete", variant="error", id="mcp_delete_server")
+                                with Horizontal(classes="settings-button-row"):
+                                    yield Button("Verify", id="mcp_verify_server")
+                                    yield Button("Clear OAuth Tokens", id="mcp_clear_tokens")
+                                with Horizontal(classes="settings-button-row"):
+                                    yield Button("Enable", id="mcp_enable_server")
+                                    yield Button("Disable", id="mcp_disable_server")
                             with Vertical(classes="settings-section", id="settings_appearance") as appearance_section:
                                 appearance_section.border_title = "Appearance"
                                 yield Label("Theme")
@@ -440,6 +511,15 @@ class KolegaCodeApp(
         # never let diagnostics setup break mount.
         try:
             secret_values = [v for v in getattr(self.settings, "api_keys", {}).values() if v]
+            mcp_config = getattr(self.config, "mcp_config", None)
+            if mcp_config is None:
+                mcp_config = load_mcp_config(
+                    self.project_path,
+                    self.settings_store.root,
+                    project_trusted=self.settings.is_mcp_project_trusted(self.project_path),
+                )
+            secret_values.extend(mcp_secret_values(mcp_config))
+            secret_values.extend(MCPOAuthTokenStore(self.settings_store.root).secret_values())
             self._diag = DiagnosticsLog(self.store.root, self.session.session_id, secret_values=secret_values)
             self._diag.record("session_start", **self._diagnostics_header())
             self._watchdog = ResponsivenessWatchdog(self._diag)
@@ -994,6 +1074,10 @@ class KolegaCodeApp(
             return
         if event.button.id == "save_settings":
             await self._save_settings_from_ui()
+            return
+        if event.button.id and event.button.id.startswith("mcp_"):
+            if await self._handle_mcp_settings_button(event.button.id):
+                return
 
     def copy_to_clipboard(self, text: str) -> None:
         super().copy_to_clipboard(text)

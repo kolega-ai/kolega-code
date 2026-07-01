@@ -12,6 +12,7 @@ from pydantic import ValidationError
 from kolega_code.auth.tokens import ChatGPTTokenManager, OAuthTokens
 from kolega_code.config import AgentConfig, AgentRole, ModelConfig, ModelProvider, RateLimitConfig
 from kolega_code.llm.specs import MODEL_SPECS, get_model_specs, normalize_thinking_effort
+from kolega_code.mcp.config import load_mcp_config
 
 from .provider_registry import default_model_for_provider
 from .settings import CliSettings, SettingsStore
@@ -447,6 +448,12 @@ def build_agent_config(
 
     agent_model_overrides = _agent_model_overrides(loaded_env, settings, active_provider, active_model)
     web_search_backend, web_search_api_key, web_search_base_url = _search_config(loaded_env, settings)
+    state_dir = settings_store.root if settings_store is not None else SettingsStore().root
+    mcp_config = load_mcp_config(
+        project_path,
+        state_dir,
+        project_trusted=bool(settings and settings.is_mcp_project_trusted(project_path)),
+    )
 
     required_providers = {long_provider, fast_provider, thinking_provider}
     required_providers.update(override.provider for override in agent_model_overrides.values())
@@ -490,6 +497,7 @@ def build_agent_config(
             web_search_api_key=web_search_api_key,
             web_search_base_url=web_search_base_url,
             openai_chatgpt_tokens=chatgpt_tokens,
+            mcp_config=mcp_config,
         )
     except ValueError as exc:
         raise CliConfigError(str(exc)) from exc
@@ -557,6 +565,9 @@ def active_model_override_message(
 
 def config_summary(config: AgentConfig) -> dict[str, object]:
     """Return a session-safe summary of model configuration."""
+    mcp_config = getattr(config, "mcp_config", None)
+    mcp_servers = getattr(mcp_config, "servers", {}) or {}
+    mcp_enabled = [server for server in mcp_servers.values() if getattr(server, "enabled", False)]
     return {
         "environment": config.environment,
         "long_provider": config.long_context_config.provider.value,
@@ -570,4 +581,7 @@ def config_summary(config: AgentConfig) -> dict[str, object]:
             role: f"{model_config.provider.value}/{model_config.model}"
             for role, model_config in config.agent_models.items()
         },
+        "mcp_servers": len(mcp_servers),
+        "mcp_enabled_servers": len(mcp_enabled),
+        "mcp_project_trusted": bool(getattr(mcp_config, "project_trusted", False)),
     }

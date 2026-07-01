@@ -42,6 +42,9 @@ class ToolExtension:
     # schema is used verbatim instead of introspecting the callable signature,
     # allowing nested input shapes the introspector cannot express.
     tool_schemas: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # Optional cleanup hook. May be sync or async; ToolCollection.cleanup awaits
+    # it when needed.
+    cleanup: Optional[Callable[[], Any]] = None
     # Whether this extension is inherited by sub-agents. Interactive or
     # session-shared host tools (task list, planning questions) belong to the
     # single top-level agent only; leaving them on for parallel sub-agents lets
@@ -1581,6 +1584,18 @@ class ToolCollection(LogMixin):
                             print(f"Cleaned up sub-agent: {agent_id}")
                         except Exception as e:
                             print(f"Error cleaning up sub-agent {agent_id}: {e}")
+
+            # Clean up host-provided tool extensions (MCP transports, etc.).
+            for extension in self.tool_extensions:
+                cleanup = getattr(extension, "cleanup", None)
+                if cleanup is None:
+                    continue
+                try:
+                    result = cleanup()
+                    if inspect.isawaitable(result):
+                        await result
+                except Exception as e:
+                    print(f"Error cleaning up tool extension {extension.name}: {e}")
 
         except Exception as e:
             await self.log_error(f"Error during tool cleanup: {str(e)}", sender="ToolCollection")
