@@ -30,9 +30,10 @@ from kolega_code.llm.exceptions import (
 # Assuming OpenAIError, GoogleAPIError, AnthropicError can be imported or mocked
 # For simplicity, we'll mock them here.
 class MockOpenAIError(Exception):
-    def __init__(self, message: str, status_code: int):
+    def __init__(self, message: str, status_code: int, code: str | None = None):
         super().__init__(message)
         self.status_code = status_code
+        self.code = code
 
 
 class MockGoogleAPIError(Exception):
@@ -123,6 +124,18 @@ def test_map_openai_errors_no_status_code():
     )  # Should be the base LLMError
     assert mapped_error.provider == ModelProvider.OPENAI.value
     assert "OpenAI APIError:" in str(mapped_error)
+
+
+def test_map_openai_context_length_exceeded():
+    """A 400 with code="context_length_exceeded" maps to LLMContextWindowExceededError."""
+    original_error = MockOpenAIError(
+        "Error code: 400 - {'error': {'code': 'context_length_exceeded', ...}}",
+        status_code=400,
+        code="context_length_exceeded",
+    )
+    mapped_error = map_openai_errors(original_error)
+    assert isinstance(mapped_error, LLMContextWindowExceededError)
+    assert mapped_error.provider == ModelProvider.OPENAI.value
 
 
 # Test Google error mapping

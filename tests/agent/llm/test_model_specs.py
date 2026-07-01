@@ -1,6 +1,16 @@
 from kolega_code.llm.specs import get_model_specs, thinking_effort_options
 
 
+def test_openai_chatgpt_gpt55_context_length():
+    """GPT-5.5 on ChatGPT subscription is capped at 400K context by the Codex
+    backend, with 128K reserved for output → effective max input is ~272K."""
+    specs = get_model_specs("openai_chatgpt", "gpt-5.5")
+
+    assert specs["context_length"] == 272000
+    assert specs["max_completion_tokens"] == 128000
+    assert specs["thinking_effort"].default == "medium"
+
+
 def test_kimi_k27_code_model_specs():
     specs = get_model_specs("moonshot", "kimi-k2.7-code")
 
