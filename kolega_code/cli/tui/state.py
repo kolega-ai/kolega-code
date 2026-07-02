@@ -98,7 +98,11 @@ class ConversationEntry:
 
 @dataclass
 class QueuedMessage:
-    """One UI-local follow-up queued while the current turn is running."""
+    """One UI-local follow-up queued while the current turn is running.
+
+    ``entry`` is the future transcript entry and stays out of
+    ``conversation_entries`` until the queued message begins processing.
+    """
 
     queue_id: str
     text: str

@@ -124,8 +124,9 @@ class AgentRuntimeMixin:
             attachments=[dict(item) for item in attachments] if attachments else None,
             entry=entry,
         )
+        # Keep the future transcript entry unmounted while pending; the queue
+        # widget is the only waiting-message preview until this item starts.
         self._queued_messages.append(queued)
-        self._add_conversation_entry(entry)
         self._refresh_queued_messages_panel()
         self._log_status(messages.QUEUED_MESSAGE, "info")
 
@@ -217,9 +218,9 @@ class AgentRuntimeMixin:
         if queued.entry not in self.conversation_entries:
             self._add_conversation_entry(queued.entry)
         else:
-            # The entry is already mounted (added when queued); just re-render that one
-            # widget for the queued->user transition instead of rebuilding the whole
-            # transcript, which on a long thread is a synchronous O(entries) hitch.
+            # Defensive compatibility for any already-mounted queued entry (for
+            # example from older in-memory behavior): re-render just that widget
+            # for the queued->user transition instead of rebuilding the transcript.
             self._invalidate_conversation(queued.entry)
         self._refresh_queued_messages_panel()
         self._clear_composer_hint()
