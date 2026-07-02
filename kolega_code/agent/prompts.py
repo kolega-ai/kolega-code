@@ -50,6 +50,9 @@ COMPRESSION_SUMMARY_USER_PROMPT_TEMPLATE = prompt_template_source("auxiliary/com
 IMPLEMENT_PLAN_PROMPT_TEMPLATE = prompt_template_source("user_tasks/cli/implement_plan.md.j2").replace(
     "{{ plan }}", "{plan}"
 )
+CURRENT_PLAN_ARTIFACT_PROMPT_TEMPLATE = prompt_template_source("extensions/cli/current_plan_artifact.md.j2").replace(
+    "{{ plan_artifact_path }}", "{plan_artifact_path}"
+)
 SKILL_CATALOG_PROMPT_TEMPLATE = prompt_template_source("extensions/skills/catalog.md.j2").replace(
     "{{ catalog }}", "{catalog}"
 )
@@ -64,8 +67,24 @@ def build_compression_summary_user_prompt(history: str, previous_summary: Option
     )
 
 
-def build_implement_plan_prompt(plan: str, gigacode_enabled: bool = False) -> str:
-    return render_prompt_template("user_tasks/cli/implement_plan.md.j2", plan=plan, gigacode_enabled=gigacode_enabled)
+def build_implement_plan_prompt(
+    plan: str,
+    gigacode_enabled: bool = False,
+    plan_artifact_path: Optional[str | Path] = None,
+) -> str:
+    return render_prompt_template(
+        "user_tasks/cli/implement_plan.md.j2",
+        plan=plan,
+        gigacode_enabled=gigacode_enabled,
+        plan_artifact_path=str(plan_artifact_path) if plan_artifact_path else "",
+    )
+
+
+def build_current_plan_artifact_prompt(plan_artifact_path: str | Path) -> str:
+    return render_prompt_template(
+        "extensions/cli/current_plan_artifact.md.j2",
+        plan_artifact_path=str(plan_artifact_path),
+    )
 
 
 def build_init_agents_prompt(arguments: str) -> str:

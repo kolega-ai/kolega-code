@@ -11,6 +11,7 @@ def test_static_prompt_templates_load() -> None:
     assert "analyzing shell command output" in prompts.SHELL_COMPRESSION_SYSTEM_PROMPT
     assert "get_task_list" in prompts.SHARED_TASK_LIST_PROMPT
     assert "ask_user_choice" in prompts.PLANNING_QUESTION_PROMPT
+    assert "read-only" in prompts.CURRENT_PLAN_ARTIFACT_PROMPT_TEMPLATE
 
 
 def test_compression_summary_user_prompt_renders_history() -> None:
@@ -27,6 +28,28 @@ def test_implement_plan_prompt_renders_plan() -> None:
     assert "Implement the approved plan below." in rendered
     assert "- [ ] update docs" in rendered
     assert "{plan}" in prompts.IMPLEMENT_PLAN_PROMPT_TEMPLATE
+
+
+def test_implement_plan_prompt_renders_plan_artifact_path_when_provided() -> None:
+    rendered = prompts.build_implement_plan_prompt(
+        "- [ ] update docs",
+        plan_artifact_path="/tmp/kolega/plans/session/current-plan.md",
+    )
+
+    assert "/tmp/kolega/plans/session/current-plan.md" in rendered
+    assert "conversation is compacted" in rendered
+    assert "read_entire_file" in rendered
+    assert "read-only" in rendered
+    assert "- [ ] update docs" in rendered
+
+
+def test_current_plan_artifact_prompt_renders_path() -> None:
+    rendered = prompts.build_current_plan_artifact_prompt("/tmp/kolega/plans/session/current-plan.md")
+
+    assert "/tmp/kolega/plans/session/current-plan.md" in rendered
+    assert "read_entire_file" in rendered
+    assert "read_file_section" in rendered
+    assert "read-only" in rendered
 
 
 def test_implement_plan_prompt_omits_gigacode_nudge_by_default() -> None:

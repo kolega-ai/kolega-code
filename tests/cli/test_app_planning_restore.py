@@ -20,6 +20,7 @@ from kolega_code.llm.models import Message, TextBlock, ToolCall, ToolResult
 from kolega_code.events import AgentEvent
 from kolega_code.agent.prompt_provider import AgentMode
 from kolega_code.cli.config import build_agent_config, config_summary
+from kolega_code.cli.plan_artifacts import current_plan_artifact_path
 from kolega_code.cli.provider_registry import (
     DEEPSEEK_DEFAULT_MODEL,
     MOONSHOT_K26_MODEL,
@@ -153,6 +154,8 @@ async def test_textual_app_restores_saved_plan_in_build_mode_without_plan_action
     session.plan_pending = True
     session.interaction_mode = "build"
     store.save(session)
+    plan_artifact = current_plan_artifact_path(store.root, session.session_id)
+    assert not plan_artifact.exists()
 
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
 
@@ -161,6 +164,10 @@ async def test_textual_app_restores_saved_plan_in_build_mode_without_plan_action
         assert isinstance(app.agent, FakeCoderAgent)
         assert app._latest_plan == saved_plan
         assert app.query_one("#planning_plan_markdown", PlanningMarkdown).source == saved_plan
+        assert plan_artifact.read_text(encoding="utf-8") == saved_plan + "\n"
+        artifact_extension = extension_by_name(app.agent.kwargs["prompt_extensions"], "cli-current-plan-artifact")
+        assert str(plan_artifact) in artifact_extension.markdown
+        assert artifact_extension.propagate_to_sub_agents is True
         # Even with a pending plan, the action stays hidden outside plan mode.
         assert app.query_one("#plan_actions").display is False
 
