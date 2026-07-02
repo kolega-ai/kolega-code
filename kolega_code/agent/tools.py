@@ -242,12 +242,17 @@ class ToolCollection(LogMixin):
         self.read_only = tool_config.read_only
         self.browser_only = tool_config.browser_only
 
-        # Build tool exclusions list from config
+        # Build tool exclusions list from config. These are internal
+        # management/logging APIs, not model-facing tools.
         self.tool_exclusions = [
             "read_memory",
             "write_memory",
             "execute_terminal_command",
             "get_tool_list",
+            "registry",
+            "has_tool",
+            "call",
+            "cleanup",
             "log_error",
             "log_warning",
             "log_info",
