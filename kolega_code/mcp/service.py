@@ -8,6 +8,7 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
+from urllib.parse import urlsplit
 
 from kolega_code.llm.models import ImageBlock, TextBlock
 from kolega_code.tools import ToolError
@@ -19,6 +20,66 @@ from .transport import open_mcp_session
 
 MCP_TOOL_PREFIX = "mcp__"
 MCP_TOOL_SEPARATOR = "__"
+
+MCP_FAILURE_MESSAGE_GENERIC = "Verification failed. Check the MCP server configuration and try again."
+MCP_FAILURE_MESSAGE_GITHUB_COPILOT_OAUTH = (
+    "GitHub remote MCP OAuth failed: this endpoint does not support generic MCP dynamic client registration. "
+    "Use a PAT Authorization header for this endpoint, or a client with GitHub-provided OAuth support."
+)
+MCP_FAILURE_MESSAGE_OAUTH_REGISTRATION = (
+    "OAuth dynamic client registration failed. This server may require a pre-registered OAuth client or "
+    "bearer-token header."
+)
+MCP_FAILURE_MESSAGE_OAUTH_UNAUTHORIZED = (
+    "MCP OAuth authorization failed. Check the server credentials or bearer-token header."
+)
+MCP_FAILURE_MESSAGE_UNAUTHORIZED = (
+    "MCP authentication failed. Check the configured credentials or Authorization header."
+)
+MCP_FAILURE_MESSAGE_NOT_FOUND = "MCP server endpoint was not found. Check the configured URL."
+MCP_FAILURE_MESSAGE_TIMEOUT = "MCP server verification timed out. Check the server URL and network connectivity."
+MCP_FAILURE_MESSAGE_CONNECTION = (
+    "Could not connect to the MCP server. Check the command, URL, and network connectivity."
+)
+MCP_FAILURE_MESSAGE_COMMAND = "Could not start the MCP server command. Check the configured command and arguments."
+MCP_FAILURE_MESSAGE_PERMISSION = "Permission denied while starting or contacting the MCP server."
+
+_SAFE_FAILED_STATUS_MESSAGES = (
+    MCP_FAILURE_MESSAGE_GENERIC,
+    MCP_FAILURE_MESSAGE_GITHUB_COPILOT_OAUTH,
+    MCP_FAILURE_MESSAGE_OAUTH_REGISTRATION,
+    MCP_FAILURE_MESSAGE_OAUTH_UNAUTHORIZED,
+    MCP_FAILURE_MESSAGE_UNAUTHORIZED,
+    MCP_FAILURE_MESSAGE_NOT_FOUND,
+    MCP_FAILURE_MESSAGE_TIMEOUT,
+    MCP_FAILURE_MESSAGE_CONNECTION,
+    MCP_FAILURE_MESSAGE_COMMAND,
+    MCP_FAILURE_MESSAGE_PERMISSION,
+)
+_UNAUTHORIZED_MARKERS = ("unauthorized", "401", "forbidden", "403", "invalid token", "invalid_token")
+_NOT_FOUND_MARKERS = ("404", "not found")
+_TIMEOUT_MARKERS = ("timeout", "timed out", "readtimeout", "connecttimeout")
+_COMMAND_FAILURE_MARKERS = (
+    "command not found",
+    "executable file not found",
+    "no such file or directory",
+    "filenotfounderror",
+)
+_CONNECTION_FAILURE_MARKERS = (
+    "connection refused",
+    "connection reset",
+    "connection aborted",
+    "connecterror",
+    "connect error",
+    "clientconnectorerror",
+    "network is unreachable",
+    "nodename nor servname",
+    "name or service not known",
+    "gaierror",
+    "could not connect",
+    "connect call failed",
+)
+_PERMISSION_MARKERS = ("permission denied", "permissionerror")
 
 
 @dataclass(frozen=True)
@@ -82,13 +143,56 @@ def _suppress_mcp_sdk_terminal_logs():
 
 
 def _mcp_failure_message(server: MCPServerConfig, exc: BaseException) -> str:
+    """Return a fixed, credential-safe status message for a caught MCP failure."""
+    return _safe_mcp_failure_message(server, _exception_text_for_matching(exc))
+
+
+def _exception_text_for_matching(exc: BaseException) -> str:
     messages = _dedupe_messages(_leaf_exception_messages(exc))
     if not messages:
         messages = [_single_exception_message(exc)]
-    message = "; ".join(messages[:3])
-    if len(messages) > 3:
-        message = f"{message}; ... ({len(messages) - 3} more)"
-    return _add_known_mcp_failure_hint(server, message)
+    return " ".join(messages).lower()
+
+
+def _safe_mcp_failure_message(server: MCPServerConfig, lower_message: str) -> str:
+    if server.oauth.enabled and _contains_any(lower_message, ("registration failed", "dynamic client")):
+        if _is_github_copilot_api_url(server.url):
+            return MCP_FAILURE_MESSAGE_GITHUB_COPILOT_OAUTH
+        return MCP_FAILURE_MESSAGE_OAUTH_REGISTRATION
+    if _contains_any(lower_message, _UNAUTHORIZED_MARKERS):
+        return MCP_FAILURE_MESSAGE_OAUTH_UNAUTHORIZED if server.oauth.enabled else MCP_FAILURE_MESSAGE_UNAUTHORIZED
+    if _contains_any(lower_message, _NOT_FOUND_MARKERS):
+        return MCP_FAILURE_MESSAGE_NOT_FOUND
+    if _contains_any(lower_message, _TIMEOUT_MARKERS):
+        return MCP_FAILURE_MESSAGE_TIMEOUT
+    if _contains_any(lower_message, _COMMAND_FAILURE_MARKERS):
+        return MCP_FAILURE_MESSAGE_COMMAND
+    if _contains_any(lower_message, _PERMISSION_MARKERS):
+        return MCP_FAILURE_MESSAGE_PERMISSION
+    if _contains_any(lower_message, _CONNECTION_FAILURE_MARKERS):
+        return MCP_FAILURE_MESSAGE_CONNECTION
+    return MCP_FAILURE_MESSAGE_GENERIC
+
+
+def _safe_failed_status_message(message: str) -> str:
+    for safe_message in _SAFE_FAILED_STATUS_MESSAGES:
+        if message == safe_message:
+            return safe_message
+    return MCP_FAILURE_MESSAGE_GENERIC
+
+
+def _contains_any(text: str, needles: tuple[str, ...]) -> bool:
+    return any(needle in text for needle in needles)
+
+
+def _is_github_copilot_api_url(url: Optional[str]) -> bool:
+    if not url:
+        return False
+    try:
+        hostname = urlsplit(url).hostname
+    except ValueError:
+        return False
+    return bool(hostname and hostname.rstrip(".").lower() == "api.githubcopilot.com")
 
 
 def _leaf_exception_messages(exc: BaseException, seen: Optional[set[int]] = None) -> list[str]:
@@ -133,25 +237,16 @@ def _dedupe_messages(messages: list[str]) -> list[str]:
     return unique
 
 
-def _add_known_mcp_failure_hint(server: MCPServerConfig, message: str) -> str:
-    if not server.oauth.enabled:
-        return message
-
-    lower = message.lower()
-    url = (server.url or "").lower()
-    if "registration failed" in lower:
-        if "api.githubcopilot.com" in url:
-            return (
-                "GitHub remote MCP OAuth failed: GitHub's endpoint does not support generic MCP dynamic client "
-                "registration. Use a PAT Authorization header for this endpoint, or a client with GitHub-provided "
-                f"OAuth support. Underlying error: {message}"
-            )
-        if "404" in lower:
-            return (
-                "OAuth dynamic client registration failed (404). This server likely requires a pre-registered "
-                f"OAuth client or bearer-token header. Underlying error: {message}"
-            )
-    return message
+def _status_row_message(status: Optional[MCPServerStatus], *, verified: bool, stale: bool) -> str:
+    if status is None:
+        return "Not verified."
+    if stale:
+        return "Configuration changed since last verification. Verify again."
+    if verified:
+        return f"Verified {status.tool_count} tool(s)."
+    if status.status == "failed":
+        return _safe_failed_status_message(status.message)
+    return "Not verified."
 
 
 class MCPService:
@@ -202,7 +297,7 @@ class MCPService:
                     if verified
                     else ("stale" if stale else (status.status if status else "unverified")),
                     "tool_count": status.tool_count if verified and status else 0,
-                    "message": status.message if status else "Not verified.",
+                    "message": _status_row_message(status, verified=verified, stale=stale),
                 }
             )
         return rows

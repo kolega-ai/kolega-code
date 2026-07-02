@@ -25,6 +25,29 @@ def write_private_text(path: Path, content: str, *, encoding: str = "utf-8") -> 
     _chmod(path, PRIVATE_FILE_MODE)
 
 
+def write_private_secret_text(path: Path, content: str, *, encoding: str = "utf-8") -> None:
+    """Atomically write deliberate local credential state to an owner-only file.
+
+    This mirrors the existing private-file provider API key model: data is kept
+    local with POSIX owner-only permissions where supported, but it is not
+    encrypted beyond filesystem/OS protections.
+    """
+    ensure_private_dir(path.parent)
+    temp = path.with_suffix(path.suffix + ".tmp")
+    fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, PRIVATE_FILE_MODE)
+    try:
+        # Intentional credential persistence for local OAuth state. Keep this
+        # suppression at the credential-specific sink so generic private writes
+        # continue to be analyzed normally.
+        # codeql[py/clear-text-storage-sensitive-data]
+        os.write(fd, content.encode(encoding))
+    finally:
+        os.close(fd)
+    _chmod(temp, PRIVATE_FILE_MODE)
+    temp.replace(path)
+    _chmod(path, PRIVATE_FILE_MODE)
+
+
 def ensure_private_file(path: Path) -> None:
     """Best-effort chmod for an existing local state file."""
     _chmod(path, PRIVATE_FILE_MODE)

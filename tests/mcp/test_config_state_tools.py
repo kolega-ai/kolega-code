@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -81,7 +82,8 @@ def test_server_fingerprint_ignores_enabled_and_source_but_not_connection_detail
 
 
 def test_status_and_oauth_token_stores_round_trip_and_redact(tmp_path: Path) -> None:
-    status_store = MCPStatusStore(tmp_path)
+    state_dir = tmp_path / "state"
+    status_store = MCPStatusStore(state_dir)
     status = MCPServerStatus.verified(
         fingerprint="fp",
         transport="streamable_http",
@@ -97,10 +99,16 @@ def test_status_and_oauth_token_stores_round_trip_and_redact(tmp_path: Path) -> 
     assert loaded.tool_count == 1
     assert loaded.tools[0].id == "search"
 
-    token_store = MCPOAuthTokenStore(tmp_path)
+    token_store = MCPOAuthTokenStore(state_dir)
     token_store.set_tokens("docs", {"access_token": "access", "refresh_token": "refresh", "id_token": "id"})
     token_store.set_client_info("docs", {"client_id": "client", "client_secret": "client-secret"})
     assert token_store.secret_values() == ["access", "refresh", "id", "client-secret"]
+    assert not token_store.path.with_suffix(token_store.path.suffix + ".tmp").exists()
+
+    if os.name == "posix":
+        assert (state_dir.stat().st_mode & 0o777) == 0o700
+        assert (status_store.path.stat().st_mode & 0o777) == 0o600
+        assert (token_store.path.stat().st_mode & 0o777) == 0o600
 
     token_store.clear("docs")
     status_store.clear("docs")

@@ -9,7 +9,7 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
-from kolega_code.local_state import write_private_text
+from kolega_code.local_state import write_private_secret_text, write_private_text
 
 MCP_STATUS_SCHEMA_VERSION = 1
 MCP_STATUS_FILENAME = "mcp_server_status.json"
@@ -170,7 +170,7 @@ class MCPOAuthTokenStore:
 
     def save(self, data: MCPOAuthTokenFile) -> None:
         payload = json.dumps(data.model_dump(mode="json"), indent=2, sort_keys=True)
-        write_private_text(self.path, payload + "\n")
+        write_private_secret_text(self.path, payload + "\n")
 
     def get(self, server_id: str) -> MCPOAuthServerTokens:
         return self.load().servers.get(server_id, MCPOAuthServerTokens())

@@ -112,7 +112,7 @@ Run verification to start the OAuth flow:
 kolega-code mcp verify oauth-server --project .
 ```
 
-Use `--no-browser` to print the authorization URL instead of opening a browser. Tokens and dynamic client registration data are stored locally in `<state_dir>/mcp_oauth_tokens.json` with private file permissions and are redacted from diagnostics.
+Use `--no-browser` to print the authorization URL instead of opening a browser. Tokens and dynamic client registration data are stored locally in `<state_dir>/mcp_oauth_tokens.json`. Kolega Code writes this file with owner-only permissions where the platform supports POSIX modes, redacts those values from diagnostics, and does not encrypt the file beyond the protection provided by the OS and filesystem permissions.
 
 ## CLI management
 

@@ -9,9 +9,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from kolega_code.mcp.config import LoadedMCPConfig, MCPOAuthConfig, MCPServerConfig
-from kolega_code.mcp.service import MCPService
-from kolega_code.mcp.state import MCPOAuthTokenStore
+from kolega_code.mcp.config import LoadedMCPConfig, MCPOAuthConfig, MCPServerConfig, server_fingerprint
+from kolega_code.mcp.service import MCPService, MCP_FAILURE_MESSAGE_GENERIC, _is_github_copilot_api_url
+from kolega_code.mcp.state import MCPServerStatus, MCPOAuthTokenStore
 from kolega_code.mcp.transport import open_mcp_session
 
 
@@ -70,6 +70,15 @@ def _install_fake_stdio_session(monkeypatch: pytest.MonkeyPatch) -> list[object]
 
 def _stdio_server() -> MCPServerConfig:
     return MCPServerConfig(id="local-filesystem", transport="stdio", command="fake-mcp-server")
+
+
+def test_github_copilot_api_url_matches_hostname_only() -> None:
+    assert _is_github_copilot_api_url("https://api.githubcopilot.com/mcp/")
+    assert _is_github_copilot_api_url("https://api.githubcopilot.com./mcp/")
+    assert not _is_github_copilot_api_url("https://api.githubcopilot.com.evil.example/mcp/")
+    assert not _is_github_copilot_api_url("https://evil.example/mcp/?next=api.githubcopilot.com")
+    assert not _is_github_copilot_api_url("https://api.githubcopilot.com@evil.example/mcp/")
+    assert not _is_github_copilot_api_url("not a url with api.githubcopilot.com")
 
 
 @pytest.mark.asyncio
@@ -145,7 +154,7 @@ async def test_verify_server_reports_exception_group_leaf_and_suppresses_sdk_log
     @asynccontextmanager
     async def fake_open_mcp_session(*args, **kwargs):
         try:
-            raise RuntimeError("Registration failed: 404 404 page not found")
+            raise RuntimeError("Registration failed: 404 404 page not found password=secret-token")
         except RuntimeError as exc:
             logging.getLogger("mcp.client.auth.oauth2").exception("OAuth flow error")
             raise ExceptionGroup("unhandled errors in a TaskGroup", [exc]) from exc
@@ -169,6 +178,39 @@ async def test_verify_server_reports_exception_group_leaf_and_suppresses_sdk_log
 
     assert result.ok is False
     assert "GitHub remote MCP OAuth failed" in result.message
-    assert "Registration failed: 404 404 page not found" in result.message
+    assert "Registration failed" not in result.message
+    assert "secret-token" not in result.message
     assert "TaskGroup" not in result.message
+    assert service.list_status_rows()[0]["message"] == result.message
+    assert "secret-token" not in service.list_status_rows()[0]["message"]
     assert "OAuth flow error" not in caplog.text
+
+
+def test_list_status_rows_replaces_legacy_failed_status_messages(tmp_path: Path) -> None:
+    server = MCPServerConfig(
+        id="docs",
+        transport="streamable_http",
+        url="https://docs.example/mcp/",
+        oauth=MCPOAuthConfig(enabled=True),
+    )
+    service = MCPService(
+        LoadedMCPConfig(servers={server.id: server}),
+        state_dir=tmp_path,
+        project_path=tmp_path,
+    )
+    service.status_store.update(
+        server.id,
+        MCPServerStatus.failed(
+            fingerprint=server_fingerprint(server),
+            transport=server.transport,
+            source=server.source,
+            message="RuntimeError: Registration failed with password=legacy-secret",
+            oauth=True,
+        ),
+    )
+
+    rows = service.list_status_rows()
+
+    assert rows[0]["status"] == "failed"
+    assert rows[0]["message"] == MCP_FAILURE_MESSAGE_GENERIC
+    assert "legacy-secret" not in rows[0]["message"]
