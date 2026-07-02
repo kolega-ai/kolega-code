@@ -101,6 +101,7 @@ CLI_AGENT_MODE = AgentMode.CLI.value
 LOG_MAX_LINES = 2_000
 TERMINAL_MAX_LINES = 2_000
 TERMINAL_FLUSH_INTERVAL = 0.04
+SESSION_DIFF_REFRESH_INTERVAL = 1.0
 TERMINAL_IMMEDIATE_FLUSH_CHARS = 64 * 1024
 LOG_FLUSH_INTERVAL = 0.05
 LOG_IMMEDIATE_FLUSH_ITEMS = 100
@@ -193,6 +194,9 @@ class KolegaCodeApp(
         self._session_file_changes: list[tui_state.SessionFileChange] = []
         self._session_diff_tracker: Optional[tui_session_diff.GitSessionDiffTracker] = None
         self._session_diff_files: list[tui_session_diff.SessionDiffFile] = []
+        self._session_diff_dirty = False
+        self._session_diff_refresh_running = False
+        self._session_diff_timer: Optional[Timer] = None
         self._workflow_activities: dict[str, tui_state.WorkflowActivity] = {}
         self._render_pending = False
         self._conversation_anchor_pending = False
@@ -1148,13 +1152,13 @@ class KolegaCodeApp(
         """Open the full-screen git session changes inspector."""
         if not self._changes_available() or self._changes_inspector is not None:
             return
-        self._refresh_session_diff()
         paths = {change.path for change in self._session_diff_files}
         if path is None or path not in paths:
             path = self._default_changes_path() or ""
         screen = tui_changes.ChangesInspectorScreen(self, path)
         self._changes_inspector = screen
         self.push_screen(screen)
+        self._start_session_diff_refresh()
 
     def _initialize_session_diff_tracker(self) -> None:
         """Set up git-only net diff tracking for the Changes inspector."""
@@ -1171,17 +1175,58 @@ class KolegaCodeApp(
     def _changes_available(self) -> bool:
         return self._session_diff_tracker is not None
 
-    def _refresh_session_diff(self) -> None:
-        tracker = self._session_diff_tracker
-        if tracker is None:
-            self._session_diff_files = []
+    def _mark_session_diff_dirty(self) -> None:
+        self._session_diff_dirty = True
+        if self._changes_inspector is None:
+            return
+        self._schedule_session_diff_refresh()
+
+    def _schedule_session_diff_refresh(self) -> None:
+        if self._session_diff_timer is not None or self._session_diff_refresh_running:
             return
         try:
-            event_paths = [change.path for change in self._session_file_changes]
-            self._session_diff_files = tracker.refresh(event_paths=event_paths)
+            self._session_diff_timer = self.set_timer(
+                SESSION_DIFF_REFRESH_INTERVAL,
+                self._session_diff_timer_fired,
+                name="session-diff-refresh",
+            )
         except Exception:
-            self._session_diff_files = []
-        self._invalidate_changes_detail()
+            self._session_diff_timer = None
+
+    def _session_diff_timer_fired(self) -> None:
+        self._session_diff_timer = None
+        if not self._session_diff_dirty or self._changes_inspector is None:
+            return
+        self._start_session_diff_refresh()
+
+    def _start_session_diff_refresh(self) -> None:
+        tracker = self._session_diff_tracker
+        if tracker is None or self._session_diff_refresh_running:
+            return
+        try:
+            self._session_diff_refresh_running = True
+            self.run_worker(self._session_diff_refresh_worker(), name="kolega-session-diff", group="session-diff")
+        except Exception:
+            self._session_diff_refresh_running = False
+
+    async def _session_diff_refresh_worker(self) -> None:
+        try:
+            self._session_diff_dirty = False
+            tracker = self._session_diff_tracker
+            event_paths = [change.path for change in self._session_file_changes]
+            if tracker is None:
+                diffs = []
+            else:
+                try:
+                    diffs = await asyncio.to_thread(tracker.refresh, event_paths)
+                except Exception:
+                    diffs = []
+            self._session_diff_files = diffs
+            self._invalidate_changes_detail()
+        finally:
+            self._session_diff_refresh_running = False
+        if self._session_diff_dirty and self._changes_inspector is not None:
+            self._schedule_session_diff_refresh()
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         if action == "open_changes":
@@ -1741,6 +1786,7 @@ class KolegaCodeApp(
         # file-edit preview and otherwise never cleared, so reset it on thread reset to
         # stop it growing for the life of the process.
         self._session_file_changes = []
+        self._session_diff_dirty = True
         self._stream_entries = {}
         self._tool_entries = {}
         self._tool_stream_buffers = {}

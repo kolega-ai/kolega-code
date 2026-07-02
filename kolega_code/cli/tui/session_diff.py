@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from subprocess import DEVNULL, PIPE, run as subprocess_run
@@ -44,6 +45,9 @@ class GitSessionDiffTracker:
         self.git_root = git_root.resolve()
         self._baseline: dict[str, FileBaseline] = {}
         self._baseline_paths: set[str] = set()
+        self._head_sha: Optional[str] = None
+        self._head_cache: dict[str, FileBaseline] = {}
+        self._diff_cache: dict[str, tuple[Optional[tuple[int, int]], Optional[SessionDiffFile]]] = {}
 
     @classmethod
     def create(cls, project_path: Path) -> "GitSessionDiffTracker | None":
@@ -78,7 +82,18 @@ class GitSessionDiffTracker:
         self._baseline_paths = set(self._baseline)
 
     def refresh(self, event_paths: Iterable[str] = ()) -> list[SessionDiffFile]:
-        """Return current net changes relative to the session-start baseline."""
+        """Return current net changes relative to the session-start baseline.
+
+        Not safe for concurrent calls; the TUI caller serializes refreshes.
+        """
+        head_sha = self._current_head_sha()
+        if head_sha != self._head_sha:
+            self._head_cache.clear()
+            self._diff_cache = {
+                repo_path: cached for repo_path, cached in self._diff_cache.items() if repo_path in self._baseline
+            }
+            self._head_sha = head_sha
+
         candidates = set(self._git_status_paths()) | set(self._baseline_paths)
         candidates.update(self._repo_paths_from_event_paths(event_paths))
 
@@ -86,11 +101,18 @@ class GitSessionDiffTracker:
         for repo_path in sorted(candidates):
             if not self._is_under_project(repo_path):
                 continue
+            sig = self._stat_signature(repo_path)
+            cached = self._diff_cache.get(repo_path)
+            if cached is not None and cached[0] == sig:
+                if cached[1] is not None:
+                    diffs.append(cached[1])
+                continue
             baseline = self._baseline.get(repo_path)
             if baseline is None:
-                baseline = self._head_baseline(repo_path)
+                baseline = self._cached_head_baseline(repo_path)
             current = self._snapshot_repo_path(repo_path)
             diff = self._build_diff(repo_path, baseline, current)
+            self._diff_cache[repo_path] = (sig, diff)
             if diff is not None:
                 diffs.append(diff)
         return diffs
@@ -149,7 +171,37 @@ class GitSessionDiffTracker:
             return FileBaseline(path=repo_path, exists=False)
         return self._baseline_from_bytes(repo_path, completed.stdout, exists=True)
 
+    def _current_head_sha(self) -> str:
+        try:
+            completed = subprocess_run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=str(self.git_root),
+                stdout=PIPE,
+                stderr=DEVNULL,
+                text=True,
+                check=False,
+            )
+        except (OSError, ValueError):
+            return ""
+        if completed.returncode != 0:
+            return ""
+        return completed.stdout.strip()
+
+    def _cached_head_baseline(self, repo_path: str) -> FileBaseline:
+        baseline = self._head_cache.get(repo_path)
+        if baseline is None:
+            baseline = self._head_baseline(repo_path)
+            self._head_cache[repo_path] = baseline
+        return baseline
+
     # ---- path/content helpers ------------------------------------------------
+
+    def _stat_signature(self, repo_path: str) -> Optional[tuple[int, int]]:
+        try:
+            stat = os.stat(self.git_root / repo_path)
+        except OSError:
+            return None
+        return (stat.st_mtime_ns, stat.st_size)
 
     def _snapshot_repo_path(self, repo_path: str) -> FileBaseline:
         abs_path = self.git_root / repo_path

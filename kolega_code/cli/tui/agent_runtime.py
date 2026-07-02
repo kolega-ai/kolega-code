@@ -51,7 +51,7 @@ class AgentRuntimeMixin:
         try:
             await self._consume_agent_stream(stream_factory())
             await self._drain_pending_events()
-            self._refresh_session_diff()
+            self._start_session_diff_refresh()
             self._finalize_sub_agent_activities()
             self._finalize_workflow_activities()
             await self._save_session_history_async()
@@ -63,7 +63,7 @@ class AgentRuntimeMixin:
             self._cancel_pending_question()
             self._cancel_pending_approval()
             await self._drain_pending_events()
-            self._refresh_session_diff()
+            self._start_session_diff_refresh()
             self._finalize_sub_agent_activities()
             self._finalize_workflow_activities()
             await self._save_session_history_async()
@@ -73,7 +73,7 @@ class AgentRuntimeMixin:
             self._cancel_pending_question()
             self._cancel_pending_approval()
             await self._drain_pending_events()
-            self._refresh_session_diff()
+            self._start_session_diff_refresh()
             self._finalize_sub_agent_activities()
             self._finalize_workflow_activities()
             await self._save_session_history_async()
@@ -85,7 +85,7 @@ class AgentRuntimeMixin:
             self._cancel_pending_question()
             self._cancel_pending_approval()
             await self._drain_pending_events()
-            self._refresh_session_diff()
+            self._start_session_diff_refresh()
             self._finalize_sub_agent_activities()
             self._finalize_workflow_activities()
             await self._save_session_history_async()
@@ -330,7 +330,7 @@ class AgentRuntimeMixin:
             if output is None:
                 output = event.content.get("output", "")
             self._queue_terminal_output(str(output))
-            self._refresh_session_diff()
+            self._mark_session_diff_dirty()
         elif event.event_type == "terminal_command":
             command = str(event.content.get("command") or "")
             self._write_terminal_command(command)
@@ -370,7 +370,7 @@ class AgentRuntimeMixin:
                 self._apply_sub_agent_edit_preview(event)
             else:
                 self._apply_edit_preview(event.content)
-            self._refresh_session_diff()
+            self._mark_session_diff_dirty()
         elif event.event_type == "llm_context_update":
             if event.sub_agent_info:
                 self._note_sub_agent_context(event)

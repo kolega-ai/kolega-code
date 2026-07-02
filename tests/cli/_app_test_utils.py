@@ -1,4 +1,5 @@
 # ruff: noqa: F401,F811,E402
+import time
 from pathlib import Path
 
 import pytest
@@ -63,6 +64,16 @@ def renderable_text(renderable) -> str:
     with console.capture() as capture:
         console.print(renderable, soft_wrap=True, end="")
     return capture.get()
+
+
+async def settle_changes_inspector(app, pilot, timeout: float = 5.0) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not app._session_diff_refresh_running and app._session_diff_timer is None:
+            await pilot.pause(0.1)
+            return
+        await pilot.pause(0.01)
+    raise AssertionError("Timed out waiting for changes inspector refresh to settle")
 
 
 def first_text_styles(renderable) -> list[str]:
