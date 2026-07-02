@@ -30,6 +30,7 @@ from kolega_code.mcp.config import (
     load_mcp_config,
     project_mcp_config_path,
     remove_server_config,
+    server_fingerprint,
     set_server_enabled,
     upsert_server_config,
 )
@@ -1064,18 +1065,37 @@ def _print_mcp_list(config, service: MCPService) -> None:
             )
         return
     print("ID\tSOURCE\tTRANSPORT\tENABLED\tOAUTH\tSTATUS\tTOOLS\tMESSAGE")
-    for row in service.list_status_rows():
-        message = _mcp_cli_list_message(row)
+    for server in config.servers.values():
+        status_text, tool_count, message = _mcp_cli_status_parts(server, service)
         print(
-            f"{row['id']}\t{row['source']}\t{row['transport']}\t{row['enabled']}\t{row['oauth']}\t"
-            f"{row['status']}\t{row['tool_count']}\t{message}"
+            f"{server.id}\t{server.source}\t{server.transport}\t{server.enabled}\t{server.oauth.enabled}\t"
+            f"{status_text}\t{tool_count}\t{message}"
         )
 
 
-def _mcp_cli_list_message(row: dict[str, object]) -> str:
-    status = str(row.get("status", "unverified"))
+def _mcp_cli_status_parts(server: MCPServerConfig, service: MCPService) -> tuple[str, int, str]:
+    status = service.server_status(server)
+    current_fingerprint = server_fingerprint(server)
+    verified = bool(status and status.status == "verified" and status.fingerprint == current_fingerprint)
+    stale = bool(status and status.fingerprint and status.fingerprint != current_fingerprint)
+    if verified and status:
+        status_text = "verified"
+        tool_count = status.tool_count
+    elif stale:
+        status_text = "stale"
+        tool_count = 0
+    elif status and status.status == "failed":
+        status_text = "failed"
+        tool_count = 0
+    else:
+        status_text = "unverified"
+        tool_count = 0
+    return status_text, tool_count, _mcp_cli_list_message(status_text, tool_count)
+
+
+def _mcp_cli_list_message(status: str, tool_count: int) -> str:
     if status == "verified":
-        return f"Verified {row.get('tool_count', 0)} tool(s)."
+        return f"Verified {tool_count} tool(s)."
     if status == "stale":
         return "Configuration changed since last verification. Verify again."
     if status == "failed":

@@ -113,6 +113,7 @@ def test_mcp_list_does_not_print_legacy_failed_status_message(tmp_path: Path, ca
 
     assert exit_code == 0
     assert "legacy-secret" not in captured.out
+    assert "docs\tglobal\tstreamable_http\tTrue\tFalse\tfailed\t0" in captured.out
     assert MCP_FAILURE_MESSAGE_GENERIC in captured.out
 
 
