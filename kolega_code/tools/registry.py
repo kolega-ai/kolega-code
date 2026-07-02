@@ -55,9 +55,9 @@ class ToolRegistry:
     def select(self, policy: ToolPolicy) -> "ToolRegistry":
         return ToolRegistry([tool for tool in self if policy.allows(tool.name)])
 
-    async def call(self, name: str, **inputs: Any) -> Any:
+    async def call(self, tool_name: str, /, **inputs: Any) -> Any:
         """Dispatch a tool by name. Raises KeyError for unknown tools."""
-        return await self.get(name).call(**inputs)
+        return await self.get(tool_name).call(**inputs)
 
     def definitions(self) -> List[ToolDefinition]:
         """
