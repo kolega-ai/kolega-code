@@ -7,7 +7,7 @@ from textual.widgets import TextArea
 from kolega_code.events import AgentEvent
 from kolega_code.cli.tui.widgets import ChatComposer
 
-from ._app_test_utils import _build_sub_agent_test_app, _sub_agent_event, renderable_text
+from ._app_test_utils import _build_sub_agent_test_app, _sub_agent_event, renderable_text, settle_changes_inspector
 
 
 def _git(project: Path, *args: str) -> None:
@@ -152,7 +152,7 @@ async def test_changes_inspector_opens_and_renders_git_shell_changes(
         (app.project_path / "src" / "b.py").unlink()
 
         app.action_open_changes()
-        await pilot.pause()
+        await settle_changes_inspector(app, pilot)
 
         assert isinstance(app._changes_inspector, ChangesInspectorScreen)
         screen = app._changes_inspector
@@ -177,7 +177,7 @@ async def test_changes_inspector_header_owns_path_and_counts_body_is_just_diff(
     async with app.run_test() as pilot:
         (app.project_path / "src" / "a.py").write_text("new a\n", encoding="utf-8")
         app.action_open_changes("src/a.py")
-        await pilot.pause()
+        await settle_changes_inspector(app, pilot)
 
         screen = app._changes_inspector
         assert screen is not None
@@ -208,7 +208,7 @@ async def test_git_project_opens_empty_changes_inspector_when_no_changes(
 
     async with app.run_test() as pilot:
         app.action_open_changes()
-        await pilot.pause()
+        await settle_changes_inspector(app, pilot)
 
         screen = app._changes_inspector
         assert screen is not None
@@ -239,7 +239,7 @@ async def test_copy_selected_changes_includes_net_diff_lines(tmp_path: Path, mon
         (app.project_path / "src" / "a.py").write_text("new a\n", encoding="utf-8")
         app._render_event(_file_edit_preview_event("src/a.py", tool_call_id="a1"))
         app.action_open_changes("src/a.py")
-        await pilot.pause()
+        await settle_changes_inspector(app, pilot)
 
         screen = app._changes_inspector
         assert screen is not None
