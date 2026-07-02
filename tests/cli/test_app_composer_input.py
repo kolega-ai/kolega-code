@@ -559,10 +559,8 @@ async def test_textual_app_queues_multiple_active_turn_messages_fifo(
         await pilot.pause()
 
         assert [item.text for item in app._queued_messages] == ["second", "third"]
-        assert [entry.kind for entry in app.conversation_entries if entry.content in {"second", "third"}] == [
-            "queued",
-            "queued",
-        ]
+        assert not [entry for entry in app.conversation_entries if entry.content in {"second", "third"}]
+        assert not [entry for entry in app.conversation_entries if entry.kind == "queued"]
         queued_panel = app.query_one("#queued_messages")
         assert queued_panel.display is True
         queued_text = renderable_text(queued_panel.render())
@@ -655,6 +653,8 @@ async def test_textual_app_queue_clear_command_discards_active_turn_followups(
             composer.load_text(text)
             await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
         assert len(app._queued_messages) == 2
+        assert not [entry for entry in app.conversation_entries if entry.content in {"second", "third"}]
+        assert not [entry for entry in app.conversation_entries if entry.kind == "queued"]
 
         composer.load_text("/queue-clear")
         await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
@@ -737,6 +737,8 @@ async def test_textual_app_cancel_restores_queued_followups_to_composer(
             await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
         assert [item.text for item in app._queued_messages] == ["second", "third"]
         assert app.query_one("#queued_messages").display is True
+        assert not [entry for entry in app.conversation_entries if entry.content in {"second", "third"}]
+        assert not [entry for entry in app.conversation_entries if entry.kind == "queued"]
 
         composer.load_text(draft)
         app.action_cancel_generation()
