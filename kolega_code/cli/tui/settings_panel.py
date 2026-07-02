@@ -55,6 +55,155 @@ MCP_TRANSPORT_OPTIONS = [
     ("stdio command", "stdio"),
 ]
 MCP_ENABLED_OPTIONS = [("Enabled", "true"), ("Disabled", "false")]
+MCP_STATUS_MESSAGE_MAX = 96
+MCP_STATUS_NAME_MAX = 34
+MCP_ATTENTION_STATUSES = {"failed", "stale", "unverified"}
+MCP_TRANSPORT_LABELS = {
+    "streamable_http": "HTTP",
+    "sse": "SSE",
+    "stdio": "stdio",
+}
+
+
+def _mcp_separator() -> str:
+    return f" {theme.g(Glyph.BULLET_SEP)} "
+
+
+def _mcp_transport_label(transport: object) -> str:
+    """Human-friendly transport label for the TUI."""
+    return MCP_TRANSPORT_LABELS.get(str(transport), str(transport))
+
+
+def _mcp_plural(count: int, singular: str, plural: Optional[str] = None) -> str:
+    return f"{count} {singular if count == 1 else (plural or singular + 's')}"
+
+
+def _mcp_ellipsize(value: str, max_chars: int) -> str:
+    value = " ".join(str(value).split())
+    if len(value) <= max_chars:
+        return value
+    if max_chars <= 1:
+        return value[:max_chars]
+    return f"{value[: max_chars - 1]}{theme.g(Glyph.ELLIPSIS)}"
+
+
+def _mcp_server_display_label(row: dict[str, object]) -> str:
+    server_id = str(row.get("id") or "").strip()
+    return str(row.get("name") or server_id).strip() or server_id
+
+
+def _mcp_status_label(row: dict[str, object]) -> tuple[str, str]:
+    """Return the row-level status label and Rich style."""
+    if not bool(row.get("enabled")):
+        return "disabled", Color.MUTED
+
+    status = str(row.get("status") or "unverified")
+    if status == "verified":
+        return "verified", Color.SUCCESS
+    if status == "stale":
+        return "needs re-verify", Color.WARNING
+    if status == "failed":
+        return "verify failed", Color.ERROR
+    if status == "unverified":
+        return "not verified", Color.WARNING
+    return status.replace("_", " "), Color.MUTED
+
+
+def _mcp_status_attention_message(row: dict[str, object]) -> str:
+    if not bool(row.get("enabled")):
+        return ""
+    status = str(row.get("status") or "unverified")
+    if status not in MCP_ATTENTION_STATUSES:
+        return ""
+    if status == "stale":
+        return "Config changed; verify again."
+
+    message = " ".join(str(row.get("message") or "").split())
+    if status == "unverified" and message.rstrip(".") == "Not verified":
+        return ""
+    if not message and status == "failed":
+        message = "Verification failed."
+    return _mcp_ellipsize(message, MCP_STATUS_MESSAGE_MAX) if message else ""
+
+
+def _mcp_status_metadata(row: dict[str, object]) -> list[str]:
+    metadata: list[str] = []
+    if bool(row.get("enabled")) and str(row.get("status") or "") == "verified":
+        try:
+            tool_count = int(row.get("tool_count") or 0)
+        except (TypeError, ValueError):
+            tool_count = 0
+        metadata.append(_mcp_plural(tool_count, "tool"))
+    metadata.append(str(row.get("source") or "unknown"))
+    metadata.append(_mcp_transport_label(row.get("transport") or "unknown"))
+    if bool(row.get("oauth")):
+        metadata.append("oauth")
+    return metadata
+
+
+def _mcp_status_summary(rows: list[dict[str, object]]) -> tuple[str, str]:
+    server_count = len(rows)
+    if server_count == 0:
+        return "No MCP servers configured. Add one below, then Verify.", "info"
+
+    separator = _mcp_separator()
+    enabled_rows = [row for row in rows if bool(row.get("enabled"))]
+    if not enabled_rows:
+        return f"{_mcp_plural(server_count, 'MCP server')} configured{separator}all disabled", "info"
+
+    attention_count = sum(1 for row in enabled_rows if str(row.get("status") or "unverified") != "verified")
+    if attention_count:
+        verb = "needs" if attention_count == 1 else "need"
+        return (
+            f"{_mcp_plural(server_count, 'MCP server')} configured{separator}{attention_count} {verb} verification",
+            "warning",
+        )
+
+    return f"{_mcp_plural(server_count, 'MCP server')} configured{separator}all enabled verified", "ok"
+
+
+def _render_mcp_status_text(diagnostics: list[str], rows: list[dict[str, object]]) -> tuple[Text, str]:
+    """Build the styled MCP status block shown in Settings."""
+    summary, tone = _mcp_status_summary(rows)
+    content = Text(summary)
+
+    for diagnostic in diagnostics:
+        message = " ".join(str(diagnostic).split())
+        if not message:
+            continue
+        content.append("\n  ")
+        content.append(message, style=Color.WARNING)
+
+    if not rows:
+        return content, tone
+
+    display_labels = [_mcp_ellipsize(_mcp_server_display_label(row), MCP_STATUS_NAME_MAX) for row in rows]
+    label_width = max(len(label) for label in display_labels)
+    separator = _mcp_separator()
+
+    for row, display_label in zip(rows, display_labels):
+        content.append("\n  ")
+        content.append(display_label.ljust(label_width))
+        content.append("  ")
+        status_label, status_style = _mcp_status_label(row)
+        content.append(status_label, style=status_style)
+        for item in _mcp_status_metadata(row):
+            content.append(separator)
+            content.append(item)
+        message = _mcp_status_attention_message(row)
+        if message:
+            content.append(" — ")
+            content.append(message, style=Color.MUTED)
+
+    return content, tone
+
+
+def _mcp_server_select_label(server: MCPServerConfig) -> str:
+    state = "enabled" if server.enabled else "disabled"
+    separator = _mcp_separator()
+    return (
+        f"{server.display_name} — {server.source}{separator}{_mcp_transport_label(server.transport)}{separator}{state}"
+    )
 
 
 class SettingsPanelMixin:
@@ -306,8 +455,7 @@ class SettingsPanelMixin:
         self._update_mcp_status_text(config)
 
     def _mcp_server_option_label(self, server: MCPServerConfig) -> str:
-        enabled = "on" if server.enabled else "off"
-        return f"{server.id} ({server.source}, {server.transport}, {enabled})"
+        return _mcp_server_select_label(server)
 
     def _populate_mcp_server_form(self, server_id: str) -> None:
         self._mcp_selected_server_id = server_id
@@ -402,27 +550,11 @@ class SettingsPanelMixin:
             self._set_mcp_status(f"MCP config could not be loaded: {exc}", tone="error")
             return
 
-        lines: list[str] = list(config.diagnostics)
-
         rows = MCPService(config, self.settings_store.root, self.project_path).list_status_rows()
-        if not rows:
-            lines.append("No MCP servers configured.")
-        else:
-            for row in rows:
-                status = row["status"]
-                icon = "✓" if status == "verified" else ("!" if status in {"failed", "stale"} else "•")
-                state = "enabled" if row["enabled"] else "disabled"
-                oauth = ", oauth" if row["oauth"] else ""
-                lines.append(
-                    f"{icon} {row['id']} [{row['source']}/{row['transport']}, {state}{oauth}] "
-                    f"{status}; tools={row['tool_count']}; {row['message']}"
-                )
-        self._set_mcp_status(
-            "\n".join(lines),
-            tone="ok" if rows and all(r["status"] == "verified" for r in rows if r["enabled"]) else "info",
-        )
+        content, tone = _render_mcp_status_text(list(config.diagnostics), rows)
+        self._set_mcp_status(content, tone=tone)
 
-    def _set_mcp_status(self, text: str, tone: str = "info") -> None:
+    def _set_mcp_status(self, text: str | Text, tone: str = "info") -> None:
         glyph, style = {
             "ok": (Glyph.CHECK, Color.SUCCESS),
             "error": (Glyph.CROSS, Color.ERROR),
@@ -430,7 +562,10 @@ class SettingsPanelMixin:
         }.get(tone, (Glyph.STATUS, Color.MUTED))
         content = Text()
         content.append(theme.g(glyph) + " ", style=style)
-        content.append(text)
+        if isinstance(text, Text):
+            content.append_text(text)
+        else:
+            content.append(text)
         try:
             self.query_one("#mcp_status", Static).update(content)
         except NoMatches:
