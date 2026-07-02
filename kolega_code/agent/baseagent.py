@@ -679,11 +679,7 @@ class BaseAgent(LogMixin):
 
         if usage_percentage >= 60:
             alert_level = "info"
-            message = (
-                "Longer threads consume more credits. "
-                f"Contents will be compressed automatically at {self.history_compression_threshold * 100:.0f}%. "
-                'You can start fresh by clicking "New Thread" in the sidebar.'
-            )
+            message = f"Contents will be compressed automatically at {self.history_compression_threshold * 100:.0f}%."
 
         await self.emitter.context_update(
             input_tokens=token_count.input_tokens,
