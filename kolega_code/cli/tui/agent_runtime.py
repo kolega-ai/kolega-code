@@ -8,6 +8,7 @@ from kolega_code.agent import AgentConfig, AgentEvent, CoderAgent, PlanningAgent
 from kolega_code.agent.prompt_provider import AgentMode
 from kolega_code.hooks import HookDispatcher, HookEvent, load_hook_config, project_hooks_present
 from kolega_code.llm.exceptions import LLMError, llm_error_message
+from kolega_code.mcp.tools import build_mcp_tool_extension
 from kolega_code.services.browser import PlaywrightBrowserManager
 
 from .. import messages
@@ -465,6 +466,19 @@ class AgentRuntimeMixin:
         if self.interaction_mode == tui_constants.PLAN_INTERACTION_MODE:
             prompt_extensions.append(self._planning_question_prompt_extension())
             tool_extensions.append(self._planning_question_tool_extension())
+
+        mcp_config = getattr(config, "mcp_config", None)
+        if mcp_config is not None:
+            for diagnostic in getattr(mcp_config, "diagnostics", []) or []:
+                self._log_status(f"mcp: {diagnostic}", level="warn")
+            mcp_extension = build_mcp_tool_extension(
+                self.project_path,
+                self.settings_store.root,
+                project_trusted=self.settings.is_mcp_project_trusted(self.project_path),
+                loaded_config=mcp_config,
+            )
+            if mcp_extension is not None:
+                tool_extensions.append(mcp_extension)
 
         # gigacode applies to any top-level agent and is carried across rebuilds.
         # In plan mode the orchestrating agent is read-only, so its workflow

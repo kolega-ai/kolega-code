@@ -166,12 +166,28 @@ ToolEntryWidget .tool-body {
     margin-top: 1;
 }
 
+#mcp_status {
+    height: auto;
+    margin-bottom: 1;
+}
+
 #settings_form Label {
     margin-top: 1;
 }
 
 #settings_form Button {
     margin-top: 1;
+}
+
+.settings-button-row {
+    height: auto;
+    min-height: 4;
+    margin-top: 1;
+}
+
+.settings-button-row Button {
+    margin-top: 0;
+    width: 1fr;
 }
 
 .settings-hint {

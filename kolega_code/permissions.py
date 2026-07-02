@@ -22,6 +22,7 @@ class PermissionMode(str, Enum):
 class PermissionKind(str, Enum):
     COMMAND = "command"
     EDIT = "edit"
+    MCP = "mcp"
 
 
 class PermissionStoreError(RuntimeError):
@@ -55,11 +56,15 @@ class PermissionRequest:
     inputs: dict[str, Any]
     command: str = ""
     path: str = ""
+    mcp_server: str = ""
+    mcp_tool: str = ""
 
     @property
     def summary(self) -> str:
         if self.kind == PermissionKind.COMMAND:
             return self.command
+        if self.kind == PermissionKind.MCP:
+            return f"{self.mcp_server}/{self.mcp_tool}" if self.mcp_server else self.tool_name
         if self.path:
             return f"{self.tool_name} {self.path}"
         return self.tool_name
@@ -119,6 +124,8 @@ class PermissionRule:
 
         if self.kind == PermissionKind.COMMAND:
             return _matches_command(self.match_type, self.pattern, request.command)
+        if self.kind == PermissionKind.MCP:
+            return _matches_mcp(self, request)
 
         return _matches_edit(self, request)
 
@@ -210,12 +217,25 @@ def permission_request_for_tool(tool_name: str, inputs: dict[str, Any]) -> Optio
             path=path,
         )
 
+    mcp_target = _mcp_target_from_tool_name(tool_name)
+    if mcp_target is not None:
+        server_id, mcp_tool = mcp_target
+        return PermissionRequest(
+            kind=PermissionKind.MCP,
+            tool_name=tool_name,
+            inputs=inputs,
+            mcp_server=server_id,
+            mcp_tool=mcp_tool,
+        )
+
     return None
 
 
 def allow_rule_options(request: PermissionRequest) -> list[PermissionRuleOption]:
     if request.kind == PermissionKind.COMMAND:
         return _command_rule_options(request)
+    if request.kind == PermissionKind.MCP:
+        return _mcp_rule_options(request)
     return _edit_rule_options(request)
 
 
@@ -251,6 +271,30 @@ def _matches_edit(rule: PermissionRule, request: PermissionRequest) -> bool:
     if rule.match_type == "path":
         return bool(request.path) and request.path == rule.pattern
     return False
+
+
+def _matches_mcp(rule: PermissionRule, request: PermissionRequest) -> bool:
+    if rule.match_type == "tool":
+        # MCP tool rules are exact exposed-tool rules (`mcp__server__tool`).
+        # Whole-server allows are represented separately by match_type="server".
+        return rule.pattern in {"*", request.tool_name}
+    if rule.match_type == "server":
+        return bool(request.mcp_server) and request.mcp_server == rule.pattern
+    return False
+
+
+def _mcp_target_from_tool_name(tool_name: str) -> Optional[tuple[str, str]]:
+    prefix = "mcp__"
+    separator = "__"
+    if not tool_name.startswith(prefix):
+        return None
+    rest = tool_name[len(prefix) :]
+    if separator not in rest:
+        return None
+    server_id, mcp_tool = rest.split(separator, 1)
+    if not server_id or not mcp_tool:
+        return None
+    return server_id, mcp_tool
 
 
 def _path_from_edit_inputs(inputs: dict[str, Any]) -> str:
@@ -338,6 +382,35 @@ def _edit_rule_options(request: PermissionRequest) -> list[PermissionRuleOption]
         )
     )
     return options
+
+
+def _mcp_rule_options(request: PermissionRequest) -> list[PermissionRuleOption]:
+    options = [
+        PermissionRuleOption(
+            label=f"Always allow MCP tool `{request.tool_name}`",
+            description="Allow this exact MCP tool.",
+            rule=PermissionRule.create(
+                kind=PermissionKind.MCP,
+                tool=request.tool_name,
+                match_type="tool",
+                pattern=request.tool_name,
+            ),
+        )
+    ]
+    if request.mcp_server:
+        options.append(
+            PermissionRuleOption(
+                label=f"Always allow MCP server `{request.mcp_server}`",
+                description="Allow all verified MCP tools from this server.",
+                rule=PermissionRule.create(
+                    kind=PermissionKind.MCP,
+                    tool="*",
+                    match_type="server",
+                    pattern=request.mcp_server,
+                ),
+            )
+        )
+    return _dedupe_options(options)
 
 
 def _shell_tokens(command: str) -> list[str]:

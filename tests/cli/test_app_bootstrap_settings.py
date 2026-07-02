@@ -857,6 +857,57 @@ async def test_save_settings_logs_on_success_without_toast(tmp_path: Path, monke
 
 
 @pytest.mark.asyncio
+async def test_mcp_server_save_auto_generates_id_without_visible_id_field(tmp_path: Path) -> None:
+    pytest.importorskip("textual")
+
+    from textual.css.query import NoMatches
+    from textual.widgets import Input, Select
+
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.mcp.config import global_mcp_config_path
+
+    class NoAgentApp(KolegaCodeApp):
+        CSS_PATH = str(Path(__file__).parents[2] / "kolega_code/cli/tui/styles.tcss")
+
+        async def _ensure_agent_from_settings(self, *args, **kwargs):
+            return None
+
+    project = tmp_path / "project"
+    project.mkdir()
+    state_dir = tmp_path / "state"
+    store = SessionStore(state_dir)
+    settings_store = SettingsStore(state_dir)
+    session = store.create(project, "code", {})
+    app = NoAgentApp(
+        project_path=project,
+        mode="code",
+        store=store,
+        settings_store=settings_store,
+        session=session,
+    )
+
+    async with app.run_test():
+        with pytest.raises(NoMatches):
+            app.query_one("#mcp_server_id_input", Input)
+
+        app.query_one("#mcp_name_input", Input).value = "DeepWiki Docs"
+        app.query_one("#mcp_transport_select", Select).value = "streamable_http"
+        app.query_one("#mcp_url_input", Input).value = "https://mcp.deepwiki.com/mcp"
+
+        await app._save_mcp_server_from_ui()
+
+        assert app.query_one("#mcp_server_select", Select).value == "deepwiki-docs"
+        payload = json.loads(global_mcp_config_path(state_dir).read_text(encoding="utf-8"))
+        assert len(payload["servers"]) == 1
+        server = payload["servers"][0]
+        assert server["id"] == "deepwiki-docs"
+        assert server["name"] == "DeepWiki Docs"
+        assert server["transport"] == "streamable_http"
+        assert server["url"] == "https://mcp.deepwiki.com/mcp"
+        assert server["enabled"] is True
+
+
+@pytest.mark.asyncio
 async def test_agent_models_section_saves_override_and_builds_agent(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
 ) -> None:

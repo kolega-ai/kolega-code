@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import json
+import re
+import shlex
 from typing import Optional
+from urllib.parse import urlparse
 
 from textual.css.query import NoMatches
 from rich.text import Text
@@ -15,6 +19,18 @@ from kolega_code.agent.tool_backend.search_backends import (
     available_backends,
     get_backend_class,
 )
+from kolega_code.mcp.config import (
+    MCPConfigError,
+    MCPOAuthConfig,
+    MCPServerConfig,
+    global_mcp_config_path,
+    load_mcp_config,
+    remove_server_config,
+    set_server_enabled,
+    upsert_server_config,
+)
+from kolega_code.mcp.service import MCPService
+from kolega_code.mcp.state import MCPStatusStore, MCPOAuthTokenStore
 
 from .. import messages, theme
 from ..config import active_model_override_message, key_status
@@ -31,6 +47,163 @@ from ..provider_registry import (
 )
 from ..settings import WEB_SEARCH_KEY_NAMES
 from ..theme import Color, Glyph
+
+MCP_NEW_SERVER_VALUE = "__new_mcp_server__"
+MCP_TRANSPORT_OPTIONS = [
+    ("Streamable HTTP", "streamable_http"),
+    ("Server-Sent Events (legacy/deprecated)", "sse"),
+    ("stdio command", "stdio"),
+]
+MCP_ENABLED_OPTIONS = [("Enabled", "true"), ("Disabled", "false")]
+MCP_STATUS_MESSAGE_MAX = 96
+MCP_STATUS_NAME_MAX = 34
+MCP_ATTENTION_STATUSES = {"failed", "stale", "unverified"}
+MCP_TRANSPORT_LABELS = {
+    "streamable_http": "HTTP",
+    "sse": "SSE",
+    "stdio": "stdio",
+}
+
+
+def _mcp_separator() -> str:
+    return f" {theme.g(Glyph.BULLET_SEP)} "
+
+
+def _mcp_transport_label(transport: object) -> str:
+    """Human-friendly transport label for the TUI."""
+    return MCP_TRANSPORT_LABELS.get(str(transport), str(transport))
+
+
+def _mcp_plural(count: int, singular: str, plural: Optional[str] = None) -> str:
+    return f"{count} {singular if count == 1 else (plural or singular + 's')}"
+
+
+def _mcp_ellipsize(value: str, max_chars: int) -> str:
+    value = " ".join(str(value).split())
+    if len(value) <= max_chars:
+        return value
+    if max_chars <= 1:
+        return value[:max_chars]
+    return f"{value[: max_chars - 1]}{theme.g(Glyph.ELLIPSIS)}"
+
+
+def _mcp_server_display_label(row: dict[str, object]) -> str:
+    server_id = str(row.get("id") or "").strip()
+    return str(row.get("name") or server_id).strip() or server_id
+
+
+def _mcp_status_label(row: dict[str, object]) -> tuple[str, str]:
+    """Return the row-level status label and Rich style."""
+    if not bool(row.get("enabled")):
+        return "disabled", Color.MUTED
+
+    status = str(row.get("status") or "unverified")
+    if status == "verified":
+        return "verified", Color.SUCCESS
+    if status == "stale":
+        return "needs re-verify", Color.WARNING
+    if status == "failed":
+        return "verify failed", Color.ERROR
+    if status == "unverified":
+        return "not verified", Color.WARNING
+    return status.replace("_", " "), Color.MUTED
+
+
+def _mcp_status_attention_message(row: dict[str, object]) -> str:
+    if not bool(row.get("enabled")):
+        return ""
+    status = str(row.get("status") or "unverified")
+    if status not in MCP_ATTENTION_STATUSES:
+        return ""
+    if status == "stale":
+        return "Config changed; verify again."
+
+    message = " ".join(str(row.get("message") or "").split())
+    if status == "unverified" and message.rstrip(".") == "Not verified":
+        return ""
+    if not message and status == "failed":
+        message = "Verification failed."
+    return _mcp_ellipsize(message, MCP_STATUS_MESSAGE_MAX) if message else ""
+
+
+def _mcp_status_metadata(row: dict[str, object]) -> list[str]:
+    metadata: list[str] = []
+    if bool(row.get("enabled")) and str(row.get("status") or "") == "verified":
+        try:
+            tool_count = int(row.get("tool_count") or 0)
+        except (TypeError, ValueError):
+            tool_count = 0
+        metadata.append(_mcp_plural(tool_count, "tool"))
+    metadata.append(str(row.get("source") or "unknown"))
+    metadata.append(_mcp_transport_label(row.get("transport") or "unknown"))
+    if bool(row.get("oauth")):
+        metadata.append("oauth")
+    return metadata
+
+
+def _mcp_status_summary(rows: list[dict[str, object]]) -> tuple[str, str]:
+    server_count = len(rows)
+    if server_count == 0:
+        return "No MCP servers configured. Add one below, then Verify.", "info"
+
+    separator = _mcp_separator()
+    enabled_rows = [row for row in rows if bool(row.get("enabled"))]
+    if not enabled_rows:
+        return f"{_mcp_plural(server_count, 'MCP server')} configured{separator}all disabled", "info"
+
+    attention_count = sum(1 for row in enabled_rows if str(row.get("status") or "unverified") != "verified")
+    if attention_count:
+        verb = "needs" if attention_count == 1 else "need"
+        return (
+            f"{_mcp_plural(server_count, 'MCP server')} configured{separator}{attention_count} {verb} verification",
+            "warning",
+        )
+
+    return f"{_mcp_plural(server_count, 'MCP server')} configured{separator}all enabled verified", "ok"
+
+
+def _render_mcp_status_text(diagnostics: list[str], rows: list[dict[str, object]]) -> tuple[Text, str]:
+    """Build the styled MCP status block shown in Settings."""
+    summary, tone = _mcp_status_summary(rows)
+    content = Text(summary)
+
+    for diagnostic in diagnostics:
+        message = " ".join(str(diagnostic).split())
+        if not message:
+            continue
+        content.append("\n  ")
+        content.append(message, style=Color.WARNING)
+
+    if not rows:
+        return content, tone
+
+    display_labels = [_mcp_ellipsize(_mcp_server_display_label(row), MCP_STATUS_NAME_MAX) for row in rows]
+    label_width = max(len(label) for label in display_labels)
+    separator = _mcp_separator()
+
+    for row, display_label in zip(rows, display_labels):
+        content.append("\n  ")
+        content.append(display_label.ljust(label_width))
+        content.append("  ")
+        status_label, status_style = _mcp_status_label(row)
+        content.append(status_label, style=status_style)
+        for item in _mcp_status_metadata(row):
+            content.append(separator)
+            content.append(item)
+        message = _mcp_status_attention_message(row)
+        if message:
+            content.append(" — ")
+            content.append(message, style=Color.MUTED)
+
+    return content, tone
+
+
+def _mcp_server_select_label(server: MCPServerConfig) -> str:
+    state = "enabled" if server.enabled else "disabled"
+    separator = _mcp_separator()
+    return (
+        f"{server.display_name} — {server.source}{separator}{_mcp_transport_label(server.transport)}{separator}{state}"
+    )
 
 
 class SettingsPanelMixin:
@@ -63,6 +236,14 @@ class SettingsPanelMixin:
 
         if select_id == "web_search_backend_select":
             self._update_search_backend_fields(str(event.value))
+            return
+
+        if select_id == "mcp_server_select":
+            self._populate_mcp_server_form(str(event.value))
+            return
+
+        if select_id == "mcp_transport_select":
+            self._update_mcp_transport_fields(str(event.value))
             return
 
         if select_id.startswith("am_provider_"):
@@ -141,6 +322,7 @@ class SettingsPanelMixin:
         api_key_input.disabled = provider == chatgpt_constants.PROVIDER_KEY
         self._populate_agent_model_rows()
         self._populate_web_search_controls()
+        self._populate_mcp_controls()
         self._update_settings_status()
 
     def _populate_agent_model_rows(self) -> None:
@@ -242,6 +424,398 @@ class SettingsPanelMixin:
             self.settings.set_api_key(backend, key)
         key_input.value = ""
         self._update_search_backend_fields(backend)
+
+    def _load_mcp_config_for_ui(self):
+        """Load MCP config for the settings panel and attach it to the active AgentConfig."""
+        trusted = bool(self.settings.is_mcp_project_trusted(self.project_path))
+        config = load_mcp_config(self.project_path, self.settings_store.root, project_trusted=trusted)
+        if self.config is not None:
+            self.config.mcp_config = config
+        return config
+
+    def _populate_mcp_controls(self) -> None:
+        """Seed the MCP settings controls from global/trusted project config and status."""
+        try:
+            config = self._load_mcp_config_for_ui()
+            server_select = self.query_one("#mcp_server_select", Select)
+        except NoMatches:
+            return
+        except Exception as exc:
+            self._set_mcp_status(f"MCP config could not be loaded: {exc}", tone="error")
+            return
+
+        options = [("New user server", MCP_NEW_SERVER_VALUE)]
+        options.extend((self._mcp_server_option_label(server), server.id) for server in config.servers.values())
+        selected = getattr(self, "_mcp_selected_server_id", MCP_NEW_SERVER_VALUE)
+        if selected not in {value for _, value in options}:
+            selected = MCP_NEW_SERVER_VALUE
+        server_select.set_options(options)
+        server_select.value = selected
+        self._populate_mcp_server_form(selected)
+        self._update_mcp_status_text(config)
+
+    def _mcp_server_option_label(self, server: MCPServerConfig) -> str:
+        return _mcp_server_select_label(server)
+
+    def _populate_mcp_server_form(self, server_id: str) -> None:
+        self._mcp_selected_server_id = server_id
+        try:
+            config = self._load_mcp_config_for_ui()
+        except Exception:
+            config = None
+        server = None if server_id == MCP_NEW_SERVER_VALUE or config is None else config.servers.get(server_id)
+
+        def set_input(widget_id: str, value: str) -> None:
+            try:
+                self.query_one(f"#{widget_id}", Input).value = value
+            except NoMatches:
+                pass
+
+        def set_select(widget_id: str, value: str) -> None:
+            try:
+                select = self.query_one(f"#{widget_id}", Select)
+                if value is not Select.NULL:
+                    select.value = value
+            except NoMatches:
+                pass
+
+        if server is None:
+            set_input("mcp_name_input", "")
+            set_select("mcp_transport_select", "streamable_http")
+            set_select("mcp_enabled_select", "true")
+            set_input("mcp_url_input", "")
+            set_input("mcp_headers_input", "")
+            set_select("mcp_oauth_select", "false")
+            set_input("mcp_command_input", "")
+            set_input("mcp_args_input", "")
+            set_input("mcp_env_input", "")
+            set_input("mcp_cwd_input", "")
+            self._set_mcp_source_hint("Create or update a user MCP server in the global state config.")
+            self._update_mcp_transport_fields("streamable_http")
+            return
+
+        set_input("mcp_name_input", server.name or "")
+        set_select("mcp_transport_select", server.transport)
+        set_select("mcp_enabled_select", "true" if server.enabled else "false")
+        set_input("mcp_url_input", server.url or "")
+        set_input("mcp_headers_input", json.dumps(server.headers, sort_keys=True) if server.headers else "")
+        set_select("mcp_oauth_select", "true" if server.oauth.enabled else "false")
+        set_input("mcp_command_input", server.command or "")
+        set_input("mcp_args_input", " ".join(shlex.quote(arg) for arg in server.args))
+        set_input("mcp_env_input", json.dumps(server.env, sort_keys=True) if server.env else "")
+        set_input("mcp_cwd_input", server.cwd or "")
+        if server.source == "project":
+            self._set_mcp_source_hint(
+                "This server comes from the trusted project config and is read-only here; edit .kolega/mcp_servers.json."
+            )
+        else:
+            self._set_mcp_source_hint("This server is stored in your global MCP config.")
+        self._update_mcp_transport_fields(server.transport)
+
+    def _update_mcp_transport_fields(self, transport: str) -> None:
+        http = transport in {"streamable_http", "sse"}
+        for widget_id, visible in (
+            ("mcp_url_label", http),
+            ("mcp_url_input", http),
+            ("mcp_headers_label", http),
+            ("mcp_headers_input", http),
+            ("mcp_oauth_label", http),
+            ("mcp_oauth_select", http),
+            ("mcp_command_label", not http),
+            ("mcp_command_input", not http),
+            ("mcp_args_label", not http),
+            ("mcp_args_input", not http),
+            ("mcp_env_label", not http),
+            ("mcp_env_input", not http),
+            ("mcp_cwd_label", not http),
+            ("mcp_cwd_input", not http),
+        ):
+            try:
+                self.query_one(f"#{widget_id}").display = visible
+            except NoMatches:
+                pass
+        try:
+            url_input = self.query_one("#mcp_url_input", Input)
+            if transport == "streamable_http":
+                url_input.placeholder = "https://example.com/mcp"
+            elif transport == "sse":
+                url_input.placeholder = "https://example.com/sse"
+        except NoMatches:
+            pass
+
+    def _update_mcp_status_text(self, config=None) -> None:
+        try:
+            config = config or self._load_mcp_config_for_ui()
+        except Exception as exc:
+            self._set_mcp_status(f"MCP config could not be loaded: {exc}", tone="error")
+            return
+
+        rows = MCPService(config, self.settings_store.root, self.project_path).list_status_rows()
+        content, tone = _render_mcp_status_text(list(config.diagnostics), rows)
+        self._set_mcp_status(content, tone=tone)
+
+    def _set_mcp_status(self, text: str | Text, tone: str = "info") -> None:
+        glyph, style = {
+            "ok": (Glyph.CHECK, Color.SUCCESS),
+            "error": (Glyph.CROSS, Color.ERROR),
+            "warning": (Glyph.STATUS, Color.WARNING),
+        }.get(tone, (Glyph.STATUS, Color.MUTED))
+        content = Text()
+        content.append(theme.g(glyph) + " ", style=style)
+        if isinstance(text, Text):
+            content.append_text(text)
+        else:
+            content.append(text)
+        try:
+            self.query_one("#mcp_status", Static).update(content)
+        except NoMatches:
+            return
+
+    def _set_mcp_source_hint(self, text: str) -> None:
+        try:
+            self.query_one("#mcp_source_hint", Static).update(text)
+        except NoMatches:
+            pass
+
+    def _slug_mcp_server_id(self, value: str) -> str:
+        slug = re.sub(r"[^A-Za-z0-9_-]+", "-", value.strip().lower())
+        slug = re.sub(r"-+", "-", slug).strip("-_")
+        return slug[:64].strip("-_")
+
+    def _auto_mcp_server_id(
+        self,
+        *,
+        name: Optional[str],
+        url: Optional[str],
+        command: Optional[str],
+        args: list[str],
+    ) -> str:
+        candidates: list[str] = []
+        if name:
+            candidates.append(name)
+        if url:
+            parsed = urlparse(url)
+            if parsed.hostname:
+                candidates.append(parsed.hostname.removeprefix("www."))
+        if args:
+            transport_args = {"stdio", "sse", "streamableHttp", "streamable_http"}
+            meaningful_args = [arg for arg in args if not arg.startswith("-") and arg not in transport_args]
+            candidates.extend(reversed(meaningful_args))
+        if command:
+            candidates.append(command)
+        candidates.append("mcp-server")
+
+        base = next((slug for candidate in candidates if (slug := self._slug_mcp_server_id(candidate))), "mcp-server")
+        try:
+            config = self._load_mcp_config_for_ui()
+            existing_ids = set(config.servers)
+        except Exception:
+            existing_ids = set()
+        selected = self._selected_mcp_server_id()
+        if selected != MCP_NEW_SERVER_VALUE:
+            existing_ids.discard(selected)
+        if base not in existing_ids:
+            return base
+        suffix = 2
+        while f"{base}-{suffix}" in existing_ids:
+            suffix += 1
+        return f"{base}-{suffix}"
+
+    def _collect_mcp_server_from_ui(self) -> MCPServerConfig:
+        name = self.query_one("#mcp_name_input", Input).value.strip() or None
+        transport = str(self.query_one("#mcp_transport_select", Select).value)
+        enabled = str(self.query_one("#mcp_enabled_select", Select).value) == "true"
+        url = self.query_one("#mcp_url_input", Input).value.strip() or None
+        headers_text = self.query_one("#mcp_headers_input", Input).value.strip()
+        oauth_enabled = str(self.query_one("#mcp_oauth_select", Select).value) == "true"
+        command = self.query_one("#mcp_command_input", Input).value.strip() or None
+        args_text = self.query_one("#mcp_args_input", Input).value.strip()
+        env_text = self.query_one("#mcp_env_input", Input).value.strip()
+        cwd = self.query_one("#mcp_cwd_input", Input).value.strip() or None
+
+        headers = self._parse_mcp_json_object(headers_text, "headers")
+        env = self._parse_mcp_json_object(env_text, "env")
+        try:
+            args = shlex.split(args_text) if args_text else []
+        except ValueError as exc:
+            raise ValueError(f"MCP args must be shell-like tokens: {exc}") from exc
+        selected = self._selected_mcp_server_id()
+        server_id = (
+            self._auto_mcp_server_id(name=name, url=url, command=command, args=args)
+            if selected == MCP_NEW_SERVER_VALUE
+            else selected
+        )
+
+        return MCPServerConfig(
+            id=server_id,
+            name=name,
+            transport=transport,
+            enabled=enabled,
+            url=url,
+            headers=headers,
+            oauth=MCPOAuthConfig(enabled=oauth_enabled),
+            command=command,
+            args=args,
+            env=env,
+            cwd=cwd,
+            source="global",
+        )
+
+    def _parse_mcp_json_object(self, value: str, label: str) -> dict[str, str]:
+        if not value:
+            return {}
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"MCP {label} must be a JSON object: {exc.msg}") from exc
+        if not isinstance(parsed, dict):
+            raise ValueError(f"MCP {label} must be a JSON object")
+        return {str(key): str(item) for key, item in parsed.items() if item is not None}
+
+    async def _handle_mcp_settings_button(self, button_id: str) -> bool:
+        if button_id == "mcp_refresh":
+            self._populate_mcp_controls()
+            return True
+        if button_id == "mcp_trust_project":
+            self.settings.trust_mcp_project(self.project_path)
+            self.settings_store.save(self.settings)
+            self._populate_mcp_controls()
+            await self._ensure_agent_from_settings(rebuild=True)
+            self._notify_user("Trusted project MCP config for this project.")
+            return True
+        if button_id == "mcp_save_server":
+            await self._save_mcp_server_from_ui()
+            return True
+        if button_id == "mcp_delete_server":
+            await self._delete_mcp_server_from_ui()
+            return True
+        if button_id == "mcp_verify_server":
+            await self._verify_mcp_server_from_ui()
+            return True
+        if button_id == "mcp_clear_tokens":
+            self._clear_mcp_tokens_from_ui()
+            return True
+        if button_id in {"mcp_enable_server", "mcp_disable_server"}:
+            await self._set_mcp_enabled_from_ui(enabled=button_id == "mcp_enable_server")
+            return True
+        return False
+
+    def _selected_mcp_server_id(self) -> str:
+        try:
+            value = self.query_one("#mcp_server_select", Select).value
+        except NoMatches:
+            return MCP_NEW_SERVER_VALUE
+        return MCP_NEW_SERVER_VALUE if value is Select.NULL else str(value)
+
+    async def _save_mcp_server_from_ui(self) -> None:
+        selected = self._selected_mcp_server_id()
+        try:
+            server = self._collect_mcp_server_from_ui()
+            config = self._load_mcp_config_for_ui()
+            existing = config.servers.get(selected) if selected != MCP_NEW_SERVER_VALUE else None
+            target_existing = config.servers.get(server.id)
+            if (existing is not None and existing.source == "project") or (
+                target_existing is not None and target_existing.source == "project"
+            ):
+                self._set_mcp_status(
+                    "Project MCP servers are read-only in the TUI; edit .kolega/mcp_servers.json.", "warning"
+                )
+                return
+            path = global_mcp_config_path(self.settings_store.root)
+            if selected != MCP_NEW_SERVER_VALUE and selected != server.id:
+                remove_server_config(path, selected, source="global")
+            upsert_server_config(path, server, source="global")
+        except (MCPConfigError, ValueError) as exc:
+            self._set_mcp_status(str(exc), "error")
+            return
+        self._mcp_selected_server_id = server.id
+        self._populate_mcp_controls()
+        await self._ensure_agent_from_settings(rebuild=True)
+        self._notify_user(f"Saved MCP server '{server.id}'.")
+
+    async def _delete_mcp_server_from_ui(self) -> None:
+        selected = self._selected_mcp_server_id()
+        if selected == MCP_NEW_SERVER_VALUE:
+            self._set_mcp_status("Select a user MCP server to delete.", "warning")
+            return
+        try:
+            config = self._load_mcp_config_for_ui()
+            existing = config.servers.get(selected)
+            if existing is not None and existing.source == "project":
+                self._set_mcp_status(
+                    "Project MCP servers are read-only in the TUI; edit .kolega/mcp_servers.json.", "warning"
+                )
+                return
+            removed = remove_server_config(global_mcp_config_path(self.settings_store.root), selected, source="global")
+            MCPStatusStore(self.settings_store.root).clear(selected)
+            MCPOAuthTokenStore(self.settings_store.root).clear(selected)
+        except MCPConfigError as exc:
+            self._set_mcp_status(str(exc), "error")
+            return
+        if not removed:
+            self._set_mcp_status(f"No user MCP server named '{selected}' was found.", "warning")
+            return
+        self._mcp_selected_server_id = MCP_NEW_SERVER_VALUE
+        self._populate_mcp_controls()
+        await self._ensure_agent_from_settings(rebuild=True)
+        self._notify_user(f"Deleted MCP server '{selected}'.")
+
+    async def _set_mcp_enabled_from_ui(self, *, enabled: bool) -> None:
+        selected = self._selected_mcp_server_id()
+        if selected == MCP_NEW_SERVER_VALUE:
+            self._set_mcp_status("Select a user MCP server first.", "warning")
+            return
+        try:
+            config = self._load_mcp_config_for_ui()
+            existing = config.servers.get(selected)
+            if existing is not None and existing.source == "project":
+                self._set_mcp_status(
+                    "Project MCP servers are read-only in the TUI; edit .kolega/mcp_servers.json.", "warning"
+                )
+                return
+            changed = set_server_enabled(
+                global_mcp_config_path(self.settings_store.root), selected, enabled, source="global"
+            )
+        except MCPConfigError as exc:
+            self._set_mcp_status(str(exc), "error")
+            return
+        if not changed:
+            self._set_mcp_status(f"No user MCP server named '{selected}' was found.", "warning")
+            return
+        self._populate_mcp_controls()
+        await self._ensure_agent_from_settings(rebuild=True)
+        self._notify_user(f"{'Enabled' if enabled else 'Disabled'} MCP server '{selected}'.")
+
+    async def _verify_mcp_server_from_ui(self) -> None:
+        selected = self._selected_mcp_server_id()
+        if selected == MCP_NEW_SERVER_VALUE:
+            self._set_mcp_status("Select a configured MCP server to verify.", "warning")
+            return
+        self._set_mcp_status(
+            f"Verifying MCP server '{selected}'... stdio servers execute their configured command.", "warning"
+        )
+        config = self._load_mcp_config_for_ui()
+        result = await MCPService(config, self.settings_store.root, self.project_path).verify_server(
+            selected,
+            interactive_oauth=True,
+            open_browser=True,
+            output=self.console,
+        )
+        self._populate_mcp_controls()
+        await self._ensure_agent_from_settings(rebuild=True)
+        if result.ok:
+            self._notify_user(f"Verified MCP server '{selected}' ({result.tool_count} tool(s)).")
+        else:
+            self._notify_user(f"MCP verification failed for '{selected}': {result.message}", severity="warning")
+
+    def _clear_mcp_tokens_from_ui(self) -> None:
+        selected = self._selected_mcp_server_id()
+        if selected == MCP_NEW_SERVER_VALUE:
+            self._set_mcp_status("Select an MCP server before clearing tokens.", "warning")
+            return
+        MCPOAuthTokenStore(self.settings_store.root).clear(selected)
+        self._set_mcp_status(f"Cleared stored MCP OAuth tokens for '{selected}'.", "ok")
+        self._notify_user(f"Cleared MCP OAuth tokens for '{selected}'.")
 
     def _set_effort_select_default(
         self, provider: str, model: str, effort_id: str = "thinking_effort_select", *, preferred: Optional[str] = None
