@@ -129,7 +129,11 @@ ToolEntryWidget .tool-body {
     border: none;
     background: $background;
     color: $text;
-    padding: 0;
+    padding: 1 0 1 1;
+}
+
+#status_task_list_markdown {
+    padding: 0 0 1 0;
 }
 
 .status-section,

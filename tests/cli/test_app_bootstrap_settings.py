@@ -211,7 +211,7 @@ async def test_textual_app_status_tab_is_default_dashboard(tmp_path: Path, monke
         dashboard_widget = app.query_one("#status_dashboard", Static)
         dashboard = str(dashboard_widget.render())
 
-        assert "Status" in dashboard
+        assert dashboard.lstrip().startswith("Model")
         assert f"{config.long_context_config.provider.value}/{config.long_context_config.model}" in dashboard
         assert "Build" in dashboard
         assert "Idle" in dashboard
