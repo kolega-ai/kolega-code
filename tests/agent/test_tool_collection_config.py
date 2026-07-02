@@ -12,6 +12,18 @@ from kolega_code.agent.tool_backend.memory_tool import MemoryTool
 from kolega_code.agent.tools import ToolCollection, ToolDefinition, ToolCollectionConfig
 
 
+INTERNAL_TOOL_NAMES = {
+    "registry",
+    "has_tool",
+    "call",
+    "cleanup",
+    "get_tool_list",
+    "log_error",
+    "log_warning",
+    "log_info",
+}
+
+
 @pytest.fixture
 def mock_connection_manager() -> AsyncMock:
     return AsyncMock()
@@ -100,11 +112,12 @@ class TestToolCollection:
                 assert hasattr(param, "description")
                 assert hasattr(param, "required")
 
-        # Check that excluded tools are not in the list
+        # Check that excluded/internal tools are not in the list
         excluded_tools = tool_collection.tool_exclusions
         tool_names = [tool.name for tool in tool_list]
         assert "exec_command" in tool_names
         assert "write_stdin" in tool_names
+        assert INTERNAL_TOOL_NAMES.isdisjoint(tool_names)
         for excluded_tool in excluded_tools:
             assert excluded_tool not in tool_names
 

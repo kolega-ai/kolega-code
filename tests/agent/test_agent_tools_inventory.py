@@ -16,6 +16,13 @@ from kolega_code.agent.planningagent import PlanningAgent
 from kolega_code.agent.prompt_provider import AgentMode, PromptProvider
 
 
+INTERNAL_TOOL_NAMES = {"registry", "has_tool", "call", "cleanup"}
+
+
+def assert_internal_tools_not_exposed(tool_names):
+    assert INTERNAL_TOOL_NAMES.isdisjoint(tool_names)
+
+
 @pytest.fixture
 def mock_connection_manager():
     """Create a mock connection manager."""
@@ -169,6 +176,7 @@ def test_coder_agent_exposes_dispatch_general_agent(project_path, mock_connectio
 
     tool_names = {tool.name for tool in agent.tool_collection.get_tool_list()}
 
+    assert_internal_tools_not_exposed(tool_names)
     assert "dispatch_general_agent" in tool_names
     assert "dispatch_investigation_agent" in tool_names
     assert "dispatch_coding_agent" not in tool_names
@@ -203,6 +211,7 @@ def test_general_agent_tool_inventory(project_path, mock_connection_manager, age
 
     tool_names = {tool.name for tool in agent.tool_collection.get_tool_list()}
 
+    assert_internal_tools_not_exposed(tool_names)
     # Full read/write/terminal access
     assert "read_entire_file" in tool_names
     assert "search_codebase" in tool_names
