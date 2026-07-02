@@ -1480,9 +1480,9 @@ class ToolCollection(LogMixin):
         """True if the named tool is currently enabled."""
         return name in self.registry()
 
-    async def call(self, name: str, **inputs: Any) -> Any:
+    async def call(self, tool_name: str, /, **inputs: Any) -> Any:
         """Dispatch an enabled tool by name."""
-        return await self.registry().call(name, **inputs)
+        return await self.registry().call(tool_name, **inputs)
 
     def get_tool_list(self) -> List[ToolDefinition]:
         """

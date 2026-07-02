@@ -37,6 +37,36 @@ class TestToolRegistry:
         assert await registry.call("read", arg="x") == "contents:x"
 
     @pytest.mark.asyncio
+    async def test_call_allows_tool_input_named_name(self):
+        async def handler(name: str):
+            return f"activated:{name}"
+
+        registry = ToolRegistry().add(
+            Tool(
+                name="activate_skill",
+                definition=ToolDefinition(name="activate_skill", description="Activate a skill", parameters=[]),
+                handler=handler,
+            )
+        )
+
+        assert await registry.call("activate_skill", name="some-skill") == "activated:some-skill"
+
+    @pytest.mark.asyncio
+    async def test_call_allows_tool_input_named_tool_name(self):
+        async def handler(tool_name: str):
+            return f"echo:{tool_name}"
+
+        registry = ToolRegistry().add(
+            Tool(
+                name="echo",
+                definition=ToolDefinition(name="echo", description="Echo a tool_name input", parameters=[]),
+                handler=handler,
+            )
+        )
+
+        assert await registry.call("echo", tool_name="payload") == "echo:payload"
+
+    @pytest.mark.asyncio
     async def test_call_unknown_tool_raises(self):
         with pytest.raises(KeyError):
             await ToolRegistry().call("nope")
@@ -105,3 +135,32 @@ class TestToolCollectionRegistry:
         names_from_list = [d.name for d in collection.get_tool_list()]
         registry_names = [tool.name for tool in collection.registry()]
         assert names_from_list == registry_names
+
+    @pytest.mark.asyncio
+    async def test_collection_call_allows_conflicting_tool_input_names(self, tmp_path):
+        from unittest.mock import Mock
+
+        from kolega_code.agent.tools import ToolCollection, ToolExtension
+
+        async def echo_conflicting_inputs(name: str, tool_name: str):
+            return f"{name}:{tool_name}"
+
+        collection = ToolCollection(
+            tmp_path,
+            "ws",
+            "thread",
+            Mock(),
+            Mock(),
+            Mock(agent_name="test"),
+            tool_extensions=[
+                ToolExtension(
+                    name="test-extension",
+                    tools={"echo_conflicting_inputs": echo_conflicting_inputs},
+                )
+            ],
+        )
+
+        assert (
+            await collection.call("echo_conflicting_inputs", name="some-skill", tool_name="payload")
+            == "some-skill:payload"
+        )
