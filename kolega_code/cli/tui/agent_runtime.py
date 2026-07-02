@@ -6,12 +6,14 @@ import asyncio
 
 from kolega_code.agent import AgentConfig, AgentEvent, CoderAgent, PlanningAgent, PromptExtension, ToolExtension
 from kolega_code.agent.prompt_provider import AgentMode
+from kolega_code.agent.prompts import build_current_plan_artifact_prompt
 from kolega_code.hooks import HookDispatcher, HookEvent, load_hook_config, project_hooks_present
 from kolega_code.llm.exceptions import LLMError, llm_error_message
 from kolega_code.services.browser import PlaywrightBrowserManager
 
 from .. import messages
 from ..config import CliConfigError, build_agent_config, config_summary
+from ..plan_artifacts import write_current_plan_artifact
 from ..skills import build_skill_prompt_extension, build_skill_tool_extension, discover_skills
 from . import constants as tui_constants
 from . import state as tui_state
@@ -424,6 +426,40 @@ class AgentRuntimeMixin:
         self._ensure_startup_entry()
         self._schedule_primary_focus_restore()
 
+    def _ensure_current_plan_artifact(self, plan: str | None = None):
+        """Persist the latest plan to the session artifact path, returning the path if available."""
+        plan_markdown = plan if plan is not None else getattr(self, "_latest_plan", None)
+        if not plan_markdown:
+            return None
+        try:
+            return write_current_plan_artifact(self.store.root, self.session.session_id, plan_markdown)
+        except Exception as exc:  # noqa: BLE001 - artifact persistence is best-effort for continuity
+            try:
+                self._notify_user(
+                    f"Could not persist current plan artifact: {exc}",
+                    severity="warning",
+                )
+            except Exception:
+                pass
+            return None
+
+    def _current_plan_artifact_prompt_extension(self) -> PromptExtension | None:
+        """Return prompt context that points the build agent at the persisted plan artifact."""
+        if self.interaction_mode != tui_constants.BUILD_INTERACTION_MODE or not getattr(self, "_latest_plan", None):
+            return None
+        artifact_path = self._ensure_current_plan_artifact()
+        if artifact_path is None:
+            return None
+        return PromptExtension(
+            id="cli-current-plan-artifact",
+            title="Current Plan Artifact",
+            markdown=build_current_plan_artifact_prompt(artifact_path),
+            modes=[AgentMode.CLI],
+            # Read-only continuity context is safe and useful for delegated agents,
+            # especially if their own histories compact while implementing the plan.
+            propagate_to_sub_agents=True,
+        )
+
     async def _build_agent(
         self,
         config: AgentConfig,
@@ -453,6 +489,9 @@ class AgentRuntimeMixin:
         if self.interaction_mode == tui_constants.BUILD_INTERACTION_MODE:
             prompt_extensions.append(self._shared_task_list_prompt_extension())
             tool_extensions.append(self._shared_task_list_tool_extension())
+            plan_artifact_extension = self._current_plan_artifact_prompt_extension()
+            if plan_artifact_extension is not None:
+                prompt_extensions.append(plan_artifact_extension)
         skill_prompt_extension = build_skill_prompt_extension(self.skill_catalog)
         skill_tool_extension = build_skill_tool_extension(
             self.skill_catalog,

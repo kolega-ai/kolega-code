@@ -1247,10 +1247,12 @@ class KolegaCodeApp(
         if plan:
             self._latest_plan = plan
             self._plan_reofferable = True
+            self._ensure_current_plan_artifact(plan)
             await self._show_plan_for_decision(plan, notification=messages.PLAN_CAPTURED)
             return
 
         if self._latest_plan and self._plan_reofferable and not self._plan_pending:
+            self._ensure_current_plan_artifact(self._latest_plan)
             await self._show_plan_for_decision(self._latest_plan, notification=messages.PLAN_REOFFERED)
 
     async def _show_plan_for_decision(self, plan: str, *, notification: str) -> None:
@@ -1274,6 +1276,7 @@ class KolegaCodeApp(
         # plan as a read-only reference while it is being built; clearing
         # _plan_pending is what hides the "Implement plan" action so it does not
         # reappear when the user re-enters plan mode.
+        plan_artifact_path = self._ensure_current_plan_artifact(plan)
         self._plan_pending = False
         self._plan_reofferable = False
         self._plan_decision_active = False
@@ -1285,7 +1288,11 @@ class KolegaCodeApp(
         self._set_plan_actions_visible(False)
         self._refresh_input_area_visibility()
 
-        prompt = build_implement_plan_prompt(plan, gigacode_enabled=self._gigacode_enabled)
+        prompt = build_implement_plan_prompt(
+            plan,
+            gigacode_enabled=self._gigacode_enabled,
+            plan_artifact_path=str(plan_artifact_path) if plan_artifact_path is not None else None,
+        )
         self._add_conversation_entry(tui_state.ConversationEntry(kind="user", content="Implement the approved plan."))
         self.agent_worker = self.run_worker(
             self._process_message(prompt), name="kolega-turn", group="turns", exclusive=True

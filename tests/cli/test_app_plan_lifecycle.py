@@ -20,6 +20,7 @@ from kolega_code.llm.models import Message, TextBlock, ToolCall, ToolResult
 from kolega_code.events import AgentEvent
 from kolega_code.agent.prompt_provider import AgentMode
 from kolega_code.cli.config import build_agent_config, config_summary
+from kolega_code.cli.plan_artifacts import current_plan_artifact_path
 from kolega_code.cli.provider_registry import (
     DEEPSEEK_DEFAULT_MODEL,
     MOONSHOT_K26_MODEL,
@@ -127,6 +128,8 @@ async def test_textual_app_shows_plan_decision_when_planning_agent_writes_plan(
         assert loaded.latest_plan_markdown == initial_plan
         assert loaded.plan_reofferable is True
         assert loaded.interaction_mode == "plan"
+        plan_artifact = current_plan_artifact_path(store.root, session.session_id)
+        assert plan_artifact.read_text(encoding="utf-8") == initial_plan + "\n"
 
         await app._discuss_pending_plan()
 
@@ -184,6 +187,8 @@ async def test_textual_app_shows_plan_decision_when_planning_agent_writes_plan(
         loaded = store.load(session.session_id)
         assert loaded.latest_plan_markdown == "# Revised plan\n\nBuild planning mode carefully."
         assert loaded.plan_reofferable is True
+        assert plan_artifact.read_text(encoding="utf-8") == "# Revised plan\n\nBuild planning mode carefully.\n"
+        assert initial_plan not in plan_artifact.read_text(encoding="utf-8")
 
 
 @pytest.mark.asyncio
@@ -248,7 +253,13 @@ async def test_textual_app_implement_plan_switches_to_build_and_sends_plan(
         assert app.interaction_mode == "build"
         assert isinstance(app.agent, FakeCoderAgent)
         assert app.agent.messages
+        plan_artifact = current_plan_artifact_path(store.root, session.session_id)
+        assert plan_artifact.read_text(encoding="utf-8") == "# Plan\n\nBuild it.\n"
         assert "# Plan\n\nBuild it." in app.agent.messages[-1]
+        assert str(plan_artifact) in app.agent.messages[-1]
+        artifact_extension = extension_by_name(app.agent.kwargs["prompt_extensions"], "cli-current-plan-artifact")
+        assert str(plan_artifact) in artifact_extension.markdown
+        assert artifact_extension.propagate_to_sub_agents is True
         assert app._plan_decision_active is False
         # The plan is kept as a read-only sidebar reference, but it is no longer
         # pending a decision so the action must not be re-offered.
@@ -518,8 +529,11 @@ async def test_textual_app_discuss_plan_preserves_old_plan_until_new_plan_is_wri
 
         assert app.interaction_mode == "build"
         assert isinstance(app.agent, FakeCoderAgent)
+        plan_artifact = current_plan_artifact_path(store.root, session.session_id)
+        assert plan_artifact.read_text(encoding="utf-8") == "# New plan\n\nBuild this instead.\n"
         assert "# New plan\n\nBuild this instead." in app.agent.messages[-1]
         assert "# Plan\n\nBuild it after discussing." not in app.agent.messages[-1]
+        assert "# Plan\n\nBuild it after discussing." not in plan_artifact.read_text(encoding="utf-8")
         assert app._latest_plan == "# New plan\n\nBuild this instead."
         assert app._plan_reofferable is False
         assert app.query_one("#planning_plan_markdown", PlanningMarkdown).source == "# New plan\n\nBuild this instead."
