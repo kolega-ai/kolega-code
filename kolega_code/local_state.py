@@ -19,7 +19,11 @@ def write_private_text(path: Path, content: str, *, encoding: str = "utf-8") -> 
     """Atomically write text to a file and make the final file owner-only."""
     ensure_private_dir(path.parent)
     temp = path.with_suffix(path.suffix + ".tmp")
-    temp.write_text(content, encoding=encoding)
+    fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, PRIVATE_FILE_MODE)
+    try:
+        os.write(fd, content.encode(encoding))
+    finally:
+        os.close(fd)
     _chmod(temp, PRIVATE_FILE_MODE)
     temp.replace(path)
     _chmod(path, PRIVATE_FILE_MODE)

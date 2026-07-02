@@ -33,7 +33,7 @@ from kolega_code.mcp.config import (
     set_server_enabled,
     upsert_server_config,
 )
-from kolega_code.mcp.service import MCPService
+from kolega_code.mcp.service import MCP_FAILURE_MESSAGE_GENERIC, MCPService
 from kolega_code.mcp.tools import build_mcp_tool_extension
 from kolega_code.agent.prompt_provider import AgentMode
 from kolega_code.permissions import (
@@ -1065,10 +1065,22 @@ def _print_mcp_list(config, service: MCPService) -> None:
         return
     print("ID\tSOURCE\tTRANSPORT\tENABLED\tOAUTH\tSTATUS\tTOOLS\tMESSAGE")
     for row in service.list_status_rows():
+        message = _mcp_cli_list_message(row)
         print(
             f"{row['id']}\t{row['source']}\t{row['transport']}\t{row['enabled']}\t{row['oauth']}\t"
-            f"{row['status']}\t{row['tool_count']}\t{row['message']}"
+            f"{row['status']}\t{row['tool_count']}\t{message}"
         )
+
+
+def _mcp_cli_list_message(row: dict[str, object]) -> str:
+    status = str(row.get("status", "unverified"))
+    if status == "verified":
+        return f"Verified {row.get('tool_count', 0)} tool(s)."
+    if status == "stale":
+        return "Configuration changed since last verification. Verify again."
+    if status == "failed":
+        return MCP_FAILURE_MESSAGE_GENERIC
+    return "Not verified."
 
 
 def _mcp_verify_server_ids(args: argparse.Namespace, config) -> list[str]:

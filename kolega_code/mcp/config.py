@@ -11,7 +11,7 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
-from kolega_code.local_state import write_private_text
+from kolega_code.local_state import write_private_secret_text
 
 MCP_CONFIG_SCHEMA_VERSION = 1
 MCP_GLOBAL_CONFIG_FILENAME = "mcp_servers.json"
@@ -248,7 +248,7 @@ def load_config_file_for_edit(path: Path, *, source: str) -> MCPConfigFile:
 
 def save_config_file(path: Path, config: MCPConfigFile) -> None:
     payload = json.dumps(config.to_file_dict(), indent=2, sort_keys=True)
-    write_private_text(path, payload + "\n")
+    write_private_secret_text(path, payload + "\n")
 
 
 def upsert_server_config(path: Path, server: MCPServerConfig, *, source: str) -> None:
