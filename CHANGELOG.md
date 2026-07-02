@@ -6,6 +6,30 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.13.0 - 2026-07-02
+
+### Added
+
+- Added first-class MCP (Model Context Protocol) support in the CLI and TUI,
+  including server settings management.
+- Persisted plan artifacts so they survive across CLI invocations.
+
+### Changed
+
+- Made session diff refreshes incremental and asynchronous for smoother TUI
+  performance.
+
+### Fixed
+
+- Hid queued follow-up messages from the transcript view.
+- Polished status card spacing and made the context-full note generic.
+- Avoided tool dispatcher input name collisions and excluded internal tool
+  collection methods from dispatch.
+- Hardened MCP credential handling, status logging, config output, and server
+  settings reliability.
+- Preserved gigacode enabled state across session resume.
+- Corrected the GPT-5.5 context window to 272K on the Codex backend.
+
 ## 0.12.0 - 2026-06-30
 
 ### Added
