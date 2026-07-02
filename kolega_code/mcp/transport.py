@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import contextlib
 import inspect
+import os
 from pathlib import Path
-from typing import Optional
+from typing import Optional, TextIO
 
 import httpx
 
@@ -34,8 +35,14 @@ async def open_mcp_session(
     project_path: Path,
     token_store: MCPOAuthTokenStore,
     oauth_interaction: Optional[OAuthInteraction] = None,
+    stdio_errlog: Optional[TextIO] = None,
 ):
-    """Open and initialize a ClientSession for a configured MCP server."""
+    """Open and initialize a ClientSession for a configured MCP server.
+
+    The MCP SDK defaults stdio server stderr to ``sys.stderr``. In the Textual UI
+    that bypasses rendering and can draw child-process logs over the composer, so
+    stdio stderr is sent to a non-terminal sink unless a caller explicitly opts in.
+    """
     from mcp.client.session import ClientSession
 
     if server.transport == "stdio":
@@ -47,11 +54,15 @@ async def open_mcp_session(
             env=server.env or None,
             cwd=_resolve_cwd(project_path, server.cwd),
         )
-        async with stdio_client(params) as streams:
-            read_stream, write_stream = streams
-            async with ClientSession(read_stream, write_stream, read_timeout_seconds=server.timeout_seconds) as session:
-                await session.initialize()
-                yield session
+        errlog_context = contextlib.nullcontext(stdio_errlog) if stdio_errlog is not None else open(os.devnull, "w")
+        with errlog_context as errlog:
+            async with stdio_client(params, errlog=errlog) as streams:
+                read_stream, write_stream = streams
+                async with ClientSession(
+                    read_stream, write_stream, read_timeout_seconds=server.timeout_seconds
+                ) as session:
+                    await session.initialize()
+                    yield session
         return
 
     auth = await build_oauth_provider(server, token_store, interaction=oauth_interaction)

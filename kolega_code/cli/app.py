@@ -397,11 +397,6 @@ class KolegaCodeApp(
                                 )
                             with Vertical(classes="settings-section", id="settings_mcp") as mcp_section:
                                 mcp_section.border_title = "MCP Servers"
-                                yield Static(
-                                    "Manage global MCP servers and trust project MCP configs. Verify before tools are "
-                                    "exposed; stdio verification executes the configured command.",
-                                    classes="settings-hint",
-                                )
                                 yield Static("", id="mcp_status")
                                 yield Label("Server")
                                 yield Select(
@@ -411,8 +406,9 @@ class KolegaCodeApp(
                                     value=tui_settings_panel.MCP_NEW_SERVER_VALUE,
                                 )
                                 yield Static("", id="mcp_source_hint", classes="settings-hint")
-                                yield Label("ID")
-                                yield Input(id="mcp_server_id_input", placeholder="github")
+                                with Horizontal(classes="settings-button-row"):
+                                    yield Button("Reload MCP List", id="mcp_refresh")
+                                    yield Button("Trust Project MCP", id="mcp_trust_project")
                                 yield Label("Display name")
                                 yield Input(id="mcp_name_input", placeholder="GitHub MCP")
                                 yield Label("Transport")
@@ -453,13 +449,10 @@ class KolegaCodeApp(
                                 yield Label("Working directory", id="mcp_cwd_label")
                                 yield Input(id="mcp_cwd_input", placeholder="optional project-relative path")
                                 with Horizontal(classes="settings-button-row"):
-                                    yield Button("Refresh", id="mcp_refresh")
-                                    yield Button("Trust Project MCP", id="mcp_trust_project")
-                                with Horizontal(classes="settings-button-row"):
-                                    yield Button("Save Server", variant="primary", id="mcp_save_server")
-                                    yield Button("Delete", variant="error", id="mcp_delete_server")
-                                with Horizontal(classes="settings-button-row"):
+                                    yield Button("Save MCP Server", variant="primary", id="mcp_save_server")
                                     yield Button("Verify", id="mcp_verify_server")
+                                with Horizontal(classes="settings-button-row"):
+                                    yield Button("Delete", variant="error", id="mcp_delete_server")
                                     yield Button("Clear OAuth Tokens", id="mcp_clear_tokens")
                                 with Horizontal(classes="settings-button-row"):
                                     yield Button("Enable", id="mcp_enable_server")

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import re
 import shlex
 from typing import Optional
+from urllib.parse import urlparse
 
 from textual.css.query import NoMatches
 from rich.text import Text
@@ -49,7 +51,7 @@ from ..theme import Color, Glyph
 MCP_NEW_SERVER_VALUE = "__new_mcp_server__"
 MCP_TRANSPORT_OPTIONS = [
     ("Streamable HTTP", "streamable_http"),
-    ("Server-Sent Events (SSE)", "sse"),
+    ("Server-Sent Events (legacy/deprecated)", "sse"),
     ("stdio command", "stdio"),
 ]
 MCP_ENABLED_OPTIONS = [("Enabled", "true"), ("Disabled", "false")]
@@ -330,7 +332,6 @@ class SettingsPanelMixin:
                 pass
 
         if server is None:
-            set_input("mcp_server_id_input", "")
             set_input("mcp_name_input", "")
             set_select("mcp_transport_select", "streamable_http")
             set_select("mcp_enabled_select", "true")
@@ -345,7 +346,6 @@ class SettingsPanelMixin:
             self._update_mcp_transport_fields("streamable_http")
             return
 
-        set_input("mcp_server_id_input", server.id)
         set_input("mcp_name_input", server.name or "")
         set_select("mcp_transport_select", server.transport)
         set_select("mcp_enabled_select", "true" if server.enabled else "false")
@@ -402,15 +402,7 @@ class SettingsPanelMixin:
             self._set_mcp_status(f"MCP config could not be loaded: {exc}", tone="error")
             return
 
-        lines: list[str] = [f"Global config: {global_mcp_config_path(self.settings_store.root)}"]
-        if config.project_config_present:
-            if config.project_trusted:
-                lines.append(f"Project config trusted: {config.project_config_path}")
-            else:
-                lines.append(f"Project config present but not trusted: {config.project_config_path}")
-        elif config.project_config_path is not None:
-            lines.append(f"Project config: {config.project_config_path} (not present)")
-        lines.extend(config.diagnostics)
+        lines: list[str] = list(config.diagnostics)
 
         rows = MCPService(config, self.settings_store.root, self.project_path).list_status_rows()
         if not rows:
@@ -450,8 +442,51 @@ class SettingsPanelMixin:
         except NoMatches:
             pass
 
+    def _slug_mcp_server_id(self, value: str) -> str:
+        slug = re.sub(r"[^A-Za-z0-9_-]+", "-", value.strip().lower())
+        slug = re.sub(r"-+", "-", slug).strip("-_")
+        return slug[:64].strip("-_")
+
+    def _auto_mcp_server_id(
+        self,
+        *,
+        name: Optional[str],
+        url: Optional[str],
+        command: Optional[str],
+        args: list[str],
+    ) -> str:
+        candidates: list[str] = []
+        if name:
+            candidates.append(name)
+        if url:
+            parsed = urlparse(url)
+            if parsed.hostname:
+                candidates.append(parsed.hostname.removeprefix("www."))
+        if args:
+            transport_args = {"stdio", "sse", "streamableHttp", "streamable_http"}
+            meaningful_args = [arg for arg in args if not arg.startswith("-") and arg not in transport_args]
+            candidates.extend(reversed(meaningful_args))
+        if command:
+            candidates.append(command)
+        candidates.append("mcp-server")
+
+        base = next((slug for candidate in candidates if (slug := self._slug_mcp_server_id(candidate))), "mcp-server")
+        try:
+            config = self._load_mcp_config_for_ui()
+            existing_ids = set(config.servers)
+        except Exception:
+            existing_ids = set()
+        selected = self._selected_mcp_server_id()
+        if selected != MCP_NEW_SERVER_VALUE:
+            existing_ids.discard(selected)
+        if base not in existing_ids:
+            return base
+        suffix = 2
+        while f"{base}-{suffix}" in existing_ids:
+            suffix += 1
+        return f"{base}-{suffix}"
+
     def _collect_mcp_server_from_ui(self) -> MCPServerConfig:
-        server_id = self.query_one("#mcp_server_id_input", Input).value.strip()
         name = self.query_one("#mcp_name_input", Input).value.strip() or None
         transport = str(self.query_one("#mcp_transport_select", Select).value)
         enabled = str(self.query_one("#mcp_enabled_select", Select).value) == "true"
@@ -469,6 +504,12 @@ class SettingsPanelMixin:
             args = shlex.split(args_text) if args_text else []
         except ValueError as exc:
             raise ValueError(f"MCP args must be shell-like tokens: {exc}") from exc
+        selected = self._selected_mcp_server_id()
+        server_id = (
+            self._auto_mcp_server_id(name=name, url=url, command=command, args=args)
+            if selected == MCP_NEW_SERVER_VALUE
+            else selected
+        )
 
         return MCPServerConfig(
             id=server_id,

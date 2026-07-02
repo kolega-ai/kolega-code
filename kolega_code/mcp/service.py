@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
@@ -58,6 +59,99 @@ def parse_mcp_tool_name(name: str) -> Optional[tuple[str, str]]:
     if not server_id or not tool_id:
         return None
     return server_id, tool_id
+
+
+@contextlib.contextmanager
+def _suppress_mcp_sdk_terminal_logs():
+    """Prevent caught MCP SDK errors from also printing raw tracebacks to stderr.
+
+    Some SDK transport/auth tasks log exceptions before re-raising them. The
+    service catches those errors and writes a concise MCP status, so the raw
+    logger output is duplicate noise and can corrupt the Textual UI.
+    """
+    logger = logging.getLogger("mcp")
+    null_handler = logging.NullHandler()
+    old_propagate = logger.propagate
+    logger.addHandler(null_handler)
+    logger.propagate = False
+    try:
+        yield
+    finally:
+        logger.propagate = old_propagate
+        logger.removeHandler(null_handler)
+
+
+def _mcp_failure_message(server: MCPServerConfig, exc: BaseException) -> str:
+    messages = _dedupe_messages(_leaf_exception_messages(exc))
+    if not messages:
+        messages = [_single_exception_message(exc)]
+    message = "; ".join(messages[:3])
+    if len(messages) > 3:
+        message = f"{message}; ... ({len(messages) - 3} more)"
+    return _add_known_mcp_failure_hint(server, message)
+
+
+def _leaf_exception_messages(exc: BaseException, seen: Optional[set[int]] = None) -> list[str]:
+    seen = seen or set()
+    if id(exc) in seen:
+        return []
+    seen.add(id(exc))
+
+    if isinstance(exc, BaseExceptionGroup):
+        messages: list[str] = []
+        for child in exc.exceptions:
+            messages.extend(_leaf_exception_messages(child, seen))
+        if messages:
+            return messages
+
+    messages = [_single_exception_message(exc)]
+    cause = exc.__cause__ or (None if exc.__suppress_context__ else exc.__context__)
+    if cause is not None:
+        messages.extend(_leaf_exception_messages(cause, seen))
+    return messages
+
+
+def _single_exception_message(exc: BaseException) -> str:
+    name = exc.__class__.__name__
+    text = str(exc).strip()
+    if not text:
+        return name
+    if text.startswith(f"{name}:"):
+        return text
+    return f"{name}: {text}"
+
+
+def _dedupe_messages(messages: list[str]) -> list[str]:
+    seen: set[str] = set()
+    unique: list[str] = []
+    for message in messages:
+        normalized = " ".join(message.split())
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        unique.append(normalized)
+    return unique
+
+
+def _add_known_mcp_failure_hint(server: MCPServerConfig, message: str) -> str:
+    if not server.oauth.enabled:
+        return message
+
+    lower = message.lower()
+    url = (server.url or "").lower()
+    if "registration failed" in lower:
+        if "api.githubcopilot.com" in url:
+            return (
+                "GitHub remote MCP OAuth failed: GitHub's endpoint does not support generic MCP dynamic client "
+                "registration. Use a PAT Authorization header for this endpoint, or a client with GitHub-provided "
+                f"OAuth support. Underlying error: {message}"
+            )
+        if "404" in lower:
+            return (
+                "OAuth dynamic client registration failed (404). This server likely requires a pre-registered "
+                f"OAuth client or bearer-token header. Underlying error: {message}"
+            )
+    return message
 
 
 class MCPService:
@@ -126,14 +220,17 @@ class MCPService:
             return MCPVerificationResult(server_id=server_id, ok=False, message=f"Unknown MCP server: {server_id}")
         fingerprint = server_fingerprint(server)
         try:
-            async with self._maybe_interactive_oauth(server, interactive_oauth, open_browser, output) as interaction:
-                async with open_mcp_session(
-                    server,
-                    project_path=self.project_path,
-                    token_store=self.oauth_store,
-                    oauth_interaction=interaction,
-                ) as session:
-                    tools = await self._list_all_tools(session)
+            with _suppress_mcp_sdk_terminal_logs():
+                async with self._maybe_interactive_oauth(
+                    server, interactive_oauth, open_browser, output
+                ) as interaction:
+                    async with open_mcp_session(
+                        server,
+                        project_path=self.project_path,
+                        token_store=self.oauth_store,
+                        oauth_interaction=interaction,
+                    ) as session:
+                        tools = await self._list_all_tools(session)
             tool_statuses = [_tool_status_from_mcp_tool(tool) for tool in tools]
             status = MCPServerStatus.verified(
                 fingerprint=fingerprint,
@@ -151,7 +248,7 @@ class MCPService:
                 status=status,
             )
         except Exception as exc:  # noqa: BLE001 - verification failures are reported in status
-            message = str(exc) or exc.__class__.__name__
+            message = _mcp_failure_message(server, exc)
             status = MCPServerStatus.failed(
                 fingerprint=fingerprint,
                 transport=server.transport,
@@ -189,8 +286,11 @@ class MCPService:
             raise ToolError(f"MCP server '{server_id}' is disabled")
         if not self.is_verified(server):
             raise ToolError(f"MCP server '{server_id}' is not verified for its current configuration")
-        async with open_mcp_session(server, project_path=self.project_path, token_store=self.oauth_store) as session:
-            result = await session.call_tool(tool_id, arguments or {})
+        with _suppress_mcp_sdk_terminal_logs():
+            async with open_mcp_session(
+                server, project_path=self.project_path, token_store=self.oauth_store
+            ) as session:
+                result = await session.call_tool(tool_id, arguments or {})
         output = _tool_result_to_agent_output(result)
         if bool(getattr(result, "is_error", False)):
             if isinstance(output, list):
