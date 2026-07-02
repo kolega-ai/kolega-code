@@ -251,8 +251,11 @@ def test_tui_stylesheet_keeps_sidebar_tabs_consistent_and_restores_card_contrast
     assert "background: $background" in status_dashboard_block
     assert "background: $surface" not in status_dashboard_block
     assert "color: $text" in status_dashboard_block
-    assert "padding: 0" in status_dashboard_block
+    assert "padding: 1 0 1 1" in status_dashboard_block
     assert "border: round" not in status_dashboard_block
+
+    task_list_block = css.split("#status_task_list_markdown {", 1)[1].split("}", 1)[0]
+    assert "padding: 0 0 1 0" in task_list_block
 
     section_block = css.split(".status-section,", 1)[1].split("}", 1)[0]
     assert ".planning-section" in section_block
@@ -362,8 +365,11 @@ async def test_sidebar_tab_and_settings_planning_computed_styles_keep_contrast(
         assert app.query_one("#planning_form").styles.padding.left == 1
         assert str(app.query_one("#status_dashboard").styles.border) == "Edges()"
         assert app.query_one("#status_dashboard").styles.background == app.query_one("#status_form").styles.background
-        assert app.query_one("#status_dashboard").styles.padding.left == 0
-        assert app.query_one("#status_task_list_markdown") is not None
+        assert app.query_one("#status_dashboard").styles.padding.left == 1
+        assert app.query_one("#status_dashboard").styles.padding.top == 1
+        assert app.query_one("#status_dashboard").styles.padding.bottom == 1
+        task_list_markdown = app.query_one("#status_task_list_markdown")
+        assert task_list_markdown.styles.padding.bottom == 1
 
         settings_background = app.query_one("#settings_form").styles.background
         select_current_widgets = list(app.query("#settings_form SelectCurrent"))

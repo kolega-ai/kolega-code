@@ -75,13 +75,11 @@ class StatusDashboardMixin:
             indicator = escape(state.compaction_message or messages.COMPACTING)
             context_lines += f"\n[{Color.ACCENT}]{theme.g(Glyph.RUNNING)} {indicator}[/{Color.ACCENT}]"
 
-        title = theme.role_header(Glyph.STATUS, "Status", Color.ACCENT)
         turn_line = (
             f"{label('Turn')} [{turn_style}]{theme.g(Glyph.STATUS)}[/{turn_style}] "
             f"[bold]{escape(state.turn_state.value)}[/bold]"
         )
         return (
-            f"{title}\n\n"
             f"{label('Model')}\n[bold]{escape(provider_model)}[/bold]\n\n"
             f"{label('Thinking effort')} [bold]{escape(effort)}[/bold]\n"
             f"{label('Mode')} [bold]{mode}[/bold]\n"
