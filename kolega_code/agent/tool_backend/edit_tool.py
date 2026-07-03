@@ -6,7 +6,7 @@ from .base_tool import BaseTool
 from .edit_preview import build_diff_preview, build_head_preview
 
 
-_BLOCK_PATTERN = re.compile(r"<<<<<<< SEARCH\n(.*?)\n=======\n(.*?)\n>>>>>>> REPLACE", re.DOTALL)
+_BLOCK_PATTERN = re.compile(r"<<<<<<< SEARCH\r?\n(.*?)\r?\n=======\r?\n(.*?)\r?\n>>>>>>> REPLACE", re.DOTALL)
 _SMART_PUNCTUATION_TRANSLATION = str.maketrans(
     {
         "\u2018": "'",
@@ -101,6 +101,12 @@ class EditTool(BaseTool):
             if parent_dir and parent_dir != "." and not self.filesystem.exists(parent_dir):
                 self.filesystem.create_directory(parent_dir)
 
+            # Preserve the file's dominant line ending on overwrite; new files
+            # keep the line endings the caller provided (typically LF).
+            if exists and old_content is not None:
+                line_ending = self._detect_dominant_line_ending(path, old_content)
+                content = self._normalize_line_endings(content, line_ending)
+
             self.filesystem.write_text(path, content)
 
             preview = (
@@ -135,20 +141,28 @@ class EditTool(BaseTool):
             self._validate_non_overlapping(resolved)
             updated_content = self._apply_replacements(original_content, resolved)
 
-            if updated_content == original_content:
+            # Preserve the file's dominant line ending. ``read_text`` may normalize
+            # CRLF -> LF (Python universal newlines), so detect the true on-disk
+            # ending and rewrite the result in that ending to keep unchanged
+            # regions byte-identical and avoid mixed line endings.
+            line_ending = self._detect_dominant_line_ending(path, original_content)
+            normalized_original = self._normalize_line_endings(original_content, line_ending)
+            normalized_updated = self._normalize_line_endings(updated_content, line_ending)
+
+            if normalized_updated == normalized_original:
                 await self.log_warning(
                     f"No changes made to {path}. All replacements were identical to original text.",
                     sender=self.caller.agent_name,
                 )
-                return f"# {path} (No changes made)\n\n```\n{original_content}\n```"
+                return f"# {path} (No changes made)\n\n```\n{normalized_original}\n```"
 
             blocked_msg = self._enforce_vibe_edit_policy(path)
             if blocked_msg:
                 return blocked_msg
-            self.filesystem.write_text(path, updated_content)
+            self.filesystem.write_text(path, normalized_updated)
 
             await self.send_edit_preview(
-                build_diff_preview(original_content, updated_content, path),
+                build_diff_preview(original_content, normalized_updated, path),
                 tool_call_id=getattr(self.caller, "current_tool_execution_id", None),
                 tool_name=tool_name,
             )
@@ -328,3 +342,40 @@ class EditTool(BaseTool):
 
     def _normalize_unicode_punctuation(self, text: str) -> str:
         return text.translate(_SMART_PUNCTUATION_TRANSLATION)
+
+    def _detect_dominant_line_ending(self, path: str, content: str) -> str:
+        """Return the dominant line ending (``\\r\\n``, ``\\r``, or ``\\n``) on disk.
+
+        ``read_text`` performs universal-newline translation (``\\r\\n`` -> ``\\n``)
+        on local filesystems, so when the read content has no carriage returns we
+        inspect the raw bytes to recover the true ending. Sandbox/MCP filesystems
+        that return raw text with carriage returns are detected directly from
+        ``content``.
+        """
+        if "\r" in content:
+            return self._dominant_line_ending_from_text(content)
+        try:
+            raw = self.filesystem.read_bytes(path)
+            raw_text = raw if isinstance(raw, str) else raw.decode("utf-8", errors="replace")
+            return self._dominant_line_ending_from_text(raw_text)
+        except Exception:
+            return "\n"
+
+    @staticmethod
+    def _dominant_line_ending_from_text(text: str) -> str:
+        n_crlf = text.count("\r\n")
+        n_lf = text.count("\n") - n_crlf
+        n_cr = text.count("\r") - n_crlf
+        if n_crlf > 0 and n_crlf >= n_lf and n_crlf >= n_cr:
+            return "\r\n"
+        if n_cr > 0 and n_cr > n_lf:
+            return "\r"
+        return "\n"
+
+    @staticmethod
+    def _normalize_line_endings(text: str, target: str) -> str:
+        """Normalize all line endings in ``text`` to ``target``."""
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
+        if target == "\n":
+            return text
+        return text.replace("\n", target)

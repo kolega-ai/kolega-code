@@ -69,6 +69,16 @@ class TestLocalFileSystem:
         read_content = filesystem.read_text("test_utf8.txt", encoding="utf-8")
         assert read_content == content
 
+    def test_write_text_is_verbatim_crlf(self, filesystem, temp_dir):
+        """write_text writes CRLF content verbatim (no platform translation)."""
+        filesystem.write_text("crlf.txt", "a\r\nb\r\n")
+        assert (temp_dir / "crlf.txt").read_bytes() == b"a\r\nb\r\n"
+
+    def test_write_text_is_verbatim_lf(self, filesystem, temp_dir):
+        """write_text writes LF content verbatim (no platform translation)."""
+        filesystem.write_text("lf.txt", "a\nb\n")
+        assert (temp_dir / "lf.txt").read_bytes() == b"a\nb\n"
+
     def test_write_and_read_bytes(self, filesystem):
         """Test writing and reading binary files."""
         content = b"\x00\x01\x02\x03\xff\xfe\xfd"
