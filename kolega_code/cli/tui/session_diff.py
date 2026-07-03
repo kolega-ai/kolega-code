@@ -291,7 +291,7 @@ class GitSessionDiffTracker:
 
         old = baseline.content or ""
         new = current.content or ""
-        preview = build_diff_preview(old, new, display_path)
+        preview = build_diff_preview(old, new, display_path, max_lines=0)
         if preview is None and old != new:
             message = "File changed; textual diff unavailable."
         else:

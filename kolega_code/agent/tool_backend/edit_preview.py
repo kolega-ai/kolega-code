@@ -93,34 +93,56 @@ def _too_big(*texts: str) -> bool:
     return any(len(t) > MAX_DIFF_INPUT_BYTES or t.count("\n") > MAX_DIFF_INPUT_LINES for t in texts)
 
 
-def build_head_preview(content: str, path: str) -> Optional[dict]:
-    """First few lines of a newly written file, as a syntax-highlightable head."""
+def _resolve_max_lines(max_lines: int | None, default: int) -> int | None:
+    """Resolve *max_lines* to an effective cap.
+
+    ``None`` → *default*, ``0`` → no cap (``None``), positive int → that value.
+    """
+    if max_lines is None:
+        return default
+    if max_lines == 0:
+        return None
+    return max_lines
+
+
+def build_head_preview(content: str, path: str, *, max_lines: int | None = None) -> Optional[dict]:
+    """First few lines of a newly written file, as a syntax-highlightable head.
+
+    *max_lines* controls the line cap: ``None`` (default) uses ``MAX_HEAD_LINES``,
+    ``0`` means no cap, and any positive integer caps at that many lines.
+    """
     if not content or _looks_binary(content):
         return None
     lines = content.splitlines()
     if not lines:
         return None
-    shown = [["context", _clip(line)] for line in lines[:MAX_HEAD_LINES]]
+    effective_max = _resolve_max_lines(max_lines, MAX_HEAD_LINES)
+    shown = [["context", _clip(line)] for line in (lines if effective_max is None else lines[:effective_max])]
+    shown_count = len(shown)
     return {
         "kind": "head",
         "path": path,
         "language": language_for_path(path),
         "lines": shown,
-        "more": max(0, len(lines) - MAX_HEAD_LINES),
+        "more": max(0, len(lines) - shown_count),
         "adds": len(lines),
         "dels": 0,
     }
 
 
-def build_diff_preview(old: str, new: str, path: str) -> Optional[dict]:
-    """A capped unified diff of an edit. ``None`` when nothing changed or is renderable."""
+def build_diff_preview(old: str, new: str, path: str, *, max_lines: int | None = None) -> Optional[dict]:
+    """A capped unified diff of an edit. ``None`` when nothing changed or is renderable.
+
+    *max_lines* controls the line cap: ``None`` (default) uses ``MAX_DIFF_LINES``,
+    ``0`` means no cap, and any positive integer caps at that many lines.
+    """
     if old == new:
         return None
     if _looks_binary(old) or _looks_binary(new):
         return None
     if _too_big(old, new):
         # Huge edit: fall back to a head of the new content so something still shows.
-        return build_head_preview(new, path)
+        return build_head_preview(new, path, max_lines=max_lines)
 
     rows: list[list[str]] = []
     adds = dels = 0
@@ -141,12 +163,14 @@ def build_diff_preview(old: str, new: str, path: str) -> Optional[dict]:
 
     if adds == 0 and dels == 0:
         return None
+    effective_max = _resolve_max_lines(max_lines, MAX_DIFF_LINES)
+    shown = rows if effective_max is None else rows[:effective_max]
     return {
         "kind": "diff",
         "path": path,
         "language": language_for_path(path),
-        "lines": rows[:MAX_DIFF_LINES],
-        "more": max(0, len(rows) - MAX_DIFF_LINES),
+        "lines": shown,
+        "more": max(0, len(rows) - len(shown)),
         "adds": adds,
         "dels": dels,
     }
