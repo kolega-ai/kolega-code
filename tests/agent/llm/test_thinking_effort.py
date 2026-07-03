@@ -9,6 +9,10 @@ from kolega_code.llm.specs import default_thinking_effort, thinking_effort_optio
 
 
 def test_model_specs_expose_provider_specific_thinking_efforts() -> None:
+    assert thinking_effort_options("anthropic", "claude-fable-5") == ("low", "medium", "high", "xhigh", "max")
+    assert default_thinking_effort("anthropic", "claude-fable-5") == "medium"
+    assert thinking_effort_options("anthropic", "claude-sonnet-5") == ("low", "medium", "high", "xhigh", "max")
+    assert default_thinking_effort("anthropic", "claude-sonnet-5") == "medium"
     assert thinking_effort_options("moonshot", "kimi-k2.7-code") == ("auto",)
     assert default_thinking_effort("moonshot", "kimi-k2.7-code") == "auto"
     assert thinking_effort_options("moonshot", "kimi-k2.6") == ("auto", "none")

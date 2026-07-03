@@ -13,6 +13,8 @@ def test_supports_vision_flag_present_on_every_entry():
 @pytest.mark.parametrize(
     "provider,model,expected",
     [
+        ("anthropic", "claude-fable-5", True),
+        ("anthropic", "claude-sonnet-5", True),
         ("anthropic", "claude-opus-4-8", True),
         ("anthropic", "claude-haiku-4-5-20251001", True),
         ("openai", "gpt-5.5", True),
