@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional
 from .common import LogMixin
 from .compression import CompactionResult, HistoryCompressor
 from .errors import MaxAgentIterationsExceeded
+from .goal import GoalVerdict, build_goal_verifier_instruction, parse_goal_verdict
 from kolega_code.config import AgentConfig, ModelProvider
 from kolega_code.events import AgentConnectionManager
 from .context import AgentContext, AgentServices, Telemetry, WorkspaceInfo
@@ -252,6 +253,11 @@ class BaseAgent(LogMixin):
         # toggling takes effect on the next turn without rebuilding the agent.
         self.gigacode_enabled = False
 
+        # Active autonomous goal condition (set/cleared by the host via apply_goal),
+        # or None when no goal is active. Kept on the agent so delegated sub-agents
+        # and the system prompt can stay goal-aware across turns.
+        self.active_goal_condition: Optional[str] = None
+
         self.prompt_override_errors: List[str] = []
 
         self.available_ports = "9001-9999"
@@ -426,6 +432,22 @@ class BaseAgent(LogMixin):
         self.gigacode_enabled = enabled
         extensions = [ext for ext in (self.prompt_extensions or []) if getattr(ext, "id", None) != "gigacode"]
         if enabled and prompt_extension is not None:
+            extensions.append(prompt_extension)
+        self.prompt_extensions = extensions
+        initialize = getattr(self, "_initialize_system_prompt", None)
+        if callable(initialize):
+            initialize()
+
+    def apply_goal(self, condition: Optional[str], prompt_extension: Optional["PromptExtension"] = None) -> None:
+        """Set, replace, or clear the active autonomous goal for this session.
+
+        Mirrors :meth:`apply_gigacode`: swaps the ``cli-active-goal`` prompt
+        extension and refreshes the system prompt so the next turn is (or stops
+        being) goal-aware. Safe to call mid-session.
+        """
+        self.active_goal_condition = condition
+        extensions = [ext for ext in (self.prompt_extensions or []) if getattr(ext, "id", None) != "cli-active-goal"]
+        if condition and prompt_extension is not None:
             extensions.append(prompt_extension)
         self.prompt_extensions = extensions
         initialize = getattr(self, "_initialize_system_prompt", None)
@@ -1133,6 +1155,25 @@ class BaseAgent(LogMixin):
             '{"ok": true} if the condition holds, or {"ok": false, "reason": "<why>"} if it does not.'
         )
         return await self.tool_collection.agent_tool.dispatch_general_agent(instruction)
+
+    async def evaluate_goal_condition(self, condition: str) -> GoalVerdict:
+        """Dispatch a read-only investigation sub-agent to verify whether the goal is met.
+
+        The verifier runs on the configured long-context model (the investigation
+        role inherits ``long_context_config``) and can read files, search, and run
+        commands/tests, but cannot edit — so it cannot game an autonomous goal. It
+        inspects the current codebase state fresh each call (stateless across
+        evaluations). A dispatch failure or malformed verdict is reported as
+        not-met rather than raising, so the goal loop keeps running safely.
+        """
+        if self.tool_collection is None or not hasattr(self.tool_collection, "agent_tool"):
+            raise RuntimeError("goal evaluation requires a tool collection with sub-agent dispatch")
+        instruction = build_goal_verifier_instruction(condition)
+        try:
+            result = await self.tool_collection.agent_tool.dispatch_investigation_agent(instruction)
+        except Exception as exc:  # noqa: BLE001 - a verifier failure must not crash the loop
+            return GoalVerdict(met=False, reason=f"verifier error: {exc}")
+        return parse_goal_verdict(result)
 
     @staticmethod
     def _hook_text(output: Any) -> str:

@@ -14,6 +14,10 @@ from kolega_code.llm.models import Message
 class MinimalFakeCoderAgent:
     def __init__(self, **kwargs):
         self.kwargs = kwargs
+        self.active_goal_condition = None
+
+    def apply_goal(self, condition, prompt_extension=None):
+        self.active_goal_condition = condition
 
     def restore_message_history(self, history):
         return None
@@ -100,6 +104,10 @@ def _build_sub_agent_test_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *
     class FakeCoderAgent:
         def __init__(self, **kwargs):
             self.kwargs = kwargs
+            self.active_goal_condition = None
+
+        def apply_goal(self, condition, prompt_extension=None):
+            self.active_goal_condition = condition
 
         def restore_message_history(self, history):
             return None
@@ -200,6 +208,10 @@ def _build_mention_test_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
             self.history = []
             self.messages = []
             self.attachments = []
+            self.active_goal_condition = None
+
+        def apply_goal(self, condition, prompt_extension=None):
+            self.active_goal_condition = condition
 
         def append_user_message(self, content):
             self.history.append(Message(role="user", content=content))

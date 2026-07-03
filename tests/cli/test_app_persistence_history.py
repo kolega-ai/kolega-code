@@ -297,6 +297,10 @@ async def test_textual_app_reset_command_clears_current_thread(
         def __init__(self, **kwargs):
             self.kwargs = kwargs
             self.history = []
+            self.active_goal_condition = None
+
+        def apply_goal(self, condition, prompt_extension=None):
+            self.active_goal_condition = condition
 
         def restore_message_history(self, history):
             self.history = list(history)

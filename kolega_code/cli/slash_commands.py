@@ -55,6 +55,7 @@ TUI_COMMAND_ENTRIES: tuple[SlashCommandEntry, ...] = (
     SlashCommandEntry("effort", "Show or set the active thinking effort", CommandScope.TUI),
     SlashCommandEntry("login", "Sign in to a provider, e.g. /login chatgpt", CommandScope.TUI),
     SlashCommandEntry("logout", "Sign out of a provider, e.g. /logout chatgpt", CommandScope.TUI),
+    SlashCommandEntry("goal", "Set, show, or clear an autonomous completion goal", CommandScope.TUI),
     SlashCommandEntry("gigacode", "Toggle gigacode workflow orchestration on or off", CommandScope.TUI),
     SlashCommandEntry("prompts", "Dump, list, or validate project prompt override files", CommandScope.TUI),
     SlashCommandEntry("queue-clear", "Clear queued follow-up messages", CommandScope.TUI),

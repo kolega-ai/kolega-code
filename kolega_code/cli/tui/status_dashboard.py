@@ -32,6 +32,7 @@ class StatusDashboardMixin:
         self._status_state.mode = self.interaction_mode
         self._status_state.permission_mode = self.permission_mode.value
         self._status_state.gigacode_enabled = self._gigacode_enabled
+        self._status_state.goal = self._goal_summary()
         try:
             self._status_dashboard.update(self._format_status_dashboard())
         except Exception:
@@ -55,6 +56,9 @@ class StatusDashboardMixin:
         def label(text: str) -> str:
             return theme.styled(text, Color.MUTED)
 
+        goal_line = ""
+        if state.goal:
+            goal_line = f"{label('Goal')} [bold]{escape(state.goal)}[/bold]\n"
         if state.usage_percentage is None:
             context_lines = theme.styled("Waiting for first context count", Color.MUTED)
         else:
@@ -85,6 +89,7 @@ class StatusDashboardMixin:
             f"{label('Mode')} [bold]{mode}[/bold]\n"
             f"{label('Permissions')} [bold]{permission_mode}[/bold]\n"
             f"{label('Gigacode')} [bold]{gigacode}[/bold]\n"
+            f"{goal_line}"
             f"{turn_line}\n\n"
             f"{label('Context')}\n"
             f"{context_lines}\n\n"
@@ -118,6 +123,18 @@ class StatusDashboardMixin:
         if alert_level.lower() in {"error", "critical"}:
             return Color.ERROR
         return Color.WARNING
+
+    def _goal_summary(self) -> Optional[str]:
+        """One-line goal summary for the status dashboard, or None when inactive."""
+        goal = getattr(self, "_goal", None)
+        if goal is None or not goal.condition:
+            return None
+        from ..goal import goal_status_label
+
+        condition = goal.condition
+        if len(condition) > 48:
+            condition = condition[:47].rstrip() + "…"
+        return f"{condition} ({goal_status_label(goal)})"
 
     def _set_status_activity(self, content: str, *, turn_state: Optional[tui_state.TurnState] = None) -> None:
         changed = False

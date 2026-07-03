@@ -19,6 +19,7 @@ from kolega_code.cli.config import API_KEY_ENV, OAUTH_PROVIDERS
 from kolega_code.cli.provider_registry import default_model_for_provider
 from kolega_code.config import ModelProvider
 from kolega_code.llm.client import LLMClient
+from kolega_code.llm.exceptions import LLMBillingError, LLMRateLimitError
 from kolega_code.llm.models import Message, MessageHistory, TextBlock
 from kolega_code.llm.specs import (
     MODEL_SPECS,
@@ -91,6 +92,19 @@ def _require_key(provider_value: str) -> str:
     return api_key
 
 
+async def _live_generate(client: "LLMClient", **generate_kwargs):
+    """Run a live ``generate`` call, skipping on provider-side quota exhaustion.
+
+    Rate-limit and billing errors reflect the API key's quota/billing state rather
+    than the integration under test, so they skip instead of failing the suite.
+    Real integration regressions (auth, request formatting, parsing) still surface.
+    """
+    try:
+        return await client.generate(**generate_kwargs)
+    except (LLMRateLimitError, LLMBillingError) as exc:
+        pytest.skip(f"provider quota exhausted for this key: {exc}")
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "provider_value,model",
@@ -107,7 +121,8 @@ async def test_live_provider_generate(provider_value: str, model: str) -> None:
     api_key = _require_key(provider_value)
     client = LLMClient(provider=provider_value, api_key=api_key)
 
-    response = await client.generate(
+    response = await _live_generate(
+        client,
         messages=_messages(),
         system=SYSTEM,
         model=model,
@@ -134,7 +149,8 @@ async def test_live_provider_thinking_effort(provider_value: str, model: str) ->
     # Exercise a different effort than the smoke test (the last/highest option).
     effort = thinking_effort_options(provider_value, model)[-1]
 
-    response = await client.generate(
+    response = await _live_generate(
+        client,
         messages=_messages(),
         system=SYSTEM,
         model=model,

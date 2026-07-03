@@ -56,6 +56,7 @@ from kolega_code.permissions import (
 from . import messages, theme
 from .config import CliConfigOverrides, active_model_override_message, key_status
 from .connection import CliConnectionManager
+from .goal import GoalState
 from .diagnostics import DiagnosticsLog, ResponsivenessWatchdog
 from .file_index import WorkspaceFileIndex
 from .mentions import build_file_attachments
@@ -209,6 +210,7 @@ class KolegaCodeApp(
         self._plan_reofferable: bool = bool(self._latest_plan and (self.session.plan_reofferable or self._plan_pending))
         self._plan_decision_active = False
         self._gigacode_enabled = bool(self.session.gigacode_enabled)
+        self._goal: Optional[GoalState] = GoalState.from_dict(self.session.goal) if self.session.goal else None
         self._pending_question: Optional[tui_state.PendingQuestion] = None
         self._pending_approval: Optional[tui_state.PendingApproval] = None
         self._pending_image_attachments: list[dict] = []
@@ -810,6 +812,7 @@ class KolegaCodeApp(
             interaction_mode=record.interaction_mode,
             permission_mode=record.permission_mode,
             gigacode_enabled=record.gigacode_enabled,
+            goal=dict(record.goal),
         )
 
     async def _save_session_async(self) -> None:
@@ -1800,6 +1803,10 @@ class KolegaCodeApp(
         self._plan_pending = False
         self._plan_reofferable = False
         self._plan_decision_active = False
+        self._goal = None
+        self.session.goal = {}
+        if self.agent is not None:
+            self.agent.apply_goal(None)
         self._clear_runtime_output()
         await self._save_session_async()
         self._set_plan_actions_visible(False)

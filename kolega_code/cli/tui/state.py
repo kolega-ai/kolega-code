@@ -239,6 +239,7 @@ class StatusDashboardState:
     mode: str = BUILD_INTERACTION_MODE
     permission_mode: str = PermissionMode.ASK.value
     gigacode_enabled: bool = False
+    goal: Optional[str] = None
     turn_state: TurnState = TurnState.IDLE
     activity: str = "Ready"
     input_tokens: Optional[int] = None

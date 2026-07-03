@@ -22,6 +22,12 @@ from kolega_code.llm.models import TextBlock
 from kolega_code.permissions import normalize_permission_mode
 
 from .. import messages, theme
+from ..goal import (
+    GOAL_CLEAR_ALIASES,
+    GoalState,
+    build_goal_task_prompt,
+    format_goal_status,
+)
 from ..provider_registry import (
     UI_DEFAULT_PROVIDER,
     default_ui_thinking_effort,
@@ -52,6 +58,7 @@ class CommandHandlersMixin:
             "/login": self._command_login,
             "/logout": self._command_logout,
             "/gigacode": self._command_gigacode,
+            "/goal": self._command_goal,
             "/prompts": self._command_prompts,
             "/queue-clear": self._command_queue_clear,
             "/theme": self._command_theme,
@@ -241,6 +248,80 @@ class CommandHandlersMixin:
             # Sub-agents can't run workflows (run_workflow is gated off for them),
             # so the authoring guide is just prompt bloat for a sub-agent.
             propagate_to_sub_agents=False,
+        )
+
+    async def _command_goal(self, args: str) -> None:
+        clean = args.strip()
+        first, _, rest = clean.partition(" ")
+        first_lower = first.lower()
+
+        # /goal clear | stop | off | reset | none | cancel
+        if first_lower in GOAL_CLEAR_ALIASES:
+            if self._turn_active or self.agent_worker is not None:
+                self._show_composer_hint(messages.GOAL_BLOCK_STOP_FIRST)
+                self._notify_user(messages.GOAL_BLOCK_STOP_FIRST, severity="warning")
+                return
+            if self._goal is None:
+                self._add_conversation_entry(
+                    tui_state.ConversationEntry(kind="system", content=messages.GOAL_NONE_ACTIVE)
+                )
+                return
+            await self._clear_active_goal(note=messages.GOAL_CLEARED)
+            return
+
+        # /goal (no args) -> status
+        if not clean:
+            if self._goal is None:
+                self._add_conversation_entry(
+                    tui_state.ConversationEntry(kind="system", content=messages.GOAL_NONE_ACTIVE)
+                )
+            else:
+                self._add_conversation_entry(
+                    tui_state.ConversationEntry(kind="system", content=format_goal_status(self._goal))
+                )
+            return
+
+        # Setting a goal requires a connected agent and an idle turn.
+        if self.agent is None:
+            self._set_settings_status(messages.GOAL_BLOCK_SETTINGS, tone="warning")
+            return
+        if self._turn_active or self.agent_worker is not None:
+            self._show_composer_hint(messages.GOAL_BLOCK_STOP_FIRST)
+            self._notify_user(messages.GOAL_BLOCK_STOP_FIRST, severity="warning")
+            return
+
+        # /goal -p <condition> | /goal --print <condition> -> run to completion
+        run_to_completion = False
+        condition_text = clean
+        if first_lower in ("-p", "--print"):
+            run_to_completion = True
+            condition_text = rest.strip()
+        if not condition_text:
+            self._add_conversation_entry(tui_state.ConversationEntry(kind="system", content=messages.GOAL_USAGE))
+            return
+
+        replacing = self._goal is not None and self._goal.condition and not self._goal.met
+        goal = GoalState.create(condition_text, run_to_completion=run_to_completion)
+        self._set_goal_state(goal)
+        await self._persist_goal_async()
+
+        transcript = f"/goal {clean}"
+        self._add_conversation_entry(tui_state.ConversationEntry(kind="user", content=transcript))
+        if run_to_completion:
+            self._add_conversation_entry(
+                tui_state.ConversationEntry(kind="system", content=messages.GOAL_RUN_TO_COMPLETION)
+            )
+        self._add_conversation_entry(
+            tui_state.ConversationEntry(
+                kind="system",
+                content=messages.GOAL_REPLACED if replacing else messages.GOAL_SET,
+            )
+        )
+
+        # Kick off the first work turn; _process_message runs the goal loop after it.
+        prompt = build_goal_task_prompt(condition_text)
+        self.agent_worker = self.run_worker(
+            self._process_message(prompt), name="kolega-turn", group="turns", exclusive=True
         )
 
     async def _command_prompts(self, args: str) -> None:
