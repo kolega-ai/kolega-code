@@ -6,6 +6,8 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.14.0 - 2026-07-03
+
 ### Added
 
 - Adopted Pyright static type checking (basic mode) across the codebase.
@@ -22,6 +24,14 @@ This project uses GitHub Releases for detailed generated release notes. This fil
   automatically until the goal is met, a turn cap is hit, or the user
   pauses/cancels. Also available as `kolega-code ask --goal <condition>` for
   run-to-completion from the CLI. Goal state persists with the session.
+
+### Fixed
+
+- Handled CRLF line endings in the edit, multi_edit, and write tools so diffs
+  and patches apply correctly on Windows-originated files.
+- Showed full diffs on the session changes screen instead of a capped preview.
+- Kept the turn worker alive during goal verification so the agent does not
+  stall while checking autonomous goal conditions.
 
 ## 0.13.0 - 2026-07-02
 
