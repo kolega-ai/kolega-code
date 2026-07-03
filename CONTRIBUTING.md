@@ -57,12 +57,13 @@ to `.githooks`:
 uv run pre-commit run --all-files --show-diff-on-failure
 ```
 
-CI runs Ruff through pre-commit. You can also run Ruff directly for one-off linting and
-formatting checks:
+CI runs Ruff and Pyright through pre-commit. You can also run them directly for
+one-off checks:
 
 ```bash
 uv run ruff check .
 uv run ruff format --check .
+uv run pyright
 ```
 
 To apply formatting locally:
@@ -70,6 +71,27 @@ To apply formatting locally:
 ```bash
 uv run ruff format .
 ```
+
+### Type checking
+
+The project uses [Pyright](https://github.com/microsoft/pyright) in basic mode to
+catch type errors before runtime. The configuration lives in `[tool.pyright]` in
+`pyproject.toml`.
+
+Run the type checker locally:
+
+```bash
+uv run pyright
+```
+
+Guidelines for type annotations:
+
+- All new code should have type annotations on function signatures and class
+  attributes.
+- Use `# pyright: ignore[<rule>]` sparingly and only for third-party stub
+  limitations — never to silence errors in first-party code.
+- Prefer narrowing `Optional` values with `assert` or `if` guards over ignoring
+  the error.
 
 Run the fast test suite before opening a pull request:
 

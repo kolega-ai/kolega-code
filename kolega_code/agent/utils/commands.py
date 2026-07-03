@@ -76,17 +76,17 @@ class CommandProcessor:
         return f"Current context token count: {input_tokens}"
 
     @staticmethod
-    def process_commands(cls: Type) -> Type:
+    def process_commands(target_cls: Type) -> Type:
         """
         Class decorator that adds command processing to process_message_stream.
 
         Args:
-            cls: The class to decorate
+            target_cls: The class to decorate
 
         Returns:
             Decorated class with command processing
         """
-        original_method = cls.process_message_stream
+        original_method = target_cls.process_message_stream
 
         @wraps(original_method)
         async def wrapped_process_message_stream(
@@ -110,5 +110,5 @@ class CommandProcessor:
             async for response in original_method(self, message, attachments):
                 yield response
 
-        cls.process_message_stream = wrapped_process_message_stream
-        return cls
+        target_cls.process_message_stream = wrapped_process_message_stream
+        return target_cls

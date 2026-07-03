@@ -164,6 +164,8 @@ class PtySession:
     # -- output reading ----------------------------------------------------
 
     def _on_readable(self) -> None:
+        if self.master_fd is None:
+            return
         try:
             data = os.read(self.master_fd, 65536)
         except (BlockingIOError, InterruptedError):
@@ -523,7 +525,7 @@ class LocalTerminalManager(TerminalManager):
         result = await self.exec_command(command, workdir=cwd, yield_time_ms=MAX_YIELD_MS, max_output_tokens=200000)
         parts = [result.output]
         session_id = result.session_id
-        while result.status == "running" and time.monotonic() < deadline:
+        while result.status == "running" and session_id is not None and time.monotonic() < deadline:
             result = await self.write_stdin(session_id, "", yield_time_ms=MAX_POLL_MS, max_output_tokens=200000)
             parts.append(result.output)
         if result.status == "running" and session_id is not None:

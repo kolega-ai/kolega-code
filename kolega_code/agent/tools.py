@@ -61,9 +61,9 @@ class ToolCollectionConfig:
         browser_only: bool = False,
         include_agent_dispatch_tools: bool = False,
         include_memory_tools: bool = False,
-        tool_exclusions: List[str] = None,
-        custom_tool_groups: List[str] = None,
-        enabled_tool_groups: List[str] = None,
+        tool_exclusions: Optional[List[str]] = None,
+        custom_tool_groups: Optional[List[str]] = None,
+        enabled_tool_groups: Optional[List[str]] = None,
         restrict_to_tool_groups: bool = False,
     ):
         """
@@ -490,8 +490,8 @@ class ToolCollection(LogMixin):
         self,
         browser_id: str,
         max_logs: int = 50,
-        log_types: list = None,
-        minutes_back: int = None,
+        log_types: Optional[list] = None,
+        minutes_back: Optional[int] = None,
         max_chars: int = 8000,
     ) -> str:
         """
@@ -558,7 +558,7 @@ class ToolCollection(LogMixin):
         """
         return await self.browser_tool.get_browser_interactive_elements(browser_id)
 
-    async def take_browser_screenshot(self, browser_id: str) -> str:
+    async def take_browser_screenshot(self, browser_id: str) -> List[ImageBlock]:
         """
         Take a screenshot of the current browser page.
 
@@ -1403,10 +1403,13 @@ class ToolCollection(LogMixin):
         Returns:
             The full hostname including port (e.g., 'localhost:3000' or 'xxxx.e2b.dev')
         """
-        # Check if we're using a SandboxTerminalManager (indicates sandbox mode)
-        if hasattr(self.terminal_manager, "sandbox") and self.terminal_manager.sandbox:
+        # Check if we're using a SandboxTerminalManager (indicates sandbox mode).
+        # ``sandbox`` is only present on ``SandboxTerminalManager``; the base
+        # ``TerminalManager``/``LocalTerminalManager`` do not declare it, so access it
+        # via ``getattr`` rather than a direct attribute lookup.
+        sandbox = getattr(self.terminal_manager, "sandbox", None)
+        if sandbox is not None:
             # We're in sandbox mode, get the host from the sandbox
-            sandbox = self.terminal_manager.sandbox
             # E2B AsyncSandbox has a get_host method that takes a port
             # The method is synchronous and returns a string directly
             host = sandbox.get_host(port)

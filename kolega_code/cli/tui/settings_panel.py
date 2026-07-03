@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 import shlex
-from typing import Optional
+from typing import Literal, Optional, cast
 from urllib.parse import urlparse
 
 from textual.css.query import NoMatches
@@ -45,6 +45,7 @@ from ..provider_registry import (
     ui_provider_options,
     ui_thinking_effort_options,
 )
+from . import app_base as tui_app_base
 from ..settings import WEB_SEARCH_KEY_NAMES
 from ..theme import Color, Glyph
 
@@ -130,7 +131,7 @@ def _mcp_status_metadata(row: dict[str, object]) -> list[str]:
     metadata: list[str] = []
     if bool(row.get("enabled")) and str(row.get("status") or "") == "verified":
         try:
-            tool_count = int(row.get("tool_count") or 0)
+            tool_count = int(row.get("tool_count") or 0)  # pyright: ignore[reportArgumentType]
         except (TypeError, ValueError):
             tool_count = 0
         metadata.append(_mcp_plural(tool_count, "tool"))
@@ -206,7 +207,7 @@ def _mcp_server_select_label(server: MCPServerConfig) -> str:
     )
 
 
-class SettingsPanelMixin:
+class SettingsPanelMixin(tui_app_base.KolegaAppBase):
     @property
     def _settings_status(self) -> Static:
         return self.query_one("#settings_status", Static)
@@ -623,7 +624,10 @@ class SettingsPanelMixin:
 
     def _collect_mcp_server_from_ui(self) -> MCPServerConfig:
         name = self.query_one("#mcp_name_input", Input).value.strip() or None
-        transport = str(self.query_one("#mcp_transport_select", Select).value)
+        transport = cast(
+            Literal["streamable_http", "sse", "stdio"],
+            str(self.query_one("#mcp_transport_select", Select).value),
+        )
         enabled = str(self.query_one("#mcp_enabled_select", Select).value) == "true"
         url = self.query_one("#mcp_url_input", Input).value.strip() or None
         headers_text = self.query_one("#mcp_headers_input", Input).value.strip()

@@ -65,7 +65,7 @@ from ..config import ModelProvider
 class LLMError(Exception):
     """Base exception class for all LLM-related errors."""
 
-    def __init__(self, message: str, model: str = None, provider: str = None):
+    def __init__(self, message: str, model: str | None = None, provider: str | None = None):
         super().__init__(message)
         self.provider = provider
 
@@ -246,28 +246,29 @@ def map_openai_errors(error: "OpenAIError") -> LLMError:
         APITimeoutError as OpenAIAPITimeoutError,
     )
 
-    if hasattr(error, "status_code"):
-        if error.status_code == 400:
+    status_code = getattr(error, "status_code", None)
+    if status_code is not None:
+        if status_code == 400:
             if getattr(error, "code", None) == "context_length_exceeded":
                 return LLMContextWindowExceededError(
                     message=f"OpenAI APIError: {str(error)}", provider=ModelProvider.OPENAI.value
                 )
             return LLMInvalidRequestError(message=f"OpenAI APIError: {str(error)}", provider=ModelProvider.OPENAI.value)
-        elif error.status_code == 401:
+        elif status_code == 401:
             return LLMAuthenticationError(message=f"OpenAI APIError: {str(error)}", provider=ModelProvider.OPENAI.value)
-        elif error.status_code == 403:
+        elif status_code == 403:
             return LLMPermissionDeniedError(
                 message=f"OpenAI APIError: {str(error)}", provider=ModelProvider.OPENAI.value
             )
-        elif error.status_code == 404:
+        elif status_code == 404:
             return LLMNotFoundError(message=f"OpenAI APIError: {str(error)}", provider=ModelProvider.OPENAI.value)
-        elif error.status_code == 422:
+        elif status_code == 422:
             return LLMUnprocessableEntityError(
                 message=f"OpenAI APIError: {str(error)}", provider=ModelProvider.OPENAI.value
             )
-        elif error.status_code == 429:
+        elif status_code == 429:
             return LLMRateLimitError(message=f"OpenAI APIError: {str(error)}", provider=ModelProvider.OPENAI.value)
-        elif error.status_code == 500:
+        elif status_code == 500:
             return LLMInternalServerError(message=f"OpenAI APIError: {str(error)}", provider=ModelProvider.OPENAI.value)
 
     # Transport failures (a stalled streaming read hitting the per-request timeout, a
@@ -349,25 +350,26 @@ def map_anthropic_errors(error: "AnthropicError", provider: str | None = None) -
     if type(error) is AnthropicInternalServerError:
         return LLMInternalServerError(message=f"AnthropicError: {str(error)}", provider=provider)
 
-    if hasattr(error, "status_code"):
-        if error.status_code == 400:
+    status_code = getattr(error, "status_code", None)
+    if status_code is not None:
+        if status_code == 400:
             error_text = str(error).lower()
             if any(phrase in error_text for phrase in context_window_phrases):
                 return LLMContextWindowExceededError(message=f"AnthropicError: {str(error)}", provider=provider)
             return LLMInvalidRequestError(message=f"AnthropicError: {str(error)}", provider=provider)
-        elif error.status_code == 401:
+        elif status_code == 401:
             return LLMAuthenticationError(message=f"AnthropicError: {str(error)}", provider=provider)
-        elif error.status_code == 403:
+        elif status_code == 403:
             return LLMPermissionDeniedError(message=f"AnthropicError: {str(error)}", provider=provider)
-        elif error.status_code == 404:
+        elif status_code == 404:
             return LLMNotFoundError(message=f"AnthropicError: {str(error)}", provider=provider)
-        elif error.status_code == 413:
+        elif status_code == 413:
             return LLMContextWindowExceededError(message=f"AnthropicError: {str(error)}", provider=provider)
-        if error.status_code == 429:
+        if status_code == 429:
             return LLMRateLimitError(message=f"AnthropicError: {str(error)}", provider=provider)
-        if error.status_code == 500:
+        if status_code == 500:
             return LLMInternalServerError(message=f"AnthropicError: {str(error)}", provider=provider)
-        if error.status_code == 529:
+        if status_code == 529:
             return LLMInternalServerError(message=f"AnthropicError: {str(error)}", provider=provider)
 
     # Transport failures (a stalled streaming read hitting the per-request timeout, a
@@ -381,7 +383,7 @@ def map_anthropic_errors(error: "AnthropicError", provider: str | None = None) -
     return LLMError(message=f"AnthropicError: {str(error)}", provider=provider)
 
 
-def map_to_llm_error(error: Exception, provider: str = None) -> LLMError:
+def map_to_llm_error(error: Exception, provider: str | None = None) -> LLMError:
     """Map any exception to a standardized LLM error.
 
     This function provides a single point of control for converting any exception

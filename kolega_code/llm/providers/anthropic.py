@@ -2,13 +2,13 @@ import asyncio
 import json
 import os
 import threading
-from typing import Any, AsyncContextManager, Dict, List, Optional
+from typing import Any, AsyncContextManager, Dict, List, Optional, cast
 from weakref import WeakKeyDictionary
 
 import tiktoken
 from anthropic import AsyncAnthropic
 
-from ..models import Message, MessageChunk, MessageHistory, ToolDefinition
+from ..models import ContentBlock, Message, MessageChunk, MessageHistory, ToolDefinition
 from ..specs import build_thinking_request_params, get_model_specs
 from ..timeouts import streaming_timeout
 from ..tool_execution_ids import ToolExecutionIdRegistry
@@ -20,7 +20,7 @@ class AnthropicStreamWrapper:
     def __init__(self, anthropic_stream, provider_name: str = "anthropic"):
         self.anthropic_stream = anthropic_stream
         self.provider_name = provider_name
-        self.generator = None
+        self.generator: Any = None
         self._closed = False
 
         # Track tool calls being streamed
@@ -189,7 +189,7 @@ class AnthropicProvider(BaseLLMProvider):
         messages: MessageHistory,
         system: Optional[Message] = None,
         model: Optional[str] = None,
-        tools: List[ToolDefinition] = None,
+        tools: Optional[List[ToolDefinition]] = None,
         **kwargs,
     ) -> TokenCount:
         tools = tools or []
@@ -200,13 +200,15 @@ class AnthropicProvider(BaseLLMProvider):
             # Textual/asyncio event loop (the remote branch already yields on I/O).
             return await asyncio.to_thread(self._count_tokens_local, messages, system, model, tools)
         else:
-            # Use Anthropic API for token counting
+            # Use Anthropic API for token counting. The remote branch assumes a
+            # system message is supplied (the local branch tolerates None).
+            assert system is not None
             await self.rate_limiter.acquire()
             count = await self.async_client.messages.count_tokens(
                 messages=messages.to_anthropic(),
-                system=[c.to_anthropic() for c in system.content],
-                model=model,
-                tools=[t.to_anthropic() for t in tools],
+                system=cast(Any, [c.to_anthropic() for c in cast(List[ContentBlock], system.content)]),
+                model=cast(Any, model),
+                tools=cast(Any, [t.to_anthropic() for t in tools]),
                 **kwargs,
             )
 
@@ -221,7 +223,7 @@ class AnthropicProvider(BaseLLMProvider):
         messages: MessageHistory,
         system: Optional[Message] = None,
         model: Optional[str] = None,
-        tools: List[ToolDefinition] = None,
+        tools: Optional[List[ToolDefinition]] = None,
     ) -> TokenCount:
         """Count tokens locally using tiktoken with p50k_base encoding.
 
@@ -448,6 +450,7 @@ class AnthropicProvider(BaseLLMProvider):
         The context manager also provides get_final_message() to retrieve the
         complete message after streaming.
         """
+        assert system is not None
         generation_params = self._prepare_generation_params(params)
         generation_params.update(kwargs)
         self._apply_thinking_params(generation_params, params)
@@ -461,7 +464,7 @@ class AnthropicProvider(BaseLLMProvider):
         return AnthropicStreamWrapper(
             self.async_client.messages.stream(
                 messages=messages.to_anthropic(),
-                system=[c.to_anthropic() for c in system.content],
+                system=cast(Any, [c.to_anthropic() for c in cast(List[ContentBlock], system.content)]),
                 timeout=streaming_timeout(),
                 **generation_params,
             ),
@@ -475,6 +478,7 @@ class AnthropicProvider(BaseLLMProvider):
         params: Optional[GenerationParams] = None,
         **kwargs,
     ) -> Message:
+        assert system is not None
         generation_params = self._prepare_generation_params(params)
         generation_params.update(kwargs)
         self._apply_thinking_params(generation_params, params)
@@ -483,7 +487,7 @@ class AnthropicProvider(BaseLLMProvider):
         await self.rate_limiter.acquire()
         response = await self.async_client.messages.create(
             messages=messages.to_anthropic(),
-            system=[c.to_anthropic() for c in system.content],
+            system=cast(Any, [c.to_anthropic() for c in cast(List[ContentBlock], system.content)]),
             **generation_params,
         )
         message = Message.from_anthropic(response)

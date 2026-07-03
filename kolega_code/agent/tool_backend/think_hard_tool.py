@@ -1,3 +1,7 @@
+from typing import Any, cast
+from collections.abc import Coroutine
+from contextlib import AbstractAsyncContextManager
+
 from .. import prompts
 from kolega_code.llm.client import LLMClient
 from kolega_code.llm.instrumented_client import InstrumentedLLMClient
@@ -32,7 +36,7 @@ class ThinkHardTool(StreamingTool):
             # Create a new instrumented client with the same Langfuse instance but for thinking
             client = InstrumentedLLMClient(
                 provider=provider.value,
-                api_key=api_key,
+                api_key=api_key or "",
                 max_retries=rate_limits.max_retries,
                 requests_per_minute=rate_limits.requests_per_minute,
                 tokens_per_minute=rate_limits.tokens_per_minute,
@@ -49,7 +53,7 @@ class ThinkHardTool(StreamingTool):
             # Fallback to regular client
             client = LLMClient(
                 provider=provider.value,
-                api_key=api_key,
+                api_key=api_key or "",
                 max_retries=rate_limits.max_retries,
                 requests_per_minute=rate_limits.requests_per_minute,
                 tokens_per_minute=rate_limits.tokens_per_minute,
@@ -89,14 +93,21 @@ class ThinkHardTool(StreamingTool):
 
             max_completion = model_specs["max_completion_tokens"]
 
-            # Use the stream and process chunks for streaming updates
-            async with await client.stream(
-                model=self.config.thinking_config.model,
-                max_completion_tokens=max_completion,
-                system=system_message,
-                messages=messages,
-                thinking=thinking_param,
-            ) as stream:
+            # Use the stream and process chunks for streaming updates.
+            # ``LLMClient.stream`` is typed as ``AsyncContextManager | Coroutine``
+            # because providers may define ``stream`` either way; every concrete
+            # provider is ``async def``, so cast to the coroutine form before awaiting.
+            stream_cm = await cast(
+                Coroutine[Any, Any, AbstractAsyncContextManager[Any]],
+                client.stream(
+                    model=self.config.thinking_config.model,
+                    max_completion_tokens=max_completion,
+                    system=system_message,
+                    messages=messages,
+                    thinking=thinking_param,
+                ),
+            )
+            async with stream_cm as stream:
                 # Process chunks for streaming if we have a tool_call_id
                 if tool_call_id:
                     async for chunk in stream:

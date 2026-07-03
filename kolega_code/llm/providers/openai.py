@@ -226,7 +226,7 @@ class OpenAIProvider(BaseLLMProvider):
 
     def _prepare_generation_params(self, params: Optional[GenerationParams] = None) -> Dict[str, Any]:
         """Convert common parameters to provider-specific format"""
-        generation_params = {
+        generation_params: Dict[str, Any] = {
             "model": "gpt-5.5",  # Default model
         }
 
@@ -256,7 +256,7 @@ class OpenAIProvider(BaseLLMProvider):
         messages: MessageHistory,
         system: Optional[Message] = None,
         model: Optional[str] = None,
-        tools: List[ToolDefinition] = None,
+        tools: Optional[List[ToolDefinition]] = None,
         **kwargs,
     ) -> TokenCount:
         """Count tokens for a list of messages using tiktoken.
@@ -352,8 +352,12 @@ class OpenAIProvider(BaseLLMProvider):
                     # Handle text blocks
                     if hasattr(item, "text") and item.text:
                         num_tokens += len(encoding.encode(item.text))
-                    elif isinstance(item, dict) and "text" in item:
-                        num_tokens += len(encoding.encode(item["text"]))
+                    elif isinstance(item, dict):
+                        # Raw dict content block (e.g. serialized shape). Only the
+                        # text payload contributes tokens; a dict without a "text"
+                        # key adds nothing, matching the prior fall-through behavior.
+                        if "text" in item:
+                            num_tokens += len(encoding.encode(item["text"]))
                     # Handle image blocks
                     elif isinstance(item, ImageBlock):
                         num_tokens += self._estimate_image_tokens(len(item.data))
@@ -401,9 +405,9 @@ class OpenAIProvider(BaseLLMProvider):
                                 if isinstance(result_item, ImageBlock):
                                     num_tokens += self._estimate_image_tokens(len(result_item.data))
                                 elif hasattr(result_item, "data") and hasattr(result_item, "media_type"):
-                                    num_tokens += self._estimate_image_tokens(len(result_item.data))
-                                elif hasattr(result_item, "text") and result_item.text:
-                                    num_tokens += len(encoding.encode(result_item.text))
+                                    num_tokens += self._estimate_image_tokens(len(getattr(result_item, "data", "")))
+                                elif hasattr(result_item, "text") and getattr(result_item, "text", None):
+                                    num_tokens += len(encoding.encode(getattr(result_item, "text", "")))
                         num_tokens += 2  # Minimal formatting overhead for tool results
         return num_tokens
 
@@ -427,8 +431,11 @@ class OpenAIProvider(BaseLLMProvider):
         # Branch order mirrors _count_message_tokens so classification stays aligned.
         if hasattr(item, "text") and getattr(item, "text", None):
             return ("txt", len(item.text))
-        if isinstance(item, dict) and "text" in item:
-            return ("dtxt", len(item.get("text") or ""))
+        if isinstance(item, dict):
+            # Raw dict content block. A dict with a "text" key fingerprints like a
+            # text block; a dict without one has no encoded payload, mirroring the
+            # prior fall-through to the catch-all ("?",) return.
+            return ("dtxt", len(item.get("text") or "")) if "text" in item else ("?",)
         if isinstance(item, ImageBlock):
             return ("img", len(item.data))
         if hasattr(item, "data") and hasattr(item, "media_type"):

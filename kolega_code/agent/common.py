@@ -1,4 +1,9 @@
+from typing import TYPE_CHECKING
+
 from kolega_code.events import AgentEvent
+
+if TYPE_CHECKING:
+    from kolega_code.events import AgentConnectionManager
 
 
 class LogMixin:
@@ -8,6 +13,11 @@ class LogMixin:
     This mixin expects the implementing class to have a connection_manager attribute,
     a workspace_id attribute, and a thread_id attribute.
     """
+
+    if TYPE_CHECKING:
+        connection_manager: "AgentConnectionManager"
+        workspace_id: str
+        thread_id: str
 
     async def log_info(self, message: str, sender: str = "agent") -> None:
         """

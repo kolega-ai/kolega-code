@@ -2,7 +2,7 @@ import shutil
 import os
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, BinaryIO, Dict, List, Optional, Union, Iterator, ContextManager
+from typing import Any, BinaryIO, Dict, List, Optional, Union, Iterator, ContextManager, cast
 from datetime import datetime
 
 
@@ -477,7 +477,12 @@ class FileSystem(ABC):
 
     def get_path(self, path: str) -> Path:
         """Get a Path object for the given path."""
-        return self._resolve_path(path) if hasattr(self, "_resolve_path") else Path(path)
+        # ``_resolve_path`` is defined by concrete subclasses (Local/Sandbox);
+        # the base ``FileSystem`` does not declare it, so cast to ``Any`` for the
+        # guarded lookup rather than adding a stub that would change overrides.
+        if hasattr(self, "_resolve_path"):
+            return Path(cast(Any, self)._resolve_path(path))
+        return Path(path)
 
     def list_directory(self, path: str) -> List[str]:
         """Alias for iterdir that returns a list."""

@@ -1,5 +1,8 @@
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, List, Optional
+
+if TYPE_CHECKING:
+    from ..models import ToolDefinition
 
 
 @dataclass
@@ -14,5 +17,5 @@ class GenerationParams:
 
     temperature: float = 1.0
     max_completion_tokens: Optional[int] = None
-    tools: Optional[List[Dict[str, Any]]] = None
+    tools: Optional[List["ToolDefinition"]] = None
     thinking: Optional[Any] = None

@@ -82,7 +82,7 @@ class FirecrawlBackend(SearchBackend):
         return _field(data, "web") or []
 
     def _sdk_search(self, query: str, count: int):
-        client = Firecrawl(api_key=self.api_key, timeout=self.timeout)
+        client = Firecrawl(api_key=self.api_key or "", timeout=self.timeout)
         return client.search(query, limit=count, timeout=int(self.timeout * 1000))
 
     async def _search_keyless(self, query: str, count: int) -> list:

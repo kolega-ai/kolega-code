@@ -7,7 +7,7 @@ import base64
 import importlib
 import json
 import logging
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union, cast
 
 from kolega_code.utils.images import ascii_thumbnail_from_base64
 
@@ -122,6 +122,27 @@ class ContentBlock:
         """Serializes the content block to a dictionary."""
         raise NotImplementedError("Subclasses must implement to_dict")
 
+    def to_anthropic(self) -> Dict[str, Any]:
+        """Convert this block to the provider-native Anthropic payload.
+
+        The base class has no canonical Anthropic shape; concrete blocks override
+        this. Declared here so call sites that hold a generic ``ContentBlock`` type
+        check against a known interface.
+        """
+        raise NotImplementedError("Subclasses must implement to_anthropic")
+
+    def to_openai(self) -> Dict[str, Any]:
+        """Convert this block to the OpenAI Chat Completions payload shape."""
+        raise NotImplementedError("Subclasses must implement to_openai")
+
+    def to_google(self) -> genai_types.Part:
+        """Convert this block to a Google genai ``Part``."""
+        raise NotImplementedError("Subclasses must implement to_google")
+
+    def to_markdown(self) -> str:
+        """Convert this block to a markdown string for history display."""
+        raise NotImplementedError("Subclasses must implement to_markdown")
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ContentBlock":
         """Deserializes a content block from a dictionary."""
@@ -161,7 +182,7 @@ class TextBlock(ContentBlock):
         Returns:
             Dict[str, Any]: A dictionary with the structure expected by Anthropic API
         """
-        result = {"type": "text", "text": self.text}
+        result: Dict[str, Any] = {"type": "text", "text": self.text}
 
         if self.cache_checkpoint:
             result["cache_control"] = {"type": "ephemeral"}
@@ -230,7 +251,7 @@ class ImageBlock(ContentBlock):
         Returns:
             Dict[str, Any]: A dictionary with the structure expected by Anthropic API
         """
-        result = {
+        result: Dict[str, Any] = {
             "type": "image",
             "source": {"type": self.image_type, "media_type": self.media_type, "data": self.data},
         }
@@ -314,7 +335,7 @@ class ThinkingBlock(ContentBlock):
         Returns:
             Dict[str, Any]: A dictionary with the structure expected by Anthropic API
         """
-        result = {"type": "thinking", "thinking": self.thinking}
+        result: Dict[str, Any] = {"type": "thinking", "thinking": self.thinking}
         if self.signature:
             result["signature"] = self.signature
 
@@ -561,11 +582,11 @@ class ToolDefinition(ContentBlock):
             required = []
             for parameter in self.parameters:
                 properties[parameter.name] = genai_types.Schema(
-                    type=parameter.type.upper(), description=parameter.description
+                    type=cast(Any, parameter.type.upper()), description=parameter.description
                 )
                 if parameter.required:
                     required.append(parameter.name)
-            parameters = genai_types.Schema(type="OBJECT", properties=properties, required=required)
+            parameters = genai_types.Schema(type=cast(Any, "OBJECT"), properties=properties, required=required)
 
         function_declaration = genai_types.FunctionDeclaration(
             name=self.name,
@@ -776,7 +797,7 @@ class ToolResult(ContentBlock):
         """
         return _openai_tool_result_message(self)
 
-    def to_google(self) -> genai_types.FunctionResponse:
+    def to_google(self) -> genai_types.Part:
         google_content = self.content
         if isinstance(self.content, list):
             google_content = [item.to_google() for item in self.content]
@@ -1022,7 +1043,7 @@ class Message:
             return self.content
         elif isinstance(self.content, list):
             # Extract text from each content block and join them
-            return "\n".join(block.text for block in self.content if hasattr(block, "text"))
+            return "\n".join(getattr(block, "text", "") for block in self.content if hasattr(block, "text"))
 
         return ""
 
@@ -1131,9 +1152,11 @@ class Message:
         return result
 
     def to_google(self) -> genai_types.Content:
-        return genai_types.Content(
-            role=self.role if self.role == "user" else "model", parts=[c.to_google() for c in self.content]
-        )
+        if isinstance(self.content, str):
+            parts = [genai_types.Part.from_text(text=self.content)]
+        else:
+            parts = [c.to_google() for c in self.content]
+        return genai_types.Content(role=self.role if self.role == "user" else "model", parts=parts)
 
     @classmethod
     def from_anthropic(cls, message, tool_execution_ids: Optional[ToolExecutionIdRegistry] = None):
@@ -1271,25 +1294,31 @@ class Message:
         content_blocks = []
         tool_use_blocks = []
 
-        if message.candidates[0].content and message.candidates[0].content.parts:
-            for part in message.candidates[0].content.parts:
+        # ``candidates`` and its ``content`` are optional in the genai stubs; bind to
+        # locals with a None guard so the subscript/attribute access below type-checks.
+        candidate = message.candidates[0] if message.candidates else None
+        candidate_content = candidate.content if candidate else None
+        if candidate_content and candidate_content.parts:
+            for part in candidate_content.parts:
                 if part.function_call:
+                    function_call = part.function_call
                     # Capture the part-level thought_signature (Gemini 3.x requires it echoed back).
                     tool_call = ToolCall(
-                        id=part.function_call.id,
-                        name=part.function_call.name,
-                        input=part.function_call.args,
-                        execution_id=tool_execution_ids.get_or_create(part.function_call.id),
+                        id=cast(str, function_call.id),
+                        name=cast(str, function_call.name),
+                        input=cast(Dict[str, Any], function_call.args),
+                        execution_id=tool_execution_ids.get_or_create(cast(str, function_call.id)),
                         thought_signature=part.thought_signature,
                     )
                     tool_use_blocks.append(tool_call)
                     content_blocks.append(tool_call)
                 elif part.thought:
-                    content_blocks.append(ThinkingBlock(thinking=part.text))
+                    content_blocks.append(ThinkingBlock(thinking=cast(str, part.text)))
                 elif part.text:
-                    content_blocks.append(TextBlock(text=part.text))
+                    content_blocks.append(TextBlock(text=cast(str, part.text)))
 
-        mapped_stop_reason = stop_reason_map[message.finish_reason] if hasattr(message, "finish_reason") else None
+        finish_reason = getattr(message, "finish_reason", None)
+        mapped_stop_reason = stop_reason_map[finish_reason] if finish_reason else None
         if tool_use_blocks:
             mapped_stop_reason = "tool_use"
 
@@ -1318,7 +1347,7 @@ class Message:
         role: str,
         content: str,
         reasoning_content: str = "",
-        tool_calls: Optional[list] = None,
+        tool_calls: Optional[Dict[str, Any]] = None,
         stop_reason: Optional[str] = None,
         tool_execution_ids: Optional[ToolExecutionIdRegistry] = None,
     ):
@@ -1380,7 +1409,7 @@ class Message:
         cls,
         role: str,
         content: str,
-        tool_calls: Optional[list] = None,
+        tool_calls: Optional[Dict[str, Any]] = None,
         stop_reason: Optional[str] = None,
         tool_execution_ids: Optional[ToolExecutionIdRegistry] = None,
     ):
@@ -1492,9 +1521,9 @@ class Message:
                     if hasattr(block, "to_markdown"):
                         markdown += block.to_markdown() + "\n\n"
                     elif hasattr(block, "text"):
-                        markdown += block.text + "\n\n"
+                        markdown += getattr(block, "text", "") + "\n\n"
                     elif hasattr(block, "thinking"):
-                        markdown += f"*Thinking:*\n\n```\n{block.thinking}\n```\n\n"
+                        markdown += f"*Thinking:*\n\n```\n{getattr(block, 'thinking', '')}\n```\n\n"
 
         # Add stop reason if present
         if self.stop_reason:

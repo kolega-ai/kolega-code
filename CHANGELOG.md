@@ -8,6 +8,10 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ### Added
 
+- Adopted Pyright static type checking (basic mode) across the codebase.
+  Pyright runs in pre-commit and CI, catching type errors before runtime. The
+  `[tool.pyright]` configuration lives in `pyproject.toml`. Run locally with
+  `uv run pyright`.
 - Added support for Anthropic Claude Fable 5 (`claude-fable-5`) and Claude Sonnet 5
   (`claude-sonnet-5`): 1M-token context, 128K max output, vision input, and
   adaptive thinking with `low`/`medium`/`high`/`xhigh`/`max` effort levels. Both

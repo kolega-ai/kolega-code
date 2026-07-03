@@ -9,9 +9,10 @@ holding their own reference.
 
 import logging
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from kolega_code.llm.models import (
+    ContentBlock,
     ImageBlock,
     Message,
     MessageHistory,
@@ -286,7 +287,7 @@ class Conversation:
     # Appending
     # ------------------------------------------------------------------
 
-    def append_user(self, content) -> None:
+    def append_user(self, content: Union[str, List[ContentBlock]]) -> None:
         """
         Safely append a user message, reconciling incoming tool results with
         any placeholder or duplicate results already in history.
@@ -294,6 +295,7 @@ class Conversation:
         Args:
             content: Either a string (converted to TextBlock) or list of ContentBlocks
         """
+        content_blocks: List[ContentBlock]
         if isinstance(content, str):
             content_blocks = [TextBlock(text=content)]
         elif isinstance(content, list):

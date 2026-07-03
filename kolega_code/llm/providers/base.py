@@ -56,9 +56,9 @@ class BaseLLMProvider(ABC):
     async def count_tokens(
         self,
         messages: MessageHistory,
-        system: Message = None,
+        system: Optional[Message] = None,
         model: Optional[str] = None,
-        tools: List[ToolDefinition] = None,
+        tools: Optional[List[ToolDefinition]] = None,
         **kwargs,
     ) -> TokenCount:
         pass
@@ -75,7 +75,11 @@ class BaseLLMProvider(ABC):
 
     @abstractmethod
     async def generate(
-        self, messages: MessageHistory, system: Message = None, params: Optional[GenerationParams] = None, **kwargs
+        self,
+        messages: MessageHistory,
+        system: Optional[Message] = None,
+        params: Optional[GenerationParams] = None,
+        **kwargs,
     ) -> Message:
         pass
 

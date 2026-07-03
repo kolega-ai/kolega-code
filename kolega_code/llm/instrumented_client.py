@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from langfuse import Langfuse
 
 from .client import LLMClient
-from .models import Message, MessageHistory
+from .models import Message, MessageHistory, ToolDefinition
 from .providers.models import GenerationParams
 
 logger = logging.getLogger(__name__)
@@ -178,10 +178,10 @@ class InstrumentedLLMClient(LLMClient):
         system: Optional[Message] = None,
         temperature: float = 1.0,
         max_completion_tokens: Optional[int] = None,
-        tools: Optional[List[Dict[str, Any]]] = None,
+        tools: Optional[List[ToolDefinition]] = None,
         thinking: Optional[Union[int, str]] = None,
         params: Optional[GenerationParams] = None,
-        **kwargs: Dict[str, Any],
+        **kwargs: Any,
     ) -> Message:
         """Generate with Langfuse tracing."""
         if not self.langfuse:
@@ -234,14 +234,15 @@ class InstrumentedLLMClient(LLMClient):
         )
 
         # Create generation as child of trace
+        model_parameters: Dict[str, Any] = {
+            "temperature": temperature,
+            "max_completion_tokens": max_completion_tokens,
+            "provider": self.provider_name,
+        }
         generation = trace.start_generation(
             name=f"{self.agent_type or 'agent'}-llm-generation",
             model=model,
-            model_parameters={
-                "temperature": temperature,
-                "max_completion_tokens": max_completion_tokens,
-                "provider": self.provider_name,
-            },
+            model_parameters=model_parameters,
             input=input_data,
             metadata=metadata,
         )
@@ -318,10 +319,10 @@ class InstrumentedLLMClient(LLMClient):
         system: Optional[Message] = None,
         temperature: float = 1.0,
         max_completion_tokens: Optional[int] = None,
-        tools: Optional[List[Dict[str, Any]]] = None,
+        tools: Optional[List[ToolDefinition]] = None,
         thinking: Optional[Union[int, str]] = None,
         params: Optional[GenerationParams] = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> Union[AsyncContextManager[Any], Coroutine[Any, Any, AsyncContextManager[Any]]]:
         """Stream a response with Langfuse tracing"""
         if not self.langfuse:
@@ -329,6 +330,10 @@ class InstrumentedLLMClient(LLMClient):
             return super().stream(
                 messages, system, temperature, max_completion_tokens, tools, thinking, params, **kwargs
             )
+
+        # ``self.langfuse`` is guaranteed non-None here (we returned early above).
+        # Capture it in a local so the closure below sees a non-optional type.
+        langfuse = self.langfuse
 
         # Since we need to create langfuse metadata synchronously but the stream
         # might be a coroutine, we return a coroutine that creates the wrapper
@@ -349,7 +354,7 @@ class InstrumentedLLMClient(LLMClient):
             metadata = self._create_generation_metadata(**kwargs)
 
             # Create trace first (v3 API)
-            trace = self.langfuse.start_span(
+            trace = langfuse.start_span(
                 name=f"{self.agent_type or 'agent'}-llm-stream",
                 input=input_data,
                 metadata=metadata,
@@ -378,15 +383,16 @@ class InstrumentedLLMClient(LLMClient):
             )
 
             # Create generation as child of trace
+            model_parameters: Dict[str, Any] = {
+                "temperature": temperature,
+                "max_completion_tokens": max_completion_tokens,
+                "streaming": True,
+                "provider": self.provider_name,
+            }
             generation = trace.start_generation(
                 name=f"{self.agent_type or 'agent'}-llm-stream-generation",
                 model=model,
-                model_parameters={
-                    "temperature": temperature,
-                    "max_completion_tokens": max_completion_tokens,
-                    "streaming": True,
-                    "provider": self.provider_name,
-                },
+                model_parameters=model_parameters,
                 input=input_data,
                 metadata=metadata,
             )
@@ -442,7 +448,7 @@ class MinimalLangfuseStreamWrapper:
             logger.debug(f"Error getting final message: {e}")
 
         # Update generation with available data
-        gen_update_kwargs = {
+        gen_update_kwargs: Dict[str, Any] = {
             "level": "ERROR" if exc_type else "DEFAULT",
             "status_message": str(exc_val) if exc_val else "Success",
         }

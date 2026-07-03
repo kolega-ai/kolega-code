@@ -10,7 +10,7 @@ import sys
 import time
 import traceback
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from rich.console import Group
 from rich.text import Text
@@ -252,7 +252,7 @@ class KolegaCodeApp(
         self._terminal_output_buffer_chars = 0
         self._terminal_flush_timer: Optional[Timer] = None
         self._terminal_display_normalizer = tui_terminal_display.TerminalDisplayNormalizer()
-        self._log_output_buffer: list[object] = []
+        self._log_output_buffer: list[Any] = []
         self._log_flush_timer: Optional[Timer] = None
 
     def compose(self) -> ComposeResult:
@@ -1370,10 +1370,11 @@ class KolegaCodeApp(
 
         plan = consume_completed_plan()
         if plan:
-            self._latest_plan = plan
+            plan_str = str(plan)
+            self._latest_plan = plan_str
             self._plan_reofferable = True
-            self._ensure_current_plan_artifact(plan)
-            await self._show_plan_for_decision(plan, notification=messages.PLAN_CAPTURED)
+            self._ensure_current_plan_artifact(plan_str)
+            await self._show_plan_for_decision(plan_str, notification=messages.PLAN_CAPTURED)
             return
 
         if self._latest_plan and self._plan_reofferable and not self._plan_pending:

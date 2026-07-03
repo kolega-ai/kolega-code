@@ -2,7 +2,7 @@ import uuid
 import inspect
 import json
 from pathlib import Path
-from typing import Any, Union, Optional
+from typing import Any, Awaitable, Callable, Union, Optional, cast
 from datetime import datetime, timezone
 import time
 
@@ -135,7 +135,9 @@ class AgentTool(BaseTool):
     async def _apply_subagent_stop_hooks(self, agent_name: str, result: str, sub_agent_info: Optional[dict]) -> str:
         """Fire SubagentStop on the parent agent and fold any augmentation into the result."""
         dispatcher = getattr(self.caller, "hook_dispatcher", None)
-        fire = getattr(self.caller, "fire_hook", None)
+        # ``fire_hook`` is an async method on the parent agent; ``getattr`` returns a
+        # broad type, so cast to a concrete async-callable signature before awaiting.
+        fire = cast(Callable[..., Awaitable[Any]], getattr(self.caller, "fire_hook", None))
         if not isinstance(dispatcher, HookDispatcher) or not dispatcher.is_active or not callable(fire):
             return result
         outcome = await fire(

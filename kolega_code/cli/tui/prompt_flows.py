@@ -24,12 +24,13 @@ from kolega_code.permissions import (
 from kolega_code.tools import ASK_USER_CHOICE_INPUT_SCHEMA, ASK_USER_CHOICE_SHAPE_HINT, ToolError
 
 from .. import messages, theme
+from . import app_base as tui_app_base
 from .constants import APPROVAL_OPTION_ID_PREFIX, PLAN_INTERACTION_MODE, QUESTION_OPTION_ID_PREFIX, QUESTION_TOOL_NAME
 from .state import ConversationEntry, PendingApproval, PendingQuestion, TurnState
 from .widgets import PromptPanel
 
 
-class PromptFlowMixin:
+class PromptFlowMixin(tui_app_base.KolegaAppBase):
     def _shared_task_list_prompt_extension(self) -> PromptExtension:
         return PromptExtension(
             id="cli-shared-task-list",
