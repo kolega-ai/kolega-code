@@ -43,6 +43,7 @@ These control the app and your session.
 | `/login` | Sign in to a provider, e.g. `/login chatgpt` |
 | `/logout` | Sign out of a provider, e.g. `/logout chatgpt` |
 | `/gigacode` | Toggle [gigacode](../../gigacode/) workflow orchestration on or off |
+| `/goal` | Set, show, or clear an autonomous completion goal |
 | `/queue-clear` | Clear queued follow-up messages |
 | `/copy` | Copy the last response to the clipboard |
 | `/diagnostics` | Show version, model/endpoint, and the local diagnostics log path |
@@ -51,6 +52,13 @@ These control the app and your session.
 | `/update` | Update Kolega Code to the latest version |
 | `/quit` | Save the session and exit |
 | `/exit` | Save the session and exit |
+
+Run `/goal <condition>` to set an autonomous completion goal the agent works
+toward, verifying its own progress after each turn until the goal is met, the turn
+cap is hit, or you pause it. `/goal` (no args) shows the goal status; `/goal clear`
+(aliases: `stop`, `off`, `reset`, `none`, `cancel`) removes it. See
+[Goal-Conditioned Work](../../goal/) for the full loop behavior, safety model, and
+examples.
 
 Run `/model` to open a selectable list of supported models for the current
 provider. You can also switch directly with `/model <name>`.

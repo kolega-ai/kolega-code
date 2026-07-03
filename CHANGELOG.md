@@ -6,6 +6,15 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+### Added
+
+- Added a `/goal` slash command that sets an autonomous completion condition the
+  agent works toward. After each turn, a read-only investigation sub-agent
+  verifies whether the goal is met; if not, the agent is nudged to continue
+  automatically until the goal is met, a turn cap is hit, or the user
+  pauses/cancels. Also available as `kolega-code ask --goal <condition>` for
+  run-to-completion from the CLI. Goal state persists with the session.
+
 ## 0.13.0 - 2026-07-02
 
 ### Added

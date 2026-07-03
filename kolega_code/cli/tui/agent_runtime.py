@@ -14,6 +14,12 @@ from kolega_code.services.browser import PlaywrightBrowserManager
 
 from .. import messages
 from ..config import CliConfigError, build_agent_config, config_summary
+from ..goal import (
+    GoalState,
+    build_goal_nudge,
+    build_goal_prompt_extension_markdown,
+    now_iso,
+)
 from ..plan_artifacts import write_current_plan_artifact
 from ..skills import build_skill_prompt_extension, build_skill_tool_extension, discover_skills
 from . import constants as tui_constants
@@ -112,8 +118,152 @@ class AgentRuntimeMixin:
         if self.agent is None:
             return
         cancelled_by_user = await self._run_turn_stream(lambda: self._agent_turn_stream(message, attachments))
-        if not cancelled_by_user:
+        if cancelled_by_user:
             self._schedule_maybe_start_queued_message()
+            return
+        # Un-pause a paused goal on any user-initiated turn so the loop resumes.
+        if self._goal is not None and self._goal.paused and not self._goal.met:
+            self._goal.paused = False
+            self._goal.status_note = ""
+            self._sync_goal_to_session()
+        if self._goal is not None and self._goal.is_active:
+            await self._run_goal_loop()
+        else:
+            self._schedule_maybe_start_queued_message()
+
+    # ------------------------------------------------------------------
+    # Autonomous goal loop
+    # ------------------------------------------------------------------
+
+    def _goal_prompt_extension(self) -> PromptExtension:
+        condition = self._goal.condition if self._goal else ""
+        return PromptExtension(
+            id="cli-active-goal",
+            title="Active goal",
+            markdown=build_goal_prompt_extension_markdown(condition),
+            modes=None,
+            # Read-only continuity context; safe and useful for delegated agents.
+            propagate_to_sub_agents=True,
+        )
+
+    def _sync_goal_to_session(self) -> None:
+        """Mirror the live goal state into the session record (in-memory only)."""
+        self.session.goal = self._goal.to_dict() if self._goal is not None else {}
+
+    async def _persist_goal_async(self) -> None:
+        self._sync_goal_to_session()
+        await self._save_session_async()
+
+    def _set_goal_state(self, goal: GoalState) -> None:
+        self._goal = goal
+        if self.agent is not None:
+            self.agent.apply_goal(goal.condition, self._goal_prompt_extension())
+        self._refresh_status_dashboard()
+
+    async def _clear_active_goal(self, *, note: str | None = None) -> None:
+        self._goal = None
+        if self.agent is not None:
+            self.agent.apply_goal(None)
+        self._refresh_status_dashboard()
+        await self._persist_goal_async()
+        if note:
+            self._add_conversation_entry(tui_state.ConversationEntry(kind="system", content=note))
+
+    def _accumulate_goal_tokens(self) -> None:
+        """Best-effort: add the last assistant turn's token usage to the goal."""
+        if self._goal is None or self.agent is None:
+            return
+        try:
+            history = self.agent.history
+        except Exception:  # noqa: BLE001 - token accounting must never break the loop
+            return
+        for message in reversed(history):
+            if getattr(message, "role", None) == "assistant":
+                usage = getattr(message, "usage_metadata", {}) or {}
+                added = int(usage.get("input_tokens") or 0) + int(usage.get("output_tokens") or 0)
+                if added > 0:
+                    self._goal.tokens_spent += added
+                return
+
+    async def _evaluate_active_goal(self):
+        """Dispatch the read-only verifier and update goal bookkeeping. Returns the verdict."""
+        self._set_status_activity(messages.GOAL_EVALUATING)
+        self._refresh_status_dashboard()
+        verdict = await self.agent.evaluate_goal_condition(self._goal.condition)
+        self._goal.last_reason = verdict.reason
+        self._goal.last_evaluated_at = now_iso()
+        return verdict
+
+    async def _run_goal_loop(self) -> None:
+        """Evaluate → continue loop, run after a successful (non-cancelled) turn."""
+        while self._goal is not None and self._goal.is_active:
+            self._accumulate_goal_tokens()
+            verdict = await self._evaluate_active_goal()
+            if verdict.met:
+                await self._complete_goal(verdict)
+                break
+            self._goal.turns_evaluated += 1
+            self._sync_goal_to_session()
+            if self._goal.turns_evaluated >= self._goal.max_turns:
+                await self._abort_goal()
+                break
+            turns_remaining = self._goal.max_turns - self._goal.turns_evaluated
+            nudge = build_goal_nudge(self._goal.condition, verdict, turns_remaining)
+            self._add_conversation_entry(
+                tui_state.ConversationEntry(
+                    kind="system",
+                    content=messages.GOAL_NOT_MET_CONTINUE.format(
+                        reason=verdict.reason or "see the verifier's assessment"
+                    ),
+                )
+            )
+            cancelled = await self._run_turn_stream(lambda: self._agent_turn_stream(nudge))
+            if cancelled:
+                await self._pause_goal(messages.GOAL_PAUSED.format(reason="Stopped by user. "))
+                break
+        self._schedule_maybe_start_queued_message()
+
+    async def _complete_goal(self, verdict) -> None:
+        if self._goal is None:
+            return
+        condition = self._goal.condition
+        self._goal.met = True
+        self._goal.status_note = ""
+        self._refresh_status_dashboard()
+        await self._persist_goal_async()
+        self._add_conversation_entry(
+            tui_state.ConversationEntry(kind="system", content=messages.GOAL_MET.format(condition=condition))
+        )
+        self._notify_user(messages.GOAL_MET.format(condition=condition))
+        # Goal achieved: drop the active-goal prompt extension for future turns.
+        if self.agent is not None:
+            self.agent.apply_goal(None)
+
+    async def _abort_goal(self) -> None:
+        if self._goal is None:
+            return
+        turns = self._goal.turns_evaluated
+        self._goal.paused = True
+        self._goal.status_note = f"Reached the turn cap ({self._goal.max_turns})."
+        self._refresh_status_dashboard()
+        await self._persist_goal_async()
+        self._add_conversation_entry(
+            tui_state.ConversationEntry(
+                kind="system", content=messages.GOAL_MAX_TURNS.format(turns=turns), tone="warning"
+            )
+        )
+        self._notify_user(messages.GOAL_MAX_TURNS.format(turns=turns), severity="warning")
+        if self.agent is not None:
+            self.agent.apply_goal(None)
+
+    async def _pause_goal(self, note: str) -> None:
+        if self._goal is None:
+            return
+        self._goal.paused = True
+        self._goal.status_note = "Stopped by user."
+        self._refresh_status_dashboard()
+        await self._persist_goal_async()
+        self._add_conversation_entry(tui_state.ConversationEntry(kind="system", content=note, tone="warning"))
 
     def _queue_user_message(self, text: str, attachments: list[dict] | None = None) -> None:
         self._queued_message_seq += 1
@@ -527,6 +677,11 @@ class AgentRuntimeMixin:
         if gigacode_active:
             prompt_extensions.append(self._gigacode_prompt_extension())
 
+        # An active autonomous goal is carried across rebuilds so the agent stays
+        # goal-aware after a model switch. Live set/clear uses agent.apply_goal().
+        if self._goal is not None and self._goal.condition:
+            prompt_extensions.append(self._goal_prompt_extension())
+
         self.agent = agent_class(
             project_path=self.project_path,
             workspace_id=self.session.workspace_id,
@@ -582,3 +737,13 @@ class AgentRuntimeMixin:
         outcome = await fire(HookEvent.SESSION_START, {"source": "startup"})
         if outcome.additional_context:
             self._add_conversation_entry(tui_state.ConversationEntry(kind="system", content=outcome.additional_context))
+        # Surface a restored active goal once at startup so the user knows the loop
+        # is dormant and how to resume/clear it. The loop itself does not auto-start.
+        if self._goal is not None and self._goal.condition and not self._goal.met:
+            self._add_conversation_entry(
+                tui_state.ConversationEntry(
+                    kind="system",
+                    content=messages.GOAL_RESUMED_NOTE.format(condition=self._goal.condition),
+                )
+            )
+            self._refresh_status_dashboard()

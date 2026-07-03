@@ -40,6 +40,7 @@ class SessionRecord:
     interaction_mode: str = "build"
     permission_mode: str = "ask"
     gigacode_enabled: bool = False
+    goal: dict[str, Any] = field(default_factory=dict)
     schema_version: int = SCHEMA_VERSION
 
     @classmethod
@@ -94,6 +95,7 @@ class SessionRecord:
             interaction_mode=data.get("interaction_mode") or "build",
             permission_mode=data.get("permission_mode") or "ask",
             gigacode_enabled=bool(data.get("gigacode_enabled", False)),
+            goal=data.get("goal") or {},
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -117,6 +119,7 @@ class SessionRecord:
             "interaction_mode": self.interaction_mode,
             "permission_mode": self.permission_mode,
             "gigacode_enabled": self.gigacode_enabled,
+            "goal": self.goal,
         }
 
 

@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Iterable, Optional
 
 from kolega_code.agent import CoderAgent
+from kolega_code.agent.prompt_provider import PromptExtension
 from kolega_code.agent.prompt_dump import (
     dump_prompt_overrides,
     format_prompt_dump_result,
@@ -61,6 +62,14 @@ from .connection import CliConnectionManager
 from .mentions import build_file_attachments
 from .session_store import SessionRecord, SessionStore, SessionStoreError
 from .settings import CliSettings, SettingsStore, SettingsStoreError
+from .goal import (
+    DEFAULT_GOAL_MAX_TURNS,
+    GoalState,
+    build_goal_nudge,
+    build_goal_prompt_extension_markdown,
+    build_goal_task_prompt,
+    now_iso,
+)
 from .slash_commands import SKILLS_LIST_COMMAND, agent_command_names
 from .skills import (
     SkillCatalog,
@@ -231,8 +240,19 @@ def _build_subcommand_parser() -> argparse.ArgumentParser:
     _add_tui_args(tui)
 
     ask = subparsers.add_parser("ask", help="Run a single prompt and print the answer.")
-    ask.add_argument("prompt", help="Prompt to send to Kolega Code.")
+    ask.add_argument("prompt", nargs="?", default=None, help="Prompt to send to Kolega Code.")
     ask.add_argument("--project", default=".", type=Path, help="Project directory to work in.")
+    ask.add_argument(
+        "--goal",
+        default=None,
+        help="Set an autonomous completion goal and loop until it is met or capped (no prompt required).",
+    )
+    ask.add_argument(
+        "--goal-max-turns",
+        type=int,
+        default=None,
+        help="Maximum evaluation turns before an unmet --goal gives up (default: 50).",
+    )
     ask.add_argument(
         "--mode", choices=[mode.value for mode in AgentMode], default=CLI_AGENT_MODE, help=argparse.SUPPRESS
     )
@@ -649,10 +669,30 @@ def _permission_callback_for_ask(project_path: Path):
     return permission_callback
 
 
+def _extract_last_turn_tokens(agent: CoderAgent) -> int:
+    """Best-effort token usage from the agent's last assistant turn (for goal accounting)."""
+    try:
+        history = agent.history
+    except Exception:  # noqa: BLE001 - token accounting must never break the goal loop
+        return 0
+    for message in reversed(history):
+        if getattr(message, "role", None) == "assistant":
+            usage = getattr(message, "usage_metadata", {}) or {}
+            added = int(usage.get("input_tokens") or 0) + int(usage.get("output_tokens") or 0)
+            return added
+    return 0
+
+
 async def _run_ask(args: argparse.Namespace) -> int:
     project_path = _validate_project(args.project)
     skill_catalog = discover_skills(project_path)
-    skill_command = _parse_skill_prompt(args.prompt, skill_catalog)
+    goal_condition = getattr(args, "goal", None)
+    raw_prompt = args.prompt
+    # --goal can run without a prompt (it synthesises one from the condition).
+    if raw_prompt is None and not goal_condition:
+        print("Error: prompt is required (or use --goal <condition>).", file=sys.stderr)
+        return 2
+    skill_command = _parse_skill_prompt(raw_prompt, skill_catalog) if raw_prompt else None
 
     if skill_command and skill_command[0] == "skills":
         if args.json:
@@ -771,7 +811,7 @@ async def _run_ask(args: argparse.Namespace) -> int:
         if session_start.additional_context:
             agent.append_user_message([TextBlock(text=session_start.additional_context)])
 
-    prompt = args.prompt
+    prompt = raw_prompt
     if skill_command:
         skill_name, skill_prompt = skill_command
         active_names = activated_skill_names(agent.history)
@@ -805,7 +845,26 @@ async def _run_ask(args: argparse.Namespace) -> int:
             await agent.cleanup()
             return 0
 
-    attachments, unresolved_mentions = build_file_attachments(prompt, project_path)
+    # --goal: apply the goal-aware prompt extension and synthesise the first
+    # work-turn message when no explicit prompt was given.
+    goal_state: Optional[GoalState] = None
+    if goal_condition:
+        max_turns = getattr(args, "goal_max_turns", None) or DEFAULT_GOAL_MAX_TURNS
+        goal_state = GoalState.create(goal_condition, max_turns=max_turns, run_to_completion=True)
+        agent.apply_goal(
+            goal_condition,
+            PromptExtension(
+                id="cli-active-goal",
+                title="Active goal",
+                markdown=build_goal_prompt_extension_markdown(goal_condition),
+                modes=None,
+                propagate_to_sub_agents=True,
+            ),
+        )
+        if not prompt:
+            prompt = build_goal_task_prompt(goal_condition)
+
+    attachments, unresolved_mentions = build_file_attachments(prompt or "", project_path)
     for mention in unresolved_mentions:
         print(f"Note: @{mention} not found, sent as plain text", file=sys.stderr)
     for image_path in getattr(args, "image", None) or []:
@@ -833,6 +892,63 @@ async def _run_ask(args: argparse.Namespace) -> int:
                 print(json.dumps({"kind": "chunk", "data": chunk}, default=str))
             elif chunk.get("type") == "response" and chunk.get("content"):
                 print(chunk["content"], end="" if not chunk.get("complete") else "\n")
+
+        # --goal: evaluate and auto-continue until the goal is met or the cap is hit.
+        if goal_state is not None:
+            goal_state.tokens_spent += _extract_last_turn_tokens(agent)
+            while not goal_state.met and goal_state.turns_evaluated < goal_state.max_turns:
+                verdict = await agent.evaluate_goal_condition(goal_state.condition)
+                goal_state.turns_evaluated += 1
+                goal_state.last_reason = verdict.reason
+                goal_state.last_evaluated_at = now_iso()
+                if args.json:
+                    print(
+                        json.dumps(
+                            {
+                                "kind": "goal_eval",
+                                "data": {
+                                    "met": verdict.met,
+                                    "turns": goal_state.turns_evaluated,
+                                    "reason": verdict.reason,
+                                },
+                            }
+                        )
+                    )
+                else:
+                    tag = "MET" if verdict.met else f"not met — {verdict.reason}"
+                    print(f"[goal] turn {goal_state.turns_evaluated}: {tag}", file=sys.stderr)
+                if verdict.met:
+                    goal_state.met = True
+                    break
+                turns_remaining = goal_state.max_turns - goal_state.turns_evaluated
+                nudge = build_goal_nudge(goal_state.condition, verdict, turns_remaining)
+                stream = agent.process_message_stream(nudge)
+                async for chunk in stream:
+                    response_chunks.append(chunk)
+                    if args.json:
+                        print(json.dumps({"kind": "chunk", "data": chunk}, default=str))
+                    elif chunk.get("type") == "response" and chunk.get("content"):
+                        print(chunk["content"], end="" if not chunk.get("complete") else "\n")
+                goal_state.tokens_spent += _extract_last_turn_tokens(agent)
+            # Emit a final goal result line.
+            if args.json:
+                print(
+                    json.dumps(
+                        {
+                            "kind": "goal_result",
+                            "data": {
+                                "met": goal_state.met,
+                                "turns": goal_state.turns_evaluated,
+                                "reason": goal_state.last_reason,
+                            },
+                        }
+                    )
+                )
+            else:
+                status = "met" if goal_state.met else "not met (turn cap reached)"
+                print(f"[goal] {status} after {goal_state.turns_evaluated} turn(s)", file=sys.stderr)
+            if not goal_state.met:
+                exit_code = 1
 
         if args.save or args.session:
             session.history = agent.dump_message_history()
