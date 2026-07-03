@@ -78,5 +78,6 @@ in [Settings & API Keys](../../configuration/settings-and-api-keys/).
 | Code | Meaning |
 | --- | --- |
 | `0` | Success |
+| `1` | Goal not met: `ask --goal` reached the turn cap without completing the goal |
 | `2` | Configuration / usage error (e.g. invalid provider, missing API key, project path not found, Textual not installed) |
 | `130` | Interrupted (`Ctrl+C`) |

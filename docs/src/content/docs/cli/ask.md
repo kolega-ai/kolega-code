@@ -15,8 +15,10 @@ kolega-code ask "<prompt>" [options]
 
 | Argument / option | Description |
 | --- | --- |
-| `prompt` | The prompt to send (required, positional) |
+| `prompt` | The prompt to send (optional when `--goal` is given; otherwise required) |
 | `--project <PATH>` | Project directory to work in (default `.`) |
+| `--goal <condition>` | Set an autonomous completion goal and loop until it is met or capped (no prompt required) |
+| `--goal-max-turns <N>` | Maximum evaluation turns before an unmet goal gives up (default 50) |
 | `--save` | Persist the session after the prompt completes |
 | `--json` | Emit response chunks and events as JSON |
 | `--browser-visible` | Launch visible Playwright browser windows |
@@ -77,6 +79,22 @@ it against the project's [Agent Skills](../../skills/):
 - `kolega-code ask "/my-skill do the thing"` activates the skill and runs the
   remaining prompt.
 
+## Goal mode
+
+Pass `--goal "<condition>"` to set an autonomous completion goal. The agent works
+toward the goal, and after each turn a read-only verifier checks whether it's met.
+The loop continues until the goal is met or the turn cap (default 50, override
+with `--goal-max-turns`) is reached. The positional `prompt` is optional with
+`--goal` — the CLI synthesizes the first work-turn message from the condition:
+
+```bash
+kolega-code ask --goal "all tests pass and ruff is clean" --project .
+kolega-code ask "start by fixing the parser" --goal "all tests pass" --project .
+```
+
+See [Goal-Conditioned Work](../../goal/) for the loop behavior, safety model, and
+JSON event details.
+
 ## JSON output
 
 With `--json`, the command streams newline-delimited JSON objects, each tagged with
@@ -93,6 +111,8 @@ The stream includes:
 | `chunk` | A streamed piece of the response |
 | `event` | An agent event (sub-agent activity, tool calls, terminal output) |
 | `skill` | Skill activation metadata |
+| `goal_eval` | Emitted after each goal evaluation (with `--goal`): `met`, `turns`, `reason` |
+| `goal_result` | Final goal outcome (with `--goal`): `met`, `turns`, `reason` |
 | `summary` | A final object with the chunk count and `session_id` |
 
 In plain (non-JSON) mode, the answer is written to **stdout** while sub-agent and
@@ -105,3 +125,12 @@ answer.
 confirmations. If you pass `--permission-mode ask`, shell commands and file edits
 prompt on stderr when stdin is interactive. Persisted allow rules are stored in
 the project at `.kolega/permissions.json`.
+
+## Exit codes
+
+| Code | Meaning |
+| --- | --- |
+| `0` | Success (or: the goal was met when using `--goal`) |
+| `1` | With `--goal`: the turn cap was reached without meeting the goal |
+| `2` | Configuration / usage error (e.g. invalid provider, missing API key) |
+| `130` | Interrupted (`Ctrl+C`) |

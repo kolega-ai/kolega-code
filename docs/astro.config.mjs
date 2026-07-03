@@ -106,6 +106,10 @@ export default defineConfig({
           items: [{ label: "Workflow Orchestration", slug: "gigacode" }],
         },
         {
+          label: "Autonomous Goals",
+          items: [{ label: "Goal-Conditioned Work", slug: "goal" }],
+        },
+        {
           label: "Troubleshooting",
           items: [
             {
