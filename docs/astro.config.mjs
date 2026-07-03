@@ -23,8 +23,8 @@ export default defineConfig({
       // Brand fonts (Geist) + the Kolega Code theme. Order matters: fonts first
       // so the brand stylesheet can reference their family names.
       customCss: [
-        "@fontsource-variable/geist/index.css",
-        "@fontsource-variable/geist-mono/index.css",
+        "@fontsource-variable/ibm-plex-sans/index.css",
+        "@fontsource-variable/jetbrains-mono/index.css",
         "./src/styles/brand.css",
       ],
       social: [
