@@ -19,7 +19,7 @@ class _Choice:
 class _Chunk:
     def __init__(self, text=None, is_final=False):
         self.choices = [_Choice(delta=_Delta(content=text), finish_reason="stop" if is_final else None)]
-        self.usage = None
+        self.usage: object = None
 
 
 class _Usage:

@@ -96,6 +96,7 @@ def test_general_agent_never_gets_run_workflow(project_path, mock_connection_man
         config=agent_config,
     )
     agent.gigacode_enabled = True
+    assert agent.tool_collection is not None
     names = {tool.name for tool in agent.tool_collection.get_tool_list()}
     assert "run_workflow" not in names
 
@@ -172,6 +173,7 @@ def test_workflow_sub_agent_does_not_inherit_task_list(project_path, mock_connec
         None,
     )
     sub_agent = agent_tool._construct_workflow_sub_agent(GeneralAgent, None, [])
+    assert sub_agent.tool_collection is not None
     sub_tools = {tool.name for tool in sub_agent.tool_collection.get_tool_list()}
     assert "get_task_list" not in sub_tools
     assert "update_task_list" not in sub_tools

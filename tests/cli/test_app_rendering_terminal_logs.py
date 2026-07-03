@@ -66,8 +66,8 @@ async def test_log_lines_carry_timestamp_and_level_glyph(tmp_path: Path, monkeyp
         assert written == []
         app._flush_log_output()
         assert len(written) == 1
-        assert "[error]" not in written[0].plain  # no raw level prefix
-        assert "it [broke]" in written[0].plain  # brackets survive without markup errors
+        assert "[error]" not in getattr(written[0], "plain")  # no raw level prefix
+        assert "it [broke]" in getattr(written[0], "plain")  # brackets survive without markup errors
 
 
 @pytest.mark.asyncio
@@ -89,7 +89,7 @@ async def test_terminal_commands_render_as_styled_blocks(tmp_path: Path, monkeyp
         app._render_event(AgentEvent(event_type="terminal_output", sender="coder", content={"output": "one"}))
         app._render_event(AgentEvent(event_type="terminal_command", sender="coder", content={"command": "echo two"}))
 
-        plains = [item.plain if hasattr(item, "plain") else item for item in written]
+        plains = [getattr(item, "plain", item) for item in written]
         # Pending output is flushed before the next command, whose block is preceded
         # by a blank separator line.
         assert plains == [f"{theme.g(theme.Glyph.USER)} echo one", "one", "", f"{theme.g(theme.Glyph.USER)} echo two"]

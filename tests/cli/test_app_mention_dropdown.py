@@ -5,6 +5,7 @@ import json
 import time
 
 import pytest
+from typing import Protocol, runtime_checkable
 
 from kolega_code.cli.tui import agent_runtime as agent_runtime_module
 
@@ -42,6 +43,20 @@ from ._app_test_utils import (
     question_payload,
     renderable_text,
 )
+
+
+@runtime_checkable
+class _MentionAgent(Protocol):
+    """Structural view of the mention-test fake agent's recorded call state.
+
+    The fake agent is installed by the shared ``_build_mention_test_app`` helper
+    (which cannot be modified here) and exposes ``messages``/``attachments``
+    lists that are not part of ``BaseAgent``. This protocol enables legitimate
+    ``isinstance`` narrowing so those attributes can be accessed type-safely.
+    """
+
+    messages: list
+    attachments: list
 
 
 @pytest.mark.asyncio
@@ -132,6 +147,7 @@ async def test_textual_app_mention_dropdown_down_and_tab_completes(
 ) -> None:
     pytest.importorskip("textual")
 
+    from kolega_code.cli.file_index import IndexEntry
     from kolega_code.cli.tui.widgets import ChatComposer, CompletionDropdown
 
     app = _build_mention_test_app(tmp_path, monkeypatch)
@@ -144,7 +160,9 @@ async def test_textual_app_mention_dropdown_down_and_tab_completes(
         await pilot.pause()
         assert dropdown.is_open
 
-        expected = dropdown.entry_at(1).path
+        entry = dropdown.entry_at(1)
+        assert isinstance(entry, IndexEntry)
+        expected = entry.path
         await pilot.press("down")
         assert dropdown.highlighted == 1
         await pilot.press("tab")
@@ -175,6 +193,7 @@ async def test_textual_app_mention_enter_completes_instead_of_submitting(
         assert composer.text == "@README.md "
         assert not dropdown.is_open
         # No message was submitted, only the completion was applied.
+        assert isinstance(app.agent, _MentionAgent)
         assert app.agent.messages == []
 
 
@@ -194,6 +213,7 @@ async def test_textual_app_submitting_mention_attaches_file_and_keeps_short_text
         await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
         await pilot.pause()
 
+        assert isinstance(app.agent, _MentionAgent)
         assert app.agent.messages == ["summarize @src/alpha.py please"]
         attachments = app.agent.attachments[0]
         assert attachments is not None and len(attachments) == 1
@@ -229,5 +249,6 @@ async def test_textual_app_unresolved_mention_clears_hint_and_sends_plain_text(
         assert str(hint.render()) == ""
 
         await pilot.pause()
+        assert isinstance(app.agent, _MentionAgent)
         assert app.agent.messages == ["look at @does/not/exist.py"]
         assert app.agent.attachments == [None]

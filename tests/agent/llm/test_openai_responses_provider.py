@@ -6,6 +6,7 @@ providers (fireworks, xai, …) keep using the Chat Completions ``OpenAIProvider
 """
 
 import types
+from typing import Any
 
 import pytest
 
@@ -42,7 +43,7 @@ class _FakeStream:
 class _FakeResponses:
     def __init__(self, result):
         self._result = result
-        self.last_kwargs = None
+        self.last_kwargs: dict[str, Any] = {}
 
     async def create(self, **kwargs):
         self.last_kwargs = kwargs
@@ -115,7 +116,7 @@ def test_build_request_default_model_and_no_reasoning_without_thinking():
 
 
 @pytest.mark.asyncio
-async def test_generate_tags_openai_provider_and_sends_include():
+async def test_generate_tags_openai_provider_and_sends_include(monkeypatch):
     provider = OpenAIResponsesProvider(api_key="sk-test")
     completed = _ns(
         output=[_ns(type="message", content=[_ns(type="output_text", text="hi")])],
@@ -124,7 +125,7 @@ async def test_generate_tags_openai_provider_and_sends_include():
         incomplete_details=None,
     )
     fake = _FakeResponses(_FakeStream([_ns(type="response.completed", response=completed)]))
-    provider.async_client = _ns(responses=fake)
+    monkeypatch.setattr(provider, "async_client", _ns(responses=fake))
 
     msg = await provider.generate(
         MessageHistory([Message(role="user", content=[TextBlock(text="hello")])]),
@@ -139,7 +140,7 @@ async def test_generate_tags_openai_provider_and_sends_include():
 
 
 @pytest.mark.asyncio
-async def test_stream_captures_reasoning_for_continuity():
+async def test_stream_captures_reasoning_for_continuity(monkeypatch):
     provider = OpenAIResponsesProvider(api_key="sk-test")
     completed = _ns(output=[], usage=None, status="completed", incomplete_details=None)
     events = [
@@ -149,7 +150,7 @@ async def test_stream_captures_reasoning_for_continuity():
         _ns(type="response.output_text.delta", delta="hi"),
         _ns(type="response.completed", response=completed),
     ]
-    provider.async_client = _ns(responses=_FakeResponses(_FakeStream(events)))
+    monkeypatch.setattr(provider, "async_client", _ns(responses=_FakeResponses(_FakeStream(events))))
 
     wrapper = await provider.stream(
         MessageHistory([Message(role="user", content=[TextBlock(text="x")])]),

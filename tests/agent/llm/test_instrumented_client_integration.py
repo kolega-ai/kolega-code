@@ -7,6 +7,7 @@ and Langfuse tracing.
 """
 
 import asyncio
+import inspect
 import os
 from pathlib import Path
 from unittest.mock import Mock
@@ -241,15 +242,18 @@ class TestInstrumentedClientWithRealAPIs:
 
         # Stream response
         accumulated_text = ""
-        stream = await client.stream(
+        stream_obj = client.stream(
             messages=TEST_MESSAGES,
             system=TEST_SYSTEM,
             model="claude-haiku-4-5-20251001",
             max_completion_tokens=50,
             temperature=0,
         )
-
-        async with stream:
+        # InstrumentedLLMClient.stream returns either an async context manager or a
+        # coroutine resolving to one, depending on whether Langfuse is configured.
+        if inspect.isawaitable(stream_obj):
+            stream_obj = await stream_obj
+        async with stream_obj as stream:
             async for chunk in stream:
                 if chunk.type == "text":
                     accumulated_text += chunk.text

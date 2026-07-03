@@ -55,7 +55,9 @@ def test_session_store_create_load_list_export_delete(tmp_path: Path) -> None:
     assert loaded.interaction_mode == "plan"
     assert loaded.permission_mode == "auto"
     assert loaded.gigacode_enabled is True
-    assert store.latest_for_project(project).session_id == record.session_id
+    latest = store.latest_for_project(project)
+    assert latest is not None
+    assert latest.session_id == record.session_id
     exported = store.export(record.session_id)
     assert record.session_id in exported
     assert "task_list_markdown" in exported

@@ -163,6 +163,12 @@ def test_google_gemini_3_pro_uses_thinking_level() -> None:
     medium_config = provider._prepare_thinking_config("gemini-3.1-pro-preview", GenerationParams(thinking="medium"))
     high_config = provider._prepare_thinking_config("gemini-3.1-pro-preview", GenerationParams(thinking="high"))
 
+    assert low_config is not None
+    assert medium_config is not None
+    assert high_config is not None
+    assert low_config.thinking_level is not None
+    assert medium_config.thinking_level is not None
+    assert high_config.thinking_level is not None
     assert low_config.thinking_level.value.lower() == "low"
     assert medium_config.thinking_level.value.lower() == "medium"
     assert high_config.thinking_level.value.lower() == "high"

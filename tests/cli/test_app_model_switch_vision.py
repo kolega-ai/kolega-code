@@ -76,7 +76,7 @@ async def test_switch_to_non_vision_model_with_image_history_warns(tmp_path, mon
     async with app.run_test():
         # Install a non-vision agent with image history, as if the rebuild produced it.
         async def _fake_ensure(rebuild=False):
-            app.agent = _FakeAgent(supports_vision=False, has_images=True)
+            monkeypatch.setattr(app, "agent", _FakeAgent(supports_vision=False, has_images=True))
 
         app._ensure_agent_from_settings = _fake_ensure
         app._populate_settings_controls = lambda: None
@@ -138,7 +138,7 @@ async def test_switch_to_vision_model_with_image_history_no_warn(tmp_path, monke
     async with app.run_test():
 
         async def _fake_ensure(rebuild=False):
-            app.agent = _FakeAgent(supports_vision=True, has_images=True)
+            monkeypatch.setattr(app, "agent", _FakeAgent(supports_vision=True, has_images=True))
 
         app._ensure_agent_from_settings = _fake_ensure
         app._populate_settings_controls = lambda: None
@@ -192,7 +192,7 @@ async def test_switch_to_non_vision_model_without_image_history_no_warn(tmp_path
     async with app.run_test():
 
         async def _fake_ensure(rebuild=False):
-            app.agent = _FakeAgent(supports_vision=False, has_images=False)
+            monkeypatch.setattr(app, "agent", _FakeAgent(supports_vision=False, has_images=False))
 
         app._ensure_agent_from_settings = _fake_ensure
         app._populate_settings_controls = lambda: None

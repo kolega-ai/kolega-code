@@ -96,7 +96,7 @@ async def test_textual_app_cancellation_is_visible_in_chat(tmp_path: Path, monke
         composer = app.query_one("#composer", ChatComposer)
         turn_status = app.query_one("#turn_status", Static)
         task = asyncio.create_task(app._process_message("hi"))
-        app.agent_worker = task
+        monkeypatch.setattr(app, "agent_worker", task)
         await started.wait()
 
         app.screen.set_focus(app.query_one("#conversation"))

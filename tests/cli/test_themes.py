@@ -107,7 +107,9 @@ def test_tinted_chrome_downsamples_to_cube_but_gray_to_ramp():
     from rich.color import ColorSystem
 
     def to256(hexv: str) -> int:
-        return RichColor.parse(hexv).downgrade(ColorSystem.EIGHT_BIT).number
+        number = RichColor.parse(hexv).downgrade(ColorSystem.EIGHT_BIT).number
+        assert number is not None
+        return number
 
     for tinted in ("#2e3440", "#002b36"):  # Nord bg, Solarized bg
         assert to256(tinted) < 232, "tinted dark unexpectedly mapped to the gray ramp"

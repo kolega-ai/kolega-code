@@ -89,6 +89,7 @@ async def test_write_stdin_sends_raw_input_and_reports_exit():
 
     result = await manager.exec_command("python prompt.py", yield_time_ms=300)
     session_id = result.session_id
+    assert session_id is not None
 
     running = await manager.write_stdin(session_id, "Ada\n", yield_time_ms=200)
     assert (123, "Ada\n") in sandbox.commands.send_stdin_calls
@@ -107,6 +108,7 @@ async def test_kill_session_kills_handle():
 
     result = await manager.exec_command("sleep 100", yield_time_ms=200)
     assert result.status == "running"
+    assert result.session_id is not None
 
     killed = await manager.kill_session(result.session_id, "TERM")
     assert sandbox.commands.handle.killed is True
@@ -119,6 +121,7 @@ async def test_kill_session_interrupt_sends_ctrl_c():
     manager = SandboxTerminalManager(sandbox, "workspace", "thread")
 
     result = await manager.exec_command("sleep 100", yield_time_ms=200)
+    assert result.session_id is not None
     await manager.kill_session(result.session_id, "INT")
     assert (123, "\x03") in sandbox.commands.send_stdin_calls
 

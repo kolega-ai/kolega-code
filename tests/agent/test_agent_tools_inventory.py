@@ -71,6 +71,7 @@ def test_browser_agent_tools(project_path, mock_connection_manager, agent_config
         config=agent_config,
     )
 
+    assert agent.tool_collection is not None
     tools = agent.tool_collection.get_tool_list()
     tool_names = [tool.name for tool in tools]
 
@@ -100,6 +101,7 @@ def test_investigation_agent_tools(project_path, mock_connection_manager, agent_
         config=agent_config,
     )
 
+    assert agent.tool_collection is not None
     tools = agent.tool_collection.get_tool_list()
     tool_names = [tool.name for tool in tools]
 
@@ -209,6 +211,7 @@ def test_general_agent_tool_inventory(project_path, mock_connection_manager, age
         config=agent_config,
     )
 
+    assert agent.tool_collection is not None
     tool_names = {tool.name for tool in agent.tool_collection.get_tool_list()}
 
     assert_internal_tools_not_exposed(tool_names)
@@ -234,6 +237,7 @@ def test_cli_general_agent_excludes_manifest_build_tools(project_path, mock_conn
         agent_mode=AgentMode.CLI,
     )
 
+    assert agent.tool_collection is not None
     tool_names = {tool.name for tool in agent.tool_collection.get_tool_list()}
 
     assert "build_backend" not in tool_names

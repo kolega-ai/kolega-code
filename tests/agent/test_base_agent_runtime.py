@@ -35,6 +35,15 @@ from .compaction_helpers import FakeLLM
 load_dotenv()
 
 
+class _FakeHTTPError(Exception):
+    """Lightweight Exception stand-in with response/status_code for retry-after tests."""
+
+    def __init__(self, headers: dict[str, str], status_code: int):
+        super().__init__("fake http error")
+        self.response = SimpleNamespace(headers=headers)
+        self.status_code = status_code
+
+
 class TestBaseAgent:
     def test_default_max_iterations_is_uncapped(self, base_agent):
         assert base_agent.max_iterations is None
@@ -52,7 +61,9 @@ class TestBaseAgent:
             )
 
     @pytest.mark.asyncio
-    async def test_max_iterations_raises_for_runaway_tool_loop(self, tmp_path, mock_connection_manager, agent_config):
+    async def test_max_iterations_raises_for_runaway_tool_loop(
+        self, tmp_path, mock_connection_manager, agent_config, monkeypatch
+    ):
         agent = BaseAgent(
             project_path=tmp_path,
             workspace_id="test_workspace",
@@ -71,7 +82,7 @@ class TestBaseAgent:
         agent.system_prompt = Message(role="system", content=[TextBlock(text="sys")])
         agent.tool_collection = MagicMock()
         agent.tool_collection.get_tool_list = MagicMock(return_value=[])
-        agent.llm = FakeLLM(token_script=[100], final_message=looping_message)
+        monkeypatch.setattr(agent, "llm", FakeLLM(token_script=[100], final_message=looping_message))
         agent.process_tool_calls = AsyncMock(
             return_value=[ToolResult(tool_use_id="tool_1", name="read_file", content="ok", is_error=False)]
         )
@@ -179,9 +190,7 @@ class TestBaseAgent:
     @pytest.mark.asyncio
     async def test_handle_llm_error_honors_retry_after(self, base_agent):
         """A retry-after header on the raw exception is used (capped) for the wait."""
-        raw = SimpleNamespace(response=SimpleNamespace(headers={"retry-after": "7"}))
-        # Make it look like a rate-limit so map_to_llm_error classifies it as retryable.
-        raw.status_code = 429
+        raw = _FakeHTTPError({"retry-after": "7"}, 429)
 
         sleeps: list[float] = []
 
@@ -200,6 +209,6 @@ class TestBaseAgent:
         assert sleeps == [7.0]
 
     def test_parse_retry_after_forms(self):
-        seconds = SimpleNamespace(response=SimpleNamespace(headers={"retry-after": "12"}))
+        seconds = _FakeHTTPError({"retry-after": "12"}, 200)
         assert BaseAgent._parse_retry_after(seconds) == 12.0
         assert BaseAgent._parse_retry_after(Exception("no header")) is None

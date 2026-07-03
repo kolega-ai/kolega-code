@@ -70,7 +70,9 @@ async def test_textual_app_slash_dropdown_opens_filters_and_tab_completes(
         composer.insert("pl")
         await pilot.pause()
         assert dropdown.is_open
-        assert dropdown.highlighted_entry().name == "plan"
+        highlighted = dropdown.highlighted_entry()
+        assert isinstance(highlighted, SlashCommandEntry)
+        assert highlighted.name == "plan"
 
         await pilot.press("tab")
         assert composer.text == "/plan "
@@ -84,6 +86,7 @@ async def test_textual_app_slash_dropdown_lists_skills_with_descriptions(
     pytest.importorskip("textual")
 
     from kolega_code.cli.tui.widgets import ChatComposer, CompletionDropdown
+    from kolega_code.cli.slash_commands import SlashCommandEntry
 
     app = _build_mention_test_app(tmp_path, monkeypatch)
     skill_dir = app.project_path / ".agents" / "skills" / "demo-skill"
@@ -102,6 +105,7 @@ async def test_textual_app_slash_dropdown_lists_skills_with_descriptions(
 
         assert dropdown.is_open
         entry = dropdown.highlighted_entry()
+        assert isinstance(entry, SlashCommandEntry)
         assert entry.name == "demo-skill"
         assert entry.description == "Use this demo skill."
 
@@ -131,7 +135,10 @@ async def test_textual_app_slash_dropdown_enter_completes_instead_of_submitting(
         await pilot.pause()
         assert composer.text == "/version "
         assert not dropdown.is_open
-        assert app.agent.messages == []
+        assert app.agent is not None
+        # The helper's fake coder agent records submitted messages on ``messages``;
+        # completing a slash command must not submit anything.
+        assert getattr(app.agent, "messages") == []
 
 
 @pytest.mark.asyncio

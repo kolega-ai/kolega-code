@@ -42,11 +42,14 @@ def test_app_apply_compaction_status_toggles_indicator():
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.state import StatusDashboardState
 
+    class _FakeApp(KolegaCodeApp):
+        def __init__(self):
+            pass
+
     refreshed = []
-    fake = SimpleNamespace(
-        _status_state=StatusDashboardState(),
-        _refresh_status_dashboard=lambda: refreshed.append(True),
-    )
+    fake = _FakeApp()
+    object.__setattr__(fake, "_status_state", StatusDashboardState())
+    object.__setattr__(fake, "_refresh_status_dashboard", lambda: refreshed.append(True))
 
     KolegaCodeApp._apply_compaction_status(fake, {"phase": "started", "message": "Compacting…"})
     assert fake._status_state.is_compacting is True
@@ -64,12 +67,15 @@ def test_app_apply_compaction_status_adds_summary_collapsible():
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.state import ConversationEntry, StatusDashboardState
 
+    class _FakeApp(KolegaCodeApp):
+        def __init__(self):
+            pass
+
     added = []
-    fake = SimpleNamespace(
-        _status_state=StatusDashboardState(),
-        _refresh_status_dashboard=lambda: None,
-        _add_conversation_entry=lambda entry: added.append(entry),
-    )
+    fake = _FakeApp()
+    object.__setattr__(fake, "_status_state", StatusDashboardState())
+    object.__setattr__(fake, "_refresh_status_dashboard", lambda: None)
+    object.__setattr__(fake, "_add_conversation_entry", lambda entry: added.append(entry))
 
     KolegaCodeApp._apply_compaction_status(
         fake, {"phase": "finished", "message": "done", "summary": "## Goal\nDo the thing"}
@@ -85,8 +91,14 @@ def test_app_resume_compaction_entry():
     # The resume helper builds a collapsible summary entry from session.compaction.
     from kolega_code.cli.app import KolegaCodeApp
 
+    class _FakeApp(KolegaCodeApp):
+        def __init__(self):
+            pass
+
     def app_with(compaction):
-        return SimpleNamespace(session=SimpleNamespace(compaction=compaction))
+        app = _FakeApp()
+        object.__setattr__(app, "session", SimpleNamespace(compaction=compaction))
+        return app
 
     assert KolegaCodeApp._resume_compaction_entry(app_with({})) is None
     assert KolegaCodeApp._resume_compaction_entry(app_with({"summary": "", "compacted_through": 3})) is None

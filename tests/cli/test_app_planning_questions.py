@@ -57,9 +57,12 @@ async def test_textual_app_planning_question_tool_accepts_option_list_answer(
     from kolega_code.cli.messages import COMPOSER_PLACEHOLDER, QUEUE_PLACEHOLDER
 
     class FakeBaseAgent:
+        instances: list["FakeBaseAgent"] = []
+
         def __init__(self, **kwargs):
             self.kwargs = kwargs
             self.history = []
+            self.__class__.instances.append(self)
 
         def restore_message_history(self, history):
             self.history = list(history)
@@ -94,9 +97,9 @@ async def test_textual_app_planning_question_tool_accepts_option_list_answer(
 
     async with app.run_test() as pilot:
         await app.action_toggle_interaction_mode()
-        ask_user_choice = extension_by_name(app.agent.kwargs["tool_extensions"], "cli-planning-questions").tools[
-            "ask_user_choice"
-        ]
+        ask_user_choice = extension_by_name(
+            FakeBaseAgent.instances[-1].kwargs["tool_extensions"], "cli-planning-questions"
+        ).tools["ask_user_choice"]
 
         app._turn_active = True
         answer_task = asyncio.create_task(
@@ -146,9 +149,12 @@ async def test_textual_app_planning_question_supports_arrow_and_digit_selection(
     from kolega_code.cli.tui.widgets import ActionList
 
     class FakeBaseAgent:
+        instances: list["FakeBaseAgent"] = []
+
         def __init__(self, **kwargs):
             self.kwargs = kwargs
             self.history = []
+            self.__class__.instances.append(self)
 
         def restore_message_history(self, history):
             self.history = list(history)
@@ -183,9 +189,9 @@ async def test_textual_app_planning_question_supports_arrow_and_digit_selection(
 
     async with app.run_test() as pilot:
         await app.action_toggle_interaction_mode()
-        ask_user_choice = extension_by_name(app.agent.kwargs["tool_extensions"], "cli-planning-questions").tools[
-            "ask_user_choice"
-        ]
+        ask_user_choice = extension_by_name(
+            FakeBaseAgent.instances[-1].kwargs["tool_extensions"], "cli-planning-questions"
+        ).tools["ask_user_choice"]
 
         options = ["Alpha", "Beta", "Gamma", "Delta"]
         answer_task = asyncio.create_task(
@@ -221,9 +227,12 @@ async def test_textual_app_planning_question_tool_accepts_custom_text_answer(
     from kolega_code.cli.tui.widgets import ActionList, ChatComposer
 
     class FakeBaseAgent:
+        instances: list["FakeBaseAgent"] = []
+
         def __init__(self, **kwargs):
             self.kwargs = kwargs
             self.history = []
+            self.__class__.instances.append(self)
 
         def restore_message_history(self, history):
             self.history = list(history)
@@ -258,9 +267,9 @@ async def test_textual_app_planning_question_tool_accepts_custom_text_answer(
 
     async with app.run_test() as pilot:
         await app.action_toggle_interaction_mode()
-        ask_user_choice = extension_by_name(app.agent.kwargs["tool_extensions"], "cli-planning-questions").tools[
-            "ask_user_choice"
-        ]
+        ask_user_choice = extension_by_name(
+            FakeBaseAgent.instances[-1].kwargs["tool_extensions"], "cli-planning-questions"
+        ).tools["ask_user_choice"]
 
         answer_task = asyncio.create_task(
             ask_user_choice(questions=question_payload("Which scope?", ["Small fix", "Full workflow"], header="Scope"))
@@ -293,9 +302,12 @@ async def test_textual_app_planning_question_tool_asks_multiple_questions_sequen
     from textual.widgets import OptionList
 
     class FakeBaseAgent:
+        instances: list["FakeBaseAgent"] = []
+
         def __init__(self, **kwargs):
             self.kwargs = kwargs
             self.history = []
+            self.__class__.instances.append(self)
 
         def restore_message_history(self, history):
             self.history = list(history)
@@ -330,9 +342,9 @@ async def test_textual_app_planning_question_tool_asks_multiple_questions_sequen
 
     async with app.run_test() as pilot:
         await app.action_toggle_interaction_mode()
-        ask_user_choice = extension_by_name(app.agent.kwargs["tool_extensions"], "cli-planning-questions").tools[
-            "ask_user_choice"
-        ]
+        ask_user_choice = extension_by_name(
+            FakeBaseAgent.instances[-1].kwargs["tool_extensions"], "cli-planning-questions"
+        ).tools["ask_user_choice"]
 
         questions = question_payload("First?", ["A1", "B1"], header="First") + question_payload(
             "Second?", ["A2", "B2"], header="Second"
@@ -366,9 +378,12 @@ async def test_textual_app_planning_question_tool_rejects_malformed_input(
     from kolega_code.tools import ToolError
 
     class FakeBaseAgent:
+        instances: list["FakeBaseAgent"] = []
+
         def __init__(self, **kwargs):
             self.kwargs = kwargs
             self.history = []
+            self.__class__.instances.append(self)
 
         def restore_message_history(self, history):
             self.history = list(history)
@@ -403,9 +418,9 @@ async def test_textual_app_planning_question_tool_rejects_malformed_input(
 
     async with app.run_test():
         await app.action_toggle_interaction_mode()
-        ask_user_choice = extension_by_name(app.agent.kwargs["tool_extensions"], "cli-planning-questions").tools[
-            "ask_user_choice"
-        ]
+        ask_user_choice = extension_by_name(
+            FakeBaseAgent.instances[-1].kwargs["tool_extensions"], "cli-planning-questions"
+        ).tools["ask_user_choice"]
 
         # Empty / non-list questions.
         with pytest.raises(ToolError):

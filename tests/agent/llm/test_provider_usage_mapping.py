@@ -1,6 +1,7 @@
 # ruff: noqa: F401,F811,E402
 import asyncio
 import os
+from collections.abc import Awaitable
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -48,6 +49,7 @@ def test_ollama_cloud_uses_openai_compatible_provider():
 @pytest.mark.asyncio
 async def test_fireworks_generate_maps_openai_provider_response_usage(capsys):
     client = LLMClient("fireworks", "test-key")
+    assert isinstance(client.provider, OpenAIProvider)
 
     class MessageObj:
         content = "ok"
@@ -82,6 +84,7 @@ async def test_fireworks_generate_maps_openai_provider_response_usage(capsys):
         )
 
     assert create.await_count == 1
+    assert create.await_args is not None
     assert create.await_args.kwargs["model"] == "accounts/fireworks/models/glm-5p2"
     assert create.await_args.kwargs["reasoning_effort"] == "high"
     assert response.usage_metadata == {
@@ -91,7 +94,9 @@ async def test_fireworks_generate_maps_openai_provider_response_usage(capsys):
         "total_tokens": 375,
         "cache_read_input_tokens": 76,
     }
+    assert isinstance(response.content, list)
     assert response.content[0].type == "thinking"
+    assert isinstance(response.content[1], TextBlock)
     assert response.content[1].text == "ok"
     assert capsys.readouterr().out == ""
 
@@ -99,6 +104,7 @@ async def test_fireworks_generate_maps_openai_provider_response_usage(capsys):
 @pytest.mark.asyncio
 async def test_fireworks_stream_final_message_maps_openai_usage():
     client = LLMClient("fireworks", "test-key")
+    assert isinstance(client.provider, OpenAIProvider)
 
     class Delta:
         def __init__(self, content=None, reasoning_content=None):
@@ -149,7 +155,11 @@ async def test_fireworks_stream_final_message_maps_openai_usage():
 
     create = AsyncMock(return_value=FakeOpenAIStream())
     with patch.object(client.provider.async_client.chat.completions, "create", create):
-        fireworks_stream = await client.stream(
+        # ``client.stream`` is typed as ``AsyncContextManager | Coroutine[...,
+        # AsyncContextManager]`` (some providers return a plain context manager).
+        # For OpenAI-compatible providers it returns a coroutine; narrow to the
+        # awaitable branch before awaiting.
+        stream_result = client.stream(
             messages=TEST_MESSAGES,
             system=TEST_SYSTEM,
             model="accounts/fireworks/models/glm-5p2",
@@ -157,6 +167,8 @@ async def test_fireworks_stream_final_message_maps_openai_usage():
             max_completion_tokens=8,
             thinking="low",
         )
+        assert isinstance(stream_result, Awaitable)
+        fireworks_stream = await stream_result
 
         chunks = []
         async with fireworks_stream as stream_ctx:
@@ -165,6 +177,7 @@ async def test_fireworks_stream_final_message_maps_openai_usage():
             final_message = await stream_ctx.get_final_message()
 
     assert create.await_count == 1
+    assert create.await_args is not None
     assert create.await_args.kwargs["model"] == "accounts/fireworks/models/glm-5p2"
     assert create.await_args.kwargs["reasoning_effort"] == "low"
     assert [chunk.type for chunk in chunks] == ["thinking", "thinking", "text"]
@@ -184,6 +197,7 @@ async def test_fireworks_stream_final_message_maps_openai_usage():
 async def test_moonshot_generate_maps_provider_response_usage(capsys):
     """Kimi billing metadata should come from Moonshot's Anthropic-shaped usage block."""
     client = LLMClient("moonshot", "test-key")
+    assert isinstance(client.provider, AnthropicProvider)
 
     class TextContent:
         type = "text"
@@ -226,6 +240,7 @@ async def test_moonshot_generate_maps_provider_response_usage(capsys):
 @pytest.mark.asyncio
 async def test_anthropic_opus_47_generate_omits_deprecated_temperature():
     client = LLMClient("anthropic", "test-key")
+    assert isinstance(client.provider, AnthropicProvider)
 
     class TextContent:
         type = "text"
@@ -247,28 +262,34 @@ async def test_anthropic_opus_47_generate_omits_deprecated_temperature():
             max_completion_tokens=8,
         )
 
+    assert create.await_args is not None
     assert "temperature" not in create.await_args.kwargs
 
 
 @pytest.mark.asyncio
 async def test_anthropic_opus_47_stream_omits_deprecated_temperature():
     client = LLMClient("anthropic", "test-key")
+    assert isinstance(client.provider, AnthropicProvider)
 
     with patch.object(client.provider.async_client.messages, "stream", return_value=object()) as stream:
-        await client.stream(
+        stream_result = client.stream(
             messages=TEST_MESSAGES,
             system=TEST_SYSTEM,
             model="claude-opus-4-7",
             temperature=0.7,
             max_completion_tokens=8,
         )
+        assert isinstance(stream_result, Awaitable)
+        await stream_result
 
+    assert stream.call_args is not None
     assert "temperature" not in stream.call_args.kwargs
 
 
 @pytest.mark.asyncio
 async def test_anthropic_non_opus_47_generate_keeps_temperature():
     client = LLMClient("anthropic", "test-key")
+    assert isinstance(client.provider, AnthropicProvider)
 
     class TextContent:
         type = "text"
@@ -290,4 +311,5 @@ async def test_anthropic_non_opus_47_generate_keeps_temperature():
             max_completion_tokens=8,
         )
 
+    assert create.await_args is not None
     assert create.await_args.kwargs["temperature"] == 0.7

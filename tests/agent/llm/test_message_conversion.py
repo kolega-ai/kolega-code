@@ -178,10 +178,16 @@ async def test_anthropic_stream_tool_use_start_execution_id_matches_final_tool_c
         start_chunk = await stream.__anext__()
         final_message = await stream.get_final_message()
 
-    execution_id = start_chunk.tool_call_delta["execution_id"]
+    tool_call_delta = start_chunk.tool_call_delta
+    assert tool_call_delta is not None
+    execution_id = tool_call_delta["execution_id"]
 
-    assert start_chunk.tool_call_delta["id"] == "toolu_write"
+    assert tool_call_delta["id"] == "toolu_write"
     assert execution_id.startswith("tool_exec_")
     assert final_message.tool_calls[0].id == "toolu_write"
     assert final_message.tool_calls[0].execution_id == execution_id
-    assert final_message.content[0].execution_id == execution_id
+    final_content = final_message.content
+    assert isinstance(final_content, list)
+    final_first_block = final_content[0]
+    assert isinstance(final_first_block, ToolCall)
+    assert final_first_block.execution_id == execution_id

@@ -67,11 +67,11 @@ def real_system_prompt():
         platform="Linux",
         date_today="2025-01-01",
         model_name="gpt-4o",
-        available_ports=[3000, 8000],
+        available_ports="3000, 8000",
         kolega_md="",
         workspace_id="test-workspace",
-        workspace_environment_variables=None,
-        memories=None,
+        workspace_environment_variables={},
+        memories=[],
     )
 
     prompt_text = prompt_provider.get_system_prompt(

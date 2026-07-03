@@ -86,7 +86,7 @@ class TestPlaywrightBrowserManagerIntegration:
 
         finally:
             # Clean up: close the browser if it was created
-            if browser_id and browser_id in browser_manager.browsers:
+            if isinstance(browser_id, str) and browser_id in browser_manager.browsers:
                 await browser_manager.close_browser(browser_id)
 
             # Additional cleanup to ensure all browsers are closed

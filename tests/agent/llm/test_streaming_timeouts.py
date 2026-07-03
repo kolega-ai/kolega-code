@@ -20,11 +20,12 @@ from kolega_code.llm.models import Message, MessageHistory, TextBlock
 from kolega_code.llm.providers.anthropic import AnthropicProvider
 from kolega_code.llm.providers.openai import OpenAIProvider
 from kolega_code.llm.providers.models import GenerationParams
+from kolega_code.llm.ratelimit import RateLimiter
 from kolega_code.llm.timeouts import STREAM_READ_TIMEOUT, streaming_timeout
 
 
-class _RateLimiter:
-    async def acquire(self) -> None:
+class _RateLimiter(RateLimiter):
+    async def acquire(self, tokens=None) -> None:
         return None
 
 
@@ -41,6 +42,7 @@ def test_streaming_timeout_value():
     assert isinstance(timeout, httpx.Timeout)
     assert timeout.read == STREAM_READ_TIMEOUT == 300.0
     # Far below the 600s SDK default that caused the hang.
+    assert timeout.read is not None
     assert timeout.read < 600.0
 
 

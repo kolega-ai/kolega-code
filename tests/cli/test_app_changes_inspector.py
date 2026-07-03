@@ -58,9 +58,11 @@ def _file_edit_preview_event(path: str, *, tool_call_id: str = "t1", sub_agent_i
 
 
 def test_changes_hotkey_uses_ctrl_r_without_known_composer_conflict() -> None:
+    from textual.binding import Binding
+
     from kolega_code.cli.app import KolegaCodeApp
 
-    app_bindings = {binding.action: binding for binding in KolegaCodeApp.BINDINGS}
+    app_bindings = {binding.action: binding for binding in KolegaCodeApp.BINDINGS if isinstance(binding, Binding)}
     assert app_bindings["open_changes"].key == "ctrl+r"
     assert app_bindings["open_changes"].key_display == "Ctrl+R"
 

@@ -1,6 +1,6 @@
 """Terminal manager state serialization utilities."""
 
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
 from kolega_code.models.sandbox_terminal_state import SandboxTerminalState, TerminalInfo, TerminalOutput
 
@@ -79,7 +79,7 @@ class TerminalStateSerializer:
         return state
 
     @staticmethod
-    def restore_from_model(terminal_manager, state: SandboxTerminalState) -> None:
+    def restore_from_model(terminal_manager, state: Optional[SandboxTerminalState]) -> None:
         """Restore terminal manager state from a SandboxTerminalState model."""
         if not state or not hasattr(terminal_manager, "terminals"):
             return

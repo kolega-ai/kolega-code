@@ -6,12 +6,13 @@ These tests drive the full loop (call -> tool_use -> tool_result -> call again) 
 the real API for both the non-streaming and streaming paths.
 """
 
+import inspect
 import os
 
 import pytest
 
 from kolega_code.llm.client import LLMClient
-from kolega_code.llm.models import Message, MessageHistory, TextBlock, ToolCall, ToolResult
+from kolega_code.llm.models import ContentBlock, Message, MessageHistory, TextBlock, ToolCall, ToolResult
 from kolega_code.llm.models import ToolDefinition, ToolParameter
 
 pytestmark = pytest.mark.integration
@@ -42,7 +43,7 @@ def _user(text: str) -> Message:
 
 def _tool_results_for(assistant: Message) -> Message:
     """Fabricate tool results for every tool call the model just made."""
-    results = [
+    results: list[ContentBlock] = [
         ToolResult(tool_use_id=tc.id, content="README.md\npyproject.toml", name=tc.name, is_error=False)
         for tc in assistant.content
         if isinstance(tc, ToolCall)
@@ -91,7 +92,7 @@ async def test_google_tool_round_trip_streaming() -> None:
     client = _client()
     history = MessageHistory([_user("List the files in the current directory using the tool.")])
 
-    stream = await client.stream(
+    stream_obj = client.stream(
         messages=history,
         system=SYSTEM,
         model=MODEL,
@@ -100,10 +101,14 @@ async def test_google_tool_round_trip_streaming() -> None:
         thinking="high",
         tools=[LIST_DIR_TOOL],
     )
-    async with stream as ctx:
+    # LLMClient.stream returns either an async context manager or a coroutine
+    # resolving to one, depending on the provider.
+    if inspect.isawaitable(stream_obj):
+        stream_obj = await stream_obj
+    async with stream_obj as ctx:
         async for _ in ctx:
             pass
-        first = await stream.get_final_message()
+        first = await ctx.get_final_message()
 
     tool_calls = [b for b in first.content if isinstance(b, ToolCall)]
     if not tool_calls:
@@ -113,7 +118,7 @@ async def test_google_tool_round_trip_streaming() -> None:
     history.append(first)
     history.append(_tool_results_for(first))
     # The follow-up request must not 400 on a missing thought_signature.
-    second_stream = await client.stream(
+    second_stream_obj = client.stream(
         messages=history,
         system=SYSTEM,
         model=MODEL,
@@ -122,9 +127,11 @@ async def test_google_tool_round_trip_streaming() -> None:
         thinking="high",
         tools=[LIST_DIR_TOOL],
     )
-    async with second_stream as ctx:
+    if inspect.isawaitable(second_stream_obj):
+        second_stream_obj = await second_stream_obj
+    async with second_stream_obj as ctx:
         async for _ in ctx:
             pass
-        second = await second_stream.get_final_message()
+        second = await ctx.get_final_message()
     assert second is not None
     assert second.role == "assistant"

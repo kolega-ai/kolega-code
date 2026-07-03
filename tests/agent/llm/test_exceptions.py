@@ -3,6 +3,9 @@ Tests for the LLM exception classes and mapping functions.
 """
 
 import pytest
+from anthropic import AnthropicError
+from google.genai.errors import APIError as GoogleAPIError
+from openai import OpenAIError
 
 from kolega_code.config import ModelProvider
 from kolega_code.llm.exceptions import (
@@ -29,20 +32,23 @@ from kolega_code.llm.exceptions import (
 
 # Assuming OpenAIError, GoogleAPIError, AnthropicError can be imported or mocked
 # For simplicity, we'll mock them here.
-class MockOpenAIError(Exception):
+class MockOpenAIError(OpenAIError):
     def __init__(self, message: str, status_code: int, code: str | None = None):
         super().__init__(message)
         self.status_code = status_code
         self.code = code
 
 
-class MockGoogleAPIError(Exception):
-    def __init__(self, message: str, status: int):
-        super().__init__(message)
+class MockGoogleAPIError(GoogleAPIError):
+    status: int | None  # overrides GoogleAPIError.status (str) with the int code used by tests
+
+    def __init__(self, message: str, status: int | None = None):
+        # Bypass GoogleAPIError's complex constructor; emulate a status-bearing error.
+        Exception.__init__(self, message)
         self.status = status
 
 
-class MockAnthropicError(Exception):
+class MockAnthropicError(AnthropicError):
     def __init__(self, message: str, status_code: int):
         super().__init__(message)
         self.status_code = status_code
@@ -105,9 +111,7 @@ def test_map_openai_errors(status_code, expected_exception):
 
 def test_map_openai_errors_no_status_code():
     """Test mapping OpenAI errors without a status code."""
-    original_error = Exception("Generic OpenAI error")  # Mock error without status_code
-    # Ensure the base class or a simple Exception can be handled if needed
-    # Re-mocking OpenAIError as a simple Exception for this case
+    original_error = OpenAIError("Generic OpenAI error")  # error without status_code
     mapped_error = map_openai_errors(original_error)
     assert isinstance(mapped_error, LLMError)
     assert not isinstance(
@@ -163,7 +167,7 @@ def test_map_google_errors(status, expected_exception):
 
 def test_map_google_errors_no_status():
     """Test mapping Google errors without a status attribute."""
-    original_error = Exception("Generic Google error")  # Mock error without status
+    original_error = MockGoogleAPIError("Generic Google error")  # error without a matching status
     mapped_error = map_google_errors(original_error)
     assert isinstance(mapped_error, LLMError)
     assert not isinstance(
@@ -200,7 +204,7 @@ def test_map_anthropic_errors(status_code, expected_exception):
 
 def test_map_anthropic_errors_no_status_code():
     """Test mapping Anthropic errors without a status code."""
-    original_error = Exception("Generic Anthropic error")  # Mock error without status_code
+    original_error = AnthropicError("Generic Anthropic error")  # error without status_code
     mapped_error = map_anthropic_errors(original_error)
     assert isinstance(mapped_error, LLMError)
     assert not isinstance(

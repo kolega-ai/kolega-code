@@ -1,6 +1,7 @@
 """Unit tests for terminal state serialization."""
 
 from datetime import datetime
+from typing import Optional
 from unittest.mock import Mock
 from kolega_code.sandbox.serializer import TerminalStateSerializer
 from kolega_code.models.sandbox_terminal_state import SandboxTerminalState, TerminalInfo, TerminalOutput
@@ -121,8 +122,12 @@ class TestTerminalStateSerializer:
             },
             outputs={
                 "term1": [
-                    TerminalOutput(type="command", data="echo hello", timestamp=datetime.now(), purpose="Test echo"),
-                    TerminalOutput(type="stdout", data="hello\n", timestamp=datetime.now()),
+                    TerminalOutput(
+                        type="command", data="echo hello", timestamp=datetime.now(), purpose="Test echo", exit_code=None
+                    ),
+                    TerminalOutput(
+                        type="stdout", data="hello\n", timestamp=datetime.now(), purpose=None, exit_code=None
+                    ),
                 ]
             },
             default_terminal_id="term1",
@@ -178,15 +183,25 @@ class TestTerminalStateSerializer:
             },
             outputs={
                 "term1": [
-                    TerminalOutput(type="command", data="ls", timestamp=datetime.now()),
-                    TerminalOutput(type="stdout", data="file1.txt\nfile2.txt\n", timestamp=datetime.now()),
+                    TerminalOutput(type="command", data="ls", timestamp=datetime.now(), purpose=None, exit_code=None),
                     TerminalOutput(
-                        type="exit", data="Process exited with code 0", timestamp=datetime.now(), exit_code=0
+                        type="stdout",
+                        data="file1.txt\nfile2.txt\n",
+                        timestamp=datetime.now(),
+                        purpose=None,
+                        exit_code=None,
+                    ),
+                    TerminalOutput(
+                        type="exit",
+                        data="Process exited with code 0",
+                        timestamp=datetime.now(),
+                        purpose=None,
+                        exit_code=0,
                     ),
                 ],
                 "term2": [
-                    TerminalOutput(type="command", data="pwd", timestamp=datetime.now()),
-                    TerminalOutput(type="stdout", data="/tmp", timestamp=datetime.now()),
+                    TerminalOutput(type="command", data="pwd", timestamp=datetime.now(), purpose=None, exit_code=None),
+                    TerminalOutput(type="stdout", data="/tmp", timestamp=datetime.now(), purpose=None, exit_code=None),
                 ],
             },
         )
@@ -253,8 +268,8 @@ class TestTerminalStateSerializer:
         terminal_manager.terminals = {"existing": {}}
         terminal_manager.outputs = {"existing": []}
 
-        # Should not raise exception
-        TerminalStateSerializer.restore_from_model(terminal_manager, None)
+        none_state: Optional[SandboxTerminalState] = None
+        TerminalStateSerializer.restore_from_model(terminal_manager, none_state)
 
         # Should not modify terminal manager
         assert "existing" in terminal_manager.terminals

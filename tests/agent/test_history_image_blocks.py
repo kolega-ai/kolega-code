@@ -217,4 +217,5 @@ def test_replace_preserves_cache_checkpoint_on_tool_result():
     history = [_user(tr)]
     out = replace_image_blocks_with_placeholders(history, "deepseek-v4-pro")
     new_tr = out[0].content[0]
+    assert isinstance(new_tr, ToolResult)
     assert new_tr.cache_checkpoint is True

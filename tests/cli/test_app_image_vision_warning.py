@@ -96,7 +96,7 @@ async def test_add_pending_image_non_vision_shows_warning_hint(tmp_path, monkeyp
     """Non-vision model: warning-tone hint + transcript system message."""
     app = _make_app(tmp_path, monkeypatch)
     async with app.run_test():
-        app.agent = _FakeAgent(supports_vision=False)
+        monkeypatch.setattr(app, "agent", _FakeAgent(supports_vision=False))
         hints: list[tuple] = []
         app._show_composer_hint = lambda text, tone="warning": hints.append((text, tone))
         entries: list = []
@@ -121,7 +121,7 @@ async def test_add_pending_image_vision_shows_info_hint(tmp_path, monkeypatch):
     """Vision model: info-tone hint, no transcript system message."""
     app = _make_app(tmp_path, monkeypatch)
     async with app.run_test():
-        app.agent = _FakeAgent(supports_vision=True)
+        monkeypatch.setattr(app, "agent", _FakeAgent(supports_vision=True))
         hints: list[tuple] = []
         app._show_composer_hint = lambda text, tone="warning": hints.append((text, tone))
         entries: list = []
@@ -141,7 +141,7 @@ async def test_multiple_attachments_non_vision_one_transcript_message(tmp_path, 
     """Multiple attachments on a non-vision model: one transcript message, hint updates."""
     app = _make_app(tmp_path, monkeypatch)
     async with app.run_test():
-        app.agent = _FakeAgent(supports_vision=False)
+        monkeypatch.setattr(app, "agent", _FakeAgent(supports_vision=False))
         hints: list[tuple] = []
         app._show_composer_hint = lambda text, tone="warning": hints.append((text, tone))
         entries: list = []
@@ -171,7 +171,7 @@ async def test_paste_clipboard_image_non_vision_warning_not_overwritten(tmp_path
     overwrote it with an info hint. Now the warning survives because the check is centralised."""
     app = _make_app(tmp_path, monkeypatch)
     async with app.run_test():
-        app.agent = _FakeAgent(supports_vision=False)
+        monkeypatch.setattr(app, "agent", _FakeAgent(supports_vision=False))
 
         # Mock the clipboard reader.
         async def _fake_read():
@@ -208,7 +208,7 @@ async def test_attach_command_non_vision_shows_warning(tmp_path, monkeypatch):
     """/attach on a non-vision model shows the vision warning (centralised check)."""
     app = _make_app(tmp_path, monkeypatch)
     async with app.run_test():
-        app.agent = _FakeAgent(supports_vision=False)
+        monkeypatch.setattr(app, "agent", _FakeAgent(supports_vision=False))
 
         # Create a real image file for /attach to read.
         import struct
@@ -261,7 +261,7 @@ async def test_submit_with_pending_image_non_vision_blocked(tmp_path, monkeypatc
     No agent worker is spawned — the user sees a transcript message, not an API failure."""
     app = _make_app(tmp_path, monkeypatch)
     async with app.run_test():
-        app.agent = _FakeAgent(supports_vision=False)
+        monkeypatch.setattr(app, "agent", _FakeAgent(supports_vision=False))
         app._pending_image_attachments.append(_image_attachment("photo.png"))
 
         hints: list[tuple] = []
@@ -275,7 +275,7 @@ async def test_submit_with_pending_image_non_vision_blocked(tmp_path, monkeypatc
             coro.close()  # avoid "coroutine never awaited" warning
             return None
 
-        app.run_worker = _track_worker
+        monkeypatch.setattr(app, "run_worker", _track_worker)
 
         from kolega_code.cli.tui.widgets import ChatComposer
 
@@ -308,7 +308,7 @@ async def test_submit_with_mention_image_non_vision_blocked(tmp_path, monkeypatc
     """@file.png mention resolved at submit time on a non-vision model: blocked at CLI gate."""
     app = _make_app(tmp_path, monkeypatch)
     async with app.run_test():
-        app.agent = _FakeAgent(supports_vision=False)
+        monkeypatch.setattr(app, "agent", _FakeAgent(supports_vision=False))
 
         # Create an image file so the @mention resolves to an image attachment.
         import struct
@@ -345,7 +345,7 @@ async def test_submit_with_mention_image_non_vision_blocked(tmp_path, monkeypatc
             coro.close()
             return None
 
-        app.run_worker = _track_worker
+        monkeypatch.setattr(app, "run_worker", _track_worker)
 
         from kolega_code.cli.tui.widgets import ChatComposer
 
@@ -371,7 +371,7 @@ async def test_submit_with_image_vision_model_proceeds(tmp_path, monkeypatch):
     """Submitting with a pending image on a vision model: send proceeds normally."""
     app = _make_app(tmp_path, monkeypatch)
     async with app.run_test():
-        app.agent = _FakeAgent(supports_vision=True)
+        monkeypatch.setattr(app, "agent", _FakeAgent(supports_vision=True))
         app._pending_image_attachments.append(_image_attachment("photo.png"))
 
         entries: list = []
@@ -383,7 +383,7 @@ async def test_submit_with_image_vision_model_proceeds(tmp_path, monkeypatch):
             coro.close()
             return None
 
-        app.run_worker = _track_worker
+        monkeypatch.setattr(app, "run_worker", _track_worker)
 
         from kolega_code.cli.tui.widgets import ChatComposer
 
@@ -415,7 +415,7 @@ async def test_submit_text_only_non_vision_with_history_images_proceeds(tmp_path
     app = _make_app(tmp_path, monkeypatch)
     async with app.run_test():
         # Non-vision model WITH image history, but NO new image attachments.
-        app.agent = _FakeAgent(supports_vision=False, has_images=True)
+        monkeypatch.setattr(app, "agent", _FakeAgent(supports_vision=False, has_images=True))
 
         entries: list = []
         app._add_conversation_entry = lambda entry: entries.append(entry)
@@ -426,7 +426,7 @@ async def test_submit_text_only_non_vision_with_history_images_proceeds(tmp_path
             coro.close()
             return None
 
-        app.run_worker = _track_worker
+        monkeypatch.setattr(app, "run_worker", _track_worker)
 
         from kolega_code.cli.tui.widgets import ChatComposer
 
@@ -450,7 +450,7 @@ async def test_detach_clears_pending_attachments(tmp_path, monkeypatch):
     """/detach removes all pending image attachments and confirms via hint."""
     app = _make_app(tmp_path, monkeypatch)
     async with app.run_test():
-        app.agent = _FakeAgent(supports_vision=False)
+        monkeypatch.setattr(app, "agent", _FakeAgent(supports_vision=False))
         app._pending_image_attachments.append(_image_attachment("photo.png"))
         app._pending_image_attachments.append(_image_attachment("chart.png"))
 
@@ -473,7 +473,7 @@ async def test_detach_with_no_attachments(tmp_path, monkeypatch):
     """/detach with nothing pending shows an info hint, not an error."""
     app = _make_app(tmp_path, monkeypatch)
     async with app.run_test():
-        app.agent = _FakeAgent(supports_vision=False)
+        monkeypatch.setattr(app, "agent", _FakeAgent(supports_vision=False))
 
         hints: list[tuple] = []
         app._show_composer_hint = lambda text, tone="warning": hints.append((text, tone))
@@ -513,7 +513,7 @@ async def test_detach_button_visible_when_image_attached(tmp_path, monkeypatch):
 
     app = _make_app(tmp_path, monkeypatch)
     async with app.run_test():
-        app.agent = _FakeAgent(supports_vision=True)
+        monkeypatch.setattr(app, "agent", _FakeAgent(supports_vision=True))
         app.add_pending_image_attachment(_image_attachment("photo.png"))
 
         btn = app.query_one("#detach_btn", Button)
@@ -527,7 +527,7 @@ async def test_detach_button_hidden_when_no_attachments(tmp_path, monkeypatch):
 
     app = _make_app(tmp_path, monkeypatch)
     async with app.run_test():
-        app.agent = _FakeAgent(supports_vision=True)
+        monkeypatch.setattr(app, "agent", _FakeAgent(supports_vision=True))
 
         btn = app.query_one("#detach_btn", Button)
         assert not btn.display, "detach button should be hidden when no image is attached"
@@ -540,7 +540,7 @@ async def test_detach_button_click_clears_attachments(tmp_path, monkeypatch):
 
     app = _make_app(tmp_path, monkeypatch)
     async with app.run_test():
-        app.agent = _FakeAgent(supports_vision=True)
+        monkeypatch.setattr(app, "agent", _FakeAgent(supports_vision=True))
         app.add_pending_image_attachment(_image_attachment("photo.png"))
         app.add_pending_image_attachment(_image_attachment("chart.png"))
 

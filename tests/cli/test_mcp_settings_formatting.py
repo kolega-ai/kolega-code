@@ -10,6 +10,16 @@ def test_mcp_status_rendering_all_verified_has_single_aggregate_tick() -> None:
 
     from kolega_code.cli.tui import settings_panel
 
+    class _FakeMCPStatusPanel(settings_panel.SettingsPanelMixin):
+        def __init__(self) -> None:
+            self.updated = None
+
+        def query_one(self, *_args, **_kwargs):
+            return self
+
+        def update(self, content) -> None:
+            self.updated = content
+
     rows = _rows(
         {
             "id": "context7",
@@ -39,6 +49,7 @@ def test_mcp_status_rendering_all_verified_has_single_aggregate_tick() -> None:
     fake_panel = _FakeMCPStatusPanel()
     settings_panel.SettingsPanelMixin._set_mcp_status(fake_panel, content, tone=tone)
 
+    assert fake_panel.updated is not None
     plain = fake_panel.updated.plain
     check = settings_panel.theme.g(settings_panel.Glyph.CHECK)
     sep = f" {settings_panel.theme.g(settings_panel.Glyph.BULLET_SEP)} "
@@ -146,6 +157,16 @@ def test_mcp_server_selector_labels_are_readable() -> None:
     from kolega_code.cli.tui import settings_panel
     from kolega_code.mcp.config import MCPServerConfig
 
+    class _FakeMCPStatusPanel(settings_panel.SettingsPanelMixin):
+        def __init__(self) -> None:
+            self.updated = None
+
+        def query_one(self, *_args, **_kwargs):
+            return self
+
+        def update(self, content) -> None:
+            self.updated = content
+
     http_server = MCPServerConfig(
         id="context7",
         name="Context7",
@@ -169,17 +190,6 @@ def test_mcp_server_selector_labels_are_readable() -> None:
     assert settings_panel._mcp_server_select_label(http_server) == f"Context7 — global{sep}HTTP{sep}enabled"
     assert settings_panel._mcp_server_select_label(stdio_server) == f"Repo Tools — project{sep}stdio{sep}disabled"
     assert (
-        settings_panel.SettingsPanelMixin._mcp_server_option_label(object(), http_server)
+        settings_panel.SettingsPanelMixin._mcp_server_option_label(_FakeMCPStatusPanel(), http_server)
         == f"Context7 — global{sep}HTTP{sep}enabled"
     )
-
-
-class _FakeMCPStatusPanel:
-    def __init__(self) -> None:
-        self.updated = None
-
-    def query_one(self, *_args, **_kwargs):
-        return self
-
-    def update(self, content) -> None:
-        self.updated = content

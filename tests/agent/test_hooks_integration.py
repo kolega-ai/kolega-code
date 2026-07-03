@@ -114,10 +114,10 @@ def _call(name="do_thing", index=1, **inputs):
 
 
 @pytest.mark.asyncio
-async def test_pre_tool_use_deny_blocks_and_skips_handler(tmp_path, agent_config):
+async def test_pre_tool_use_deny_blocks_and_skips_handler(tmp_path, agent_config, monkeypatch):
     handler = AsyncMock(return_value="ran")
     agent = _make_agent(tmp_path, agent_config, _dispatcher(HookEvent.PRE_TOOL_USE, "deny_hook"))
-    agent.tool_collection = _tools(handler)
+    monkeypatch.setattr(agent, "tool_collection", _tools(handler))
 
     result = await agent.execute_single_tool(_call(command="rm -rf /"))
 
@@ -128,10 +128,10 @@ async def test_pre_tool_use_deny_blocks_and_skips_handler(tmp_path, agent_config
 
 
 @pytest.mark.asyncio
-async def test_pre_tool_use_updated_input_is_applied(tmp_path, agent_config):
+async def test_pre_tool_use_updated_input_is_applied(tmp_path, agent_config, monkeypatch):
     handler = AsyncMock(return_value="ran")
     agent = _make_agent(tmp_path, agent_config, _dispatcher(HookEvent.PRE_TOOL_USE, "modify_input_hook"))
-    agent.tool_collection = _tools(handler)
+    monkeypatch.setattr(agent, "tool_collection", _tools(handler))
 
     result = await agent.execute_single_tool(_call(command="rm -rf /"))
 
@@ -143,10 +143,10 @@ async def test_pre_tool_use_updated_input_is_applied(tmp_path, agent_config):
 
 
 @pytest.mark.asyncio
-async def test_post_tool_use_updated_output_replaces_content(tmp_path, agent_config):
+async def test_post_tool_use_updated_output_replaces_content(tmp_path, agent_config, monkeypatch):
     handler = AsyncMock(return_value="secret value")
     agent = _make_agent(tmp_path, agent_config, _dispatcher(HookEvent.POST_TOOL_USE, "modify_output_hook"))
-    agent.tool_collection = _tools(handler)
+    monkeypatch.setattr(agent, "tool_collection", _tools(handler))
 
     result = await agent.execute_single_tool(_call())
 
@@ -158,11 +158,11 @@ async def test_post_tool_use_updated_output_replaces_content(tmp_path, agent_con
 
 
 @pytest.mark.asyncio
-async def test_parallel_batch_denies_only_matching_tool(tmp_path, agent_config):
+async def test_parallel_batch_denies_only_matching_tool(tmp_path, agent_config, monkeypatch):
     handler = AsyncMock(return_value="ran")
     agent = _make_agent(tmp_path, agent_config, _dispatcher(HookEvent.PRE_TOOL_USE, "deny_boom_hook"))
     # search_codebase is parallel-safe, so the batch runs via asyncio.gather.
-    agent.tool_collection = _tools(handler, name="search_codebase", parallel_safe=True)
+    monkeypatch.setattr(agent, "tool_collection", _tools(handler, name="search_codebase", parallel_safe=True))
 
     results = await agent.process_tool_calls(
         [_call(name="search_codebase", index=1, task="boom"), _call(name="search_codebase", index=2, task="ok")]

@@ -197,6 +197,7 @@ async def test_goal_set_condition(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
         assert app._goal.paused is False
 
         # Agent was told about the goal + carries the prompt extension.
+        assert app.agent is not None
         assert app.agent.active_goal_condition == "make all tests pass"
         ext_ids = [getattr(e, "id", None) for e in app.agent.prompt_extensions]
         assert "cli-active-goal" in ext_ids
@@ -210,8 +211,9 @@ async def test_goal_set_condition(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
         assert any("make all tests pass" in e.content for e in user_entries)
 
         # First turn was kicked off with the goal task prompt.
-        assert app.agent.messages
-        assert app.agent.messages[0] == build_goal_task_prompt("make all tests pass")
+        agent = GoalFakeAgent.instances[-1]
+        assert agent.messages
+        assert agent.messages[0] == build_goal_task_prompt("make all tests pass")
 
 
 @pytest.mark.asyncio
@@ -271,6 +273,7 @@ async def test_goal_clear_aliases(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
         await pilot.pause()
 
         assert app._goal is None
+        assert app.agent is not None
         assert app.agent.active_goal_condition is None
         assert app.session.goal == {}
         assert any(e.kind == "system" and messages.GOAL_CLEARED in e.content for e in app.conversation_entries)
@@ -321,9 +324,10 @@ async def test_goal_loop_completes_after_nudges(tmp_path: Path, monkeypatch: pyt
 
     async with app.run_test() as pilot:
         await _wait_for(app, pilot, lambda: app.agent is not None)
+        agent = GoalFakeAgent.instances[-1]
 
         # Two not-met evaluations (→ two nudges), then met.
-        app.agent._goal_evaluate_results = [
+        agent._goal_evaluate_results = [
             GoalVerdict(met=False, reason="not yet"),
             GoalVerdict(met=False, reason="still not"),
             GoalVerdict(met=True, reason="done"),
@@ -337,14 +341,14 @@ async def test_goal_loop_completes_after_nudges(tmp_path: Path, monkeypatch: pyt
         assert app._goal.paused is False
 
         # The evaluator was called three times with the condition.
-        assert len(app.agent._evaluate_calls) == 3
-        assert all(c == "make all tests pass" for c in app.agent._evaluate_calls)
+        assert len(agent._evaluate_calls) == 3
+        assert all(c == "make all tests pass" for c in agent._evaluate_calls)
 
         # First stream call = goal task prompt; calls 2 and 3 = nudges.
-        assert len(app.agent.messages) == 3
-        assert app.agent.messages[0] == build_goal_task_prompt("make all tests pass")
-        assert "not yet met" in app.agent.messages[1]
-        assert "not yet met" in app.agent.messages[2]
+        assert len(agent.messages) == 3
+        assert agent.messages[0] == build_goal_task_prompt("make all tests pass")
+        assert "not yet met" in agent.messages[1]
+        assert "not yet met" in agent.messages[2]
 
         # A system entry announcing completion exists.
         assert any(
@@ -369,9 +373,10 @@ async def test_goal_loop_turn_cap_aborts(tmp_path: Path, monkeypatch: pytest.Mon
 
     async with app.run_test() as pilot:
         await _wait_for(app, pilot, lambda: app.agent is not None)
+        agent = GoalFakeAgent.instances[-1]
 
         # Always not-met so the only exit is the turn cap.
-        app.agent._goal_evaluate_results = [
+        agent._goal_evaluate_results = [
             GoalVerdict(met=False, reason="nope"),
             GoalVerdict(met=False, reason="nope"),
             GoalVerdict(met=False, reason="nope"),
@@ -385,7 +390,7 @@ async def test_goal_loop_turn_cap_aborts(tmp_path: Path, monkeypatch: pytest.Mon
         assert app._goal.met is False
         assert app._goal.turns_evaluated == 2
         # Two evaluations (cap hit on the second).
-        assert len(app.agent._evaluate_calls) == 2
+        assert len(agent._evaluate_calls) == 2
 
         # A warning-tone system entry about the turn cap exists.
         warning = [
@@ -403,11 +408,12 @@ async def test_goal_cancel_pauses(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
 
     async with app.run_test() as pilot:
         await _wait_for(app, pilot, lambda: app.agent is not None)
+        agent = GoalFakeAgent.instances[-1]
 
         # First evaluation: not met → a nudge turn is scheduled.
-        app.agent._goal_evaluate_results = [GoalVerdict(met=False, reason="keep going")]
+        agent._goal_evaluate_results = [GoalVerdict(met=False, reason="keep going")]
         # Cancel the nudge turn (the 2nd stream call).
-        app.agent._cancel_on_calls = {2}
+        agent._cancel_on_calls = {2}
 
         await _submit(app, pilot, "/goal make all tests pass")
         await _wait_goal_terminal(app, pilot)
@@ -416,7 +422,7 @@ async def test_goal_cancel_pauses(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
         assert app._goal.paused is True
         assert app._goal.met is False
         # Only the initial task-prompt turn ran; the nudge was cancelled.
-        assert len(app.agent.messages) == 1
+        assert len(agent.messages) == 1
 
         # A paused system entry exists.
         assert any(e.kind == "system" and "Goal paused" in e.content for e in app.conversation_entries)
@@ -441,6 +447,7 @@ async def test_clear_command_clears_active_goal(tmp_path: Path, monkeypatch: pyt
 
         assert app._goal is None
         assert app.session.goal == {}
+        assert app.agent is not None
         assert app.agent.active_goal_condition is None
         ext_ids = [getattr(e, "id", None) for e in app.agent.prompt_extensions]
         assert "cli-active-goal" not in ext_ids

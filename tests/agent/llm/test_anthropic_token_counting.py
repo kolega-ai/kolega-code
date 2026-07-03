@@ -70,11 +70,11 @@ def real_system_prompt():
         platform="Linux",
         date_today="2025-01-01",
         model_name="claude-sonnet-4-5-20250929",
-        available_ports=[3000, 8000],
+        available_ports="3000, 8000",
         kolega_md="",
         workspace_id="test-workspace",
-        workspace_environment_variables=None,
-        memories=None,
+        workspace_environment_variables={},
+        memories=[],
     )
 
     prompt_text = prompt_provider.get_system_prompt(

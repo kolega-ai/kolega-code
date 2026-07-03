@@ -297,6 +297,7 @@ async def test_sub_agent_event_without_agent_id_uses_fallback_key(
         event1 = _sub_agent_event(uuid="u1", text="part one ")
         event2 = _sub_agent_event(uuid="u1", text="part two")
         for event in (event1, event2):
+            assert event.sub_agent_info is not None
             del event.sub_agent_info["agent_id"]
             app._render_event(event)
 
@@ -480,6 +481,7 @@ async def test_sub_agent_inspector_switches_agents(tmp_path: Path, monkeypatch: 
         app.action_open_sub_agent("a1")
         await pilot.pause()
         screen = app._sub_agent_inspector
+        assert screen is not None
         assert screen._selected_key == "a1"
 
         screen.action_next_agent()
@@ -657,14 +659,18 @@ async def test_workflow_card_lifecycle(tmp_path: Path, monkeypatch: pytest.Monke
 
         # A phase event marks it active; a log lands in the footer.
         app._render_event(_workflow_event("workflow_phase", text="Review"))
-        assert card.phase_by_title("Review").state == "active"
+        review_phase = card.phase_by_title("Review")
+        assert review_phase is not None
+        assert review_phase.state == "active"
         app._render_event(_workflow_event("workflow_log", text="grepping"))
         assert card.latest_log == "grepping"
 
         # Moving to the next phase retires the prior one.
         app._render_event(_workflow_event("workflow_phase", text="Verify"))
-        assert card.phase_by_title("Review").state == "done"
-        assert card.phase_by_title("Verify").state == "active"
+        assert review_phase.state == "done"
+        verify_phase = card.phase_by_title("Verify")
+        assert verify_phase is not None
+        assert verify_phase.state == "active"
 
         # End completes the card and any remaining phases.
         app._render_event(_workflow_event("workflow_end", status="completed"))
@@ -684,18 +690,21 @@ async def test_workflow_card_counts_sub_agents_by_phase(tmp_path: Path, monkeypa
         # A workflow sub-agent carrying run_id + phase rolls into the card even though no
         # workflow_phase event was emitted (the agent(phase=...) kwarg path).
         evt = _sub_agent_event(agent_id="wf-a1", task="do it", text="working")
+        assert evt.sub_agent_info is not None
         evt.sub_agent_info["workflow_run_id"] = "wf-1"
         evt.sub_agent_info["phase"] = "Verify"
         app._render_event(evt)
 
         assert card.agent_count == 1
         verify = card.phase_by_title("Verify")
+        assert verify is not None
         assert verify.state == "active"
         assert verify.agents_total == 1
         assert verify.agents_done == 0
 
         # Completion bumps the done count and rolls up tokens.
         done = _sub_agent_event(agent_id="wf-a1", task="do it", status="STOPPED", message="Completed", total_tokens=500)
+        assert done.sub_agent_info is not None
         done.sub_agent_info["workflow_run_id"] = "wf-1"
         done.sub_agent_info["phase"] = "Verify"
         app._render_event(done)

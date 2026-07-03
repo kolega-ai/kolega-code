@@ -343,6 +343,7 @@ def test_config_override_clears_agent_models_for_explicit_model(tmp_path, connec
     tool = WorkflowTool(str(tmp_path / "project"), "ws", "thread", connection_manager, config, caller, None)
 
     overridden = tool._config_override("claude-opus-4-7", "high")
+    assert overridden is not None
 
     assert overridden.long_context_config.model == "claude-opus-4-7"
     assert overridden.long_context_config.thinking_effort == "high"
