@@ -1,67 +1,116 @@
 /* Kolega Code — brand theme for Starlight.
  *
- * Mirrors the kolega.dev / kolegadevwebsite design system:
- *   - Lime accent  #ADDD30 (bright variant #C4F03E)
- *   - Near-black surfaces (#0A0A0A page, #0D0D0D cards, #1F1F1F borders)
- *   - Geist Sans for text, Geist Mono for code
- *   - Dark-first
+ * GitHub-dark terminal aesthetic matching the Kolega Code reskin.
+ *   - Primary accent: cyan #39C5CF (links, active states, headings)
+ *   - Secondary: purple #9B7DD4 (branding)
+ *   - Tertiary: lime #ADDD30 (CTAs, selection, status indicators)
+ *   - Surfaces: #0D1117 page, #161B22 cards, #010409 nav, #0A0D12 code
+ *   - Hairlines: #21262D, visible borders: #30363D
+ *   - JetBrains Mono for code/mono, IBM Plex Sans for prose
+ *   - Dark-first, with a readable light variant
  */
 
+/* ==========================================================================
+ * Fonts (loaded via @fontsource in astro.config.mjs customCss)
+ * ========================================================================== */
 :root {
-  --kolega-lime: #addd30;
-  --kolega-lime-bright: #c4f03e;
-  --kolega-lime-dark: #9cc429;
-
-  /* Typography (loaded via @fontsource in astro.config.mjs customCss) */
-  --sl-font: "Geist Variable", system-ui, -apple-system, BlinkMacSystemFont,
-    "Segoe UI", Roboto, sans-serif;
-  --sl-font-mono: "Geist Mono Variable", ui-monospace, SFMono-Regular, Menlo,
-    Consolas, monospace;
+  --sl-font: "IBM Plex Sans Variable", system-ui, -apple-system,
+    BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --sl-font-mono: "JetBrains Mono Variable", ui-monospace, SFMono-Regular,
+    Menlo, Consolas, monospace;
 }
 
-/* ----------------------------------------------------------------------------
- * Dark theme (the brand default)
- * ------------------------------------------------------------------------- */
+/* ==========================================================================
+ * Dark theme — GitHub-dark palette with cyan primary accent
+ * ========================================================================== */
 :root,
 :root[data-theme="dark"] {
-  /* Accent ramp — lime on near-black */
-  --sl-color-accent-low: #2b3a0a;
-  --sl-color-accent: #6f9c12;
-  --sl-color-accent-high: #c8ef62;
+  /* ── Accent ramp — cyan ── */
+  --sl-color-accent-low: #0a1c1f;
+  --sl-color-accent: #1a7a85;
+  --sl-color-accent-high: #39c5cf;
+  --sl-color-text-accent: #39c5cf;
 
-  /* Lime is the on-brand link/highlight color */
-  --sl-color-text-accent: var(--kolega-lime);
+  /* ── Semantic hues for asides / callouts ── */
+  /* cyan (note) */
+  --sl-hue-blue: 185;
+  --sl-color-blue-low: #0f1c1e;
+  --sl-color-blue: #33bcc7;
+  --sl-color-blue-high: #85dbe3;
+  /* purple (tip) */
+  --sl-hue-purple: 265;
+  --sl-color-purple-low: #191324;
+  --sl-color-purple: #9b7dd4;
+  --sl-color-purple-high: #bbace4;
+  /* amber (caution) */
+  --sl-hue-orange: 35;
+  --sl-color-orange-low: #1d160e;
+  --sl-color-orange: #d9911a;
+  --sl-color-orange-high: #ecc07a;
+  /* red (danger) */
+  --sl-hue-red: 0;
+  --sl-color-red-low: #1c1111;
+  --sl-color-red: #cc3333;
+  --sl-color-red-high: #e08585;
+  /* lime (success) */
+  --sl-hue-green: 80;
+  --sl-color-green-low: #171d0e;
+  --sl-color-green: #addd30;
+  --sl-color-green-high: #cceb85;
 
-  /* Neutral ramp — pushed toward the site's pure-black palette */
-  --sl-color-white: #ffffff;
-  --sl-color-gray-1: #e8eae6;
-  --sl-color-gray-2: #b3b3b3;
-  --sl-color-gray-3: #808080;
-  --sl-color-gray-4: #4d4d4d;
-  --sl-color-gray-5: #1f1f1f;
-  --sl-color-gray-6: #141414;
-  --sl-color-black: #0a0a0a;
+  /* ── Neutral / gray ramp — GitHub-dark scale ── */
+  --sl-color-white: #f0f3f6;
+  --sl-color-gray-1: #c9d1d9;
+  --sl-color-gray-2: #8b949e;
+  --sl-color-gray-3: #6e7681;
+  --sl-color-gray-4: #484f58;
+  --sl-color-gray-5: #21262d;
+  --sl-color-gray-6: #161b22;
+  --sl-color-black: #0d1117;
 
-  /* Surfaces */
-  --sl-color-bg: #0a0a0a;
-  --sl-color-bg-nav: rgba(10, 10, 10, 0.85);
-  --sl-color-bg-sidebar: #0a0a0a;
-  --sl-color-bg-inline-code: #1a1a1a;
-  --sl-color-hairline: #1f1f1f;
-  --sl-color-hairline-light: #2a2a2a;
-  --sl-color-hairline-shade: #141414;
+  /* ── Surfaces ── */
+  --sl-color-bg: #0d1117;
+  --sl-color-bg-nav: rgba(13, 17, 23, 0.88);
+  --sl-color-bg-sidebar: #0d1117;
+  --sl-color-bg-inline-code: #161b22;
+  --sl-color-hairline: #21262d;
+  --sl-color-hairline-light: #30363d;
+  --sl-color-hairline-shade: #161b22;
 }
 
-/* ----------------------------------------------------------------------------
- * Light theme (brand-tinted, kept readable)
- * ------------------------------------------------------------------------- */
+/* ==========================================================================
+ * Light theme — readable GitHub-flavoured light variant
+ * ========================================================================== */
 :root[data-theme="light"] {
-  --sl-color-accent-low: #e7f4b6;
-  --sl-color-accent: #5f810f;
-  --sl-color-accent-high: #2f400a;
-  --sl-color-text-accent: #5a7d0a;
+  --sl-color-accent-low: #d9f2f5;
+  --sl-color-accent: #1a7a85;
+  --sl-color-accent-high: #0d4d54;
+  --sl-color-text-accent: #1a7a85;
 
-  --sl-color-white: #0a0a0a;
+  /* ── Semantic hues ── */
+  --sl-hue-blue: 185;
+  --sl-color-blue-low: #d9f2f5;
+  --sl-color-blue: #1a7a85;
+  --sl-color-blue-high: #0d4d54;
+  --sl-hue-purple: 265;
+  --sl-color-purple-low: #e8e0f7;
+  --sl-color-purple: #5a3d7a;
+  --sl-color-purple-high: #3a2055;
+  --sl-hue-orange: 35;
+  --sl-color-orange-low: #fef0d8;
+  --sl-color-orange: #b37414;
+  --sl-color-orange-high: #5c3a08;
+  --sl-hue-red: 0;
+  --sl-color-red-low: #fce0e0;
+  --sl-color-red: #b32424;
+  --sl-color-red-high: #5c1010;
+  --sl-hue-green: 80;
+  --sl-color-green-low: #e7f4b6;
+  --sl-color-green: #5f810f;
+  --sl-color-green-high: #2f400a;
+
+  /* ── Neutral ramp ── */
+  --sl-color-white: #0d1117;
   --sl-color-gray-1: #1a1a1a;
   --sl-color-gray-2: #3a3a3a;
   --sl-color-gray-3: #5c5c5c;
@@ -71,11 +120,9 @@
   --sl-color-gray-7: #f6f7f3;
   --sl-color-black: #ffffff;
 
-  /* Surfaces — these are only defined in the dark block above (via the bare
-   * `:root`), so without re-declaring them here the dark surfaces would leak
-   * into light mode (dark text on a dark background). */
+  /* ── Surfaces ── */
   --sl-color-bg: #ffffff;
-  --sl-color-bg-nav: rgba(255, 255, 255, 0.85);
+  --sl-color-bg-nav: rgba(255, 255, 255, 0.88);
   --sl-color-bg-sidebar: #f6f7f3;
   --sl-color-bg-inline-code: #eceee9;
   --sl-color-hairline: #d9dcd5;
@@ -83,41 +130,82 @@
   --sl-color-hairline-shade: #eceee9;
 }
 
-/* ----------------------------------------------------------------------------
- * Brand accents on top of Starlight defaults
- * ------------------------------------------------------------------------- */
+/* ==========================================================================
+ * Global touches
+ * ========================================================================== */
+html {
+  scroll-behavior: smooth;
+}
 
-/* The primary action button: bright lime with black text, like the site CTA.
- * Lime fill with dark text reads on any page background, so apply it in both
- * themes. */
+::selection {
+  background: #addd30;
+  color: #0d1117;
+}
+
+/* ==========================================================================
+ * Header — hide redundant title text (logo already says KOLEGA CODE)
+ * ========================================================================== */
+.site-title span {
+  display: none;
+}
+
+/* ==========================================================================
+ * Nav bar
+ * ========================================================================== */
+:root[data-theme="dark"] header {
+  background: #010409;
+  border-bottom: 1px solid #21262d;
+}
+:root[data-theme="light"] header {
+  background: #f6f7f3;
+  border-bottom: 1px solid #d9dcd5;
+}
+
+/* ==========================================================================
+ * Focus rings — use cyan accent
+ * ========================================================================== */
+:root {
+  accent-color: var(--sl-color-text-accent);
+}
+
+/* ==========================================================================
+ * Links (content area)
+ * ========================================================================== */
+.sl-markdown-content a {
+  color: var(--sl-color-text-accent);
+}
+
+/* ==========================================================================
+ * Buttons — lime CTAs (only place lime is the primary action colour)
+ * ========================================================================== */
+
+/* Primary: bright lime fill, dark text. */
 .sl-link-button.primary {
-  background: var(--kolega-lime-bright);
-  border-color: var(--kolega-lime-bright);
-  color: #0a0a0a;
+  background: #addd30;
+  border-color: #addd30;
+  color: #0d1117;
+  font-family: var(--sl-font-mono);
+  letter-spacing: 0.02em;
 }
 .sl-link-button.primary:hover {
-  background: var(--kolega-lime);
-  border-color: var(--kolega-lime);
-  color: #0a0a0a;
+  background: #c4f03e;
+  border-color: #c4f03e;
+  color: #0d1117;
 }
 
-/* Minimal/secondary button: neutral outline that lights up lime on hover. The
- * resting border is a per-theme neutral; the hover accent uses the theme-aware
- * lime (bright on dark, darker/contrast-safe on light). */
+/* Minimal: neutral border outline → cyan on hover. */
 :root[data-theme="dark"] .sl-link-button.minimal {
-  border-color: #404040;
+  border-color: #30363d;
+  color: var(--sl-color-gray-2);
 }
 :root[data-theme="light"] .sl-link-button.minimal {
   border-color: #d9dcd5;
+  color: var(--sl-color-gray-2);
 }
 .sl-link-button.minimal:hover {
   border-color: var(--sl-color-text-accent);
   color: var(--sl-color-text-accent);
 }
-/* Starlight zeroes the inline padding on `minimal` (it ships as a bare text
- * link). We give it a visible border + the inherited pill radius, so restore
- * the inline padding to match the primary button — otherwise the rounded
- * corners pinch the label (e.g. the "View on GitHub" hero button). */
 .sl-link-button.minimal {
   padding-inline: 1.125rem;
 }
@@ -127,38 +215,108 @@
   }
 }
 
-/* Hero headline: subtle lime emphasis to echo the marketing site. gray-2 is a
- * readable mid-tone in both themes. */
+/* ==========================================================================
+ * Hero
+ * ========================================================================== */
 .hero .tagline {
   color: var(--sl-color-gray-2);
 }
-
-/* Active sidebar entry gets the lime treatment — lime fill + dark text works
- * on both the dark and light sidebar surfaces. */
-.sidebar-content a[aria-current="page"] {
-  color: #0a0a0a;
-  background-color: var(--kolega-lime);
-  font-weight: 600;
+.hero .actions .sl-link-button {
+  font-family: var(--sl-font-mono);
+  letter-spacing: 0.02em;
 }
 
-/* Inline code: lime text on the code chip, matching the site's mono labels.
- * --sl-color-text-accent is the bright lime in dark mode and the darker,
- * contrast-safe lime on light surfaces. */
-:not(pre) > code {
+/* ==========================================================================
+ * Sidebar
+ * ========================================================================== */
+
+/* Section headings ("Getting Started", "Configuration", etc.) */
+.sidebar-content .large {
   color: var(--sl-color-text-accent);
 }
 
-/* On-this-page / nav current markers use the accent automatically; nudge
- * the table-of-contents current item to the brand lime for legibility. */
+/* Sidebar links — muted gray like the reskin nav */
+.sidebar-content a {
+  color: var(--sl-color-gray-2);
+}
+.sidebar-content a:hover {
+  color: var(--sl-color-white);
+}
+
+/* Active page — subtle cyan highlight (not lime fill) */
+.sidebar-content a[aria-current="page"] {
+  color: var(--sl-color-text-accent);
+  background-color: rgba(57, 197, 207, 0.12);
+  font-weight: 600;
+}
+
+/* ==========================================================================
+ * Code
+ * ========================================================================== */
+
+/* Inline code: cyan accent (reskin secondary highlight). */
+:not(pre) > code {
+  color: #39c5cf;
+}
+
+/* ── Code blocks — terminal aesthetic (uses Expressive Code frames) ── */
+
+/* Override Expressive Code border radius to match the reskin. */
+.expressive-code {
+  --ec-brdRad: 10px;
+}
+
+/* ── Dark-mode code blocks ── */
+:root[data-theme="dark"] .expressive-code {
+  --ec-brdCol: #21262d;
+  --ec-frm-trmTtbBg: #0e131a;
+  --ec-frm-trmTtbDotsFg: #8b949e;
+  --ec-frm-trmTtbBrdBtmCol: #21262d;
+  --ec-frm-trmBg: #0a0d12;
+}
+
+/* Replace single-colour mask dots with red/yellow/green circles. */
+:root[data-theme="dark"] .expressive-code .frame.is-terminal .header::before,
+:root[data-theme="light"] .expressive-code .frame.is-terminal .header::before {
+  mask-image: none !important;
+  -webkit-mask-image: none !important;
+  background-color: transparent !important;
+  width: 11px !important;
+  height: 11px !important;
+  border-radius: 50% !important;
+}
+:root[data-theme="dark"] .expressive-code .frame.is-terminal .header::before {
+  background-color: #ff5f56 !important;
+  box-shadow: 20px 0 0 #ffbd2e, 40px 0 0 #27c93f;
+}
+
+/* ── Light-mode code blocks ── */
+:root[data-theme="light"] .expressive-code {
+  --ec-brdCol: #d9dcd5;
+  --ec-frm-trmTtbBg: #e8eaed;
+  --ec-frm-trmTtbDotsFg: #8b949e;
+  --ec-frm-trmTtbBrdBtmCol: #d9dcd5;
+  --ec-frm-trmBg: #f6f8fa;
+}
+:root[data-theme="light"] .expressive-code .frame.is-terminal .header::before {
+  background-color: #ff5f56 !important;
+  box-shadow: 20px 0 0 #ffbd2e, 40px 0 0 #27c93f;
+}
+
+/* ==========================================================================
+ * Table of contents
+ * ========================================================================== */
 starlight-toc a[aria-current="true"] {
   color: var(--sl-color-text-accent);
   border-color: var(--sl-color-text-accent);
 }
 
-/* Cards (splash page) — themed surface with a lime hover edge and lime icon. */
+/* ==========================================================================
+ * Cards (splash / index page)
+ * ========================================================================== */
 :root[data-theme="dark"] .card {
-  background: #0d0d0d;
-  border-color: #1f1f1f;
+  background: #161b22;
+  border-color: #21262d;
 }
 :root[data-theme="light"] .card {
   background: #f6f7f3;
@@ -171,8 +329,133 @@ starlight-toc a[aria-current="true"] {
   color: var(--sl-color-text-accent);
 }
 
-/* Mono labels: tighten tracking like the site's uppercase mono chips. */
-.hero .actions .sl-link-button {
-  font-family: var(--sl-font-mono);
-  letter-spacing: 0.02em;
+/* ==========================================================================
+ * Social icons (GitHub link in header) — gray, hover cyan
+ * ========================================================================== */
+.social-icons a,
+a[href*="github.com"] {
+  color: #8b949e;
+}
+.social-icons a:hover,
+a[href*="github.com"]:hover {
+  color: #39c5cf;
+}
+
+/* ==========================================================================
+ * Asides / callouts
+ * ========================================================================== */
+
+/* Aside base: soften the left border and add subtle rounding. */
+.starlight-aside {
+  border-radius: 8px;
+}
+:root[data-theme="dark"] .starlight-aside {
+  border-color: #30363d;
+}
+:root[data-theme="light"] .starlight-aside {
+  border-color: #c6c8c4;
+}
+
+/* Override the border-inline-start colour to use semantic accent. */
+.starlight-aside--note {
+  border-inline-start-color: var(--sl-color-blue) !important;
+}
+.starlight-aside--tip {
+  border-inline-start-color: var(--sl-color-purple) !important;
+}
+.starlight-aside--caution {
+  border-inline-start-color: var(--sl-color-orange) !important;
+}
+.starlight-aside--danger {
+  border-inline-start-color: var(--sl-color-red) !important;
+}
+
+/* ==========================================================================
+ * Tabs
+ * ========================================================================== */
+starlight-tabs [role="tab"][aria-selected="true"] {
+  color: var(--sl-color-text-accent);
+  border-color: var(--sl-color-text-accent);
+}
+starlight-tabs [role="tab"]:hover {
+  color: var(--sl-color-white);
+}
+
+/* ==========================================================================
+ * Tables
+ * ========================================================================== */
+:root[data-theme="dark"] .sl-markdown-content table {
+  border-color: #21262d;
+}
+:root[data-theme="dark"] .sl-markdown-content :is(th, td) {
+  border-color: #21262d;
+}
+:root[data-theme="light"] .sl-markdown-content :is(th, td) {
+  border-color: #d9dcd5;
+}
+
+/* ==========================================================================
+ * Search
+ * ========================================================================== */
+:root[data-theme="dark"] site-search button {
+  background: #161b22;
+  border: 1px solid #30363d;
+  color: var(--sl-color-gray-3);
+}
+:root[data-theme="dark"] site-search button:hover {
+  border-color: var(--sl-color-text-accent);
+  color: var(--sl-color-gray-2);
+}
+
+/* Search dialog / modal background */
+:root[data-theme="dark"] site-search dialog {
+  background: #0d1117;
+  border: 1px solid #30363d;
+}
+
+/* Search kbd hints */
+site-search kbd {
+  background: var(--sl-color-gray-6);
+  border: 1px solid var(--sl-color-gray-5);
+  color: var(--sl-color-gray-3);
+}
+
+/* Pagefind search results — match brand colors */
+:root[data-theme="dark"] .pagefind-ui {
+  --pagefind-ui-primary: #39c5cf;
+  --pagefind-ui-text: #c9d1d9;
+  --pagefind-ui-background: #0d1117;
+  --pagefind-ui-border: #30363d;
+  --pagefind-ui-scale: 1;
+}
+
+/* ==========================================================================
+ * Misc: breadcrumbs, edit link, last-updated, pagination
+ * ========================================================================== */
+
+/* Edit-this-page link */
+:root[data-theme="dark"] .content-panel + .content-panel a[href*="github.com"] {
+  color: var(--sl-color-gray-3);
+}
+:root[data-theme="dark"] .content-panel + .content-panel a[href*="github.com"]:hover {
+  color: var(--sl-color-text-accent);
+}
+
+/* Last-updated text */
+sl-edit-link + div,
+.meta sl-last-updated {
+  color: var(--sl-color-gray-4);
+}
+
+/* Pagination links */
+.pagination-links a {
+  color: var(--sl-color-gray-2);
+  border-color: var(--sl-color-hairline);
+}
+.pagination-links a:hover {
+  border-color: var(--sl-color-text-accent);
+  color: var(--sl-color-text-accent);
+}
+.pagination-links .link-title {
+  color: var(--sl-color-white);
 }

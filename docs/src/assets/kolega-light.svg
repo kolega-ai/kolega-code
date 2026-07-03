@@ -1,5 +1,15 @@
-<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <path d="M7 8L3 12L7 16" stroke="#1a1a1a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M17 8L21 12L17 16" stroke="#1a1a1a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M10 20L14 4" stroke="#1a1a1a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 290 30" width="290" height="30">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#0d7377"/>
+      <stop offset="100%" stop-color="#5a3d7a"/>
+    </linearGradient>
+  </defs>
+  <text x="0" y="5" font-family="'JetBrains Mono','Cascadia Code','Fira Code',Menlo,Consolas,monospace" font-size="5" fill="url(#g)" font-weight="700" xml:space="preserve">
+    <tspan x="0" dy="0"> ██  ██   ██████  ██      ███████  ██████   █████    ██████  ██████  ██████  ███████</tspan>
+    <tspan x="0" dy="5.5"> ██ ██   ██    ██ ██      ██      ██       ██   ██  ██      ██    ██ ██   ██ ██</tspan>
+    <tspan x="0" dy="5.5"> ████    ██    ██ ██      █████   ██   ███ ███████  ██      ██    ██ ██   ██ █████</tspan>
+    <tspan x="0" dy="5.5"> ██ ██   ██    ██ ██      ██      ██    ██ ██   ██  ██      ██    ██ ██   ██ ██</tspan>
+    <tspan x="0" dy="5.5"> ██  ██   ██████  ███████ ███████  ██████  ██   ██   ██████  ██████  ██████  ███████</tspan>
+  </text>
 </svg>
