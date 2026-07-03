@@ -51,6 +51,33 @@ class TestBuildDiffPreview:
         # '+' marker + clipped body + ellipsis, never the full 290-char line.
         assert len(add_rows[0]) <= ep.MAX_LINE_CHARS + 2
 
+    def test_no_cap_with_max_lines_zero(self):
+        """All diff lines are included and more is 0 when max_lines=0."""
+        old = "\n".join(f"old{i}" for i in range(30)) + "\n"
+        new = "\n".join(f"new{i}" for i in range(30)) + "\n"
+        p = ep.build_diff_preview(old, new, "many.py", max_lines=0)
+        assert p["kind"] == "diff"
+        # With 30 old lines replaced by 30 new lines, we expect 60 + some meta lines.
+        assert len(p["lines"]) > ep.MAX_DIFF_LINES
+        assert p["more"] == 0
+
+    def test_custom_cap(self):
+        """max_lines=N caps at exactly N lines."""
+        old = "\n".join(f"old{i}" for i in range(50)) + "\n"
+        new = "\n".join(f"new{i}" for i in range(50)) + "\n"
+        p = ep.build_diff_preview(old, new, "custom.py", max_lines=5)
+        assert len(p["lines"]) == 5
+        assert p["more"] > 0
+
+    def test_oversize_falls_back_to_head_with_max_lines_zero(self):
+        """When oversized, fallback head preview also receives max_lines=0 (uncapped)."""
+        big = "x\n" * (ep.MAX_DIFF_INPUT_LINES + 10)
+        p = ep.build_diff_preview("", big, "big.txt", max_lines=0)
+        assert p is not None
+        assert p["kind"] == "head"
+        # With max_lines=0, head should be uncapped (all lines shown).
+        assert p["more"] == 0
+
 
 class TestBuildHeadPreview:
     def test_basic_head(self):
@@ -71,6 +98,20 @@ class TestBuildHeadPreview:
         p = ep.build_head_preview(content, "big.txt")
         assert len(p["lines"]) == ep.MAX_HEAD_LINES
         assert p["more"] == 50 - ep.MAX_HEAD_LINES
+
+    def test_no_cap_with_max_lines_zero(self):
+        """All head lines are included and more is 0 when max_lines=0."""
+        content = "\n".join(f"line{i}" for i in range(30)) + "\n"
+        p = ep.build_head_preview(content, "full.txt", max_lines=0)
+        assert len(p["lines"]) == 30
+        assert p["more"] == 0
+
+    def test_custom_cap(self):
+        """max_lines=N caps the head at exactly N lines."""
+        content = "\n".join(f"line{i}" for i in range(30)) + "\n"
+        p = ep.build_head_preview(content, "capped.txt", max_lines=7)
+        assert len(p["lines"]) == 7
+        assert p["more"] == 30 - 7
 
 
 class TestLanguageForPath:
