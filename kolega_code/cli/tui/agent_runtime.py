@@ -108,7 +108,6 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             self._flush_conversation_render()
             self._active_progress_entry = None
             self._turn_active = False
-            self.agent_worker = None
             if self._plan_decision_active:
                 self._set_composer_status(messages.PLAN_READY_PLACEHOLDER)
             else:
@@ -119,21 +118,29 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         return cancelled_by_user
 
     async def _process_message(self, message: str, attachments: list[dict] | None = None) -> None:
-        if self.agent is None:
-            return
-        cancelled_by_user = await self._run_turn_stream(lambda: self._agent_turn_stream(message, attachments))
-        if cancelled_by_user:
-            self._schedule_maybe_start_queued_message()
-            return
-        # Un-pause a paused goal on any user-initiated turn so the loop resumes.
-        if self._goal is not None and self._goal.paused and not self._goal.met:
-            self._goal.paused = False
-            self._goal.status_note = ""
-            self._sync_goal_to_session()
-        if self._goal is not None and self._goal.is_active:
-            await self._run_goal_loop()
-        else:
-            self._schedule_maybe_start_queued_message()
+        try:
+            if self.agent is None:
+                return
+            cancelled_by_user = await self._run_turn_stream(lambda: self._agent_turn_stream(message, attachments))
+            if cancelled_by_user:
+                self._schedule_maybe_start_queued_message()
+                return
+            # Un-pause a paused goal on any user-initiated turn so the loop resumes.
+            if self._goal is not None and self._goal.paused and not self._goal.met:
+                self._goal.paused = False
+                self._goal.status_note = ""
+                self._sync_goal_to_session()
+            if self._goal is not None and self._goal.is_active:
+                await self._run_goal_loop()
+            else:
+                self._schedule_maybe_start_queued_message()
+        finally:
+            # The turn worker owns ``agent_worker`` for its whole lifetime — including
+            # the goal loop's verifier phase, which runs between work turns. Clear it
+            # only here so the app stays "busy" during goal evaluation: submissions
+            # queue instead of running immediately (which would cancel the verifier
+            # via the exclusive ``turns`` worker group) and Esc can interrupt the loop.
+            self.agent_worker = None
 
     # ------------------------------------------------------------------
     # Autonomous goal loop
@@ -202,31 +209,37 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
 
     async def _run_goal_loop(self) -> None:
         """Evaluate → continue loop, run after a successful (non-cancelled) turn."""
-        while self._goal is not None and self._goal.is_active:
-            self._accumulate_goal_tokens()
-            verdict = await self._evaluate_active_goal()
-            if verdict.met:
-                await self._complete_goal(verdict)
-                break
-            self._goal.turns_evaluated += 1
-            self._sync_goal_to_session()
-            if self._goal.turns_evaluated >= self._goal.max_turns:
-                await self._abort_goal()
-                break
-            turns_remaining = self._goal.max_turns - self._goal.turns_evaluated
-            nudge = build_goal_nudge(self._goal.condition, verdict, turns_remaining)
-            self._add_conversation_entry(
-                tui_state.ConversationEntry(
-                    kind="system",
-                    content=messages.GOAL_NOT_MET_CONTINUE.format(
-                        reason=verdict.reason or "see the verifier's assessment"
-                    ),
+        try:
+            while self._goal is not None and self._goal.is_active:
+                self._accumulate_goal_tokens()
+                verdict = await self._evaluate_active_goal()
+                if verdict.met:
+                    await self._complete_goal(verdict)
+                    break
+                self._goal.turns_evaluated += 1
+                self._sync_goal_to_session()
+                if self._goal.turns_evaluated >= self._goal.max_turns:
+                    await self._abort_goal()
+                    break
+                turns_remaining = self._goal.max_turns - self._goal.turns_evaluated
+                nudge = build_goal_nudge(self._goal.condition, verdict, turns_remaining)
+                self._add_conversation_entry(
+                    tui_state.ConversationEntry(
+                        kind="system",
+                        content=messages.GOAL_NOT_MET_CONTINUE.format(
+                            reason=verdict.reason or "see the verifier's assessment"
+                        ),
+                    )
                 )
-            )
-            cancelled = await self._run_turn_stream(lambda: self._agent_turn_stream(nudge))
-            if cancelled:
+                cancelled = await self._run_turn_stream(lambda: self._agent_turn_stream(nudge))
+                if cancelled:
+                    await self._pause_goal(messages.GOAL_PAUSED.format(reason="Stopped by user. "))
+                    break
+        except asyncio.CancelledError:
+            # Cancelled between work turns (e.g. Esc while the verifier was running).
+            # Pause so the goal survives and can be resumed, like the nudge-turn cancel.
+            if self._goal is not None and not self._goal.met and not self._goal.paused:
                 await self._pause_goal(messages.GOAL_PAUSED.format(reason="Stopped by user. "))
-                break
         self._schedule_maybe_start_queued_message()
 
     async def _complete_goal(self, verdict) -> None:

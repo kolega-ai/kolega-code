@@ -49,6 +49,11 @@ class GoalFakeAgent:
         # raise asyncio.CancelledError instead of yielding.
         self._stream_call_count = 0
         self._cancel_on_calls: set[int] = set()
+        # Optional verifier gate: when set, evaluate_goal_condition signals
+        # ``_verifier_started`` then blocks on ``_release_verifier`` so tests can
+        # act *during* the verifier phase (e.g. submit a message or cancel).
+        self._verifier_started: asyncio.Event | None = None
+        self._release_verifier: asyncio.Event | None = None
         GoalFakeAgent.instances.append(self)
 
     # -- goal plumbing ----------------------------------------------------- #
@@ -62,6 +67,10 @@ class GoalFakeAgent:
 
     async def evaluate_goal_condition(self, condition):
         self._evaluate_calls.append(condition)
+        if self._verifier_started is not None:
+            self._verifier_started.set()
+        if self._release_verifier is not None:
+            await self._release_verifier.wait()  # CancelledError propagates here on cancel
         if self._goal_evaluate_results:
             return self._goal_evaluate_results.pop(0)
         return GoalVerdict(met=True, reason="done")
@@ -473,6 +482,86 @@ async def test_goal_blocked_while_turn_active(tmp_path: Path, monkeypatch: pytes
         # Goal is untouched and a stop-first warning was surfaced.
         assert app._goal is not None
         assert app._goal.condition == "make all tests pass"
+
+
+@pytest.mark.asyncio
+async def test_submission_during_verifier_is_queued(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A message submitted while the verifier runs is queued, not processed
+    immediately (which would cancel the verifier via the exclusive worker group)."""
+    app = _build_goal_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        await _wait_for(app, pilot, lambda: app.agent is not None)
+        agent = GoalFakeAgent.instances[-1]
+
+        # First evaluation: not met (blocks on the gate); second: met.
+        agent._goal_evaluate_results = [
+            GoalVerdict(met=False, reason="not yet"),
+            GoalVerdict(met=True, reason="done"),
+        ]
+        verifier_started = asyncio.Event()
+        release_verifier = asyncio.Event()
+        agent._verifier_started = verifier_started
+        agent._release_verifier = release_verifier
+
+        await _submit(app, pilot, "/goal make all tests pass")
+        await _wait_for(app, pilot, lambda: verifier_started.is_set())
+
+        # The worker is alive during the verifier (the fix). Without it,
+        # agent_worker is None and a submission would start a new turn worker
+        # that cancels the verifier via the exclusive ``turns`` group.
+        assert app.agent_worker is not None
+        assert app._turn_active is False
+
+        # Submit a steering message mid-verifier → it must queue, not run.
+        await _submit(app, pilot, "steer: do X")
+        assert any(item.text == "steer: do X" for item in app._queued_messages)
+        assert "steer: do X" not in agent.messages
+
+        # Release the verifier so the loop can proceed to completion, and clear
+        # the gate so the second evaluation doesn't block.
+        release_verifier.set()
+        agent._release_verifier = None
+        agent._verifier_started = None
+
+        await _wait_goal_terminal(app, pilot)
+        # The queued message is drained and processed after the goal loop ends.
+        await _wait_for(app, pilot, lambda: "steer: do X" in agent.messages, timeout=8.0)
+        await _wait_turn_idle(app, pilot)
+
+        assert "steer: do X" in agent.messages
+
+
+@pytest.mark.asyncio
+async def test_cancel_during_verifier_pauses_goal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Esc while the verifier is running pauses the goal instead of doing nothing."""
+    app = _build_goal_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        await _wait_for(app, pilot, lambda: app.agent is not None)
+        agent = GoalFakeAgent.instances[-1]
+
+        # First evaluation: not met → blocks on the gate so we can cancel mid-verifier.
+        agent._goal_evaluate_results = [GoalVerdict(met=False, reason="keep going")]
+        verifier_started = asyncio.Event()
+        release_verifier = asyncio.Event()
+        agent._verifier_started = verifier_started
+        agent._release_verifier = release_verifier
+
+        await _submit(app, pilot, "/goal make all tests pass")
+        await _wait_for(app, pilot, lambda: verifier_started.is_set())
+
+        # The worker is alive during the verifier (the fix). Without it,
+        # agent_worker is None and action_cancel_generation is a no-op.
+        assert app.agent_worker is not None
+
+        app.action_cancel_generation()
+        await _wait_goal_terminal(app, pilot)
+
+        assert app._goal is not None
+        assert app._goal.paused is True
+        assert app._goal.met is False
+        assert any(e.kind == "system" and "Goal paused" in e.content for e in app.conversation_entries)
 
 
 # --------------------------------------------------------------------------- #
