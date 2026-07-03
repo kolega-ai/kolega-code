@@ -52,6 +52,8 @@ def edit_tool(project_path, mock_connection_manager, agent_config, mock_base_age
 
 
 class MemoryFileSystem:
+    """CRLF-preserving in-memory filesystem (mimics sandbox/E2B reads)."""
+
     def __init__(self, content: str):
         self.content = content
 
@@ -60,6 +62,9 @@ class MemoryFileSystem:
 
     def read_text(self, path: str) -> str:
         return self.content
+
+    def read_bytes(self, path: str) -> bytes:
+        return self.content.encode("utf-8")
 
     def write_text(self, path: str, content: str) -> None:
         self.content = content
@@ -244,6 +249,123 @@ class TestEditTool:
         assert "overlaps" in str(exc_info.value)
         assert file_path.read_text() == "alpha beta gamma\n"
 
+    # --- line-ending handling: parse tolerance (the reported failure) ---
+
+    async def test_edit_parses_block_with_crlf_markers(self, edit_tool, project_path):
+        """CRLF at the SEARCH/=======/REPLACE marker lines parses and applies."""
+        file_path = project_path / "src.py"
+        file_path.write_bytes(b"def foo():\r\n    return 1\r\n\r\ndef bar():\r\n    return 2\r\n")
+        crlf_block = (
+            "<<<<<<< SEARCH\r\ndef foo():\r\n    return 1\r\n=======\r\ndef foo():\r\n    return 99\r\n>>>>>>> REPLACE"
+        )
+
+        result = await edit_tool.edit("src.py", crlf_block)
+
+        assert result == "Edited src.py"
+        after = file_path.read_bytes()
+        assert b"def foo():\r\n    return 99\r\n" in after
+        # unchanged lines keep CRLF; no bare LF introduced
+        assert b"\n" not in after.replace(b"\r\n", b"")
+
+    async def test_multi_edit_parses_block_with_crlf_markers(self, edit_tool, project_path):
+        """multi_edit tolerates CRLF marker lines across multiple blocks."""
+        file_path = project_path / "src.py"
+        file_path.write_bytes(b"alpha\r\nbeta\r\ngamma\r\n")
+        crlf_blocks = (
+            "<<<<<<< SEARCH\r\nalpha\r\n=======\r\nALPHA\r\n>>>>>>> REPLACE\r\n"
+            "<<<<<<< SEARCH\r\ngamma\r\n=======\r\nGAMMA\r\n>>>>>>> REPLACE"
+        )
+
+        result = await edit_tool.multi_edit("src.py", crlf_blocks)
+
+        assert result == "Edited src.py with 2 replacements"
+        assert file_path.read_bytes() == b"ALPHA\r\nbeta\r\nGAMMA\r\n"
+
+    async def test_edit_crlf_markers_lf_content_parses(self, edit_tool, project_path):
+        """CRLF marker lines with LF content parses and edits an LF file."""
+        file_path = project_path / "src.py"
+        file_path.write_text("def foo():\n    return 1\n\ndef bar():\n    return 2\n")
+        crlf_markers_lf_content = (
+            "<<<<<<< SEARCH\r\ndef foo():\n    return 1\n=======\r\ndef foo():\n    return 99\n>>>>>>> REPLACE"
+        )
+
+        result = await edit_tool.edit("src.py", crlf_markers_lf_content)
+
+        assert result == "Edited src.py"
+        assert file_path.read_text() == "def foo():\n    return 99\n\ndef bar():\n    return 2\n"
+
+    # --- line-ending handling: preservation ---
+
+    async def test_edit_preserves_crlf_line_endings(self, edit_tool, project_path):
+        """Editing a CRLF file preserves CRLF on unchanged and changed lines."""
+        file_path = project_path / "src.py"
+        file_path.write_bytes(b"def foo():\r\n    return 1\r\n\r\ndef bar():\r\n    return 2\r\n")
+
+        result = await edit_tool.edit("src.py", block("def foo():\n    return 1", "def foo():\n    return 99"))
+
+        assert result == "Edited src.py"
+        after = file_path.read_bytes()
+        assert b"def foo():\r\n    return 99\r\n" in after
+        assert b"def bar():\r\n    return 2\r\n" in after
+        assert b"\n" not in after.replace(b"\r\n", b"")
+
+    async def test_edit_preserves_lf_line_endings(self, edit_tool, project_path):
+        """Editing an LF file introduces no carriage returns."""
+        file_path = project_path / "lf.py"
+        file_path.write_bytes(b"def foo():\n    return 1\n\ndef bar():\n    return 2\n")
+
+        result = await edit_tool.edit("lf.py", block("def foo():\n    return 1", "def foo():\n    return 99"))
+
+        assert result == "Edited lf.py"
+        after = file_path.read_bytes()
+        assert b"\r" not in after
+        assert after == b"def foo():\n    return 99\n\ndef bar():\n    return 2\n"
+
+    async def test_edit_normalizes_mixed_line_endings_to_dominant(self, edit_tool, project_path):
+        """A file with mixed endings is normalized to the dominant ending after edit."""
+        file_path = project_path / "mix.py"
+        # two CRLF lines, one bare-LF line -> dominant is CRLF
+        file_path.write_bytes(b"line one\r\nline two\nline three\r\n")
+
+        result = await edit_tool.edit("mix.py", block("line one", "LINE ONE"))
+
+        assert result == "Edited mix.py"
+        after = file_path.read_bytes()
+        assert after == b"LINE ONE\r\nline two\r\nline three\r\n"
+        assert b"\n" not in after.replace(b"\r\n", b"")
+
+    async def test_edit_crlf_content_no_mixed_endings(
+        self, project_path, mock_connection_manager, agent_config, mock_base_agent
+    ):
+        """A CRLF-preserving (sandbox-like) filesystem edit yields no mixed endings."""
+        filesystem = MemoryFileSystem("def foo():\r\n    return 1\r\n\r\ndef bar():\r\n    return 2\r\n")
+        tool = EditTool(
+            project_path,
+            "test_workspace",
+            str(uuid.uuid4()),
+            mock_connection_manager,
+            agent_config,
+            mock_base_agent,
+            filesystem,
+        )
+
+        result = await tool.edit("crlf.txt", block("def foo():\n    return 1", "def foo():\n    return 99"))
+
+        assert result == "Edited crlf.txt"
+        assert "\n" not in filesystem.content.replace("\r\n", "")
+        assert filesystem.content == "def foo():\r\n    return 99\r\n\r\ndef bar():\r\n    return 2\r\n"
+
+    async def test_edit_no_change_does_not_write_crlf_file(self, edit_tool, project_path):
+        """A no-op edit on a CRLF file leaves disk bytes unchanged (no write, no LE flip)."""
+        file_path = project_path / "nc.py"
+        original = b"foo\r\nbar\r\n"
+        file_path.write_bytes(original)
+
+        result = await edit_tool.edit("nc.py", block("foo", "foo"))
+
+        assert "No changes made" in result
+        assert file_path.read_bytes() == original
+
 
 @pytest.mark.asyncio
 class TestWriteTool:
@@ -300,6 +422,23 @@ class TestWriteTool:
         assert content["tool_name"] == "write"
         assert content["kind"] == "diff"
         assert content["path"] == "m.py"
+
+    async def test_write_overwrite_preserves_dominant_line_endings(self, edit_tool, project_path):
+        """write overwrite adopts the file's dominant line ending; new files stay LF."""
+        crlf_file = project_path / "crlf.py"
+        crlf_file.write_bytes(b"old\r\ncontent\r\n")
+
+        result = await edit_tool.write("crlf.py", "new\ncontent\n")
+
+        assert result == "Wrote crlf.py"
+        after = crlf_file.read_bytes()
+        assert after == b"new\r\ncontent\r\n"
+        assert b"\n" not in after.replace(b"\r\n", b"")
+
+        # a brand-new file keeps the LF content the caller provided
+        result = await edit_tool.write("new.py", "brand\nnew\n")
+        assert result == "Wrote new.py"
+        assert (project_path / "new.py").read_bytes() == b"brand\nnew\n"
 
     async def test_write_permission_error(self, edit_tool, project_path):
         with patch("pathlib.Path.write_text", side_effect=PermissionError("Permission denied")):

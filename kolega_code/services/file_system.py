@@ -553,7 +553,10 @@ class LocalFileSystem(FileSystem):
 
     def write_text(self, path: str, content: str, encoding: str = "utf-8") -> None:
         resolved_path = self._resolve_path(path)
-        resolved_path.write_text(content, encoding=encoding)
+        # newline="" disables platform newline translation so we write exactly
+        # the bytes the caller normalized (prevents \r\r\n on Windows and
+        # CRLF->LF round-trip surprises on macOS/Linux).
+        resolved_path.write_text(content, encoding=encoding, newline="")
 
     def write_bytes(self, path: str, content: bytes) -> None:
         resolved_path = self._resolve_path(path)
