@@ -15,3 +15,13 @@ repos:
       - id: check-yaml
       - id: debug-statements
       - id: detect-private-key
+
+  - repo: local
+    hooks:
+      - id: pyright
+        name: pyright type checker
+        entry: uv run pyright
+        language: system
+        types: [python]
+        pass_filenames: false
+        require_serial: true

@@ -34,8 +34,12 @@ class ListDirectoryTool(BaseTool):
         """
         Sandbox-specific implementation using a single command for efficiency.
         """
-        # Resolve the full path
-        full_path = self.filesystem._resolve_path(path) if path else self.filesystem.root_path
+        # ``_resolve_path``/``root_path``/``sandbox`` are provided by the concrete
+        # sandbox filesystem subclasses, not the ``FileSystem`` base, so access them
+        # via ``getattr``. This method is only reached when ``hasattr(filesystem,
+        # "sandbox")`` is true (see ``list_directory``).
+        resolve = getattr(self.filesystem, "_resolve_path", None)
+        full_path = resolve(path) if path and callable(resolve) else getattr(self.filesystem, "root_path", ".")
 
         # Use ls with detailed format to get all info in one command
         # -la: list all files with details
@@ -48,8 +52,10 @@ class ListDirectoryTool(BaseTool):
         count_cmd = f'cd {full_path} && find . -maxdepth 1 -type d ! -name . -exec sh -c \'echo "$(basename "{{}}"):$(ls -1 "{{}}" 2>/dev/null | wc -l)"\' \\; 2>/dev/null || true'
 
         # Run both commands - always await since sandbox commands are always async
-        ls_result = await self.filesystem.sandbox.commands.run(ls_cmd)
-        count_result = await self.filesystem.sandbox.commands.run(count_cmd)
+        sandbox = getattr(self.filesystem, "sandbox", None)
+        assert sandbox is not None, "sandbox filesystem required for _list_directory_sandbox"
+        ls_result = await sandbox.commands.run(ls_cmd)
+        count_result = await sandbox.commands.run(count_cmd)
 
         if ls_result.exit_code != 0:
             raise OSError(f"Failed to list directory: {ls_result.stderr}")

@@ -12,10 +12,11 @@ from kolega_code.agent import AgentEvent
 
 from .. import messages, theme
 from ..theme import Color, Glyph
+from . import app_base as tui_app_base
 from . import state as tui_state
 
 
-class StatusDashboardMixin:
+class StatusDashboardMixin(tui_app_base.KolegaAppBase):
     @property
     def _status_dashboard(self) -> Static:
         return self.query_one("#status_dashboard", Static)
@@ -187,13 +188,13 @@ class StatusDashboardMixin:
 
     def _as_optional_int(self, value: object) -> Optional[int]:
         try:
-            return int(value) if value is not None else None
+            return int(value) if value is not None else None  # pyright: ignore[reportArgumentType]
         except (TypeError, ValueError):
             return None
 
     def _as_optional_float(self, value: object) -> Optional[float]:
         try:
-            return float(value) if value is not None else None
+            return float(value) if value is not None else None  # pyright: ignore[reportArgumentType]
         except (TypeError, ValueError):
             return None
 

@@ -201,11 +201,12 @@ class SandboxTerminalManager(TerminalManager):
         for command_id, info in self.command_history.items():
             if info.get("status") == "running":
                 terminal_id = info.get("terminal_id")
-                result[command_id] = {
-                    "command": info.get("command", ""),
-                    "workdir": self.terminals.get(terminal_id, {}).get("cwd"),
-                    "running": True,
-                }
+                if terminal_id is not None:
+                    result[command_id] = {
+                        "command": info.get("command", ""),
+                        "workdir": self.terminals.get(terminal_id, {}).get("cwd"),
+                        "running": True,
+                    }
         return result
 
     async def get_last_command(self, terminal_id: str) -> str:

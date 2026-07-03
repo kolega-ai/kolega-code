@@ -19,6 +19,7 @@ from textual.widgets import Static
 from .. import messages, theme
 from ..theme import Color, Glyph
 from .session_diff import SessionDiffFile
+from .state import SessionFileChange
 
 if TYPE_CHECKING:
     from ..app import KolegaCodeApp
@@ -88,7 +89,7 @@ class ChangesInspectorScreen(ModalScreen):
 
     # ---- live updates ---------------------------------------------------------
 
-    def note_change_updated(self, change: Optional[object] = None) -> None:
+    def note_change_updated(self, change: SessionFileChange | None = None) -> None:
         """Called by the owner when net diff state or edit-event history changes."""
         if self._follow:
             self._selected_path = self._owner._default_changes_path() or self._selected_path

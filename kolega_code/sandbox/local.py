@@ -37,6 +37,7 @@ class LocalSandboxManager(SandboxManager):
         if self.filesystem is None and workspace:
             self.filesystem = LocalFileSystem(root_path=workspace.directory_path)
         if self.terminal_manager is None:
+            assert self.connection_manager is not None, "connection_manager is required for LocalTerminalManager"
             self.terminal_manager = LocalTerminalManager(workspace_id, thread_id, self.connection_manager)
         if self.browser_manager is None:
             self.browser_manager = PlaywrightBrowserManager()

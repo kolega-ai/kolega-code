@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Union
+from typing import Optional, Union
 
 from kolega_code.config import AgentConfig
 from kolega_code.events import AgentEvent
@@ -74,8 +74,8 @@ class BrowserTool(BaseTool):
         self,
         browser_id: str,
         max_logs: int = 50,
-        log_types: list = None,
-        minutes_back: int = None,
+        log_types: Optional[list] = None,
+        minutes_back: Optional[int] = None,
         max_chars: int = 8000,
     ) -> str:
         logs = await self.browser_manager.get_browser_console_logs(
@@ -142,8 +142,8 @@ class BrowserTool(BaseTool):
         self,
         browser_id: str,
         max_logs: int = 50,
-        log_types: list = None,
-        minutes_back: int = None,
+        log_types: Optional[list] = None,
+        minutes_back: Optional[int] = None,
         max_chars: int = 8000,
     ) -> str:
         content = await self.browser_manager.get_browser_content(

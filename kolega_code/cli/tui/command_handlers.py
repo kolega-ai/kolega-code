@@ -38,12 +38,13 @@ from ..skills import activated_skill_names
 from ..slash_commands import SKILLS_LIST_COMMAND, TUI_COMMAND_NAMES, agent_command_names
 from ..diagnostics import assemble_bug_bundle
 from ..updater import check_for_update, current_version, run_self_update, update_status_message
+from . import app_base as tui_app_base
 from . import constants as tui_constants
 from . import state as tui_state
 from . import widgets as tui_widgets
 
 
-class CommandHandlersMixin:
+class CommandHandlersMixin(tui_app_base.KolegaAppBase):
     def _tui_command_handlers(self) -> dict[str, Callable[[str], Awaitable[None]]]:
         return {
             "/attach": self._command_attach,

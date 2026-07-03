@@ -231,7 +231,9 @@ done <<< "$limited"
 echo "__TOTAL__ $total_items"
 '"""
 
-        result = await self.filesystem.sandbox.commands.run(script)
+        sandbox = getattr(self.filesystem, "sandbox", None)
+        assert sandbox is not None, "sandbox filesystem required for _search_files_sandbox"
+        result = await sandbox.commands.run(script)
         if result.exit_code != 0:
             return [], 0, False
 

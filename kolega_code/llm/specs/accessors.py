@@ -4,7 +4,7 @@ from .catalog import MODEL_SPECS
 from .types import ThinkingEffortSpec
 
 
-def _provider_value(provider: str) -> str:
+def _provider_value(provider: Any) -> str:
     return provider.value if hasattr(provider, "value") else provider
 
 
@@ -26,7 +26,7 @@ def get_model_specs(provider: str, model_name: str) -> Dict[str, Any]:
     if key not in MODEL_SPECS:
         raise ValueError(f"Model {model_name} from provider {provider_str} is not supported.")
 
-    return MODEL_SPECS.get(key)
+    return MODEL_SPECS[key]
 
 
 def supports_vision(provider: str, model_name: str) -> bool:

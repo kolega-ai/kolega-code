@@ -11,6 +11,7 @@ from kolega_code.hooks import HookDispatcher, HookEvent, load_hook_config, proje
 from kolega_code.llm.exceptions import LLMError, llm_error_message
 from kolega_code.mcp.tools import build_mcp_tool_extension
 from kolega_code.services.browser import PlaywrightBrowserManager
+from textual.widgets import Static
 
 from .. import messages
 from ..config import CliConfigError, build_agent_config, config_summary
@@ -22,12 +23,15 @@ from ..goal import (
 )
 from ..plan_artifacts import write_current_plan_artifact
 from ..skills import build_skill_prompt_extension, build_skill_tool_extension, discover_skills
+from . import app_base as tui_app_base
 from . import constants as tui_constants
 from . import state as tui_state
+from . import widgets as tui_widgets
 
 
-class AgentRuntimeMixin:
+class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
     def _agent_turn_stream(self, message: str, attachments: list[dict] | None = None):
+        assert self.agent is not None
         if attachments:
             return self.agent.process_message_stream(message, attachments)
         return self.agent.process_message_stream(message)
@@ -187,6 +191,8 @@ class AgentRuntimeMixin:
 
     async def _evaluate_active_goal(self):
         """Dispatch the read-only verifier and update goal bookkeeping. Returns the verdict."""
+        assert self.agent is not None
+        assert self._goal is not None
         self._set_status_activity(messages.GOAL_EVALUATING)
         self._refresh_status_dashboard()
         verdict = await self.agent.evaluate_goal_condition(self._goal.condition)
@@ -296,7 +302,7 @@ class AgentRuntimeMixin:
 
     def _refresh_queued_messages_panel(self) -> None:
         try:
-            panel = self.query_one("#queued_messages")
+            panel = self.query_one("#queued_messages", Static)
         except Exception:
             return
         if not self._queued_messages:
@@ -329,7 +335,7 @@ class AgentRuntimeMixin:
 
         queued_text = "\n\n".join(item.text for item in queued)
         try:
-            composer = self.query_one("#composer")
+            composer = self.query_one("#composer", tui_widgets.ChatComposer)
             existing_text = getattr(composer, "text", "") or ""
             restored_text = f"{queued_text}\n\n{existing_text}" if existing_text else queued_text
             composer.load_text(restored_text)
@@ -696,6 +702,7 @@ class AgentRuntimeMixin:
             permission_callback=self._permission_callback,
             hook_dispatcher=self._session_hook_dispatcher(),
         )
+        assert self.agent is not None
         self.agent.gigacode_enabled = gigacode_active
         if history:
             self.agent.restore_message_history(history)

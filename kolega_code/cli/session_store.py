@@ -128,7 +128,7 @@ def _now() -> str:
 
 
 def default_state_dir(env: Optional[dict[str, str]] = None) -> Path:
-    env = env or os.environ
+    env = env or dict(os.environ)
     if env.get("KOLEGA_CODE_STATE_DIR"):
         return Path(env["KOLEGA_CODE_STATE_DIR"]).expanduser()
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Callable, Optional
+from typing import TYPE_CHECKING, Any, Callable, Optional
 
 from rich.markdown import Markdown as RichMarkdown
 from rich.segment import Segment
@@ -24,18 +24,19 @@ from textual.widgets.option_list import Option
 from .. import theme as cli_theme
 from ..file_index import IndexEntry
 from ..slash_commands import SlashCommandEntry
+from .app_base import KolegaAppBase
 from .state import ConversationEntry
 
 
 class ConversationEntryWidget(Static):
     """Displays one ConversationEntry and is updated in place as the entry changes."""
 
-    def __init__(self, entry: ConversationEntry, format_entry: Callable[[ConversationEntry], object]) -> None:
+    def __init__(self, entry: ConversationEntry, format_entry: Callable[[ConversationEntry], Any]) -> None:
         super().__init__("", markup=False)
         self.entry = entry
         self._format_entry = format_entry
         self._kind_class = ""
-        self._formatted: object = None
+        self._formatted: Any = None
         self._content_snapshot: tuple[object, ...] | None = None
         self.refresh_content()
 
@@ -269,7 +270,7 @@ class ToolEntryWidget(Vertical):
         self,
         entry: ConversationEntry,
         title_factory: Callable[[ConversationEntry], str],
-        preview_factory: Optional[Callable[[ConversationEntry], object]] = None,
+        preview_factory: Optional[Callable[[ConversationEntry], Any]] = None,
     ) -> None:
         super().__init__()
         self.entry = entry
@@ -553,6 +554,11 @@ class PromptPanel(Vertical):
 
 class ChatComposer(TextArea):
     """Multiline chat input that submits on Enter and inserts newlines on Shift+Enter."""
+
+    if TYPE_CHECKING:
+
+        @property
+        def app(self) -> KolegaAppBase: ...
 
     BINDINGS = [
         *TextArea.BINDINGS,

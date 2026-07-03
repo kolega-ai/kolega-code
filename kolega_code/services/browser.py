@@ -100,7 +100,7 @@ class PlaywrightBrowserManager(BrowserManager):
 
         return f"wss://production-sfo.browserless.io?token={self.browserless_api_key}&timeout={timeout}"
 
-    async def launch_browser(self, url: str) -> str:
+    async def launch_browser(self, url: str) -> str | dict[str, str]:
         # Imported here, not at module load: playwright.async_api pulls in ~5-15MB
         # and most sessions never drive a browser. An import error now surfaces when
         # the browser tool is first used, which is the right place for it.
@@ -112,7 +112,7 @@ class PlaywrightBrowserManager(BrowserManager):
             # Connect based on backend
             if self.browser_backend == "browserstack":
                 cdp_url = self._get_browserstack_cdp_url()
-                browser = await playwright.chromium.connect(ws_endpoint=cdp_url)
+                browser = await playwright.chromium.connect(endpoint=cdp_url)
             elif self.browser_backend == "browserless":
                 cdp_url = self._get_browserless_cdp_url()
                 # Use connectOverCDP for browserless as recommended in their docs
@@ -282,7 +282,7 @@ class PlaywrightBrowserManager(BrowserManager):
             },
         }
 
-    async def get_browser_interactive_elements(self, browser_id: str) -> list:
+    async def get_browser_interactive_elements(self, browser_id: str) -> dict:
         if browser_id not in self.browsers:
             raise KeyError(f"Browser with ID {browser_id} not found.")
 

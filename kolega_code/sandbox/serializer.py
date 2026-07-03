@@ -57,6 +57,8 @@ class TerminalStateSerializer:
                                 type="truncation",
                                 data="[Earlier terminal output truncated due to size limits]",
                                 timestamp=datetime.now(timezone.utc),
+                                purpose=None,
+                                exit_code=None,
                             ),
                         )
                     break

@@ -97,9 +97,9 @@ async def open_mcp_session(
 async def _streamable_http_client(server: MCPServerConfig, *, auth=None):
     """Compatibility wrapper for MCP SDK streamable HTTP client naming/signatures."""
     try:
-        from mcp.client.streamable_http import create_mcp_http_client, streamable_http_client
+        from mcp.client.streamable_http import create_mcp_http_client, streamable_http_client  # pyright: ignore[reportPrivateImportUsage]
     except ImportError:  # pragma: no cover - older SDK compatibility
-        from mcp.client.streamable_http import create_mcp_http_client, streamablehttp_client as streamable_http_client
+        from mcp.client.streamable_http import create_mcp_http_client, streamablehttp_client as streamable_http_client  # pyright: ignore[reportPrivateImportUsage, reportAttributeAccessIssue]
 
     signature = inspect.signature(streamable_http_client)
     params = signature.parameters

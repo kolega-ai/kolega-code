@@ -57,7 +57,7 @@ class TerminalTool(BaseTool):
 
         client = LLMClient(
             provider=provider.value,
-            api_key=api_key,
+            api_key=api_key or "",
             max_retries=rate_limits.max_retries,
             requests_per_minute=rate_limits.requests_per_minute,
             tokens_per_minute=rate_limits.tokens_per_minute,
@@ -90,7 +90,7 @@ class TerminalTool(BaseTool):
             response_text = response.get_text_content()
 
             if response_text == "safe":
-                return True, None
+                return True, ""
             else:
                 return False, response_text
         except Exception as ex:
@@ -316,7 +316,9 @@ class TerminalTool(BaseTool):
         ansi_escape = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
         return ansi_escape.sub("", text)
 
-    def configure(self, auto_activate_venv: bool = None, security_check_enabled: bool = None) -> None:
+    def configure(
+        self, auto_activate_venv: Optional[bool] = None, security_check_enabled: Optional[bool] = None
+    ) -> None:
         """
         Configure the terminal tool settings.
 

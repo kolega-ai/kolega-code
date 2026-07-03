@@ -105,7 +105,10 @@ class WorkspaceFileIndex:
             if not gitignore_path.is_file():
                 return None
             content = gitignore_path.read_text(encoding="utf-8")
-            return pathspec.PathSpec.from_lines(pathspec.patterns.GitWildMatchPattern, content.splitlines())
+            return pathspec.PathSpec.from_lines(
+                pathspec.patterns.GitWildMatchPattern,  # pyright: ignore[reportPrivateImportUsage]
+                content.splitlines(),
+            )
         except Exception:
             return None
 

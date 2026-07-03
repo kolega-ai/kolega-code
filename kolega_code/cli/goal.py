@@ -157,7 +157,9 @@ def format_goal_status(state: GoalState, *, now: Optional[str] = None) -> str:
     """Render the ``/goal`` (no-args) status block as plain text."""
     now_dt = _parse_iso(now) if now else datetime.now(timezone.utc)
     started = _parse_iso(state.started_at)
-    runtime = _format_duration((now_dt - started).total_seconds()) if started else "unknown"
+    runtime: str = "unknown"
+    if started is not None and now_dt is not None:
+        runtime = _format_duration((now_dt - started).total_seconds())
     label = goal_status_label(state)
     lines = [
         f"Goal ({label}): {state.condition}",

@@ -128,9 +128,16 @@ def ascii_thumbnail_from_base64(data: str, media_type: str, *, width: int = 40, 
         return f"[Image — {media_type} — could not render preview]"
 
     pixels = img.load()
+    if pixels is None:
+        return f"[Image — {media_type} — could not render preview]"
     ramp_last = len(_ASCII_RAMP) - 1
     lines: list[str] = []
     for y in range(height):
-        row = "".join(_ASCII_RAMP[pixels[x, y] * ramp_last // 255] for x in range(width))
-        lines.append(row)
+        chars: list[str] = []
+        for x in range(width):
+            v = pixels[x, y]
+            if isinstance(v, tuple):
+                v = v[0]
+            chars.append(_ASCII_RAMP[int(v) * ramp_last // 255])
+        lines.append("".join(chars))
     return "\n".join(lines)

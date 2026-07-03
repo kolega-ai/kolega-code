@@ -27,6 +27,7 @@ from .state import (
     TOOL_STATE_PRESENTATION,
     tool_state_presentation,
 )
+from . import app_base as tui_app_base
 from .sub_agent_screen import SubAgentEntryWidget
 from .widgets import ConversationEntryWidget, JumpToBottomBar, ToolEntryWidget
 
@@ -54,7 +55,7 @@ class _InsetRenderState:
         self.style = style
 
 
-class TranscriptRenderingMixin:
+class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
     def _restore_conversation_history(self, history: list[dict]) -> None:
         self.conversation_entries = []
         self._stream_entries = {}
@@ -450,7 +451,9 @@ class TranscriptRenderingMixin:
         entry = self._find_tool_entry(tool_call_id, tool_name)
         if entry is None:
             # Preview can arrive before the tool entry exists; stash and apply on creation.
-            self.__dict__.setdefault("_pending_edit_previews", {})[tool_call_id] = content
+            previews: dict[str, dict] = getattr(self, "_pending_edit_previews", None) or {}
+            previews[tool_call_id] = content
+            self._pending_edit_previews = previews
             return
         entry.edit_preview = content
         self._invalidate_conversation(entry)

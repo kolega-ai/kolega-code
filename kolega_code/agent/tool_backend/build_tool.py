@@ -57,6 +57,7 @@ class BuildTool(BaseTool):
             return f"Error: No {kind}_build_command or build_command found in .kolega-manifest.yaml"
 
         try:
+            assert self.terminal_manager is not None, "terminal_manager is required to run build commands"
             output = await self.terminal_manager.run_command(
                 command=command,
                 cwd=str(self.project_path),

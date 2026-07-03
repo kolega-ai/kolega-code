@@ -190,7 +190,8 @@ class BaseTool(LogMixin):
 
             # Parse gitignore patterns
             self._gitignore_spec = pathspec.PathSpec.from_lines(
-                pathspec.patterns.GitWildMatchPattern, gitignore_content.splitlines()
+                pathspec.patterns.GitWildMatchPattern,  # pyright: ignore[reportPrivateImportUsage]
+                gitignore_content.splitlines(),
             )
         except Exception as e:
             # If there's an error loading gitignore, log it and continue without gitignore filtering

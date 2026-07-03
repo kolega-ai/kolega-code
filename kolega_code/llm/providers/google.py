@@ -1,4 +1,4 @@
-from typing import AsyncContextManager, List, Optional
+from typing import Any, AsyncContextManager, List, Optional, cast
 
 from google.genai import Client as genai_client
 from google.genai import types as genai_types
@@ -113,7 +113,7 @@ class GoogleProvider(BaseLLMProvider):
         messages: MessageHistory,
         system: Optional[Message] = None,
         model: Optional[str] = None,
-        tools: List[ToolDefinition] = None,
+        tools: Optional[List[ToolDefinition]] = None,
         **kwargs,
     ) -> TokenCount:
         """Count tokens for a list of messages using tiktoken
@@ -127,11 +127,11 @@ class GoogleProvider(BaseLLMProvider):
             TokenCount object with input token count
         """
         count = await self.async_client.aio.models.count_tokens(
-            model=model,
+            model=cast(str, model),
             contents=messages.to_google(),
         )
 
-        return TokenCount(input_tokens=count.total_tokens, output_tokens=None)
+        return TokenCount(input_tokens=count.total_tokens or 0, output_tokens=None)
 
     async def stream(
         self,
@@ -145,8 +145,9 @@ class GoogleProvider(BaseLLMProvider):
         Returns a coroutine that resolves to an async iterator.
         """
         model = kwargs["model"]
+        assert system is not None and params is not None
         config = genai_types.GenerateContentConfig(
-            system_instruction=system.content[0].text,
+            system_instruction=cast(Any, system.content[0]).text,
             temperature=params.temperature,
             max_output_tokens=params.max_completion_tokens,
             tools=[t.to_google() for t in params.tools] if params.tools else None,
@@ -175,8 +176,9 @@ class GoogleProvider(BaseLLMProvider):
         **kwargs,
     ) -> Message:
         model = kwargs["model"]
+        assert system is not None and params is not None
         config = genai_types.GenerateContentConfig(
-            system_instruction=system.content[0].text,
+            system_instruction=cast(Any, system.content[0]).text,
             temperature=params.temperature,
             max_output_tokens=params.max_completion_tokens,
             tools=[t.to_google() for t in params.tools] if params.tools else None,

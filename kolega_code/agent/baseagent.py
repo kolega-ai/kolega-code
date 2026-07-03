@@ -10,7 +10,9 @@ import uuid
 from email.utils import parsedate_to_datetime
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional, cast
+from contextlib import AbstractAsyncContextManager
+from collections.abc import Coroutine
 
 from .common import LogMixin
 from .compression import CompactionResult, HistoryCompressor
@@ -89,6 +91,14 @@ class BaseAgent(LogMixin):
     """
 
     agent_name = "base-agent"  # you should never see this
+    # The active system prompt Message; populated by ``_initialize_system_prompt``
+    # (overridden by subclasses, e.g. CoderAgent) which wraps the prompt text in a
+    # ``Message(role="system", ...)``. Declared here for type checkers; the base
+    # ``__init__`` leaves subclasses to populate it.
+    system_prompt: Message = Message(role="system", content=[TextBlock(text="")])
+    # Tool collection; subclasses initialize this in ``__init__`` with the
+    # appropriate tool configuration. ``None`` until then.
+    tool_collection: Optional[ToolCollection] = None
     history_compression_threshold = 0.8
     # Cap on concurrently executing tool calls within one batch (each dispatched
     # sub-agent runs its own multi-turn LLM loop, so an unbounded fan-out would
@@ -165,6 +175,10 @@ class BaseAgent(LogMixin):
         if context is None:
             if project_path is None or workspace_id is None or thread_id is None:
                 raise TypeError("BaseAgent requires either an AgentContext or project_path/workspace_id/thread_id")
+            assert config is not None, "config is required to build an AgentContext from flat kwargs"
+            assert connection_manager is not None, (
+                "connection_manager is required to build an AgentContext from flat kwargs"
+            )
 
             workspace = WorkspaceInfo(
                 project_path=Path(project_path) if isinstance(project_path, str) else project_path,
@@ -469,7 +483,7 @@ class BaseAgent(LogMixin):
     def _sanitize_oversized_tool_results(self) -> int:
         return self.conversation.sanitize_oversized_tool_results()
 
-    def _is_history_valid_for_anthropic(self, messages: List[Message] = None) -> bool:
+    def _is_history_valid_for_anthropic(self, messages: Optional[List[Message]] = None) -> bool:
         """
         Check if the message history is valid for Anthropic API.
         Every tool_use block must be followed by a tool_result block.
@@ -619,6 +633,16 @@ class BaseAgent(LogMixin):
         if callable(initialize):
             initialize()
 
+    def _initialize_system_prompt(self) -> None:
+        """Rebuild ``self.system_prompt`` from the current prompt configuration.
+
+        Subclasses with a real prompt (e.g. ``CoderAgent``) override this to
+        populate ``system_prompt`` via ``build_agent_system_prompt``. The base
+        implementation is a no-op so the attribute is always declared on the
+        class for type checkers and ``getattr``-based callers stay safe.
+        """
+        return None
+
     # ------------------------------------------------------------------
     # Attachments
     # ------------------------------------------------------------------
@@ -679,6 +703,7 @@ class BaseAgent(LogMixin):
             # History sent to the LLM (and to token counting): tool-call-repaired and,
             # for non-vision models, stripped of image blocks from earlier turns.
             fixed_history = self._history_for_llm()
+        assert self.tool_collection is not None, "tool_collection must be initialized before counting context"
         token_count = await self.llm.count_tokens(
             system=self.system_prompt,
             messages=fixed_history,
@@ -819,6 +844,7 @@ class BaseAgent(LogMixin):
         self.current_tool_execution_id = tool_execution_id
         self.current_tool_call_id = tool_execution_id
 
+        assert self.tool_collection is not None, "tool_collection must be initialized before executing tools"
         try:
             registry = self.tool_collection.registry()
             if tool_name not in registry:
@@ -1023,6 +1049,7 @@ class BaseAgent(LogMixin):
         if len(tool_use_blocks) == 1:
             return [await self.execute_single_tool(tool_use_blocks[0])]
 
+        assert self.tool_collection is not None, "tool_collection must be initialized before processing tool calls"
         # A batch runs concurrently only when every tool in it is marked
         # parallel-safe (read-only operations and independent sub-agent
         # dispatches); any other tool forces sequential execution.
@@ -1127,7 +1154,7 @@ class BaseAgent(LogMixin):
 
         client = LLMClient(
             provider=model_config.provider.value,
-            api_key=self.config.get_api_key(model_config.provider),
+            api_key=self.config.get_api_key(model_config.provider) or "",
             max_retries=model_config.rate_limits.max_retries,
             requests_per_minute=model_config.rate_limits.requests_per_minute,
             tokens_per_minute=model_config.rate_limits.tokens_per_minute,
@@ -1432,7 +1459,7 @@ class BaseAgent(LogMixin):
         return self.history[-1].get_text_content()
 
     async def process_message_stream(
-        self, message: str, attachments: List[Dict[str, Any]] = None
+        self, message: str, attachments: Optional[List[Dict[str, Any]]] = None
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         Process a user message and yield response/thinking chunks while the agent works.
@@ -1540,15 +1567,25 @@ class BaseAgent(LogMixin):
                     endpoint=self.llm.provider.base_url,
                 )
 
-                async with await self.llm.stream(
-                    system=self.system_prompt,
-                    max_completion_tokens=self.model_completion_tokens,
-                    temperature=self.model_default_temperature,
-                    messages=fixed_history,
-                    model=self.primary_model_config.model,
-                    tools=self.tool_collection.get_tool_list(),
-                    thinking=self.primary_model_config.thinking_effort,
-                ) as stream:
+                assert self.tool_collection is not None, "tool_collection must be initialized before streaming"
+                # ``LLMClient.stream`` is typed as ``AsyncContextManager | Coroutine[..., AsyncContextManager]]``
+                # because providers may define ``stream`` either way; every concrete
+                # provider is ``async def``, so the call is always a coroutine that we
+                # await into the context manager. Cast to the coroutine form for the type
+                # checker rather than awaiting the union directly.
+                stream_cm = await cast(
+                    Coroutine[Any, Any, AbstractAsyncContextManager[Any]],
+                    self.llm.stream(
+                        system=self.system_prompt,
+                        max_completion_tokens=self.model_completion_tokens,
+                        temperature=self.model_default_temperature,
+                        messages=fixed_history,
+                        model=self.primary_model_config.model,
+                        tools=self.tool_collection.get_tool_list(),
+                        thinking=self.primary_model_config.thinking_effort,
+                    ),
+                )
+                async with stream_cm as stream:
                     async for event in stream:
                         if event.type == "text":
                             current_response += event.text
@@ -1663,7 +1700,7 @@ class BaseAgent(LogMixin):
         This should be called when the agent is being destroyed.
         """
         # Clean up tool collection resources
-        if hasattr(self, "tool_collection"):
+        if self.tool_collection is not None:
             await self.tool_collection.cleanup()
 
         # Log cleanup

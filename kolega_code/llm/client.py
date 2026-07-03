@@ -198,7 +198,7 @@ class LLMClient:
         messages: MessageHistory,
         system: Optional[Message] = None,
         tools: List[ToolDefinition] = [],
-        **kwargs: Dict[str, Any],
+        **kwargs: Any,
     ) -> TokenCount:
         """Count tokens for a list of messages and optional system message.
 
@@ -242,10 +242,10 @@ class LLMClient:
         system: Optional[Message] = None,
         temperature: float = 1.0,
         max_completion_tokens: Optional[int] = None,
-        tools: Optional[List[Dict[str, Any]]] = None,
+        tools: Optional[List[ToolDefinition]] = None,
         thinking: Optional[Union[int, str]] = None,
         params: Optional[GenerationParams] = None,
-        **kwargs: Dict[str, Any],
+        **kwargs: Any,
     ) -> Message:
         """Generate a complete response from the LLM provider.
 
@@ -285,10 +285,10 @@ class LLMClient:
         system: Optional[Message] = None,
         temperature: float = 1.0,
         max_completion_tokens: Optional[int] = None,
-        tools: Optional[List[Dict[str, Any]]] = None,
+        tools: Optional[List[ToolDefinition]] = None,
         thinking: Optional[Union[int, str]] = None,
         params: Optional[GenerationParams] = None,
-        **kwargs: Dict[str, Any],
+        **kwargs: Any,
     ) -> Union[AsyncContextManager[Any], Coroutine[Any, Any, AsyncContextManager[Any]]]:
         """Generate a streaming response from the LLM provider.
 
