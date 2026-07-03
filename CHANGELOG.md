@@ -8,6 +8,10 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ### Added
 
+- Added support for Anthropic Claude Fable 5 (`claude-fable-5`) and Claude Sonnet 5
+  (`claude-sonnet-5`): 1M-token context, 128K max output, vision input, and
+  adaptive thinking with `low`/`medium`/`high`/`xhigh`/`max` effort levels. Both
+  are selectable in the Settings UI, `/model` picker, CLI flags, and env vars.
 - Added a `/goal` slash command that sets an autonomous completion condition the
   agent works toward. After each turn, a read-only investigation sub-agent
   verifies whether the goal is met; if not, the agent is nudged to continue
