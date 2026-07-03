@@ -1,6 +1,7 @@
 """Tests for the unified AgentTool dispatch mechanism."""
 
 import pytest
+from typing import ClassVar, Optional
 from unittest.mock import AsyncMock, Mock, MagicMock, patch
 import uuid
 import builtins
@@ -82,7 +83,7 @@ class MockAgent:
 
     agent_name = "mock-agent"
     default_stream_messages = []
-    last_instance = None
+    last_instance: ClassVar[Optional["MockAgent"]] = None
 
     def __init__(self, *args, **kwargs):
         self.init_kwargs = kwargs
@@ -177,6 +178,7 @@ class TestAgentTool:
 
             # Verify result
             assert result == "Mock agent completed"
+            assert MockAgent.last_instance is not None
             assert MockAgent.last_instance.init_kwargs["max_iterations"] is None
 
             # Verify start status was sent
@@ -233,6 +235,7 @@ class TestAgentTool:
 
             await agent_tool._dispatch_agent(agent_class_import="test.module.MockAgent", task="Test task")
 
+        assert MockAgent.last_instance is not None
         assert MockAgent.last_instance.init_kwargs["max_iterations"] == 3
         MockAgent.configure_streaming([])
 
@@ -265,6 +268,7 @@ class TestAgentTool:
         conversation_payload = mock_caller.sub_agent_recorder.start_conversation.call_args.args[0]
         assert conversation_payload["parent_tool_call_id"] == "tool_exec_unique_123"
         assert conversation_payload["parent_tool_call_id"] != mock_caller.current_provider_tool_call_id
+        assert MockAgent.last_instance is not None
         assert MockAgent.last_instance.parent_tool_call_id == "tool_exec_unique_123"
 
         sub_agent_events = [

@@ -159,12 +159,9 @@ async def test_conversation_render_skips_detached_view_during_teardown(
         # from the DOM, so query_one still resolves it.
         app.conversation_entries.append(ConversationEntry(kind="assistant", content="late", complete=False))
         app._render_pending = True
-        ConversationView.is_attached = property(lambda self: False)
-        try:
-            app._flush_conversation_render()  # must not raise (pre-fix: MountError)
-            app._render_conversation()  # must not raise
-        finally:
-            del ConversationView.is_attached
+        monkeypatch.setattr(ConversationView, "is_attached", property(lambda self: False))
+        app._flush_conversation_render()  # must not raise (pre-fix: MountError)
+        app._render_conversation()  # must not raise
 
         # The detached render was skipped, so nothing new was mounted.
         assert len(app.query(ConversationEntryWidget)) == 1

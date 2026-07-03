@@ -243,7 +243,7 @@ def test_openai_stream_wrapper_accumulates_reasoning_field_in_final_message():
     assert message.usage_metadata["provider"] == "ollama_cloud"
 
 
-def test_openai_provider_generate_stamps_ollama_cloud_provider_name_without_usage():
+def test_openai_provider_generate_stamps_ollama_cloud_provider_name_without_usage(monkeypatch):
     class OpenAIMessage:
         content = "final answer"
         reasoning = "ollama reasoning"
@@ -268,7 +268,7 @@ def test_openai_provider_generate_stamps_ollama_cloud_provider_name_without_usag
 
     async def run_generate():
         provider = OpenAIProvider(api_key="sk-test", provider_name="ollama_cloud")
-        provider.async_client = FakeAsyncClient()
+        monkeypatch.setattr(provider, "async_client", FakeAsyncClient())
         return await provider.generate(MessageHistory([]), model="gpt-oss:20b")
 
     message = asyncio.run(run_generate())

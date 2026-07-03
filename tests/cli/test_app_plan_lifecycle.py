@@ -104,7 +104,9 @@ async def test_textual_app_shows_plan_decision_when_planning_agent_writes_plan(
         await app.action_toggle_interaction_mode()
         await app._process_message("plan this")
 
+        assert isinstance(app.agent, FakePlanningAgent)
         initial_plan = app.agent.completed_plan or app._latest_plan
+        assert initial_plan is not None
         assert app._plan_decision_active is True
         assert app._plan_pending is True
         assert app._latest_plan == initial_plan
@@ -167,6 +169,7 @@ async def test_textual_app_shows_plan_decision_when_planning_agent_writes_plan(
 
         await app._discuss_pending_plan()
 
+        assert isinstance(app.agent, FakePlanningAgent)
         app.agent.completed_plan = "# Revised plan\n\nBuild planning mode carefully."
         await app._capture_completed_plan()
 
@@ -408,6 +411,7 @@ async def test_textual_app_clear_context_and_implement_plan_starts_build_agent_f
         await app.action_toggle_interaction_mode()
         # Seed the planning agent with prior conversation that the normal implement flow
         # would carry forward into the build agent.
+        assert app.agent is not None
         app.agent.history = ["planning message 1", "planning message 2"]
         prior_entry_count = len(app.conversation_entries)
         app._latest_plan = "# Plan\n\nBuild it."
@@ -515,7 +519,8 @@ async def test_textual_app_discuss_plan_preserves_old_plan_until_new_plan_is_wri
         assert loaded.plan_reofferable is True
 
         await app._implement_pending_plan()
-        assert app.agent_worker is None
+        first_worker = app.agent_worker
+        assert first_worker is None
         assert app.interaction_mode == "plan"
 
         app._latest_plan = "# New plan\n\nBuild this instead."

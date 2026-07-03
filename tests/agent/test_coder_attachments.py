@@ -56,7 +56,9 @@ class _EmptyStream:
 
 def test_non_vision_image_attachment_is_rejected_by_provider_check():
     agent = object.__new__(BaseAgent)
-    agent.primary_model_config = SimpleNamespace(provider=ModelProvider.DEEPSEEK.value, model="deepseek-v4-pro")
+    object.__setattr__(
+        agent, "primary_model_config", SimpleNamespace(provider=ModelProvider.DEEPSEEK.value, model="deepseek-v4-pro")
+    )
 
     message = agent._unsupported_attachment_message([_image_attachment()])
     assert message is not None
@@ -67,13 +69,17 @@ def test_non_vision_image_attachment_is_rejected_by_provider_check():
 
 def test_vision_image_attachment_is_allowed():
     agent = object.__new__(BaseAgent)
-    agent.primary_model_config = SimpleNamespace(provider=ModelProvider.ANTHROPIC, model="claude-opus-4-8")
+    object.__setattr__(
+        agent, "primary_model_config", SimpleNamespace(provider=ModelProvider.ANTHROPIC, model="claude-opus-4-8")
+    )
     assert agent._unsupported_attachment_message([_image_attachment()]) is None
 
 
 def test_attachment_check_allows_non_images_for_non_vision_model():
     agent = object.__new__(BaseAgent)
-    agent.primary_model_config = SimpleNamespace(provider=ModelProvider.DEEPSEEK, model="deepseek-v4-pro")
+    object.__setattr__(
+        agent, "primary_model_config", SimpleNamespace(provider=ModelProvider.DEEPSEEK, model="deepseek-v4-pro")
+    )
     assert agent._unsupported_attachment_message(None) is None
     assert agent._unsupported_attachment_message([{"type": "document", "data": "abc"}]) is None
     assert agent._unsupported_attachment_message([{"type": "file", "path": "a.py", "content": "x"}]) is None
@@ -212,7 +218,7 @@ class TestCoderAgentAttachments:
         """Test that empty or None attachments are handled gracefully."""
         # Test with None
         image_blocks = []
-        attachments = None
+        attachments: list[dict] | None = None
         if attachments:
             for attachment in attachments:
                 if attachment.get("type") == "image":
@@ -251,7 +257,7 @@ class TestCoderAgentAttachments:
         ]
 
         # Build content blocks as the coder agent would
-        content_blocks = [TextBlock(text=test_message)]
+        content_blocks: list[TextBlock | ImageBlock] = [TextBlock(text=test_message)]
 
         if attachments:
             for attachment in attachments:

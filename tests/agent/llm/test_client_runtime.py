@@ -55,7 +55,9 @@ async def test_rate_limiting():
     # Create a mock for the generate method
     mock_response = Message("assistant", [TextBlock("Success")])
 
-    with patch.object(client.provider.async_client.messages, "create", AsyncMock(return_value=mock_response)):
+    provider = client.provider
+    assert isinstance(provider, AnthropicProvider)
+    with patch.object(provider.async_client.messages, "create", AsyncMock(return_value=mock_response)):
         # Make multiple requests quickly
         start_time = asyncio.get_event_loop().time()
         tasks = [client.generate(TEST_MESSAGES, TEST_SYSTEM) for _ in range(3)]
@@ -88,7 +90,9 @@ async def test_retry_on_error():
     # the value was stored but never forwarded, so the SDK silently used its default.)
     # Only the async client exists — the unused sync client was removed to drop its
     # redundant httpx connection pool / SSL context.
-    assert client.provider.async_client.max_retries == 3
+    provider = client.provider
+    assert isinstance(provider, AnthropicProvider)
+    assert provider.async_client.max_retries == 3
 
 
 @pytest.mark.slow

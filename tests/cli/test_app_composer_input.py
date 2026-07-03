@@ -101,7 +101,7 @@ async def test_textual_app_composer_shift_enter_inserts_line_break_and_enter_sub
         await pilot.pause()
 
         assert app.agent is not None
-        assert app.agent.messages == ["hi\nthere"]
+        assert getattr(app.agent, "messages") == ["hi\nthere"]
         assert composer.text == ""
         user_entries = [entry for entry in app.conversation_entries if entry.kind == "user"]
         assert user_entries[-1].content == "hi\nthere"
@@ -368,7 +368,7 @@ async def test_textual_app_composer_preserves_multiline_paste(tmp_path: Path, mo
         await worker.wait()
 
         assert app.agent is not None
-        assert app.agent.messages == [pasted]
+        assert getattr(app.agent, "messages") == [pasted]
         assert composer.text == ""
 
 
@@ -573,7 +573,7 @@ async def test_textual_app_queues_multiple_active_turn_messages_fifo(
             await pilot.pause()
             if (
                 app.agent is not None
-                and app.agent.messages == ["first", "second", "third"]
+                and getattr(app.agent, "messages") == ["first", "second", "third"]
                 and app.agent_worker is None
             ):
                 break
@@ -582,7 +582,7 @@ async def test_textual_app_queues_multiple_active_turn_messages_fifo(
         await pilot.pause()
 
         assert app.agent is not None
-        assert app.agent.messages == ["first", "second", "third"]
+        assert getattr(app.agent, "messages") == ["first", "second", "third"]
         assert [entry.kind for entry in app.conversation_entries if entry.content in {"second", "third"}] == [
             "user",
             "user",
@@ -667,7 +667,7 @@ async def test_textual_app_queue_clear_command_discards_active_turn_followups(
             await app.agent_worker.wait()
 
         assert app.agent is not None
-        assert app.agent.messages == ["first"]
+        assert getattr(app.agent, "messages") == ["first"]
         assert app.query_one("#queued_messages").display is False
         assert not [entry for entry in app.conversation_entries if entry.content in {"second", "third"}]
         assert any(messages.QUEUE_CLEARED.format(count=2) in entry.content for entry in app.conversation_entries)

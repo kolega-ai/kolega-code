@@ -5,18 +5,31 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from kolega_code.agent.tool_backend.read_image_tool import ReadImageTool
-from kolega_code.agent.tools import ToolCollection
+from kolega_code.agent.tools import ToolCollection, ToolCollectionConfig
+from kolega_code.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
 from kolega_code.llm.models import ImageBlock
 from kolega_code.services.file_system import LocalFileSystem
 
 
 def _make_tool(tmp_path, caller=None, config=None):
+    if config is None:
+        _cfg = ModelConfig(
+            provider=ModelProvider.ANTHROPIC,
+            model="claude-haiku-4-5-20251001",
+            rate_limits=RateLimitConfig(),
+        )
+        config = AgentConfig(
+            anthropic_api_key="test_key",
+            long_context_config=_cfg,
+            fast_config=_cfg,
+            thinking_config=_cfg,
+        )
     return ReadImageTool(
         tmp_path,
         "ws",
         "thread",
         Mock(),  # connection_manager
-        config or SimpleNamespace(),
+        config,
         caller or object(),
         LocalFileSystem(root_path=tmp_path),
     )
@@ -49,8 +62,10 @@ class TestReadImageToolBackend:
         tool = _make_tool(tmp_path)
         result = await tool.read_image(str(path))
 
-        assert result[0].media_type == "image/jpeg"
-        assert base64.b64decode(result[0].data) == jpeg_bytes
+        jpeg_block = result[0]
+        assert isinstance(jpeg_block, ImageBlock)
+        assert jpeg_block.media_type == "image/jpeg"
+        assert base64.b64decode(jpeg_block.data) == jpeg_bytes
 
     @pytest.mark.asyncio
     async def test_missing_path_raises_file_not_found(self, tmp_path):
@@ -131,7 +146,7 @@ class TestShouldIncludeReadImage:
         collection = ToolCollection.__new__(ToolCollection)
         collection.caller = object()
         collection.orchestration_tools = []
-        collection.tool_config = SimpleNamespace(custom_tool_groups=None)
+        collection.tool_config = ToolCollectionConfig(custom_tool_groups=None)
         return collection
 
     def test_vision_enabled_includes_tool(self):

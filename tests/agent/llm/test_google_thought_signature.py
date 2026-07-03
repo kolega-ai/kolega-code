@@ -6,32 +6,35 @@ on the way in, emitted on the way out, and survives session persistence.
 """
 
 import json
-from types import SimpleNamespace
+
+from google.genai import types as genai_types
 
 from kolega_code.agent.conversation import Conversation
 from kolega_code.llm.models import Message, ToolCall
 
 
-def _fake_google_response(signature: bytes):
+def _fake_google_response(signature: bytes) -> genai_types.GenerateContentResponse:
     """Minimal stand-in for a genai GenerateContentResponse with one function-call part."""
-    part = SimpleNamespace(
-        function_call=SimpleNamespace(id="call-1", name="list_directory", args={"path": "."}),
+    part = genai_types.Part(
+        function_call=genai_types.FunctionCall(id="call-1", name="list_directory", args={"path": "."}),
         thought_signature=signature,
-        thought=None,
-        text=None,
+        thought=False,
     )
-    candidate = SimpleNamespace(content=SimpleNamespace(parts=[part]))
-    return SimpleNamespace(
+    candidate = genai_types.Candidate(content=genai_types.Content(parts=[part]))
+    return genai_types.GenerateContentResponse(
         candidates=[candidate],
-        function_calls=[part.function_call],
-        finish_reason="STOP",
-        usage_metadata=SimpleNamespace(prompt_token_count=1, candidates_token_count=1, total_token_count=2),
+        usage_metadata=genai_types.GenerateContentResponseUsageMetadata(
+            prompt_token_count=1,
+            candidates_token_count=1,
+            total_token_count=2,
+        ),
     )
 
 
 def test_to_google_emits_thought_signature() -> None:
     tc = ToolCall(id="c1", name="list_directory", input={"path": "."}, thought_signature=b"\x01\x02SIG")
     part = tc.to_google()
+    assert part.function_call is not None
     assert part.function_call.name == "list_directory"
     assert part.thought_signature == b"\x01\x02SIG"
 

@@ -113,7 +113,7 @@ def test_edit_permission_rule_can_scope_to_path():
 
 
 @pytest.mark.asyncio
-async def test_execute_single_tool_denies_gated_tool_before_dispatch(tmp_path, agent_config):
+async def test_execute_single_tool_denies_gated_tool_before_dispatch(tmp_path, agent_config, monkeypatch):
     handler = AsyncMock(return_value="command ran")
 
     class TestTools:
@@ -140,7 +140,7 @@ async def test_execute_single_tool_denies_gated_tool_before_dispatch(tmp_path, a
         permission_mode=PermissionMode.ASK,
         permission_callback=deny,
     )
-    agent.tool_collection = TestTools()
+    monkeypatch.setattr(agent, "tool_collection", TestTools())
     agent.send_chat_message = AsyncMock()
     agent.log_info = AsyncMock()
     agent.log_warning = AsyncMock()

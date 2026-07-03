@@ -49,12 +49,24 @@ def test_project_prompt_overrides_load_uppercase_files_only(tmp_path):
 
     overrides = ProjectPromptOverrides(LocalFileSystem(tmp_path))
 
-    assert overrides.load_agent_system_prompt(AgentType.CODER).content == "Coder override"
-    assert overrides.load_agent_system_prompt(AgentType.PLANNING).content == "Planning override"
-    assert overrides.load_agent_system_prompt(AgentType.GENERAL).content == "General override"
-    assert overrides.load_agent_system_prompt(AgentType.INVESTIGATION).content == "Investigation override"
-    assert overrides.load_agent_system_prompt(AgentType.BROWSER).content == "Browser override"
-    assert overrides.load_compaction_system_prompt().content == "Compaction override"
+    coder_override = overrides.load_agent_system_prompt(AgentType.CODER)
+    assert coder_override is not None
+    assert coder_override.content == "Coder override"
+    planning_override = overrides.load_agent_system_prompt(AgentType.PLANNING)
+    assert planning_override is not None
+    assert planning_override.content == "Planning override"
+    general_override = overrides.load_agent_system_prompt(AgentType.GENERAL)
+    assert general_override is not None
+    assert general_override.content == "General override"
+    investigation_override = overrides.load_agent_system_prompt(AgentType.INVESTIGATION)
+    assert investigation_override is not None
+    assert investigation_override.content == "Investigation override"
+    browser_override = overrides.load_agent_system_prompt(AgentType.BROWSER)
+    assert browser_override is not None
+    assert browser_override.content == "Browser override"
+    compaction_override = overrides.load_compaction_system_prompt()
+    assert compaction_override is not None
+    assert compaction_override.content == "Compaction override"
 
     (prompt_dir / "CODER.md").unlink()
     (prompt_dir / "coder.md").write_text("lowercase ignored", encoding="utf-8")

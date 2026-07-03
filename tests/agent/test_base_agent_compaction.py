@@ -76,6 +76,7 @@ class TestBaseAgent:
         assert base_agent.history[-1] in list(effective)  # most recent turn kept verbatim
 
         fake.stream.assert_awaited_once()
+        assert fake.stream.await_args is not None
         call_args = fake.stream.await_args.kwargs
         assert call_args["model"] == base_agent.primary_model_config.model
         # Summary budget is capped small (we are not aiming for a gigantic summary).

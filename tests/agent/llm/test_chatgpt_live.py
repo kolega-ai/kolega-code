@@ -11,6 +11,7 @@ Token source (first match wins):
   - the stored token in the local settings file (the one /login writes).
 """
 
+import inspect
 import json
 import os
 
@@ -85,14 +86,19 @@ async def test_live_chatgpt_stream() -> None:
     )
 
     text = ""
-    async with await client.stream(
+    stream_obj = client.stream(
         messages=MessageHistory(
             [Message(role="user", content=[TextBlock(text="Say the word 'ready' and nothing else.")])]
         ),
         model=chatgpt_constants.DEFAULT_MODEL,
         max_completion_tokens=4096,
         thinking="low",
-    ) as stream:
+    )
+    # LLMClient.stream returns either an async context manager or a coroutine
+    # resolving to one, depending on the provider.
+    if inspect.isawaitable(stream_obj):
+        stream_obj = await stream_obj
+    async with stream_obj as stream:
         async for chunk in stream:
             if chunk.type == "text" and chunk.text:
                 text += chunk.text

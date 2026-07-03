@@ -150,8 +150,10 @@ async def test_textual_app_init_slash_command_starts_agents_md_turn(
         await pilot.pause()
 
         assert composer.text == ""
-        assert len(app.agent.messages) == 1
-        prompt = app.agent.messages[0]
+        assert app.agent is not None
+        messages = getattr(app.agent, "messages")
+        assert len(messages) == 1
+        prompt = messages[0]
         assert "Create or update `AGENTS.md` for this repository." in prompt
         assert "`focus on test commands`" in prompt
         assert "$ARGUMENTS" not in prompt
@@ -246,6 +248,7 @@ async def test_textual_app_init_slash_command_blocks_during_active_turn(
         composer.load_text("/init")
         await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
 
-        assert app.agent.messages == []
+        assert app.agent is not None
+        assert getattr(app.agent, "messages") == []
         assert "Stop the current turn before running /init." in str(app.query_one("#composer_hint", Static).render())
         app._turn_active = False

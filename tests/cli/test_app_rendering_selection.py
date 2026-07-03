@@ -78,10 +78,16 @@ async def test_textual_app_keeps_command_c_for_screen_copy(tmp_path: Path, monke
     session = store.create(project, "code", config_summary(config))
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
 
+    from textual.binding import Binding
+
     async with app.run_test():
-        cancel_binding = next(binding for binding in app.BINDINGS if binding.action == "cancel_generation")
+        cancel_binding = next(
+            binding
+            for binding in app.BINDINGS
+            if isinstance(binding, Binding) and binding.action == "cancel_generation"
+        )
         assert cancel_binding.key == "ctrl+c"
-        assert all("super+c" not in binding.key for binding in app.BINDINGS)
+        assert all("super+c" not in binding.key for binding in app.BINDINGS if isinstance(binding, Binding))
 
 
 @pytest.mark.asyncio
@@ -289,6 +295,7 @@ async def test_conversation_entry_selection_preserves_text_foreground(
                 # keeps its original foreground (one seen unselected) and never the
                 # transparent selection foreground.
                 for segment in highlighted:
+                    assert segment.style is not None
                     assert segment.style.color in plain_colors, f"selection wiped the text foreground for {theme_name}"
                     if selection_style.color is not None:
                         assert segment.style.color != selection_style.color, (

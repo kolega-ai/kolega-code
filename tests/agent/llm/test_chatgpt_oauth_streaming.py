@@ -2,6 +2,7 @@
 """Tests for the ChatGPT-subscription Responses provider and its wiring."""
 
 import types
+from typing import Any
 
 import httpx
 import pytest
@@ -55,7 +56,7 @@ class _FakeStream:
 class _FakeResponses:
     def __init__(self, result):
         self._result = result
-        self.last_kwargs = None
+        self.last_kwargs: dict[str, Any] = {}
 
     async def create(self, **kwargs):
         self.last_kwargs = kwargs
@@ -162,11 +163,11 @@ async def test_responses_stream_wrapper_tool_call_from_output_item_done():
 
 
 @pytest.mark.asyncio
-async def test_provider_always_sends_non_empty_instructions():
+async def test_provider_always_sends_non_empty_instructions(monkeypatch):
     # The backend 400s with "Instructions are required" on an empty instructions.
     provider = ChatGPTOAuthProvider(token_manager=ChatGPTTokenManager(_tokens()))
     fake = _FakeResponses(_FakeStream([]))
-    provider.async_client = _ns(responses=fake)
+    monkeypatch.setattr(provider, "async_client", _ns(responses=fake))
     await provider.stream(
         MessageHistory([Message(role="user", content=[TextBlock(text="hi")])]),
         params=GenerationParams(),

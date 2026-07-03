@@ -1,3 +1,5 @@
+from typing import Dict, Optional
+
 import pytest
 
 from kolega_code.llm.instrumented_client import InstrumentedLLMClient
@@ -5,7 +7,7 @@ from kolega_code.llm.instrumented_client import InstrumentedLLMClient
 
 class _UsageRecorder:
     def __init__(self):
-        self.payload = None
+        self.payload: Optional[Dict[str, object]] = None
 
     def record_usage(self, usage_data):
         self.payload = usage_data
@@ -32,6 +34,7 @@ async def test_usage_recorder_maps_openai_cached_tokens():
     }
 
     await client._record_usage(usage, model="m1", success=True)
+    assert recorder.payload is not None
     assert recorder.payload["input_tokens"] == 10
     assert recorder.payload["output_tokens"] == 2
     assert recorder.payload["cache_read_input_tokens"] == 2048
@@ -65,10 +68,13 @@ async def test_usage_recorder_maps_moonshot_response_usage():
 
     await client._record_usage(usage, model="kimi-k2.6", success=True)
 
+    assert recorder.payload is not None
     assert recorder.payload["provider"] == "moonshot"
     assert recorder.payload["model"] == "kimi-k2.6"
     assert recorder.payload["input_tokens"] == 123
     assert recorder.payload["output_tokens"] == 45
     assert recorder.payload["cache_read_input_tokens"] == 67
     assert recorder.payload["cache_write_input_tokens"] == 89
-    assert recorder.payload["metadata"]["raw_usage"] == usage
+    metadata = recorder.payload["metadata"]
+    assert isinstance(metadata, dict)
+    assert metadata["raw_usage"] == usage

@@ -128,7 +128,9 @@ async def test_textual_app_model_slash_command_shows_and_switches_model(
         effort_actions = app.query_one("#effort_actions", ActionList)
         assert effort_actions.display is True
         assert app.focused is effort_actions
-        assert effort_actions.get_option("effort_option_0").prompt.startswith("1. Auto (auto)")
+        effort_prompt = effort_actions.get_option("effort_option_0").prompt
+        assert isinstance(effort_prompt, str)
+        assert effort_prompt.startswith("1. Auto (auto)")
 
         composer.load_text("/effort auto")
         await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
@@ -147,7 +149,9 @@ async def test_textual_app_model_slash_command_shows_and_switches_model(
         assert model_actions.display is True
         assert app.focused is model_actions
         assert model_actions.option_count == 3
-        assert model_actions.get_option("model_option_0").prompt.startswith(f"1. Kimi K2.7 Code ({UI_DEFAULT_MODEL})")
+        model_prompt = model_actions.get_option("model_option_0").prompt
+        assert isinstance(model_prompt, str)
+        assert model_prompt.startswith(f"1. Kimi K2.7 Code ({UI_DEFAULT_MODEL})")
 
         # kimi-k3 is a fake model the real config builder rejects, so stub it for the rebuild step.
         saved_config = app.config
@@ -312,6 +316,7 @@ async def test_textual_app_model_slash_command_accepts_typed_selection_and_rejec
         assert settings_store.load().active_model == UI_DEFAULT_MODEL
         assert model_actions.display is True
         assert not any(entry.kind == "user" and entry.content == "bogus-model" for entry in app.conversation_entries)
+        assert isinstance(app.agent, FakeCoderAgent)
         assert app.agent.messages == []
 
         composer.load_text(MOONSHOT_K26_MODEL.upper())
@@ -530,6 +535,7 @@ async def test_textual_app_effort_slash_command_accepts_typed_selection_and_reje
         assert settings_store.load().active_thinking_effort == "high"
         assert effort_actions.display is True
         assert not any(entry.kind == "user" and entry.content == "bogus" for entry in app.conversation_entries)
+        assert isinstance(app.agent, FakeCoderAgent)
         assert app.agent.messages == []
 
         composer.load_text("MAX")

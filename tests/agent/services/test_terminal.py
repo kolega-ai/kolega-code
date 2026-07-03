@@ -2,13 +2,31 @@ import asyncio
 
 import pytest
 
+from kolega_code.events import AgentConnectionManager
 from kolega_code.services.terminal import LocalTerminalManager, PtySession
+
+
+class _RecordingConnectionManager(AgentConnectionManager):
+    def __init__(self):
+        self.events = []
+
+    async def broadcast_event(self, event, workspace_id, thread_id):
+        self.events.append(event)
+
+    async def connect(self, websocket, workspace_id, thread_id, connection_type, user_info=None) -> None:
+        return None
+
+    def disconnect(self, websocket, workspace_id, thread_id, connection_type) -> None:
+        return None
+
+    def get_connection_count(self, workspace_id, thread_id) -> dict:
+        return {}
 
 
 @pytest.fixture
 def manager():
-    # connection_manager=None: output broadcasting is skipped in tests.
-    return LocalTerminalManager("workspace", "thread", None)
+    # A no-op connection manager: output broadcasting is recorded but unused in tests.
+    return LocalTerminalManager("workspace", "thread", _RecordingConnectionManager())
 
 
 @pytest.mark.asyncio
@@ -139,14 +157,6 @@ async def test_close_all_terminates_sessions(manager):
     assert len(manager.sessions) == 2
     await manager.close_all()
     assert len(manager.sessions) == 0
-
-
-class _RecordingConnectionManager:
-    def __init__(self):
-        self.events = []
-
-    async def broadcast_event(self, event, workspace_id, thread_id):
-        self.events.append(event)
 
 
 @pytest.mark.asyncio

@@ -380,6 +380,7 @@ async def test_textual_app_mounts_settings_without_api_key(
 
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.widgets import ChatComposer
+    from textual.widgets import TabbedContent
 
     class FakeCoderAgent:
         def __init__(self, **kwargs):
@@ -406,7 +407,7 @@ async def test_textual_app_mounts_settings_without_api_key(
         composer = app.query_one("#composer", ChatComposer)
         assert composer.disabled is True
         assert composer.placeholder == "Connect a model in Settings before chatting."
-        assert app.query_one("#events").active == "status_pane"
+        assert app.query_one("#events", TabbedContent).active == "status_pane"
         startup = app.conversation_entries[0].content
         assert "Not connected." in startup
         assert "Choose a provider and add an API key or sign in from the Settings tab before chatting." in startup
@@ -966,7 +967,8 @@ async def test_agent_models_section_saves_override_and_builds_agent(
         assert saved["provider"] == UI_DEFAULT_PROVIDER
         assert saved["model"] == MOONSHOT_K26_MODEL
 
-        config = app.agent.kwargs["config"]
+        assert app.agent is not None
+        config = getattr(app.agent, "kwargs")["config"]
         assert config.model_config_for_agent("investigation-agent").model == MOONSHOT_K26_MODEL
         # Roles left on "Default" still inherit the active model.
         assert config.model_config_for_agent("coder").model == UI_DEFAULT_MODEL

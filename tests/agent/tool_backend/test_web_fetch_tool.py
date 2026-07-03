@@ -84,6 +84,7 @@ class TestWebFetchTool:
             mock_specs.assert_called_once()
             mock_llm_instance.generate.assert_awaited_once()
 
+            assert mock_llm_instance.generate.await_args is not None
             await_args, await_kwargs = mock_llm_instance.generate.await_args
             assert await_kwargs["model"] == agent_config.fast_config.model
             assert await_kwargs["max_completion_tokens"] == 1024
@@ -139,6 +140,7 @@ class TestWebFetchTool:
             result = await web_fetch_tool.web_fetch("https://example.com", "Summarize")
 
             assert result == "Summarized answer"
+            assert mock_llm_instance.generate.await_args is not None
             await_args, await_kwargs = mock_llm_instance.generate.await_args
             assert await_kwargs["max_completion_tokens"] == WebFetchTool.WEB_FETCH_MAX_COMPLETION_TOKENS
 
@@ -166,6 +168,7 @@ class TestWebFetchTool:
             result = await web_fetch_tool.web_fetch("https://example.com", "Summarize")
 
             assert result == "Summarized answer"
+            assert mock_llm_instance.generate.await_args is not None
             await_args, await_kwargs = mock_llm_instance.generate.await_args
             assert await_kwargs["max_completion_tokens"] == 512
 

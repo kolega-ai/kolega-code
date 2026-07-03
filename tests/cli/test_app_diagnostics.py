@@ -55,6 +55,7 @@ async def test_diagnostics_and_bug_commands(tmp_path: Path, monkeypatch: pytest.
     async with app.run_test():
         await app._command_diagnostics("")
         await app._command_bug("")
+        assert app._diag is not None
         diag_dir = app._diag.dir
 
     # /bug wrote a shareable zip with the summary + the full session JSON.

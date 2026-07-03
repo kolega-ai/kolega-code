@@ -1,4 +1,6 @@
-from kolega_code.llm.models import ContentBlock, Message, ToolCall
+from google.genai import types as genai_types
+
+from kolega_code.llm.models import ContentBlock, Message, ToolCall as ToolCallBlock
 from kolega_code.llm.tool_execution_ids import ToolExecutionIdRegistry, new_tool_execution_id
 
 
@@ -31,7 +33,7 @@ def test_tool_execution_id_registry_is_response_scoped():
 
 
 def test_tool_call_from_dict_preserves_existing_execution_id():
-    tool_call = ToolCall.from_dict(
+    tool_call = ToolCallBlock.from_dict(
         {
             "type": "tool_call",
             "id": "provider_tool_call_id",
@@ -46,7 +48,7 @@ def test_tool_call_from_dict_preserves_existing_execution_id():
 
 
 def test_tool_call_from_dict_generates_execution_id_for_legacy_records():
-    tool_call = ToolCall.from_dict(
+    tool_call = ToolCallBlock.from_dict(
         {
             "type": "tool_call",
             "id": "provider_tool_call_id",
@@ -78,7 +80,10 @@ def test_message_from_anthropic_uses_supplied_execution_id_registry():
 
     assert message.tool_calls[0].id == "provider_tool_call_id"
     assert message.tool_calls[0].execution_id == execution_id
-    assert message.content[0].execution_id == execution_id
+    assert isinstance(message.content, list)
+    first_content = message.content[0]
+    assert isinstance(first_content, ToolCallBlock)
+    assert first_content.execution_id == execution_id
 
 
 def test_message_from_openai_uses_supplied_execution_id_registry():
@@ -102,36 +107,29 @@ def test_message_from_openai_uses_supplied_execution_id_registry():
 
     assert message.tool_calls[0].id == "provider_tool_call_id"
     assert message.tool_calls[0].execution_id == execution_id
-    assert message.content[0].execution_id == execution_id
+    assert isinstance(message.content, list)
+    first_content = message.content[0]
+    assert isinstance(first_content, ToolCallBlock)
+    assert first_content.execution_id == execution_id
 
 
 def test_message_from_google_uses_supplied_execution_id_registry():
-    class FunctionCall:
-        id = "provider_tool_call_id"
-        name = "read_file"
-        args = {"path": "README.md"}
-
-    # Real Gemini responses carry the function call (and its thought_signature) on a part.
-    class Part:
-        function_call = FunctionCall()
-        thought_signature = b"sig"
-        thought = None
-        text = None
-
-    class Content:
-        parts = [Part()]
-
-    class Candidate:
-        content = Content()
-
-    class GoogleMessage:
-        candidates = [Candidate()]
-        finish_reason = "STOP"
-
     registry = ToolExecutionIdRegistry()
     execution_id = registry.get_or_create("provider_tool_call_id")
 
-    message = Message.from_google(GoogleMessage(), tool_execution_ids=registry)
+    part = genai_types.Part(
+        function_call=genai_types.FunctionCall(
+            id="provider_tool_call_id", name="read_file", args={"path": "README.md"}
+        ),
+        thought_signature=b"sig",
+    )
+    candidate = genai_types.Candidate(content=genai_types.Content(parts=[part]))
+    response = genai_types.GenerateContentResponse(candidates=[candidate])
+
+    message = Message.from_google(
+        response,
+        tool_execution_ids=registry,
+    )
 
     assert message.tool_calls[0].id == "provider_tool_call_id"
     assert message.tool_calls[0].execution_id == execution_id
@@ -155,14 +153,17 @@ def test_message_from_openai_stream_uses_supplied_execution_id_registry():
     message = Message.from_openai_stream(
         role="assistant",
         content="",
-        tool_calls={0: ToolCall()},
+        tool_calls={"0": ToolCall()},
         stop_reason="tool_calls",
         tool_execution_ids=registry,
     )
 
     assert message.tool_calls[0].id == "provider_tool_call_id"
     assert message.tool_calls[0].execution_id == execution_id
-    assert message.content[0].execution_id == execution_id
+    assert isinstance(message.content, list)
+    first_content = message.content[0]
+    assert isinstance(first_content, ToolCallBlock)
+    assert first_content.execution_id == execution_id
 
 
 def test_message_from_google_stream_uses_supplied_execution_id_registry():
@@ -178,7 +179,7 @@ def test_message_from_google_stream_uses_supplied_execution_id_registry():
     message = Message.from_google_stream(
         role="assistant",
         content="",
-        tool_calls={0: (ToolCall(), b"sig")},
+        tool_calls={"0": (ToolCall(), b"sig")},
         stop_reason="STOP",
         tool_execution_ids=registry,
     )
@@ -186,7 +187,10 @@ def test_message_from_google_stream_uses_supplied_execution_id_registry():
     assert message.tool_calls[0].id == "provider_tool_call_id"
     assert message.tool_calls[0].execution_id == execution_id
     assert message.tool_calls[0].thought_signature == b"sig"
-    assert message.content[0].execution_id == execution_id
+    assert isinstance(message.content, list)
+    first_content = message.content[0]
+    assert isinstance(first_content, ToolCallBlock)
+    assert first_content.execution_id == execution_id
 
 
 def test_content_block_from_dict_generates_execution_id_for_legacy_tool_call():
@@ -199,5 +203,5 @@ def test_content_block_from_dict_generates_execution_id_for_legacy_tool_call():
         }
     )
 
-    assert isinstance(block, ToolCall)
+    assert isinstance(block, ToolCallBlock)
     assert block.execution_id.startswith("tool_exec_")

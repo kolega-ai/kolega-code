@@ -254,11 +254,14 @@ async def test_textual_app_gigacode_command_persists_and_updates_status(
     from kolega_code.cli.app import KolegaCodeApp
 
     class FakeCoderAgent:
+        instances: list["FakeCoderAgent"] = []
+
         def __init__(self, **kwargs):
             self.kwargs = kwargs
             self.gigacode_enabled = False
             self.prompt_extensions = kwargs.get("prompt_extensions") or []
             self.apply_calls = []
+            self.__class__.instances.append(self)
 
         def restore_message_history(self, history):
             return None
@@ -297,8 +300,9 @@ async def test_textual_app_gigacode_command_persists_and_updates_status(
         await app._command_gigacode("on")
 
         assert app._gigacode_enabled is True
-        assert app.agent.apply_calls[-1][0] is True
-        assert app.agent.apply_calls[-1][1].id == "gigacode"
+        coder = FakeCoderAgent.instances[-1]
+        assert coder.apply_calls[-1][0] is True
+        assert coder.apply_calls[-1][1].id == "gigacode"
         assert store.load(session.session_id).gigacode_enabled is True
         assert "Gigacode: on" in app.conversation_entries[0].content
         dashboard = str(app.query_one("#status_dashboard", Static).render())
@@ -308,7 +312,7 @@ async def test_textual_app_gigacode_command_persists_and_updates_status(
         await app._command_gigacode("off")
 
         assert app._gigacode_enabled is False
-        assert app.agent.apply_calls[-1] == (False, None)
+        assert FakeCoderAgent.instances[-1].apply_calls[-1] == (False, None)
         assert store.load(session.session_id).gigacode_enabled is False
         assert "Gigacode: off" in app.conversation_entries[0].content
         assert "gigacode off" in str(app.query_one("#session_meta", Static).render())
@@ -509,6 +513,8 @@ async def test_textual_app_shift_tab_toggles_between_build_and_plan_agents(
 ) -> None:
     pytest.importorskip("textual")
 
+    from textual.binding import Binding
+
     from kolega_code.cli.tui.widgets import PlanningMarkdown
 
     from kolega_code.cli.app import KolegaCodeApp
@@ -553,7 +559,9 @@ async def test_textual_app_shift_tab_toggles_between_build_and_plan_agents(
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
 
     async with app.run_test() as pilot:
-        toggle_binding = next(binding for binding in app.BINDINGS if binding.action == "toggle_interaction_mode")
+        toggle_binding = next(
+            b for b in app.BINDINGS if isinstance(b, Binding) and b.action == "toggle_interaction_mode"
+        )
         assert toggle_binding.key == "shift+tab"
         assert toggle_binding.key_display == "Shift+Tab"
         assert toggle_binding.priority is True
@@ -601,13 +609,18 @@ async def test_textual_app_ctrl_p_toggles_permission_mode(tmp_path: Path, monkey
 
     from textual.widgets import Static
 
+    from textual.binding import Binding
+
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.permissions import PermissionMode
 
     class FakeCoderAgent:
+        instances: list["FakeCoderAgent"] = []
+
         def __init__(self, **kwargs):
             self.kwargs = kwargs
             self.permission_mode = kwargs["permission_mode"]
+            self.__class__.instances.append(self)
 
         def restore_message_history(self, history):
             return None
@@ -640,14 +653,18 @@ async def test_textual_app_ctrl_p_toggles_permission_mode(tmp_path: Path, monkey
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
 
     async with app.run_test() as pilot:
-        toggle_binding = next(binding for binding in app.BINDINGS if binding.action == "toggle_permission_mode")
+        toggle_binding = next(
+            b for b in app.BINDINGS if isinstance(b, Binding) and b.action == "toggle_permission_mode"
+        )
         assert toggle_binding.key == "ctrl+p"
         assert app.permission_mode == PermissionMode.ASK
-        assert app.agent.kwargs["permission_mode"] == PermissionMode.ASK
+        coder = FakeCoderAgent.instances[-1]
+        assert coder.kwargs["permission_mode"] == PermissionMode.ASK
 
         await pilot.press("ctrl+p")
 
         assert app.permission_mode == PermissionMode.AUTO
+        assert app.agent is not None
         assert app.agent.permission_mode == PermissionMode.AUTO
         assert store.load(session.session_id).permission_mode == "auto"
         assert SettingsStore(store.root).load().permission_mode == "auto"
@@ -657,6 +674,7 @@ async def test_textual_app_ctrl_p_toggles_permission_mode(tmp_path: Path, monkey
         await app._command_permissions("ask")
 
         assert app.permission_mode == PermissionMode.ASK
+        assert app.agent is not None
         assert app.agent.permission_mode == PermissionMode.ASK
         assert store.load(session.session_id).permission_mode == "ask"
         assert SettingsStore(store.root).load().permission_mode == "ask"
@@ -734,9 +752,11 @@ def test_app_ctrl_bindings_use_explicit_key_display() -> None:
     (e.g. ctrl+q renders as "^q"), which is inconsistent with the other
     Ctrl bindings. This guards against that regression at the source.
     """
+    from textual.binding import Binding
+
     from kolega_code.cli.app import KolegaCodeApp
 
-    ctrl_bindings = [binding for binding in KolegaCodeApp.BINDINGS if binding.key.startswith("ctrl+")]
+    ctrl_bindings = [b for b in KolegaCodeApp.BINDINGS if isinstance(b, Binding) and b.key.startswith("ctrl+")]
     assert ctrl_bindings, "expected at least one ctrl binding"
 
     for binding in ctrl_bindings:
@@ -753,6 +773,8 @@ async def test_textual_app_ctrl_o_toggles_sidebar_and_keeps_active_tab(
     pytest.importorskip("textual")
 
     from textual.widgets import TabbedContent
+
+    from textual.binding import Binding
 
     from kolega_code.cli.app import KolegaCodeApp
 
@@ -785,7 +807,7 @@ async def test_textual_app_ctrl_o_toggles_sidebar_and_keeps_active_tab(
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
 
     async with app.run_test() as pilot:
-        toggle_binding = next(binding for binding in app.BINDINGS if binding.action == "toggle_sidebar")
+        toggle_binding = next(b for b in app.BINDINGS if isinstance(b, Binding) and b.action == "toggle_sidebar")
         assert toggle_binding.key == "ctrl+o"
         assert toggle_binding.key_display == "Ctrl+O"
         assert toggle_binding.priority is True

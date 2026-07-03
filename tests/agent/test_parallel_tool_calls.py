@@ -88,6 +88,9 @@ class ConcurrencyTracker:
 class FakeToolCollection:
     """Test stand-in for ToolCollection: builds a registry from get_tool_list + methods."""
 
+    def get_tool_list(self) -> list[SimpleNamespace]:
+        raise NotImplementedError
+
     def registry(self):
         from kolega_code.agent.tools import ToolCollection
         from kolega_code.llm.models import ToolDefinition
@@ -252,7 +255,7 @@ class TestParallelToolCalls:
 
     @pytest.mark.asyncio
     async def test_nested_agent_does_not_clobber_parent_ids(
-        self, tmp_path, mock_connection_manager, agent_config, base_agent
+        self, tmp_path, mock_connection_manager, agent_config, base_agent, monkeypatch
     ):
         nested_agent = BaseAgent(
             project_path=tmp_path,
@@ -271,7 +274,7 @@ class TestParallelToolCalls:
             async def read_entire_file(self, task: str):
                 return "nested contents"
 
-        nested_agent.tool_collection = NestedTools()
+        monkeypatch.setattr(nested_agent, "tool_collection", NestedTools())
         observed = {}
 
         class ParentTools(FakeToolCollection):

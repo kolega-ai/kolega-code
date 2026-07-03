@@ -54,6 +54,7 @@ def test_tracked_file_modified_after_baseline(tmp_path: Path) -> None:
     assert change.status == "modified"
     assert change.adds == 1
     assert change.dels == 1
+    assert change.preview is not None
     assert [row[1] for row in change.preview["lines"] if row[0] in {"add", "del"}] == ["-old", "+new"]
 
 
@@ -73,6 +74,7 @@ def test_tracked_file_deleted_after_baseline(tmp_path: Path) -> None:
 
     assert change.status == "deleted"
     assert change.dels == 1
+    assert change.preview is not None
     assert any(row[1] == "-old" for row in change.preview["lines"])
 
 
@@ -92,6 +94,7 @@ def test_new_untracked_file_after_baseline(tmp_path: Path) -> None:
 
     assert change.status == "added"
     assert change.adds == 1
+    assert change.preview is not None
     assert change.preview["kind"] == "diff"
     assert any(row[1] == "+print('new')" for row in change.preview["lines"])
 
@@ -114,6 +117,7 @@ def test_pre_existing_dirty_file_is_session_baseline(tmp_path: Path) -> None:
     change = _by_path(tracker.refresh())["a.py"]
 
     assert change.status == "modified"
+    assert change.preview is not None
     lines = [row[1] for row in change.preview["lines"] if row[0] in {"add", "del"}]
     assert lines == ["-dirty", "+session"]
 
@@ -173,13 +177,16 @@ def test_refresh_recomputes_when_file_stat_signature_changes(tmp_path: Path, mon
     assert tracker is not None
     tracker.capture_baseline()
     (project / "a.py").write_text("one\n", encoding="utf-8")
-    assert any(row[1] == "+one" for row in _by_path(tracker.refresh())["a.py"].preview["lines"])
+    first_change = _by_path(tracker.refresh())["a.py"]
+    assert first_change.preview is not None
+    assert any(row[1] == "+one" for row in first_change.preview["lines"])
 
     snapshot_calls = _count_method_calls(monkeypatch, tracker, "_snapshot_repo_path")
     (project / "a.py").write_text("second content\n", encoding="utf-8")
     change = _by_path(tracker.refresh())["a.py"]
 
     assert snapshot_calls["count"] == 1
+    assert change.preview is not None
     assert any(row[1] == "+second content" for row in change.preview["lines"])
 
 
@@ -263,6 +270,7 @@ def test_repo_with_no_commits_reports_added_files(tmp_path: Path) -> None:
 
     assert change.status == "added"
     assert change.adds == 1
+    assert change.preview is not None
     assert any(row[1] == "+new" for row in change.preview["lines"])
 
 

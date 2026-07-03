@@ -177,6 +177,7 @@ async def test_textual_app_passes_skill_extensions_to_build_and_plan_agents(
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
 
     async with app.run_test() as pilot:
+        assert isinstance(app.agent, FakeCoderAgent)
         skill_prompt = extension_by_name(app.agent.kwargs["prompt_extensions"], "cli-agent-skills")
         skill_tools = extension_by_name(app.agent.kwargs["tool_extensions"], "cli-agent-skills").tools
 
@@ -186,5 +187,6 @@ async def test_textual_app_passes_skill_extensions_to_build_and_plan_agents(
 
         await pilot.press("shift+tab")
 
+        assert isinstance(app.agent, FakePlanningAgent)
         planning_skill_tools = extension_by_name(app.agent.kwargs["tool_extensions"], "cli-agent-skills")
         assert "activate_skill" in planning_skill_tools.tools

@@ -1,6 +1,8 @@
 # ruff: noqa: F401,F811,E402
 """Tests for the ChatGPT-subscription Responses provider and its wiring."""
 
+from typing import Dict, Optional
+
 import types
 
 import httpx
@@ -55,7 +57,7 @@ class _FakeStream:
 class _FakeResponses:
     def __init__(self, result):
         self._result = result
-        self.last_kwargs = None
+        self.last_kwargs: Optional[Dict[str, object]] = None
 
     async def create(self, **kwargs):
         self.last_kwargs = kwargs
@@ -63,7 +65,7 @@ class _FakeResponses:
 
 
 @pytest.mark.asyncio
-async def test_provider_generate_builds_codex_shaped_request():
+async def test_provider_generate_builds_codex_shaped_request(monkeypatch):
     provider = ChatGPTOAuthProvider(token_manager=ChatGPTTokenManager(_tokens()))
     completed = _ns(
         output=[_ns(type="message", content=[_ns(type="output_text", text="hi")])],
@@ -72,7 +74,7 @@ async def test_provider_generate_builds_codex_shaped_request():
         incomplete_details=None,
     )
     fake = _FakeResponses(_FakeStream([_ns(type="response.completed", response=completed)]))
-    provider.async_client = _ns(responses=fake)
+    monkeypatch.setattr(provider, "async_client", _ns(responses=fake))
 
     params = GenerationParams(max_completion_tokens=256, thinking="high")
     message = await provider.generate(
@@ -85,6 +87,7 @@ async def test_provider_generate_builds_codex_shaped_request():
     assert message.get_text_content() == "hi"
     assert message.usage_metadata["provider"] == "openai_chatgpt"
     kwargs = fake.last_kwargs
+    assert kwargs is not None
     assert kwargs["model"] == "gpt-5.5"
     assert kwargs["store"] is False
     assert kwargs["stream"] is True  # backend is SSE-only; generate streams too
@@ -104,7 +107,7 @@ async def test_provider_generate_builds_codex_shaped_request():
 
 
 @pytest.mark.asyncio
-async def test_provider_generate_omits_reasoning_and_include_without_thinking():
+async def test_provider_generate_omits_reasoning_and_include_without_thinking(monkeypatch):
     provider = ChatGPTOAuthProvider(token_manager=ChatGPTTokenManager(_tokens()))
     completed = _ns(
         output=[_ns(type="message", content=[_ns(type="output_text", text="hi")])],
@@ -113,20 +116,21 @@ async def test_provider_generate_omits_reasoning_and_include_without_thinking():
         incomplete_details=None,
     )
     fake = _FakeResponses(_FakeStream([_ns(type="response.completed", response=completed)]))
-    provider.async_client = _ns(responses=fake)
+    monkeypatch.setattr(provider, "async_client", _ns(responses=fake))
     await provider.generate(
         MessageHistory([Message(role="user", content=[TextBlock(text="hello")])]),
         params=GenerationParams(),  # no thinking effort
         model="gpt-5.5",
     )
+    assert fake.last_kwargs is not None
     assert "reasoning" not in fake.last_kwargs
     assert "include" not in fake.last_kwargs
 
 
 @pytest.mark.asyncio
-async def test_provider_stream_returns_wrapper():
+async def test_provider_stream_returns_wrapper(monkeypatch):
     provider = ChatGPTOAuthProvider(token_manager=ChatGPTTokenManager(_tokens()))
-    provider.async_client = _ns(responses=_FakeResponses(_FakeStream([])))
+    monkeypatch.setattr(provider, "async_client", _ns(responses=_FakeResponses(_FakeStream([]))))
     stream = await provider.stream(
         MessageHistory([Message(role="user", content=[TextBlock(text="hi")])]),
         params=GenerationParams(),

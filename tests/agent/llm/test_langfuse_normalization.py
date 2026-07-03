@@ -20,6 +20,7 @@ def test_langfuse_normalizes_openai_cache_tokens():
         stream=None, generation=None, trace=None, instrumented_client=None, model="x"
     )
     usage = wrapper._extract_langfuse_usage(msg)
+    assert usage is not None
     assert usage["input"] == 10
     assert usage["output"] == 2
     assert usage["total"] == 12
@@ -46,6 +47,7 @@ def test_langfuse_normalizes_deepseek_usage():
         stream=None, generation=None, trace=None, instrumented_client=None, model="x"
     )
     usage = wrapper._extract_langfuse_usage(msg)
+    assert usage is not None
     assert usage["input"] == 10
     assert usage["output"] == 2
     assert usage["total"] == 12
@@ -70,6 +72,7 @@ def test_langfuse_normalizes_fireworks_openai_usage():
         stream=None, generation=None, trace=None, instrumented_client=None, model="x"
     )
     usage = wrapper._extract_langfuse_usage(msg)
+    assert usage is not None
     assert usage["input"] == 20
     assert usage["output"] == 5
     assert usage["total"] == 25

@@ -197,7 +197,9 @@ def test_adapt_preserves_images_for_vision_target_while_converting_foreign_think
 
     assert count_image_blocks(out) == 2
     assert isinstance(out[0].content[1], ImageBlock)
-    assert isinstance(out[0].content[2].content[0], ImageBlock)
+    nested_tr = out[0].content[2]
+    assert isinstance(nested_tr, ToolResult)
+    assert isinstance(nested_tr.content[0], ImageBlock)
     assert isinstance(out[1].content[0], TextBlock)
 
 
@@ -218,7 +220,9 @@ def test_adapt_replaces_images_for_non_vision_target_and_converts_foreign_thinki
     assert count_image_blocks(out) == 0
     assert isinstance(out[0].content[1], TextBlock)
     assert "not visible" in out[0].content[1].text
-    assert isinstance(out[0].content[2].content[0], TextBlock)
+    nested_tr = out[0].content[2]
+    assert isinstance(nested_tr, ToolResult)
+    assert isinstance(nested_tr.content[0], TextBlock)
     assert isinstance(out[1].content[0], TextBlock)
     assert "redacted reasoning from kimi_coding omitted" in out[1].content[0].text
 

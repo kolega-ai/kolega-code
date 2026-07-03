@@ -69,20 +69,27 @@ def test_explicit_schema_passed_through_for_openai():
 def test_explicit_schema_converted_for_google():
     definition = _nested_definition()
     tool = definition.to_google()
+    assert tool.function_declarations is not None
     params = tool.function_declarations[0].parameters
+    assert params is not None
 
     assert params.type == genai_types.Type.OBJECT
+    assert params.properties is not None
     questions = params.properties["questions"]
     assert questions.type == genai_types.Type.ARRAY
 
     item = questions.items
+    assert item is not None
     assert item.type == genai_types.Type.OBJECT
+    assert item.properties is not None
     assert set(item.properties) == {"question", "header", "multiSelect", "options"}
     assert "question" in (item.required or [])
 
     options = item.properties["options"]
     assert options.type == genai_types.Type.ARRAY
+    assert options.items is not None
     assert options.items.type == genai_types.Type.OBJECT
+    assert options.items.properties is not None
     assert "label" in options.items.properties
     assert options.items.properties["label"].type == genai_types.Type.STRING
 
@@ -109,6 +116,10 @@ def test_flat_definition_still_serializes_without_input_schema():
     assert anthropic["properties"]["limit"]["type"] == "integer"
     assert set(anthropic["required"]) == {"query", "limit"}
 
-    google_params = definition.to_google().function_declarations[0].parameters
+    tool = definition.to_google()
+    assert tool.function_declarations is not None
+    google_params = tool.function_declarations[0].parameters
+    assert google_params is not None
     assert google_params.type == genai_types.Type.OBJECT
+    assert google_params.properties is not None
     assert set(google_params.properties) == {"query", "limit"}

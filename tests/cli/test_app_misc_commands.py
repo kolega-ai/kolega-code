@@ -174,7 +174,8 @@ async def test_textual_app_unknown_slash_command_falls_through_to_agent(
         await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
         await pilot.pause()
 
-        assert app.agent.messages == ["/help"]
+        assert app.agent is not None
+        assert getattr(app.agent, "messages") == ["/help"]
 
 
 @pytest.mark.asyncio
@@ -419,4 +420,5 @@ async def test_textual_app_prompts_dump_accepts_selected_prompts_and_force(
         assert "Written:" in entry.content
         assert "powerful AI coding assistant" in coder.read_text(encoding="utf-8")
         assert not (prompt_dir / "PLANNING.md").exists()
-        assert app.agent.refresh_count == 1
+        assert app.agent is not None
+        assert getattr(app.agent, "refresh_count") == 1

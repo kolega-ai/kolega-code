@@ -183,7 +183,8 @@ async def test_textual_app_history_save_runs_off_event_loop(tmp_path: Path, monk
 
     monkeypatch.setattr(store, "save", slow_save)
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
-    app.agent = FakeAgent()
+    fake_agent = FakeAgent()
+    monkeypatch.setattr(app, "agent", fake_agent)
 
     save_task = asyncio.create_task(app._save_session_history_async())
     marker_task = asyncio.create_task(asyncio.sleep(0.05))
@@ -196,7 +197,9 @@ async def test_textual_app_history_save_runs_off_event_loop(tmp_path: Path, monk
 
 
 @pytest.mark.asyncio
-async def test_textual_app_history_save_persists_session_and_compaction(tmp_path: Path) -> None:
+async def test_textual_app_history_save_persists_session_and_compaction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     pytest.importorskip("textual")
 
     from kolega_code.cli.app import KolegaCodeApp
@@ -217,7 +220,8 @@ async def test_textual_app_history_save_persists_session_and_compaction(tmp_path
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
-    app.agent = FakeAgent()
+    fake_agent = FakeAgent()
+    monkeypatch.setattr(app, "agent", fake_agent)
 
     await app._save_session_history_async()
 
@@ -251,7 +255,8 @@ async def test_textual_app_overlapping_saves_preserve_later_state(
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
-    app.agent = FakeAgent()
+    fake_agent = FakeAgent()
+    monkeypatch.setattr(app, "agent", fake_agent)
 
     original_save = store.save
     saved_snapshots: list[tuple[str, list[dict]]] = []
@@ -496,6 +501,7 @@ async def test_textual_app_renders_resumed_history_in_chat(tmp_path: Path, monke
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
 
     async with app.run_test():
+        assert isinstance(app.agent, FakeCoderAgent)
         assert app.agent.restored_history == session.history
         assert app.conversation_entries[0].kind == "startup"
         startup = app.conversation_entries[0].content
@@ -678,6 +684,7 @@ async def test_textual_app_model_rebuild_rerenders_completed_tool_once(
     ]
 
     async with app.run_test():
+        assert app.agent is not None
         app.agent.history = history
         await app._build_agent(config, rebuild=True)
 

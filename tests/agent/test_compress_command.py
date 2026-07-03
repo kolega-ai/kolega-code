@@ -19,14 +19,15 @@ async def test_compress_command_reports_real_outcome(tmp_path):
 
 @pytest.mark.asyncio
 async def test_compress_command_nothing_to_compress_under_five(tmp_path):
-    agent, _cm = build_agent(tmp_path, llm=FakeLLM(token_script=[100]))
+    fake = FakeLLM(token_script=[100])
+    agent, _cm = build_agent(tmp_path, llm=fake)
     agent.history = long_history(2)  # 4 messages < MIN_MESSAGES_TO_COMPRESS
 
     result = await agent.command_processor._handle_compress()
 
     assert "Nothing to compress" in result
     assert agent.conversation.summary is None
-    agent.llm.stream.assert_not_called()
+    fake.stream.assert_not_called()
 
 
 @pytest.mark.asyncio
