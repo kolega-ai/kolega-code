@@ -727,6 +727,8 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             hook_dispatcher=self._session_hook_dispatcher(),
         )
         assert self.agent is not None
+        # Initialize LSP (language detection + server resolution)
+        await self.agent.tool_collection.initialize()  # pyright: ignore[reportOptionalMemberAccess]
         self.agent.gigacode_enabled = gigacode_active
         if history:
             self.agent.restore_message_history(history)
@@ -736,6 +738,51 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         self._update_mode_chrome()
         self._ensure_startup_entry()
         await self._fire_session_start_once()
+
+    def _format_lsp_status(self) -> str:
+        """Build a human-readable LSP status message for the conversation or /lsp command."""
+        if self.agent is None:
+            return ""
+        manager = self.agent.tool_collection.lsp_manager  # pyright: ignore[reportOptionalMemberAccess]
+        if manager is None or not manager.enabled:
+            return ""
+
+        lines = ["## 🔍 Language Servers (LSP)"]
+
+        report = manager.report
+        if report is None:
+            lines.append("\nLSP status will appear after the agent starts.")
+            return "\n".join(lines)
+
+        detected = report.detected
+        resolved = {r.language_id: r for r in report.resolved}
+        missing = report.missing
+
+        if detected:
+            lines.append(f"\n**Detected {len(detected)} language(s):**")
+            for d in detected:
+                rl = resolved.get(d.language_id)
+                missing_rl = next((m for m in missing if m.language_id == d.language_id), None)
+                if rl:
+                    lines.append(f"  - {d.display_name} → **{rl.server_name}** ({d.detection_reason})")
+                elif missing_rl:
+                    lines.append(f"  - {d.display_name} → _{missing_rl.server_name} not found_ ({d.detection_reason})")
+                else:
+                    lines.append(f"  - {d.display_name} ({d.detection_reason})")
+        else:
+            lines.append("\nNo supported languages detected in this project.")
+            return "\n".join(lines)
+
+        if missing:
+            lines.append(f"\n**⚠️ Missing servers ({len(missing)}):**")
+            for m in missing:
+                install = m.install_commands[0] if m.install_commands else "See docs for install instructions"
+                lines.append(f"  - **{m.display_name}**: `{m.server_name}` — install: `{install}`")
+                if m.alternatives:
+                    lines.append(f"    Alternatives: {', '.join(m.alternatives)}")
+            lines.append("\nRun `/lsp` to see this status again.")
+
+        return "\n".join(lines)
 
     def _session_hook_dispatcher(self) -> HookDispatcher:
         """Build (once) the hook dispatcher for this session from global + project config."""

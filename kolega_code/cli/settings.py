@@ -100,6 +100,9 @@ class CliSettings:
     # Global default for new TUI sessions. Resumed sessions keep their own
     # SessionRecord.permission_mode unless a CLI override is supplied.
     permission_mode: str = PermissionMode.ASK.value
+    # Additive optional field — absent in older files -> None -> use default
+    # LSP config (enabled=True).
+    lsp_enabled: Optional[bool] = None
     schema_version: int = SETTINGS_SCHEMA_VERSION
 
     @classmethod
@@ -130,6 +133,8 @@ class CliSettings:
             oauth_tokens=_coerce_oauth_tokens(data.get("oauth_tokens")),
             # Additive optional field; absent in older files -> ask.
             permission_mode=_coerce_permission_mode(data.get("permission_mode")),
+            # Additive optional field; absent in older files -> None (use default).
+            lsp_enabled=data.get("lsp_enabled"),
         )
 
     def to_dict(self) -> dict:
@@ -147,6 +152,7 @@ class CliSettings:
             "web_search_base_url": self.web_search_base_url,
             "oauth_tokens": self.oauth_tokens,
             "permission_mode": _coerce_permission_mode(self.permission_mode),
+            "lsp_enabled": self.lsp_enabled,
         }
 
     def get_api_key(self, provider: str) -> Optional[str]:

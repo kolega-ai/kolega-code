@@ -56,6 +56,7 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
             "/permissions": self._command_permissions,
             "/model": self._command_model,
             "/effort": self._command_effort,
+            "/lsp": self._command_lsp,
             "/login": self._command_login,
             "/logout": self._command_logout,
             "/gigacode": self._command_gigacode,
@@ -930,6 +931,19 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
             "Open an issue: https://github.com/kolega-ai/kolega-code/issues/new"
         )
         self._add_conversation_entry(tui_state.ConversationEntry(kind="system", content=content))
+
+    async def _command_lsp(self, args: str) -> None:
+        """Show LSP status: detected languages, servers, and install instructions."""
+        msg = self._format_lsp_status()
+        if msg:
+            self._add_conversation_entry(tui_state.ConversationEntry(kind="lsp", content=msg))
+        else:
+            self._add_conversation_entry(
+                tui_state.ConversationEntry(
+                    kind="system",
+                    content="LSP is not available (disabled or not configured).",
+                )
+            )
 
     async def _command_version(self, args: str) -> None:
         result = await asyncio.to_thread(check_for_update)

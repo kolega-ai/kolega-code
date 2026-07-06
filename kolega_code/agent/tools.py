@@ -29,6 +29,8 @@ from .tool_backend.workflow_tool import RUN_WORKFLOW_INPUT_SCHEMA, WorkflowTool
 
 # Import additional tools for consolidated functionality
 from .tool_backend.build_tool import BuildTool
+from .tool_backend.lsp_tool import LspTool
+from kolega_code.services.lsp import LspManager
 
 
 @dataclass(frozen=True)
@@ -107,6 +109,7 @@ class ToolCollection(LogMixin):
         "web_search",
         "sleep",
         "read_image",
+        "lsp_diagnostics",
     ]
 
     browser_tools = [
@@ -284,6 +287,19 @@ class ToolCollection(LogMixin):
     def _initialize_tools(self):
         """Initialize all tool backends based on configuration."""
         # Core tool backends (always available)
+
+        # LSP manager (shared across EditTool and LspTool)
+        lsp_config = getattr(self.config, "lsp", None)
+        from kolega_code.services.lsp import LspConfig as _LspConfig
+
+        if isinstance(lsp_config, _LspConfig) and lsp_config.enabled:
+            self.lsp_manager = LspManager(
+                self.project_path,
+                config=lsp_config,
+            )
+        else:
+            self.lsp_manager = None
+
         self.think_hard_tool = ThinkHardTool(
             self.project_path,
             self.workspace_id,
@@ -301,6 +317,7 @@ class ToolCollection(LogMixin):
             self.config,
             self.caller,
             self.filesystem,
+            lsp_manager=self.lsp_manager,
         )
         self.list_directory_tool = ListDirectoryTool(
             self.project_path,
@@ -432,6 +449,18 @@ class ToolCollection(LogMixin):
             self.caller,
             self.filesystem,
             terminal_manager=self.terminal_manager,
+        )
+
+        # LSP tool
+        self.lsp_tool = LspTool(
+            self.project_path,
+            self.workspace_id,
+            self.thread_id,
+            self.connection_manager,
+            self.config,
+            self.caller,
+            self.filesystem,
+            lsp_manager=self.lsp_manager,
         )
 
     async def launch_browser(self, url: str) -> str:
@@ -1377,6 +1406,38 @@ class ToolCollection(LogMixin):
             pattern, include_directories=include_directories, show_details=show_details
         )
 
+    async def lsp_diagnostics(self, path: str) -> str:
+        """Get language server diagnostics (errors, warnings, hints) for a file.
+
+        Use this when you want to verify that a file you just edited or created is
+        free of syntax errors, type errors, or other code quality issues. The
+        diagnostics come from the project's language servers (e.g. pyright for
+        Python, typescript-language-server for TypeScript).
+
+        When to use this tool:
+        - After editing or creating a file to verify correctness
+        - When you suspect a file may have issues but aren't sure
+        - Before proposing changes to verify the baseline
+        - When a previous edit produced unexpected behavior
+
+        Usage notes:
+        1. The path should be relative to the project root (or absolute).
+        2. Diagnostics are returned as markdown with severity indicators
+           (🔴 error, 🟡 warning, 🔵 info/hint).
+        3. If no language server is available for the file's language, a message
+           is returned noting that.
+        4. Results are capped (default: 20 diagnostics per file).
+
+        Args:
+            path: Path to the file. Relative to the project root is preferred;
+                  an absolute path is also accepted.
+
+        Returns:
+            A markdown-formatted list of diagnostics, or a confirmation message
+            if no issues were found.
+        """
+        return await self.lsp_tool.lsp_diagnostics(path)
+
     async def get_host(self, port: int) -> str:
         """
         Get the hostname for accessing a service on the specified port.
@@ -1570,9 +1631,25 @@ class ToolCollection(LogMixin):
         # Include all other core tools by default
         return True
 
+    async def initialize(self) -> list[str]:
+        """Perform async one-time initialization (LSP auto-detection, etc.).
+
+        Safe to call multiple times — ``LspManager.initialize()`` is idempotent.
+        Returns status messages that the caller may display (e.g., detected
+        languages, install prompts for missing servers).
+        """
+        if self.lsp_manager is not None:
+            return await self.lsp_manager.initialize()
+        return []
+
     async def cleanup(self):
         """Clean up all tool resources"""
         try:
+            # Clean up LSP resources
+            if hasattr(self, "lsp_manager") and self.lsp_manager is not None:
+                await self.lsp_manager.shutdown()
+                print("Cleaned up LSP resources")
+
             # Clean up terminal resources
             if hasattr(self, "terminal_tool") and hasattr(self.terminal_tool, "terminal_manager"):
                 await self.terminal_tool.terminal_manager.cleanup_all()

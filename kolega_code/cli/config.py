@@ -13,6 +13,7 @@ from kolega_code.auth.tokens import ChatGPTTokenManager, OAuthTokens
 from kolega_code.config import AgentConfig, AgentRole, ModelConfig, ModelProvider, RateLimitConfig
 from kolega_code.llm.specs import MODEL_SPECS, get_model_specs, normalize_thinking_effort
 from kolega_code.mcp.config import load_mcp_config
+from kolega_code.services.lsp.config import LspConfig
 
 from .provider_registry import default_model_for_provider
 from .settings import CliSettings, SettingsStore
@@ -498,6 +499,7 @@ def build_agent_config(
             web_search_base_url=web_search_base_url,
             openai_chatgpt_tokens=chatgpt_tokens,
             mcp_config=mcp_config,
+            lsp=LspConfig(enabled=True if settings is None or settings.lsp_enabled is None else settings.lsp_enabled),
         )
     except ValueError as exc:
         raise CliConfigError(str(exc)) from exc

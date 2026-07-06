@@ -1396,6 +1396,11 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
             return self._format_tool_entry(entry, state=state, color=color)
         if entry.kind == "system":
             return Text(entry.content, style="dim")
+        if entry.kind == "lsp":
+            return self._markdown_entry(
+                theme.role_header(Glyph.STATUS, "LSP", Color.ACCENT),
+                entry.content,
+            )
         return Text(entry.content)
 
     def _entry_renderable(

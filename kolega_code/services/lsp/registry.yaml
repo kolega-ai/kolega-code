@@ -1,0 +1,482 @@
+# Language presets for the Kolega Code LSP integration.
+# Each entry maps a stable language_id to its detection criteria and available servers.
+#
+# key: language_id (used in code and config)
+#   display_name:        Human-readable name
+#   config_files:        Project-root files that strongly indicate this language (may include globs)
+#   extensions:          Dot-prefixed file extensions
+#   filename_map:        Exact filenames that route to this language
+#   family:              (optional) Reuse another language's server
+#   language_servers:    Ordered list (first match on PATH wins)
+#     - name:            Human-readable server name
+#       bin:             Executable name (resolved via shutil.which)
+#       args:            Default CLI arguments
+#       install_commands: Platform-keyed install instructions
+
+python:
+  display_name: Python
+  config_files: [pyproject.toml, setup.py, Pipfile]
+  extensions: [.py, .pyi]
+  filename_map: {}
+  language_servers:
+    - name: pyright
+      bin: pyright-langserver
+      args: [--stdio]
+      install_commands:
+        darwin: [brew install pyright]
+        linux: [pip install pyright]
+    - name: basedpyright
+      bin: basedpyright-langserver
+      args: [--stdio]
+      install_commands:
+        darwin: [pip install basedpyright]
+        linux: [pip install basedpyright]
+    - name: ruff-lsp
+      bin: ruff-lsp
+      args: []
+      install_commands:
+        darwin: [pip install ruff-lsp]
+        linux: [pip install ruff-lsp]
+
+javascript:
+  display_name: JavaScript
+  config_files: [package.json]
+  extensions: [.js, .cjs, .mjs]
+  filename_map: {}
+  language_servers:
+    - name: typescript-language-server
+      bin: typescript-language-server
+      args: [--stdio]
+      install_commands:
+        darwin: [npm install -g typescript-language-server typescript]
+        linux: [npm install -g typescript-language-server typescript]
+
+typescript:
+  display_name: TypeScript
+  config_files: [tsconfig.json]
+  extensions: [.ts, .tsx, .mts, .cts]
+  filename_map: {}
+  family: javascript
+
+rust:
+  display_name: Rust
+  config_files: [Cargo.toml]
+  extensions: [.rs]
+  filename_map: {}
+  language_servers:
+    - name: rust-analyzer
+      bin: rust-analyzer
+      args: []
+      install_commands:
+        darwin: [brew install rust-analyzer, rustup component add rust-analyzer]
+        linux: [rustup component add rust-analyzer]
+
+go:
+  display_name: Go
+  config_files: [go.mod]
+  extensions: [.go]
+  filename_map: {}
+  language_servers:
+    - name: gopls
+      bin: gopls
+      args: []
+      install_commands:
+        darwin: [brew install gopls, go install golang.org/x/tools/gopls@latest]
+        linux: [go install golang.org/x/tools/gopls@latest]
+
+c_cpp:
+  display_name: C / C++
+  config_files: [CMakeLists.txt, compile_commands.json]
+  extensions: [.c, .h, .cpp, .cc, .cxx, .hpp, .hxx, .c++, .hh]
+  filename_map: {}
+  language_servers:
+    - name: clangd
+      bin: clangd
+      args: []
+      install_commands:
+        darwin: [brew install llvm]
+        linux: [apt install clangd]
+
+csharp:
+  display_name: C#
+  config_files: ["*.csproj", "*.sln"]
+  extensions: [.cs]
+  filename_map: {}
+  language_servers:
+    - name: csharp-ls
+      bin: csharp-ls
+      args: []
+      install_commands:
+        darwin: [dotnet tool install -g csharp-ls]
+        linux: [dotnet tool install -g csharp-ls]
+
+java:
+  display_name: Java
+  config_files: [pom.xml, build.gradle]
+  extensions: [.java]
+  filename_map: {}
+  language_servers:
+    - name: jdtls
+      bin: jdtls
+      args: []
+      install_commands:
+        darwin: [brew install jdtls]
+        linux: [See https://github.com/eclipse-jdtls/eclipse.jdt.ls]
+
+kotlin:
+  display_name: Kotlin
+  config_files: [build.gradle.kts, settings.gradle.kts]
+  extensions: [.kt, .kts]
+  filename_map: {}
+  language_servers:
+    - name: kotlin-language-server
+      bin: kotlin-language-server
+      args: []
+      install_commands:
+        darwin: [brew install kotlin-language-server]
+        linux: [sdk install kotlin]
+
+scala:
+  display_name: Scala
+  config_files: [build.sbt]
+  extensions: [.scala]
+  filename_map: {}
+  language_servers:
+    - name: metals
+      bin: metals
+      args: []
+      install_commands:
+        darwin: [brew install metals]
+        linux: [coursier install metals]
+
+ruby:
+  display_name: Ruby
+  config_files: [Gemfile, .ruby-version]
+  extensions: [.rb]
+  filename_map: {}
+  language_servers:
+    - name: ruby-lsp
+      bin: ruby-lsp
+      args: []
+      install_commands:
+        darwin: [gem install ruby-lsp]
+        linux: [gem install ruby-lsp]
+    - name: solargraph
+      bin: solargraph
+      args: [stdio]
+      install_commands:
+        darwin: [gem install solargraph]
+        linux: [gem install solargraph]
+
+php:
+  display_name: PHP
+  config_files: [composer.json]
+  extensions: [.php]
+  filename_map: {}
+  language_servers:
+    - name: intelephense
+      bin: intelephense
+      args: [--stdio]
+      install_commands:
+        darwin: [npm install -g intelephense]
+        linux: [npm install -g intelephense]
+
+swift:
+  display_name: Swift
+  config_files: [Package.swift]
+  extensions: [.swift]
+  filename_map: {}
+  language_servers:
+    - name: sourcekit-lsp
+      bin: sourcekit-lsp
+      args: []
+      install_commands:
+        darwin: [Bundled with Xcode]
+        linux: [apt install sourcekit-lsp]
+
+dart:
+  display_name: Dart
+  config_files: [pubspec.yaml]
+  extensions: [.dart]
+  filename_map: {}
+  language_servers:
+    - name: dart
+      bin: dart
+      args: [language-server]
+      install_commands:
+        darwin: [brew install dart]
+        linux: [apt install dart]
+
+elixir:
+  display_name: Elixir
+  config_files: [mix.exs]
+  extensions: [.ex, .exs]
+  filename_map: {}
+  language_servers:
+    - name: elixir-ls
+      bin: elixir-ls
+      args: []
+      install_commands:
+        darwin: [brew install elixir-ls]
+        linux: [See https://github.com/elixir-lsp/elixir-ls]
+
+elm:
+  display_name: Elm
+  config_files: [elm.json]
+  extensions: [.elm]
+  filename_map: {}
+  language_servers:
+    - name: elm-language-server
+      bin: elm-language-server
+      args: [--stdio]
+      install_commands:
+        darwin: [npm install -g @elm-tooling/elm-language-server]
+        linux: [npm install -g @elm-tooling/elm-language-server]
+
+haskell:
+  display_name: Haskell
+  config_files: [stack.yaml, "*.cabal"]
+  extensions: [.hs, .lhs]
+  filename_map: {}
+  language_servers:
+    - name: haskell-language-server
+      bin: haskell-language-server
+      args: []
+      install_commands:
+        darwin: [ghcup install hls]
+        linux: [ghcup install hls]
+
+lua:
+  display_name: Lua
+  config_files: []
+  extensions: [.lua]
+  filename_map: {}
+  language_servers:
+    - name: lua-language-server
+      bin: lua-language-server
+      args: []
+      install_commands:
+        darwin: [brew install lua-language-server]
+        linux: [brew install lua-language-server, See https://luals.github.io]
+
+clojure:
+  display_name: Clojure
+  config_files: [deps.edn, project.clj]
+  extensions: [.clj, .cljs, .cljc, .edn]
+  filename_map: {}
+  language_servers:
+    - name: clojure-lsp
+      bin: clojure-lsp
+      args: []
+      install_commands:
+        darwin: [brew install clojure-lsp]
+        linux: [brew install clojure-lsp]
+
+zig:
+  display_name: Zig
+  config_files: [build.zig]
+  extensions: [.zig]
+  filename_map: {}
+  language_servers:
+    - name: zls
+      bin: zls
+      args: []
+      install_commands:
+        darwin: [brew install zls]
+        linux: [See https://github.com/zigtools/zls]
+
+r:
+  display_name: R
+  config_files: [DESCRIPTION, NAMESPACE]
+  extensions: [.R, .r]
+  filename_map: {}
+  language_servers:
+    - name: languageserver
+      bin: R
+      args: [--slave, -e, "languageserver::run()"]
+      install_commands:
+        darwin: ['R -e ''install.packages("languageserver")''']
+        linux: ['R -e ''install.packages("languageserver")''']
+
+julia:
+  display_name: Julia
+  config_files: [Project.toml]
+  extensions: [.jl]
+  filename_map: {}
+  language_servers:
+    - name: julia-language-server
+      bin: julia
+      args: [--project=., -e, "using LanguageServer; runserver()"]
+      install_commands:
+        darwin: ['julia -e ''import Pkg; Pkg.add("LanguageServer")''']
+        linux: ['julia -e ''import Pkg; Pkg.add("LanguageServer")''']
+
+terraform:
+  display_name: Terraform
+  config_files: []
+  extensions: [.tf, .tfvars]
+  filename_map: {}
+  language_servers:
+    - name: terraform-ls
+      bin: terraform-ls
+      args: []
+      install_commands:
+        darwin: [brew install hashicorp/tap/terraform-ls]
+        linux: [See https://github.com/hashicorp/terraform-ls]
+
+shell:
+  display_name: Shell / Bash
+  config_files: []
+  extensions: [.sh, .bash, .zsh]
+  filename_map: {}
+  language_servers:
+    - name: bash-language-server
+      bin: bash-language-server
+      args: [start]
+      install_commands:
+        darwin: [npm install -g bash-language-server]
+        linux: [npm install -g bash-language-server]
+
+docker:
+  display_name: Docker
+  config_files: [docker-compose.yml]
+  extensions: []
+  filename_map:
+    Dockerfile: docker
+  language_servers:
+    - name: docker-langserver
+      bin: docker-langserver
+      args: [--stdio]
+      install_commands:
+        darwin: [npm install -g dockerfile-language-server-nodejs]
+        linux: [npm install -g dockerfile-language-server-nodejs]
+
+yaml:
+  display_name: YAML
+  config_files: []
+  extensions: [.yml, .yaml]
+  filename_map: {}
+  language_servers:
+    - name: yaml-language-server
+      bin: yaml-language-server
+      args: [--stdio]
+      install_commands:
+        darwin: [npm install -g yaml-language-server]
+        linux: [npm install -g yaml-language-server]
+
+json:
+  display_name: JSON
+  config_files: []
+  extensions: [.json]
+  filename_map: {}
+  language_servers:
+    - name: vscode-json-language-server
+      bin: vscode-json-language-server
+      args: [--stdio]
+      install_commands:
+        darwin: [npm install -g vscode-langservers-extracted]
+        linux: [npm install -g vscode-langservers-extracted]
+
+markdown:
+  display_name: Markdown
+  config_files: []
+  extensions: [.md, .mdx]
+  filename_map: {}
+  language_servers:
+    - name: marksman
+      bin: marksman
+      args: [server]
+      install_commands:
+        darwin: [brew install marksman]
+        linux: [See https://github.com/artempyanykh/marksman]
+
+sql:
+  display_name: SQL
+  config_files: []
+  extensions: [.sql]
+  filename_map: {}
+  language_servers:
+    - name: sql-language-server
+      bin: sql-language-server
+      args: [up, --method, stdio]
+      install_commands:
+        darwin: [npm install -g sql-language-server]
+        linux: [npm install -g sql-language-server]
+
+nix:
+  display_name: Nix
+  config_files: [flake.nix, default.nix]
+  extensions: [.nix]
+  filename_map: {}
+  language_servers:
+    - name: nil
+      bin: nil
+      args: []
+      install_commands:
+        darwin: [nix profile install nixpkgs#nil]
+        linux: [nix profile install nixpkgs#nil]
+
+css:
+  display_name: CSS
+  config_files: []
+  extensions: [.css, .scss, .less]
+  filename_map: {}
+  language_servers:
+    - name: vscode-css-language-server
+      bin: vscode-css-language-server
+      args: [--stdio]
+      install_commands:
+        darwin: [npm install -g vscode-langservers-extracted]
+        linux: [npm install -g vscode-langservers-extracted]
+
+html:
+  display_name: HTML
+  config_files: []
+  extensions: [.html, .htm]
+  filename_map: {}
+  language_servers:
+    - name: vscode-html-language-server
+      bin: vscode-html-language-server
+      args: [--stdio]
+      install_commands:
+        darwin: [npm install -g vscode-langservers-extracted]
+        linux: [npm install -g vscode-langservers-extracted]
+
+toml:
+  display_name: TOML
+  config_files: []
+  extensions: [.toml]
+  filename_map: {}
+  language_servers:
+    - name: taplo
+      bin: taplo
+      args: [lsp, stdio]
+      install_commands:
+        darwin: [brew install taplo, cargo install taplo-cli --features lsp]
+        linux: [cargo install taplo-cli --features lsp]
+
+graphql:
+  display_name: GraphQL
+  config_files: []
+  extensions: [.graphql, .gql]
+  filename_map: {}
+  language_servers:
+    - name: graphql-lsp
+      bin: graphql-lsp
+      args: [server, -m, stream]
+      install_commands:
+        darwin: [npm install -g graphql-language-service-cli]
+        linux: [npm install -g graphql-language-service-cli]
+
+protobuf:
+  display_name: Protobuf
+  config_files: []
+  extensions: [.proto]
+  filename_map: {}
+  language_servers:
+    - name: protols
+      bin: protols
+      args: []
+      install_commands:
+        darwin: [cargo install protols]
+        linux: [cargo install protols]

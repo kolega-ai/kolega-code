@@ -463,6 +463,21 @@ class KolegaCodeApp(
                                 with Horizontal(classes="settings-button-row"):
                                     yield Button("Enable", id="mcp_enable_server")
                                     yield Button("Disable", id="mcp_disable_server")
+                            with Vertical(classes="settings-section", id="settings_lsp") as lsp_section:
+                                lsp_section.border_title = "Language Servers (LSP)"
+                                yield Static(
+                                    "Auto-detect project languages and run language servers for diagnostics. "
+                                    "Requires agent restart when toggled.",
+                                    classes="settings-hint",
+                                )
+                                yield Static("", id="lsp_status")
+                                yield Label("LSP")
+                                yield Select(
+                                    [("Enabled", "true"), ("Disabled", "false")],
+                                    id="lsp_enabled_select",
+                                    allow_blank=False,
+                                    value="true",
+                                )
                             with Vertical(classes="settings-section", id="settings_appearance") as appearance_section:
                                 appearance_section.border_title = "Appearance"
                                 yield Label("Theme")
@@ -1903,12 +1918,38 @@ class KolegaCodeApp(
                 *self._startup_prompt_override_lines(),
                 f"Thinking effort: {effort}",
                 f"API key: {api_key}",
-                "",
+                *self._startup_lsp_lines(),
                 f"Enter send {theme.g(Glyph.BULLET_SEP)} Shift+Enter newline {theme.g(Glyph.BULLET_SEP)} Shift+Tab plan/build {theme.g(Glyph.BULLET_SEP)} Ctrl+P permissions {theme.g(Glyph.BULLET_SEP)} Ctrl+O sidebar",
                 f"Ctrl+C stop turn {theme.g(Glyph.BULLET_SEP)} Cmd+C copy selection {theme.g(Glyph.BULLET_SEP)} / commands",
             ]
         )
         return "\n".join(startup_lines)
+
+    def _startup_lsp_lines(self) -> list[str]:
+        """Plain-text LSP status lines for the startup block (above command summary)."""
+        if self.agent is None:
+            return [""]
+        manager = self.agent.tool_collection.lsp_manager  # pyright: ignore[reportOptionalMemberAccess]
+        if manager is None or not manager.enabled:
+            return [""]
+        report = manager.report
+        if report is None or not report.detected:
+            return [""]
+
+        lines = ["", "LSP:"]
+        for d in report.detected:
+            rl = next((r for r in report.resolved if r.language_id == d.language_id), None)
+            if rl:
+                lines.append(f"  {d.display_name} \u2192 {rl.server_name}")
+            else:
+                missing_rl = next((m for m in report.missing if m.language_id == d.language_id), None)
+                if missing_rl:
+                    install = missing_rl.install_commands[0] if missing_rl.install_commands else "see docs"
+                    lines.append(f"  {d.display_name} \u2192 {missing_rl.server_name} (install: {install})")
+                    if missing_rl.alternatives:
+                        lines.append(f"     Alternatives: {', '.join(missing_rl.alternatives)}")
+        lines.append("")  # blank line before command summary
+        return lines
 
     def _startup_model(self) -> tuple[str, str]:
         if self.config is not None:

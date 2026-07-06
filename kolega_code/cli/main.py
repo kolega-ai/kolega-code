@@ -805,6 +805,10 @@ async def _run_ask(args: argparse.Namespace) -> int:
         hook_dispatcher=hook_dispatcher,
     )
     agent_ref["agent"] = agent
+    lsp_messages = await agent.tool_collection.initialize()
+    if not args.json:
+        for msg in lsp_messages:
+            print(msg, file=sys.stderr)
     if session.history:
         agent.restore_message_history(session.history)
         agent.restore_compaction_state(session.compaction)

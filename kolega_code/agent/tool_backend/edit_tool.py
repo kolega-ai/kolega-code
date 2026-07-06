@@ -1,9 +1,14 @@
+from __future__ import annotations
+
 import re
 from dataclasses import dataclass
-from typing import Callable
+from typing import TYPE_CHECKING, Callable, Optional
 
 from .base_tool import BaseTool
 from .edit_preview import build_diff_preview, build_head_preview
+
+if TYPE_CHECKING:
+    from kolega_code.services.lsp import LspManager
 
 
 _BLOCK_PATTERN = re.compile(r"<<<<<<< SEARCH\r?\n(.*?)\r?\n=======\r?\n(.*?)\r?\n>>>>>>> REPLACE", re.DOTALL)
@@ -38,6 +43,10 @@ class ResolvedReplacement:
 
 
 class EditTool(BaseTool):
+    def __init__(self, *args, lsp_manager: Optional["LspManager"] = None, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._lsp_manager = lsp_manager
+
     async def edit(self, path: str, block: str) -> str:
         """
         Edit a file using a single search and replace block.
@@ -54,7 +63,11 @@ class EditTool(BaseTool):
             error_msg = "Multiple search and replace blocks provided. Use multi_edit for multiple blocks."
             await self.log_error(error_msg, sender=self.caller.agent_name)
             raise ValueError(error_msg)
-        return await self._edit_blocks(path, parsed_blocks, tool_name="edit")
+        result = await self._edit_blocks(path, parsed_blocks, tool_name="edit")
+        lsp_diags = await self._maybe_append_lsp_diagnostics(path)
+        if lsp_diags:
+            result += lsp_diags
+        return result
 
     async def multi_edit(self, path: str, blocks: str) -> str:
         """
@@ -71,7 +84,11 @@ class EditTool(BaseTool):
             A short summary of the update
         """
         parsed_blocks = self._parse_blocks(blocks)
-        return await self._edit_blocks(path, parsed_blocks, tool_name="multi_edit")
+        result = await self._edit_blocks(path, parsed_blocks, tool_name="multi_edit")
+        lsp_diags = await self._maybe_append_lsp_diagnostics(path)
+        if lsp_diags:
+            result += lsp_diags
+        return result
 
     async def write(self, path: str, content: str) -> str:
         """
@@ -119,7 +136,11 @@ class EditTool(BaseTool):
                 tool_call_id=getattr(self.caller, "current_tool_execution_id", None),
                 tool_name="write",
             )
-            return f"Wrote {path}"
+            result = f"Wrote {path}"
+            lsp_diags = await self._maybe_append_lsp_diagnostics(path)
+            if lsp_diags:
+                result += lsp_diags
+            return result
         except PermissionError:
             error_msg = f"Permission denied when writing to file: {path}"
             await self.log_error(error_msg, sender=self.caller.agent_name)
@@ -379,3 +400,30 @@ class EditTool(BaseTool):
         if target == "\n":
             return text
         return text.replace("\n", target)
+
+    async def _maybe_append_lsp_diagnostics(self, path: str) -> str:
+        """Query LSP diagnostics for *path* and format them for appending to the tool result.
+
+        Returns an empty string if LSP is unavailable, disabled, or produces no diagnostics.
+        """
+        if self._lsp_manager is None or not self._lsp_manager.enabled:
+            return ""
+
+        if not self._lsp_manager._initialized:
+            await self._lsp_manager.initialize()
+
+        server_name = self._lsp_manager.server_for_path(path)
+        if server_name is None:
+            return ""
+
+        try:
+            diagnostics = await self._lsp_manager.get_diagnostics(path)
+        except Exception:
+            return ""
+
+        if not diagnostics:
+            return ""
+
+        from kolega_code.services.lsp import format_diagnostics
+
+        return format_diagnostics(diagnostics, path, source=server_name)
