@@ -76,6 +76,15 @@ def test_gigacode_guide_points_agents_to_artifact_transcripts() -> None:
     assert "READ `resultPath` or `transcriptPath`" in GIGACODE_AUTHORING_GUIDE
 
 
+def test_gigacode_guide_includes_workflow_shape_vocabulary() -> None:
+    assert "Surface map" in GIGACODE_AUTHORING_GUIDE
+    assert "Cross-cut matrix" in GIGACODE_AUTHORING_GUIDE
+    assert "Research funnel" in GIGACODE_AUTHORING_GUIDE
+    assert "Hypothesis tournament" in GIGACODE_AUTHORING_GUIDE
+    assert "Migration factory" in GIGACODE_AUTHORING_GUIDE
+    assert "Synthesis gate" in GIGACODE_AUTHORING_GUIDE
+
+
 def test_init_agents_prompt_renders_arguments() -> None:
     rendered = prompts.build_init_agents_prompt("focus on Python packaging")
 
