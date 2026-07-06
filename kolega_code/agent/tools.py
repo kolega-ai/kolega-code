@@ -32,6 +32,58 @@ from .tool_backend.build_tool import BuildTool
 from .tool_backend.lsp_tool import LspTool
 from kolega_code.services.lsp import LspManager
 
+# Explicit input schema for the generic ``lsp`` tool.  The ``operation`` parameter
+# is an enum that signature introspection cannot express.
+_LSP_INPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "operation": {
+            "type": "string",
+            "enum": [
+                "diagnostics",
+                "definition",
+                "type_definition",
+                "implementation",
+                "references",
+                "hover",
+                "document_symbols",
+                "workspace_symbols",
+                "status",
+                "capabilities",
+                "reload",
+            ],
+            "description": (
+                "The LSP operation to perform. Position operations (definition, "
+                "type_definition, implementation, references, hover) require path, "
+                "line, and symbol. diagnostics and document_symbols require path. "
+                "workspace_symbols requires query. status, capabilities, and reload "
+                "need no additional args."
+            ),
+        },
+        "path": {
+            "type": "string",
+            "description": "File path (relative to project root preferred). Required for most operations.",
+        },
+        "line": {
+            "type": "integer",
+            "description": "1-based line number for position operations.",
+        },
+        "symbol": {
+            "type": "string",
+            "description": "Symbol name to resolve on the line. Supports 'name#N' for the Nth occurrence.",
+        },
+        "query": {
+            "type": "string",
+            "description": "Search query for workspace_symbols.",
+        },
+        "timeout": {
+            "type": "number",
+            "description": "Per-call timeout in seconds (default: 30).",
+        },
+    },
+    "required": ["operation"],
+}
+
 
 @dataclass(frozen=True)
 class ToolExtension:
@@ -110,6 +162,7 @@ class ToolCollection(LogMixin):
         "sleep",
         "read_image",
         "lsp_diagnostics",
+        "lsp",
     ]
 
     browser_tools = [
@@ -428,6 +481,9 @@ class ToolCollection(LogMixin):
         # run_workflow's `args` is free-form JSON, which the signature introspector
         # cannot express, so register its explicit input schema.
         self.extension_schemas["run_workflow"] = RUN_WORKFLOW_INPUT_SCHEMA
+        # The `lsp` tool's `operation` is an enum that signature introspection
+        # can't express, so register an explicit input schema.
+        self.extension_schemas["lsp"] = _LSP_INPUT_SCHEMA
         self.browser_tool = BrowserTool(
             self.project_path,
             self.workspace_id,
@@ -1437,6 +1493,49 @@ class ToolCollection(LogMixin):
             if no issues were found.
         """
         return await self.lsp_tool.lsp_diagnostics(path)
+
+    async def lsp(
+        self,
+        operation: str,
+        path: Optional[str] = None,
+        line: Optional[int] = None,
+        symbol: Optional[str] = None,
+        query: Optional[str] = None,
+        timeout: Optional[float] = None,
+    ) -> str:
+        """Query language server intelligence: diagnostics, definition, references, hover, symbols, status.
+
+        This versatile read-only tool interacts with the project's language servers.
+        Different operations require different arguments — see the operation list below.
+
+        Operations and required arguments:
+        - ``diagnostics`` — errors/warnings/hints for a file (``path``)
+        - ``definition`` — go-to-definition (``path``, ``line``, ``symbol``)
+        - ``type_definition`` — go-to-type-definition (``path``, ``line``, ``symbol``)
+        - ``implementation`` — find implementations (``path``, ``line``, ``symbol``)
+        - ``references`` — find all references (``path``, ``line``, ``symbol``)
+        - ``hover`` — hover/type info (``path``, ``line``, ``symbol``)
+        - ``document_symbols`` — symbols in a file (``path``)
+        - ``workspace_symbols`` — project-wide symbol search (``query``)
+        - ``status`` — LSP server status (no args)
+        - ``capabilities`` — server capabilities (optional ``path``)
+        - ``reload`` — restart servers and re-detect (no args)
+
+        For position operations, ``line`` is 1-based and ``symbol`` is the name to
+        find on that line. Use ``name#N`` for the Nth occurrence.
+
+        Args:
+            operation: One of the operations listed above.
+            path: File path (relative to project root preferred).
+            line: 1-based line number for position operations.
+            symbol: Symbol name to resolve on the line (supports ``name#N``).
+            query: Search query for ``workspace_symbols``.
+            timeout: Per-call timeout in seconds (default: 30).
+
+        Returns:
+            Markdown-formatted results for the requested operation.
+        """
+        return await self.lsp_tool.lsp(operation, path, line, symbol, query, timeout)
 
     async def get_host(self, port: int) -> str:
         """

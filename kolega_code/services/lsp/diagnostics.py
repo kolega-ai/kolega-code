@@ -212,3 +212,38 @@ def _line_number(diag: LspDiagnostic) -> Optional[int]:
         if isinstance(raw, int):
             return raw + 1  # LSP uses 0-based lines; convert to 1-based
     return None
+
+
+def _diag_sort_key(diag: LspDiagnostic) -> tuple:
+    """Sort key: severity (errors first), then line, then character."""
+    start = diag.range.get("start", {})
+    line = start.get("line", 0) if isinstance(start, dict) else 0
+    char = start.get("character", 0) if isinstance(start, dict) else 0
+    severity = diag.severity if diag.severity is not None else 99
+    return (severity, line, char)
+
+
+def _diag_dedup_key(diag: LspDiagnostic) -> tuple:
+    """Dedup key: (start_line, start_char, message, source, code)."""
+    start = diag.range.get("start", {})
+    line = start.get("line", 0) if isinstance(start, dict) else 0
+    char = start.get("character", 0) if isinstance(start, dict) else 0
+    return (line, char, diag.message, diag.source, diag.code)
+
+
+def dedupe_and_sort(diagnostics: list[LspDiagnostic], max_count: int = 20) -> list[LspDiagnostic]:
+    """Deduplicate, sort by severity/location, and cap diagnostics.
+
+    - **Dedup** by ``(start_line, start_character, message, source, code)``.
+    - **Sort** by ``(severity, start_line, start_character)`` — errors first.
+    - **Cap** at *max_count*.
+    """
+    seen: set[tuple] = set()
+    deduped: list[LspDiagnostic] = []
+    for d in diagnostics:
+        key = _diag_dedup_key(d)
+        if key not in seen:
+            seen.add(key)
+            deduped.append(d)
+    deduped.sort(key=_diag_sort_key)
+    return deduped[:max_count]

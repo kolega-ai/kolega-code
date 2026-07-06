@@ -60,6 +60,10 @@ class _LspEnabledFakeAgent(FakeCoderAgent):
                 resolved=[SimpleNamespace(language_id="python", server_name="pylsp")],
                 missing=[],
             ),
+            _sessions={},
+            _resolved={},
+            _missing={},
+            last_diagnostic_count={},
         )
         self.tool_collection.lsp_manager = manager
 

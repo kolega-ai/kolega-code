@@ -925,6 +925,17 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             parts = [f"Detected: {', '.join(detected_names)}"]
             if missing_names:
                 parts.append(f"Missing servers: {', '.join(missing_names)}")
+            # Show active sessions with live state
+            active = []
+            for lang_id, client in manager._sessions.items():
+                rl = manager._resolved.get(lang_id) or manager._missing.get(lang_id)
+                server_name = rl.server_name if rl else lang_id
+                if client.running and client.status == "initialized":
+                    active.append(server_name)
+                elif client.status == "error":
+                    active.append(f"{server_name} (error)")
+            if active:
+                parts.append(f"Active: {', '.join(active)}")
             status.update(" ".join(parts))
         else:
             status.update("No supported languages detected in this project.")

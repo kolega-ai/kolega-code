@@ -64,9 +64,17 @@ class LspClient:
         self._request_id: int = 0
         self._pending: dict[int, asyncio.Future[dict[str, Any]]] = {}
         self._notification_handlers: dict[str, list[Callable[[dict[str, Any]], None]]] = {}
+        self._request_handlers: dict[str, Callable[[dict[str, Any]], Any]] = {}
         self._reader_task: Optional[asyncio.Task[None]] = None
         self._lock = asyncio.Lock()
         self._running = False
+
+        # -- state tracking ---------------------------------------
+        self.server_capabilities: Optional[dict[str, Any]] = None
+        self.server_pid: Optional[int] = None
+        self.last_error: Optional[str] = None
+        self.status: str = "stopped"
+        self.active_root: Optional[str] = None
 
     # -- lifecycle ----------------------------------------------------------
 
@@ -89,12 +97,15 @@ class LspClient:
             env=env or None,
         )
         self._running = True
+        self.server_pid = self._proc.pid
+        self.status = "starting"
         self._reader_task = asyncio.create_task(self._read_loop())
-        logger.debug("LSP client started: %s (pid=%s)", self._command, self._proc.pid)
+        logger.debug("LSP client started: %s (pid=%s)", self._command, self.server_pid)
 
     async def stop(self) -> None:
         """Terminate the subprocess and cancel the reader task."""
         self._running = False
+        self.status = "stopped"
         if self._reader_task:
             self._reader_task.cancel()
             try:
@@ -121,8 +132,14 @@ class LspClient:
 
     # -- request / notification --------------------------------------------
 
-    async def request(self, method: str, params: Any = None) -> dict[str, Any]:
-        """Send a JSON-RPC request and await the response."""
+    async def request(self, method: str, params: Any = None, *, timeout: float = 30) -> dict[str, Any]:
+        """Send a JSON-RPC request and await the response.
+
+        Args:
+            method: LSP method name.
+            params: Request parameters (sent as ``params``).
+            timeout: Maximum seconds to wait for a response (default 30).
+        """
         if not self._running:
             raise LspClientError("Client not running")
         async with self._lock:
@@ -132,10 +149,10 @@ class LspClient:
             self._pending[rid] = fut
             await self._send(payload)
         try:
-            return await asyncio.wait_for(fut, timeout=30)
+            return await asyncio.wait_for(fut, timeout=timeout)
         except asyncio.TimeoutError:
             self._pending.pop(rid, None)
-            raise LspClientError(f"Request '{method}' timed out after 30s")
+            raise LspClientError(f"Request '{method}' timed out after {timeout}s")
 
     async def notify(self, method: str, params: Any = None) -> None:
         """Send a JSON-RPC notification (no response expected)."""
@@ -148,6 +165,15 @@ class LspClient:
         """Register a handler for server→client notifications."""
         self._notification_handlers.setdefault(method, []).append(handler)
 
+    def on_request(self, method: str, handler: Callable[[dict[str, Any]], Any]) -> None:
+        """Register a handler for server→client requests.
+
+        The handler receives the request ``params`` and must return a JSON-serialisable
+        result (or raise, which sends an error response).  Only one handler per method
+        is supported (last registration wins).
+        """
+        self._request_handlers[method] = handler
+
     # -- internals ----------------------------------------------------------
 
     async def _send(self, payload: dict[str, Any]) -> None:
@@ -156,6 +182,15 @@ class LspClient:
         header = f"Content-Length: {len(body)}\r\n\r\n"
         self._proc.stdin.write((header + body).encode("utf-8"))
         await self._proc.stdin.drain()
+
+    async def _send_response(self, rid: Any, result: Any = None, error: Optional[dict[str, Any]] = None) -> None:
+        """Send a JSON-RPC response to a server→client request."""
+        payload: dict[str, Any] = {"jsonrpc": "2.0", "id": rid}
+        if error is not None:
+            payload["error"] = error
+        else:
+            payload["result"] = result
+        await self._send(payload)
 
     async def _read_loop(self) -> None:
         assert self._proc is not None and self._proc.stdout is not None
@@ -217,21 +252,46 @@ class LspClient:
         return None
 
     async def _dispatch(self, message: dict[str, Any]) -> None:
-        if "id" in message and "method" not in message:
-            # Response
+        has_id = "id" in message
+        has_method = "method" in message
+
+        if has_id and not has_method:
+            # Response to our request
             rid = message["id"]
             fut = self._pending.pop(rid, None)
             if fut and not fut.done():
                 if "error" in message:
+                    err = message["error"]
                     fut.set_exception(
-                        LspClientError(
-                            f"LSP error {message['error'].get('code', '?')}: "
-                            f"{message['error'].get('message', 'unknown')}"
-                        )
+                        LspClientError(f"LSP error {err.get('code', '?')}: {err.get('message', 'unknown')}")
                     )
                 else:
                     fut.set_result(message.get("result") or {})
-        elif "method" in message:
+            # If fut is None or done: late-arriving response to a timed-out/cancelled
+            # request — silently drop it.
+        elif has_id and has_method:
+            # Server→client request — must send a response back
+            rid = message["id"]
+            method = message["method"]
+            params = message.get("params", {})
+            handler = self._request_handlers.get(method)
+            if handler is not None:
+                try:
+                    result = handler(params)
+                    await self._send_response(rid, result=result)
+                except Exception as exc:
+                    logger.exception("LSP request handler error for %s", method)
+                    await self._send_response(
+                        rid,
+                        error={"code": -32603, "message": f"Internal error: {exc}"},
+                    )
+            else:
+                # Method not found — respond so the server doesn't hang
+                await self._send_response(
+                    rid,
+                    error={"code": -32601, "message": f"Method not found: {method}"},
+                )
+        elif has_method:
             # Notification
             method = message["method"]
             params = message.get("params", {})

@@ -1,0 +1,356 @@
+"""Tests for the generic ``lsp`` tool and the ``lsp_diagnostics`` compatibility wrapper.
+
+The LspManager is fully mocked — no real language server is started.
+"""
+
+from __future__ import annotations
+
+import uuid
+from unittest.mock import AsyncMock, MagicMock, Mock
+
+import pytest
+
+from kolega_code.agent.tool_backend.lsp_tool import LspTool
+from kolega_code.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
+from kolega_code.services.lsp import LspDiagnostic, format_no_diagnostics
+
+
+# ---------------------------------------------------------------------------
+# shared fixtures (mirror tests/agent/tool_backend/test_edit_tool.py)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def mock_connection_manager():
+    return AsyncMock()
+
+
+@pytest.fixture
+def project_path(tmp_path):
+    return tmp_path
+
+
+@pytest.fixture
+def agent_config():
+    return AgentConfig(
+        anthropic_api_key="test_key",
+        openai_api_key="test-key",
+        long_context_config=ModelConfig(
+            provider=ModelProvider.ANTHROPIC, model="test-model", rate_limits=RateLimitConfig()
+        ),
+        fast_config=ModelConfig(provider=ModelProvider.ANTHROPIC, model="test-model", rate_limits=RateLimitConfig()),
+        thinking_config=ModelConfig(
+            provider=ModelProvider.ANTHROPIC,
+            model="test-model",
+            rate_limits=RateLimitConfig(),
+            thinking_effort="medium",
+        ),
+    )
+
+
+@pytest.fixture
+def mock_base_agent():
+    mock = Mock()
+    mock.agent_name = "test_agent"
+    mock.sub_agent = False
+    mock.current_tool_execution_id = "test-call-id"
+    return mock
+
+
+@pytest.fixture
+def make_lsp_tool(project_path, mock_connection_manager, agent_config, mock_base_agent):
+    """Factory that builds an ``LspTool`` bound to a given (mock) LspManager."""
+
+    def _make(lsp_manager=None) -> LspTool:
+        return LspTool(
+            project_path,
+            "test_workspace",
+            str(uuid.uuid4()),
+            mock_connection_manager,
+            agent_config,
+            mock_base_agent,
+            lsp_manager=lsp_manager,
+        )
+
+    return _make
+
+
+@pytest.fixture
+def mock_lsp_manager():
+    """A fully-mocked, enabled, initialized LspManager (no real server)."""
+    manager = MagicMock()
+    manager.enabled = True
+    manager._initialized = True
+    manager.initialize = AsyncMock(return_value=[])
+
+    # Diagnostics / routing
+    manager.server_for_path = Mock(return_value="pyright")
+    manager.get_diagnostics = AsyncMock(return_value=[])
+
+    # Position resolution (sync) + code-intelligence handlers (async)
+    manager._resolve_position = Mock(return_value=(0, 0))
+    manager.get_definition = AsyncMock(return_value=None)
+    manager.get_type_definition = AsyncMock(return_value=None)
+    manager.get_implementation = AsyncMock(return_value=None)
+    manager.get_references = AsyncMock(return_value=None)
+    manager.get_hover = AsyncMock(return_value=None)
+
+    # Symbols
+    manager.get_document_symbols = AsyncMock(return_value=None)
+    manager.get_workspace_symbols = AsyncMock(return_value=None)
+
+    # Status / capabilities / reload
+    manager.status = Mock(
+        return_value={
+            "enabled": True,
+            "initialized": True,
+            "detected": [],
+            "missing": [],
+            "sessions": [],
+            "diagnostic_counts": {},
+        }
+    )
+    manager.get_capabilities = Mock(return_value={})
+    manager.reload = AsyncMock(return_value=[])
+
+    manager._sessions = {}
+    return manager
+
+
+@pytest.fixture
+def lsp_tool(make_lsp_tool, mock_lsp_manager):
+    return make_lsp_tool(mock_lsp_manager)
+
+
+# ---------------------------------------------------------------------------
+# 1. Argument validation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestLspArgumentValidation:
+    async def test_diagnostics_requires_path(self, lsp_tool):
+        result = await lsp_tool.lsp(operation="diagnostics")
+        assert result == "Error: 'path' is required for the 'diagnostics' operation."
+
+    async def test_document_symbols_requires_path(self, lsp_tool):
+        result = await lsp_tool.lsp(operation="document_symbols")
+        assert result == "Error: 'path' is required for the 'document_symbols' operation."
+
+    async def test_workspace_symbols_requires_query(self, lsp_tool):
+        result = await lsp_tool.lsp(operation="workspace_symbols")
+        assert result == "Error: 'query' is required for the 'workspace_symbols' operation."
+
+    @pytest.mark.parametrize("operation", ["definition", "type_definition", "implementation", "references", "hover"])
+    async def test_position_ops_require_path(self, lsp_tool, operation):
+        result = await lsp_tool.lsp(operation=operation)
+        assert result == f"Error: 'path' is required for the '{operation}' operation."
+
+    @pytest.mark.parametrize("operation", ["definition", "type_definition", "implementation", "references", "hover"])
+    async def test_position_ops_require_line(self, lsp_tool, operation):
+        result = await lsp_tool.lsp(operation=operation, path="foo.py")
+        assert result == f"Error: 'line' (1-based) is required for the '{operation}' operation."
+
+    @pytest.mark.parametrize("operation", ["definition", "type_definition", "implementation", "references", "hover"])
+    async def test_position_ops_require_symbol(self, lsp_tool, operation):
+        result = await lsp_tool.lsp(operation=operation, path="foo.py", line=1)
+        assert result == f"Error: 'symbol' is required for the '{operation}' operation."
+
+    async def test_unknown_operation_returns_error(self, lsp_tool):
+        result = await lsp_tool.lsp(operation="bogus", path="foo.py")
+        assert result.startswith("Unknown operation 'bogus'.")
+        assert "Valid operations:" in result
+        # The error must list the real operations.
+        for op in ("diagnostics", "definition", "hover", "status", "workspace_symbols"):
+            assert op in result
+
+    async def test_empty_string_treated_as_missing(self, lsp_tool):
+        # Empty path / query strings are falsy and should be rejected too.
+        assert (
+            await lsp_tool.lsp(operation="diagnostics", path="")
+            == "Error: 'path' is required for the 'diagnostics' operation."
+        )
+        assert (
+            await lsp_tool.lsp(operation="workspace_symbols", query="")
+            == "Error: 'query' is required for the 'workspace_symbols' operation."
+        )
+
+
+# ---------------------------------------------------------------------------
+# 2. Disabled / absent LSP
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestLspDisabled:
+    async def test_lsp_returns_not_available_when_manager_is_none(self, make_lsp_tool):
+        tool = make_lsp_tool(lsp_manager=None)
+        result = await tool.lsp(operation="diagnostics", path="foo.py")
+        assert result == "LSP is not available (disabled or not configured)."
+
+    async def test_lsp_returns_not_available_when_manager_disabled(self, make_lsp_tool):
+        manager = MagicMock()
+        manager.enabled = False
+        tool = make_lsp_tool(lsp_manager=manager)
+        result = await tool.lsp(operation="status")
+        assert result == "LSP is not available (disabled or not configured)."
+
+    async def test_lsp_diagnostics_returns_not_available_when_manager_is_none(self, make_lsp_tool):
+        tool = make_lsp_tool(lsp_manager=None)
+        result = await tool.lsp_diagnostics("foo.py")
+        assert result == "LSP diagnostics are not available (LSP is disabled or not configured)."
+
+    async def test_lsp_diagnostics_returns_not_available_when_manager_disabled(self, make_lsp_tool):
+        manager = MagicMock()
+        manager.enabled = False
+        tool = make_lsp_tool(lsp_manager=manager)
+        result = await tool.lsp_diagnostics("foo.py")
+        assert result == "LSP diagnostics are not available (LSP is disabled or not configured)."
+
+    async def test_disabled_check_precedes_operation_validation(self, make_lsp_tool):
+        """Even an unknown operation reports 'not available' when LSP is off."""
+        tool = make_lsp_tool(lsp_manager=None)
+        result = await tool.lsp(operation="bogus")
+        assert result == "LSP is not available (disabled or not configured)."
+
+
+# ---------------------------------------------------------------------------
+# 3. Status operation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestLspStatus:
+    async def test_status_formats_enabled_manager(self, lsp_tool, mock_lsp_manager):
+        mock_lsp_manager.status.return_value = {
+            "enabled": True,
+            "initialized": True,
+            "detected": [
+                {"language_id": "python", "display_name": "Python", "detection_reason": "by extension"},
+                {"language_id": "typescript", "display_name": "TypeScript", "detection_reason": "by extension"},
+            ],
+            "sessions": [
+                {
+                    "language_id": "python",
+                    "server_name": "pyright",
+                    "connected": True,
+                    "pid": 1234,
+                    "last_error": None,
+                },
+                {
+                    "language_id": "typescript",
+                    "server_name": "typescript-language-server",
+                    "connected": False,
+                    "pid": None,
+                    "last_error": "boom",
+                },
+            ],
+            "missing": [
+                {"language_id": "rust", "display_name": "Rust", "server_name": "rust-analyzer"},
+            ],
+            "diagnostic_counts": {"file:///proj/foo.py": 3},
+        }
+
+        result = await lsp_tool.lsp(operation="status")
+
+        assert result.startswith("## 🔍 LSP Status")
+        assert "Detected 2 language(s)" in result
+        assert "Python (by extension)" in result
+        assert "Active sessions (2)" in result
+        assert "✅ pyright (python) pid=1234" in result
+        assert "❌ typescript-language-server (typescript) — boom" in result
+        assert "Missing servers (1)" in result
+        assert "Rust → rust-analyzer" in result
+        assert "Last diagnostic counts" in result
+        assert "/proj/foo.py: 3" in result
+
+    async def test_status_reports_disabled(self, lsp_tool, mock_lsp_manager):
+        mock_lsp_manager.status.return_value = {
+            "enabled": False,
+            "initialized": False,
+            "detected": [],
+            "missing": [],
+            "sessions": [],
+            "diagnostic_counts": {},
+        }
+
+        result = await lsp_tool.lsp(operation="status")
+
+        assert result.startswith("## 🔍 LSP Status")
+        assert "LSP is disabled." in result
+
+    async def test_status_no_languages_detected(self, lsp_tool, mock_lsp_manager):
+        mock_lsp_manager.status.return_value = {
+            "enabled": True,
+            "initialized": True,
+            "detected": [],
+            "missing": [],
+            "sessions": [],
+            "diagnostic_counts": {},
+        }
+
+        result = await lsp_tool.lsp(operation="status")
+
+        assert "No languages detected." in result
+
+    async def test_status_calls_manager_status(self, lsp_tool, mock_lsp_manager):
+        await lsp_tool.lsp(operation="status")
+        mock_lsp_manager.status.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# 4. lsp_diagnostics compatibility wrapper
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestLspDiagnosticsWrapper:
+    async def test_wrapper_matches_diagnostics_operation_no_diagnostics(self, lsp_tool, mock_lsp_manager):
+        mock_lsp_manager.server_for_path.return_value = "pyright"
+        mock_lsp_manager.get_diagnostics.return_value = []
+
+        wrapper_result = await lsp_tool.lsp_diagnostics("foo.py")
+        op_result = await lsp_tool.lsp(operation="diagnostics", path="foo.py")
+
+        assert wrapper_result == op_result
+        assert wrapper_result == format_no_diagnostics()
+
+    async def test_wrapper_matches_diagnostics_operation_with_diagnostics(self, lsp_tool, mock_lsp_manager):
+        mock_lsp_manager.server_for_path.return_value = "pyright"
+        mock_lsp_manager.get_diagnostics.return_value = [
+            LspDiagnostic(
+                range={"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 3}},
+                severity=1,
+                message="Undefined name",
+                source="pyright",
+            ),
+        ]
+
+        wrapper_result = await lsp_tool.lsp_diagnostics("foo.py")
+        op_result = await lsp_tool.lsp(operation="diagnostics", path="foo.py")
+
+        assert wrapper_result == op_result
+        assert "LSP diagnostics (1 error):" in wrapper_result
+        assert "Undefined name" in wrapper_result
+
+    async def test_wrapper_matches_when_no_server_configured(self, lsp_tool, mock_lsp_manager):
+        mock_lsp_manager.server_for_path.return_value = None
+
+        wrapper_result = await lsp_tool.lsp_diagnostics("data.csv")
+        op_result = await lsp_tool.lsp(operation="diagnostics", path="data.csv")
+
+        assert wrapper_result == op_result
+        assert wrapper_result == "No language server configured for data.csv."
+
+    async def test_wrapper_initializes_manager_when_not_initialized(self, make_lsp_tool):
+        manager = MagicMock()
+        manager.enabled = True
+        manager._initialized = False
+        manager.initialize = AsyncMock(return_value=[])
+        manager.server_for_path = Mock(return_value="pyright")
+        manager.get_diagnostics = AsyncMock(return_value=[])
+        tool = make_lsp_tool(lsp_manager=manager)
+
+        await tool.lsp_diagnostics("foo.py")
+
+        manager.initialize.assert_awaited_once()

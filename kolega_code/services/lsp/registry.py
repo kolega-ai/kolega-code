@@ -25,6 +25,9 @@ class LspRegistry:
         self._languages: dict[str, LanguageSpec] = {}
         self._ext_to_lang: dict[str, str] = {}
         self._filename_to_lang: dict[str, str] = {}
+        self._initialization_options: dict[str, dict] = (
+            dict(config.initialization_options) if isinstance(config, LspConfig) else {}
+        )
 
         self._load_presets()
         if config:
@@ -57,6 +60,10 @@ class LspRegistry:
     def language_for_filename(self, filename: str) -> Optional[str]:
         """Return the ``language_id`` for an exact filename match."""
         return self._filename_to_lang.get(filename)
+
+    def initialization_options_for(self, server_name: str) -> dict:
+        """Return ``initializationOptions`` for *server_name*, or ``{}`` if unset."""
+        return dict(self._initialization_options.get(server_name, {}))
 
     # -- loading -----------------------------------------------------------
 
@@ -280,4 +287,6 @@ def load_project_lsp_config(project_path: str | Path) -> Optional[LspConfig]:
         disabled_languages=list(data.get("disabled_languages", []) or []),
         preferences=dict(data.get("preferences", {}) or {}),
         custom_servers=dict(data.get("servers", {}) or {}),
+        initialization_options=dict(data.get("initialization_options", {}) or {}),
+        diagnostic_servers=list(data.get("diagnostic_servers", []) or []),
     )

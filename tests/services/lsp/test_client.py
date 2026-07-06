@@ -124,3 +124,165 @@ async def test_notification_handlers():
     assert events[0]["uri"] == "file:///test.py"
 
     await client.stop()
+
+
+# ---------------------------------------------------------------------------
+# server→client request handling
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_server_request_handler_called_and_response_sent():
+    """A server→client request (id + method) triggers the handler and sends a response."""
+    client = LspClient(["sleep", "10"])
+    await client.start()
+
+    sent_messages: list[dict] = []
+
+    async def fake_send(payload):
+        sent_messages.append(payload)
+
+    client._send = fake_send  # type: ignore[assignment]  # noqa: SLF001
+
+    handler_calls: list[dict] = []
+
+    def config_handler(params):
+        handler_calls.append(params)
+        return [{"someSetting": True}]
+
+    client.on_request("workspace/configuration", config_handler)
+
+    # Simulate a server→client request
+    await client._dispatch(
+        {  # noqa: SLF001
+            "jsonrpc": "2.0",
+            "id": 42,
+            "method": "workspace/configuration",
+            "params": {"items": [{"section": "python"}]},
+        }
+    )
+
+    assert len(handler_calls) == 1
+    assert handler_calls[0]["items"][0]["section"] == "python"
+    # A response was sent
+    assert len(sent_messages) == 1
+    assert sent_messages[0]["id"] == 42
+    assert sent_messages[0]["result"] == [{"someSetting": True}]
+
+    await client.stop()
+
+
+@pytest.mark.asyncio
+async def test_unhandled_server_request_sends_error_response():
+    """An unhandled server→client request gets a -32601 error response (no hang)."""
+    client = LspClient(["sleep", "10"])
+    await client.start()
+
+    sent_messages: list[dict] = []
+
+    async def fake_send(payload):
+        sent_messages.append(payload)
+
+    client._send = fake_send  # type: ignore[assignment]  # noqa: SLF001
+
+    await client._dispatch(
+        {  # noqa: SLF001
+            "jsonrpc": "2.0",
+            "id": 99,
+            "method": "some/unknown/method",
+            "params": {},
+        }
+    )
+
+    assert len(sent_messages) == 1
+    assert sent_messages[0]["id"] == 99
+    assert sent_messages[0]["error"]["code"] == -32601
+
+    await client.stop()
+
+
+@pytest.mark.asyncio
+async def test_server_request_handler_exception_sends_error():
+    """If a request handler raises, an error response is sent."""
+    client = LspClient(["sleep", "10"])
+    await client.start()
+
+    sent_messages: list[dict] = []
+
+    async def fake_send(payload):
+        sent_messages.append(payload)
+
+    client._send = fake_send  # type: ignore[assignment]  # noqa: SLF001
+
+    def bad_handler(params):
+        raise RuntimeError("boom")
+
+    client.on_request("window/workDoneProgress/create", bad_handler)
+
+    await client._dispatch(
+        {  # noqa: SLF001
+            "jsonrpc": "2.0",
+            "id": 7,
+            "method": "window/workDoneProgress/create",
+            "params": {"token": "abc"},
+        }
+    )
+
+    assert len(sent_messages) == 1
+    assert sent_messages[0]["error"]["code"] == -32603
+
+    await client.stop()
+
+
+@pytest.mark.asyncio
+async def test_late_response_to_timed_out_request_no_crash():
+    """A response arriving after timeout is silently dropped (no crash)."""
+    client = LspClient(["sleep", "10"])
+    await client.start()
+
+    # Dispatch a response for a request id that was never registered (simulating
+    # a response arriving after the future was popped due to timeout)
+    await client._dispatch(
+        {  # noqa: SLF001
+            "jsonrpc": "2.0",
+            "id": 9999,
+            "result": {"late": True},
+        }
+    )
+    # No crash — the method simply returns
+
+    await client.stop()
+
+
+# ---------------------------------------------------------------------------
+# state tracking
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_client_tracks_pid_and_status():
+    """Client stores server_pid and status after start."""
+    client = LspClient(["sleep", "10"])
+    assert client.status == "stopped"
+    assert client.server_pid is None
+
+    await client.start()
+    assert client.status == "starting"
+    assert client.server_pid is not None
+    assert client.server_pid > 0
+
+    await client.stop()
+    assert client.status == "stopped"
+
+
+@pytest.mark.asyncio
+async def test_client_request_accepts_custom_timeout():
+    """The request method accepts a custom timeout."""
+    client = LspClient(["sleep", "10"])
+    await client.start()
+
+    # A request to a dummy server will time out quickly with a small timeout
+    with pytest.raises(LspClientError, match="timed out after 0.1s"):
+        await client.request("test/method", timeout=0.1)
+
+    await client.stop()

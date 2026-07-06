@@ -409,6 +409,9 @@ class EditTool(BaseTool):
         if self._lsp_manager is None or not self._lsp_manager.enabled:
             return ""
 
+        if not self._lsp_manager._config.auto_diagnostics_on_edit:
+            return ""
+
         if not self._lsp_manager._initialized:
             await self._lsp_manager.initialize()
 
@@ -417,7 +420,7 @@ class EditTool(BaseTool):
             return ""
 
         try:
-            diagnostics = await self._lsp_manager.get_diagnostics(path)
+            diagnostics = await self._lsp_manager.get_fresh_diagnostics(path)
         except Exception:
             return ""
 

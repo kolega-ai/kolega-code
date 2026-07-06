@@ -88,6 +88,18 @@ class LspConfig:
     custom_servers: dict[str, dict] = field(default_factory=dict)
     """User-defined server definitions keyed by server name."""
 
+    initialization_options: dict[str, dict] = field(default_factory=dict)
+    """Per-server initialization options keyed by server name.
+
+    Example: ``{"pyright": {"python": {"analysis": {"typeCheckingMode": "basic"}}}}``.
+    Passed as ``initializationOptions`` in the LSP ``initialize`` request.
+    """
+
+    diagnostic_servers: list[str] = field(default_factory=list)
+    """Names of *additional* servers to start alongside the primary for extra
+    linting coverage.  Default: empty (one server per language).
+    """
+
 
 # ---------------------------------------------------------------------------
 # internal helpers

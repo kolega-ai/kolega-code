@@ -79,6 +79,10 @@ class ResolvedLanguage:
     install_commands: list[str]
     alternatives: list[str]  # other server names available
     family: Optional[str] = None  # if set, reuse this language's server
+    env: dict[str, str] = field(default_factory=dict)
+    """Environment variables from the matched ``LanguageServerSpec``."""
+    initialization_options: dict = field(default_factory=dict)
+    """Server-specific initialization options (from config or spec)."""
 
 
 @dataclass
@@ -211,6 +215,8 @@ async def detect_languages(project_path: str | Path, registry: LspRegistry) -> D
             install_commands=registry.install_commands_for_platform(chosen) if chosen is not None else [],
             alternatives=alternatives,
             family=spec.family,
+            env=dict(chosen.env) if chosen is not None else {},
+            initialization_options=registry.initialization_options_for(chosen.name) if chosen is not None else {},
         )
 
         if resolved_bin:

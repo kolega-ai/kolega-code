@@ -23,6 +23,7 @@ from .client import LspClientError, LspDiagnostic, PublishDiagnosticsParams, par
 from .config import LanguageServerSpec, LanguageSpec, LspConfig, platform_key
 from .diagnostics import (
     MissingServer,
+    dedupe_and_sort,
     extract_lsp_label,
     format_detected_summary,
     format_diagnostics,
@@ -42,6 +43,7 @@ __all__ = [
     "LspRegistry",
     "MissingServer",
     "PublishDiagnosticsParams",
+    "dedupe_and_sort",
     "extract_lsp_label",
     "format_detected_summary",
     "format_diagnostics",

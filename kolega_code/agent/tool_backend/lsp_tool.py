@@ -1,12 +1,12 @@
-"""``lsp_diagnostics`` tool — explicit LSP diagnostic queries for agents.
+"""Read-only LSP tools for agents.
 
-Provides a read-only tool that agents call to check for errors, warnings, and
-hints from language servers after editing files.
+Provides ``lsp_diagnostics`` (compatibility wrapper) and the generic ``lsp``
+tool for diagnostics, go-to-definition, references, hover, symbols, and status.
 """
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 
 from .base_tool import BaseTool
 from kolega_code.services.lsp import LspManager, format_diagnostics, format_no_diagnostics
@@ -78,3 +78,387 @@ class LspTool(BaseTool):
             path,
             source=server_name,
         )
+
+    # -- generic lsp tool ----------------------------------------
+
+    _POSITION_OPS = {"definition", "type_definition", "implementation", "references", "hover"}
+    _PATH_OPS = {
+        "diagnostics",
+        "document_symbols",
+        "definition",
+        "type_definition",
+        "implementation",
+        "references",
+        "hover",
+        "capabilities",
+    }
+    _ALL_OPS = _POSITION_OPS | {
+        "diagnostics",
+        "document_symbols",
+        "workspace_symbols",
+        "status",
+        "capabilities",
+        "reload",
+    }
+
+    async def lsp(
+        self,
+        operation: str,
+        path: Optional[str] = None,
+        line: Optional[int] = None,
+        symbol: Optional[str] = None,
+        query: Optional[str] = None,
+        timeout: Optional[float] = None,
+    ) -> str:
+        """Query language server intelligence (diagnostics, definition, references, hover, symbols, status).
+
+        This is a versatile read-only tool for interacting with the project's language
+        servers. Different operations require different arguments.
+
+        Operations:
+        - **diagnostics**: Get errors/warnings/hints for a file. Requires ``path``.
+        - **definition**: Go to definition. Requires ``path``, ``line`` (1-based), ``symbol``.
+        - **type_definition**: Go to type definition. Requires ``path``, ``line``, ``symbol``.
+        - **implementation**: Find implementations. Requires ``path``, ``line``, ``symbol``.
+        - **references**: Find all references. Requires ``path``, ``line``, ``symbol``.
+        - **hover**: Get hover/type info. Requires ``path``, ``line``, ``symbol``.
+        - **document_symbols**: List symbols in a file. Requires ``path``.
+        - **workspace_symbols**: Search project-wide symbols. Requires ``query``.
+        - **status**: Show LSP server status (no args required).
+        - **capabilities**: Show server capabilities. Optional ``path``.
+        - **reload**: Restart language servers and re-detect languages (no args required).
+
+        Position resolution: For position operations, provide a 1-based ``line`` number
+        and a ``symbol`` name. The tool finds the symbol on that line and computes the
+        exact character position. Use ``name#N`` to target the Nth occurrence on the line.
+
+        Args:
+            operation: One of the operations listed above.
+            path: File path (relative to project root preferred).
+            line: 1-based line number for position operations.
+            symbol: Symbol name to resolve on the line (supports ``name#N``).
+            query: Search query for workspace_symbols.
+            timeout: Per-call timeout in seconds (default: 30).
+
+        Returns:
+            Markdown-formatted results for the requested operation.
+        """
+        if self._lsp_manager is None or not self._lsp_manager.enabled:
+            return "LSP is not available (disabled or not configured)."
+
+        if operation not in self._ALL_OPS:
+            return f"Unknown operation '{operation}'. Valid operations: {', '.join(sorted(self._ALL_OPS))}."
+
+        if not self._lsp_manager._initialized:
+            await self._lsp_manager.initialize()
+
+        kw_timeout: dict[str, Any] = {"timeout": timeout} if timeout is not None else {}
+
+        try:
+            if operation == "diagnostics":
+                return await self._op_diagnostics(path)
+            elif operation in self._POSITION_OPS:
+                return await self._op_position(operation, path, line, symbol, kw_timeout)
+            elif operation == "document_symbols":
+                return await self._op_document_symbols(path, kw_timeout)
+            elif operation == "workspace_symbols":
+                return await self._op_workspace_symbols(query, kw_timeout)
+            elif operation == "status":
+                return self._op_status()
+            elif operation == "capabilities":
+                return self._op_capabilities(path)
+            elif operation == "reload":
+                return await self._op_reload()
+            else:
+                return f"Operation '{operation}' is not yet implemented."
+        except ValueError as exc:
+            return f"Error: {exc}"
+        except Exception as exc:
+            await self.log_warning(f"LSP operation '{operation}' failed: {exc}", sender=self.caller.agent_name)
+            return f"LSP operation '{operation}' failed: {exc}"
+
+    async def _op_diagnostics(self, path: Optional[str]) -> str:
+        assert self._lsp_manager is not None
+        if not path:
+            return "Error: 'path' is required for the 'diagnostics' operation."
+        server_name = self._lsp_manager.server_for_path(path)
+        if server_name is None:
+            return f"No language server configured for {path}."
+        diagnostics = await self._lsp_manager.get_diagnostics(path)
+        if not diagnostics:
+            return format_no_diagnostics()
+        return format_diagnostics(diagnostics, path, source=server_name)
+
+    async def _op_position(
+        self,
+        operation: str,
+        path: Optional[str],
+        line: Optional[int],
+        symbol: Optional[str],
+        kw_timeout: dict[str, Any],
+    ) -> str:
+        assert self._lsp_manager is not None
+        if not path:
+            return f"Error: 'path' is required for the '{operation}' operation."
+        if line is None:
+            return f"Error: 'line' (1-based) is required for the '{operation}' operation."
+        if not symbol:
+            return f"Error: 'symbol' is required for the '{operation}' operation."
+
+        server_name = self._lsp_manager.server_for_path(path)
+        if server_name is None:
+            return f"No language server configured for {path}."
+
+        lsp_line, character = self._lsp_manager._resolve_position(path, line, symbol)
+
+        method_map = {
+            "definition": self._lsp_manager.get_definition,
+            "type_definition": self._lsp_manager.get_type_definition,
+            "implementation": self._lsp_manager.get_implementation,
+            "references": self._lsp_manager.get_references,
+            "hover": self._lsp_manager.get_hover,
+        }
+        handler = method_map[operation]
+        result = await handler(path, lsp_line, character, **kw_timeout)
+
+        if result is None:
+            return f"The '{operation}' operation is not supported by {server_name}, or no results were found."
+
+        return self._format_position_result(operation, result, server_name)
+
+    async def _op_document_symbols(self, path: Optional[str], kw_timeout: dict[str, Any]) -> str:
+        assert self._lsp_manager is not None
+        if not path:
+            return "Error: 'path' is required for the 'document_symbols' operation."
+        server_name = self._lsp_manager.server_for_path(path)
+        if server_name is None:
+            return f"No language server configured for {path}."
+        result = await self._lsp_manager.get_document_symbols(path, **kw_timeout)
+        if result is None:
+            return f"Document symbols are not supported by {server_name}, or the file has no symbols."
+        return self._format_symbols(result)
+
+    async def _op_workspace_symbols(self, query: Optional[str], kw_timeout: dict[str, Any]) -> str:
+        assert self._lsp_manager is not None
+        if not query:
+            return "Error: 'query' is required for the 'workspace_symbols' operation."
+        result = await self._lsp_manager.get_workspace_symbols(query, **kw_timeout)
+        if result is None:
+            return "Workspace symbol search is not supported, or no symbols were found."
+        if not result:
+            return f"No symbols found matching '{query}'."
+        return self._format_symbol_info_list(result)
+
+    def _op_status(self) -> str:
+        assert self._lsp_manager is not None
+        status = self._lsp_manager.status()
+        return self._format_status(status)
+
+    def _op_capabilities(self, path: Optional[str]) -> str:
+        assert self._lsp_manager is not None
+        if path:
+            caps = self._lsp_manager.get_capabilities(path)
+            if not caps:
+                return f"No active language server for {path}, or capabilities not yet available."
+            return f"Server capabilities for {path}:\n\n```json\n{caps}\n```"
+        # No path — show all sessions' capabilities summary
+        lines = ["## LSP Capabilities"]
+        for lang_id, client in self._lsp_manager._sessions.items():
+            caps = client.server_capabilities or {}
+            providers = sorted(k for k in caps if k.endswith("Provider") or k.endswith("Provider"))
+            lines.append(f"\n**{lang_id}** ({client.status}): {', '.join(providers) if providers else 'none'}")
+        return "\n".join(lines)
+
+    async def _op_reload(self) -> str:
+        assert self._lsp_manager is not None
+        messages = await self._lsp_manager.reload()
+        if messages:
+            return "LSP reloaded.\n" + "\n".join(messages)
+        return "LSP reloaded."
+
+    # -- formatting helpers -------------------------------------------------
+
+    @staticmethod
+    def _format_position_result(operation: str, result: Any, server_name: str) -> str:
+        """Format definition/references/hover results as readable text."""
+        op_label = operation.replace("_", " ").title()
+
+        if operation == "hover":
+            return LspTool._format_hover(result, server_name)
+
+        # Definition, typeDefinition, implementation, references → Location | Location[] | null
+        locations = result
+        if isinstance(result, dict) and "uri" in result:
+            locations = [result]
+        elif isinstance(result, list):
+            locations = result
+        else:
+            locations = []
+
+        if not locations:
+            return f"No {op_label.lower()} results."
+
+        lines = [f"## {op_label} ({len(locations)} result{'s' if len(locations) != 1 else ''})"]
+        for loc in locations[:50]:
+            uri = loc.get("uri", "?")
+            rng = loc.get("range", {})
+            start = rng.get("start", {}) if isinstance(rng, dict) else {}
+            line_no = start.get("line", 0) + 1 if isinstance(start, dict) else 1
+            char_no = start.get("character", 0) if isinstance(start, dict) else 0
+            # Convert file:// URI to a path
+            path_str = uri.replace("file://", "") if uri.startswith("file://") else uri
+            lines.append(f"  - `{path_str}:{line_no}:{char_no}`")
+
+        if len(locations) > 50:
+            lines.append(f"  ... and {len(locations) - 50} more")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _format_hover(result: Any, server_name: str) -> str:
+        if not result:
+            return "No hover information available."
+        contents = result.get("contents") if isinstance(result, dict) else None
+        if contents is None:
+            return "No hover information available."
+
+        if isinstance(contents, dict):
+            value = contents.get("value", "")
+            language = contents.get("language", "")
+            if language:
+                return f"```{language}\n{value}\n```"
+            return value
+        elif isinstance(contents, list):
+            parts = []
+            for item in contents:
+                if isinstance(item, dict):
+                    value = item.get("value", "")
+                    language = item.get("language", "")
+                    if language:
+                        parts.append(f"```{language}\n{value}\n```")
+                    else:
+                        parts.append(value)
+                elif isinstance(item, str):
+                    parts.append(item)
+            return "\n\n".join(parts) if parts else "No hover information available."
+        elif isinstance(contents, str):
+            return contents
+        return "No hover information available."
+
+    @staticmethod
+    def _format_symbols(symbols: Any) -> str:
+        """Format documentSymbol results."""
+        if not symbols:
+            return "No symbols found in this file."
+
+        lines = ["## Document Symbols"]
+        for sym in symbols[:100]:
+            if isinstance(sym, dict):
+                name = sym.get("name", "?")
+                kind = sym.get("kind", 0)
+                detail = sym.get("detail", "")
+                kind_str = _SYMBOL_KINDS.get(kind, "Symbol")
+                detail_str = f" — {detail}" if detail else ""
+                # Check for range
+                rng = sym.get("range", {})
+                start = rng.get("start", {}) if isinstance(rng, dict) else {}
+                line_no = start.get("line", 0) + 1 if isinstance(start, dict) else 0
+                lines.append(f"  - `{name}` ({kind_str}){detail_str} — line {line_no}")
+
+        if len(symbols) > 100:
+            lines.append(f"  ... and {len(symbols) - 100} more")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _format_symbol_info_list(symbols: Any) -> str:
+        """Format workspace/symbol (SymbolInformation[]) results."""
+        if not symbols:
+            return "No symbols found."
+
+        lines = [f"## Workspace Symbols ({len(symbols)} found)"]
+        for sym in symbols[:50]:
+            if isinstance(sym, dict):
+                name = sym.get("name", "?")
+                kind = sym.get("kind", 0)
+                container = sym.get("containerName", "")
+                loc = sym.get("location", {})
+                uri = loc.get("uri", "?") if isinstance(loc, dict) else "?"
+                path_str = uri.replace("file://", "") if uri.startswith("file://") else uri
+                kind_str = _SYMBOL_KINDS.get(kind, "Symbol")
+                container_str = f" in {container}" if container else ""
+                lines.append(f"  - `{name}` ({kind_str}){container_str} — `{path_str}`")
+
+        if len(symbols) > 50:
+            lines.append(f"  ... and {len(symbols) - 50} more")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _format_status(status: dict) -> str:
+        """Format the manager status dict as readable text."""
+        lines = ["## 🔍 LSP Status"]
+
+        if not status.get("enabled"):
+            lines.append("\nLSP is disabled.")
+            return "\n".join(lines)
+
+        detected = status.get("detected", [])
+        if detected:
+            lines.append(f"\n**Detected {len(detected)} language(s):**")
+            for d in detected:
+                lines.append(f"  - {d['display_name']} ({d['detection_reason']})")
+        else:
+            lines.append("\nNo languages detected.")
+
+        sessions = status.get("sessions", [])
+        if sessions:
+            lines.append(f"\n**Active sessions ({len(sessions)}):**")
+            for s in sessions:
+                status_icon = "✅" if s.get("connected") else "❌"
+                pid_str = f" pid={s['pid']}" if s.get("pid") else ""
+                error_str = f" — {s['last_error']}" if s.get("last_error") else ""
+                lines.append(f"  {status_icon} {s['server_name']} ({s['language_id']}){pid_str}{error_str}")
+
+        missing = status.get("missing", [])
+        if missing:
+            lines.append(f"\n**⚠️ Missing servers ({len(missing)}):**")
+            for m in missing:
+                lines.append(f"  - {m['display_name']} → {m['server_name']}")
+
+        diag_counts = status.get("diagnostic_counts", {})
+        if diag_counts:
+            lines.append("\n**Last diagnostic counts:**")
+            for uri, count in list(diag_counts.items())[:10]:
+                path_str = uri.replace("file://", "") if uri.startswith("file://") else uri
+                lines.append(f"  - {path_str}: {count}")
+
+        return "\n".join(lines)
+
+
+# LSP SymbolKind constants (subset)
+_SYMBOL_KINDS: dict[int, str] = {
+    1: "File",
+    2: "Module",
+    3: "Namespace",
+    4: "Package",
+    5: "Class",
+    6: "Method",
+    7: "Property",
+    8: "Field",
+    9: "Constructor",
+    10: "Enum",
+    11: "Interface",
+    12: "Function",
+    13: "Variable",
+    14: "Constant",
+    15: "String",
+    16: "Number",
+    17: "Boolean",
+    18: "Array",
+    19: "Object",
+    20: "Key",
+    21: "Null",
+    22: "EnumMember",
+    23: "Struct",
+    24: "Event",
+    25: "Operator",
+    26: "TypeParameter",
+}

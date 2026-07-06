@@ -787,7 +787,33 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
                 lines.append(f"  - **{m.display_name}**: `{m.server_name}` — install: `{install}`")
                 if m.alternatives:
                     lines.append(f"    Alternatives: {', '.join(m.alternatives)}")
-            lines.append("\nRun `/lsp` to see this status again.")
+
+        # Active sessions with live state
+        active_sessions = []
+        for lang_id, client in manager._sessions.items():
+            rl = manager._resolved.get(lang_id) or manager._missing.get(lang_id)
+            server_name = rl.server_name if rl else lang_id
+            if client.running and client.status == "initialized":
+                pid_str = f" (pid={client.server_pid})" if client.server_pid else ""
+                active_sessions.append(f"  - ✅ **{server_name}** for {lang_id}{pid_str}")
+            elif client.status == "error" and client.last_error:
+                active_sessions.append(f"  - ❌ **{server_name}** for {lang_id} — {client.last_error}")
+
+        if active_sessions:
+            lines.append(f"\n**Active sessions ({len(active_sessions)}):**")
+            lines.extend(active_sessions)
+
+        # Last diagnostic counts
+        diag_counts = manager.last_diagnostic_count
+        if diag_counts:
+            shown = list(diag_counts.items())[:5]
+            count_parts = []
+            for uri, count in shown:
+                path_str = uri.replace("file://", "") if uri.startswith("file://") else uri
+                count_parts.append(f"{path_str}: {count}")
+            lines.append(f"\n**Last diagnostics:** {', '.join(count_parts)}")
+
+        lines.append("\nRun `/lsp` to see this status again.")
 
         return "\n".join(lines)
 

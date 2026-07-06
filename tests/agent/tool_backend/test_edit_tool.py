@@ -448,3 +448,67 @@ class TestWriteTool:
 
         assert "Permission denied" in str(exc_info.value)
         assert not (project_path / "test.txt").exists()
+
+
+def _make_mock_lsp_manager(*, auto_diagnostics_on_edit: bool, diagnostics=None) -> Mock:
+    """Build a mock LspManager with the attributes _maybe_append_lsp_diagnostics() inspects."""
+    manager = Mock()
+    manager.enabled = True
+    manager._config = Mock()
+    manager._config.auto_diagnostics_on_edit = auto_diagnostics_on_edit
+    manager._initialized = True
+    manager.server_for_path = Mock(return_value="pyright")
+    manager.get_fresh_diagnostics = AsyncMock(return_value=diagnostics or [])
+    return manager
+
+
+@pytest.mark.asyncio
+class TestEditToolLspDiagnostics:
+    """Tests for LSP diagnostics behavior controlled by auto_diagnostics_on_edit."""
+
+    @staticmethod
+    def _make_edit_tool(project_path, mock_connection_manager, agent_config, mock_base_agent, lsp_manager):
+        return EditTool(
+            project_path,
+            "test_workspace",
+            str(uuid.uuid4()),
+            mock_connection_manager,
+            agent_config,
+            mock_base_agent,
+            lsp_manager=lsp_manager,
+        )
+
+    async def test_edit_skips_diagnostics_when_auto_diagnostics_disabled(
+        self, project_path, mock_connection_manager, agent_config, mock_base_agent
+    ):
+        """When auto_diagnostics_on_edit=False, edit() does NOT append LSP diagnostics."""
+        lsp_manager = _make_mock_lsp_manager(auto_diagnostics_on_edit=False)
+        tool = self._make_edit_tool(project_path, mock_connection_manager, agent_config, mock_base_agent, lsp_manager)
+
+        file_path = project_path / "test.py"
+        file_path.write_text("x = 1\n")
+
+        result = await tool.edit("test.py", block("x = 1", "x = 2"))
+
+        assert result == "Edited test.py"
+        assert "LSP diagnostics" not in result
+        # The diagnostics path is short-circuited before any LSP queries happen.
+        lsp_manager.get_fresh_diagnostics.assert_not_called()
+
+    async def test_edit_queries_diagnostics_when_auto_diagnostics_enabled(
+        self, project_path, mock_connection_manager, agent_config, mock_base_agent
+    ):
+        """When auto_diagnostics_on_edit=True (default), edit() queries the LSP manager."""
+        lsp_manager = _make_mock_lsp_manager(auto_diagnostics_on_edit=True)
+        tool = self._make_edit_tool(project_path, mock_connection_manager, agent_config, mock_base_agent, lsp_manager)
+
+        file_path = project_path / "test.py"
+        file_path.write_text("x = 1\n")
+
+        result = await tool.edit("test.py", block("x = 1", "x = 2"))
+
+        assert result == "Edited test.py"
+        # Mock returns empty diagnostics, so no diagnostics block is appended.
+        assert "LSP diagnostics" not in result
+        # But the manager WAS queried for fresh diagnostics.
+        lsp_manager.get_fresh_diagnostics.assert_awaited_once_with("test.py")
