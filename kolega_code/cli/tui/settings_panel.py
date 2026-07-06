@@ -907,7 +907,11 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             status = self.query_one("#lsp_status", Static)
         except NoMatches:
             return
-        manager = self.agent.tool_collection.lsp_manager if self.agent is not None else None  # pyright: ignore[reportOptionalMemberAccess]
+        agent = self.agent
+        if agent is None or agent.tool_collection is None:
+            status.update("LSP is not active. Enable it above and save settings.")
+            return
+        manager = agent.tool_collection.lsp_manager
         if manager is None or not manager.enabled:
             status.update("LSP is not active. Enable it above and save settings.")
             return

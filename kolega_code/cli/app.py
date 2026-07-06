@@ -1927,9 +1927,10 @@ class KolegaCodeApp(
 
     def _startup_lsp_lines(self) -> list[str]:
         """Plain-text LSP status lines for the startup block (above command summary)."""
-        if self.agent is None:
+        agent = self.agent
+        if agent is None or agent.tool_collection is None:
             return [""]
-        manager = self.agent.tool_collection.lsp_manager  # pyright: ignore[reportOptionalMemberAccess]
+        manager = agent.tool_collection.lsp_manager
         if manager is None or not manager.enabled:
             return [""]
         report = manager.report

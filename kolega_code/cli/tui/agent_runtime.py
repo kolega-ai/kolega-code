@@ -728,8 +728,10 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         )
         assert self.agent is not None
         # Initialize LSP (language detection + server resolution)
-        await self.agent.tool_collection.initialize()  # pyright: ignore[reportOptionalMemberAccess]
-        self.agent.gigacode_enabled = gigacode_active
+        agent = self.agent
+        assert agent.tool_collection is not None
+        await agent.tool_collection.initialize()
+        agent.gigacode_enabled = gigacode_active
         if history:
             self.agent.restore_message_history(history)
             self.agent.restore_compaction_state(compaction)
@@ -741,9 +743,10 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
 
     def _format_lsp_status(self) -> str:
         """Build a human-readable LSP status message for the conversation or /lsp command."""
-        if self.agent is None:
+        agent = self.agent
+        if agent is None or agent.tool_collection is None:
             return ""
-        manager = self.agent.tool_collection.lsp_manager  # pyright: ignore[reportOptionalMemberAccess]
+        manager = agent.tool_collection.lsp_manager
         if manager is None or not manager.enabled:
             return ""
 
