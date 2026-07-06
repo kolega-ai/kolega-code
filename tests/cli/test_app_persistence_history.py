@@ -30,6 +30,7 @@ from kolega_code.cli.session_store import SessionStore
 from kolega_code.cli.settings import CliSettings, SettingsStore
 
 from ._app_test_utils import (
+    FakeCoderAgent,
     _build_mention_test_app,
     _build_sub_agent_test_app,
     _sub_agent_context_event,
@@ -39,9 +40,24 @@ from ._app_test_utils import (
     build_test_config,
     extension_by_name,
     first_text_styles,
+    install_fake_agents,
     question_payload,
     renderable_text,
 )
+
+
+class _RestoredHistoryFakeAgent(FakeCoderAgent):
+    """Fake agent that records the raw history passed to ``restore_message_history``."""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.restored_history = None
+
+    def restore_message_history(self, history):
+        self.restored_history = history
+
+    def dump_message_history(self):
+        return self.restored_history or []
 
 
 @pytest.mark.asyncio
@@ -50,26 +66,7 @@ async def test_textual_app_startup_entry_updates_incrementally(tmp_path: Path, m
 
     from kolega_code.cli.app import KolegaCodeApp
 
-    class FakeAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-        def restore_message_history(self, history):
-            return None
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return []
-
-        async def cleanup(self):
-            return None
-
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeAgent)
+    install_fake_agents(monkeypatch)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -119,26 +116,11 @@ async def test_textual_app_does_not_save_startup_entry_to_history(
 
     saved_history = [Message(role="assistant", content=[TextBlock("saved response")]).to_dict()]
 
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-        def restore_message_history(self, history):
-            return None
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
+    class FakeAgent(FakeCoderAgent):
         def dump_message_history(self):
             return saved_history
 
-        async def cleanup(self):
-            return None
-
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -163,12 +145,9 @@ async def test_textual_app_history_save_runs_off_event_loop(tmp_path: Path, monk
 
     saved_history = [Message(role="assistant", content=[TextBlock("saved response")]).to_dict()]
 
-    class FakeAgent:
+    class FakeAgent(FakeCoderAgent):
         def dump_message_history(self):
             return saved_history
-
-        def dump_compaction_state(self):
-            return {}
 
     project = tmp_path / "project"
     project.mkdir()
@@ -207,7 +186,7 @@ async def test_textual_app_history_save_persists_session_and_compaction(
     saved_history = [Message(role="assistant", content=[TextBlock("persist me")]).to_dict()]
     saved_compaction = {"summary": "older turns", "compacted_through": 3, "compacted_history_length": 5}
 
-    class FakeAgent:
+    class FakeAgent(FakeCoderAgent):
         def dump_message_history(self):
             return saved_history
 
@@ -242,12 +221,9 @@ async def test_textual_app_overlapping_saves_preserve_later_state(
 
     saved_history = [Message(role="assistant", content=[TextBlock("history from first save")]).to_dict()]
 
-    class FakeAgent:
+    class FakeAgent(FakeCoderAgent):
         def dump_message_history(self):
             return saved_history
-
-        def dump_compaction_state(self):
-            return {}
 
     project = tmp_path / "project"
     project.mkdir()
@@ -298,34 +274,11 @@ async def test_textual_app_reset_command_clears_current_thread(
     from kolega_code.cli.tui.widgets import ChatComposer
     from kolega_code.cli.messages import THREAD_RESET_MESSAGE
 
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-            self.history = []
-            self.active_goal_condition = None
-
-        def apply_goal(self, condition, prompt_extension=None):
-            self.active_goal_condition = condition
-
-        def restore_message_history(self, history):
-            self.history = list(history)
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return self.history
-
-        async def cleanup(self):
-            return None
-
-        async def process_message_stream(self, message):
+    class FakeAgent(FakeCoderAgent):
+        async def process_message_stream(self, message, attachments=None):
             raise AssertionError("reset commands should not be sent to the agent")
 
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeAgent)
 
     saved_history = [
         Message(role="user", content=[TextBlock("old request")]).to_dict(),
@@ -396,27 +349,7 @@ async def test_textual_app_reset_command_waits_for_active_turn(tmp_path: Path, m
     from kolega_code.cli.tui.widgets import ChatComposer
     from kolega_code.cli.messages import COMPOSER_PLACEHOLDER
 
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-            self.history = ["old history"]
-
-        def restore_message_history(self, history):
-            return None
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return self.history
-
-        async def cleanup(self):
-            return None
-
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    install_fake_agents(monkeypatch)
 
     saved_history = [Message(role="user", content=[TextBlock("old request")]).to_dict()]
     project = tmp_path / "project"
@@ -451,27 +384,7 @@ async def test_textual_app_renders_resumed_history_in_chat(tmp_path: Path, monke
 
     from kolega_code.cli.app import KolegaCodeApp
 
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-            self.restored_history = None
-
-        def restore_message_history(self, history):
-            self.restored_history = history
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return self.restored_history or []
-
-        async def cleanup(self):
-            return None
-
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", _RestoredHistoryFakeAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -501,7 +414,7 @@ async def test_textual_app_renders_resumed_history_in_chat(tmp_path: Path, monke
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
 
     async with app.run_test():
-        assert isinstance(app.agent, FakeCoderAgent)
+        assert isinstance(app.agent, _RestoredHistoryFakeAgent)
         assert app.agent.restored_history == session.history
         assert app.conversation_entries[0].kind == "startup"
         startup = app.conversation_entries[0].content
@@ -525,27 +438,7 @@ async def test_textual_app_restore_tool_history_matches_legacy_and_execution_ids
 
     from kolega_code.cli.app import KolegaCodeApp
 
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-            self.restored_history = None
-
-        def restore_message_history(self, history):
-            self.restored_history = history
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return self.restored_history or []
-
-        async def cleanup(self):
-            return None
-
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", _RestoredHistoryFakeAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -643,14 +536,16 @@ async def test_textual_app_model_rebuild_rerenders_completed_tool_once(
 
     from kolega_code.cli.app import KolegaCodeApp
 
-    class FakeCoderAgent:
+    class FakeAgent(FakeCoderAgent):
         def __init__(self, **kwargs):
-            self.kwargs = kwargs
-            self.history = []
+            super().__init__(**kwargs)
             self.compaction = {}
 
         def restore_message_history(self, history):
             self.history = history
+
+        def dump_message_history(self):
+            return self.history
 
         def dump_compaction_state(self):
             return self.compaction
@@ -658,13 +553,7 @@ async def test_textual_app_model_rebuild_rerenders_completed_tool_once(
         def restore_compaction_state(self, data):
             self.compaction = data or {}
 
-        def dump_message_history(self):
-            return self.history
-
-        async def cleanup(self):
-            return None
-
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeAgent)
 
     project = tmp_path / "project"
     project.mkdir()

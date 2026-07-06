@@ -31,6 +31,7 @@ from kolega_code.cli.session_store import SessionStore
 from kolega_code.cli.settings import CliSettings, SettingsStore
 
 from ._app_test_utils import (
+    FakeCoderAgent,
     _build_mention_test_app,
     _build_sub_agent_test_app,
     _sub_agent_context_event,
@@ -40,6 +41,7 @@ from ._app_test_utils import (
     build_test_config,
     extension_by_name,
     first_text_styles,
+    install_fake_agents,
     question_payload,
     renderable_text,
 )
@@ -196,26 +198,7 @@ async def test_textual_app_prompt_list_recovers_focus_after_drift(
     from kolega_code.cli.tui.widgets import ActionList
     from kolega_code.permissions import PermissionDecision, allow_rule_options, permission_request_for_tool
 
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            pass
-
-        def restore_message_history(self, history):
-            return None
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return []
-
-        async def cleanup(self):
-            return None
-
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    install_fake_agents(monkeypatch)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -270,26 +253,7 @@ async def test_textual_app_question_recovers_focus_but_allows_free_form_answer(
     from kolega_code.cli.tui.state import PendingQuestion
     from kolega_code.cli.tui.widgets import ActionList, ChatComposer
 
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            pass
-
-        def restore_message_history(self, history):
-            return None
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return []
-
-        async def cleanup(self):
-            return None
-
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    install_fake_agents(monkeypatch)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -323,25 +287,13 @@ async def test_textual_app_question_recovers_focus_but_allows_free_form_answer(
         app._set_question_actions_visible(False)
 
 
-class PromptCommandFakeAgent:
+class PromptCommandFakeAgent(FakeCoderAgent):
     def __init__(self, **kwargs):
-        self.kwargs = kwargs
+        super().__init__(**kwargs)
         self.prompt_provider = PromptProvider()
         self.agent_mode = AgentMode.CLI
         self.project_template_slug = None
         self.refresh_count = 0
-
-    def restore_message_history(self, history):
-        return None
-
-    def dump_compaction_state(self):
-        return {}
-
-    def restore_compaction_state(self, data):
-        pass
-
-    def dump_message_history(self):
-        return []
 
     def build_prompt_context(self):
         return PromptContext(
@@ -353,9 +305,6 @@ class PromptCommandFakeAgent:
 
     def refresh_system_prompt(self):
         self.refresh_count += 1
-
-    async def cleanup(self):
-        return None
 
 
 @pytest.mark.asyncio

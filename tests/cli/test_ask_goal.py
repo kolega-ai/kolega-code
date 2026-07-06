@@ -5,10 +5,10 @@ import json
 
 from kolega_code.agent.goal import GoalVerdict
 from kolega_code.cli.goal import build_goal_task_prompt
-from kolega_code.llm.models import Message
+from ._app_test_utils import FakeCoderAgent
 
 
-class GoalAskFakeAgent:
+class GoalAskFakeAgent(FakeCoderAgent):
     """Fake CoderAgent supporting the goal loop contract."""
 
     agent_name = "coder"
@@ -20,10 +20,7 @@ class GoalAskFakeAgent:
     default_reason: str = "done"
 
     def __init__(self, **kwargs):
-        self.kwargs = kwargs
-        self.history: list[Message] = []
-        self.messages: list[str] = []
-        self.active_goal_condition = None
+        super().__init__(**kwargs)
         self.prompt_extensions = list(kwargs.get("prompt_extensions", []))
         self.evaluate_calls = 0
         GoalAskFakeAgent.instances.append(self)
@@ -48,27 +45,15 @@ class GoalAskFakeAgent:
 
     # -- messaging ------------------------------------------------------
 
-    def append_user_message(self, content):
-        self.history.append(Message(role="user", content=content))
-
     def restore_message_history(self, history):
         pass
 
     def dump_message_history(self):
         return []
 
-    def dump_compaction_state(self):
-        return {}
-
-    def restore_compaction_state(self, data):
-        pass
-
     async def process_message_stream(self, message, attachments=None):
         self.messages.append(message)
         yield {"type": "response", "content": "working", "complete": True, "uuid": "resp-1"}
-
-    async def cleanup(self):
-        pass
 
     async def fire_hook(self, event, payload):
         class Result:

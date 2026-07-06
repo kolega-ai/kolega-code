@@ -6,8 +6,6 @@ import time
 
 import pytest
 
-from kolega_code.cli.tui import agent_runtime as agent_runtime_module
-
 from kolega_code.config import ModelProvider
 from kolega_code.llm.exceptions import (
     LLMBillingError,
@@ -30,6 +28,7 @@ from kolega_code.cli.session_store import SessionStore
 from kolega_code.cli.settings import CliSettings, SettingsStore
 
 from ._app_test_utils import (
+    FakeCoderAgent,
     _build_mention_test_app,
     _build_sub_agent_test_app,
     _sub_agent_context_event,
@@ -39,6 +38,7 @@ from ._app_test_utils import (
     build_test_config,
     extension_by_name,
     first_text_styles,
+    install_fake_agents,
     question_payload,
     renderable_text,
 )
@@ -51,26 +51,7 @@ async def test_textual_app_renders_tool_events_in_chat(tmp_path: Path, monkeypat
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.theme import TOOL_RESULT_PREVIEW_CHARS
 
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-        def restore_message_history(self, history):
-            return None
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return []
-
-        async def cleanup(self):
-            return None
-
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    install_fake_agents(monkeypatch)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -134,26 +115,7 @@ async def test_textual_app_appends_append_mode_tool_streaming_events_in_chat(
 
     from kolega_code.cli.app import KolegaCodeApp
 
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-        def restore_message_history(self, history):
-            return None
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return []
-
-        async def cleanup(self):
-            return None
-
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    install_fake_agents(monkeypatch)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -237,26 +199,7 @@ async def test_textual_app_replaces_default_tool_streaming_events_in_chat(
 
     from kolega_code.cli.app import KolegaCodeApp
 
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-        def restore_message_history(self, history):
-            return None
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return []
-
-        async def cleanup(self):
-            return None
-
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    install_fake_agents(monkeypatch)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -306,26 +249,7 @@ async def test_textual_app_caps_long_append_mode_tool_streaming_events(
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.theme import TOOL_STREAM_PREVIEW_CHARS
 
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-        def restore_message_history(self, history):
-            return None
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return []
-
-        async def cleanup(self):
-            return None
-
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    install_fake_agents(monkeypatch)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -372,27 +296,12 @@ async def test_textual_app_renders_queued_tool_events_during_active_turn(
     started = asyncio.Event()
     release = asyncio.Event()
 
-    class FakeCoderAgent:
+    class _QueuingCoderAgent(FakeCoderAgent):
         def __init__(self, **kwargs):
-            self.kwargs = kwargs
+            super().__init__(**kwargs)
             self.connection_manager = kwargs["connection_manager"]
             self.workspace_id = kwargs["workspace_id"]
             self.thread_id = kwargs["thread_id"]
-
-        def restore_message_history(self, history):
-            return None
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return []
-
-        async def cleanup(self):
-            return None
 
         async def process_message_stream(self, message):
             await self.connection_manager.broadcast_event(
@@ -434,7 +343,7 @@ async def test_textual_app_renders_queued_tool_events_during_active_turn(
                 return entries
             await asyncio.sleep(0.01)
 
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    install_fake_agents(monkeypatch, coder_cls=_QueuingCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -484,26 +393,7 @@ async def test_textual_app_late_tool_result_updates_existing_tool_row(
 
     from kolega_code.cli.app import KolegaCodeApp
 
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-        def restore_message_history(self, history):
-            return None
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return []
-
-        async def cleanup(self):
-            return None
-
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    install_fake_agents(monkeypatch)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -585,3 +475,64 @@ async def test_tool_entries_render_as_collapsibles_with_full_output(
         entry = widget.entry
         assert len(entry.content) == TOOL_RESULT_PREVIEW_CHARS + 1  # preview stays truncated
         assert entry.full_content == long_output  # expand-on-demand shows everything
+
+
+@pytest.mark.asyncio
+async def test_tool_entry_title_shows_lsp_badge_for_diagnostics(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A tool result carrying LSP diagnostics surfaces a severity badge in its title."""
+    pytest.importorskip("textual")
+
+    from textual.widgets import Collapsible
+
+    from kolega_code.cli.tui.widgets import ToolEntryWidget
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        app._turn_active = True
+        result_text = (
+            "Edited foo.py\n\n"
+            "LSP diagnostics (2 warnings):\n"
+            "🟡 Line 5: 'foo' is not defined (pyright)\n"
+            "🟡 Line 10: Unused import 'os' (pyright)"
+        )
+        app._add_tool_message("tool_call", {"tool_name": "edit", "tool_call_id": "tc-lsp", "text": "Calling edit"})
+        app._add_tool_message("tool_result", {"tool_name": "edit", "tool_call_id": "tc-lsp", "text": result_text})
+        app._flush_conversation_render()
+        await pilot.pause()
+
+        widget = app.query(ToolEntryWidget).last()
+        title = str(widget.query_one(Collapsible).title)
+        assert "done" in title
+        # The badge is visible without expanding and reads "2 LSP warnings".
+        assert "2 LSP warnings" in title
+        # The full diagnostics block is available in the expandable body.
+        assert "LSP diagnostics (2 warnings):" in widget.entry.full_content
+
+
+@pytest.mark.asyncio
+async def test_tool_entry_title_has_no_lsp_badge_without_diagnostics(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A tool result without diagnostics shows no LSP badge."""
+    pytest.importorskip("textual")
+
+    from textual.widgets import Collapsible
+
+    from kolega_code.cli.tui.widgets import ToolEntryWidget
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        app._turn_active = True
+        app._add_tool_message("tool_call", {"tool_name": "edit", "tool_call_id": "tc-clean", "text": "Calling edit"})
+        app._add_tool_message("tool_result", {"tool_name": "edit", "tool_call_id": "tc-clean", "text": "Edited foo.py"})
+        app._flush_conversation_render()
+        await pilot.pause()
+
+        widget = app.query(ToolEntryWidget).last()
+        title = str(widget.query_one(Collapsible).title)
+        assert "done" in title
+        assert "LSP" not in title

@@ -11,7 +11,7 @@ from kolega_code.cli.session_store import SessionStore
 from kolega_code.llm.models import ImageBlock, Message, TextBlock
 
 
-from ._app_test_utils import build_test_config
+from ._app_test_utils import FakeCoderAgent, build_test_config
 
 
 class _FakeConversation:
@@ -44,25 +44,6 @@ async def test_switch_to_non_vision_model_with_image_history_warns(tmp_path, mon
     pytest.importorskip("textual")
 
     from kolega_code.cli.app import KolegaCodeApp
-
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-        def restore_message_history(self, history):
-            return None
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return []
-
-        async def cleanup(self):
-            return None
 
     monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
@@ -107,25 +88,6 @@ async def test_switch_to_vision_model_with_image_history_no_warn(tmp_path, monke
 
     from kolega_code.cli.app import KolegaCodeApp
 
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-        def restore_message_history(self, history):
-            return None
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return []
-
-        async def cleanup(self):
-            return None
-
     monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
@@ -160,25 +122,6 @@ async def test_switch_to_non_vision_model_without_image_history_no_warn(tmp_path
     pytest.importorskip("textual")
 
     from kolega_code.cli.app import KolegaCodeApp
-
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-        def restore_message_history(self, history):
-            return None
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return []
-
-        async def cleanup(self):
-            return None
 
     monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 

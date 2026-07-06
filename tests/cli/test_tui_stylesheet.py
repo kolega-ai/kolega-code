@@ -6,14 +6,13 @@ import pytest
 from kolega_code.agent.prompt_provider import AgentMode
 from kolega_code.cli.config import config_summary
 from kolega_code.cli.session_store import SessionStore
-from kolega_code.cli.tui import agent_runtime as agent_runtime_module
 from kolega_code.config import ModelProvider
 
 
 EXPECTED_CSS_PATH = "tui/styles.tcss"
 
 
-from ._app_test_utils import build_test_config
+from ._app_test_utils import FakeCoderAgent, build_test_config, install_fake_agents
 
 
 def test_tui_uses_external_textual_stylesheet(tmp_path: Path) -> None:
@@ -45,26 +44,7 @@ async def test_tui_external_stylesheet_loads_in_textual_app(
 
     from kolega_code.cli.app import KolegaCodeApp
 
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-        def restore_message_history(self, history):
-            pass
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return []
-
-        async def cleanup(self):
-            return None
-
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    install_fake_agents(monkeypatch)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -305,26 +285,7 @@ async def test_sidebar_tab_and_settings_planning_computed_styles_keep_contrast(
 
     from kolega_code.cli.app import KolegaCodeApp
 
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-        def restore_message_history(self, history):
-            pass
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return []
-
-        async def cleanup(self):
-            return None
-
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    install_fake_agents(monkeypatch)
 
     project = tmp_path / "project"
     project.mkdir()

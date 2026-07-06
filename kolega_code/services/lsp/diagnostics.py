@@ -1,7 +1,8 @@
-"""Format LSP diagnostics as markdown for agent consumption."""
+"""Format LSP diagnostics for agent consumption and UI presentation."""
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Optional
 
@@ -42,22 +43,28 @@ class MissingServer:
 
 
 def format_diagnostics(diagnostics: list[LspDiagnostic], path: str, source: str = "", max_diags: int = 20) -> str:
-    """Format a list of LSP diagnostics as markdown.
+    """Format a list of LSP diagnostics as plain text.
+
+    The output begins with a header line of the form
+    ``LSP diagnostics (<summary label>):`` (e.g. ``LSP diagnostics (2 warnings):``)
+    followed by one line per diagnostic. ``extract_lsp_label`` parses that header so
+    the TUI can surface a glanceable badge without re-deriving the counts.
 
     Args:
         diagnostics: Raw diagnostics from the language server.
-        path: The file path (for the header).
-        source: Language server name shown as attribution, e.g. ``"(pyright)"``.
+        path: The file path (reserved for future use; not currently rendered).
+        source: Language server name shown as attribution, e.g. ``(pyright)``.
         max_diags: Maximum diagnostics to include; excess is truncated with a note.
 
     Returns:
-        A markdown string suitable for appending to a tool result.
+        Plain text suitable for appending to a tool result. No leading newline —
+        the caller adds any separator it wants between the result and this block.
     """
     if not diagnostics:
         return ""
 
-    lines: list[str] = []
-    lines.append("\n### LSP Diagnostics")
+    label = summary_label(severity_counts(diagnostics))
+    lines: list[str] = [f"LSP diagnostics ({label}):"]
 
     shown = diagnostics[:max_diags]
     for diag in shown:
@@ -73,9 +80,69 @@ def format_diagnostics(diagnostics: list[LspDiagnostic], path: str, source: str 
             lines.append(f"{emoji} {msg}{code_str}{source_str}")
 
     if len(diagnostics) > max_diags:
-        lines.append(f"\n... and {len(diagnostics) - max_diags} more diagnostics (capped at {max_diags})")
+        lines.append(f"... and {len(diagnostics) - max_diags} more (capped at {max_diags})")
 
     return "\n".join(lines)
+
+
+def severity_counts(diagnostics: list[LspDiagnostic]) -> dict:
+    """Tally diagnostics by LSP severity.
+
+    Returns a dict with keys ``total``, ``errors``, ``warnings``, ``infos``,
+    ``hints``. Unknown severities count toward ``total`` only.
+    """
+    counts = {"total": 0, "errors": 0, "warnings": 0, "infos": 0, "hints": 0}
+    for diag in diagnostics:
+        counts["total"] += 1
+        severity = diag.severity
+        if severity == _SEVERITY_ERROR:
+            counts["errors"] += 1
+        elif severity == _SEVERITY_WARNING:
+            counts["warnings"] += 1
+        elif severity == _SEVERITY_INFO:
+            counts["infos"] += 1
+        elif severity == _SEVERITY_HINT:
+            counts["hints"] += 1
+    return counts
+
+
+def summary_label(counts: dict) -> str:
+    """Compact, pluralization-correct severity label for a ``severity_counts`` dict.
+
+    Examples: ``"2 warnings"``, ``"1 error, 2 warnings"``, ``"3 diagnostics"``.
+    """
+    parts: list[str] = []
+    errors = int(counts.get("errors", 0))
+    warnings = int(counts.get("warnings", 0))
+    notes = int(counts.get("infos", 0)) + int(counts.get("hints", 0))
+    if errors:
+        parts.append(f"{errors} error{'s' if errors != 1 else ''}")
+    if warnings:
+        parts.append(f"{warnings} warning{'s' if warnings != 1 else ''}")
+    if notes:
+        parts.append(f"{notes} note{'s' if notes != 1 else ''}")
+    if not parts:
+        total = int(counts.get("total", 0))
+        return f"{total} diagnostic{'s' if total != 1 else ''}"
+    return ", ".join(parts)
+
+
+# Matches the ``LSP diagnostics (<label>):`` header emitted by format_diagnostics.
+_LSP_HEADER_RE = re.compile(r"LSP diagnostics \(([^)]+)\)")
+
+
+def extract_lsp_label(text: str) -> Optional[str]:
+    """Recover the severity summary label from a tool-result text, or ``None``.
+
+    Scans for the ``LSP diagnostics (<label>):`` header produced by
+    :func:`format_diagnostics` and returns the captured label (e.g. ``"2 warnings"``).
+    Returns ``None`` when the text carries no diagnostics block, so callers can
+    treat the absence as "no badge".
+    """
+    if not text:
+        return None
+    match = _LSP_HEADER_RE.search(text)
+    return match.group(1) if match else None
 
 
 def format_no_diagnostics() -> str:

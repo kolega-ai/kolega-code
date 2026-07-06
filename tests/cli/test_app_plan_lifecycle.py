@@ -6,8 +6,6 @@ import time
 
 import pytest
 
-from kolega_code.cli.tui import agent_runtime as agent_runtime_module
-
 from kolega_code.config import ModelProvider
 from kolega_code.llm.exceptions import (
     LLMBillingError,
@@ -31,6 +29,7 @@ from kolega_code.cli.session_store import SessionStore
 from kolega_code.cli.settings import CliSettings, SettingsStore
 
 from ._app_test_utils import (
+    FakeCoderAgent,
     _build_mention_test_app,
     _build_sub_agent_test_app,
     _sub_agent_context_event,
@@ -40,6 +39,7 @@ from ._app_test_utils import (
     build_test_config,
     extension_by_name,
     first_text_styles,
+    install_fake_agents,
     question_payload,
     renderable_text,
 )
@@ -56,25 +56,6 @@ async def test_textual_app_shows_plan_decision_when_planning_agent_writes_plan(
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.widgets import ActionList, ChatComposer
 
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-        def restore_message_history(self, history):
-            return None
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return []
-
-        async def cleanup(self):
-            return None
-
     class FakePlanningAgent(FakeCoderAgent):
         def __init__(self, **kwargs):
             super().__init__(**kwargs)
@@ -90,8 +71,7 @@ async def test_textual_app_shows_plan_decision_when_planning_agent_writes_plan(
             self.completed_plan = None
             return plan
 
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
-    monkeypatch.setattr(agent_runtime_module, "PlanningAgent", FakePlanningAgent)
+    install_fake_agents(monkeypatch, planning_cls=FakePlanningAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -204,36 +184,7 @@ async def test_textual_app_implement_plan_switches_to_build_and_sends_plan(
 
     from kolega_code.cli.app import KolegaCodeApp
 
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-            self.messages: list[str] = []
-            self.history = []
-
-        def restore_message_history(self, history):
-            self.history = list(history)
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return self.history
-
-        async def cleanup(self):
-            return None
-
-        async def process_message_stream(self, message):
-            self.messages.append(message)
-            yield {"type": "response", "content": "implemented", "complete": True, "uuid": "response-1"}
-
-    class FakePlanningAgent(FakeCoderAgent):
-        pass
-
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
-    monkeypatch.setattr(agent_runtime_module, "PlanningAgent", FakePlanningAgent)
+    install_fake_agents(monkeypatch, planning_cls=FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -290,34 +241,7 @@ async def test_textual_app_implemented_plan_not_reoffered_on_reentry(
     from kolega_code.cli.tui.constants import PLAN_INTERACTION_MODE
     from kolega_code.cli.tui.widgets import ActionList
 
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-            self.history = []
-
-        def restore_message_history(self, history):
-            self.history = list(history)
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return self.history
-
-        async def cleanup(self):
-            return None
-
-        async def process_message_stream(self, message):
-            yield {"type": "response", "content": "implemented", "complete": True, "uuid": "response-1"}
-
-    class FakePlanningAgent(FakeCoderAgent):
-        pass
-
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
-    monkeypatch.setattr(agent_runtime_module, "PlanningAgent", FakePlanningAgent)
+    install_fake_agents(monkeypatch, planning_cls=FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -368,37 +292,7 @@ async def test_textual_app_clear_context_and_implement_plan_starts_build_agent_f
 
     from kolega_code.cli.app import KolegaCodeApp
 
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-            self.messages: list[str] = []
-            self.history = []
-            self.last_compression_index = None
-
-        def restore_message_history(self, history):
-            self.history = list(history)
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return self.history
-
-        async def cleanup(self):
-            return None
-
-        async def process_message_stream(self, message):
-            self.messages.append(message)
-            yield {"type": "response", "content": "implemented", "complete": True, "uuid": "response-1"}
-
-    class FakePlanningAgent(FakeCoderAgent):
-        pass
-
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
-    monkeypatch.setattr(agent_runtime_module, "PlanningAgent", FakePlanningAgent)
+    install_fake_agents(monkeypatch, planning_cls=FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -458,36 +352,7 @@ async def test_textual_app_discuss_plan_preserves_old_plan_until_new_plan_is_wri
 
     from kolega_code.cli.app import KolegaCodeApp
 
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-            self.messages: list[str] = []
-            self.history = []
-
-        def restore_message_history(self, history):
-            self.history = list(history)
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return self.history
-
-        async def cleanup(self):
-            return None
-
-        async def process_message_stream(self, message):
-            self.messages.append(message)
-            yield {"type": "response", "content": "implemented", "complete": True, "uuid": "response-1"}
-
-    class FakePlanningAgent(FakeCoderAgent):
-        pass
-
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
-    monkeypatch.setattr(agent_runtime_module, "PlanningAgent", FakePlanningAgent)
+    install_fake_agents(monkeypatch, planning_cls=FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()

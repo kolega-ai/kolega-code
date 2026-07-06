@@ -11,16 +11,48 @@ from kolega_code.events import AgentEvent
 from kolega_code.llm.models import Message
 
 
-class MinimalFakeCoderAgent:
+class _FakeToolCollection:
+    """Minimal stand-in satisfying app startup's ``await tool_collection.initialize()``.
+
+    The LSP branch wires ``agent.tool_collection.initialize()`` into ``_build_agent``;
+    the fake agents used by the rendering tests need this attribute so the app mounts.
+    """
+
+    lsp_manager = None
+
+    async def initialize(self):
+        return []
+
+
+class FakeCoderAgent:
+    """Shared stand-in for ``CoderAgent`` in TUI app tests.
+
+    Consolidates the app-mount contract (``tool_collection.initialize``,
+    message-history round-trip, compaction stubs, ``cleanup``, ``apply_goal``)
+    so individual tests don't re-declare the same boilerplate. Tests needing
+    custom streaming/error/goal behavior subclass this and override only the
+    relevant method (typically ``process_message_stream``).
+    """
+
     def __init__(self, **kwargs):
         self.kwargs = kwargs
+        self.tool_collection = _FakeToolCollection()
+        self.history: list[Message] = []
+        self.messages: list = []
+        self.attachments: list = []
         self.active_goal_condition = None
 
     def apply_goal(self, condition, prompt_extension=None):
         self.active_goal_condition = condition
 
+    def append_user_message(self, content):
+        self.history.append(Message(role="user", content=content))
+
     def restore_message_history(self, history):
-        return None
+        self.history = [Message.from_dict(item) for item in history]
+
+    def dump_message_history(self):
+        return [message.to_dict() for message in self.history]
 
     def dump_compaction_state(self):
         return {}
@@ -28,14 +60,20 @@ class MinimalFakeCoderAgent:
     def restore_compaction_state(self, data):
         pass
 
-    def dump_message_history(self):
-        return []
-
     async def cleanup(self):
         return None
 
+    async def process_message_stream(self, message, attachments=None):
+        self.messages.append(message)
+        self.attachments.append(attachments)
+        yield {"type": "response", "content": "done", "complete": True, "uuid": "response-1"}
 
-def install_fake_agents(monkeypatch: pytest.MonkeyPatch, *, coder_cls=MinimalFakeCoderAgent, planning_cls=None):
+
+# Backwards-compatible alias; new code should use ``FakeCoderAgent`` directly.
+MinimalFakeCoderAgent = FakeCoderAgent
+
+
+def install_fake_agents(monkeypatch: pytest.MonkeyPatch, *, coder_cls=FakeCoderAgent, planning_cls=None):
     monkeypatch.setattr(agent_runtime_module, "CoderAgent", coder_cls)
     if planning_cls is not None:
         monkeypatch.setattr(agent_runtime_module, "PlanningAgent", planning_cls)
@@ -101,30 +139,7 @@ def _build_sub_agent_test_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *
 
     from kolega_code.cli.app import KolegaCodeApp
 
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-            self.active_goal_condition = None
-
-        def apply_goal(self, condition, prompt_extension=None):
-            self.active_goal_condition = condition
-
-        def restore_message_history(self, history):
-            return None
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return []
-
-        async def cleanup(self):
-            return None
-
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    install_fake_agents(monkeypatch)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -202,41 +217,7 @@ def _workflow_event(message_type, run_id="wf-1", **content):
 def _build_mention_test_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     from kolega_code.cli.app import KolegaCodeApp
 
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-            self.history = []
-            self.messages = []
-            self.attachments = []
-            self.active_goal_condition = None
-
-        def apply_goal(self, condition, prompt_extension=None):
-            self.active_goal_condition = condition
-
-        def append_user_message(self, content):
-            self.history.append(Message(role="user", content=content))
-
-        def restore_message_history(self, history):
-            self.history = [Message.from_dict(item) for item in history]
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return [message.to_dict() for message in self.history]
-
-        async def cleanup(self):
-            return None
-
-        async def process_message_stream(self, message, attachments=None):
-            self.messages.append(message)
-            self.attachments.append(attachments)
-            yield {"type": "response", "content": "done", "complete": True, "uuid": "response-1"}
-
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    install_fake_agents(monkeypatch)
 
     project = tmp_path / "project"
     project.mkdir()

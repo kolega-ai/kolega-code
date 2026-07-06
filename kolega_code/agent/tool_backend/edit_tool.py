@@ -426,4 +426,6 @@ class EditTool(BaseTool):
 
         from kolega_code.services.lsp import format_diagnostics
 
-        return format_diagnostics(diagnostics, path, source=server_name)
+        # Blank-line separator so the diagnostics block reads as a distinct section
+        # after the result line (e.g. "Edited foo.py\n\nLSP diagnostics (...)").
+        return "\n\n" + format_diagnostics(diagnostics, path, source=server_name)

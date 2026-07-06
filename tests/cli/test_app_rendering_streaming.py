@@ -30,6 +30,7 @@ from kolega_code.cli.session_store import SessionStore
 from kolega_code.cli.settings import CliSettings, SettingsStore
 
 from ._app_test_utils import (
+    FakeCoderAgent,
     _build_mention_test_app,
     _build_sub_agent_test_app,
     _sub_agent_context_event,
@@ -58,30 +59,12 @@ async def test_textual_app_merges_streamed_response_chunks(tmp_path: Path, monke
         {"type": "response", "content": "", "complete": True, "uuid": "response-1"},
     ]
 
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-        def restore_message_history(self, history):
-            return None
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return []
-
-        async def cleanup(self):
-            return None
-
-        async def process_message_stream(self, message):
+    class ChunkedResponseCoderAgent(FakeCoderAgent):
+        async def process_message_stream(self, message, attachments=None):
             for chunk in chunks:
                 yield chunk
 
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", ChunkedResponseCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -114,30 +97,12 @@ async def test_textual_app_merges_streamed_thinking_chunks(tmp_path: Path, monke
         {"type": "response", "content": "done", "complete": True, "uuid": "response-1"},
     ]
 
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-        def restore_message_history(self, history):
-            return None
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return []
-
-        async def cleanup(self):
-            return None
-
-        async def process_message_stream(self, message):
+    class ThinkingChunkCoderAgent(FakeCoderAgent):
+        async def process_message_stream(self, message, attachments=None):
             for chunk in chunks:
                 yield chunk
 
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", ThinkingChunkCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -163,25 +128,6 @@ async def test_textual_app_formats_thinking_as_italic_chat_entry(
 
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.state import ConversationEntry
-
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-        def restore_message_history(self, history):
-            return None
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return []
-
-        async def cleanup(self):
-            return None
 
     monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
@@ -214,29 +160,11 @@ async def test_textual_app_ignores_empty_final_response_without_existing_entry(
     from kolega_code.cli.tui.widgets import ChatComposer
     from kolega_code.cli.messages import COMPOSER_PLACEHOLDER
 
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-        def restore_message_history(self, history):
-            return None
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return []
-
-        async def cleanup(self):
-            return None
-
-        async def process_message_stream(self, message):
+    class EmptyResponseCoderAgent(FakeCoderAgent):
+        async def process_message_stream(self, message, attachments=None):
             yield {"type": "response", "content": "", "complete": True, "uuid": "response-empty"}
 
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", EmptyResponseCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()

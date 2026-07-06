@@ -14,10 +14,8 @@ from kolega_code.cli import messages
 from kolega_code.cli.config import build_agent_config, config_summary
 from kolega_code.cli.goal import GOAL_CLEAR_ALIASES, GoalState, build_goal_task_prompt
 from kolega_code.cli.session_store import SessionStore
-from kolega_code.cli.tui import agent_runtime as agent_runtime_module
-from kolega_code.llm.models import Message
 
-from ._app_test_utils import build_test_config
+from ._app_test_utils import FakeCoderAgent, build_test_config, install_fake_agents
 
 
 # --------------------------------------------------------------------------- #
@@ -25,23 +23,21 @@ from ._app_test_utils import build_test_config
 # --------------------------------------------------------------------------- #
 
 
-class GoalFakeAgent:
-    """A minimal coder-agent stand-in that supports the goal operations.
+class GoalFakeAgent(FakeCoderAgent):
+    """A coder-agent stand-in that supports the goal operations.
 
-    ``process_message_stream`` yields a single response chunk. Goal evaluation
-    results are dequeued from ``_goal_evaluate_results`` so each test can script
-    the verdict sequence the loop will see.
+    Inherits the app-mount contract (tool collection, compaction stubs,
+    ``cleanup``, ``append_user_message``) from ``FakeCoderAgent`` and adds
+    goal-specific plumbing. ``process_message_stream`` yields a single response
+    chunk; goal evaluation results are dequeued from ``_goal_evaluate_results``
+    so each test can script the verdict sequence the loop will see.
     """
 
     instances: list["GoalFakeAgent"] = []
 
     def __init__(self, **kwargs):
-        self.kwargs = kwargs
-        self.history: list = []
-        self.messages: list = []
-        self.attachments: list = []
+        super().__init__(**kwargs)
         self.prompt_extensions = list(kwargs.get("prompt_extensions", []))
-        self.active_goal_condition = None
         # Queue of GoalVerdict values returned by evaluate_goal_condition (FIFO).
         self._goal_evaluate_results: list[GoalVerdict] = []
         self._evaluate_calls: list[str] = []
@@ -75,22 +71,13 @@ class GoalFakeAgent:
             return self._goal_evaluate_results.pop(0)
         return GoalVerdict(met=True, reason="done")
 
-    # -- message history --------------------------------------------------- #
-
-    def append_user_message(self, content):
-        self.history.append(Message(role="user", content=content))
+    # -- message history (empty stubs; tests don't rely on round-trip) ----- #
 
     def restore_message_history(self, history):
         self.history = []
 
     def dump_message_history(self):
         return []
-
-    def dump_compaction_state(self):
-        return {}
-
-    def restore_compaction_state(self, data):
-        pass
 
     # -- streaming --------------------------------------------------------- #
 
@@ -102,9 +89,6 @@ class GoalFakeAgent:
         self.messages.append(message)
         self.attachments.append(attachments)
         yield {"type": "response", "content": "working on it", "complete": True, "uuid": "resp-1"}
-
-    async def cleanup(self):
-        pass
 
     @property
     def primary_model_config(self):
@@ -121,7 +105,7 @@ def _build_goal_test_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     from kolega_code.cli.app import KolegaCodeApp
 
     GoalFakeAgent.instances = []
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", GoalFakeAgent)
+    install_fake_agents(monkeypatch, coder_cls=GoalFakeAgent)
 
     project = tmp_path / "project"
     project.mkdir()

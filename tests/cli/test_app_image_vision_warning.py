@@ -15,13 +15,11 @@ import base64
 
 import pytest
 
-from kolega_code.cli.tui import agent_runtime as agent_runtime_module
-
 from kolega_code.cli.config import config_summary
 from kolega_code.cli.session_store import SessionStore
 
 
-from ._app_test_utils import build_test_config
+from ._app_test_utils import build_test_config, install_fake_agents
 
 
 def _image_attachment(path: str = "clipboard") -> dict:
@@ -56,26 +54,7 @@ def _make_app(tmp_path, monkeypatch):
 
     from kolega_code.cli.app import KolegaCodeApp
 
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-        def restore_message_history(self, history):
-            return None
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return []
-
-        async def cleanup(self):
-            return None
-
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    install_fake_agents(monkeypatch)
 
     project = tmp_path / "project"
     project.mkdir()
