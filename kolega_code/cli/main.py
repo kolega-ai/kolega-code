@@ -76,6 +76,7 @@ from .skills import (
     activated_skill_names,
     build_skill_prompt_extension,
     build_skill_tool_extension,
+    context_window_tokens_for_skill_budget,
     discover_skills,
 )
 from .updater import check_for_update, run_self_update, update_status_message
@@ -759,7 +760,10 @@ async def _run_ask(args: argparse.Namespace) -> int:
     agent_ref: dict[str, CoderAgent] = {}
     prompt_extensions = []
     tool_extensions = []
-    skill_prompt_extension = build_skill_prompt_extension(skill_catalog)
+    skill_prompt_extension = build_skill_prompt_extension(
+        skill_catalog,
+        context_window_tokens=context_window_tokens_for_skill_budget(config, CoderAgent.agent_name),
+    )
     skill_tool_extension = build_skill_tool_extension(
         skill_catalog,
         lambda: agent_ref["agent"].history if "agent" in agent_ref else [],
