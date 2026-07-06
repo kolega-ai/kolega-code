@@ -2,7 +2,14 @@ from pathlib import Path
 
 import pytest
 
-from kolega_code.cli.skills import activated_skill_names, discover_skills
+from kolega_code.cli.skills import (
+    MAX_SKILL_METADATA_CHAR_BUDGET,
+    SkillCatalogBudget,
+    activated_skill_names,
+    build_skill_prompt_extension,
+    build_skill_tool_extension,
+    discover_skills,
+)
 from kolega_code.llm.models import Message, TextBlock, ToolResult
 
 
@@ -83,6 +90,132 @@ Follow folded instructions.
     catalog = discover_skills(project, user_home=user_home)
 
     assert catalog.skills["folded-skill"].description == "Use this folded skill when testing YAML descriptions."
+
+
+def test_prompt_catalog_uses_only_names_and_descriptions(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    user_home = tmp_path / "home"
+    project.mkdir()
+    write_skill(project / ".agents" / "skills", "plain-skill", "Use this plain skill.")
+
+    catalog = discover_skills(project, user_home=user_home)
+    prompt = catalog.prompt_catalog(budget=SkillCatalogBudget(max_chars=1_000))
+
+    assert "- `plain-skill`: Use this plain skill." in prompt
+    assert "/plain-skill" not in prompt
+    assert "(project)" not in prompt
+
+
+def test_prompt_catalog_truncates_descriptions_before_omitting_skills(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    user_home = tmp_path / "home"
+    project.mkdir()
+    skills_root = project / ".agents" / "skills"
+    long_description = "Use this skill " + ("for a very long specialized workflow " * 8)
+    for name in ("alpha-skill", "beta-skill", "gamma-skill"):
+        write_skill(skills_root, name, long_description)
+
+    catalog = discover_skills(project, user_home=user_home)
+    render = catalog.render_prompt_catalog(SkillCatalogBudget(max_chars=95))
+
+    assert render.report.included_count == 3
+    assert render.report.omitted_count == 0
+    assert render.report.truncated_description_count == 3
+    assert "`alpha-skill`" in render.markdown
+    assert "`beta-skill`" in render.markdown
+    assert "`gamma-skill`" in render.markdown
+    assert "Skill descriptions were shortened" in render.markdown
+    assert long_description not in render.markdown
+
+
+def test_prompt_catalog_omits_overflow_when_names_exceed_budget(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    user_home = tmp_path / "home"
+    project.mkdir()
+    skills_root = project / ".agents" / "skills"
+    for index in range(10):
+        write_skill(skills_root, f"skill-{index:02d}", f"Use skill {index}.")
+
+    catalog = discover_skills(project, user_home=user_home)
+    render = catalog.render_prompt_catalog(SkillCatalogBudget(max_chars=30))
+
+    assert render.report.included_count == 2
+    assert render.report.omitted_count == 8
+    assert "`skill-00`" in render.markdown
+    assert "`skill-01`" in render.markdown
+    assert "`skill-02`" not in render.markdown
+    assert "8 additional skills were omitted" in render.markdown
+
+
+def test_build_skill_prompt_extension_uses_context_window_budget(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    user_home = tmp_path / "home"
+    project.mkdir()
+    write_skill(
+        project / ".agents" / "skills",
+        "budgeted-skill",
+        "Use this skill " + ("when the model needs a long detailed workflow " * 12),
+    )
+
+    catalog = discover_skills(project, user_home=user_home)
+    extension = build_skill_prompt_extension(catalog, context_window_tokens=1_000)
+
+    assert extension is not None
+    assert "`budgeted-skill`" in extension.markdown
+    assert "Skill descriptions were shortened" in extension.markdown
+    assert "(project)" not in extension.markdown
+
+
+def test_context_window_budget_has_hard_cap() -> None:
+    budget = SkillCatalogBudget.for_context_window(1_000_000)
+
+    assert budget.max_chars == MAX_SKILL_METADATA_CHAR_BUDGET
+
+
+def test_large_context_skill_prompt_extension_stays_bounded(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    user_home = tmp_path / "home"
+    project.mkdir()
+    skills_root = project / ".agents" / "skills"
+    long_description = "Use this skill " + ("when the model needs a long detailed stress workflow " * 10)
+    for index in range(200):
+        write_skill(skills_root, f"stress-skill-{index:03d}", long_description)
+
+    catalog = discover_skills(project, user_home=user_home)
+    extension = build_skill_prompt_extension(catalog, context_window_tokens=1_000_000)
+
+    assert extension is not None
+    assert len(extension.markdown) <= MAX_SKILL_METADATA_CHAR_BUDGET + 500
+    assert "`stress-skill-000`" in extension.markdown
+    assert "`stress-skill-199`" in extension.markdown
+    assert "Skill descriptions were shortened" in extension.markdown
+
+
+@pytest.mark.asyncio
+async def test_list_skills_tool_is_bounded_and_queryable(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    user_home = tmp_path / "home"
+    project.mkdir()
+    skills_root = project / ".agents" / "skills"
+    for index in range(60):
+        write_skill(skills_root, f"alpha-{index:02d}", f"Use alpha skill {index}.")
+
+    catalog = discover_skills(project, user_home=user_home)
+    extension = build_skill_tool_extension(catalog, lambda: [])
+    assert extension is not None
+    list_skills = extension.tools["list_skills"]
+
+    default_output = await list_skills()
+    assert "`alpha-00`" in default_output
+    assert "`alpha-49`" in default_output
+    assert "`alpha-59`" not in default_output
+    assert "10 matching skills were not shown" in default_output
+    assert "/alpha-00" not in default_output
+    assert "(project)" not in default_output
+
+    queried_output = await list_skills(query="alpha-59")
+    assert "`alpha-59`" in queried_output
+    assert "Use alpha skill 59." in queried_output
 
 
 def test_discover_skills_skips_missing_description_and_malformed_yaml(tmp_path: Path) -> None:

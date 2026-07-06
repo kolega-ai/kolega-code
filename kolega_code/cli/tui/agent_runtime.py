@@ -22,7 +22,12 @@ from ..goal import (
     now_iso,
 )
 from ..plan_artifacts import write_current_plan_artifact
-from ..skills import build_skill_prompt_extension, build_skill_tool_extension, discover_skills
+from ..skills import (
+    build_skill_prompt_extension,
+    build_skill_tool_extension,
+    context_window_tokens_for_skill_budget,
+    discover_skills,
+)
 from . import app_base as tui_app_base
 from . import constants as tui_constants
 from . import state as tui_state
@@ -663,7 +668,13 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             plan_artifact_extension = self._current_plan_artifact_prompt_extension()
             if plan_artifact_extension is not None:
                 prompt_extensions.append(plan_artifact_extension)
-        skill_prompt_extension = build_skill_prompt_extension(self.skill_catalog)
+        skill_prompt_extension = build_skill_prompt_extension(
+            self.skill_catalog,
+            context_window_tokens=context_window_tokens_for_skill_budget(
+                config,
+                getattr(agent_class, "agent_name", None),
+            ),
+        )
         skill_tool_extension = build_skill_tool_extension(
             self.skill_catalog,
             lambda: self.agent.history if self.agent is not None else [],

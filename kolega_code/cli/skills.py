@@ -5,22 +5,67 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Iterable, Optional
+from typing import Callable, Iterable, Optional, Sequence
 
 import yaml
 
 from kolega_code.agent import PromptExtension, ToolExtension
 from kolega_code.agent.prompts import build_skill_catalog_prompt
-from kolega_code.llm.models import Message
 from kolega_code.agent.prompt_provider import AgentMode
+from kolega_code.llm.models import Message
+from kolega_code.llm.specs import get_model_specs
 
 
 PROJECT_SKILLS_DIR = Path(".agents") / "skills"
 USER_SKILLS_DIR = Path(".agents") / "skills"
 MAX_RESOURCE_FILES = 100
 MAX_RESOURCE_READ_CHARS = 100_000
+DEFAULT_SKILL_METADATA_CHAR_BUDGET = 8_000
+MAX_SKILL_METADATA_CHAR_BUDGET = 48_000
+SKILL_METADATA_CONTEXT_WINDOW_PERCENT = 2
+APPROX_CHARS_PER_TOKEN = 4
+SKILL_DESCRIPTION_TRUNCATION_SUFFIX = "..."
+LIST_SKILLS_DEFAULT_MAX_RESULTS = 50
+LIST_SKILLS_MAX_RESULTS = 100
 SKILL_NAME_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$")
 SKILL_CONTENT_RE = re.compile(r'<skill_content name="([^"]+)">')
+
+
+@dataclass(frozen=True)
+class SkillCatalogBudget:
+    max_chars: int
+    source: str = "explicit"
+
+    @classmethod
+    def for_context_window(cls, context_window_tokens: Optional[int]) -> "SkillCatalogBudget":
+        if context_window_tokens and context_window_tokens > 0:
+            budget_tokens = max(1, context_window_tokens * SKILL_METADATA_CONTEXT_WINDOW_PERCENT // 100)
+            return cls(
+                max_chars=min(
+                    MAX_SKILL_METADATA_CHAR_BUDGET,
+                    budget_tokens * APPROX_CHARS_PER_TOKEN,
+                ),
+                source=f"{SKILL_METADATA_CONTEXT_WINDOW_PERCENT}% of context window",
+            )
+        return cls(max_chars=DEFAULT_SKILL_METADATA_CHAR_BUDGET, source="default")
+
+    def normalized(self) -> "SkillCatalogBudget":
+        return SkillCatalogBudget(max_chars=max(1, int(self.max_chars)), source=self.source)
+
+
+@dataclass(frozen=True)
+class SkillCatalogRenderReport:
+    total_count: int
+    included_count: int
+    omitted_count: int
+    truncated_description_count: int = 0
+    truncated_description_chars: int = 0
+
+
+@dataclass(frozen=True)
+class SkillCatalogRenderResult:
+    markdown: str
+    report: SkillCatalogRenderReport
 
 
 @dataclass(frozen=True)
@@ -71,9 +116,68 @@ class SkillCatalog:
 
         return "\n".join(lines)
 
-    def prompt_catalog(self) -> str:
-        catalog_lines = [f"- `{record.name}` ({record.scope}): {record.description}" for record in self.skills.values()]
-        return build_skill_catalog_prompt("\n".join(catalog_lines))
+    def render_prompt_catalog(self, budget: Optional[SkillCatalogBudget] = None) -> SkillCatalogRenderResult:
+        render = _render_skill_metadata_records(
+            list(self.skills.values()),
+            budget or SkillCatalogBudget.for_context_window(None),
+        )
+        markdown = _append_skill_metadata_notes(render.markdown, render.report)
+        return SkillCatalogRenderResult(markdown=markdown, report=render.report)
+
+    def prompt_catalog(
+        self,
+        *,
+        context_window_tokens: Optional[int] = None,
+        budget: Optional[SkillCatalogBudget] = None,
+    ) -> str:
+        effective_budget = budget or SkillCatalogBudget.for_context_window(context_window_tokens)
+        return build_skill_catalog_prompt(self.render_prompt_catalog(effective_budget).markdown)
+
+    def format_model_catalog(
+        self,
+        *,
+        query: str = "",
+        max_results: int = LIST_SKILLS_DEFAULT_MAX_RESULTS,
+        budget: Optional[SkillCatalogBudget] = None,
+    ) -> str:
+        """Return a bounded model-facing skill list with names and descriptions only."""
+        records = _filter_skill_records(list(self.skills.values()), query)
+        clean_query = query.strip()
+        if not records:
+            if clean_query:
+                return f"No Agent Skills matched query `{clean_query}`."
+            return "No Agent Skills found."
+
+        max_results = _clamp_max_results(max_results)
+        visible_records = records[:max_results]
+        render = _render_skill_metadata_records(
+            visible_records,
+            budget or SkillCatalogBudget.for_context_window(None),
+        )
+
+        if clean_query:
+            lines = [f"Available Agent Skills matching `{clean_query}` ({len(records)} total):"]
+        else:
+            lines = [f"Available Agent Skills ({len(records)} total):"]
+        if render.markdown:
+            lines.extend(["", render.markdown])
+
+        if render.report.truncated_description_count:
+            lines.extend(["", "Skill descriptions were shortened to fit the skill metadata budget."])
+
+        omitted_count = len(records) - render.report.included_count
+        if omitted_count > 0:
+            lines.extend(
+                [
+                    "",
+                    (
+                        f"{omitted_count} matching skills were not shown. "
+                        "Call `list_skills(query=...)` with a narrower query to inspect more."
+                    ),
+                ]
+            )
+
+        return "\n".join(lines)
 
     def activation_content(self, name: str, *, active_names: Optional[set[str]] = None) -> str:
         record = self._require_skill(name)
@@ -158,6 +262,161 @@ class SkillCatalog:
         return record
 
 
+def _render_skill_metadata_records(
+    records: Sequence[SkillRecord],
+    budget: SkillCatalogBudget,
+) -> SkillCatalogRenderResult:
+    budget = budget.normalized()
+    records = list(records)
+    total_count = len(records)
+    if not records:
+        return SkillCatalogRenderResult(
+            markdown="",
+            report=SkillCatalogRenderReport(total_count=0, included_count=0, omitted_count=0),
+        )
+
+    full_lines = [_skill_metadata_line(record, _clean_description(record.description)) for record in records]
+    if _joined_len(full_lines) <= budget.max_chars:
+        return SkillCatalogRenderResult(
+            markdown="\n".join(full_lines),
+            report=SkillCatalogRenderReport(total_count=total_count, included_count=total_count, omitted_count=0),
+        )
+
+    minimum_lines = [_skill_metadata_line(record, "") for record in records]
+    if _joined_len(minimum_lines) <= budget.max_chars:
+        lines, truncated_count, truncated_chars = _largest_description_limited_lines(records, budget.max_chars)
+        return SkillCatalogRenderResult(
+            markdown="\n".join(lines),
+            report=SkillCatalogRenderReport(
+                total_count=total_count,
+                included_count=total_count,
+                omitted_count=0,
+                truncated_description_count=truncated_count,
+                truncated_description_chars=truncated_chars,
+            ),
+        )
+
+    included_lines: list[str] = []
+    included_records: list[SkillRecord] = []
+    for record in records:
+        line = _skill_metadata_line(record, "")
+        if not _line_fits(included_lines, line, budget.max_chars):
+            break
+        included_lines.append(line)
+        included_records.append(record)
+
+    return SkillCatalogRenderResult(
+        markdown="\n".join(included_lines),
+        report=SkillCatalogRenderReport(
+            total_count=total_count,
+            included_count=len(included_lines),
+            omitted_count=total_count - len(included_lines),
+            truncated_description_count=sum(1 for record in included_records if _clean_description(record.description)),
+            truncated_description_chars=sum(len(_clean_description(record.description)) for record in included_records),
+        ),
+    )
+
+
+def _largest_description_limited_lines(records: Sequence[SkillRecord], max_chars: int) -> tuple[list[str], int, int]:
+    max_description_len = max((len(_clean_description(record.description)) for record in records), default=0)
+    best_lines = [_skill_metadata_line(record, "") for record in records]
+    best_truncated_count = sum(1 for record in records if _clean_description(record.description))
+    best_truncated_chars = sum(len(_clean_description(record.description)) for record in records)
+    low = 0
+    high = max_description_len
+
+    while low <= high:
+        mid = (low + high) // 2
+        lines, truncated_count, truncated_chars = _description_limited_lines(records, mid)
+        if _joined_len(lines) <= max_chars:
+            best_lines = lines
+            best_truncated_count = truncated_count
+            best_truncated_chars = truncated_chars
+            low = mid + 1
+        else:
+            high = mid - 1
+
+    return best_lines, best_truncated_count, best_truncated_chars
+
+
+def _description_limited_lines(records: Sequence[SkillRecord], description_limit: int) -> tuple[list[str], int, int]:
+    lines: list[str] = []
+    truncated_count = 0
+    truncated_chars = 0
+    for record in records:
+        description = _clean_description(record.description)
+        rendered_description = _truncate_description(description, description_limit)
+        if rendered_description != description:
+            truncated_count += 1
+            truncated_chars += max(0, len(description) - len(rendered_description))
+        lines.append(_skill_metadata_line(record, rendered_description))
+    return lines, truncated_count, truncated_chars
+
+
+def _truncate_description(description: str, limit: int) -> str:
+    if limit <= 0:
+        return ""
+    if len(description) <= limit:
+        return description
+    if limit <= len(SKILL_DESCRIPTION_TRUNCATION_SUFFIX):
+        return description[:limit].rstrip()
+    body_limit = max(0, limit - len(SKILL_DESCRIPTION_TRUNCATION_SUFFIX))
+    return f"{description[:body_limit].rstrip()}{SKILL_DESCRIPTION_TRUNCATION_SUFFIX}"
+
+
+def _skill_metadata_line(record: SkillRecord, description: str) -> str:
+    if description:
+        return f"- `{record.name}`: {description}"
+    return f"- `{record.name}`:"
+
+
+def _clean_description(description: str) -> str:
+    return " ".join(description.split())
+
+
+def _joined_len(lines: Sequence[str]) -> int:
+    return len("\n".join(lines))
+
+
+def _line_fits(existing_lines: Sequence[str], new_line: str, max_chars: int) -> bool:
+    if not existing_lines:
+        return len(new_line) <= max_chars
+    return _joined_len([*existing_lines, new_line]) <= max_chars
+
+
+def _append_skill_metadata_notes(markdown: str, report: SkillCatalogRenderReport) -> str:
+    notes: list[str] = []
+    if report.truncated_description_count:
+        notes.append("Skill descriptions were shortened to fit the skill metadata budget.")
+    if report.omitted_count:
+        notes.append(f"{report.omitted_count} additional skills were omitted to fit the skill metadata budget.")
+    if not notes:
+        return markdown
+    note_block = "\n".join(f"- {note}" for note in notes)
+    if markdown:
+        return f"{markdown}\n\n{note_block}"
+    return note_block
+
+
+def _filter_skill_records(records: Sequence[SkillRecord], query: str) -> list[SkillRecord]:
+    clean_query = query.strip().lower()
+    if not clean_query:
+        return list(records)
+    return [
+        record
+        for record in records
+        if clean_query in record.name.lower() or clean_query in _clean_description(record.description).lower()
+    ]
+
+
+def _clamp_max_results(max_results: int) -> int:
+    try:
+        value = int(max_results)
+    except (TypeError, ValueError):
+        value = LIST_SKILLS_DEFAULT_MAX_RESULTS
+    return max(1, min(value, LIST_SKILLS_MAX_RESULTS))
+
+
 def discover_skills(project_path: Path, *, user_home: Optional[Path] = None) -> SkillCatalog:
     """Discover project and user Agent Skills."""
     user_home = user_home or Path.home()
@@ -202,13 +461,27 @@ def discover_skills(project_path: Path, *, user_home: Optional[Path] = None) -> 
     return catalog
 
 
-def build_skill_prompt_extension(catalog: SkillCatalog) -> Optional[PromptExtension]:
+def context_window_tokens_for_skill_budget(config: object, agent_name: Optional[str]) -> Optional[int]:
+    try:
+        model_config = config.model_config_for_agent(agent_name)  # type: ignore[attr-defined]
+        specs = get_model_specs(model_config.provider, model_config.model)
+        context_length = int(specs.get("context_length") or 0)
+    except Exception:
+        return None
+    return context_length if context_length > 0 else None
+
+
+def build_skill_prompt_extension(
+    catalog: SkillCatalog,
+    *,
+    context_window_tokens: Optional[int] = None,
+) -> Optional[PromptExtension]:
     if not catalog.has_skills():
         return None
     return PromptExtension(
         id="cli-agent-skills",
         title="Agent Skills",
-        markdown=catalog.prompt_catalog(),
+        markdown=catalog.prompt_catalog(context_window_tokens=context_window_tokens),
         modes=[AgentMode.CLI],
     )
 
@@ -220,16 +493,21 @@ def build_skill_tool_extension(
     if not catalog.has_skills():
         return None
 
-    async def list_skills() -> str:
+    async def list_skills(query: str = "", max_results: int = LIST_SKILLS_DEFAULT_MAX_RESULTS) -> str:
         """
         Return Agent Skills available in this CLI session.
 
-        Use this when choosing whether a specialized workflow is available.
+        Use this when choosing whether a specialized workflow is available. Pass a query to search by skill name or
+        description when the default result set is too broad.
+
+        Args:
+            query: Optional case-insensitive search text matched against skill names and descriptions.
+            max_results: Maximum number of matching skills to inspect. Values are clamped to a safe limit.
 
         Returns:
-            A Markdown list of skill names, scopes, and descriptions.
+            A bounded Markdown list of skill names and descriptions.
         """
-        return catalog.format_catalog()
+        return catalog.format_model_catalog(query=query, max_results=max_results)
 
     async def activate_skill(name: str) -> str:
         """
