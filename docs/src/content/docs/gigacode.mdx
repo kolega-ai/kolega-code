@@ -34,6 +34,9 @@ can:
   modules, services, issues, or review targets.
 - **Run judge panels** — ask several agents to evaluate a change or plan from
   different angles, then reconcile disagreements.
+- **Compose workflow shapes** — use sweeps, matrices, funnels, pipelines, triage
+  loops, and adversarial reviews when the task needs more structure than simple
+  parallelism.
 - **Preserve artifacts** — save the workflow script, result files, transcripts, raw
   JSONL, and resume journal so the run is inspectable after the fact.
 
@@ -98,6 +101,13 @@ findings = await parallel([
 ])
 return findings
 ```
+
+The stage names in a workflow are not fixed runtime types. The agent composes
+shapes from the task: a broad audit might map surfaces, sweep reviewers across
+them, verify findings adversarially, and synthesize; a planning task might funnel
+unknowns through research and option comparison; a debugging task might cluster
+failures, investigate root causes, test targeted fixes, and run a regression
+review. All of those shapes are built from the same primitives above.
 
 <Aside type="note">
 Workflows are deterministic and **resumable**. Each run is saved under Kolega

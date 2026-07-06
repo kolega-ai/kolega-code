@@ -88,6 +88,23 @@ without running the script. Required keys: `name`, `description`. Optional `phas
 
 ### Quality patterns to compose
 
+- Surface map: before a broad run, map the real work surface — files, modules,
+  services, risks, unknowns, owner boundaries, or test targets — then fan out over
+  that map instead of guessing stages from the user's wording.
+- Shard-and-sweep: split a large surface by package/module/service/concern, send
+  focused agents across the shards, then deduplicate and synthesize.
+- Cross-cut matrix: review the same target set across dimensions such as correctness,
+  security, performance, UX, compatibility, test coverage, and migration risk.
+- Research funnel: map unknowns → research in parallel → compare options → produce
+  a decision-ready plan. In plan mode this is the main workflow shape.
+- Hypothesis tournament: generate several plausible explanations or approaches,
+  gather evidence for each, score them with parallel judges, then choose.
+- Implementation pipeline: map disjoint workstreams → implement with coder agents →
+  verify each stream → integrate and run final checks yourself.
+- Migration factory: inventory affected areas → classify risk → batch independent
+  edits → run targeted checks → compatibility review.
+- Failure triage loop: collect failures → cluster by likely root cause → investigate
+  clusters → fix isolated causes → rerun targeted tests.
 - Adversarial verify: for each finding, spawn N skeptics prompted to REFUTE it; keep it
   only if a majority fail to refute. Prevents plausible-but-wrong findings surviving.
 - Loop-until-dry: for unknown-size discovery, keep spawning finders until K consecutive
@@ -96,6 +113,8 @@ without running the script. Required keys: `name`, `description`. Optional `phas
   judges, synthesize from the winner.
 - Loop-until-budget: `while budget.total and budget.remaining() > 50_000: ...` to scale
   depth to the token ceiling.
+- Synthesis gate: after any broad fan-out, merge duplicates, rank confidence, identify
+  unresolved gaps, and decide whether another loop is worth the remaining budget.
 
 ### Implementing a plan (build mode)
 
