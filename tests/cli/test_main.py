@@ -331,6 +331,7 @@ def test_ask_skill_with_prompt_activates_before_dispatch(
     from kolega_code.cli import main as main_module
 
     class FakeCoderAgent:
+        agent_name = "coder"
         instances = []
 
         def __init__(self, **kwargs):
@@ -380,6 +381,7 @@ def test_ask_plain_handles_billing_error_without_traceback(
     from kolega_code.cli import main as main_module
 
     class FakeCoderAgent:
+        agent_name = "coder"
         instances = []
 
         def __init__(self, **kwargs):
@@ -432,6 +434,8 @@ def test_ask_json_handles_billing_error_without_traceback(
     from kolega_code.cli import main as main_module
 
     class FakeCoderAgent:
+        agent_name = "coder"
+
         def __init__(self, **kwargs):
             self.kwargs = kwargs
 
@@ -711,6 +715,7 @@ def _sub_agent_test_event():
 class _SubAgentEventCoderAgent:
     """Fake CoderAgent that broadcasts a sub-agent event mid-stream."""
 
+    agent_name = "coder"
     instances = []
 
     def __init__(self, **kwargs):
@@ -794,6 +799,7 @@ def test_ask_prompt_with_file_mention_attaches_content(
     from kolega_code.cli import main as main_module
 
     class FakeCoderAgent:
+        agent_name = "coder"
         instances = []
 
         def __init__(self, **kwargs):
@@ -846,6 +852,7 @@ def test_ask_prompt_with_unresolved_mention_warns_on_stderr(
     from kolega_code.cli import main as main_module
 
     class FakeCoderAgent:
+        agent_name = "coder"
         instances = []
 
         def __init__(self, **kwargs):

@@ -11,6 +11,7 @@ from kolega_code.llm.models import Message
 class GoalAskFakeAgent:
     """Fake CoderAgent supporting the goal loop contract."""
 
+    agent_name = "coder"
     instances: list["GoalAskFakeAgent"] = []
     # Class-level verdict queue so tests can pre-populate before ``main`` creates
     # the agent instance internally.
