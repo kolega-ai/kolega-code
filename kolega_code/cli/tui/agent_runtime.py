@@ -740,6 +740,10 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         self._update_mode_chrome()
         self._ensure_startup_entry()
         await self._fire_session_start_once()
+        # Refresh the Settings-tab LSP status now that the agent (and its
+        # initialized lsp_manager) exists. Without this the status is stale
+        # from startup, when it was computed before the agent was built.
+        self._update_lsp_settings_status()
 
     def _format_lsp_status(self) -> str:
         """Build a human-readable LSP status message for the conversation or /lsp command."""
