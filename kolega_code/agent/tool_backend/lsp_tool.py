@@ -6,7 +6,8 @@ tool for diagnostics, go-to-definition, references, hover, symbols, and status.
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Optional, cast
+from urllib.parse import unquote, urlparse
 
 from .base_tool import BaseTool
 from kolega_code.services.lsp import LspManager, format_diagnostics, format_no_diagnostics
@@ -90,9 +91,13 @@ class LspTool(BaseTool):
         "implementation",
         "references",
         "hover",
+        "call_hierarchy",
+        "code_actions",
         "capabilities",
     }
     _ALL_OPS = _POSITION_OPS | {
+        "call_hierarchy",
+        "code_actions",
         "diagnostics",
         "document_symbols",
         "workspace_symbols",
@@ -108,6 +113,8 @@ class LspTool(BaseTool):
         line: Optional[int] = None,
         symbol: Optional[str] = None,
         query: Optional[str] = None,
+        end_line: Optional[int] = None,
+        kind: Optional[str] = None,
         timeout: Optional[float] = None,
     ) -> str:
         """Query language server intelligence (diagnostics, definition, references, hover, symbols, status).
@@ -122,6 +129,8 @@ class LspTool(BaseTool):
         - **implementation**: Find implementations. Requires ``path``, ``line``, ``symbol``.
         - **references**: Find all references. Requires ``path``, ``line``, ``symbol``.
         - **hover**: Get hover/type info. Requires ``path``, ``line``, ``symbol``.
+        - **call_hierarchy**: Show incoming/outgoing calls. Requires ``path``, ``line``, ``symbol``.
+        - **code_actions**: List available fixes/refactors. Requires ``path``, ``line``, ``symbol``.
         - **document_symbols**: List symbols in a file. Requires ``path``.
         - **workspace_symbols**: Search project-wide symbols. Requires ``query``.
         - **status**: Show LSP server status (no args required).
@@ -138,6 +147,8 @@ class LspTool(BaseTool):
             line: 1-based line number for position operations.
             symbol: Symbol name to resolve on the line (supports ``name#N``).
             query: Search query for workspace_symbols.
+            end_line: Optional 1-based end line for code_actions.
+            kind: Optional code action kind filter, e.g. ``quickfix`` or ``refactor``.
             timeout: Per-call timeout in seconds (default: 30).
 
         Returns:
@@ -159,6 +170,10 @@ class LspTool(BaseTool):
                 return await self._op_diagnostics(path)
             elif operation in self._POSITION_OPS:
                 return await self._op_position(operation, path, line, symbol, kw_timeout)
+            elif operation == "call_hierarchy":
+                return await self._op_call_hierarchy(path, line, symbol, kw_timeout)
+            elif operation == "code_actions":
+                return await self._op_code_actions(path, line, symbol, end_line, kind, kw_timeout)
             elif operation == "document_symbols":
                 return await self._op_document_symbols(path, kw_timeout)
             elif operation == "workspace_symbols":
@@ -226,6 +241,66 @@ class LspTool(BaseTool):
 
         return self._format_position_result(operation, result, server_name)
 
+    async def _op_call_hierarchy(
+        self,
+        path: Optional[str],
+        line: Optional[int],
+        symbol: Optional[str],
+        kw_timeout: dict[str, Any],
+    ) -> str:
+        assert self._lsp_manager is not None
+        if not path:
+            return "Error: 'path' is required for the 'call_hierarchy' operation."
+        if line is None:
+            return "Error: 'line' (1-based) is required for the 'call_hierarchy' operation."
+        if not symbol:
+            return "Error: 'symbol' is required for the 'call_hierarchy' operation."
+
+        server_name = self._lsp_manager.server_for_path(path)
+        if server_name is None:
+            return f"No language server configured for {path}."
+
+        lsp_line, character = self._lsp_manager._resolve_position(path, line, symbol)
+        result = await self._lsp_manager.get_call_hierarchy(path, lsp_line, character, **kw_timeout)
+        if result is None:
+            return f"Call hierarchy is not supported by {server_name}, or no results were found."
+        return self._format_call_hierarchy(result)
+
+    async def _op_code_actions(
+        self,
+        path: Optional[str],
+        line: Optional[int],
+        symbol: Optional[str],
+        end_line: Optional[int],
+        kind: Optional[str],
+        kw_timeout: dict[str, Any],
+    ) -> str:
+        assert self._lsp_manager is not None
+        if not path:
+            return "Error: 'path' is required for the 'code_actions' operation."
+        if line is None:
+            return "Error: 'line' (1-based) is required for the 'code_actions' operation."
+        if not symbol:
+            return "Error: 'symbol' is required for the 'code_actions' operation."
+
+        server_name = self._lsp_manager.server_for_path(path)
+        if server_name is None:
+            return f"No language server configured for {path}."
+
+        lsp_line, character = self._lsp_manager._resolve_position(path, line, symbol)
+        lsp_end_line = end_line - 1 if end_line is not None else None
+        result = await self._lsp_manager.get_code_actions(
+            path,
+            lsp_line,
+            character,
+            end_line=lsp_end_line,
+            kind=kind,
+            **kw_timeout,
+        )
+        if result is None:
+            return f"Code actions are not supported by {server_name}, or no actions were found."
+        return self._format_code_actions(result)
+
     async def _op_document_symbols(self, path: Optional[str], kw_timeout: dict[str, Any]) -> str:
         assert self._lsp_manager is not None
         if not path:
@@ -286,9 +361,9 @@ class LspTool(BaseTool):
         if operation == "hover":
             return LspTool._format_hover(result, server_name)
 
-        # Definition, typeDefinition, implementation, references → Location | Location[] | null
+        # Definition, typeDefinition, implementation, references → Location | Location[] | LocationLink[] | null
         locations = result
-        if isinstance(result, dict) and "uri" in result:
+        if isinstance(result, dict) and ("uri" in result or "targetUri" in result):
             locations = [result]
         elif isinstance(result, list):
             locations = result
@@ -300,14 +375,7 @@ class LspTool(BaseTool):
 
         lines = [f"## {op_label} ({len(locations)} result{'s' if len(locations) != 1 else ''})"]
         for loc in locations[:50]:
-            uri = loc.get("uri", "?")
-            rng = loc.get("range", {})
-            start = rng.get("start", {}) if isinstance(rng, dict) else {}
-            line_no = start.get("line", 0) + 1 if isinstance(start, dict) else 1
-            char_no = start.get("character", 0) if isinstance(start, dict) else 0
-            # Convert file:// URI to a path
-            path_str = uri.replace("file://", "") if uri.startswith("file://") else uri
-            lines.append(f"  - `{path_str}:{line_no}:{char_no}`")
+            lines.append(f"  - `{LspTool._format_location(loc)}`")
 
         if len(locations) > 50:
             lines.append(f"  ... and {len(locations) - 50} more")
@@ -351,21 +419,33 @@ class LspTool(BaseTool):
             return "No symbols found in this file."
 
         lines = ["## Document Symbols"]
+        count = 0
+
+        def append_symbol(sym: dict[str, Any], depth: int = 0) -> None:
+            nonlocal count
+            if count >= 100:
+                return
+            name = sym.get("name", "?")
+            kind = sym.get("kind", 0)
+            detail = sym.get("detail", "")
+            kind_str = _SYMBOL_KINDS.get(kind, "Symbol")
+            detail_str = f" — {detail}" if detail else ""
+            rng = sym.get("range") or sym.get("selectionRange") or {}
+            start = rng.get("start", {}) if isinstance(rng, dict) else {}
+            line_no = start.get("line", 0) + 1 if isinstance(start, dict) else 0
+            indent = "  " + ("  " * depth)
+            lines.append(f"{indent}- `{name}` ({kind_str}){detail_str} — line {line_no}")
+            count += 1
+            for child in sym.get("children", []) or []:
+                if isinstance(child, dict):
+                    append_symbol(child, depth + 1)
+
         for sym in symbols[:100]:
             if isinstance(sym, dict):
-                name = sym.get("name", "?")
-                kind = sym.get("kind", 0)
-                detail = sym.get("detail", "")
-                kind_str = _SYMBOL_KINDS.get(kind, "Symbol")
-                detail_str = f" — {detail}" if detail else ""
-                # Check for range
-                rng = sym.get("range", {})
-                start = rng.get("start", {}) if isinstance(rng, dict) else {}
-                line_no = start.get("line", 0) + 1 if isinstance(start, dict) else 0
-                lines.append(f"  - `{name}` ({kind_str}){detail_str} — line {line_no}")
+                append_symbol(sym)
 
-        if len(symbols) > 100:
-            lines.append(f"  ... and {len(symbols) - 100} more")
+        if len(symbols) > 100 or count >= 100:
+            lines.append("  ... additional nested symbols omitted")
         return "\n".join(lines)
 
     @staticmethod
@@ -381,15 +461,109 @@ class LspTool(BaseTool):
                 kind = sym.get("kind", 0)
                 container = sym.get("containerName", "")
                 loc = sym.get("location", {})
-                uri = loc.get("uri", "?") if isinstance(loc, dict) else "?"
-                path_str = uri.replace("file://", "") if uri.startswith("file://") else uri
                 kind_str = _SYMBOL_KINDS.get(kind, "Symbol")
                 container_str = f" in {container}" if container else ""
-                lines.append(f"  - `{name}` ({kind_str}){container_str} — `{path_str}`")
+                location = LspTool._format_location(loc) if isinstance(loc, dict) else "?"
+                lines.append(f"  - `{name}` ({kind_str}){container_str} — `{location}`")
 
         if len(symbols) > 50:
             lines.append(f"  ... and {len(symbols) - 50} more")
         return "\n".join(lines)
+
+    @staticmethod
+    def _format_code_actions(actions: Any) -> str:
+        if not actions:
+            return "No code actions found."
+        if not isinstance(actions, list):
+            return "No code actions found."
+
+        lines = [f"## Code Actions ({len(actions)} found)"]
+        for index, action in enumerate(actions[:50], 1):
+            if not isinstance(action, dict):
+                continue
+            title = action.get("title") or action.get("command") or f"Action {index}"
+            kind = action.get("kind")
+            command = action.get("command")
+            diagnostics = action.get("diagnostics") or []
+            raw_edit = action.get("edit")
+            edit = cast(dict[str, Any], raw_edit) if isinstance(raw_edit, dict) else {}
+            edit_summary = LspTool._summarize_workspace_edit(edit)
+            parts = [f"  {index}. `{title}`"]
+            if kind:
+                parts.append(f"kind={kind}")
+            if command:
+                parts.append(f"command={command}")
+            if diagnostics:
+                parts.append(f"diagnostics={len(diagnostics)}")
+            if edit_summary:
+                parts.append(edit_summary)
+            lines.append(" — ".join(parts))
+        if len(actions) > 50:
+            lines.append(f"  ... and {len(actions) - 50} more")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _summarize_workspace_edit(edit: dict[str, Any]) -> str:
+        if not edit:
+            return ""
+        changes = edit.get("changes")
+        doc_changes = edit.get("documentChanges")
+        parts = []
+        if isinstance(changes, dict):
+            parts.append(f"{sum(len(v) for v in changes.values() if isinstance(v, list))} text edits")
+        if isinstance(doc_changes, list):
+            parts.append(f"{len(doc_changes)} document changes")
+        return ", ".join(parts)
+
+    @staticmethod
+    def _format_call_hierarchy(result: Any) -> str:
+        if not isinstance(result, dict):
+            return "No call hierarchy found."
+        items = result.get("items") or []
+        incoming = result.get("incoming") or []
+        outgoing = result.get("outgoing") or []
+        if not items and not incoming and not outgoing:
+            return "No call hierarchy found."
+
+        lines = ["## Call Hierarchy"]
+        if items:
+            lines.append("\n**Prepared items:**")
+            for item in items[:10]:
+                if isinstance(item, dict):
+                    lines.append(f"  - {LspTool._format_call_item(item)}")
+        if incoming:
+            lines.append(f"\n**Incoming calls ({len(incoming)}):**")
+            for call in incoming[:50]:
+                if isinstance(call, dict):
+                    caller = call.get("from", {})
+                    lines.append(f"  - {LspTool._format_call_item(caller)}")
+        if outgoing:
+            lines.append(f"\n**Outgoing calls ({len(outgoing)}):**")
+            for call in outgoing[:50]:
+                if isinstance(call, dict):
+                    callee = call.get("to", {})
+                    lines.append(f"  - {LspTool._format_call_item(callee)}")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _format_call_item(item: Any) -> str:
+        if not isinstance(item, dict):
+            return "`?`"
+        name = item.get("name", "?")
+        kind = _SYMBOL_KINDS.get(item.get("kind", 0), "Symbol")
+        uri = item.get("uri", "?")
+        rng = item.get("selectionRange") or item.get("range") or {}
+        loc = LspTool._format_location({"uri": uri, "range": rng})
+        return f"`{name}` ({kind}) — `{loc}`"
+
+    @staticmethod
+    def _format_location(loc: dict[str, Any]) -> str:
+        uri = loc.get("targetUri") or loc.get("uri") or "?"
+        rng = loc.get("targetSelectionRange") or loc.get("targetRange") or loc.get("range") or {}
+        start = rng.get("start", {}) if isinstance(rng, dict) else {}
+        line_no = start.get("line", 0) + 1 if isinstance(start, dict) else 1
+        char_no = start.get("character", 0) if isinstance(start, dict) else 0
+        return f"{_uri_to_display_path(uri)}:{line_no}:{char_no}"
 
     @staticmethod
     def _format_status(status: dict) -> str:
@@ -462,3 +636,13 @@ _SYMBOL_KINDS: dict[int, str] = {
     25: "Operator",
     26: "TypeParameter",
 }
+
+
+def _uri_to_display_path(uri: str) -> str:
+    if not uri.startswith("file://"):
+        return uri
+    parsed = urlparse(uri)
+    path = unquote(parsed.path)
+    if parsed.netloc:
+        return f"//{parsed.netloc}{path}"
+    return path

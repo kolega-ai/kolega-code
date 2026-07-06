@@ -98,6 +98,8 @@ def mock_lsp_manager():
     # Symbols
     manager.get_document_symbols = AsyncMock(return_value=None)
     manager.get_workspace_symbols = AsyncMock(return_value=None)
+    manager.get_code_actions = AsyncMock(return_value=None)
+    manager.get_call_hierarchy = AsyncMock(return_value=None)
 
     # Status / capabilities / reload
     manager.status = Mock(
@@ -354,3 +356,89 @@ class TestLspDiagnosticsWrapper:
         await tool.lsp_diagnostics("foo.py")
 
         manager.initialize.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+class TestLspNewReadOnlyOperations:
+    async def test_code_actions_formats_metadata_without_applying(self, lsp_tool, mock_lsp_manager):
+        mock_lsp_manager._resolve_position.return_value = (0, 8)
+        mock_lsp_manager.get_code_actions.return_value = [
+            {
+                "title": "Replace undefined_var with defined_var",
+                "kind": "quickfix",
+                "edit": {"changes": {"file:///repo/foo.py": [{"newText": "defined_var"}]}},
+            }
+        ]
+
+        result = await lsp_tool.lsp(
+            operation="code_actions",
+            path="foo.py",
+            line=1,
+            symbol="undefined_var",
+            kind="quickfix",
+        )
+
+        assert "## Code Actions (1 found)" in result
+        assert "Replace undefined_var with defined_var" in result
+        assert "1 text edits" in result
+        mock_lsp_manager.get_code_actions.assert_awaited_once_with(
+            "foo.py",
+            0,
+            8,
+            end_line=None,
+            kind="quickfix",
+        )
+
+    async def test_call_hierarchy_formats_incoming_and_outgoing(self, lsp_tool, mock_lsp_manager):
+        item = {
+            "name": "example",
+            "kind": 12,
+            "uri": "file:///repo/foo.py",
+            "selectionRange": {"start": {"line": 0, "character": 4}, "end": {"line": 0, "character": 11}},
+        }
+        mock_lsp_manager._resolve_position.return_value = (0, 4)
+        mock_lsp_manager.get_call_hierarchy.return_value = {
+            "items": [item],
+            "incoming": [{"from": {**item, "name": "caller"}}],
+            "outgoing": [{"to": {**item, "name": "callee"}}],
+        }
+
+        result = await lsp_tool.lsp(operation="call_hierarchy", path="foo.py", line=1, symbol="example")
+
+        assert "## Call Hierarchy" in result
+        assert "caller" in result
+        assert "callee" in result
+
+    async def test_location_links_are_formatted_and_decoded(self, lsp_tool, mock_lsp_manager):
+        mock_lsp_manager._resolve_position.return_value = (0, 0)
+        mock_lsp_manager.get_definition.return_value = [
+            {
+                "targetUri": "file:///repo/space%20file.py",
+                "targetSelectionRange": {"start": {"line": 2, "character": 4}, "end": {"line": 2, "character": 8}},
+            }
+        ]
+
+        result = await lsp_tool.lsp(operation="definition", path="foo.py", line=1, symbol="foo")
+
+        assert "/repo/space file.py:3:4" in result
+
+    async def test_document_symbols_formats_children(self, lsp_tool, mock_lsp_manager):
+        mock_lsp_manager.get_document_symbols.return_value = [
+            {
+                "name": "Parent",
+                "kind": 5,
+                "range": {"start": {"line": 0, "character": 0}},
+                "children": [
+                    {
+                        "name": "child",
+                        "kind": 12,
+                        "range": {"start": {"line": 1, "character": 4}},
+                    }
+                ],
+            }
+        ]
+
+        result = await lsp_tool.lsp(operation="document_symbols", path="foo.py")
+
+        assert "`Parent` (Class)" in result
+        assert "`child` (Function)" in result

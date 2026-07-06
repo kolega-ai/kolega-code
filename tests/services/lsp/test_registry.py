@@ -94,6 +94,32 @@ def test_user_config_disabled_language():
     assert registry.language_for_extension(".py") is None
 
 
+def test_auto_fallback_false_only_checks_preferred_server(monkeypatch):
+    """When fallback is disabled, an available alternative is not selected."""
+    config = LspConfig(
+        custom_servers={
+            "missing": {"bin": "missing-bin", "languages": ["python"]},
+            "available": {"bin": "available-bin", "languages": ["python"]},
+        },
+        preferences={"python": "missing"},
+    )
+    registry = LspRegistry(config=config)
+
+    monkeypatch.setattr(
+        "kolega_code.services.lsp.registry.shutil.which",
+        lambda binary: f"/bin/{binary}" if binary == "available-bin" else None,
+    )
+
+    bin_path, matched, _ = registry.resolve_server("python", auto_fallback=False)
+    assert bin_path is None
+    assert matched is None
+
+    bin_path, matched, _ = registry.resolve_server("python", auto_fallback=True)
+    assert bin_path == "/bin/available-bin"
+    assert matched is not None
+    assert matched.name == "available"
+
+
 def test_lsp_config_defaults():
     """LspConfig has sensible defaults."""
     cfg = LspConfig()

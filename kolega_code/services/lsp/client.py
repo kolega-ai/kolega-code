@@ -62,7 +62,7 @@ class LspClient:
         self._env = env
         self._proc: Optional[asyncio.subprocess.Process] = None
         self._request_id: int = 0
-        self._pending: dict[int, asyncio.Future[dict[str, Any]]] = {}
+        self._pending: dict[int, asyncio.Future[Any]] = {}
         self._notification_handlers: dict[str, list[Callable[[dict[str, Any]], None]]] = {}
         self._request_handlers: dict[str, Callable[[dict[str, Any]], Any]] = {}
         self._reader_task: Optional[asyncio.Task[None]] = None
@@ -87,7 +87,7 @@ class LspClient:
         if self._running:
             return
 
-        env = {**dict(self._env or {}), **self._build_env()}
+        env = self._subprocess_env()
 
         self._proc = await asyncio.create_subprocess_exec(
             *self._command,
@@ -132,7 +132,7 @@ class LspClient:
 
     # -- request / notification --------------------------------------------
 
-    async def request(self, method: str, params: Any = None, *, timeout: float = 30) -> dict[str, Any]:
+    async def request(self, method: str, params: Any = None, *, timeout: float = 30) -> Any:
         """Send a JSON-RPC request and await the response.
 
         Args:
@@ -144,8 +144,8 @@ class LspClient:
             raise LspClientError("Client not running")
         async with self._lock:
             rid = self._request_id = self._request_id + 1
-            payload = {"jsonrpc": "2.0", "id": rid, "method": method, "params": params or {}}
-            fut: asyncio.Future[dict[str, Any]] = asyncio.get_event_loop().create_future()
+            payload = {"jsonrpc": "2.0", "id": rid, "method": method, "params": params if params is not None else {}}
+            fut: asyncio.Future[Any] = asyncio.get_event_loop().create_future()
             self._pending[rid] = fut
             await self._send(payload)
         try:
@@ -158,7 +158,7 @@ class LspClient:
         """Send a JSON-RPC notification (no response expected)."""
         if not self._running:
             raise LspClientError("Client not running")
-        payload = {"jsonrpc": "2.0", "method": method, "params": params or {}}
+        payload = {"jsonrpc": "2.0", "method": method, "params": params if params is not None else {}}
         await self._send(payload)
 
     def on_notification(self, method: str, handler: Callable[[dict[str, Any]], None]) -> None:
@@ -266,7 +266,7 @@ class LspClient:
                         LspClientError(f"LSP error {err.get('code', '?')}: {err.get('message', 'unknown')}")
                     )
                 else:
-                    fut.set_result(message.get("result") or {})
+                    fut.set_result(message["result"] if "result" in message else None)
             # If fut is None or done: late-arriving response to a timed-out/cancelled
             # request — silently drop it.
         elif has_id and has_method:
@@ -306,12 +306,11 @@ class LspClient:
         """Environment variables to pass to the LS subprocess."""
         import os
 
-        env = {}
-        # Inherit PATH but strip PYTHON* to avoid confusing Python-based servers
-        path = os.environ.get("PATH", "")
-        if path:
-            env["PATH"] = path
-        return env
+        return {key: value for key, value in os.environ.items() if not key.startswith("PYTHON")}
+
+    def _subprocess_env(self) -> dict[str, str]:
+        """Build the final subprocess env, with server-specific overrides last."""
+        return {**self._build_env(), **dict(self._env or {})}
 
 
 # ---------------------------------------------------------------------------

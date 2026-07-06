@@ -1,5 +1,7 @@
 """Unit tests for LSP JSON-RPC client (message framing, request/response, notifications)."""
 
+import asyncio
+
 import pytest
 
 from kolega_code.services.lsp.client import LspClient, LspClientError, parse_publish_diagnostics
@@ -252,6 +254,34 @@ async def test_late_response_to_timed_out_request_no_crash():
     # No crash — the method simply returns
 
     await client.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("value", [[], None, False, 0, "", {"ok": True}])
+async def test_response_preserves_exact_jsonrpc_result(value):
+    """JSON-RPC responses preserve valid falsey result values."""
+    client = LspClient(["sleep", "10"])
+    fut = client._pending[1] = asyncio.get_event_loop().create_future()  # noqa: SLF001
+
+    await client._dispatch({"jsonrpc": "2.0", "id": 1, "result": value})  # noqa: SLF001
+
+    assert fut.done()
+    assert fut.result() == value
+
+
+def test_subprocess_env_strips_python_vars_and_applies_server_overrides(monkeypatch):
+    """Server-specific env values win after the safe inherited env is built."""
+    monkeypatch.setenv("PATH", "/inherited")
+    monkeypatch.setenv("PYTHONPATH", "/bad")
+    monkeypatch.setenv("KEEP_ME", "yes")
+
+    client = LspClient(["echo"], env={"PATH": "/custom", "SERVER_ONLY": "1"})
+    env = client._subprocess_env()  # noqa: SLF001
+
+    assert env["PATH"] == "/custom"
+    assert env["KEEP_ME"] == "yes"
+    assert env["SERVER_ONLY"] == "1"
+    assert "PYTHONPATH" not in env
 
 
 # ---------------------------------------------------------------------------

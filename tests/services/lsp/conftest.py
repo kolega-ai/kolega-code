@@ -88,3 +88,43 @@ async def fake_lsp_manager_no_pull(tmp_path: Path) -> AsyncGenerator["LspManager
     yield manager
 
     await manager.shutdown()
+
+
+@pytest_asyncio.fixture
+async def fake_lsp_manager_with_extra_strict(tmp_path: Path) -> AsyncGenerator["LspManager", None]:
+    """Manager with primary + extra fake servers that reject didChange before didOpen."""
+    from kolega_code.services.lsp import LspConfig
+    from kolega_code.services.lsp.manager import LspManager
+
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "pyproject.toml").write_text("[project]\nname = 'test'\n", encoding="utf-8")
+    (project / "src.py").write_text("def hello():\n    pass\n", encoding="utf-8")
+
+    config = LspConfig(
+        enabled=True,
+        prompt_on_missing=False,
+        custom_servers={
+            "fake-primary": {
+                "bin": sys.executable,
+                "args": [str(_FAKE_SERVER)],
+                "languages": ["python"],
+                "env": {"FAKE_LSP_STRICT_OPEN": "1", "FAKE_LSP_SOURCE": "primary"},
+            },
+            "fake-extra": {
+                "bin": sys.executable,
+                "args": [str(_FAKE_SERVER)],
+                "languages": ["python"],
+                "env": {"FAKE_LSP_STRICT_OPEN": "1", "FAKE_LSP_SOURCE": "extra"},
+            },
+        },
+        preferences={"python": "fake-primary"},
+        diagnostic_servers=["fake-extra"],
+    )
+
+    manager = LspManager(project, config=config)
+    await manager.initialize()
+
+    yield manager
+
+    await manager.shutdown()

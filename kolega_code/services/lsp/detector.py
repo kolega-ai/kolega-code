@@ -199,7 +199,10 @@ async def detect_languages(project_path: str | Path, registry: LspRegistry) -> D
         if not spec or not spec.language_servers:
             continue
 
-        resolved_bin, matched, all_candidates = registry.resolve_server(lang_id)
+        resolved_bin, matched, all_candidates = registry.resolve_server(
+            lang_id,
+            auto_fallback=getattr(registry.config, "auto_fallback", True),
+        )
 
         alternatives = [s.name for s in all_candidates if matched is None or s.name != matched.name]
         first = all_candidates[0] if all_candidates else None

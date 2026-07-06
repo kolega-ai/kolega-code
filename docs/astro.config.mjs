@@ -69,6 +69,10 @@ export default defineConfig({
               slug: "configuration/mcp",
             },
             {
+              label: "Language Servers",
+              slug: "configuration/lsp",
+            },
+            {
               label: "Environment Variables",
               slug: "configuration/environment-variables",
             },

@@ -65,6 +65,21 @@ class _LspEnabledFakeAgent(FakeCoderAgent):
             _missing={},
             last_diagnostic_count={},
         )
+        manager.status = lambda: {
+            "enabled": True,
+            "initialized": True,
+            "detected": [
+                {
+                    "language_id": "python",
+                    "display_name": "Python",
+                    "detection_reason": "pyproject.toml",
+                }
+            ],
+            "resolved": [{"language_id": "python", "display_name": "Python", "server_name": "pylsp"}],
+            "missing": [],
+            "sessions": [],
+            "diagnostic_counts": {},
+        }
         self.tool_collection.lsp_manager = manager
 
 

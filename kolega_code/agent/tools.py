@@ -46,6 +46,8 @@ _LSP_INPUT_SCHEMA: dict[str, Any] = {
                 "implementation",
                 "references",
                 "hover",
+                "call_hierarchy",
+                "code_actions",
                 "document_symbols",
                 "workspace_symbols",
                 "status",
@@ -54,7 +56,8 @@ _LSP_INPUT_SCHEMA: dict[str, Any] = {
             ],
             "description": (
                 "The LSP operation to perform. Position operations (definition, "
-                "type_definition, implementation, references, hover) require path, "
+                "type_definition, implementation, references, hover, call_hierarchy, "
+                "code_actions) require path, "
                 "line, and symbol. diagnostics and document_symbols require path. "
                 "workspace_symbols requires query. status, capabilities, and reload "
                 "need no additional args."
@@ -75,6 +78,14 @@ _LSP_INPUT_SCHEMA: dict[str, Any] = {
         "query": {
             "type": "string",
             "description": "Search query for workspace_symbols.",
+        },
+        "end_line": {
+            "type": "integer",
+            "description": "Optional 1-based end line for code_actions.",
+        },
+        "kind": {
+            "type": "string",
+            "description": "Optional code action kind filter, such as quickfix or refactor.",
         },
         "timeout": {
             "type": "number",
@@ -1501,6 +1512,8 @@ class ToolCollection(LogMixin):
         line: Optional[int] = None,
         symbol: Optional[str] = None,
         query: Optional[str] = None,
+        end_line: Optional[int] = None,
+        kind: Optional[str] = None,
         timeout: Optional[float] = None,
     ) -> str:
         """Query language server intelligence: diagnostics, definition, references, hover, symbols, status.
@@ -1515,6 +1528,8 @@ class ToolCollection(LogMixin):
         - ``implementation`` — find implementations (``path``, ``line``, ``symbol``)
         - ``references`` — find all references (``path``, ``line``, ``symbol``)
         - ``hover`` — hover/type info (``path``, ``line``, ``symbol``)
+        - ``call_hierarchy`` — incoming/outgoing calls (``path``, ``line``, ``symbol``)
+        - ``code_actions`` — list fixes/refactors without applying them (``path``, ``line``, ``symbol``)
         - ``document_symbols`` — symbols in a file (``path``)
         - ``workspace_symbols`` — project-wide symbol search (``query``)
         - ``status`` — LSP server status (no args)
@@ -1530,12 +1545,14 @@ class ToolCollection(LogMixin):
             line: 1-based line number for position operations.
             symbol: Symbol name to resolve on the line (supports ``name#N``).
             query: Search query for ``workspace_symbols``.
+            end_line: Optional 1-based end line for ``code_actions``.
+            kind: Optional code action kind filter, e.g. ``quickfix``.
             timeout: Per-call timeout in seconds (default: 30).
 
         Returns:
             Markdown-formatted results for the requested operation.
         """
-        return await self.lsp_tool.lsp(operation, path, line, symbol, query, timeout)
+        return await self.lsp_tool.lsp(operation, path, line, symbol, query, end_line, kind, timeout)
 
     async def get_host(self, port: int) -> str:
         """

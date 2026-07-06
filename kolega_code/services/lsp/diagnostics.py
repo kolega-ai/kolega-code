@@ -72,7 +72,8 @@ def format_diagnostics(diagnostics: list[LspDiagnostic], path: str, source: str 
         emoji = _SEVERITY_EMOJI.get(diag.severity or 0, "\u26a0\ufe0f")  # ⚠️ fallback
         msg = diag.message.strip()
         code_str = f" [{diag.code}]" if diag.code else ""
-        source_str = f" ({source})" if source else ""
+        source_label = diag.source or source
+        source_str = f" ({source_label})" if source_label else ""
 
         if line_no is not None:
             lines.append(f"{emoji} Line {line_no}: {msg}{code_str}{source_str}")

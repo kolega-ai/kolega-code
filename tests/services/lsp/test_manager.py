@@ -7,7 +7,7 @@ End-to-end tests with a fake server are in ``test_integration.py``.
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -15,7 +15,7 @@ from kolega_code.services.lsp.client import LspDiagnostic
 from kolega_code.services.lsp.config import LspConfig
 from kolega_code.services.lsp.diagnostics import dedupe_and_sort
 from kolega_code.services.lsp.detector import DetectionReport, DetectionResult, ResolvedLanguage
-from kolega_code.services.lsp.manager import LspManager
+from kolega_code.services.lsp.manager import LspManager, _LspSession, _path_to_uri
 
 
 # ---------------------------------------------------------------------------
@@ -277,3 +277,53 @@ def test_next_version_increments(manager: LspManager):
     assert manager._next_version("file:///a") == 3
     # Different URI starts at 1
     assert manager._next_version("file:///b") == 1
+
+
+@pytest.mark.asyncio
+async def test_document_open_state_is_per_session(manager: LspManager, tmp_path: Path):
+    """Each server session receives its own first didOpen for a URI."""
+    (tmp_path / "test.py").write_text("x = 1\n", encoding="utf-8")
+    uri = _path_to_uri(tmp_path, "test.py")
+
+    client_a = MagicMock()
+    client_a.notify = AsyncMock()
+    client_b = MagicMock()
+    client_b.notify = AsyncMock()
+    manager._session_records["python"] = _LspSession("python", "python", "pyright", client_a, tmp_path.as_uri())
+    manager._session_records["python:ruff"] = _LspSession("python:ruff", "python", "ruff", client_b, tmp_path.as_uri())
+
+    await manager._ensure_document_open(client_a, uri, "test.py", "python", session_key="python")
+    await manager._ensure_document_open(client_a, uri, "test.py", "python", session_key="python")
+    await manager._ensure_document_open(client_b, uri, "test.py", "python", session_key="python:ruff")
+
+    assert client_a.notify.await_args_list[0].args[0] == "textDocument/didOpen"
+    assert client_a.notify.await_args_list[1].args[0] == "textDocument/didChange"
+    assert client_b.notify.await_args_list[0].args[0] == "textDocument/didOpen"
+
+
+def test_workspace_configuration_returns_configured_sections(manager: LspManager):
+    """workspace/configuration replies with per-server section config."""
+    manager._config.workspace_configuration = {
+        "pyright": {
+            "python": {"analysis": {"typeCheckingMode": "strict"}},
+        }
+    }
+    handlers = {}
+    client = MagicMock()
+    client.on_request.side_effect = lambda method, handler: handlers.setdefault(method, handler)
+
+    manager._register_server_request_handlers(client, server_name="pyright")
+    result = handlers["workspace/configuration"]({"items": [{"section": "python"}, {"section": "missing"}, {}]})
+
+    assert result == [
+        {"analysis": {"typeCheckingMode": "strict"}},
+        {},
+        manager._config.workspace_configuration["pyright"],
+    ]
+
+
+def test_path_to_uri_escapes_spaces(tmp_path: Path):
+    """file:// URIs are encoded correctly for paths with spaces."""
+    uri = _path_to_uri(tmp_path, "space file.py")
+    assert uri.startswith("file://")
+    assert "space%20file.py" in uri

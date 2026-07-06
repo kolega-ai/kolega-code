@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
@@ -42,6 +43,8 @@ _CLIENT_CAPABILITIES: dict = {
         "implementation": {"linkSupport": False},
         "references": {},
         "documentSymbol": {"hierarchicalDocumentSymbolSupport": True},
+        "codeAction": {"dynamicRegistration": True, "resolveSupport": {"properties": ["edit", "command"]}},
+        "callHierarchy": {"dynamicRegistration": True},
     },
     "workspace": {
         "symbol": {},
@@ -49,6 +52,19 @@ _CLIENT_CAPABILITIES: dict = {
         "workspaceFolders": True,
     },
 }
+
+
+@dataclass
+class _LspSession:
+    key: str
+    language_id: str
+    server_name: str
+    client: LspClient
+    root_uri: str
+    opened_docs: dict[str, str] = field(default_factory=dict)
+    doc_versions: dict[str, int] = field(default_factory=dict)
+    diagnostics: dict[str, list[LspDiagnostic]] = field(default_factory=dict)
+    diag_versions: dict[str, Optional[int]] = field(default_factory=dict)
 
 
 class LspManager:
@@ -73,14 +89,16 @@ class LspManager:
         self._config = config or LspConfig()
         self._registry = LspRegistry(config=self._config)
 
-        # Per-language (or family) LspClient sessions
+        # Per-language/server LspClient sessions. Kept as a client map because
+        # existing UI/tests inspect it directly.
         self._sessions: dict[str, LspClient] = {}
+        self._session_records: dict[str, _LspSession] = {}
         # Maps file URI to language_id for tracking open documents
         self._open_files: dict[str, str] = {}
         # Latest diagnostics per URI (from publishDiagnostics notifications)
         self._diagnostics: dict[str, list[LspDiagnostic]] = {}
-        # Diagnostics events for non-blocking await
-        self._diag_events: dict[str, asyncio.Event] = {}
+        # Diagnostics events for non-blocking await, keyed by (session_key, uri)
+        self._diag_events: dict[tuple[str, str], asyncio.Event] = {}
         # Detection report (populated by initialize)
         self.report: Optional[DetectionReport] = None
         # Initialization lock
@@ -209,46 +227,20 @@ class LspManager:
 
         # Open / change the document so the server knows about it
         try:
-            await self._ensure_document_open(client, uri, path, lang_id)
+            await self._ensure_document_open(client, uri, path, lang_id, session_key=effective_id)
         except LspClientError:
             logger.warning("LSP document sync failed for %s", path)
             # Continue — some servers publish diagnostics without explicit didOpen
 
         # Request pull diagnostics (LSP 3.17)
-        try:
-            result = await client.request(
-                "textDocument/diagnostic",
-                {"textDocument": {"uri": uri}},
-            )
-            items = result.get("items", [])
-            if items:
-                parsed = [
-                    LspDiagnostic(
-                        range=item.get("range", {}),
-                        severity=item.get("severity"),
-                        code=str(item.get("code")) if item.get("code") else None,
-                        message=item.get("message", ""),
-                        source=item.get("source"),
-                    )
-                    for item in items
-                ]
-                extra = await self._get_extra_diagnostics(path, lang_id, uri)
-                return dedupe_and_sort(parsed + extra, self._config.max_diagnostics)
-        except LspClientError:
-            # Pull diagnostics not supported — wait for push notification
-            pass
+        primary = await self._pull_diagnostics(client, uri, source=rl.server_name)
+        extra = await self._get_extra_diagnostics(path, lang_id, uri)
+        if primary is not None:
+            return dedupe_and_sort(primary + extra, self._config.max_diagnostics)
 
         # Fallback: wait briefly for publishDiagnostics
-        self._diag_events[uri] = asyncio.Event()
-        try:
-            await asyncio.wait_for(self._diag_events[uri].wait(), timeout=3.0)
-        except asyncio.TimeoutError:
-            pass
-        finally:
-            self._diag_events.pop(uri, None)
-
-        extra = await self._get_extra_diagnostics(path, lang_id, uri)
-        return dedupe_and_sort(self._diagnostics.get(uri, []) + extra, self._config.max_diagnostics)
+        await self._wait_for_push_diagnostics(effective_id, uri, timeout=3.0)
+        return dedupe_and_sort(self._diagnostics_for(effective_id, uri) + extra, self._config.max_diagnostics)
 
     async def get_fresh_diagnostics(self, path: str) -> list[LspDiagnostic]:
         """Get diagnostics for *path* after an edit, accepting only fresh results.
@@ -261,7 +253,7 @@ class LspManager:
             return []
 
         effective_id, client = await self._get_or_start_session(path)
-        if client is None:
+        if client is None or effective_id is None:
             return []
 
         lang_id = self._language_for_path(path)
@@ -271,11 +263,12 @@ class LspManager:
         uri = _path_to_uri(self._project_path, path)
 
         # Snapshot pre-edit version for freshness comparison
-        pre_edit_version = self._diag_versions.get(uri)
+        record = self._session_records.get(effective_id)
+        pre_edit_version = record.diag_versions.get(uri) if record else self._diag_versions.get(uri)
 
         # Sync new content (sends didChange with incremented version)
         try:
-            await self._ensure_document_open(client, uri, path, lang_id)
+            await self._ensure_document_open(client, uri, path, lang_id, session_key=effective_id)
         except LspClientError:
             logger.warning("LSP document sync failed for %s", path)
 
@@ -286,47 +279,25 @@ class LspManager:
             pass
 
         # Try pull diagnostics first
-        try:
-            result = await client.request(
-                "textDocument/diagnostic",
-                {"textDocument": {"uri": uri}},
-            )
-            items = result.get("items", [])
-            if items:
-                parsed = [
-                    LspDiagnostic(
-                        range=item.get("range", {}),
-                        severity=item.get("severity"),
-                        code=str(item.get("code")) if item.get("code") else None,
-                        message=item.get("message", ""),
-                        source=item.get("source"),
-                    )
-                    for item in items
-                ]
-                return dedupe_and_sort(parsed, self._config.max_diagnostics)
-        except LspClientError:
-            pass
+        primary = await self._pull_diagnostics(client, uri, source=self.server_for_path(path) or None)
+        extra = await self._get_extra_diagnostics(path, lang_id, uri)
+        if primary is not None:
+            return dedupe_and_sort(primary + extra, self._config.max_diagnostics)
 
         # Fallback: wait for fresh push diagnostics
-        self._diag_events[uri] = asyncio.Event()
-        try:
-            await asyncio.wait_for(self._diag_events[uri].wait(), timeout=3.0)
-        except asyncio.TimeoutError:
-            pass
-        finally:
-            self._diag_events.pop(uri, None)
+        await self._wait_for_push_diagnostics(effective_id, uri, timeout=3.0)
 
         # Accept push diagnostics only if the version is fresh (different from
         # pre-edit, or version tracking is not supported by the server)
-        push_version = self._diag_versions.get(uri)
-        push_diags = self._diagnostics.get(uri, [])
+        record = self._session_records.get(effective_id)
+        push_version = record.diag_versions.get(uri) if record else self._diag_versions.get(uri)
+        push_diags = self._diagnostics_for(effective_id, uri)
 
         if push_version is not None and push_version == pre_edit_version:
-            # Server hasn't published fresh diagnostics yet — return what we have
-            # but note they may be stale
-            return dedupe_and_sort(push_diags, self._config.max_diagnostics)
+            logger.debug("LSP diagnostics for %s are stale at version %s", path, push_version)
+            return []
 
-        return dedupe_and_sort(push_diags, self._config.max_diagnostics)
+        return dedupe_and_sort(push_diags + extra, self._config.max_diagnostics)
 
     # -- code intelligence ---------------------------------------
 
@@ -345,7 +316,7 @@ class LspManager:
             return None
 
         effective_id, client = await self._get_or_start_session(path)
-        if client is None:
+        if client is None or effective_id is None:
             return None
 
         lang_id = self._language_for_path(path)
@@ -358,7 +329,7 @@ class LspManager:
             return None
 
         try:
-            await self._ensure_document_open(client, uri, path, lang_id)
+            await self._ensure_document_open(client, uri, path, lang_id, session_key=effective_id)
         except LspClientError:
             pass
 
@@ -411,7 +382,7 @@ class LspManager:
             return None
 
         effective_id, client = await self._get_or_start_session(path)
-        if client is None:
+        if client is None or effective_id is None:
             return None
 
         lang_id = self._language_for_path(path)
@@ -424,7 +395,7 @@ class LspManager:
             return None
 
         try:
-            await self._ensure_document_open(client, uri, path, lang_id)
+            await self._ensure_document_open(client, uri, path, lang_id, session_key=effective_id)
         except LspClientError:
             pass
 
@@ -473,6 +444,122 @@ class LspManager:
         except LspClientError:
             return None
 
+    async def get_code_actions(
+        self,
+        path: str,
+        line: int,
+        character: int,
+        *,
+        end_line: Optional[int] = None,
+        end_character: Optional[int] = None,
+        kind: Optional[str] = None,
+        timeout: float = 30,
+    ) -> Any:
+        """Query ``textDocument/codeAction`` without applying returned edits."""
+        if not self._config.enabled:
+            return None
+
+        effective_id, client = await self._get_or_start_session(path)
+        if client is None or effective_id is None:
+            return None
+
+        lang_id = self._language_for_path(path)
+        if not lang_id:
+            return None
+
+        if not self._has_capability(client, "codeActionProvider"):
+            return None
+
+        uri = _path_to_uri(self._project_path, path)
+        try:
+            await self._ensure_document_open(client, uri, path, lang_id, session_key=effective_id)
+        except LspClientError:
+            pass
+
+        range_end = {
+            "line": end_line if end_line is not None else line,
+            "character": end_character if end_character is not None else character + 1,
+        }
+        context: dict[str, Any] = {
+            "diagnostics": [self._diagnostic_to_wire(diag) for diag in self._diagnostics_for(effective_id, uri)]
+        }
+        if kind:
+            context["only"] = [kind]
+
+        try:
+            return await client.request(
+                "textDocument/codeAction",
+                {
+                    "textDocument": {"uri": uri},
+                    "range": {"start": {"line": line, "character": character}, "end": range_end},
+                    "context": context,
+                },
+                timeout=timeout,
+            )
+        except LspClientError:
+            return None
+
+    async def get_call_hierarchy(self, path: str, line: int, character: int, *, timeout: float = 30) -> Any:
+        """Query call hierarchy prepare + incoming/outgoing calls."""
+        if not self._config.enabled:
+            return None
+
+        effective_id, client = await self._get_or_start_session(path)
+        if client is None or effective_id is None:
+            return None
+
+        lang_id = self._language_for_path(path)
+        if not lang_id:
+            return None
+
+        if not self._has_capability(client, "callHierarchyProvider"):
+            return None
+
+        uri = _path_to_uri(self._project_path, path)
+        try:
+            await self._ensure_document_open(client, uri, path, lang_id, session_key=effective_id)
+        except LspClientError:
+            pass
+
+        try:
+            items = await client.request(
+                "textDocument/prepareCallHierarchy",
+                {
+                    "textDocument": {"uri": uri},
+                    "position": {"line": line, "character": character},
+                },
+                timeout=timeout,
+            )
+        except LspClientError:
+            return None
+
+        if items is None:
+            return {"items": [], "incoming": [], "outgoing": []}
+        if isinstance(items, dict):
+            items = [items]
+        if not isinstance(items, list):
+            return None
+
+        incoming: list[Any] = []
+        outgoing: list[Any] = []
+        for item in items[:10]:
+            if not isinstance(item, dict):
+                continue
+            try:
+                result = await client.request("callHierarchy/incomingCalls", {"item": item}, timeout=timeout)
+                if isinstance(result, list):
+                    incoming.extend(result)
+            except LspClientError:
+                pass
+            try:
+                result = await client.request("callHierarchy/outgoingCalls", {"item": item}, timeout=timeout)
+                if isinstance(result, list):
+                    outgoing.extend(result)
+            except LspClientError:
+                pass
+
+        return {"items": items, "incoming": incoming, "outgoing": outgoing}
+
     def get_capabilities(self, path: str) -> dict:
         """Return the stored server capabilities for *path*'s language server."""
         _, client, _ = self._resolve_session(path)
@@ -504,18 +591,31 @@ class LspManager:
                     }
                 )
 
+        resolved = []
+        if self.report:
+            for r in self.report.resolved:
+                resolved.append(
+                    {
+                        "language_id": r.language_id,
+                        "display_name": r.display_name,
+                        "server_name": r.server_name,
+                    }
+                )
+
         sessions = []
         for lang_id, client in self._sessions.items():
+            record = self._session_records.get(lang_id)
             rl = self._resolved.get(lang_id) or self._missing.get(lang_id)
             sessions.append(
                 {
-                    "language_id": lang_id,
-                    "server_name": rl.server_name if rl else "unknown",
+                    "key": lang_id,
+                    "language_id": record.language_id if record else lang_id,
+                    "server_name": record.server_name if record else (rl.server_name if rl else "unknown"),
                     "status": client.status,
                     "pid": client.server_pid,
                     "connected": client.running and client.status == "initialized",
                     "last_error": client.last_error,
-                    "root": client.active_root,
+                    "root": record.root_uri if record else client.active_root,
                 }
             )
 
@@ -523,6 +623,7 @@ class LspManager:
             "enabled": self._config.enabled,
             "initialized": self._initialized,
             "detected": detected,
+            "resolved": resolved,
             "missing": missing,
             "sessions": sessions,
             "diagnostic_counts": dict(self.last_diagnostic_count),
@@ -549,6 +650,7 @@ class LspManager:
             except Exception:
                 logger.exception("Error stopping LSP session for %s", lang_id)
         self._sessions.clear()
+        self._session_records.clear()
         self._open_files.clear()
         self._diagnostics.clear()
         self._diag_events.clear()
@@ -585,6 +687,7 @@ class LspManager:
                 return client
             # Restart crashed session
             await client.stop()
+            self._session_records.pop(key, None)
 
         if not rl.server_bin:
             return None
@@ -600,13 +703,23 @@ class LspManager:
             return None
 
         # Register push-diagnostics handler
-        client.on_notification("textDocument/publishDiagnostics", self._on_publish_diagnostics)
+        client.on_notification(
+            "textDocument/publishDiagnostics",
+            lambda params, session_key=key: self._on_publish_diagnostics(session_key, params),
+        )
 
         # Register server→client request handlers
-        self._register_server_request_handlers(client)
+        self._register_server_request_handlers(client, server_name=rl.server_name)
 
         root_uri = _path_to_uri(self._project_path, str(self._project_path))
         client.active_root = root_uri
+        record = _LspSession(
+            key=key,
+            language_id=lang_id,
+            server_name=rl.server_name,
+            client=client,
+            root_uri=root_uri,
+        )
 
         # LSP initialize handshake
         try:
@@ -631,8 +744,86 @@ class LspManager:
             return None
 
         self._sessions[key] = client
+        self._session_records[key] = record
+        if session_key is not None:
+            self._extra_sessions[(lang_id, rl.server_name)] = client
         logger.debug("LSP session started: %s (%s)", lang_id, rl.server_name)
         return client
+
+    def _record_for_client(self, client: LspClient) -> Optional[_LspSession]:
+        for record in self._session_records.values():
+            if record.client is client:
+                return record
+        return None
+
+    @staticmethod
+    def _parse_diagnostic_items(items: list[dict[str, Any]], *, source: Optional[str] = None) -> list[LspDiagnostic]:
+        parsed: list[LspDiagnostic] = []
+        for item in items:
+            parsed.append(
+                LspDiagnostic(
+                    range=item.get("range", {}),
+                    severity=item.get("severity"),
+                    code=str(item.get("code")) if item.get("code") else None,
+                    message=item.get("message", ""),
+                    source=item.get("source") or source,
+                )
+            )
+        return parsed
+
+    @staticmethod
+    def _diagnostic_to_wire(diag: LspDiagnostic) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "range": diag.range,
+            "message": diag.message,
+        }
+        if diag.severity is not None:
+            payload["severity"] = diag.severity
+        if diag.code is not None:
+            payload["code"] = diag.code
+        if diag.source is not None:
+            payload["source"] = diag.source
+        return payload
+
+    async def _pull_diagnostics(
+        self, client: LspClient, uri: str, *, source: Optional[str] = None
+    ) -> Optional[list[LspDiagnostic]]:
+        try:
+            result = await client.request(
+                "textDocument/diagnostic",
+                {"textDocument": {"uri": uri}},
+            )
+        except LspClientError:
+            return None
+
+        if not isinstance(result, dict) or "items" not in result:
+            return None
+        items = result.get("items")
+        if not isinstance(items, list):
+            return None
+        return self._parse_diagnostic_items(items, source=source)
+
+    async def _wait_for_push_diagnostics(self, session_key: str, uri: str, *, timeout: float) -> None:
+        event_key = (session_key, uri)
+        self._diag_events[event_key] = asyncio.Event()
+        try:
+            await asyncio.wait_for(self._diag_events[event_key].wait(), timeout=timeout)
+        except asyncio.TimeoutError:
+            pass
+        finally:
+            self._diag_events.pop(event_key, None)
+
+    def _diagnostics_for(self, session_key: str, uri: str) -> list[LspDiagnostic]:
+        record = self._session_records.get(session_key)
+        if record is None:
+            return list(self._diagnostics.get(uri, []))
+        return list(record.diagnostics.get(uri, []))
+
+    def _aggregate_diagnostics(self, uri: str) -> list[LspDiagnostic]:
+        merged: list[LspDiagnostic] = []
+        for record in self._session_records.values():
+            merged.extend(record.diagnostics.get(uri, []))
+        return merged
 
     async def _get_extra_diagnostics(self, path: str, lang_id: str, uri: str) -> list[LspDiagnostic]:
         """Get diagnostics from extra ``diagnostic_servers`` configured for the language.
@@ -691,38 +882,40 @@ class LspManager:
 
             # Ensure document is open in the extra server
             try:
-                await self._ensure_document_open(client, uri, path, lang_id)
+                await self._ensure_document_open(client, uri, path, lang_id, session_key=session_key)
             except LspClientError:
                 pass
 
             # Try pull diagnostics
-            try:
-                result = await client.request(
-                    "textDocument/diagnostic",
-                    {"textDocument": {"uri": uri}},
-                )
-                items = result.get("items", [])
-                for item in items:
-                    all_diagnostics.append(
-                        LspDiagnostic(
-                            range=item.get("range", {}),
-                            severity=item.get("severity"),
-                            code=str(item.get("code")) if item.get("code") else None,
-                            message=item.get("message", ""),
-                            source=item.get("source") or extra_name,
-                        )
-                    )
-            except LspClientError:
-                pass
+            pulled = await self._pull_diagnostics(client, uri, source=extra_name)
+            if pulled is not None:
+                all_diagnostics.extend(pulled)
+                continue
+
+            await self._wait_for_push_diagnostics(session_key, uri, timeout=3.0)
+            all_diagnostics.extend(self._diagnostics_for(session_key, uri))
 
         return all_diagnostics
 
-    def _next_version(self, uri: str) -> int:
+    def _next_version(self, uri: str, *, session_key: Optional[str] = None) -> int:
         """Return the next incrementing document version for *uri*."""
+        record = self._session_records.get(session_key or "")
+        if record is not None:
+            record.doc_versions[uri] = record.doc_versions.get(uri, 0) + 1
+            self._doc_versions[uri] = max(self._doc_versions.get(uri, 0), record.doc_versions[uri])
+            return record.doc_versions[uri]
         self._doc_versions[uri] = self._doc_versions.get(uri, 0) + 1
         return self._doc_versions[uri]
 
-    async def _ensure_document_open(self, client: LspClient, uri: str, path: str, lang_id: str) -> None:
+    async def _ensure_document_open(
+        self,
+        client: LspClient,
+        uri: str,
+        path: str,
+        lang_id: str,
+        *,
+        session_key: Optional[str] = None,
+    ) -> None:
         """Ensure the document is open in the language server (didOpen or didChange)."""
         try:
             full_path = self._project_path / path
@@ -730,9 +923,12 @@ class LspManager:
         except Exception:
             return
 
-        if uri in self._open_files:
+        record = self._session_records.get(session_key or "") or self._record_for_client(client)
+        opened_docs = record.opened_docs if record is not None else self._open_files
+
+        if uri in opened_docs:
             # Already open — send didChange with incrementing version
-            version = self._next_version(uri)
+            version = self._next_version(uri, session_key=record.key if record else session_key)
             await client.notify(
                 "textDocument/didChange",
                 {
@@ -742,7 +938,7 @@ class LspManager:
             )
         else:
             # Send didOpen
-            version = self._next_version(uri)
+            version = self._next_version(uri, session_key=record.key if record else session_key)
             await client.notify(
                 "textDocument/didOpen",
                 {
@@ -754,6 +950,7 @@ class LspManager:
                     },
                 },
             )
+            opened_docs[uri] = lang_id
             self._open_files[uri] = lang_id
 
     def _language_for_path(self, path: str) -> Optional[str]:
@@ -776,28 +973,47 @@ class LspManager:
 
         return None
 
-    def _on_publish_diagnostics(self, params: dict) -> None:
+    def _on_publish_diagnostics(self, session_key: str, params: dict) -> None:
         """Handle ``textDocument/publishDiagnostics`` notification."""
         parsed = parse_publish_diagnostics(params)
-        self._diagnostics[parsed.uri] = list(parsed.diagnostics)
-        self.last_diagnostic_count[parsed.uri] = len(parsed.diagnostics)
+        record = self._session_records.get(session_key)
+        diagnostics = list(parsed.diagnostics)
+        if record is not None:
+            for diag in diagnostics:
+                if not diag.source:
+                    diag.source = record.server_name
+            record.diagnostics[parsed.uri] = diagnostics
+        aggregate = self._aggregate_diagnostics(parsed.uri) if record is not None else diagnostics
+        self._diagnostics[parsed.uri] = aggregate
+        self.last_diagnostic_count[parsed.uri] = len(aggregate)
         # Track the document version the server is responding to (if provided)
         version = params.get("version")
+        if record is not None:
+            record.diag_versions[parsed.uri] = version
         self._diag_versions[parsed.uri] = version
-        event = self._diag_events.get(parsed.uri)
+        event = self._diag_events.get((session_key, parsed.uri))
         if event:
             event.set()
 
     # -- server→client request handlers ------------------------
 
-    def _register_server_request_handlers(self, client: LspClient) -> None:
+    def _register_server_request_handlers(self, client: LspClient, *, server_name: str) -> None:
         """Register handlers for server→client requests so they get responses."""
         root_uri = _path_to_uri(self._project_path, str(self._project_path))
 
         def _workspace_configuration(params: dict) -> list:
-            # Return empty list — no config sections configured yet.
-            # Servers tolerate this and fall back to defaults.
-            return []
+            server_config = self._config.workspace_configuration.get(server_name, {})
+            items = params.get("items", [])
+            if not isinstance(items, list):
+                return []
+            results = []
+            for item in items:
+                section = item.get("section") if isinstance(item, dict) else None
+                if section is None:
+                    results.append(server_config)
+                else:
+                    results.append(server_config.get(section, {}))
+            return results
 
         def _workspace_folders(params: dict) -> list:
             return [{"uri": root_uri, "name": "workspace"}]
@@ -945,12 +1161,8 @@ class LspManager:
 
 def _path_to_uri(project_path: Path, relative_path: str) -> str:
     """Convert a project-relative path to a ``file://`` URI."""
-    from pathlib import PurePosixPath
-
     if Path(relative_path).is_absolute():
-        abs_path = Path(relative_path)
+        abs_path = Path(relative_path).resolve()
     else:
         abs_path = (project_path / relative_path).resolve()
-    # Normalize to posix for URI
-    posix = PurePosixPath(abs_path)
-    return f"file://{posix}"
+    return abs_path.as_uri()

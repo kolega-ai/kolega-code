@@ -22,6 +22,7 @@ class LspRegistry:
     """Immutable registry of language → server mappings, built from presets + user config."""
 
     def __init__(self, config: Optional[LspConfig] = None) -> None:
+        self.config = config or LspConfig()
         self._languages: dict[str, LanguageSpec] = {}
         self._ext_to_lang: dict[str, str] = {}
         self._filename_to_lang: dict[str, str] = {}
@@ -174,7 +175,8 @@ class LspRegistry:
 
         all_candidates = list(resolved_spec.language_servers)
 
-        for server in all_candidates:
+        candidates_to_check = all_candidates if auto_fallback else all_candidates[:1]
+        for server in candidates_to_check:
             resolved = shutil.which(server.bin)
             if resolved:
                 return resolved, server, all_candidates
@@ -289,4 +291,5 @@ def load_project_lsp_config(project_path: str | Path) -> Optional[LspConfig]:
         custom_servers=dict(data.get("servers", {}) or {}),
         initialization_options=dict(data.get("initialization_options", {}) or {}),
         diagnostic_servers=list(data.get("diagnostic_servers", []) or []),
+        workspace_configuration=dict(data.get("workspace_configuration", {}) or {}),
     )

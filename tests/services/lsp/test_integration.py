@@ -121,6 +121,38 @@ async def test_workspace_symbols(fake_lsp_manager):
 
 
 @pytest.mark.asyncio
+async def test_code_actions(fake_lsp_manager):
+    """textDocument/codeAction returns read-only action metadata."""
+    manager = fake_lsp_manager
+    (manager._project_path / "actions.py").write_text("value = undefined_var\n", encoding="utf-8")
+    result = await manager.get_code_actions("actions.py", 0, 8)
+    assert result is not None
+    assert any(action.get("title") == "Replace undefined_var with defined_var" for action in result)
+
+
+@pytest.mark.asyncio
+async def test_call_hierarchy(fake_lsp_manager):
+    """Call hierarchy prepare + incoming/outgoing calls are queried."""
+    manager = fake_lsp_manager
+    (manager._project_path / "calls.py").write_text("def example():\n    pass\n", encoding="utf-8")
+    result = await manager.get_call_hierarchy("calls.py", 0, 4)
+    assert result is not None
+    assert result["items"]
+    assert result["incoming"]
+    assert result["outgoing"]
+
+
+@pytest.mark.asyncio
+async def test_extra_diagnostic_server_gets_its_own_did_open(fake_lsp_manager_with_extra_strict):
+    """Extra diagnostic servers must receive didOpen before didChange."""
+    manager = fake_lsp_manager_with_extra_strict
+    (manager._project_path / "multi.py").write_text("value = undefined_var\n", encoding="utf-8")
+    diags = await manager.get_diagnostics("multi.py")
+    sources = {d.source for d in diags}
+    assert {"primary", "extra"} <= sources
+
+
+@pytest.mark.asyncio
 async def test_status_returns_sessions(fake_lsp_manager):
     """status() returns active session info after a session is started."""
     manager = fake_lsp_manager

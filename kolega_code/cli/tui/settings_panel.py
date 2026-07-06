@@ -915,24 +915,23 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
         if manager is None or not manager.enabled:
             status.update("LSP is not active. Enable it above and save settings.")
             return
-        if manager.report is None:
+        lsp_status = manager.status()
+        if not lsp_status.get("initialized"):
             status.update("LSP status will appear after the agent starts.")
             return
-        report = manager.report
-        detected_names = [d.display_name for d in report.detected]
-        missing_names = [m.display_name for m in report.missing]
+        detected_names = [d["display_name"] for d in lsp_status.get("detected", [])]
+        missing_names = [m["display_name"] for m in lsp_status.get("missing", [])]
         if detected_names:
             parts = [f"Detected: {', '.join(detected_names)}"]
             if missing_names:
                 parts.append(f"Missing servers: {', '.join(missing_names)}")
             # Show active sessions with live state
             active = []
-            for lang_id, client in manager._sessions.items():
-                rl = manager._resolved.get(lang_id) or manager._missing.get(lang_id)
-                server_name = rl.server_name if rl else lang_id
-                if client.running and client.status == "initialized":
+            for session in lsp_status.get("sessions", []):
+                server_name = session["server_name"]
+                if session.get("connected"):
                     active.append(server_name)
-                elif client.status == "error":
+                elif session.get("status") == "error":
                     active.append(f"{server_name} (error)")
             if active:
                 parts.append(f"Active: {', '.join(active)}")

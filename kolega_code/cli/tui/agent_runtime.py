@@ -756,26 +756,28 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
 
         lines = ["## 🔍 Language Servers (LSP)"]
 
-        report = manager.report
-        if report is None:
+        status = manager.status()
+        if not status.get("initialized"):
             lines.append("\nLSP status will appear after the agent starts.")
             return "\n".join(lines)
 
-        detected = report.detected
-        resolved = {r.language_id: r for r in report.resolved}
-        missing = report.missing
+        detected = status.get("detected", [])
+        resolved = {r["language_id"]: r for r in status.get("resolved", [])}
+        missing = status.get("missing", [])
 
         if detected:
             lines.append(f"\n**Detected {len(detected)} language(s):**")
             for d in detected:
-                rl = resolved.get(d.language_id)
-                missing_rl = next((m for m in missing if m.language_id == d.language_id), None)
+                rl = resolved.get(d["language_id"])
+                missing_rl = next((m for m in missing if m["language_id"] == d["language_id"]), None)
                 if rl:
-                    lines.append(f"  - {d.display_name} → **{rl.server_name}** ({d.detection_reason})")
+                    lines.append(f"  - {d['display_name']} → **{rl['server_name']}** ({d['detection_reason']})")
                 elif missing_rl:
-                    lines.append(f"  - {d.display_name} → _{missing_rl.server_name} not found_ ({d.detection_reason})")
+                    lines.append(
+                        f"  - {d['display_name']} → _{missing_rl['server_name']} not found_ ({d['detection_reason']})"
+                    )
                 else:
-                    lines.append(f"  - {d.display_name} ({d.detection_reason})")
+                    lines.append(f"  - {d['display_name']} ({d['detection_reason']})")
         else:
             lines.append("\nNo supported languages detected in this project.")
             return "\n".join(lines)
@@ -783,28 +785,25 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         if missing:
             lines.append(f"\n**⚠️ Missing servers ({len(missing)}):**")
             for m in missing:
-                install = m.install_commands[0] if m.install_commands else "See docs for install instructions"
-                lines.append(f"  - **{m.display_name}**: `{m.server_name}` — install: `{install}`")
-                if m.alternatives:
-                    lines.append(f"    Alternatives: {', '.join(m.alternatives)}")
+                lines.append(f"  - **{m['display_name']}**: `{m['server_name']}`")
 
         # Active sessions with live state
         active_sessions = []
-        for lang_id, client in manager._sessions.items():
-            rl = manager._resolved.get(lang_id) or manager._missing.get(lang_id)
-            server_name = rl.server_name if rl else lang_id
-            if client.running and client.status == "initialized":
-                pid_str = f" (pid={client.server_pid})" if client.server_pid else ""
+        for session in status.get("sessions", []):
+            server_name = session["server_name"]
+            lang_id = session["language_id"]
+            if session.get("connected"):
+                pid_str = f" (pid={session['pid']})" if session.get("pid") else ""
                 active_sessions.append(f"  - ✅ **{server_name}** for {lang_id}{pid_str}")
-            elif client.status == "error" and client.last_error:
-                active_sessions.append(f"  - ❌ **{server_name}** for {lang_id} — {client.last_error}")
+            elif session.get("status") == "error" and session.get("last_error"):
+                active_sessions.append(f"  - ❌ **{server_name}** for {lang_id} — {session['last_error']}")
 
         if active_sessions:
             lines.append(f"\n**Active sessions ({len(active_sessions)}):**")
             lines.extend(active_sessions)
 
         # Last diagnostic counts
-        diag_counts = manager.last_diagnostic_count
+        diag_counts = status.get("diagnostic_counts", {})
         if diag_counts:
             shown = list(diag_counts.items())[:5]
             count_parts = []

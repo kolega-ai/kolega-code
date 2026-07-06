@@ -11,6 +11,8 @@ client's server→client request handling.
 Configurable via environment variables:
 - ``FAKE_LSP_DELAY``: seconds to delay before publishing diagnostics (default 0).
 - ``FAKE_LSP_PULL_DIAGS``: if ``"0"``, disable pull diagnostics (force push-only).
+- ``FAKE_LSP_STRICT_OPEN``: if ``"1"``, ignore didChange for unopened docs.
+- ``FAKE_LSP_SOURCE``: diagnostic/source label (default ``"fake-lsp"``).
 """
 
 from __future__ import annotations
@@ -77,6 +79,9 @@ _open_docs: dict[str, dict] = {}
 # Config
 _DELAY = float(os.environ.get("FAKE_LSP_DELAY", "0"))
 _PULL_DIAGS = os.environ.get("FAKE_LSP_PULL_DIAGS", "1") != "0"
+_STRICT_OPEN = os.environ.get("FAKE_LSP_STRICT_OPEN", "0") == "1"
+_SOURCE = os.environ.get("FAKE_LSP_SOURCE", "fake-lsp")
+_CONFIGURATION_RESPONSES: list[Any] = []
 
 # Capabilities we advertise
 _CAPABILITIES = {
@@ -89,11 +94,13 @@ _CAPABILITIES = {
     "hoverProvider": True,
     "documentSymbolProvider": True,
     "workspaceSymbolProvider": True,
+    "codeActionProvider": True,
+    "callHierarchyProvider": True,
     "publishDiagnosticsProvider": True,
 }
 
 
-def _make_diagnostic(uri: str, line: int, message: str, severity: int = 1, source: str = "fake-lsp") -> dict:
+def _make_diagnostic(uri: str, line: int, message: str, severity: int = 1, source: str | None = None) -> dict:
     return {
         "range": {
             "start": {"line": line, "character": 0},
@@ -101,7 +108,7 @@ def _make_diagnostic(uri: str, line: int, message: str, severity: int = 1, sourc
         },
         "severity": severity,
         "message": message,
-        "source": source,
+        "source": source or _SOURCE,
     }
 
 
@@ -177,6 +184,8 @@ def handle_did_change(msg: dict) -> None:
     uri = td.get("uri", "")
     version = td.get("version", 1)
     changes = params.get("contentChanges", [])
+    if _STRICT_OPEN and uri not in _open_docs:
+        return
     if changes:
         _open_docs[uri] = {"text": changes[0].get("text", ""), "version": version}
     _publish_diagnostics(uri, version)
@@ -289,6 +298,54 @@ def handle_workspace_symbol(msg: dict) -> Any:
     ]
 
 
+def handle_code_action(msg: dict) -> Any:
+    return [
+        {
+            "title": "Replace undefined_var with defined_var",
+            "kind": "quickfix",
+            "diagnostics": [],
+            "edit": {
+                "changes": {
+                    msg.get("params", {}).get("textDocument", {}).get("uri", "file:///fake/path.py"): [
+                        {
+                            "range": {
+                                "start": {"line": 0, "character": 0},
+                                "end": {"line": 0, "character": 13},
+                            },
+                            "newText": "defined_var",
+                        }
+                    ]
+                }
+            },
+        },
+        {"title": "Organize imports", "kind": "source.organizeImports", "command": "fake.organizeImports"},
+    ]
+
+
+def _call_hierarchy_item(uri: str = "file:///fake/path.py") -> dict:
+    return {
+        "name": "example",
+        "kind": 12,
+        "uri": uri,
+        "range": {"start": {"line": 0, "character": 0}, "end": {"line": 2, "character": 0}},
+        "selectionRange": {"start": {"line": 0, "character": 4}, "end": {"line": 0, "character": 11}},
+    }
+
+
+def handle_prepare_call_hierarchy(msg: dict) -> Any:
+    params = msg.get("params", {})
+    uri = params.get("textDocument", {}).get("uri", "file:///fake/path.py")
+    return [_call_hierarchy_item(uri)]
+
+
+def handle_incoming_calls(msg: dict) -> Any:
+    return [{"from": {**_call_hierarchy_item(), "name": "caller"}, "fromRanges": []}]
+
+
+def handle_outgoing_calls(msg: dict) -> Any:
+    return [{"to": {**_call_hierarchy_item(), "name": "callee"}, "fromRanges": []}]
+
+
 # ---------------------------------------------------------------------------
 # Main loop
 # ---------------------------------------------------------------------------
@@ -305,6 +362,11 @@ def main() -> None:
 
         method = msg.get("method", "")
         msg_id = msg.get("id")
+
+        # Response to a server-generated request such as workspace/configuration.
+        if msg_id is not None and not method:
+            _CONFIGURATION_RESPONSES.append(msg.get("result"))
+            continue
 
         # Notifications (no id → no response)
         if msg_id is None:
@@ -331,6 +393,10 @@ def main() -> None:
             "textDocument/hover": handle_hover,
             "textDocument/documentSymbol": handle_document_symbol,
             "workspace/symbol": handle_workspace_symbol,
+            "textDocument/codeAction": handle_code_action,
+            "textDocument/prepareCallHierarchy": handle_prepare_call_hierarchy,
+            "callHierarchy/incomingCalls": handle_incoming_calls,
+            "callHierarchy/outgoingCalls": handle_outgoing_calls,
             "shutdown": lambda m: None,
         }
 

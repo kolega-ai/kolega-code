@@ -100,6 +100,12 @@ class LspConfig:
     linting coverage.  Default: empty (one server per language).
     """
 
+    workspace_configuration: dict[str, dict] = field(default_factory=dict)
+    """Per-server responses for ``workspace/configuration`` requests.
+
+    Example: ``{"pyright": {"python": {"analysis": {"typeCheckingMode": "basic"}}}}``.
+    """
+
 
 # ---------------------------------------------------------------------------
 # internal helpers
