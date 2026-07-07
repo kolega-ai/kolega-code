@@ -134,6 +134,76 @@ async def test_code_actions(fake_lsp_manager):
 
 
 @pytest.mark.asyncio
+async def test_code_action_resolve(fake_lsp_manager):
+    """codeAction/resolve returns a server-provided edit."""
+    manager = fake_lsp_manager
+    (manager._project_path / "resolve_actions.py").write_text("value = undefined_var\n", encoding="utf-8")
+    actions = await manager.get_code_actions("resolve_actions.py", 0, 8)
+    unresolved = next(action for action in actions if action.get("title") == "Resolve undefined_var with defined_var")
+
+    resolved = await manager.resolve_code_action("resolve_actions.py", unresolved)
+
+    assert "edit" in resolved
+    assert resolved["edit"]["changes"]
+
+
+@pytest.mark.asyncio
+async def test_rename_returns_workspace_edit(fake_lsp_manager):
+    """textDocument/rename returns a WorkspaceEdit."""
+    manager = fake_lsp_manager
+    (manager._project_path / "rename.py").write_text("old = 1\nprint(old)\n", encoding="utf-8")
+
+    edit = await manager.get_rename("rename.py", 0, 0, "new")
+
+    assert edit is not None
+    changes = edit["changes"]
+    edits = next(iter(changes.values()))
+    assert len(edits) == 2
+
+
+@pytest.mark.asyncio
+async def test_formatting_returns_text_edits(fake_lsp_manager):
+    """textDocument/formatting returns TextEdits."""
+    manager = fake_lsp_manager
+    (manager._project_path / "format_me.py").write_text("x = 1   \n", encoding="utf-8")
+
+    edits = await manager.get_document_formatting("format_me.py")
+
+    assert edits is not None
+    assert edits[0]["newText"] == "x = 1\n"
+
+
+@pytest.mark.asyncio
+async def test_will_rename_files_returns_workspace_edit(fake_lsp_manager):
+    """workspace/willRenameFiles returns edits for opened referencing documents."""
+    manager = fake_lsp_manager
+    (manager._project_path / "importer.py").write_text("from old import value\n", encoding="utf-8")
+    await manager.get_diagnostics("importer.py")
+
+    edits = await manager.will_rename_files("old.py", "new.py")
+
+    assert len(edits) == 1
+    assert edits[0]["changes"]
+
+
+@pytest.mark.asyncio
+async def test_workspace_apply_edit_denied_by_default(fake_lsp_manager):
+    """Server-initiated workspace/applyEdit is denied unless a trusted edit tool scopes it."""
+    manager = fake_lsp_manager
+    path = manager._project_path / "imports.py"
+    path.write_text("import unused\nvalue = 1\n", encoding="utf-8")
+    await manager.get_diagnostics("imports.py")
+
+    result = await manager.execute_command(
+        "imports.py",
+        {"command": "fake.organizeImports", "arguments": [path.as_uri()]},
+    )
+
+    assert result == {"applied": False}
+    assert path.read_text(encoding="utf-8") == "import unused\nvalue = 1\n"
+
+
+@pytest.mark.asyncio
 async def test_call_hierarchy(fake_lsp_manager):
     """Call hierarchy prepare + incoming/outgoing calls are queried."""
     manager = fake_lsp_manager

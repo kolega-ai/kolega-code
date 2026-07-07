@@ -6,12 +6,16 @@ tool for diagnostics, go-to-definition, references, hover, symbols, and status.
 
 from __future__ import annotations
 
+import hashlib
 import json
+from pathlib import Path
 from typing import Any, Optional, cast
 from urllib.parse import unquote, urlparse
 
 from .base_tool import BaseTool
+from .edit_preview import build_diff_preview
 from kolega_code.services.lsp import LspManager, format_diagnostics, format_no_diagnostics
+from kolega_code.services.lsp.edits import WorkspaceEditApplier, WorkspaceEditError, WorkspaceEditResult
 
 
 class LspTool(BaseTool):
@@ -489,7 +493,7 @@ class LspTool(BaseTool):
             raw_edit = action.get("edit")
             edit = cast(dict[str, Any], raw_edit) if isinstance(raw_edit, dict) else {}
             edit_summary = LspTool._summarize_workspace_edit(edit)
-            parts = [f"  {index}. `{title}`"]
+            parts = [f"  {index}. `{title}`", f"action_id={LspTool._action_id(action, index - 1)}"]
             if kind:
                 parts.append(f"kind={kind}")
             if command:
@@ -502,6 +506,18 @@ class LspTool(BaseTool):
         if len(actions) > 50:
             lines.append(f"  ... and {len(actions) - 50} more")
         return "\n".join(lines)
+
+    @staticmethod
+    def _action_id(action: dict[str, Any], index: int) -> str:
+        payload = {
+            "index": index,
+            "title": action.get("title"),
+            "kind": action.get("kind"),
+            "command": action.get("command"),
+            "edit": action.get("edit"),
+        }
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+        return hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:12]
 
     @staticmethod
     def _summarize_workspace_edit(edit: dict[str, Any]) -> str:
@@ -606,6 +622,476 @@ class LspTool(BaseTool):
                 lines.append(f"  - {path_str}: {count}")
 
         return "\n".join(lines)
+
+
+class LspEditTool(BaseTool):
+    """Trusted mutating LSP operations."""
+
+    _ALL_OPS = {"rename", "rename_file", "format_document", "format_range", "apply_code_action"}
+
+    def __init__(self, *args, lsp_manager: Optional[LspManager] = None, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._lsp_manager = lsp_manager
+
+    async def lsp_edit(
+        self,
+        operation: str,
+        path: Optional[str] = None,
+        line: Optional[int] = None,
+        symbol: Optional[str] = None,
+        new_name: Optional[str] = None,
+        new_path: Optional[str] = None,
+        query: Optional[str] = None,
+        action_id: Optional[str] = None,
+        end_line: Optional[int] = None,
+        kind: Optional[str] = None,
+        apply: bool = True,
+        timeout: Optional[float] = None,
+    ) -> str:
+        """Apply trusted LSP edits such as rename, formatting, and code actions."""
+        if self._lsp_manager is None or not self._lsp_manager.enabled:
+            return "LSP edits are not available (LSP is disabled or not configured)."
+
+        if operation not in self._ALL_OPS:
+            return f"Unknown operation '{operation}'. Valid operations: {', '.join(sorted(self._ALL_OPS))}."
+
+        if not self._lsp_manager._initialized:
+            await self._lsp_manager.initialize()
+
+        kw_timeout: dict[str, Any] = {"timeout": timeout} if timeout is not None else {}
+
+        try:
+            if operation == "rename":
+                return await self._op_rename(path, line, symbol, new_name, apply, kw_timeout)
+            if operation == "rename_file":
+                return await self._op_rename_file(path, new_path, apply, kw_timeout)
+            if operation == "format_document":
+                return await self._op_format_document(path, apply, kw_timeout)
+            if operation == "format_range":
+                return await self._op_format_range(path, line, end_line, apply, kw_timeout)
+            if operation == "apply_code_action":
+                return await self._op_apply_code_action(
+                    path, line, symbol, query, action_id, end_line, kind, apply, kw_timeout
+                )
+            return f"Operation '{operation}' is not yet implemented."
+        except WorkspaceEditError as exc:
+            return f"LSP edit was rejected: {exc}"
+        except ValueError as exc:
+            return f"Error: {exc}"
+        except Exception as exc:
+            await self.log_warning(f"LSP edit operation '{operation}' failed: {exc}", sender=self.caller.agent_name)
+            return f"LSP edit operation '{operation}' failed: {exc}"
+
+    async def _op_rename(
+        self,
+        path: Optional[str],
+        line: Optional[int],
+        symbol: Optional[str],
+        new_name: Optional[str],
+        should_apply: bool,
+        kw_timeout: dict[str, Any],
+    ) -> str:
+        assert self._lsp_manager is not None
+        if not path:
+            return "Error: 'path' is required for the 'rename' operation."
+        if line is None:
+            return "Error: 'line' (1-based) is required for the 'rename' operation."
+        if not symbol:
+            return "Error: 'symbol' is required for the 'rename' operation."
+        if not new_name:
+            return "Error: 'new_name' is required for the 'rename' operation."
+
+        server_name = self._lsp_manager.server_for_path(path)
+        if server_name is None:
+            return f"No language server configured for {path}."
+
+        lsp_line, character = self._lsp_manager._resolve_position(path, line, symbol)
+        edit = await self._lsp_manager.get_rename(path, lsp_line, character, new_name, **kw_timeout)
+        if edit is None:
+            return f"Rename is not supported by {server_name}, or no rename edits were returned."
+        return await self._apply_or_preview_workspace_edit("rename", edit, should_apply)
+
+    async def _op_rename_file(
+        self,
+        path: Optional[str],
+        new_path: Optional[str],
+        should_apply: bool,
+        kw_timeout: dict[str, Any],
+    ) -> str:
+        assert self._lsp_manager is not None
+        if not path:
+            return "Error: 'path' is required for the 'rename_file' operation."
+        if not new_path:
+            return "Error: 'new_path' is required for the 'rename_file' operation."
+
+        will_rename_edits = await self._lsp_manager.will_rename_files(path, new_path, **kw_timeout)
+        result_lines: list[str] = []
+        touched_paths: list[str] = []
+
+        for edit in will_rename_edits:
+            preview_result = self._preview_workspace_edit(edit)
+            result = await self._apply_or_preview_workspace_edit(
+                "rename_file:willRenameFiles",
+                edit,
+                should_apply,
+                include_diagnostics=False,
+            )
+            result_lines.append(result)
+            touched_paths.extend(preview_result.touched_paths)
+
+        rename_edit = {
+            "documentChanges": [
+                {
+                    "kind": "rename",
+                    "oldUri": self._file_uri(path),
+                    "newUri": self._file_uri(new_path),
+                    "options": {"overwrite": False, "ignoreIfExists": False},
+                }
+            ]
+        }
+        result = await self._apply_or_preview_workspace_edit(
+            "rename_file",
+            rename_edit,
+            should_apply,
+            include_diagnostics=False,
+        )
+        result_lines.append(result)
+        touched_paths.extend([path, new_path])
+
+        if should_apply:
+            await self._lsp_manager.did_rename_files(path, new_path)
+            diagnostics = await self._diagnostics_for_paths([new_path, *touched_paths])
+            if diagnostics:
+                result_lines.append(diagnostics)
+
+        return "\n\n".join(line for line in result_lines if line)
+
+    async def _op_format_document(
+        self,
+        path: Optional[str],
+        should_apply: bool,
+        kw_timeout: dict[str, Any],
+    ) -> str:
+        assert self._lsp_manager is not None
+        if not path:
+            return "Error: 'path' is required for the 'format_document' operation."
+
+        server_name = self._lsp_manager.server_for_path(path)
+        if server_name is None:
+            return f"No language server configured for {path}."
+
+        edits = await self._lsp_manager.get_document_formatting(path, **kw_timeout)
+        if edits is None:
+            return f"Document formatting is not supported by {server_name}."
+        if not edits:
+            return "Document formatting returned no edits."
+        return await self._apply_or_preview_workspace_edit(
+            "format_document",
+            self._text_edits_to_workspace_edit(path, edits),
+            should_apply,
+        )
+
+    async def _op_format_range(
+        self,
+        path: Optional[str],
+        line: Optional[int],
+        end_line: Optional[int],
+        should_apply: bool,
+        kw_timeout: dict[str, Any],
+    ) -> str:
+        assert self._lsp_manager is not None
+        if not path:
+            return "Error: 'path' is required for the 'format_range' operation."
+        if line is None:
+            return "Error: 'line' (1-based) is required for the 'format_range' operation."
+
+        server_name = self._lsp_manager.server_for_path(path)
+        if server_name is None:
+            return f"No language server configured for {path}."
+
+        end_line_1based = end_line if end_line is not None else line
+        end_character = self._line_end_character(path, end_line_1based)
+        edits = await self._lsp_manager.get_range_formatting(
+            path,
+            line - 1,
+            0,
+            end_line_1based - 1,
+            end_character,
+            **kw_timeout,
+        )
+        if edits is None:
+            return f"Range formatting is not supported by {server_name}."
+        if not edits:
+            return "Range formatting returned no edits."
+        return await self._apply_or_preview_workspace_edit(
+            "format_range",
+            self._text_edits_to_workspace_edit(path, edits),
+            should_apply,
+        )
+
+    async def _op_apply_code_action(
+        self,
+        path: Optional[str],
+        line: Optional[int],
+        symbol: Optional[str],
+        query: Optional[str],
+        action_id: Optional[str],
+        end_line: Optional[int],
+        kind: Optional[str],
+        should_apply: bool,
+        kw_timeout: dict[str, Any],
+    ) -> str:
+        assert self._lsp_manager is not None
+        if not path:
+            return "Error: 'path' is required for the 'apply_code_action' operation."
+        if line is None:
+            return "Error: 'line' (1-based) is required for the 'apply_code_action' operation."
+        if not symbol:
+            return "Error: 'symbol' is required for the 'apply_code_action' operation."
+
+        server_name = self._lsp_manager.server_for_path(path)
+        if server_name is None:
+            return f"No language server configured for {path}."
+
+        lsp_line, character = self._lsp_manager._resolve_position(path, line, symbol)
+        lsp_end_line = end_line - 1 if end_line is not None else None
+        actions = await self._lsp_manager.get_code_actions(
+            path,
+            lsp_line,
+            character,
+            end_line=lsp_end_line,
+            kind=kind,
+            **kw_timeout,
+        )
+        if actions is None:
+            return f"Code actions are not supported by {server_name}, or no actions were found."
+        if not isinstance(actions, list) or not actions:
+            return "No code actions found."
+
+        selected = self._select_code_action(actions, action_id=action_id, query=query)
+        if selected is None:
+            return "No matching code action found. Use lsp code_actions to list action_id values."
+
+        disabled = selected.get("disabled")
+        if isinstance(disabled, dict):
+            reason = disabled.get("reason")
+            return f"Code action is disabled: {reason or 'no reason provided'}."
+
+        selected = await self._lsp_manager.resolve_code_action(path, selected, **kw_timeout)
+        edit = selected.get("edit")
+        command = self._command_payload(selected)
+        result_lines: list[str] = []
+        touched_paths: list[str] = []
+
+        if isinstance(edit, dict) and edit:
+            preview_result = self._preview_workspace_edit(edit)
+            result = await self._apply_or_preview_workspace_edit(
+                "apply_code_action",
+                edit,
+                should_apply,
+                include_diagnostics=False,
+            )
+            result_lines.append(result)
+            touched_paths.extend(preview_result.touched_paths)
+
+        if command:
+            if not should_apply:
+                result_lines.append(f"Preview: command `{command['command']}` would be executed on apply.")
+            else:
+                applier = WorkspaceEditApplier(self.project_path, self.filesystem)
+                server_results: list[WorkspaceEditResult] = []
+
+                def apply_edit_handler(params: dict[str, Any]) -> dict[str, Any]:
+                    workspace_edit = params.get("edit") if isinstance(params, dict) else None
+                    try:
+                        preview = applier.preview(workspace_edit)
+                        blocked = self._first_blocked_path(preview.touched_paths)
+                        if blocked:
+                            return {"applied": False, "failureReason": blocked}
+                        applied = applier.apply(workspace_edit)
+                        server_results.append(applied)
+                        return {"applied": True}
+                    except WorkspaceEditError as exc:
+                        return {"applied": False, "failureReason": str(exc)}
+
+                self._lsp_manager.set_workspace_apply_edit_handler(apply_edit_handler)
+                try:
+                    command_result = await self._lsp_manager.execute_command(path, command, **kw_timeout)
+                finally:
+                    self._lsp_manager.set_workspace_apply_edit_handler(None)
+
+                result_lines.append(f"Executed LSP command `{command['command']}`.")
+                for server_result in server_results:
+                    await self._send_previews(server_result, "apply_code_action")
+                    touched_paths.extend(server_result.touched_paths)
+                    result_lines.append(self._format_workspace_edit_result("apply_code_action", server_result))
+                if isinstance(command_result, dict) and (
+                    "changes" in command_result or "documentChanges" in command_result
+                ):
+                    preview_result = self._preview_workspace_edit(command_result)
+                    result = await self._apply_or_preview_workspace_edit(
+                        "apply_code_action:executeCommand",
+                        command_result,
+                        True,
+                        include_diagnostics=False,
+                    )
+                    result_lines.append(result)
+                    touched_paths.extend(preview_result.touched_paths)
+
+        if not result_lines:
+            return "Selected code action returned no edit or executable command."
+
+        if should_apply:
+            diagnostics = await self._diagnostics_for_paths(touched_paths)
+            if diagnostics:
+                result_lines.append(diagnostics)
+
+        return "\n\n".join(line for line in result_lines if line)
+
+    async def _apply_or_preview_workspace_edit(
+        self,
+        operation: str,
+        edit: dict[str, Any],
+        should_apply: bool,
+        *,
+        include_diagnostics: bool = True,
+    ) -> str:
+        applier = WorkspaceEditApplier(self.project_path, self.filesystem)
+        preview = applier.preview(edit)
+        blocked = self._first_blocked_path(preview.touched_paths)
+        if should_apply and blocked:
+            return blocked
+
+        result = applier.apply(edit) if should_apply else preview
+        await self._send_previews(result, operation)
+        lines = [self._format_workspace_edit_result(operation, result)]
+        if should_apply and include_diagnostics:
+            diagnostics = await self._diagnostics_for_paths(result.touched_paths)
+            if diagnostics:
+                lines.append(diagnostics)
+        return "\n\n".join(line for line in lines if line)
+
+    def _preview_workspace_edit(self, edit: dict[str, Any]) -> WorkspaceEditResult:
+        return WorkspaceEditApplier(self.project_path, self.filesystem).preview(edit)
+
+    async def _send_previews(self, result: WorkspaceEditResult, operation: str) -> None:
+        for change in result.text_changes:
+            if change.old_text == change.new_text:
+                continue
+            await self.send_edit_preview(
+                build_diff_preview(change.old_text, change.new_text, change.path),
+                tool_call_id=getattr(self.caller, "current_tool_execution_id", None),
+                tool_name="lsp_edit",
+            )
+
+    def _format_workspace_edit_result(self, operation: str, result: WorkspaceEditResult) -> str:
+        label = "Applied" if result.applied else "Preview"
+        lines = [f"{label} LSP edit `{operation}`."]
+        for summary in result.summaries:
+            lines.append(f"- {summary}")
+        return "\n".join(lines)
+
+    async def _diagnostics_for_paths(self, paths: list[str] | tuple[str, ...]) -> str:
+        assert self._lsp_manager is not None
+        if not self._lsp_manager._config.auto_diagnostics_on_edit:
+            return ""
+        lines: list[str] = []
+        for path in dict.fromkeys(paths):
+            if not path or not self.filesystem.exists(path) or self.filesystem.is_dir(path):
+                continue
+            server_name = self._lsp_manager.server_for_path(path)
+            if server_name is None:
+                continue
+            diagnostics = await self._lsp_manager.get_fresh_diagnostics(path)
+            if diagnostics:
+                lines.append(format_diagnostics(diagnostics, path, source=server_name))
+        return "\n\n".join(lines)
+
+    def _first_blocked_path(self, paths: list[str] | tuple[str, ...]) -> Optional[str]:
+        for path in paths:
+            blocked = self._enforce_vibe_edit_policy(path)
+            if blocked:
+                return blocked
+        return None
+
+    def _text_edits_to_workspace_edit(self, path: str, edits: Any) -> dict[str, Any]:
+        if not isinstance(edits, list):
+            raise WorkspaceEditError("Server returned invalid text edits.")
+        return {"changes": {self._file_uri(path): edits}}
+
+    def _file_uri(self, path: str) -> str:
+        path_obj = Path(path)
+        absolute = path_obj.resolve() if path_obj.is_absolute() else (self.project_path / path_obj).resolve()
+        return absolute.as_uri()
+
+    def _line_end_character(self, path: str, line_1based: int) -> int:
+        text = self.filesystem.read_text(path)
+        lines = text.split("\n")
+        line_index = line_1based - 1
+        if line_index < 0 or line_index >= len(lines):
+            raise ValueError(f"Line {line_1based} is out of range (file has {len(lines)} lines).")
+        return sum(2 if ord(char) > 0xFFFF else 1 for char in lines[line_index])
+
+    def _select_code_action(
+        self,
+        actions: list[Any],
+        *,
+        action_id: Optional[str],
+        query: Optional[str],
+    ) -> Optional[dict[str, Any]]:
+        dict_actions = [action for action in actions if isinstance(action, dict)]
+        if action_id:
+            for index, action in enumerate(dict_actions):
+                if LspTool._action_id(action, index) == action_id:
+                    return action
+            return None
+
+        if query:
+            query_text = query.strip()
+            if query_text.isdigit():
+                selected_index = int(query_text)
+                if 0 <= selected_index < len(dict_actions):
+                    return dict_actions[selected_index]
+                if 1 <= selected_index <= len(dict_actions):
+                    return dict_actions[selected_index - 1]
+            folded = query_text.casefold()
+            for action in dict_actions:
+                command_payload = self._command_payload(action)
+                haystack = " ".join(
+                    str(value)
+                    for value in (
+                        action.get("title"),
+                        action.get("kind"),
+                        command_payload.get("command") if command_payload else None,
+                    )
+                    if value
+                ).casefold()
+                if folded in haystack:
+                    return action
+            return None
+
+        if len(dict_actions) == 1:
+            return dict_actions[0]
+        return None
+
+    def _command_payload(self, action: dict[str, Any]) -> Optional[dict[str, Any]]:
+        command = action.get("command")
+        if isinstance(command, dict):
+            command_name = command.get("command")
+            if isinstance(command_name, str) and command_name:
+                return {
+                    "title": command.get("title") or action.get("title") or command_name,
+                    "command": command_name,
+                    "arguments": command.get("arguments", []),
+                }
+            return None
+        if isinstance(command, str) and command:
+            return {
+                "title": action.get("title") or command,
+                "command": command,
+                "arguments": action.get("arguments", []),
+            }
+        return None
 
 
 # LSP SymbolKind constants (subset)

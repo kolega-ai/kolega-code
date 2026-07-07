@@ -10,7 +10,7 @@ import asyncio
 import logging
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from .client import LspClient, LspClientError, LspDiagnostic, parse_publish_diagnostics
 from .config import LspConfig
@@ -44,12 +44,32 @@ _CLIENT_CAPABILITIES: dict = {
         "references": {},
         "documentSymbol": {"hierarchicalDocumentSymbolSupport": True},
         "codeAction": {"dynamicRegistration": True, "resolveSupport": {"properties": ["edit", "command"]}},
+        "rename": {
+            "dynamicRegistration": True,
+            "prepareSupport": False,
+            "honorsChangeAnnotations": False,
+        },
+        "formatting": {"dynamicRegistration": True},
+        "rangeFormatting": {"dynamicRegistration": True},
         "callHierarchy": {"dynamicRegistration": True},
     },
     "workspace": {
         "symbol": {},
         "configuration": True,
         "workspaceFolders": True,
+        "workspaceEdit": {
+            "documentChanges": True,
+            "resourceOperations": ["create", "rename", "delete"],
+            "failureHandling": "textOnlyTransactional",
+            "normalizesLineEndings": True,
+            "changeAnnotationSupport": {"groupsOnLabel": False},
+        },
+        "executeCommand": {"dynamicRegistration": True},
+        "fileOperations": {
+            "dynamicRegistration": True,
+            "willRename": True,
+            "didRename": True,
+        },
     },
 }
 
@@ -128,6 +148,9 @@ class LspManager:
         self._registered_capabilities: dict[str, dict] = {}
         # Additional diagnostic server sessions keyed by (lang_id, server_name)
         self._extra_sessions: dict[tuple[str, str], LspClient] = {}
+        # Scoped handler used only by trusted mutating tools while a server
+        # command is running. Default workspace/applyEdit remains read-only.
+        self._workspace_apply_edit_handler: Optional[Callable[[dict[str, Any]], dict[str, Any]]] = None
 
     # -- public API --------------------------------------------------------
 
@@ -514,6 +537,233 @@ class LspManager:
         except LspClientError:
             return None
 
+    async def get_rename(
+        self,
+        path: str,
+        line: int,
+        character: int,
+        new_name: str,
+        *,
+        timeout: float = 30,
+    ) -> Any:
+        """Query ``textDocument/rename`` and return the server-provided WorkspaceEdit."""
+        if not self._config.enabled:
+            return None
+
+        effective_id, client = await self._get_or_start_session(path)
+        if client is None or effective_id is None:
+            return None
+
+        lang_id = self._language_for_path(path)
+        if not lang_id:
+            return None
+
+        if not self._supports_method(client, ("renameProvider",), "textDocument/rename"):
+            return None
+
+        uri = _path_to_uri(self._project_path, path)
+        try:
+            await self._ensure_document_open(client, uri, path, lang_id, session_key=effective_id)
+        except LspClientError:
+            pass
+
+        try:
+            return await client.request(
+                "textDocument/rename",
+                {
+                    "textDocument": {"uri": uri},
+                    "position": {"line": line, "character": character},
+                    "newName": new_name,
+                },
+                timeout=timeout,
+            )
+        except LspClientError:
+            return None
+
+    async def get_document_formatting(self, path: str, *, timeout: float = 30) -> Any:
+        """Query ``textDocument/formatting`` and return text edits."""
+        if not self._config.enabled:
+            return None
+
+        effective_id, client = await self._get_or_start_session(path)
+        if client is None or effective_id is None:
+            return None
+
+        lang_id = self._language_for_path(path)
+        if not lang_id:
+            return None
+
+        if not self._supports_method(client, ("documentFormattingProvider",), "textDocument/formatting"):
+            return None
+
+        uri = _path_to_uri(self._project_path, path)
+        try:
+            await self._ensure_document_open(client, uri, path, lang_id, session_key=effective_id)
+        except LspClientError:
+            pass
+
+        try:
+            return await client.request(
+                "textDocument/formatting",
+                {"textDocument": {"uri": uri}, "options": self._formatting_options(path)},
+                timeout=timeout,
+            )
+        except LspClientError:
+            return None
+
+    async def get_range_formatting(
+        self,
+        path: str,
+        start_line: int,
+        start_character: int,
+        end_line: int,
+        end_character: int,
+        *,
+        timeout: float = 30,
+    ) -> Any:
+        """Query ``textDocument/rangeFormatting`` and return text edits."""
+        if not self._config.enabled:
+            return None
+
+        effective_id, client = await self._get_or_start_session(path)
+        if client is None or effective_id is None:
+            return None
+
+        lang_id = self._language_for_path(path)
+        if not lang_id:
+            return None
+
+        if not self._supports_method(client, ("documentRangeFormattingProvider",), "textDocument/rangeFormatting"):
+            return None
+
+        uri = _path_to_uri(self._project_path, path)
+        try:
+            await self._ensure_document_open(client, uri, path, lang_id, session_key=effective_id)
+        except LspClientError:
+            pass
+
+        try:
+            return await client.request(
+                "textDocument/rangeFormatting",
+                {
+                    "textDocument": {"uri": uri},
+                    "range": {
+                        "start": {"line": start_line, "character": start_character},
+                        "end": {"line": end_line, "character": end_character},
+                    },
+                    "options": self._formatting_options(path),
+                },
+                timeout=timeout,
+            )
+        except LspClientError:
+            return None
+
+    async def resolve_code_action(self, path: str, action: dict[str, Any], *, timeout: float = 30) -> dict[str, Any]:
+        """Resolve a code action if the server supports ``codeAction/resolve``."""
+        effective_id, client = await self._get_or_start_session(path)
+        if client is None or effective_id is None:
+            return action
+
+        provider = client.server_capabilities.get("codeActionProvider") if client.server_capabilities else None
+        supports_resolve = isinstance(provider, dict) and bool(provider.get("resolveProvider"))
+        if not supports_resolve and "codeAction/resolve" not in self._registered_capabilities:
+            return action
+
+        try:
+            resolved = await client.request("codeAction/resolve", action, timeout=timeout)
+        except LspClientError:
+            return action
+        return resolved if isinstance(resolved, dict) else action
+
+    async def execute_command(self, path: str, command: dict[str, Any], *, timeout: float = 30) -> Any:
+        """Execute a server command through ``workspace/executeCommand``."""
+        effective_id, client = await self._get_or_start_session(path)
+        if client is None or effective_id is None:
+            return None
+
+        command_name = command.get("command")
+        if not isinstance(command_name, str) or not command_name:
+            return None
+
+        execute_provider = (
+            client.server_capabilities.get("executeCommandProvider") if client.server_capabilities else None
+        )
+        supported_commands = execute_provider.get("commands") if isinstance(execute_provider, dict) else None
+        if isinstance(supported_commands, list) and command_name not in supported_commands:
+            return None
+
+        try:
+            return await client.request(
+                "workspace/executeCommand",
+                {
+                    "command": command_name,
+                    "arguments": command.get("arguments", []),
+                },
+                timeout=timeout,
+            )
+        except LspClientError:
+            return None
+
+    async def will_rename_files(
+        self,
+        old_path: str,
+        new_path: str,
+        *,
+        timeout: float = 30,
+    ) -> list[dict[str, Any]]:
+        """Notify relevant servers before a file rename and collect WorkspaceEdits."""
+        edits: list[dict[str, Any]] = []
+        payload = {
+            "files": [
+                {
+                    "oldUri": _path_to_uri(self._project_path, old_path),
+                    "newUri": _path_to_uri(self._project_path, new_path),
+                }
+            ]
+        }
+        for client in await self._clients_for_file_operation(old_path, new_path):
+            if not self._supports_method(
+                client, ("workspace", "fileOperations", "willRename"), "workspace/willRenameFiles"
+            ):
+                continue
+            try:
+                result = await client.request("workspace/willRenameFiles", payload, timeout=timeout)
+            except LspClientError:
+                continue
+            if isinstance(result, dict) and result:
+                edits.append(result)
+        return edits
+
+    async def did_rename_files(self, old_path: str, new_path: str) -> None:
+        """Notify relevant servers after a file rename."""
+        payload = {
+            "files": [
+                {
+                    "oldUri": _path_to_uri(self._project_path, old_path),
+                    "newUri": _path_to_uri(self._project_path, new_path),
+                }
+            ]
+        }
+        for client in await self._clients_for_file_operation(old_path, new_path):
+            if not self._supports_method(
+                client, ("workspace", "fileOperations", "didRename"), "workspace/didRenameFiles"
+            ):
+                continue
+            try:
+                await client.notify("workspace/didRenameFiles", payload)
+            except LspClientError:
+                pass
+
+        old_uri = _path_to_uri(self._project_path, old_path)
+        for record in self._session_records.values():
+            if old_uri in record.opened_docs:
+                record.opened_docs.pop(old_uri, None)
+        self._open_files.pop(old_uri, None)
+
+    def set_workspace_apply_edit_handler(self, handler: Optional[Callable[[dict[str, Any]], dict[str, Any]]]) -> None:
+        """Set the temporary handler for server-initiated ``workspace/applyEdit``."""
+        self._workspace_apply_edit_handler = handler
+
     async def get_call_hierarchy(self, path: str, line: int, character: int, *, timeout: float = 30) -> Any:
         """Query call hierarchy prepare + incoming/outgoing calls."""
         if not self._config.enabled:
@@ -845,6 +1095,62 @@ class LspManager:
             return list(self._diagnostics.get(uri, []))
         return list(record.diagnostics.get(uri, []))
 
+    def _supports_method(self, client: LspClient, capability_path: tuple[str, ...], method: str) -> bool:
+        return self._has_capability(client, *capability_path) or method in self._registered_capabilities
+
+    def _formatting_options(self, path: str) -> dict[str, Any]:
+        tab_size = 4
+        insert_spaces = True
+        try:
+            text = (self._project_path / path).read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            text = ""
+        for line in text.splitlines():
+            stripped = line.lstrip(" \t")
+            if not stripped or stripped == line:
+                continue
+            indent = line[: len(line) - len(stripped)]
+            if "\t" in indent:
+                insert_spaces = False
+                tab_size = 4
+                break
+            tab_size = min(max(len(indent), 2), 8)
+            break
+        return {
+            "tabSize": tab_size,
+            "insertSpaces": insert_spaces,
+            "trimTrailingWhitespace": True,
+            "insertFinalNewline": True,
+            "trimFinalNewlines": True,
+        }
+
+    async def _clients_for_file_operation(self, *paths: str) -> list[LspClient]:
+        clients: dict[int, LspClient] = {id(client): client for client in self._sessions.values() if client.running}
+
+        for path in paths:
+            lang_id = self._language_for_path(path)
+            if not lang_id:
+                continue
+
+            rl = self._resolved.get(lang_id) or self._missing.get(lang_id)
+            if rl is None:
+                continue
+
+            effective_id = lang_id
+            spec = self._registry.get(lang_id)
+            if spec and spec.family:
+                effective_id = spec.family
+
+            try:
+                client = await self._get_session(effective_id, rl)
+            except Exception:
+                logger.exception("Failed to start LSP session for file operation on %s", path)
+                continue
+            if client is not None and client.running:
+                clients[id(client)] = client
+
+        return list(clients.values())
+
     def _aggregate_diagnostics(self, uri: str) -> list[LspDiagnostic]:
         merged: list[LspDiagnostic] = []
         for record in self._session_records.values():
@@ -1060,7 +1366,9 @@ class LspManager:
             return None
 
         def _apply_edit(params: dict):
-            # Read-only wave: do not apply edits, acknowledge safely.
+            if self._workspace_apply_edit_handler is not None:
+                return self._workspace_apply_edit_handler(params)
+            # Read-only default: do not apply edits.
             return {"applied": False}
 
         client.on_request("workspace/configuration", _workspace_configuration)
@@ -1169,7 +1477,11 @@ class LspManager:
                 raise ValueError(f"Symbol '{actual_symbol}' not found on line {line_1based}.")
             start = found_char + len(actual_symbol)
 
-        return (line_idx, found_char)
+        return (line_idx, self._utf16_character_offset(line_text, found_char))
+
+    @staticmethod
+    def _utf16_character_offset(text: str, python_offset: int) -> int:
+        return sum(2 if ord(char) > 0xFFFF else 1 for char in text[:python_offset])
 
     @staticmethod
     def _has_capability(client: Optional[LspClient], *keys: str) -> bool:

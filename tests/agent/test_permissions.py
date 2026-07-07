@@ -112,6 +112,28 @@ def test_edit_permission_rule_can_scope_to_path():
     assert rule.matches(request)
 
 
+def test_lsp_edit_permission_is_gated_as_edit():
+    request = permission_request_for_tool(
+        "lsp_edit",
+        {"operation": "rename", "path": "src/app.py", "line": 3, "symbol": "old", "new_name": "new"},
+    )
+
+    assert request is not None
+    assert request.kind == PermissionKind.EDIT
+    assert request.summary == "lsp_edit src/app.py"
+
+
+def test_lsp_edit_rename_file_permission_summary_includes_destination():
+    request = permission_request_for_tool(
+        "lsp_edit",
+        {"operation": "rename_file", "path": "src/old.py", "new_path": "src/new.py"},
+    )
+
+    assert request is not None
+    assert request.kind == PermissionKind.EDIT
+    assert request.summary == "lsp_edit src/old.py -> src/new.py"
+
+
 @pytest.mark.asyncio
 async def test_execute_single_tool_denies_gated_tool_before_dispatch(tmp_path, agent_config, monkeypatch):
     handler = AsyncMock(return_value="command ran")

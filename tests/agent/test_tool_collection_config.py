@@ -148,7 +148,7 @@ class TestToolCollection:
             assert tool_name in ToolCollection.read_only_tools
 
         # Should not include write tools
-        write_tools = ["edit", "multi_edit", "write"]
+        write_tools = ["edit", "lsp_edit", "multi_edit", "write"]
         for write_tool in write_tools:
             assert write_tool not in tool_names
 

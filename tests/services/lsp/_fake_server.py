@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from typing import Any
 import time
@@ -98,10 +99,22 @@ _CAPABILITIES = {
     "hoverProvider": True,
     "documentSymbolProvider": True,
     "workspaceSymbolProvider": True,
-    "codeActionProvider": True,
+    "codeActionProvider": {"resolveProvider": True},
+    "renameProvider": True,
+    "documentFormattingProvider": True,
+    "documentRangeFormattingProvider": True,
+    "executeCommandProvider": {"commands": ["fake.organizeImports"]},
+    "workspace": {
+        "fileOperations": {
+            "willRename": {"filters": [{"pattern": {"glob": "**/*"}}]},
+            "didRename": {"filters": [{"pattern": {"glob": "**/*"}}]},
+        }
+    },
     "callHierarchyProvider": True,
     "publishDiagnosticsProvider": True,
 }
+
+_SERVER_REQUEST_ID = 1000
 
 
 def _make_diagnostic(uri: str, line: int, message: str, severity: int = 1, source: str | None = None) -> dict:
@@ -148,6 +161,86 @@ def _publish_diagnostics(uri: str, version: int | None = None) -> None:
             "params": params,
         }
     )
+
+
+def _full_document_range(text: str) -> dict:
+    lines = text.split("\n")
+    return {
+        "start": {"line": 0, "character": 0},
+        "end": {"line": len(lines) - 1, "character": len(lines[-1])},
+    }
+
+
+def _word_at_position(text: str, line: int, character: int) -> str:
+    lines = text.split("\n")
+    if line < 0 or line >= len(lines):
+        return ""
+    line_text = lines[line]
+    if character > len(line_text):
+        character = len(line_text)
+    for match in re.finditer(r"[A-Za-z_][A-Za-z0-9_]*", line_text):
+        if match.start() <= character <= match.end():
+            return match.group(0)
+    return ""
+
+
+def _word_replacement_edits(text: str, old: str, new: str) -> list[dict]:
+    edits: list[dict] = []
+    if not old:
+        return edits
+    pattern = re.compile(rf"\b{re.escape(old)}\b")
+    for line_index, line in enumerate(text.split("\n")):
+        for match in pattern.finditer(line):
+            edits.append(
+                {
+                    "range": {
+                        "start": {"line": line_index, "character": match.start()},
+                        "end": {"line": line_index, "character": match.end()},
+                    },
+                    "newText": new,
+                }
+            )
+    return edits
+
+
+def _replace_first_line_text_edit(text: str, old: str, new: str) -> list[dict]:
+    edits: list[dict] = []
+    for line_index, line in enumerate(text.split("\n")):
+        start = line.find(old)
+        if start == -1:
+            continue
+        edits.append(
+            {
+                "range": {
+                    "start": {"line": line_index, "character": start},
+                    "end": {"line": line_index, "character": start + len(old)},
+                },
+                "newText": new,
+            }
+        )
+        break
+    return edits
+
+
+def _client_apply_edit(edit: dict) -> dict:
+    global _SERVER_REQUEST_ID
+    _SERVER_REQUEST_ID += 1
+    request_id = _SERVER_REQUEST_ID
+    write_message(
+        {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": "workspace/applyEdit",
+            "params": {"label": "fake apply edit", "edit": edit},
+        }
+    )
+    while True:
+        response = read_message()
+        if response is None:
+            return {"applied": False}
+        if response.get("id") == request_id and not response.get("method"):
+            return response.get("result", {"applied": False})
+        handle_incoming_message(response)
 
 
 # ---------------------------------------------------------------------------
@@ -305,27 +398,121 @@ def handle_workspace_symbol(msg: dict) -> Any:
 
 
 def handle_code_action(msg: dict) -> Any:
+    uri = msg.get("params", {}).get("textDocument", {}).get("uri", "file:///fake/path.py")
+    doc = _open_docs.get(uri, {})
+    text = doc.get("text", "")
+    edits = _replace_first_line_text_edit(text, "undefined_var", "defined_var")
     return [
         {
             "title": "Replace undefined_var with defined_var",
             "kind": "quickfix",
             "diagnostics": [],
-            "edit": {
-                "changes": {
-                    msg.get("params", {}).get("textDocument", {}).get("uri", "file:///fake/path.py"): [
-                        {
-                            "range": {
-                                "start": {"line": 0, "character": 0},
-                                "end": {"line": 0, "character": 13},
-                            },
-                            "newText": "defined_var",
-                        }
-                    ]
-                }
-            },
+            "edit": {"changes": {uri: edits}},
         },
-        {"title": "Organize imports", "kind": "source.organizeImports", "command": "fake.organizeImports"},
+        {
+            "title": "Resolve undefined_var with defined_var",
+            "kind": "quickfix",
+            "diagnostics": [],
+            "data": {"uri": uri, "old": "undefined_var", "new": "defined_var"},
+        },
+        {
+            "title": "Organize imports",
+            "kind": "source.organizeImports",
+            "command": {"title": "Organize imports", "command": "fake.organizeImports", "arguments": [uri]},
+        },
     ]
+
+
+def handle_code_action_resolve(msg: dict) -> Any:
+    action = msg.get("params", {})
+    data = action.get("data", {}) if isinstance(action, dict) else {}
+    uri = data.get("uri", "file:///fake/path.py")
+    doc = _open_docs.get(uri, {})
+    text = doc.get("text", "")
+    old = data.get("old", "undefined_var")
+    new = data.get("new", "defined_var")
+    action["edit"] = {"changes": {uri: _replace_first_line_text_edit(text, old, new)}}
+    return action
+
+
+def handle_rename(msg: dict) -> Any:
+    params = msg.get("params", {})
+    uri = params.get("textDocument", {}).get("uri", "")
+    position = params.get("position", {})
+    new_name = params.get("newName", "")
+    doc = _open_docs.get(uri, {})
+    text = doc.get("text", "")
+    old_name = _word_at_position(text, int(position.get("line", 0)), int(position.get("character", 0)))
+    edits = _word_replacement_edits(text, old_name, new_name)
+    return {"changes": {uri: edits}}
+
+
+def handle_formatting(msg: dict) -> Any:
+    params = msg.get("params", {})
+    uri = params.get("textDocument", {}).get("uri", "")
+    text = _open_docs.get(uri, {}).get("text", "")
+    formatted = "\n".join(line.rstrip() for line in text.split("\n"))
+    if formatted and not formatted.endswith("\n"):
+        formatted += "\n"
+    return [{"range": _full_document_range(text), "newText": formatted}]
+
+
+def handle_range_formatting(msg: dict) -> Any:
+    params = msg.get("params", {})
+    uri = params.get("textDocument", {}).get("uri", "")
+    text = _open_docs.get(uri, {}).get("text", "")
+    lines = text.split("\n")
+    requested_range = params.get("range", {})
+    start = requested_range.get("start", {})
+    end = requested_range.get("end", {})
+    start_line = int(start.get("line", 0))
+    end_line = int(end.get("line", start_line))
+    if start_line < 0 or end_line >= len(lines):
+        return []
+    replacement = "\n".join(line.rstrip() for line in lines[start_line : end_line + 1])
+    return [
+        {
+            "range": {
+                "start": {"line": start_line, "character": 0},
+                "end": {"line": end_line, "character": len(lines[end_line])},
+            },
+            "newText": replacement,
+        }
+    ]
+
+
+def handle_execute_command(msg: dict) -> Any:
+    params = msg.get("params", {})
+    command = params.get("command", "")
+    arguments = params.get("arguments") or []
+    if command != "fake.organizeImports" or not arguments:
+        return None
+    uri = arguments[0]
+    text = _open_docs.get(uri, {}).get("text", "")
+    lines = [line for line in text.split("\n") if "import unused" not in line]
+    edit = {"changes": {uri: [{"range": _full_document_range(text), "newText": "\n".join(lines)}]}}
+    return _client_apply_edit(edit)
+
+
+def handle_will_rename_files(msg: dict) -> Any:
+    params = msg.get("params", {})
+    files = params.get("files") or []
+    if not files:
+        return None
+    old_uri = files[0].get("oldUri", "")
+    new_uri = files[0].get("newUri", "")
+    old_stem = os.path.splitext(os.path.basename(old_uri))[0]
+    new_stem = os.path.splitext(os.path.basename(new_uri))[0]
+    changes: dict[str, list[dict]] = {}
+    for uri, doc in _open_docs.items():
+        edits = _word_replacement_edits(doc.get("text", ""), old_stem, new_stem)
+        if edits:
+            changes[uri] = edits
+    return {"changes": changes} if changes else None
+
+
+def handle_did_rename_files(msg: dict) -> None:
+    return None
 
 
 def _call_hierarchy_item(uri: str = "file:///fake/path.py") -> dict:
@@ -357,6 +544,83 @@ def handle_outgoing_calls(msg: dict) -> Any:
 # ---------------------------------------------------------------------------
 
 
+def handle_incoming_message(msg: dict) -> bool:
+    method = msg.get("method", "")
+    msg_id = msg.get("id")
+
+    # Response to a server-generated request such as workspace/configuration.
+    if msg_id is not None and not method:
+        _CONFIGURATION_RESPONSES.append(msg.get("result"))
+        return True
+
+    # Notifications (no id → no response)
+    if msg_id is None:
+        if method == "initialized":
+            handle_initialized(msg)
+        elif method == "textDocument/didOpen":
+            handle_did_open(msg)
+        elif method == "textDocument/didChange":
+            handle_did_change(msg)
+        elif method == "textDocument/didSave":
+            handle_did_save(msg)
+        elif method == "workspace/didRenameFiles":
+            handle_did_rename_files(msg)
+        elif method == "exit":
+            return False
+        return True
+
+    # Requests (have id → must respond)
+    handlers = {
+        "initialize": handle_initialize,
+        "textDocument/diagnostic": handle_diagnostic,
+        "textDocument/definition": handle_definition,
+        "textDocument/typeDefinition": handle_definition,
+        "textDocument/implementation": handle_definition,
+        "textDocument/references": handle_references,
+        "textDocument/hover": handle_hover,
+        "textDocument/documentSymbol": handle_document_symbol,
+        "workspace/symbol": handle_workspace_symbol,
+        "textDocument/codeAction": handle_code_action,
+        "codeAction/resolve": handle_code_action_resolve,
+        "textDocument/rename": handle_rename,
+        "textDocument/formatting": handle_formatting,
+        "textDocument/rangeFormatting": handle_range_formatting,
+        "workspace/executeCommand": handle_execute_command,
+        "workspace/willRenameFiles": handle_will_rename_files,
+        "textDocument/prepareCallHierarchy": handle_prepare_call_hierarchy,
+        "callHierarchy/incomingCalls": handle_incoming_calls,
+        "callHierarchy/outgoingCalls": handle_outgoing_calls,
+        "shutdown": lambda m: None,
+    }
+
+    handler = handlers.get(method)
+    if handler is None:
+        write_message(
+            {
+                "jsonrpc": "2.0",
+                "id": msg_id,
+                "error": {"code": -32601, "message": f"Method not found: {method}"},
+            }
+        )
+        return True
+
+    try:
+        result = handler(msg)
+        if isinstance(result, dict) and "error" in result:
+            write_message({"jsonrpc": "2.0", "id": msg_id, "error": result["error"]})
+        else:
+            write_message({"jsonrpc": "2.0", "id": msg_id, "result": result if result is not None else {}})
+    except Exception as exc:
+        write_message(
+            {
+                "jsonrpc": "2.0",
+                "id": msg_id,
+                "error": {"code": -32603, "message": str(exc)},
+            }
+        )
+    return True
+
+
 def main() -> None:
     while True:
         try:
@@ -365,72 +629,8 @@ def main() -> None:
             break
         if msg is None:
             break
-
-        method = msg.get("method", "")
-        msg_id = msg.get("id")
-
-        # Response to a server-generated request such as workspace/configuration.
-        if msg_id is not None and not method:
-            _CONFIGURATION_RESPONSES.append(msg.get("result"))
-            continue
-
-        # Notifications (no id → no response)
-        if msg_id is None:
-            if method == "initialized":
-                handle_initialized(msg)
-            elif method == "textDocument/didOpen":
-                handle_did_open(msg)
-            elif method == "textDocument/didChange":
-                handle_did_change(msg)
-            elif method == "textDocument/didSave":
-                handle_did_save(msg)
-            elif method == "exit":
-                break
-            continue
-
-        # Requests (have id → must respond)
-        handlers = {
-            "initialize": handle_initialize,
-            "textDocument/diagnostic": handle_diagnostic,
-            "textDocument/definition": handle_definition,
-            "textDocument/typeDefinition": handle_definition,
-            "textDocument/implementation": handle_definition,
-            "textDocument/references": handle_references,
-            "textDocument/hover": handle_hover,
-            "textDocument/documentSymbol": handle_document_symbol,
-            "workspace/symbol": handle_workspace_symbol,
-            "textDocument/codeAction": handle_code_action,
-            "textDocument/prepareCallHierarchy": handle_prepare_call_hierarchy,
-            "callHierarchy/incomingCalls": handle_incoming_calls,
-            "callHierarchy/outgoingCalls": handle_outgoing_calls,
-            "shutdown": lambda m: None,
-        }
-
-        handler = handlers.get(method)
-        if handler is None:
-            write_message(
-                {
-                    "jsonrpc": "2.0",
-                    "id": msg_id,
-                    "error": {"code": -32601, "message": f"Method not found: {method}"},
-                }
-            )
-            continue
-
-        try:
-            result = handler(msg)
-            if isinstance(result, dict) and "error" in result:
-                write_message({"jsonrpc": "2.0", "id": msg_id, "error": result["error"]})
-            else:
-                write_message({"jsonrpc": "2.0", "id": msg_id, "result": result if result is not None else {}})
-        except Exception as exc:
-            write_message(
-                {
-                    "jsonrpc": "2.0",
-                    "id": msg_id,
-                    "error": {"code": -32603, "message": str(exc)},
-                }
-            )
+        if not handle_incoming_message(msg):
+            break
 
 
 if __name__ == "__main__":

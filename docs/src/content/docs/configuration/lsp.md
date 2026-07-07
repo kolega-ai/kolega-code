@@ -1,6 +1,6 @@
 ---
 title: Language servers
-description: Configure LSP diagnostics and read-only code intelligence.
+description: Configure LSP diagnostics, code intelligence, and trusted LSP edits.
 ---
 
 Kolega Code can start local Language Server Protocol (LSP) servers for detected
@@ -9,11 +9,12 @@ project languages. LSP is enabled by default and is used for:
 - diagnostics after `edit`, `multi_edit`, and `write`;
 - the `lsp_diagnostics` tool;
 - the generic read-only `lsp` tool;
+- the permission-gated `lsp_edit` tool;
 - `/lsp` and the Settings tab status display.
 
-The LSP integration is read-only from the agent's perspective. It lists code
-actions but does not apply them, and it does not expose rename, formatting, or
-raw arbitrary LSP requests.
+The `lsp` tool remains read-only. Mutating LSP operations are exposed through
+`lsp_edit`, which is treated like `edit`, `multi_edit`, and `write` for
+permission prompts. Kolega Code does not expose raw arbitrary LSP requests.
 
 ## Tool operations
 
@@ -28,10 +29,28 @@ The generic `lsp` tool supports:
 
 Position operations use `path`, a 1-based `line`, and a `symbol` on that line.
 Use `symbol#2` to select the second occurrence of a symbol on the same line.
+`code_actions` includes an `action_id` for each action so a later `lsp_edit`
+call can apply the exact server-provided action.
+
+The mutating `lsp_edit` tool supports:
+
+- `rename` for symbol rename;
+- `rename_file` for file moves with `workspace/willRenameFiles` and
+  `workspace/didRenameFiles` notifications;
+- `format_document` and `format_range`;
+- `apply_code_action` by `action_id`, title/query, or index.
+
+`lsp_edit` applies server-provided `WorkspaceEdit` payloads only. If the server
+does not advertise or return an edit for an operation, Kolega Code reports that
+the operation is unsupported instead of constructing a manual fallback edit.
+Pass `apply: false` to preview the LSP edit without writing files.
 
 ## Project configuration
 
-Create `<project>/.kolega/lsp.json` to override LSP behavior for a repository:
+Create `<project>/.kolega/lsp.json` to override LSP behavior for a repository.
+Project LSP config is trusted input because custom servers can execute local
+binaries. Kolega Code ignores this file unless the session is started with
+`--trust-lsp` or the project is listed in trusted LSP projects in user settings.
 
 ```json
 {
@@ -75,6 +94,9 @@ Create `<project>/.kolega/lsp.json` to override LSP behavior for a repository:
   }
 }
 ```
+
+The project file cannot change the user's global LSP kill switch: `enabled` is
+accepted in user settings, but ignored from `.kolega/lsp.json`.
 
 `preferences` chooses the preferred server for a language. If
 `auto_fallback` is `false`, Kolega Code checks only the preferred server before

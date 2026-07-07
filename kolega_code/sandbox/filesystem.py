@@ -2,6 +2,7 @@
 
 import os
 import base64
+import shlex
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional
 
@@ -182,6 +183,25 @@ class SandboxFileSystem(FileSystem):
                 raise OSError(f"Failed to remove file {path}: {result.stderr}")
         except Exception as e:
             raise OSError(f"Could not remove file {path}: {e}")
+
+    def rename(self, source: str, destination: str) -> None:
+        """Rename or move a file or directory."""
+        full_source = self._resolve_path(source)
+        full_destination = self._resolve_path(destination)
+
+        if not self.exists(source):
+            raise FileNotFoundError(f"File not found: {source}")
+
+        try:
+            parent_dir = os.path.dirname(full_destination)
+            if parent_dir != self.root_path:
+                self.sandbox.commands.run(f"mkdir -p {shlex.quote(parent_dir)}")
+
+            result = self.sandbox.commands.run(f"mv {shlex.quote(full_source)} {shlex.quote(full_destination)}")
+            if result.exit_code != 0:
+                raise OSError(f"Failed to rename {source} to {destination}: {result.stderr}")
+        except Exception as e:
+            raise OSError(f"Could not rename {source} to {destination}: {e}")
 
     def rmdir(self, path: str) -> None:
         """Remove empty directory."""

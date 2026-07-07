@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 
-from kolega_code.agent.tool_backend.lsp_tool import LspTool
+from kolega_code.agent.tool_backend.lsp_tool import LspEditTool, LspTool
 from kolega_code.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
 from kolega_code.services.lsp import LspDiagnostic, format_no_diagnostics
 
@@ -77,6 +77,22 @@ def make_lsp_tool(project_path, mock_connection_manager, agent_config, mock_base
 
 
 @pytest.fixture
+def make_lsp_edit_tool(project_path, mock_connection_manager, agent_config, mock_base_agent):
+    def _make(lsp_manager=None) -> LspEditTool:
+        return LspEditTool(
+            project_path,
+            "test_workspace",
+            str(uuid.uuid4()),
+            mock_connection_manager,
+            agent_config,
+            mock_base_agent,
+            lsp_manager=lsp_manager,
+        )
+
+    return _make
+
+
+@pytest.fixture
 def mock_lsp_manager():
     """A fully-mocked, enabled, initialized LspManager (no real server)."""
     manager = MagicMock()
@@ -101,6 +117,19 @@ def mock_lsp_manager():
     manager.get_workspace_symbols = AsyncMock(return_value=None)
     manager.get_code_actions = AsyncMock(return_value=None)
     manager.get_call_hierarchy = AsyncMock(return_value=None)
+    manager.get_rename = AsyncMock(return_value=None)
+    manager.get_document_formatting = AsyncMock(return_value=None)
+    manager.get_range_formatting = AsyncMock(return_value=None)
+
+    async def _resolve_code_action(_path, action, **_kwargs):
+        return action
+
+    manager.resolve_code_action = AsyncMock(side_effect=_resolve_code_action)
+    manager.execute_command = AsyncMock(return_value=None)
+    manager.will_rename_files = AsyncMock(return_value=[])
+    manager.did_rename_files = AsyncMock(return_value=None)
+    manager.set_workspace_apply_edit_handler = Mock()
+    manager._config = MagicMock(auto_diagnostics_on_edit=False)
 
     # Status / capabilities / reload
     manager.status = Mock(
@@ -123,6 +152,11 @@ def mock_lsp_manager():
 @pytest.fixture
 def lsp_tool(make_lsp_tool, mock_lsp_manager):
     return make_lsp_tool(mock_lsp_manager)
+
+
+@pytest.fixture
+def lsp_edit_tool(make_lsp_edit_tool, mock_lsp_manager):
+    return make_lsp_edit_tool(mock_lsp_manager)
 
 
 # ---------------------------------------------------------------------------
@@ -381,6 +415,7 @@ class TestLspNewReadOnlyOperations:
 
         assert "## Code Actions (1 found)" in result
         assert "Replace undefined_var with defined_var" in result
+        assert "action_id=" in result
         assert "1 text edits" in result
         mock_lsp_manager.get_code_actions.assert_awaited_once_with(
             "foo.py",
@@ -443,6 +478,91 @@ class TestLspNewReadOnlyOperations:
 
         assert "`Parent` (Class)" in result
         assert "`child` (Function)" in result
+
+
+@pytest.mark.asyncio
+class TestLspEditTool:
+    async def test_rename_preview_does_not_write_file(self, lsp_edit_tool, mock_lsp_manager, project_path):
+        path = project_path / "foo.py"
+        path.write_text("old = 1\nprint(old)\n", encoding="utf-8")
+        mock_lsp_manager._resolve_position.return_value = (0, 0)
+        mock_lsp_manager.get_rename.return_value = {
+            "changes": {
+                path.as_uri(): [
+                    {
+                        "range": {
+                            "start": {"line": 0, "character": 0},
+                            "end": {"line": 0, "character": 3},
+                        },
+                        "newText": "new",
+                    }
+                ]
+            }
+        }
+
+        result = await lsp_edit_tool.lsp_edit(
+            operation="rename",
+            path="foo.py",
+            line=1,
+            symbol="old",
+            new_name="new",
+            apply=False,
+        )
+
+        assert result.startswith("Preview LSP edit `rename`.")
+        assert path.read_text(encoding="utf-8") == "old = 1\nprint(old)\n"
+
+    async def test_format_document_applies_server_text_edits(self, lsp_edit_tool, mock_lsp_manager, project_path):
+        path = project_path / "foo.py"
+        path.write_text("x = 1   \n", encoding="utf-8")
+        mock_lsp_manager.get_document_formatting.return_value = [
+            {
+                "range": {
+                    "start": {"line": 0, "character": 0},
+                    "end": {"line": 1, "character": 0},
+                },
+                "newText": "x = 1\n",
+            }
+        ]
+
+        result = await lsp_edit_tool.lsp_edit(operation="format_document", path="foo.py")
+
+        assert result.startswith("Applied LSP edit `format_document`.")
+        assert path.read_text(encoding="utf-8") == "x = 1\n"
+
+    async def test_apply_code_action_selects_by_action_id(self, lsp_edit_tool, mock_lsp_manager, project_path):
+        path = project_path / "foo.py"
+        path.write_text("value = undefined_var\n", encoding="utf-8")
+        action = {
+            "title": "Replace undefined_var with defined_var",
+            "kind": "quickfix",
+            "edit": {
+                "changes": {
+                    path.as_uri(): [
+                        {
+                            "range": {
+                                "start": {"line": 0, "character": 8},
+                                "end": {"line": 0, "character": 21},
+                            },
+                            "newText": "defined_var",
+                        }
+                    ]
+                }
+            },
+        }
+        mock_lsp_manager._resolve_position.return_value = (0, 8)
+        mock_lsp_manager.get_code_actions.return_value = [action]
+
+        result = await lsp_edit_tool.lsp_edit(
+            operation="apply_code_action",
+            path="foo.py",
+            line=1,
+            symbol="undefined_var",
+            action_id=LspTool._action_id(action, 0),
+        )
+
+        assert result.startswith("Applied LSP edit `apply_code_action`.")
+        assert path.read_text(encoding="utf-8") == "value = defined_var\n"
 
 
 # ---------------------------------------------------------------------------

@@ -29,7 +29,7 @@ from .tool_backend.workflow_tool import RUN_WORKFLOW_INPUT_SCHEMA, WorkflowTool
 
 # Import additional tools for consolidated functionality
 from .tool_backend.build_tool import BuildTool
-from .tool_backend.lsp_tool import LspTool
+from .tool_backend.lsp_tool import LspEditTool, LspTool
 from kolega_code.services.lsp import LspManager
 
 # Explicit input schema for the generic ``lsp`` tool.  The ``operation`` parameter
@@ -86,6 +86,67 @@ _LSP_INPUT_SCHEMA: dict[str, Any] = {
         "kind": {
             "type": "string",
             "description": "Optional code action kind filter, such as quickfix or refactor.",
+        },
+        "timeout": {
+            "type": "number",
+            "description": "Per-call timeout in seconds (default: 30).",
+        },
+    },
+    "required": ["operation"],
+}
+
+_LSP_EDIT_INPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "operation": {
+            "type": "string",
+            "enum": ["rename", "rename_file", "format_document", "format_range", "apply_code_action"],
+            "description": (
+                "Mutating LSP operation. rename requires path, line, symbol, and new_name. "
+                "rename_file requires path and new_path. format_document requires path. "
+                "format_range requires path and line, with optional end_line. "
+                "apply_code_action requires path, line, symbol, and action_id or query."
+            ),
+        },
+        "path": {
+            "type": "string",
+            "description": "File path (relative to project root preferred).",
+        },
+        "line": {
+            "type": "integer",
+            "description": "1-based line number for position/range operations.",
+        },
+        "symbol": {
+            "type": "string",
+            "description": "Symbol name to resolve on the line. Supports 'name#N' for the Nth occurrence.",
+        },
+        "new_name": {
+            "type": "string",
+            "description": "New symbol name for rename.",
+        },
+        "new_path": {
+            "type": "string",
+            "description": "Destination path for rename_file.",
+        },
+        "query": {
+            "type": "string",
+            "description": "Title substring or numeric index for apply_code_action when action_id is not provided.",
+        },
+        "action_id": {
+            "type": "string",
+            "description": "Stable action_id listed by lsp code_actions.",
+        },
+        "end_line": {
+            "type": "integer",
+            "description": "Optional 1-based end line for format_range and apply_code_action.",
+        },
+        "kind": {
+            "type": "string",
+            "description": "Optional code action kind filter, such as quickfix or refactor.",
+        },
+        "apply": {
+            "type": "boolean",
+            "description": "Apply the edit when true; preview only when false. Defaults to true.",
         },
         "timeout": {
             "type": "number",
@@ -496,6 +557,7 @@ class ToolCollection(LogMixin):
         # The `lsp` tool's `operation` is an enum that signature introspection
         # can't express, so register an explicit input schema.
         self.extension_schemas["lsp"] = _LSP_INPUT_SCHEMA
+        self.extension_schemas["lsp_edit"] = _LSP_EDIT_INPUT_SCHEMA
         self.browser_tool = BrowserTool(
             self.project_path,
             self.workspace_id,
@@ -521,6 +583,16 @@ class ToolCollection(LogMixin):
 
         # LSP tool
         self.lsp_tool = LspTool(
+            self.project_path,
+            self.workspace_id,
+            self.thread_id,
+            self.connection_manager,
+            self.config,
+            self.caller,
+            self.filesystem,
+            lsp_manager=self.lsp_manager,
+        )
+        self.lsp_edit_tool = LspEditTool(
             self.project_path,
             self.workspace_id,
             self.thread_id,
@@ -1554,6 +1626,42 @@ class ToolCollection(LogMixin):
             Markdown-formatted results for the requested operation.
         """
         return await self.lsp_tool.lsp(operation, path, line, symbol, query, end_line, kind, timeout)
+
+    async def lsp_edit(
+        self,
+        operation: str,
+        path: Optional[str] = None,
+        line: Optional[int] = None,
+        symbol: Optional[str] = None,
+        new_name: Optional[str] = None,
+        new_path: Optional[str] = None,
+        query: Optional[str] = None,
+        action_id: Optional[str] = None,
+        end_line: Optional[int] = None,
+        kind: Optional[str] = None,
+        apply: bool = True,
+        timeout: Optional[float] = None,
+    ) -> str:
+        """Apply trusted LSP edits such as rename, file rename, formatting, and code actions.
+
+        This is the mutating companion to the read-only ``lsp`` tool. Use
+        ``apply=False`` to preview the server-provided WorkspaceEdit without
+        writing files.
+        """
+        return await self.lsp_edit_tool.lsp_edit(
+            operation,
+            path,
+            line,
+            symbol,
+            new_name,
+            new_path,
+            query,
+            action_id,
+            end_line,
+            kind,
+            apply,
+            timeout,
+        )
 
     async def get_host(self, port: int) -> str:
         """

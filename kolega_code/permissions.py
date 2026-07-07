@@ -38,6 +38,7 @@ COMMAND_PERMISSION_TOOLS = frozenset(
 EDIT_PERMISSION_TOOLS = frozenset(
     {
         "edit",
+        "lsp_edit",
         "multi_edit",
         "write",
     }
@@ -299,7 +300,10 @@ def _mcp_target_from_tool_name(tool_name: str) -> Optional[tuple[str, str]]:
 
 def _path_from_edit_inputs(inputs: dict[str, Any]) -> str:
     value = inputs.get("path")
-    return str(value).strip() if value is not None else ""
+    path = str(value).strip() if value is not None else ""
+    if inputs.get("operation") == "rename_file" and inputs.get("new_path"):
+        return f"{path} -> {str(inputs['new_path']).strip()}"
+    return path
 
 
 def _command_rule_options(request: PermissionRequest) -> list[PermissionRuleOption]:
