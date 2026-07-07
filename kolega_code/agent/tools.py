@@ -233,7 +233,6 @@ class ToolCollection(LogMixin):
         "web_search",
         "sleep",
         "read_image",
-        "lsp_diagnostics",
         "lsp",
     ]
 
@@ -1545,38 +1544,6 @@ class ToolCollection(LogMixin):
         return await self.glob_tool.find_files_by_pattern(
             pattern, include_directories=include_directories, show_details=show_details
         )
-
-    async def lsp_diagnostics(self, path: str) -> str:
-        """Get language server diagnostics (errors, warnings, hints) for a file.
-
-        Use this when you want to verify that a file you just edited or created is
-        free of syntax errors, type errors, or other code quality issues. The
-        diagnostics come from the project's language servers (e.g. pyright for
-        Python, typescript-language-server for TypeScript).
-
-        When to use this tool:
-        - After editing or creating a file to verify correctness
-        - When you suspect a file may have issues but aren't sure
-        - Before proposing changes to verify the baseline
-        - When a previous edit produced unexpected behavior
-
-        Usage notes:
-        1. The path should be relative to the project root (or absolute).
-        2. Diagnostics are returned as markdown with severity indicators
-           (🔴 error, 🟡 warning, 🔵 info/hint).
-        3. If no language server is available for the file's language, a message
-           is returned noting that.
-        4. Results are capped (default: 20 diagnostics per file).
-
-        Args:
-            path: Path to the file. Relative to the project root is preferred;
-                  an absolute path is also accepted.
-
-        Returns:
-            A markdown-formatted list of diagnostics, or a confirmation message
-            if no issues were found.
-        """
-        return await self.lsp_tool.lsp_diagnostics(path)
 
     async def lsp(
         self,

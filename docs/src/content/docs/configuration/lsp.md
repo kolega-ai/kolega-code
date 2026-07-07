@@ -7,7 +7,6 @@ Kolega Code can start local Language Server Protocol (LSP) servers for detected
 project languages. LSP is enabled by default and is used for:
 
 - diagnostics after `edit`, `multi_edit`, and `write`;
-- the `lsp_diagnostics` tool;
 - the generic read-only `lsp` tool;
 - the permission-gated `lsp_edit` tool;
 - `/lsp` and the Settings tab status display.

@@ -113,7 +113,6 @@ def test_investigation_agent_tools(project_path, mock_connection_manager, agent_
         "find_files_by_pattern",
         "list_directory",
         "lsp",
-        "lsp_diagnostics",
         "read_entire_file",
         "read_file_section",
         "read_image",

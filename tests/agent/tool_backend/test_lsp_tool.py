@@ -1,4 +1,4 @@
-"""Tests for the generic ``lsp`` tool and the ``lsp_diagnostics`` compatibility wrapper.
+"""Tests for the generic ``lsp`` and ``lsp_edit`` tools.
 
 The LspManager is fully mocked — no real language server is started.
 """
@@ -13,7 +13,7 @@ import pytest
 
 from kolega_code.agent.tool_backend.lsp_tool import LspEditTool, LspTool
 from kolega_code.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
-from kolega_code.services.lsp import LspDiagnostic, format_no_diagnostics
+from kolega_code.services.lsp import LspDiagnostic
 
 
 # ---------------------------------------------------------------------------
@@ -232,23 +232,58 @@ class TestLspDisabled:
         result = await tool.lsp(operation="status")
         assert result == "LSP is not available (disabled or not configured)."
 
-    async def test_lsp_diagnostics_returns_not_available_when_manager_is_none(self, make_lsp_tool):
-        tool = make_lsp_tool(lsp_manager=None)
-        result = await tool.lsp_diagnostics("foo.py")
-        assert result == "LSP diagnostics are not available (LSP is disabled or not configured)."
-
-    async def test_lsp_diagnostics_returns_not_available_when_manager_disabled(self, make_lsp_tool):
-        manager = MagicMock()
-        manager.enabled = False
-        tool = make_lsp_tool(lsp_manager=manager)
-        result = await tool.lsp_diagnostics("foo.py")
-        assert result == "LSP diagnostics are not available (LSP is disabled or not configured)."
-
     async def test_disabled_check_precedes_operation_validation(self, make_lsp_tool):
         """Even an unknown operation reports 'not available' when LSP is off."""
         tool = make_lsp_tool(lsp_manager=None)
         result = await tool.lsp(operation="bogus")
         assert result == "LSP is not available (disabled or not configured)."
+
+
+@pytest.mark.asyncio
+class TestLspDiagnosticsOperation:
+    async def test_diagnostics_operation_no_diagnostics(self, lsp_tool, mock_lsp_manager):
+        mock_lsp_manager.server_for_path.return_value = "pyright"
+        mock_lsp_manager.get_diagnostics.return_value = []
+
+        result = await lsp_tool.lsp(operation="diagnostics", path="foo.py")
+
+        assert result == "\n✅ No LSP diagnostics."
+
+    async def test_diagnostics_operation_with_diagnostics(self, lsp_tool, mock_lsp_manager):
+        mock_lsp_manager.server_for_path.return_value = "pyright"
+        mock_lsp_manager.get_diagnostics.return_value = [
+            LspDiagnostic(
+                range={"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 3}},
+                severity=1,
+                message="Undefined name",
+                source="pyright",
+            ),
+        ]
+
+        result = await lsp_tool.lsp(operation="diagnostics", path="foo.py")
+
+        assert "LSP diagnostics (1 error):" in result
+        assert "Undefined name" in result
+
+    async def test_diagnostics_operation_when_no_server_configured(self, lsp_tool, mock_lsp_manager):
+        mock_lsp_manager.server_for_path.return_value = None
+
+        result = await lsp_tool.lsp(operation="diagnostics", path="data.csv")
+
+        assert result == "No language server configured for data.csv."
+
+    async def test_diagnostics_operation_initializes_manager_when_needed(self, make_lsp_tool):
+        manager = MagicMock()
+        manager.enabled = True
+        manager._initialized = False
+        manager.initialize = AsyncMock(return_value=[])
+        manager.server_for_path = Mock(return_value="pyright")
+        manager.get_diagnostics = AsyncMock(return_value=[])
+        tool = make_lsp_tool(lsp_manager=manager)
+
+        await tool.lsp(operation="diagnostics", path="foo.py")
+
+        manager.initialize.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
@@ -333,64 +368,6 @@ class TestLspStatus:
     async def test_status_calls_manager_status(self, lsp_tool, mock_lsp_manager):
         await lsp_tool.lsp(operation="status")
         mock_lsp_manager.status.assert_called_once()
-
-
-# ---------------------------------------------------------------------------
-# 4. lsp_diagnostics compatibility wrapper
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-class TestLspDiagnosticsWrapper:
-    async def test_wrapper_matches_diagnostics_operation_no_diagnostics(self, lsp_tool, mock_lsp_manager):
-        mock_lsp_manager.server_for_path.return_value = "pyright"
-        mock_lsp_manager.get_diagnostics.return_value = []
-
-        wrapper_result = await lsp_tool.lsp_diagnostics("foo.py")
-        op_result = await lsp_tool.lsp(operation="diagnostics", path="foo.py")
-
-        assert wrapper_result == op_result
-        assert wrapper_result == format_no_diagnostics()
-
-    async def test_wrapper_matches_diagnostics_operation_with_diagnostics(self, lsp_tool, mock_lsp_manager):
-        mock_lsp_manager.server_for_path.return_value = "pyright"
-        mock_lsp_manager.get_diagnostics.return_value = [
-            LspDiagnostic(
-                range={"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 3}},
-                severity=1,
-                message="Undefined name",
-                source="pyright",
-            ),
-        ]
-
-        wrapper_result = await lsp_tool.lsp_diagnostics("foo.py")
-        op_result = await lsp_tool.lsp(operation="diagnostics", path="foo.py")
-
-        assert wrapper_result == op_result
-        assert "LSP diagnostics (1 error):" in wrapper_result
-        assert "Undefined name" in wrapper_result
-
-    async def test_wrapper_matches_when_no_server_configured(self, lsp_tool, mock_lsp_manager):
-        mock_lsp_manager.server_for_path.return_value = None
-
-        wrapper_result = await lsp_tool.lsp_diagnostics("data.csv")
-        op_result = await lsp_tool.lsp(operation="diagnostics", path="data.csv")
-
-        assert wrapper_result == op_result
-        assert wrapper_result == "No language server configured for data.csv."
-
-    async def test_wrapper_initializes_manager_when_not_initialized(self, make_lsp_tool):
-        manager = MagicMock()
-        manager.enabled = True
-        manager._initialized = False
-        manager.initialize = AsyncMock(return_value=[])
-        manager.server_for_path = Mock(return_value="pyright")
-        manager.get_diagnostics = AsyncMock(return_value=[])
-        tool = make_lsp_tool(lsp_manager=manager)
-
-        await tool.lsp_diagnostics("foo.py")
-
-        manager.initialize.assert_awaited_once()
 
 
 @pytest.mark.asyncio
