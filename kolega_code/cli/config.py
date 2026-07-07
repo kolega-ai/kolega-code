@@ -455,6 +455,7 @@ def build_agent_config(
         state_dir,
         project_trusted=bool(settings and settings.is_mcp_project_trusted(project_path)),
     )
+    lsp_project_trusted = bool(settings and settings.is_lsp_project_trusted(project_path))
 
     required_providers = {long_provider, fast_provider, thinking_provider}
     required_providers.update(override.provider for override in agent_model_overrides.values())
@@ -500,6 +501,7 @@ def build_agent_config(
             openai_chatgpt_tokens=chatgpt_tokens,
             mcp_config=mcp_config,
             lsp=LspConfig(enabled=True if settings is None or settings.lsp_enabled is None else settings.lsp_enabled),
+            lsp_project_trusted=lsp_project_trusted,
         )
     except ValueError as exc:
         raise CliConfigError(str(exc)) from exc

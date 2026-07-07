@@ -81,6 +81,10 @@ _DELAY = float(os.environ.get("FAKE_LSP_DELAY", "0"))
 _PULL_DIAGS = os.environ.get("FAKE_LSP_PULL_DIAGS", "1") != "0"
 _STRICT_OPEN = os.environ.get("FAKE_LSP_STRICT_OPEN", "0") == "1"
 _SOURCE = os.environ.get("FAKE_LSP_SOURCE", "fake-lsp")
+# When set, always publish diagnostics with this fixed document version
+# (simulates a server that does not track per-edit versions — used to test
+# the stale-diagnostics suppression branch).
+_FIXED_VERSION = os.environ.get("FAKE_LSP_FIXED_VERSION")
 _CONFIGURATION_RESPONSES: list[Any] = []
 
 # Capabilities we advertise
@@ -132,6 +136,8 @@ def _publish_diagnostics(uri: str, version: int | None = None) -> None:
     if _DELAY > 0:
         time.sleep(_DELAY)
     diags = _diagnostics_for(uri)
+    if _FIXED_VERSION is not None:
+        version = int(_FIXED_VERSION)
     params: dict = {"uri": uri, "diagnostics": diags}
     if version is not None:
         params["version"] = version

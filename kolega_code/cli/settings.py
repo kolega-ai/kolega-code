@@ -86,6 +86,8 @@ class CliSettings:
     trusted_hook_projects: list[str] = field(default_factory=list)
     # Resolved project paths whose .kolega/mcp_servers.json the user has opted to trust.
     trusted_mcp_projects: list[str] = field(default_factory=list)
+    # Resolved project paths whose .kolega/lsp.json the user has opted to trust.
+    trusted_lsp_projects: list[str] = field(default_factory=list)
     # Web search backend selection. Additive optional fields (absent -> None -> the
     # "duckduckgo" default is applied downstream), so no schema bump is needed — same
     # convention as active_theme. Cloud backend API keys live in api_keys under the
@@ -113,6 +115,7 @@ class CliSettings:
         api_keys = data.get("api_keys") or {}
         trusted = data.get("trusted_hook_projects") or []
         trusted_mcp = data.get("trusted_mcp_projects") or []
+        trusted_lsp = data.get("trusted_lsp_projects") or []
         return cls(
             schema_version=SETTINGS_SCHEMA_VERSION,
             active_provider=data.get("active_provider"),
@@ -126,6 +129,7 @@ class CliSettings:
             agent_models=_coerce_agent_models(data.get("agent_models")),
             trusted_hook_projects=[str(path) for path in trusted if path],
             trusted_mcp_projects=[str(path) for path in trusted_mcp if path],
+            trusted_lsp_projects=[str(path) for path in trusted_lsp if path],
             # Additive optional fields; absent in older files -> None -> default backend.
             web_search_backend=data.get("web_search_backend"),
             web_search_base_url=data.get("web_search_base_url"),
@@ -148,6 +152,7 @@ class CliSettings:
             "agent_models": self.agent_models,
             "trusted_hook_projects": self.trusted_hook_projects,
             "trusted_mcp_projects": self.trusted_mcp_projects,
+            "trusted_lsp_projects": self.trusted_lsp_projects,
             "web_search_backend": self.web_search_backend,
             "web_search_base_url": self.web_search_base_url,
             "oauth_tokens": self.oauth_tokens,
@@ -211,6 +216,14 @@ class CliSettings:
         resolved = str(Path(project_path).resolve())
         if resolved not in self.trusted_mcp_projects:
             self.trusted_mcp_projects.append(resolved)
+
+    def is_lsp_project_trusted(self, project_path) -> bool:
+        return str(Path(project_path).resolve()) in self.trusted_lsp_projects
+
+    def trust_lsp_project(self, project_path) -> None:
+        resolved = str(Path(project_path).resolve())
+        if resolved not in self.trusted_lsp_projects:
+            self.trusted_lsp_projects.append(resolved)
 
 
 class SettingsStore:

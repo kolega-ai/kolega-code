@@ -7,6 +7,8 @@ code intelligence queries, and server→client request handling.
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 
@@ -91,7 +93,8 @@ async def test_hover_query(fake_lsp_manager):
     result = await manager.get_hover("hover_test.py", 0, 0)
     assert result is not None
     contents = result.get("contents", {})
-    assert "value" in contents or "value" in str(contents)
+    # The fake server returns a markdown code block; assert against the body.
+    assert contents["value"].startswith("```python")
 
 
 @pytest.mark.asyncio
@@ -241,3 +244,74 @@ async def test_dedupe_and_sort_applied(fake_lsp_manager):
     # Error (severity 1) comes before warning (severity 2)
     assert result[0].severity == 1
     assert result[1].severity == 2
+
+
+# ---------------------------------------------------------------------------
+# T1: push-only freshness gate (previously untested)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_fresh_diagnostics_push_only_accepts_fresh(fake_lsp_manager_no_pull):
+    """T1a: with a push-only server, get_fresh_diagnostics returns fresh results.
+
+    Exercises the push-diagnostics fallback path that was previously skipped
+    because every other fixture enables pull diagnostics.
+    """
+    manager = fake_lsp_manager_no_pull
+    path = manager._project_path / "push.py"
+    path.write_text("a = 1\n", encoding="utf-8")
+
+    # Introduce an error and query — push diagnostics should be accepted.
+    path.write_text("a = undefined_var\n", encoding="utf-8")
+    diags = await manager.get_fresh_diagnostics("push.py")
+    assert len(diags) >= 1
+    assert any("undefined_var" in d.message for d in diags)
+
+
+@pytest.mark.asyncio
+async def test_fresh_diagnostics_push_only_suppresses_stale(fake_lsp_manager_push_fixed_version):
+    """T1b: push diagnostics whose version matches the pre-edit version are suppressed.
+
+    The fixture's server always publishes with a fixed version, so after the first
+    query the recorded version never advances. A second query must detect the
+    diagnostics as stale and return an empty list.
+    """
+    manager = fake_lsp_manager_push_fixed_version
+    path = manager._project_path / "stale.py"
+    path.write_text("a = undefined_var\n", encoding="utf-8")
+
+    # First query seeds the recorded version (fixed at 5) and returns diags.
+    diags1 = await manager.get_fresh_diagnostics("stale.py")
+    assert len(diags1) >= 1
+
+    # Second query: the server republishes with the same fixed version (5), so the
+    # freshness gate treats the push diagnostics as stale and suppresses them.
+    diags2 = await manager.get_fresh_diagnostics("stale.py")
+    assert diags2 == []
+
+
+# ---------------------------------------------------------------------------
+# T2: concurrent session starts (the _get_session race — F3)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_concurrent_same_language_starts_single_session(fake_lsp_manager):
+    """T2: two concurrent diagnostics queries for one language start one session.
+
+    Guards against the F3 race where concurrent callers each spawn + initialize a
+    subprocess and the second overwrites (orphaning) the first.
+    """
+    manager = fake_lsp_manager
+    (manager._project_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+    (manager._project_path / "b.py").write_text("y = 2\n", encoding="utf-8")
+
+    # Fire two concurrent queries for the same language.
+    await asyncio.gather(
+        manager.get_diagnostics("a.py"),
+        manager.get_diagnostics("b.py"),
+    )
+
+    # Exactly one session/subprocess should exist for the language.
+    assert len(manager._sessions) == 1

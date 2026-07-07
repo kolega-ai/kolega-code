@@ -5,6 +5,7 @@ The LspManager is fully mocked — no real language server is started.
 
 from __future__ import annotations
 
+import json
 import uuid
 from unittest.mock import AsyncMock, MagicMock, Mock
 
@@ -442,3 +443,56 @@ class TestLspNewReadOnlyOperations:
 
         assert "`Parent` (Class)" in result
         assert "`child` (Function)" in result
+
+
+# ---------------------------------------------------------------------------
+# T4: capabilities operation (no-path branch + valid JSON — F12/F13)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestLspCapabilities:
+    async def test_capabilities_no_path_summarizes_sessions(self, lsp_tool, mock_lsp_manager):
+        """T4: ``capabilities`` with no path lists each session's providers."""
+        client = MagicMock()
+        client.status = "initialized"
+        client.server_capabilities = {
+            "definitionProvider": True,
+            "hoverProvider": {},
+            "textDocumentSync": 1,
+        }
+        mock_lsp_manager._sessions = {"python": client}
+
+        result = await lsp_tool.lsp(operation="capabilities")
+
+        assert result.startswith("## LSP Capabilities")
+        assert "**python** (initialized):" in result
+        # Only *Provider keys are listed; textDocumentSync is excluded.
+        assert "definitionProvider" in result
+        assert "hoverProvider" in result
+        assert "textDocumentSync" not in result
+
+    async def test_capabilities_no_path_empty_sessions(self, lsp_tool, mock_lsp_manager):
+        """T4: with no active sessions, capabilities reports none."""
+        mock_lsp_manager._sessions = {}
+
+        result = await lsp_tool.lsp(operation="capabilities")
+
+        assert result.startswith("## LSP Capabilities")
+
+    async def test_capabilities_with_path_emits_valid_json(self, lsp_tool, mock_lsp_manager):
+        """F13: the per-path capabilities block contains valid JSON (not Python repr)."""
+        mock_lsp_manager.get_capabilities.return_value = {
+            "definitionProvider": True,
+            "hoverProvider": {"contentFormat": ["markdown"]},
+        }
+
+        result = await lsp_tool.lsp(operation="capabilities", path="foo.py")
+
+        assert "Server capabilities for foo.py:" in result
+        # Extract the JSON body from the fenced block and confirm it parses.
+        assert "```json" in result
+        body = result.split("```json\n", 1)[1].rsplit("\n```", 1)[0]
+        parsed = json.loads(body)
+        assert parsed["definitionProvider"] is True
+        assert parsed["hoverProvider"] == {"contentFormat": ["markdown"]}

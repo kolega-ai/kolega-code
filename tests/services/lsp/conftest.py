@@ -128,3 +128,41 @@ async def fake_lsp_manager_with_extra_strict(tmp_path: Path) -> AsyncGenerator["
     yield manager
 
     await manager.shutdown()
+
+
+@pytest_asyncio.fixture
+async def fake_lsp_manager_push_fixed_version(tmp_path: Path) -> AsyncGenerator["LspManager", None]:
+    """Push-only fake server that always publishes with a fixed document version.
+
+    Used to exercise the stale-diagnostics suppression branch of
+    ``get_fresh_diagnostics``: after the first query the recorded version never
+    advances, so a second query must suppress the (stale) push diagnostics.
+    """
+    from kolega_code.services.lsp import LspConfig
+    from kolega_code.services.lsp.manager import LspManager
+
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "pyproject.toml").write_text("[project]\nname = 'test'\n", encoding="utf-8")
+    (project / "src.py").write_text("def hello():\n    pass\n", encoding="utf-8")
+
+    config = LspConfig(
+        enabled=True,
+        prompt_on_missing=False,
+        custom_servers={
+            "fake-lsp": {
+                "bin": sys.executable,
+                "args": [str(_FAKE_SERVER)],
+                "languages": ["python"],
+                "env": {"FAKE_LSP_PULL_DIAGS": "0", "FAKE_LSP_FIXED_VERSION": "5"},
+            },
+        },
+        preferences={"python": "fake-lsp"},
+    )
+
+    manager = LspManager(project, config=config)
+    await manager.initialize()
+
+    yield manager
+
+    await manager.shutdown()

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Optional
 
@@ -84,15 +84,24 @@ class LspManager:
         project_path: str | Path,
         *,
         config: Optional[LspConfig] = None,
+        trusted: bool = False,
     ) -> None:
         self._project_path = Path(project_path).resolve()
         self._config = config or LspConfig()
+        # Whether the project's .kolega/lsp.json is trusted to define custom
+        # language servers. When False, project-level config is never loaded.
+        self._trusted = trusted
         self._registry = LspRegistry(config=self._config)
 
         # Per-language/server LspClient sessions. Kept as a client map because
         # existing UI/tests inspect it directly.
         self._sessions: dict[str, LspClient] = {}
         self._session_records: dict[str, _LspSession] = {}
+        # Per-key locks serializing session creation (prevents the race where two
+        # concurrent callers for the same language both spawn a subprocess).
+        self._session_locks: dict[str, asyncio.Lock] = {}
+        # Caps concurrent server starts to avoid a thundering herd of subprocesses.
+        self._start_semaphore = asyncio.Semaphore(_MAX_CONCURRENT_STARTS)
         # Maps file URI to language_id for tracking open documents
         self._open_files: dict[str, str] = {}
         # Latest diagnostics per URI (from publishDiagnostics notifications)
@@ -141,11 +150,17 @@ class LspManager:
                 self._initialized = True
                 return []
 
-            # Merge in project-level config if present
-            project_cfg = load_project_lsp_config(self._project_path)
-            if project_cfg:
-                self._config = project_cfg
-                self._registry = LspRegistry(config=self._config)
+            # Merge in project-level config (.kolega/lsp.json) only when the
+            # project is trusted. Untrusted projects never load committed
+            # custom_servers, preventing arbitrary-code-execution via a
+            # committed config. The merge preserves the user's master
+            # kill-switch (enabled) and any user-level settings the project
+            # file omits.
+            if self._trusted:
+                project_overrides = load_project_lsp_config(self._project_path)
+                if project_overrides is not None:
+                    self._config = _merge_lsp_config(self._config, project_overrides)
+                    self._registry = LspRegistry(config=self._config)
 
             # Auto-detect
             try:
@@ -681,74 +696,85 @@ class LspManager:
                 Use a compound key like ``"python:ruff-lsp"`` for extra diagnostic servers.
         """
         key = session_key or lang_id
-        if key in self._sessions:
-            client = self._sessions[key]
-            if client.running:
-                return client
-            # Restart crashed session
-            await client.stop()
-            self._session_records.pop(key, None)
+        # Serialize session creation per key so two concurrent callers for the
+        # same language cannot both spawn + initialize a subprocess (the second
+        # would overwrite the first client, orphaning its process).
+        lock = self._session_locks.setdefault(key, asyncio.Lock())
+        async with lock:
+            # Re-check after acquiring: another caller may have created it.
+            if key in self._sessions:
+                client = self._sessions[key]
+                if client.running:
+                    return client
+                # Restart crashed session
+                await client.stop()
+                self._session_records.pop(key, None)
 
-        if not rl.server_bin:
-            return None
+            if not rl.server_bin:
+                return None
 
-        cmd = [rl.server_bin] + list(rl.server_args)
-        client = LspClient(cmd, env=rl.env or None)
+            cmd = [rl.server_bin] + list(rl.server_args)
+            client = LspClient(cmd, env=rl.env or None)
 
-        try:
-            await client.start()
-        except Exception as exc:
-            logger.warning("Failed to start LS %s for %s: %s", rl.server_name, lang_id, exc)
-            client.last_error = str(exc)
-            return None
+            # Cap concurrent subprocess starts across all languages to avoid a
+            # thundering herd when many files are queried at once.
+            async with self._start_semaphore:
+                try:
+                    await client.start()
+                except Exception as exc:
+                    logger.warning("Failed to start LS %s for %s: %s", rl.server_name, lang_id, exc)
+                    client.last_error = str(exc)
+                    return None
 
-        # Register push-diagnostics handler
-        client.on_notification(
-            "textDocument/publishDiagnostics",
-            lambda params, session_key=key: self._on_publish_diagnostics(session_key, params),
-        )
+                # Register push-diagnostics handler
+                client.on_notification(
+                    "textDocument/publishDiagnostics",
+                    lambda params, session_key=key: self._on_publish_diagnostics(session_key, params),
+                )
 
-        # Register server→client request handlers
-        self._register_server_request_handlers(client, server_name=rl.server_name)
+                # Register server→client request handlers
+                self._register_server_request_handlers(client, server_name=rl.server_name)
 
-        root_uri = _path_to_uri(self._project_path, str(self._project_path))
-        client.active_root = root_uri
-        record = _LspSession(
-            key=key,
-            language_id=lang_id,
-            server_name=rl.server_name,
-            client=client,
-            root_uri=root_uri,
-        )
+                root_uri = _path_to_uri(self._project_path, str(self._project_path))
+                client.active_root = root_uri
+                record = _LspSession(
+                    key=key,
+                    language_id=lang_id,
+                    server_name=rl.server_name,
+                    client=client,
+                    root_uri=root_uri,
+                )
 
-        # LSP initialize handshake
-        try:
-            init_result = await client.request(
-                "initialize",
-                {
-                    "processId": client.server_pid,
-                    "rootUri": root_uri,
-                    "initializationOptions": rl.initialization_options or {},
-                    "capabilities": _CLIENT_CAPABILITIES,
-                    "workspaceFolders": [{"uri": root_uri, "name": "workspace"}],
-                },
-            )
-            await client.notify("initialized", {})
-            client.server_capabilities = init_result.get("capabilities") if isinstance(init_result, dict) else None
-            client.status = "initialized"
-        except LspClientError as exc:
-            logger.warning("LSP initialize failed for %s: %s", lang_id, exc)
-            client.status = "error"
-            client.last_error = str(exc)
-            await client.stop()
-            return None
+                # LSP initialize handshake
+                try:
+                    init_result = await client.request(
+                        "initialize",
+                        {
+                            "processId": client.server_pid,
+                            "rootUri": root_uri,
+                            "initializationOptions": rl.initialization_options or {},
+                            "capabilities": _CLIENT_CAPABILITIES,
+                            "workspaceFolders": [{"uri": root_uri, "name": "workspace"}],
+                        },
+                    )
+                    await client.notify("initialized", {})
+                    client.server_capabilities = (
+                        init_result.get("capabilities") if isinstance(init_result, dict) else None
+                    )
+                    client.status = "initialized"
+                except LspClientError as exc:
+                    logger.warning("LSP initialize failed for %s: %s", lang_id, exc)
+                    client.status = "error"
+                    client.last_error = str(exc)
+                    await client.stop()
+                    return None
 
-        self._sessions[key] = client
-        self._session_records[key] = record
-        if session_key is not None:
-            self._extra_sessions[(lang_id, rl.server_name)] = client
-        logger.debug("LSP session started: %s (%s)", lang_id, rl.server_name)
-        return client
+            self._sessions[key] = client
+            self._session_records[key] = record
+            if session_key is not None:
+                self._extra_sessions[(lang_id, rl.server_name)] = client
+            logger.debug("LSP session started: %s (%s)", lang_id, rl.server_name)
+            return client
 
     def _record_for_client(self, client: LspClient) -> Optional[_LspSession]:
         for record in self._session_records.values():
@@ -1101,16 +1127,20 @@ class LspManager:
         """Resolve a 1-based line + symbol name to an LSP ``(line, character)`` position.
 
         Supports ``name#N`` syntax for the Nth occurrence of *symbol* on the line.
+        Note: identifiers containing ``#`` are not supported — a trailing
+        ``#<digits>`` is always interpreted as an occurrence selector.
 
         Raises:
             ValueError: if the symbol is not found on the specified line.
         """
-        # Parse name#N suffix
+        # Parse name#N suffix. Only treat a trailing "#<digits>" as an occurrence
+        # selector when the part before "#" is non-empty (so a bare "#123" or a
+        # symbol that is purely numeric is not mis-parsed).
         occurrence = 1
         actual_symbol = symbol
         if "#" in symbol:
             parts = symbol.rsplit("#", 1)
-            if parts[1].isdigit():
+            if parts[0] and parts[1].isdigit():
                 actual_symbol = parts[0]
                 occurrence = int(parts[1])
 
@@ -1143,7 +1173,12 @@ class LspManager:
 
     @staticmethod
     def _has_capability(client: Optional[LspClient], *keys: str) -> bool:
-        """Check whether the server advertises a capability at ``capabilities.*keys``."""
+        """Check whether the server advertises a capability at ``capabilities.*keys``.
+
+        Per the LSP spec, a capability may be a boolean ``true`` **or** an options
+        object (including an empty ``{}``). Only ``false`` and absence (``None``)
+        count as "not supported".
+        """
         if client is None or client.server_capabilities is None:
             return False
         node: Any = client.server_capabilities
@@ -1151,7 +1186,7 @@ class LspManager:
             if not isinstance(node, dict):
                 return False
             node = node.get(key)
-        return bool(node)
+        return node is not None and node is not False
 
 
 # ---------------------------------------------------------------------------
@@ -1166,3 +1201,41 @@ def _path_to_uri(project_path: Path, relative_path: str) -> str:
     else:
         abs_path = (project_path / relative_path).resolve()
     return abs_path.as_uri()
+
+
+# Maps .kolega/lsp.json keys to LspConfig dataclass fields. Keys absent from this
+# map (notably ``enabled``) are intentionally ignored by the merger.
+_PROJECT_CONFIG_FIELD_MAP: dict[str, str] = {
+    "auto_diagnostics_on_edit": "auto_diagnostics_on_edit",
+    "max_diagnostics": "max_diagnostics",
+    "auto_fallback": "auto_fallback",
+    "prompt_on_missing": "prompt_on_missing",
+    "disabled_languages": "disabled_languages",
+    "preferences": "preferences",
+    "servers": "custom_servers",
+    "initialization_options": "initialization_options",
+    "diagnostic_servers": "diagnostic_servers",
+    "workspace_configuration": "workspace_configuration",
+}
+
+
+def _merge_lsp_config(base: LspConfig, overrides: dict[str, Any]) -> LspConfig:
+    """Overlay validated project-config *overrides* onto *base*.
+
+    Only keys present in *overrides* are applied; all other fields keep *base*'s
+    value (so a project file can no longer silently discard user-level settings).
+
+    The master kill-switch (``enabled``) is **always** taken from *base*: a
+    committed ``.kolega/lsp.json`` cannot enable or disable LSP — only the user's
+    setting (via CLI/TUI) controls that.
+    """
+    merged = replace(base)
+    for json_key, value in overrides.items():
+        if json_key == "enabled":
+            # Never let a project file flip the kill-switch.
+            continue
+        field_name = _PROJECT_CONFIG_FIELD_MAP.get(json_key)
+        if field_name is None:
+            continue
+        setattr(merged, field_name, value)
+    return merged

@@ -269,19 +269,52 @@ async def test_response_preserves_exact_jsonrpc_result(value):
     assert fut.result() == value
 
 
-def test_subprocess_env_strips_python_vars_and_applies_server_overrides(monkeypatch):
-    """Server-specific env values win after the safe inherited env is built."""
+def test_subprocess_env_allowlist_withholds_secrets_and_strips_loader_vars(monkeypatch):
+    """F2: only an allowlisted base env is forwarded; secrets and loader vars withheld.
+
+    - Allowlisted vars (PATH, HOME) are inherited and can be overridden by the
+      server's declared env.
+    - Non-allowlisted inherited vars (e.g. provider API keys) are NOT forwarded.
+    - Server-declared env vars are applied (so servers can opt into extra vars).
+    - Loader-injection vars (PYTHONPATH, LD_PRELOAD, NODE_OPTIONS) are stripped
+      even when declared by the server's env.
+    """
     monkeypatch.setenv("PATH", "/inherited")
+    monkeypatch.setenv("HOME", "/users/test")
     monkeypatch.setenv("PYTHONPATH", "/bad")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-secret")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-openai")
     monkeypatch.setenv("KEEP_ME", "yes")
 
-    client = LspClient(["echo"], env={"PATH": "/custom", "SERVER_ONLY": "1"})
+    client = LspClient(
+        ["echo"],
+        env={
+            "PATH": "/custom",
+            "SERVER_ONLY": "1",
+            "PYTHONPATH": "/inject",
+            "LD_PRELOAD": "/evil.so",
+            "NODE_OPTIONS": "--require /evil",
+        },
+    )
     env = client._subprocess_env()  # noqa: SLF001
 
+    # Allowlisted base vars are inherited...
+    assert env["HOME"] == "/users/test"
+    # ...and server env overrides them.
     assert env["PATH"] == "/custom"
-    assert env["KEEP_ME"] == "yes"
+
+    # Server-declared (non-dangerous) vars are applied.
     assert env["SERVER_ONLY"] == "1"
+
+    # Secrets / non-allowlisted inherited vars are withheld.
+    assert "ANTHROPIC_API_KEY" not in env
+    assert "OPENAI_API_KEY" not in env
+    assert "KEEP_ME" not in env
+
+    # Loader-injection vars are stripped from both the inherited and server env.
     assert "PYTHONPATH" not in env
+    assert "LD_PRELOAD" not in env
+    assert "NODE_OPTIONS" not in env
 
 
 # ---------------------------------------------------------------------------

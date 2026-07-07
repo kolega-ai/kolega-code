@@ -9,10 +9,59 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# subprocess environment policy
+# ---------------------------------------------------------------------------
+
+# Minimal allowlist of environment variables forwarded to language-server
+# subprocesses. Everything else (including provider API keys / OAuth tokens) is
+# withheld so a compromised or untrusted server cannot exfiltrate secrets.
+_ENV_ALLOWLIST = frozenset(
+    {
+        "PATH",
+        "HOME",
+        "USER",
+        "LOGNAME",
+        "LANG",
+        "LC_ALL",
+        "LC_CTYPE",
+        "TERM",
+        "SHELL",
+        "TMPDIR",
+        "TMP",
+        "TEMP",
+        "SYSTEMROOT",
+        "COMSPEC",
+        "APPDATA",
+        "LOCALAPPDATA",
+        "PROGRAMFILES",
+        "USERPROFILE",
+        "WINDIR",
+        "PATHEXT",
+    }
+)
+
+# Loader-injection variables that are stripped even from a server's declared
+# ``env`` so a custom_servers entry cannot hijack a legitimate binary.
+_ENV_DENYLIST = frozenset(
+    {
+        "LD_PRELOAD",
+        "LD_LIBRARY_PATH",
+        "DYLD_INSERT_LIBRARIES",
+        "DYLD_LIBRARY_PATH",
+        "DYLD_FALLBACK_LIBRARY_PATH",
+        "PYTHONPATH",
+        "PYTHONHOME",
+        "NODE_OPTIONS",
+        "NODE_PATH",
+    }
+)
 
 # ---------------------------------------------------------------------------
 # wire types
@@ -303,14 +352,28 @@ class LspClient:
 
     @staticmethod
     def _build_env() -> dict[str, str]:
-        """Environment variables to pass to the LS subprocess."""
-        import os
+        """Return the allowlisted base environment for an LS subprocess.
 
-        return {key: value for key, value in os.environ.items() if not key.startswith("PYTHON")}
+        Only a minimal set of safe variables (PATH, HOME, ...) is forwarded; all
+        other variables -- including provider API keys and OAuth tokens -- are
+        withheld so a compromised or untrusted server cannot exfiltrate secrets.
+        """
+        return {key: value for key, value in os.environ.items() if key in _ENV_ALLOWLIST}
 
     def _subprocess_env(self) -> dict[str, str]:
-        """Build the final subprocess env, with server-specific overrides last."""
-        return {**self._build_env(), **dict(self._env or {})}
+        """Build the final subprocess env.
+
+        Starts from the allowlisted base, then applies the server's declared
+        ``env`` overrides -- but always strips loader-injection variables
+        (``LD_PRELOAD``, ``PYTHONPATH``, ``NODE_OPTIONS``, ...) so a
+        ``custom_servers`` entry cannot hijack a legitimate binary.
+        """
+        env = self._build_env()
+        for key, value in (self._env or {}).items():
+            if key.upper() in _ENV_DENYLIST:
+                continue
+            env[key] = value
+        return env
 
 
 # ---------------------------------------------------------------------------

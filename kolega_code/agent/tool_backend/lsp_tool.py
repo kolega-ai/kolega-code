@@ -6,6 +6,7 @@ tool for diagnostics, go-to-definition, references, hover, symbols, and status.
 
 from __future__ import annotations
 
+import json
 from typing import Any, Optional, cast
 from urllib.parse import unquote, urlparse
 
@@ -335,12 +336,12 @@ class LspTool(BaseTool):
             caps = self._lsp_manager.get_capabilities(path)
             if not caps:
                 return f"No active language server for {path}, or capabilities not yet available."
-            return f"Server capabilities for {path}:\n\n```json\n{caps}\n```"
+            return f"Server capabilities for {path}:\n\n```json\n{json.dumps(caps, indent=2)}\n```"
         # No path — show all sessions' capabilities summary
         lines = ["## LSP Capabilities"]
         for lang_id, client in self._lsp_manager._sessions.items():
             caps = client.server_capabilities or {}
-            providers = sorted(k for k in caps if k.endswith("Provider") or k.endswith("Provider"))
+            providers = sorted(k for k in caps if k.endswith("Provider"))
             lines.append(f"\n**{lang_id}** ({client.status}): {', '.join(providers) if providers else 'none'}")
         return "\n".join(lines)
 

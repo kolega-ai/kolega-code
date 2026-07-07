@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shutil
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import yaml
 
@@ -262,10 +263,40 @@ def _replace_servers(spec: LanguageSpec, servers: list[LanguageServerSpec]) -> L
 # ---------------------------------------------------------------------------
 
 
-def load_project_lsp_config(project_path: str | Path) -> Optional[LspConfig]:
+# ---------------------------------------------------------------------------
+# project-level overrides (.kolega/lsp.json)
+# ---------------------------------------------------------------------------
+
+# JSON keys grouped by expected type, used to validate ``.kolega/lsp.json``.
+_PROJECT_BOOL_KEYS = ("enabled", "auto_diagnostics_on_edit", "auto_fallback", "prompt_on_missing")
+_PROJECT_INT_KEYS = ("max_diagnostics",)
+_PROJECT_LIST_KEYS = ("disabled_languages", "diagnostic_servers")
+_PROJECT_DICT_KEYS = ("preferences", "servers", "initialization_options", "workspace_configuration")
+
+
+def _contains_path_separator(value: str) -> bool:
+    """Return True if *value* contains any path separator (``/``, ``\\``, or ``os.sep``)."""
+    return any(sep in value for sep in ("/", "\\", os.sep))
+
+
+def load_project_lsp_config(project_path: str | Path) -> Optional[dict[str, Any]]:
     """Load a per-project LSP configuration from ``.kolega/lsp.json``.
 
-    Returns ``None`` if the file doesn't exist or can't be parsed.
+    Returns a validated dict containing **only the keys present in the file**, so
+    the caller can merge them onto an existing config without clobbering omitted
+    fields. Returns ``None`` if the file doesn't exist or can't be parsed.
+
+    Validation:
+        - Mistyped values are dropped with a warning rather than coerced (a string
+          for a list field is no longer character-split; a string for a dict field
+          no longer raises and crashes init).
+        - Custom server ``bin`` values containing a path separator are rejected
+          (defense-in-depth: a committed config may only reference PATH-resolvable
+          server names, not arbitrary executables or ``sh -c`` payloads).
+
+    Note: the ``enabled`` key is parsed for transparency, but the config merger
+    always preserves the user's master kill-switch — a project file cannot enable
+    or disable LSP.
     """
     config_path = Path(project_path) / ".kolega" / "lsp.json"
     if not config_path.exists():
@@ -273,23 +304,68 @@ def load_project_lsp_config(project_path: str | Path) -> Optional[LspConfig]:
 
     try:
         data = json.loads(config_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except Exception:
         logger.warning("Failed to load project LSP config from %s", config_path)
         return None
 
     if not isinstance(data, dict):
         return None
 
-    return LspConfig(
-        enabled=data.get("enabled", True),
-        auto_diagnostics_on_edit=data.get("auto_diagnostics_on_edit", True),
-        max_diagnostics=data.get("max_diagnostics", 20),
-        auto_fallback=data.get("auto_fallback", True),
-        prompt_on_missing=data.get("prompt_on_missing", True),
-        disabled_languages=list(data.get("disabled_languages", []) or []),
-        preferences=dict(data.get("preferences", {}) or {}),
-        custom_servers=dict(data.get("servers", {}) or {}),
-        initialization_options=dict(data.get("initialization_options", {}) or {}),
-        diagnostic_servers=list(data.get("diagnostic_servers", []) or []),
-        workspace_configuration=dict(data.get("workspace_configuration", {}) or {}),
-    )
+    result: dict[str, Any] = {}
+
+    for key in _PROJECT_BOOL_KEYS:
+        if key in data:
+            if isinstance(data[key], bool):
+                result[key] = data[key]
+            else:
+                logger.warning("Ignoring non-boolean '%s' in %s", key, config_path)
+
+    for key in _PROJECT_INT_KEYS:
+        if key in data:
+            val = data[key]
+            # bool is a subclass of int; reject it explicitly.
+            if isinstance(val, int) and not isinstance(val, bool):
+                result[key] = val
+            else:
+                logger.warning("Ignoring non-integer '%s' in %s", key, config_path)
+
+    for key in _PROJECT_LIST_KEYS:
+        val = data.get(key)
+        if val is None:
+            continue
+        if isinstance(val, list):
+            result[key] = list(val)
+        else:
+            logger.warning("Ignoring non-list '%s' in %s", key, config_path)
+
+    for key in _PROJECT_DICT_KEYS:
+        val = data.get(key)
+        if val is None:
+            continue
+        if isinstance(val, dict):
+            result[key] = dict(val)
+        else:
+            logger.warning("Ignoring non-dict '%s' in %s", key, config_path)
+
+    # Defense-in-depth: reject custom servers whose bin contains a path separator.
+    raw_servers = result.get("servers")
+    if isinstance(raw_servers, dict):
+        clean_servers: dict[str, dict] = {}
+        for server_name, raw_spec in raw_servers.items():
+            if not isinstance(raw_spec, dict):
+                logger.warning("Ignoring malformed server spec '%s' in %s", server_name, config_path)
+                continue
+            bin_name = raw_spec.get("bin", server_name)
+            if not isinstance(bin_name, str) or _contains_path_separator(bin_name):
+                logger.warning(
+                    "Rejecting custom server '%s' with path-bearing bin '%s' in %s "
+                    "(project servers must be PATH-resolvable names)",
+                    server_name,
+                    bin_name,
+                    config_path,
+                )
+                continue
+            clean_servers[server_name] = dict(raw_spec)
+        result["servers"] = clean_servers
+
+    return result

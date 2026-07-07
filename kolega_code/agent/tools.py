@@ -360,6 +360,7 @@ class ToolCollection(LogMixin):
             self.lsp_manager = LspManager(
                 self.project_path,
                 config=lsp_config,
+                trusted=getattr(self.config, "lsp_project_trusted", False),
             )
         else:
             self.lsp_manager = None
@@ -1764,17 +1765,17 @@ class ToolCollection(LogMixin):
             # Clean up LSP resources
             if hasattr(self, "lsp_manager") and self.lsp_manager is not None:
                 await self.lsp_manager.shutdown()
-                print("Cleaned up LSP resources")
+                await self.log_info("Cleaned up LSP resources", sender="ToolCollection")
 
             # Clean up terminal resources
             if hasattr(self, "terminal_tool") and hasattr(self.terminal_tool, "terminal_manager"):
                 await self.terminal_tool.terminal_manager.cleanup_all()
-                print("Cleaned up terminal resources")
+                await self.log_info("Cleaned up terminal resources", sender="ToolCollection")
 
             # Clean up any browser resources
             if hasattr(self, "browser_tool") and hasattr(self.browser_tool, "cleanup"):
                 await self.browser_tool.cleanup()
-                print("Cleaned up browser resources")
+                await self.log_info("Cleaned up browser resources", sender="ToolCollection")
 
             # Clean up any sub-agents
             if hasattr(self, "agent_tool") and hasattr(self.agent_tool, "agents"):
@@ -1782,9 +1783,11 @@ class ToolCollection(LogMixin):
                     if hasattr(agent, "cleanup"):
                         try:
                             await agent.cleanup()
-                            print(f"Cleaned up sub-agent: {agent_id}")
+                            await self.log_info(f"Cleaned up sub-agent: {agent_id}", sender="ToolCollection")
                         except Exception as e:
-                            print(f"Error cleaning up sub-agent {agent_id}: {e}")
+                            await self.log_warning(
+                                f"Error cleaning up sub-agent {agent_id}: {e}", sender="ToolCollection"
+                            )
 
             # Clean up host-provided tool extensions (MCP transports, etc.).
             for extension in self.tool_extensions:
@@ -1796,7 +1799,9 @@ class ToolCollection(LogMixin):
                     if inspect.isawaitable(result):
                         await result
                 except Exception as e:
-                    print(f"Error cleaning up tool extension {extension.name}: {e}")
+                    await self.log_warning(
+                        f"Error cleaning up tool extension {extension.name}: {e}", sender="ToolCollection"
+                    )
 
         except Exception as e:
             await self.log_error(f"Error during tool cleanup: {str(e)}", sender="ToolCollection")

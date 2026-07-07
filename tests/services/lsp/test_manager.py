@@ -327,3 +327,49 @@ def test_path_to_uri_escapes_spaces(tmp_path: Path):
     uri = _path_to_uri(tmp_path, "space file.py")
     assert uri.startswith("file://")
     assert "space%20file.py" in uri
+
+
+# ---------------------------------------------------------------------------
+# F10: _has_capability treats empty options object {} as supported
+# ---------------------------------------------------------------------------
+
+
+def _client_with_caps(caps):
+    """Build a fake client object exposing ``server_capabilities``."""
+    client = MagicMock()
+    client.server_capabilities = caps
+    return client
+
+
+def test_has_capability_true_is_supported():
+    """A ``true`` capability value is supported."""
+    client = _client_with_caps({"definitionProvider": True})
+    assert LspManager._has_capability(client, "definitionProvider") is True
+
+
+def test_has_capability_empty_object_is_supported():
+    """F10: an empty options object ``{}`` is a valid 'enabled' advertisement."""
+    client = _client_with_caps({"definitionProvider": {}})
+    assert LspManager._has_capability(client, "definitionProvider") is True
+
+
+def test_has_capability_populated_object_is_supported():
+    """A populated options object is supported."""
+    client = _client_with_caps({"definitionProvider": {"workDoneProgress": False}})
+    assert LspManager._has_capability(client, "definitionProvider") is True
+
+
+def test_has_capability_false_is_unsupported():
+    """An explicit ``false`` is unsupported."""
+    client = _client_with_caps({"definitionProvider": False})
+    assert LspManager._has_capability(client, "definitionProvider") is False
+
+
+def test_has_capability_absent_is_unsupported():
+    """A missing capability is unsupported."""
+    client = _client_with_caps({"hoverProvider": True})
+    assert LspManager._has_capability(client, "definitionProvider") is False
+
+
+def test_has_capability_none_client_is_unsupported():
+    assert LspManager._has_capability(None, "definitionProvider") is False

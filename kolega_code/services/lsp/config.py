@@ -24,7 +24,13 @@ class LanguageServerSpec:
     """Platform-keyed install commands, e.g. ``{"darwin": [...], "linux": [...]}``."""
 
     env: dict[str, str] = field(default_factory=dict)
-    """Optional environment variables to set for the server process."""
+    """Optional environment variables to set for the server process.
+
+    These are merged onto a minimal allowlisted base environment (PATH, HOME, …);
+    provider API keys and other inherited variables are withheld. Loader-injection
+    variables (``LD_PRELOAD``, ``PYTHONPATH``, ``NODE_OPTIONS``, …) are always
+    stripped, even when declared here.
+    """
 
 
 @dataclass(frozen=True)
