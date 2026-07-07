@@ -6,6 +6,22 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.15.0 - 2026-07-07
+
+### Added
+
+- Added Language Server Protocol (LSP) integration with an agent-callable
+  read-only `lsp` tool (diagnostics, go-to-definition, references, hover,
+  document/workspace symbols, and status) and a trusted `lsp_edit` tool for
+  rename, formatting, and code actions. The `edit`, `multi_edit`, and `write`
+  tools now append LSP diagnostics to their results, with a `/lsp` status
+  command, detected-language status in the TUI wordmark, and a Settings toggle.
+- Added bounded skill metadata rendering with a context-aware token budget.
+  The prompt catalog now uses skill name and description only, descriptions are
+  truncated before skills are omitted, and `list_skills` is queryable with
+  `max_results`.
+- Documented composable workflow shapes in the Gigacode orchestration guide.
+
 ## 0.14.0 - 2026-07-03
 
 ### Added
