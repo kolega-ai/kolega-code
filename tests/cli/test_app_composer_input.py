@@ -7,7 +7,6 @@ import time
 import pytest
 
 from kolega_code.cli import messages
-from kolega_code.cli.tui import agent_runtime as agent_runtime_module
 from kolega_code.cli.tui import state as tui_state
 
 from kolega_code.config import ModelProvider
@@ -32,6 +31,7 @@ from kolega_code.cli.session_store import SessionStore
 from kolega_code.cli.settings import CliSettings, SettingsStore
 
 from ._app_test_utils import (
+    FakeCoderAgent,
     _build_mention_test_app,
     _build_sub_agent_test_app,
     _sub_agent_context_event,
@@ -41,6 +41,7 @@ from ._app_test_utils import (
     build_test_config,
     extension_by_name,
     first_text_styles,
+    install_fake_agents,
     question_payload,
     renderable_text,
 )
@@ -55,31 +56,7 @@ async def test_textual_app_composer_shift_enter_inserts_line_break_and_enter_sub
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.widgets import ChatComposer
 
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-            self.messages: list[str] = []
-
-        def restore_message_history(self, history):
-            return None
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return []
-
-        async def cleanup(self):
-            return None
-
-        async def process_message_stream(self, message):
-            self.messages.append(message)
-            yield {"type": "response", "content": "ok", "complete": True, "uuid": "response-1"}
-
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    install_fake_agents(monkeypatch)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -116,26 +93,7 @@ async def test_textual_app_composer_ctrl_enter_still_inserts_line_break(
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.widgets import ChatComposer
 
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-        def restore_message_history(self, history):
-            return None
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return []
-
-        async def cleanup(self):
-            return None
-
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    install_fake_agents(monkeypatch)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -321,31 +279,7 @@ async def test_textual_app_composer_preserves_multiline_paste(tmp_path: Path, mo
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.widgets import ChatComposer
 
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-            self.messages: list[str] = []
-
-        def restore_message_history(self, history):
-            return None
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return []
-
-        async def cleanup(self):
-            return None
-
-        async def process_message_stream(self, message):
-            self.messages.append(message)
-            yield {"type": "response", "content": "ok", "complete": True, "uuid": "response-1"}
-
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    install_fake_agents(monkeypatch)
 
     pasted = "line one\n    line two\nline three"
     project = tmp_path / "project"
@@ -507,33 +441,14 @@ async def test_textual_app_queues_multiple_active_turn_messages_fifo(
     first_started = asyncio.Event()
     release_first = asyncio.Event()
 
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-            self.messages: list[str] = []
-
-        def restore_message_history(self, history):
-            return None
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return []
-
-        async def cleanup(self):
-            return None
-
+    class _GatedCoderAgent(FakeCoderAgent):
         async def process_message_stream(self, message, attachments=None):
             self.messages.append(message)
             first_started.set()
             await release_first.wait()
             yield {"type": "response", "content": "first done", "complete": True, "uuid": "response-1"}
 
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    install_fake_agents(monkeypatch, coder_cls=_GatedCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -604,33 +519,14 @@ async def test_textual_app_queue_clear_command_discards_active_turn_followups(
     first_started = asyncio.Event()
     release_first = asyncio.Event()
 
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-            self.messages: list[str] = []
-
-        def restore_message_history(self, history):
-            return None
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return []
-
-        async def cleanup(self):
-            return None
-
+    class _GatedCoderAgent(FakeCoderAgent):
         async def process_message_stream(self, message, attachments=None):
             self.messages.append(message)
             first_started.set()
             await release_first.wait()
             yield {"type": "response", "content": "first done", "complete": True, "uuid": "response-1"}
 
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    install_fake_agents(monkeypatch, coder_cls=_GatedCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -691,31 +587,13 @@ async def test_textual_app_cancel_restores_queued_followups_to_composer(
 
     first_started = asyncio.Event()
 
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-        def restore_message_history(self, history):
-            return None
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return []
-
-        async def cleanup(self):
-            return None
-
+    class _BlockingCoderAgent(FakeCoderAgent):
         async def process_message_stream(self, message, attachments=None):
             first_started.set()
             await asyncio.Event().wait()
             yield {"type": "response", "content": "unreachable", "complete": True, "uuid": "response-1"}
 
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    install_fake_agents(monkeypatch, coder_cls=_BlockingCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()

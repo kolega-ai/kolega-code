@@ -112,6 +112,7 @@ class TestToolCollectionRegistry:
         assert registry.get("read_entire_file").parallel_safe
         assert registry.get("search_codebase").parallel_safe
         assert not registry.get("edit").parallel_safe
+        assert not registry.get("lsp_edit").parallel_safe
         assert not registry.get("multi_edit").parallel_safe
         assert not registry.get("write").parallel_safe
         # Command tools have side effects, so they must never be parallel-safe —

@@ -20,7 +20,7 @@ from kolega_code.cli.settings import CliSettings, SettingsStore
 from kolega_code.cli.updater import UpdateCheckResult, UpdateRunResult
 from kolega_code.agent.prompt_overrides import PROMPT_OVERRIDE_DIR
 from kolega_code.llm.exceptions import LLMBillingError
-from kolega_code.llm.models import Message
+from ._app_test_utils import FakeCoderAgent as _FakeCoderAgent
 
 
 def write_skill(root: Path, name: str = "demo-skill") -> None:
@@ -330,25 +330,14 @@ def test_ask_skill_with_prompt_activates_before_dispatch(
 ) -> None:
     from kolega_code.cli import main as main_module
 
-    class FakeCoderAgent:
+    class FakeCoderAgent(_FakeCoderAgent):
         agent_name = "coder"
         instances = []
 
         def __init__(self, **kwargs):
-            self.kwargs = kwargs
-            self.history = []
-            self.messages = []
+            super().__init__(**kwargs)
             self.cleaned = False
             self.__class__.instances.append(self)
-
-        def append_user_message(self, content):
-            self.history.append(Message(role="user", content=content))
-
-        def restore_message_history(self, history):
-            self.history = [Message.from_dict(item) for item in history]
-
-        def dump_message_history(self):
-            return [message.to_dict() for message in self.history]
 
         async def process_message_stream(self, message):
             self.messages.append(message)
@@ -380,20 +369,14 @@ def test_ask_plain_handles_billing_error_without_traceback(
 ) -> None:
     from kolega_code.cli import main as main_module
 
-    class FakeCoderAgent:
+    class FakeCoderAgent(_FakeCoderAgent):
         agent_name = "coder"
         instances = []
 
         def __init__(self, **kwargs):
-            self.kwargs = kwargs
+            super().__init__(**kwargs)
             self.cleaned = False
             self.__class__.instances.append(self)
-
-        def restore_message_history(self, history):
-            return None
-
-        def dump_message_history(self):
-            return []
 
         async def process_message_stream(self, message):
             raise LLMBillingError("DeepSeek APIError: Insufficient Balance", provider=ModelProvider.DEEPSEEK.value)
@@ -433,17 +416,8 @@ def test_ask_json_handles_billing_error_without_traceback(
 ) -> None:
     from kolega_code.cli import main as main_module
 
-    class FakeCoderAgent:
+    class FakeCoderAgent(_FakeCoderAgent):
         agent_name = "coder"
-
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-        def restore_message_history(self, history):
-            return None
-
-        def dump_message_history(self):
-            return []
 
         async def process_message_stream(self, message):
             raise LLMBillingError(
@@ -451,9 +425,6 @@ def test_ask_json_handles_billing_error_without_traceback(
                 provider="raw-exception-provider",
             )
             yield {"type": "response", "content": "unreachable"}
-
-        async def cleanup(self):
-            return None
 
     project = tmp_path / "project"
     project.mkdir()
@@ -712,25 +683,15 @@ def _sub_agent_test_event():
     )
 
 
-class _SubAgentEventCoderAgent:
+class _SubAgentEventCoderAgent(_FakeCoderAgent):
     """Fake CoderAgent that broadcasts a sub-agent event mid-stream."""
 
     agent_name = "coder"
     instances = []
 
     def __init__(self, **kwargs):
-        self.kwargs = kwargs
-        self.history = []
+        super().__init__(**kwargs)
         self.__class__.instances.append(self)
-
-    def append_user_message(self, content):
-        self.history.append(content)
-
-    def restore_message_history(self, history):
-        return None
-
-    def dump_message_history(self):
-        return []
 
     async def process_message_stream(self, message):
         yield {"type": "response", "content": "first ", "complete": False, "uuid": "response-1"}
@@ -740,9 +701,6 @@ class _SubAgentEventCoderAgent:
         for _ in range(5):
             await asyncio.sleep(0)
         yield {"type": "response", "content": "second", "complete": True, "uuid": "response-1"}
-
-    async def cleanup(self):
-        return None
 
 
 def test_ask_json_interleaves_sub_agent_events(
@@ -798,33 +756,18 @@ def test_ask_prompt_with_file_mention_attaches_content(
 ) -> None:
     from kolega_code.cli import main as main_module
 
-    class FakeCoderAgent:
+    class FakeCoderAgent(_FakeCoderAgent):
         agent_name = "coder"
         instances = []
 
         def __init__(self, **kwargs):
-            self.kwargs = kwargs
-            self.history = []
-            self.messages = []
-            self.attachments = []
+            super().__init__(**kwargs)
             self.__class__.instances.append(self)
-
-        def append_user_message(self, content):
-            self.history.append(Message(role="user", content=content))
-
-        def restore_message_history(self, history):
-            self.history = [Message.from_dict(item) for item in history]
-
-        def dump_message_history(self):
-            return [message.to_dict() for message in self.history]
 
         async def process_message_stream(self, message, attachments=None):
             self.messages.append(message)
             self.attachments.append(attachments)
             yield {"type": "response", "content": "ok", "complete": True, "uuid": "response-1"}
-
-        async def cleanup(self):
-            return None
 
     project = tmp_path / "project"
     project.mkdir()
@@ -851,31 +794,13 @@ def test_ask_prompt_with_unresolved_mention_warns_on_stderr(
 ) -> None:
     from kolega_code.cli import main as main_module
 
-    class FakeCoderAgent:
+    class FakeCoderAgent(_FakeCoderAgent):
         agent_name = "coder"
         instances = []
 
         def __init__(self, **kwargs):
-            self.kwargs = kwargs
-            self.history = []
-            self.attachments = []
+            super().__init__(**kwargs)
             self.__class__.instances.append(self)
-
-        def append_user_message(self, content):
-            self.history.append(Message(role="user", content=content))
-
-        def restore_message_history(self, history):
-            self.history = [Message.from_dict(item) for item in history]
-
-        def dump_message_history(self):
-            return [message.to_dict() for message in self.history]
-
-        async def process_message_stream(self, message, attachments=None):
-            self.attachments.append(attachments)
-            yield {"type": "response", "content": "ok", "complete": True, "uuid": "response-1"}
-
-        async def cleanup(self):
-            return None
 
     project = tmp_path / "project"
     project.mkdir()

@@ -6,8 +6,6 @@ import time
 
 import pytest
 
-from kolega_code.cli.tui import agent_runtime as agent_runtime_module
-
 from kolega_code.config import ModelProvider
 from kolega_code.llm.exceptions import (
     LLMBillingError,
@@ -30,6 +28,7 @@ from kolega_code.cli.session_store import SessionStore
 from kolega_code.cli.settings import CliSettings, SettingsStore
 
 from ._app_test_utils import (
+    FakeCoderAgent,
     _build_mention_test_app,
     _build_sub_agent_test_app,
     _sub_agent_context_event,
@@ -39,6 +38,7 @@ from ._app_test_utils import (
     build_test_config,
     extension_by_name,
     first_text_styles,
+    install_fake_agents,
     question_payload,
     renderable_text,
 )
@@ -56,37 +56,14 @@ async def test_textual_app_planning_question_tool_accepts_option_list_answer(
     from kolega_code.cli.tui.widgets import ActionList, ChatComposer
     from kolega_code.cli.messages import COMPOSER_PLACEHOLDER, QUEUE_PLACEHOLDER
 
-    class FakeBaseAgent:
+    class FakeBaseAgent(FakeCoderAgent):
         instances: list["FakeBaseAgent"] = []
 
         def __init__(self, **kwargs):
-            self.kwargs = kwargs
-            self.history = []
+            super().__init__(**kwargs)
             self.__class__.instances.append(self)
 
-        def restore_message_history(self, history):
-            self.history = list(history)
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return self.history
-
-        async def cleanup(self):
-            return None
-
-    class FakeCoderAgent(FakeBaseAgent):
-        pass
-
-    class FakePlanningAgent(FakeBaseAgent):
-        pass
-
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
-    monkeypatch.setattr(agent_runtime_module, "PlanningAgent", FakePlanningAgent)
+    install_fake_agents(monkeypatch, coder_cls=FakeBaseAgent, planning_cls=FakeBaseAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -148,37 +125,14 @@ async def test_textual_app_planning_question_supports_arrow_and_digit_selection(
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.widgets import ActionList
 
-    class FakeBaseAgent:
+    class FakeBaseAgent(FakeCoderAgent):
         instances: list["FakeBaseAgent"] = []
 
         def __init__(self, **kwargs):
-            self.kwargs = kwargs
-            self.history = []
+            super().__init__(**kwargs)
             self.__class__.instances.append(self)
 
-        def restore_message_history(self, history):
-            self.history = list(history)
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return self.history
-
-        async def cleanup(self):
-            return None
-
-    class FakeCoderAgent(FakeBaseAgent):
-        pass
-
-    class FakePlanningAgent(FakeBaseAgent):
-        pass
-
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
-    monkeypatch.setattr(agent_runtime_module, "PlanningAgent", FakePlanningAgent)
+    install_fake_agents(monkeypatch, coder_cls=FakeBaseAgent, planning_cls=FakeBaseAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -226,37 +180,14 @@ async def test_textual_app_planning_question_tool_accepts_custom_text_answer(
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.widgets import ActionList, ChatComposer
 
-    class FakeBaseAgent:
+    class FakeBaseAgent(FakeCoderAgent):
         instances: list["FakeBaseAgent"] = []
 
         def __init__(self, **kwargs):
-            self.kwargs = kwargs
-            self.history = []
+            super().__init__(**kwargs)
             self.__class__.instances.append(self)
 
-        def restore_message_history(self, history):
-            self.history = list(history)
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return self.history
-
-        async def cleanup(self):
-            return None
-
-    class FakeCoderAgent(FakeBaseAgent):
-        pass
-
-    class FakePlanningAgent(FakeBaseAgent):
-        pass
-
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
-    monkeypatch.setattr(agent_runtime_module, "PlanningAgent", FakePlanningAgent)
+    install_fake_agents(monkeypatch, coder_cls=FakeBaseAgent, planning_cls=FakeBaseAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -301,37 +232,14 @@ async def test_textual_app_planning_question_tool_asks_multiple_questions_sequen
     from kolega_code.cli.tui.widgets import ActionList
     from textual.widgets import OptionList
 
-    class FakeBaseAgent:
+    class FakeBaseAgent(FakeCoderAgent):
         instances: list["FakeBaseAgent"] = []
 
         def __init__(self, **kwargs):
-            self.kwargs = kwargs
-            self.history = []
+            super().__init__(**kwargs)
             self.__class__.instances.append(self)
 
-        def restore_message_history(self, history):
-            self.history = list(history)
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return self.history
-
-        async def cleanup(self):
-            return None
-
-    class FakeCoderAgent(FakeBaseAgent):
-        pass
-
-    class FakePlanningAgent(FakeBaseAgent):
-        pass
-
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
-    monkeypatch.setattr(agent_runtime_module, "PlanningAgent", FakePlanningAgent)
+    install_fake_agents(monkeypatch, coder_cls=FakeBaseAgent, planning_cls=FakeBaseAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -377,37 +285,14 @@ async def test_textual_app_planning_question_tool_rejects_malformed_input(
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.tools import ToolError
 
-    class FakeBaseAgent:
+    class FakeBaseAgent(FakeCoderAgent):
         instances: list["FakeBaseAgent"] = []
 
         def __init__(self, **kwargs):
-            self.kwargs = kwargs
-            self.history = []
+            super().__init__(**kwargs)
             self.__class__.instances.append(self)
 
-        def restore_message_history(self, history):
-            self.history = list(history)
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return self.history
-
-        async def cleanup(self):
-            return None
-
-    class FakeCoderAgent(FakeBaseAgent):
-        pass
-
-    class FakePlanningAgent(FakeBaseAgent):
-        pass
-
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
-    monkeypatch.setattr(agent_runtime_module, "PlanningAgent", FakePlanningAgent)
+    install_fake_agents(monkeypatch, coder_cls=FakeBaseAgent, planning_cls=FakeBaseAgent)
 
     project = tmp_path / "project"
     project.mkdir()

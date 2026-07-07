@@ -53,6 +53,7 @@ TUI_COMMAND_ENTRIES: tuple[SlashCommandEntry, ...] = (
     SlashCommandEntry("permissions", "Show or switch shell/edit permission mode", CommandScope.TUI),
     SlashCommandEntry("model", "Show or switch the active model", CommandScope.TUI),
     SlashCommandEntry("effort", "Show or set the active thinking effort", CommandScope.TUI),
+    SlashCommandEntry("lsp", "Show language server status and install instructions", CommandScope.TUI),
     SlashCommandEntry("login", "Sign in to a provider, e.g. /login chatgpt", CommandScope.TUI),
     SlashCommandEntry("logout", "Sign out of a provider, e.g. /logout chatgpt", CommandScope.TUI),
     SlashCommandEntry("goal", "Set, show, or clear an autonomous completion goal", CommandScope.TUI),

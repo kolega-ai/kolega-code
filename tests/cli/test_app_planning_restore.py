@@ -31,6 +31,7 @@ from kolega_code.cli.session_store import SessionStore
 from kolega_code.cli.settings import CliSettings, SettingsStore
 
 from ._app_test_utils import (
+    FakeCoderAgent,
     _build_mention_test_app,
     _build_sub_agent_test_app,
     _sub_agent_context_event,
@@ -40,6 +41,7 @@ from ._app_test_utils import (
     build_test_config,
     extension_by_name,
     first_text_styles,
+    install_fake_agents,
     question_payload,
     renderable_text,
 )
@@ -56,34 +58,10 @@ async def test_textual_app_restores_saved_plan_and_interaction_mode(
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.widgets import ActionList, ChatComposer
 
-    class FakeBaseAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-            self.history = []
-
-        def restore_message_history(self, history):
-            self.history = list(history)
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return self.history
-
-        async def cleanup(self):
-            return None
-
-    class FakeCoderAgent(FakeBaseAgent):
+    class FakePlanningAgent(FakeCoderAgent):
         pass
 
-    class FakePlanningAgent(FakeBaseAgent):
-        pass
-
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
-    monkeypatch.setattr(agent_runtime_module, "PlanningAgent", FakePlanningAgent)
+    install_fake_agents(monkeypatch, planning_cls=FakePlanningAgent)
 
     saved_plan = "# Saved plan\n\nUse the restored plan."
     saved_history = [Message(role="assistant", content=[TextBlock("saved response")]).to_dict()]
@@ -123,25 +101,6 @@ async def test_textual_app_restores_saved_plan_in_build_mode_without_plan_action
 
     from kolega_code.cli.app import KolegaCodeApp
 
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-        def restore_message_history(self, history):
-            return None
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return []
-
-        async def cleanup(self):
-            return None
-
     monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     saved_plan = "# Saved plan\n\nKeep this visible."
@@ -180,25 +139,6 @@ async def test_textual_app_invalid_saved_interaction_mode_falls_back_to_build(
 
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.constants import BUILD_INTERACTION_MODE
-
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-        def restore_message_history(self, history):
-            return None
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return []
-
-        async def cleanup(self):
-            return None
 
     monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 

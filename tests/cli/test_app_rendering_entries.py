@@ -6,8 +6,6 @@ import time
 
 import pytest
 
-from kolega_code.cli.tui import agent_runtime as agent_runtime_module
-
 from kolega_code.config import ModelProvider
 from kolega_code.llm.exceptions import (
     LLMBillingError,
@@ -30,6 +28,7 @@ from kolega_code.cli.session_store import SessionStore
 from kolega_code.cli.settings import CliSettings, SettingsStore
 
 from ._app_test_utils import (
+    FakeCoderAgent,
     _build_mention_test_app,
     _build_sub_agent_test_app,
     _sub_agent_context_event,
@@ -39,6 +38,7 @@ from ._app_test_utils import (
     build_test_config,
     extension_by_name,
     first_text_styles,
+    install_fake_agents,
     question_payload,
     renderable_text,
 )
@@ -52,26 +52,7 @@ async def test_textual_app_renders_one_widget_per_chat_entry(tmp_path: Path, mon
     from kolega_code.cli.tui.state import ConversationEntry
     from kolega_code.cli.tui.widgets import ConversationEntryWidget
 
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-        def restore_message_history(self, history):
-            return None
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return []
-
-        async def cleanup(self):
-            return None
-
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    install_fake_agents(monkeypatch)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -120,26 +101,7 @@ async def test_conversation_render_skips_detached_view_during_teardown(
     from kolega_code.cli.tui.state import ConversationEntry
     from kolega_code.cli.tui.widgets import ConversationEntryWidget, ConversationView
 
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-        def restore_message_history(self, history):
-            return None
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return []
-
-        async def cleanup(self):
-            return None
-
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    install_fake_agents(monkeypatch)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -240,26 +202,7 @@ async def test_textual_app_formats_agent_and_tool_chat_entries(tmp_path: Path, m
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.state import ConversationEntry
 
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-        def restore_message_history(self, history):
-            return None
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return []
-
-        async def cleanup(self):
-            return None
-
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    install_fake_agents(monkeypatch)
 
     project = tmp_path / "project"
     project.mkdir()

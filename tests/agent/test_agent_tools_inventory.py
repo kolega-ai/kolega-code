@@ -112,6 +112,7 @@ def test_investigation_agent_tools(project_path, mock_connection_manager, agent_
         "list_sessions",
         "find_files_by_pattern",
         "list_directory",
+        "lsp",
         "read_entire_file",
         "read_file_section",
         "read_image",
@@ -128,6 +129,7 @@ def test_investigation_agent_tools(project_path, mock_connection_manager, agent_
     assert "edit" not in tool_names
     assert "multi_edit" not in tool_names
     assert "write" not in tool_names
+    assert "lsp_edit" not in tool_names
 
 
 def test_cli_coder_agent_does_not_expose_manifest_build_tools(project_path, mock_connection_manager, agent_config):
@@ -221,6 +223,7 @@ def test_general_agent_tool_inventory(project_path, mock_connection_manager, age
     assert "edit" in tool_names
     assert "multi_edit" in tool_names
     assert "write" in tool_names
+    assert "lsp_edit" in tool_names
     assert "exec_command" in tool_names
     # Recursion guard: no dispatch tools at all
     assert not any(name.startswith("dispatch_") for name in tool_names)

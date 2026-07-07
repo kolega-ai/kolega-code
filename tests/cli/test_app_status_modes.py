@@ -30,6 +30,7 @@ from kolega_code.cli.session_store import SessionStore
 from kolega_code.cli.settings import CliSettings, SettingsStore
 
 from ._app_test_utils import (
+    FakeCoderAgent,
     _build_mention_test_app,
     _build_sub_agent_test_app,
     _sub_agent_context_event,
@@ -39,9 +40,12 @@ from ._app_test_utils import (
     build_test_config,
     extension_by_name,
     first_text_styles,
+    install_fake_agents,
     question_payload,
     renderable_text,
 )
+
+_FakeCoderAgentBase = FakeCoderAgent
 
 
 @pytest.mark.asyncio
@@ -56,26 +60,7 @@ async def test_textual_app_context_usage_updates_status_without_raw_json(
     from kolega_code.cli.tui.widgets import ChatComposer
     from kolega_code.cli.messages import COMPOSER_PLACEHOLDER
 
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-        def restore_message_history(self, history):
-            return None
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return []
-
-        async def cleanup(self):
-            return None
-
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    install_fake_agents(monkeypatch)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -123,27 +108,7 @@ async def test_textual_app_status_dashboard_tracks_interaction_mode(
 
     from kolega_code.cli.app import KolegaCodeApp
 
-    class FakeAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-        def restore_message_history(self, history):
-            return None
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return []
-
-        async def cleanup(self):
-            return None
-
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeAgent)
-    monkeypatch.setattr(agent_runtime_module, "PlanningAgent", FakeAgent)
+    install_fake_agents(monkeypatch, planning_cls=FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -172,35 +137,20 @@ async def test_textual_app_resumes_gigacode_enabled_across_mode_rebuilds(
 
     from kolega_code.cli.app import KolegaCodeApp
 
-    class FakeBaseAgent:
+    class FakeCoderAgent(_FakeCoderAgentBase):
         instances = []
 
         def __init__(self, **kwargs):
-            self.kwargs = kwargs
+            super().__init__(**kwargs)
             self.prompt_extensions = kwargs.get("prompt_extensions") or []
             self.gigacode_enabled = False
             self.cleaned = False
             self.__class__.instances.append(self)
 
-        def restore_message_history(self, history):
-            return None
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return []
-
         async def cleanup(self):
             self.cleaned = True
 
-    class FakeCoderAgent(FakeBaseAgent):
-        instances = []
-
-    class FakePlanningAgent(FakeBaseAgent):
+    class FakePlanningAgent(FakeCoderAgent):
         instances = []
 
     monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
@@ -253,27 +203,15 @@ async def test_textual_app_gigacode_command_persists_and_updates_status(
 
     from kolega_code.cli.app import KolegaCodeApp
 
-    class FakeCoderAgent:
-        instances: list["FakeCoderAgent"] = []
+    class FakeCoderAgent(_FakeCoderAgentBase):
+        instances = []
 
         def __init__(self, **kwargs):
-            self.kwargs = kwargs
+            super().__init__(**kwargs)
             self.gigacode_enabled = False
             self.prompt_extensions = kwargs.get("prompt_extensions") or []
             self.apply_calls = []
             self.__class__.instances.append(self)
-
-        def restore_message_history(self, history):
-            return None
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return []
 
         def apply_gigacode(self, enabled, prompt_extension=None):
             self.apply_calls.append((enabled, prompt_extension))
@@ -283,9 +221,6 @@ async def test_textual_app_gigacode_command_persists_and_updates_status(
             ]
             if enabled and prompt_extension is not None:
                 self.prompt_extensions.append(prompt_extension)
-
-        async def cleanup(self):
-            return None
 
     monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
@@ -331,9 +266,9 @@ async def test_textual_app_mode_switch_rebuild_skips_transcript_restore(
     history = [{"role": "user", "content": [{"type": "text", "text": "keep me"}]}]
     compaction = {"summary": "summary", "compacted_through": 1, "compacted_history_length": 1}
 
-    class FakeCoderAgent:
+    class FakeCoderAgent(_FakeCoderAgentBase):
         def __init__(self, **kwargs):
-            self.kwargs = kwargs
+            super().__init__(**kwargs)
             self.restored_history = None
             self.restored_compaction = None
 
@@ -348,9 +283,6 @@ async def test_textual_app_mode_switch_rebuild_skips_transcript_restore(
 
         def dump_message_history(self):
             return history
-
-        async def cleanup(self):
-            return None
 
     class FakePlanningAgent(FakeCoderAgent):
         instances = []
@@ -407,24 +339,9 @@ async def test_textual_app_mode_switch_preserves_transcript_entries(
 
     history = [{"role": "user", "content": [{"type": "text", "text": "persisted"}]}]
 
-    class FakeAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-        def restore_message_history(self, history):
-            return None
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
+    class FakeAgent(FakeCoderAgent):
         def dump_message_history(self):
             return history
-
-        async def cleanup(self):
-            return None
 
     monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeAgent)
     monkeypatch.setattr(agent_runtime_module, "PlanningAgent", FakeAgent)
@@ -469,26 +386,7 @@ async def test_textual_app_turn_status_formats_error_duration(tmp_path: Path, mo
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.state import TurnState
 
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-        def restore_message_history(self, history):
-            return None
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return []
-
-        async def cleanup(self):
-            return None
-
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    install_fake_agents(monkeypatch)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -521,31 +419,7 @@ async def test_textual_app_shift_tab_toggles_between_build_and_plan_agents(
     from kolega_code.cli.tui.constants import BUILD_INTERACTION_MODE, PLAN_INTERACTION_MODE
     from kolega_code.cli.tui.state import PendingQuestion
 
-    class FakeBaseAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-            self.history = []
-            self.cleaned = False
-
-        def restore_message_history(self, history):
-            self.history = list(history)
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return self.history
-
-        async def cleanup(self):
-            self.cleaned = True
-
-    class FakeCoderAgent(FakeBaseAgent):
-        pass
-
-    class FakePlanningAgent(FakeBaseAgent):
+    class FakePlanningAgent(FakeCoderAgent):
         pass
 
     monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
@@ -614,34 +488,19 @@ async def test_textual_app_ctrl_p_toggles_permission_mode(tmp_path: Path, monkey
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.permissions import PermissionMode
 
-    class FakeCoderAgent:
-        instances: list["FakeCoderAgent"] = []
+    class FakeCoderAgent(_FakeCoderAgentBase):
+        instances = []
 
         def __init__(self, **kwargs):
-            self.kwargs = kwargs
+            super().__init__(**kwargs)
             self.permission_mode = kwargs["permission_mode"]
             self.__class__.instances.append(self)
-
-        def restore_message_history(self, history):
-            return None
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return []
 
         def set_permission_mode(self, permission_mode):
             self.permission_mode = permission_mode
 
         def set_permission_callback(self, permission_callback):
             self.permission_callback = permission_callback
-
-        async def cleanup(self):
-            return None
 
     monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
@@ -698,31 +557,16 @@ async def test_footer_renders_ctrl_p_permissions_exactly_once(tmp_path: Path, mo
     # The command palette (default ctrl+p) is disabled to avoid the collision.
     assert KolegaCodeApp.ENABLE_COMMAND_PALETTE is False
 
-    class FakeCoderAgent:
+    class FakeCoderAgent(_FakeCoderAgentBase):
         def __init__(self, **kwargs):
-            self.kwargs = kwargs
+            super().__init__(**kwargs)
             self.permission_mode = kwargs["permission_mode"]
-
-        def restore_message_history(self, history):
-            return None
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return []
 
         def set_permission_mode(self, permission_mode):
             self.permission_mode = permission_mode
 
         def set_permission_callback(self, permission_callback):
             self.permission_callback = permission_callback
-
-        async def cleanup(self):
-            return None
 
     monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
@@ -778,26 +622,7 @@ async def test_textual_app_ctrl_o_toggles_sidebar_and_keeps_active_tab(
 
     from kolega_code.cli.app import KolegaCodeApp
 
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-        def restore_message_history(self, history):
-            return None
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return []
-
-        async def cleanup(self):
-            return None
-
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    install_fake_agents(monkeypatch)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -845,26 +670,7 @@ async def test_textual_app_blocks_mode_toggle_during_active_turn(
     from kolega_code.cli.tui.widgets import ChatComposer
     from kolega_code.cli.messages import COMPOSER_PLACEHOLDER
 
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-        def restore_message_history(self, history):
-            return None
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return []
-
-        async def cleanup(self):
-            return None
-
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    install_fake_agents(monkeypatch)
 
     project = tmp_path / "project"
     project.mkdir()

@@ -6,8 +6,6 @@ import time
 
 import pytest
 
-from kolega_code.cli.tui import agent_runtime as agent_runtime_module
-
 from kolega_code.config import ModelProvider
 from kolega_code.llm.exceptions import (
     LLMBillingError,
@@ -30,6 +28,7 @@ from kolega_code.cli.session_store import SessionStore
 from kolega_code.cli.settings import CliSettings, SettingsStore
 
 from ._app_test_utils import (
+    FakeCoderAgent,
     _build_mention_test_app,
     _build_sub_agent_test_app,
     _sub_agent_context_event,
@@ -39,6 +38,7 @@ from ._app_test_utils import (
     build_test_config,
     extension_by_name,
     first_text_styles,
+    install_fake_agents,
     question_payload,
     renderable_text,
 )
@@ -50,26 +50,7 @@ async def test_textual_app_keeps_command_c_for_screen_copy(tmp_path: Path, monke
 
     from kolega_code.cli.app import KolegaCodeApp
 
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-        def restore_message_history(self, history):
-            return None
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return []
-
-        async def cleanup(self):
-            return None
-
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    install_fake_agents(monkeypatch)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -102,26 +83,7 @@ async def test_conversation_entry_widget_extracts_plain_selected_text(
     from kolega_code.cli.tui.state import ConversationEntry
     from kolega_code.cli.tui.widgets import ConversationEntryWidget
 
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-        def restore_message_history(self, history):
-            return None
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return []
-
-        async def cleanup(self):
-            return None
-
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    install_fake_agents(monkeypatch)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -159,26 +121,7 @@ async def test_conversation_entry_supports_mouse_drag_selection(
     from kolega_code.cli.tui.state import ConversationEntry
     from kolega_code.cli.tui.widgets import ConversationEntryWidget
 
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-        def restore_message_history(self, history):
-            return None
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return []
-
-        async def cleanup(self):
-            return None
-
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    install_fake_agents(monkeypatch)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -511,31 +454,12 @@ async def test_command_c_copies_selected_chat_text_to_macos_clipboard(
     from kolega_code.cli.tui.state import ConversationEntry
     from kolega_code.cli.tui.widgets import ConversationEntryWidget
 
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-        def restore_message_history(self, history):
-            return None
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return []
-
-        async def cleanup(self):
-            return None
-
     pbcopy_calls: list[dict] = []
 
     def fake_run(args, *, input, text, check):
         pbcopy_calls.append({"args": args, "input": input, "text": text, "check": check})
 
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    install_fake_agents(monkeypatch)
     monkeypatch.setattr(app_module.sys, "platform", "darwin")
     monkeypatch.setattr(app_module.subprocess, "run", fake_run)
 

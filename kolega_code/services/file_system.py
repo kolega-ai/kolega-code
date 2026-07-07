@@ -82,6 +82,10 @@ class FileSystemPath:
     def unlink(self, missing_ok: bool = False) -> None:
         self.filesystem.remove(self.path, missing_ok=missing_ok)
 
+    def rename(self, destination: Union[str, "FileSystemPath"]) -> None:
+        destination_path = str(destination) if isinstance(destination, FileSystemPath) else destination
+        self.filesystem.rename(self.path, destination_path)
+
     def rmdir(self) -> None:
         self.filesystem.rmdir(self.path)
 
@@ -278,6 +282,21 @@ class FileSystem(ABC):
             FileNotFoundError: If the file doesn't exist and missing_ok is False
             PermissionError: If the file cannot be removed
             IsADirectoryError: If the path is a directory
+        """
+
+    @abstractmethod
+    def rename(self, source: str, destination: str) -> None:
+        """
+        Rename or move a file or directory.
+
+        Args:
+            source: Existing path to rename
+            destination: New path
+
+        Raises:
+            FileNotFoundError: If the source doesn't exist
+            FileExistsError: If the destination exists and cannot be overwritten
+            PermissionError: If the path cannot be moved
         """
 
     @abstractmethod
@@ -599,6 +618,11 @@ class LocalFileSystem(FileSystem):
     def remove(self, path: str, missing_ok: bool = False) -> None:
         resolved_path = self._resolve_path(path)
         resolved_path.unlink(missing_ok=missing_ok)
+
+    def rename(self, source: str, destination: str) -> None:
+        resolved_source = self._resolve_path(source)
+        resolved_destination = self._resolve_path(destination)
+        resolved_source.rename(resolved_destination)
 
     def rmdir(self, path: str) -> None:
         resolved_path = self._resolve_path(path)

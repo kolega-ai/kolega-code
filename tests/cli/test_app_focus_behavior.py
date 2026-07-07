@@ -7,7 +7,7 @@ from kolega_code.cli.config import config_summary
 from kolega_code.cli.session_store import SessionStore
 from kolega_code.permissions import PermissionDecision, allow_rule_options, permission_request_for_tool
 
-from ._app_test_utils import MinimalFakeCoderAgent, build_test_config, install_fake_agents
+from ._app_test_utils import FakeCoderAgent, build_test_config, install_fake_agents
 
 
 def _build_focus_test_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -15,7 +15,7 @@ def _build_focus_test_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
     from kolega_code.cli.app import KolegaCodeApp
 
-    install_fake_agents(monkeypatch, coder_cls=MinimalFakeCoderAgent)
+    install_fake_agents(monkeypatch, coder_cls=FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()

@@ -324,6 +324,7 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
         self._populate_agent_model_rows()
         self._populate_web_search_controls()
         self._populate_mcp_controls()
+        self._populate_lsp_controls()
         self._update_settings_status()
 
     def _populate_agent_model_rows(self) -> None:
@@ -888,6 +889,64 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             select.set_options([])
             select.value = Select.NULL
 
+    def _populate_lsp_controls(self) -> None:
+        """Seed the LSP settings toggle from saved settings."""
+        try:
+            lsp_select = self.query_one("#lsp_enabled_select", Select)
+        except NoMatches:
+            return
+        enabled = self.settings.lsp_enabled
+        if enabled is not None:
+            lsp_select.value = "true" if enabled else "false"
+        # Update the LSP status text
+        self._update_lsp_settings_status()
+
+    def _update_lsp_settings_status(self) -> None:
+        """Show current LSP status in the settings panel."""
+        try:
+            status = self.query_one("#lsp_status", Static)
+        except NoMatches:
+            return
+        agent = self.agent
+        if agent is None or agent.tool_collection is None:
+            status.update("LSP is not active. Enable it above and save settings.")
+            return
+        manager = agent.tool_collection.lsp_manager
+        if manager is None or not manager.enabled:
+            status.update("LSP is not active. Enable it above and save settings.")
+            return
+        lsp_status = manager.status()
+        if not lsp_status.get("initialized"):
+            status.update("LSP status will appear after the agent starts.")
+            return
+        detected_names = [d["display_name"] for d in lsp_status.get("detected", [])]
+        missing_names = [m["display_name"] for m in lsp_status.get("missing", [])]
+        if detected_names:
+            parts = [f"Detected: {', '.join(detected_names)}"]
+            if missing_names:
+                parts.append(f"Missing servers: {', '.join(missing_names)}")
+            # Show active sessions with live state
+            active = []
+            for session in lsp_status.get("sessions", []):
+                server_name = session["server_name"]
+                if session.get("connected"):
+                    active.append(server_name)
+                elif session.get("status") == "error":
+                    active.append(f"{server_name} (error)")
+            if active:
+                parts.append(f"Active: {', '.join(active)}")
+            status.update(" ".join(parts))
+        else:
+            status.update("No supported languages detected in this project.")
+
+    def _collect_lsp_from_ui(self) -> None:
+        """Read the LSP toggle and save into settings."""
+        try:
+            value = str(self.query_one("#lsp_enabled_select", Select).value)
+        except NoMatches:
+            return
+        self.settings.lsp_enabled = value == "true"
+
     async def _save_settings_from_ui(self) -> None:
         provider = str(self.query_one("#provider_select", Select).value)
         model = str(self.query_one("#model_select", Select).value)
@@ -906,6 +965,7 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             self.settings.set_api_key(provider, api_key)
         self._collect_agent_models_from_ui()
         self._collect_web_search_from_ui()
+        self._collect_lsp_from_ui()
         self.settings_store.save(self.settings)
         api_key_input.value = ""
         api_key_input.placeholder = self._api_key_placeholder(provider)

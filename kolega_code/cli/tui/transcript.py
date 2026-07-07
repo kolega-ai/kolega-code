@@ -12,6 +12,7 @@ from rich.text import Text
 
 from kolega_code.agent import AgentEvent
 from kolega_code.llm.models import Message, TextBlock, ToolCall, ToolResult
+from kolega_code.services.lsp import extract_lsp_label
 
 from .. import messages, theme
 from ..skills import skill_names_in_text
@@ -1396,6 +1397,11 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
             return self._format_tool_entry(entry, state=state, color=color)
         if entry.kind == "system":
             return Text(entry.content, style="dim")
+        if entry.kind == "lsp":
+            return self._markdown_entry(
+                theme.role_header(Glyph.STATUS, "LSP", Color.ACCENT),
+                entry.content,
+            )
         return Text(entry.content)
 
     def _entry_renderable(
@@ -1518,7 +1524,18 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
 
     def _tool_entry_title(self, entry: ConversationEntry) -> str:
         state, color = tool_state_presentation(entry.kind)
-        return theme.role_header(Glyph.TOOL, escape(entry.tool_name or "tool"), color, state=state)
+        header = theme.role_header(Glyph.TOOL, escape(entry.tool_name or "tool"), color, state=state)
+        # Surface an LSP diagnostics summary as a severity-colored badge in the title
+        # (e.g. "· 2 LSP warnings") so warnings are visible without expanding. The
+        # label is recovered from the result text, which covers live edits, sub-agent
+        # steps, and restored sessions through this one shared title factory.
+        label = extract_lsp_label(entry.full_content or entry.content)
+        if label:
+            head, sep, rest = label.partition(" ")
+            badge = f"{head} LSP {rest}" if sep else f"LSP {label}"  # "2 warnings" -> "2 LSP warnings"
+            badge_color = Color.ERROR if "error" in label else Color.WARNING if "warning" in label else Color.MUTED
+            header += " " + theme.styled(f"{theme.g(Glyph.BULLET_SEP)} {badge}", badge_color)
+        return header
 
     def _tool_preview_renderable(self, entry: ConversationEntry) -> Optional[Group]:
         """Inline diff/file-head preview for an edit tool, or None to hide the preview region."""

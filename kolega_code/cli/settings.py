@@ -86,6 +86,8 @@ class CliSettings:
     trusted_hook_projects: list[str] = field(default_factory=list)
     # Resolved project paths whose .kolega/mcp_servers.json the user has opted to trust.
     trusted_mcp_projects: list[str] = field(default_factory=list)
+    # Resolved project paths whose .kolega/lsp.json the user has opted to trust.
+    trusted_lsp_projects: list[str] = field(default_factory=list)
     # Web search backend selection. Additive optional fields (absent -> None -> the
     # "duckduckgo" default is applied downstream), so no schema bump is needed — same
     # convention as active_theme. Cloud backend API keys live in api_keys under the
@@ -100,6 +102,9 @@ class CliSettings:
     # Global default for new TUI sessions. Resumed sessions keep their own
     # SessionRecord.permission_mode unless a CLI override is supplied.
     permission_mode: str = PermissionMode.ASK.value
+    # Additive optional field — absent in older files -> None -> use default
+    # LSP config (enabled=True).
+    lsp_enabled: Optional[bool] = None
     schema_version: int = SETTINGS_SCHEMA_VERSION
 
     @classmethod
@@ -110,6 +115,7 @@ class CliSettings:
         api_keys = data.get("api_keys") or {}
         trusted = data.get("trusted_hook_projects") or []
         trusted_mcp = data.get("trusted_mcp_projects") or []
+        trusted_lsp = data.get("trusted_lsp_projects") or []
         return cls(
             schema_version=SETTINGS_SCHEMA_VERSION,
             active_provider=data.get("active_provider"),
@@ -123,6 +129,7 @@ class CliSettings:
             agent_models=_coerce_agent_models(data.get("agent_models")),
             trusted_hook_projects=[str(path) for path in trusted if path],
             trusted_mcp_projects=[str(path) for path in trusted_mcp if path],
+            trusted_lsp_projects=[str(path) for path in trusted_lsp if path],
             # Additive optional fields; absent in older files -> None -> default backend.
             web_search_backend=data.get("web_search_backend"),
             web_search_base_url=data.get("web_search_base_url"),
@@ -130,6 +137,8 @@ class CliSettings:
             oauth_tokens=_coerce_oauth_tokens(data.get("oauth_tokens")),
             # Additive optional field; absent in older files -> ask.
             permission_mode=_coerce_permission_mode(data.get("permission_mode")),
+            # Additive optional field; absent in older files -> None (use default).
+            lsp_enabled=data.get("lsp_enabled"),
         )
 
     def to_dict(self) -> dict:
@@ -143,10 +152,12 @@ class CliSettings:
             "agent_models": self.agent_models,
             "trusted_hook_projects": self.trusted_hook_projects,
             "trusted_mcp_projects": self.trusted_mcp_projects,
+            "trusted_lsp_projects": self.trusted_lsp_projects,
             "web_search_backend": self.web_search_backend,
             "web_search_base_url": self.web_search_base_url,
             "oauth_tokens": self.oauth_tokens,
             "permission_mode": _coerce_permission_mode(self.permission_mode),
+            "lsp_enabled": self.lsp_enabled,
         }
 
     def get_api_key(self, provider: str) -> Optional[str]:
@@ -205,6 +216,14 @@ class CliSettings:
         resolved = str(Path(project_path).resolve())
         if resolved not in self.trusted_mcp_projects:
             self.trusted_mcp_projects.append(resolved)
+
+    def is_lsp_project_trusted(self, project_path) -> bool:
+        return str(Path(project_path).resolve()) in self.trusted_lsp_projects
+
+    def trust_lsp_project(self, project_path) -> None:
+        resolved = str(Path(project_path).resolve())
+        if resolved not in self.trusted_lsp_projects:
+            self.trusted_lsp_projects.append(resolved)
 
 
 class SettingsStore:

@@ -314,3 +314,37 @@ def test_web_search_settings_absent_in_old_file_default_to_none() -> None:
     assert settings.web_search_backend is None
     assert settings.web_search_base_url is None
     assert SETTINGS_SCHEMA_VERSION == 3
+
+
+# ---------------------------------------------------------------------------
+# F1: LSP project trust round-trip
+# ---------------------------------------------------------------------------
+
+
+def test_lsp_project_trust_round_trip(tmp_path: Path) -> None:
+    """F1: trusted_lsp_projects persists and resolves via is_lsp_project_trusted."""
+    project = tmp_path / "repo"
+    project.mkdir()
+
+    settings = CliSettings()
+    assert settings.is_lsp_project_trusted(project) is False
+
+    settings.trust_lsp_project(project)
+    assert settings.is_lsp_project_trusted(project) is True
+
+    # Round-trip through to_dict / from_dict.
+    restored = CliSettings.from_dict(settings.to_dict())
+    assert restored.is_lsp_project_trusted(project) is True
+    assert str(project.resolve()) in restored.trusted_lsp_projects
+
+
+def test_lsp_project_trust_independent_of_mcp(tmp_path: Path) -> None:
+    """F1: trusting LSP does not implicitly trust MCP (and vice versa)."""
+    project = tmp_path / "repo"
+    project.mkdir()
+
+    settings = CliSettings()
+    settings.trust_lsp_project(project)
+
+    assert settings.is_lsp_project_trusted(project) is True
+    assert settings.is_mcp_project_trusted(project) is False

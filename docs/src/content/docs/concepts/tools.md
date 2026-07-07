@@ -18,6 +18,9 @@ Read, search, and edit your project:
 - `read_entire_file`, `read_file_section` — read file contents.
 - `find_files_by_pattern` — glob-based file search.
 - `search_codebase` — search the codebase by regular expression (ripgrep/grep), e.g. `foo|bar`.
+- `lsp` — read diagnostics, symbols, definitions,
+  references, hover text, call hierarchy, and code action metadata from
+  [configured language servers](../../configuration/lsp/).
 - Create and edit files — create new files and apply precise edits.
 
 ### Terminal

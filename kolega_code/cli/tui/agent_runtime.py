@@ -727,7 +727,11 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             hook_dispatcher=self._session_hook_dispatcher(),
         )
         assert self.agent is not None
-        self.agent.gigacode_enabled = gigacode_active
+        # Initialize LSP (language detection + server resolution)
+        agent = self.agent
+        assert agent.tool_collection is not None
+        await agent.tool_collection.initialize()
+        agent.gigacode_enabled = gigacode_active
         if history:
             self.agent.restore_message_history(history)
             self.agent.restore_compaction_state(compaction)
@@ -736,6 +740,81 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         self._update_mode_chrome()
         self._ensure_startup_entry()
         await self._fire_session_start_once()
+        # Refresh the Settings-tab LSP status now that the agent (and its
+        # initialized lsp_manager) exists. Without this the status is stale
+        # from startup, when it was computed before the agent was built.
+        self._update_lsp_settings_status()
+
+    def _format_lsp_status(self) -> str:
+        """Build a human-readable LSP status message for the conversation or /lsp command."""
+        agent = self.agent
+        if agent is None or agent.tool_collection is None:
+            return ""
+        manager = agent.tool_collection.lsp_manager
+        if manager is None or not manager.enabled:
+            return ""
+
+        lines = ["## 🔍 Language Servers (LSP)"]
+
+        status = manager.status()
+        if not status.get("initialized"):
+            lines.append("\nLSP status will appear after the agent starts.")
+            return "\n".join(lines)
+
+        detected = status.get("detected", [])
+        resolved = {r["language_id"]: r for r in status.get("resolved", [])}
+        missing = status.get("missing", [])
+
+        if detected:
+            lines.append(f"\n**Detected {len(detected)} language(s):**")
+            for d in detected:
+                rl = resolved.get(d["language_id"])
+                missing_rl = next((m for m in missing if m["language_id"] == d["language_id"]), None)
+                if rl:
+                    lines.append(f"  - {d['display_name']} → **{rl['server_name']}** ({d['detection_reason']})")
+                elif missing_rl:
+                    lines.append(
+                        f"  - {d['display_name']} → _{missing_rl['server_name']} not found_ ({d['detection_reason']})"
+                    )
+                else:
+                    lines.append(f"  - {d['display_name']} ({d['detection_reason']})")
+        else:
+            lines.append("\nNo supported languages detected in this project.")
+            return "\n".join(lines)
+
+        if missing:
+            lines.append(f"\n**⚠️ Missing servers ({len(missing)}):**")
+            for m in missing:
+                lines.append(f"  - **{m['display_name']}**: `{m['server_name']}`")
+
+        # Active sessions with live state
+        active_sessions = []
+        for session in status.get("sessions", []):
+            server_name = session["server_name"]
+            lang_id = session["language_id"]
+            if session.get("connected"):
+                pid_str = f" (pid={session['pid']})" if session.get("pid") else ""
+                active_sessions.append(f"  - ✅ **{server_name}** for {lang_id}{pid_str}")
+            elif session.get("status") == "error" and session.get("last_error"):
+                active_sessions.append(f"  - ❌ **{server_name}** for {lang_id} — {session['last_error']}")
+
+        if active_sessions:
+            lines.append(f"\n**Active sessions ({len(active_sessions)}):**")
+            lines.extend(active_sessions)
+
+        # Last diagnostic counts
+        diag_counts = status.get("diagnostic_counts", {})
+        if diag_counts:
+            shown = list(diag_counts.items())[:5]
+            count_parts = []
+            for uri, count in shown:
+                path_str = uri.replace("file://", "") if uri.startswith("file://") else uri
+                count_parts.append(f"{path_str}: {count}")
+            lines.append(f"\n**Last diagnostics:** {', '.join(count_parts)}")
+
+        lines.append("\nRun `/lsp` to see this status again.")
+
+        return "\n".join(lines)
 
     def _session_hook_dispatcher(self) -> HookDispatcher:
         """Build (once) the hook dispatcher for this session from global + project config."""

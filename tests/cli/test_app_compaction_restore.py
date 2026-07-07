@@ -12,13 +12,11 @@ from pathlib import Path
 
 import pytest
 
-from kolega_code.cli.tui import agent_runtime as agent_runtime_module
-
 from kolega_code.cli.config import config_summary
 from kolega_code.cli.session_store import SessionStore
 
 
-from ._app_test_utils import build_test_config
+from ._app_test_utils import build_test_config, install_fake_agents
 
 
 def _text_message(role: str, text: str) -> dict:
@@ -29,33 +27,13 @@ def _build_history(n: int) -> list[dict]:
     return [_text_message("user" if i % 2 == 0 else "assistant", f"msg-{i}") for i in range(n)]
 
 
-class _FakeCoderAgent:
-    def __init__(self, **kwargs):
-        self.kwargs = kwargs
-
-    def restore_message_history(self, history):
-        return None
-
-    def dump_compaction_state(self):
-        return {}
-
-    def restore_compaction_state(self, data):
-        pass
-
-    def dump_message_history(self):
-        return []
-
-    async def cleanup(self):
-        return None
-
-
 @pytest.mark.asyncio
 async def test_restore_places_summary_after_retained_tail(tmp_path: Path, monkeypatch) -> None:
     pytest.importorskip("textual")
 
     from kolega_code.cli.app import KolegaCodeApp
 
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", _FakeCoderAgent)
+    install_fake_agents(monkeypatch)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -109,7 +87,7 @@ async def test_restore_old_session_without_history_length_falls_back(tmp_path: P
 
     from kolega_code.cli.app import KolegaCodeApp
 
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", _FakeCoderAgent)
+    install_fake_agents(monkeypatch)
 
     project = tmp_path / "project"
     project.mkdir()

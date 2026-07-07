@@ -217,6 +217,11 @@ def _add_tui_args(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Trust and enable this project's .kolega/mcp_servers.json (persisted for future runs).",
     )
+    parser.add_argument(
+        "--trust-lsp",
+        action="store_true",
+        help="Trust and enable this project's .kolega/lsp.json (persisted for future runs).",
+    )
     _add_session_args(parser, session_help="Legacy alias for --resume THREAD_ID.")
     _add_common_model_args(parser)
 
@@ -275,6 +280,11 @@ def _build_subcommand_parser() -> argparse.ArgumentParser:
         "--trust-mcp",
         action="store_true",
         help="Trust and enable this project's .kolega/mcp_servers.json (persisted for future runs).",
+    )
+    ask.add_argument(
+        "--trust-lsp",
+        action="store_true",
+        help="Trust and enable this project's .kolega/lsp.json (persisted for future runs).",
     )
     ask.add_argument(
         "--image",
@@ -528,6 +538,9 @@ def _run_tui(args: argparse.Namespace) -> int:
     if getattr(args, "trust_mcp", False):
         settings.trust_mcp_project(project_path)
         settings_changed = True
+    if getattr(args, "trust_lsp", False):
+        settings.trust_lsp_project(project_path)
+        settings_changed = True
     if settings_changed:
         settings_store.save(settings)
     summary = {}
@@ -731,6 +744,9 @@ async def _run_ask(args: argparse.Namespace) -> int:
     if getattr(args, "trust_mcp", False):
         settings.trust_mcp_project(project_path)
         settings_changed = True
+    if getattr(args, "trust_lsp", False):
+        settings.trust_lsp_project(project_path)
+        settings_changed = True
     if settings_changed:
         settings_store.save(settings)
     config = build_agent_config(
@@ -805,6 +821,10 @@ async def _run_ask(args: argparse.Namespace) -> int:
         hook_dispatcher=hook_dispatcher,
     )
     agent_ref["agent"] = agent
+    lsp_messages = await agent.tool_collection.initialize()
+    if not args.json:
+        for msg in lsp_messages:
+            print(msg, file=sys.stderr)
     if session.history:
         agent.restore_message_history(session.history)
         agent.restore_compaction_state(session.compaction)

@@ -4,6 +4,7 @@ from typing import Any, Dict, Optional
 from pydantic import BaseModel, Field, PrivateAttr, model_validator
 
 from kolega_code.auth.tokens import OAuthTokens
+from kolega_code.services.lsp.config import LspConfig
 
 
 class ModelProvider(str, Enum):
@@ -192,6 +193,16 @@ class AgentConfig(BaseModel):
     # Host-loaded MCP configuration. Excluded from serialized model config because
     # it can contain local paths, headers/env secrets, and non-Pydantic dataclasses.
     mcp_config: Optional[Any] = Field(default=None, exclude=True, description="Loaded MCP server configuration")
+
+    # LSP (Language Server Protocol) configuration. Excluded from serialization
+    # (parity with mcp_config): LspConfig.custom_servers.env and
+    # workspace_configuration can hold secrets/local paths.
+    lsp: LspConfig = Field(default_factory=LspConfig, exclude=True, description="LSP integration configuration")
+
+    # Whether the project's .kolega/lsp.json is trusted to define custom language
+    # servers. Excluded from serialization (parity with mcp_config) — it is a
+    # runtime-resolved trust flag, not user-editable config.
+    lsp_project_trusted: bool = Field(default=False, exclude=True, description="Project LSP config trust flag")
 
     def model_config_for_agent(self, agent_name: Optional[str]) -> ModelConfig:
         """Return the model configuration an agent should use for its main loop.

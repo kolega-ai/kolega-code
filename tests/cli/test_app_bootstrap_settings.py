@@ -6,8 +6,6 @@ import time
 
 import pytest
 
-from kolega_code.cli.tui import agent_runtime as agent_runtime_module
-
 from kolega_code.config import ModelProvider
 from kolega_code.llm.exceptions import (
     LLMBillingError,
@@ -30,6 +28,7 @@ from kolega_code.cli.session_store import SessionStore
 from kolega_code.cli.settings import CliSettings, SettingsStore
 
 from ._app_test_utils import (
+    FakeCoderAgent,
     _build_mention_test_app,
     _build_sub_agent_test_app,
     _sub_agent_context_event,
@@ -39,9 +38,25 @@ from ._app_test_utils import (
     build_test_config,
     extension_by_name,
     first_text_styles,
+    install_fake_agents,
     question_payload,
     renderable_text,
 )
+
+
+class _GuardCoderAgent(FakeCoderAgent):
+    """Fake whose construction raises; asserts the app must not build an agent."""
+
+    def __init__(self, **kwargs):
+        raise AssertionError("agent should not be built")
+
+
+class _PromptOverrideCoderAgent(FakeCoderAgent):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.prompt_override_errors = [
+            "Could not render prompt override .kolega/prompts/CODER.md: boom. Falling back to the default prompt."
+        ]
 
 
 @pytest.mark.asyncio
@@ -54,27 +69,7 @@ async def test_textual_app_mounts_with_fake_agent(tmp_path: Path, monkeypatch: p
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.widgets import PlanningMarkdown
 
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-            self.history_restored = False
-
-        def restore_message_history(self, history):
-            self.history_restored = bool(history)
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return []
-
-        async def cleanup(self):
-            return None
-
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    install_fake_agents(monkeypatch)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -126,29 +121,7 @@ async def test_textual_app_startup_shows_prompt_overrides_and_errors(
 
     from kolega_code.cli.app import KolegaCodeApp
 
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-            self.prompt_override_errors = [
-                "Could not render prompt override .kolega/prompts/CODER.md: boom. Falling back to the default prompt."
-            ]
-
-        def restore_message_history(self, history):
-            return None
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return []
-
-        async def cleanup(self):
-            return None
-
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    install_fake_agents(monkeypatch, coder_cls=_PromptOverrideCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -178,26 +151,7 @@ async def test_textual_app_status_tab_is_default_dashboard(tmp_path: Path, monke
 
     from kolega_code.cli.app import KolegaCodeApp
 
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-        def restore_message_history(self, history):
-            return None
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return []
-
-        async def cleanup(self):
-            return None
-
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    install_fake_agents(monkeypatch)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -232,26 +186,7 @@ async def test_settings_tab_grouped_into_model_and_appearance_sections(
 
     from kolega_code.cli.app import KolegaCodeApp
 
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            self.history = []
-
-        def restore_message_history(self, history):
-            return None
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return []
-
-        async def cleanup(self):
-            return None
-
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    install_fake_agents(monkeypatch)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -261,7 +196,7 @@ async def test_settings_tab_grouped_into_model_and_appearance_sections(
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
 
     async with app.run_test():
-        # Bordered, titled sections.
+        # Bordered, titled section.
         assert app.query_one("#settings_model").border_title == "Model"
         assert app.query_one("#settings_agent_models").border_title == "Agent Models"
         assert app.query_one("#settings_appearance").border_title == "Appearance"
@@ -293,26 +228,7 @@ async def test_web_search_settings_section_reveal_and_save(tmp_path: Path, monke
 
     from kolega_code.cli.app import KolegaCodeApp
 
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-        def restore_message_history(self, history):
-            return None
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return []
-
-        async def cleanup(self):
-            return None
-
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    install_fake_agents(monkeypatch)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -382,11 +298,7 @@ async def test_textual_app_mounts_settings_without_api_key(
     from kolega_code.cli.tui.widgets import ChatComposer
     from textual.widgets import TabbedContent
 
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            raise AssertionError("agent should not be built without a valid API key")
-
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    install_fake_agents(monkeypatch, coder_cls=_GuardCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -439,12 +351,8 @@ async def test_textual_app_does_not_select_model_from_api_key_env(
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.widgets import ChatComposer
 
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            raise AssertionError("agent should not be built from an API key alone")
-
+    install_fake_agents(monkeypatch, coder_cls=_GuardCoderAgent)
     monkeypatch.setenv("MOONSHOT_API_KEY", "moonshot-key")
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -484,11 +392,7 @@ async def test_textual_app_ignores_project_dotenv_api_key(
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.widgets import ChatComposer
 
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            raise AssertionError("agent should not be built from a project .env API key")
-
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    install_fake_agents(monkeypatch, coder_cls=_GuardCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -525,26 +429,7 @@ async def test_textual_app_mounts_with_stored_kimi_settings(
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.widgets import ChatComposer
 
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-        def restore_message_history(self, history):
-            return None
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return []
-
-        async def cleanup(self):
-            return None
-
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    install_fake_agents(monkeypatch)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -585,29 +470,10 @@ async def test_textual_app_shows_process_env_model_override_warning(
 
     from kolega_code.cli.app import KolegaCodeApp
 
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-        def restore_message_history(self, history):
-            return None
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return []
-
-        async def cleanup(self):
-            return None
-
+    install_fake_agents(monkeypatch)
     monkeypatch.setenv("OPENAI_API_KEY", "process-openai-key")
     monkeypatch.setenv("KOLEGA_CODE_PROVIDER", ModelProvider.OPENAI.value)
     monkeypatch.setenv("KOLEGA_CODE_MODEL", "gpt-5.5")
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -650,26 +516,7 @@ async def test_textual_app_mounts_with_stored_deepseek_settings(
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.widgets import ChatComposer
 
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-        def restore_message_history(self, history):
-            return None
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return []
-
-        async def cleanup(self):
-            return None
-
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    install_fake_agents(monkeypatch)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -708,26 +555,7 @@ async def test_textual_app_saves_settings_and_builds_agent(
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.widgets import ChatComposer
 
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-        def restore_message_history(self, history):
-            return None
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return []
-
-        async def cleanup(self):
-            return None
-
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    install_fake_agents(monkeypatch)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -773,26 +601,7 @@ async def test_textual_app_saves_deepseek_settings_and_builds_agent(
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.widgets import ChatComposer
 
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-        def restore_message_history(self, history):
-            return None
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return []
-
-        async def cleanup(self):
-            return None
-
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    install_fake_agents(monkeypatch)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -918,26 +727,7 @@ async def test_agent_models_section_saves_override_and_builds_agent(
 
     from kolega_code.cli.app import KolegaCodeApp
 
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-        def restore_message_history(self, history):
-            return None
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return []
-
-        async def cleanup(self):
-            return None
-
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    install_fake_agents(monkeypatch)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -985,26 +775,7 @@ async def test_agent_models_section_populates_and_clears_to_inherit(
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.provider_registry import INHERIT_SENTINEL
 
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-        def restore_message_history(self, history):
-            return None
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return []
-
-        async def cleanup(self):
-            return None
-
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    install_fake_agents(monkeypatch)
 
     project = tmp_path / "project"
     project.mkdir()

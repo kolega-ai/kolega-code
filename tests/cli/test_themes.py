@@ -11,7 +11,7 @@ from kolega_code.cli.config import config_summary
 from kolega_code.cli.session_store import SessionStore
 from kolega_code.cli.settings import CliSettings, SettingsStore
 
-from ._app_test_utils import build_test_config
+from ._app_test_utils import FakeCoderAgent, build_test_config
 
 
 @pytest.fixture(autouse=True)
@@ -19,21 +19,6 @@ def _reset_theme():
     """Theme state is process-global; restore the default after each test."""
     yield
     theme.apply_theme(theme.DEFAULT_THEME_NAME)
-
-
-class FakeCoderAgent:
-    def __init__(self, **kwargs):
-        self.kwargs = kwargs
-        self.history = []
-
-    def restore_message_history(self, history):
-        return None
-
-    def dump_message_history(self):
-        return []
-
-    async def cleanup(self):
-        return None
 
 
 # --- theme module ----------------------------------------------------------

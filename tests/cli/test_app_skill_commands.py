@@ -6,8 +6,6 @@ import time
 
 import pytest
 
-from kolega_code.cli.tui import agent_runtime as agent_runtime_module
-
 from kolega_code.config import ModelProvider
 from kolega_code.llm.exceptions import (
     LLMBillingError,
@@ -16,7 +14,7 @@ from kolega_code.llm.exceptions import (
     LLMError,
     LLMInternalServerError,
 )
-from kolega_code.llm.models import Message, TextBlock, ToolCall, ToolResult
+from kolega_code.llm.models import TextBlock, ToolCall, ToolResult
 from kolega_code.events import AgentEvent
 from kolega_code.agent.prompt_provider import AgentMode
 from kolega_code.cli.config import build_agent_config, config_summary
@@ -30,6 +28,7 @@ from kolega_code.cli.session_store import SessionStore
 from kolega_code.cli.settings import CliSettings, SettingsStore
 
 from ._app_test_utils import (
+    FakeCoderAgent,
     _build_mention_test_app,
     _build_sub_agent_test_app,
     _sub_agent_context_event,
@@ -39,6 +38,7 @@ from ._app_test_utils import (
     build_test_config,
     extension_by_name,
     first_text_styles,
+    install_fake_agents,
     question_payload,
     renderable_text,
 )
@@ -53,30 +53,7 @@ async def test_textual_app_skill_slash_commands_list_and_activate(
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.widgets import ChatComposer
 
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-            self.history = []
-
-        def append_user_message(self, content):
-            self.history.append(Message(role="user", content=content))
-
-        def restore_message_history(self, history):
-            self.history = [Message.from_dict(item) for item in history]
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return [message.to_dict() for message in self.history]
-
-        async def cleanup(self):
-            return None
-
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    install_fake_agents(monkeypatch)
 
     project = tmp_path / "project"
     skill_dir = project / ".agents" / "skills" / "demo-skill"
@@ -116,35 +93,7 @@ async def test_textual_app_skill_slash_command_with_prompt_starts_turn(
     from kolega_code.cli.app import KolegaCodeApp
     from kolega_code.cli.tui.widgets import ChatComposer
 
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-            self.history = []
-            self.messages = []
-
-        def append_user_message(self, content):
-            self.history.append(Message(role="user", content=content))
-
-        def restore_message_history(self, history):
-            self.history = [Message.from_dict(item) for item in history]
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return [message.to_dict() for message in self.history]
-
-        async def cleanup(self):
-            return None
-
-        async def process_message_stream(self, message):
-            self.messages.append(message)
-            yield {"type": "response", "content": "done", "complete": True, "uuid": "response-1"}
-
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    install_fake_agents(monkeypatch)
 
     project = tmp_path / "project"
     skill_dir = project / ".agents" / "skills" / "demo-skill"

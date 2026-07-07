@@ -29,6 +29,132 @@ from .tool_backend.workflow_tool import RUN_WORKFLOW_INPUT_SCHEMA, WorkflowTool
 
 # Import additional tools for consolidated functionality
 from .tool_backend.build_tool import BuildTool
+from .tool_backend.lsp_tool import LspEditTool, LspTool
+from kolega_code.services.lsp import LspManager
+
+# Explicit input schema for the generic ``lsp`` tool.  The ``operation`` parameter
+# is an enum that signature introspection cannot express.
+_LSP_INPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "operation": {
+            "type": "string",
+            "enum": [
+                "diagnostics",
+                "definition",
+                "type_definition",
+                "implementation",
+                "references",
+                "hover",
+                "call_hierarchy",
+                "code_actions",
+                "document_symbols",
+                "workspace_symbols",
+                "status",
+                "capabilities",
+                "reload",
+            ],
+            "description": (
+                "The LSP operation to perform. Position operations (definition, "
+                "type_definition, implementation, references, hover, call_hierarchy, "
+                "code_actions) require path, "
+                "line, and symbol. diagnostics and document_symbols require path. "
+                "workspace_symbols requires query. status, capabilities, and reload "
+                "need no additional args."
+            ),
+        },
+        "path": {
+            "type": "string",
+            "description": "File path (relative to project root preferred). Required for most operations.",
+        },
+        "line": {
+            "type": "integer",
+            "description": "1-based line number for position operations.",
+        },
+        "symbol": {
+            "type": "string",
+            "description": "Symbol name to resolve on the line. Supports 'name#N' for the Nth occurrence.",
+        },
+        "query": {
+            "type": "string",
+            "description": "Search query for workspace_symbols.",
+        },
+        "end_line": {
+            "type": "integer",
+            "description": "Optional 1-based end line for code_actions.",
+        },
+        "kind": {
+            "type": "string",
+            "description": "Optional code action kind filter, such as quickfix or refactor.",
+        },
+        "timeout": {
+            "type": "number",
+            "description": "Per-call timeout in seconds (default: 30).",
+        },
+    },
+    "required": ["operation"],
+}
+
+_LSP_EDIT_INPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "operation": {
+            "type": "string",
+            "enum": ["rename", "rename_file", "format_document", "format_range", "apply_code_action"],
+            "description": (
+                "Mutating LSP operation. rename requires path, line, symbol, and new_name. "
+                "rename_file requires path and new_path. format_document requires path. "
+                "format_range requires path and line, with optional end_line. "
+                "apply_code_action requires path, line, symbol, and action_id or query."
+            ),
+        },
+        "path": {
+            "type": "string",
+            "description": "File path (relative to project root preferred).",
+        },
+        "line": {
+            "type": "integer",
+            "description": "1-based line number for position/range operations.",
+        },
+        "symbol": {
+            "type": "string",
+            "description": "Symbol name to resolve on the line. Supports 'name#N' for the Nth occurrence.",
+        },
+        "new_name": {
+            "type": "string",
+            "description": "New symbol name for rename.",
+        },
+        "new_path": {
+            "type": "string",
+            "description": "Destination path for rename_file.",
+        },
+        "query": {
+            "type": "string",
+            "description": "Title substring or numeric index for apply_code_action when action_id is not provided.",
+        },
+        "action_id": {
+            "type": "string",
+            "description": "Stable action_id listed by lsp code_actions.",
+        },
+        "end_line": {
+            "type": "integer",
+            "description": "Optional 1-based end line for format_range and apply_code_action.",
+        },
+        "kind": {
+            "type": "string",
+            "description": "Optional code action kind filter, such as quickfix or refactor.",
+        },
+        "apply": {
+            "type": "boolean",
+            "description": "Apply the edit when true; preview only when false. Defaults to true.",
+        },
+        "timeout": {
+            "type": "number",
+            "description": "Per-call timeout in seconds (default: 30).",
+        },
+    },
+    "required": ["operation"],
+}
 
 
 @dataclass(frozen=True)
@@ -107,6 +233,7 @@ class ToolCollection(LogMixin):
         "web_search",
         "sleep",
         "read_image",
+        "lsp",
     ]
 
     browser_tools = [
@@ -284,6 +411,20 @@ class ToolCollection(LogMixin):
     def _initialize_tools(self):
         """Initialize all tool backends based on configuration."""
         # Core tool backends (always available)
+
+        # LSP manager (shared across EditTool and LspTool)
+        lsp_config = getattr(self.config, "lsp", None)
+        from kolega_code.services.lsp import LspConfig as _LspConfig
+
+        if isinstance(lsp_config, _LspConfig) and lsp_config.enabled:
+            self.lsp_manager = LspManager(
+                self.project_path,
+                config=lsp_config,
+                trusted=getattr(self.config, "lsp_project_trusted", False),
+            )
+        else:
+            self.lsp_manager = None
+
         self.think_hard_tool = ThinkHardTool(
             self.project_path,
             self.workspace_id,
@@ -301,6 +442,7 @@ class ToolCollection(LogMixin):
             self.config,
             self.caller,
             self.filesystem,
+            lsp_manager=self.lsp_manager,
         )
         self.list_directory_tool = ListDirectoryTool(
             self.project_path,
@@ -411,6 +553,10 @@ class ToolCollection(LogMixin):
         # run_workflow's `args` is free-form JSON, which the signature introspector
         # cannot express, so register its explicit input schema.
         self.extension_schemas["run_workflow"] = RUN_WORKFLOW_INPUT_SCHEMA
+        # The `lsp` tool's `operation` is an enum that signature introspection
+        # can't express, so register an explicit input schema.
+        self.extension_schemas["lsp"] = _LSP_INPUT_SCHEMA
+        self.extension_schemas["lsp_edit"] = _LSP_EDIT_INPUT_SCHEMA
         self.browser_tool = BrowserTool(
             self.project_path,
             self.workspace_id,
@@ -432,6 +578,28 @@ class ToolCollection(LogMixin):
             self.caller,
             self.filesystem,
             terminal_manager=self.terminal_manager,
+        )
+
+        # LSP tool
+        self.lsp_tool = LspTool(
+            self.project_path,
+            self.workspace_id,
+            self.thread_id,
+            self.connection_manager,
+            self.config,
+            self.caller,
+            self.filesystem,
+            lsp_manager=self.lsp_manager,
+        )
+        self.lsp_edit_tool = LspEditTool(
+            self.project_path,
+            self.workspace_id,
+            self.thread_id,
+            self.connection_manager,
+            self.config,
+            self.caller,
+            self.filesystem,
+            lsp_manager=self.lsp_manager,
         )
 
     async def launch_browser(self, url: str) -> str:
@@ -1377,6 +1545,91 @@ class ToolCollection(LogMixin):
             pattern, include_directories=include_directories, show_details=show_details
         )
 
+    async def lsp(
+        self,
+        operation: str,
+        path: Optional[str] = None,
+        line: Optional[int] = None,
+        symbol: Optional[str] = None,
+        query: Optional[str] = None,
+        end_line: Optional[int] = None,
+        kind: Optional[str] = None,
+        timeout: Optional[float] = None,
+    ) -> str:
+        """Query language server intelligence: diagnostics, definition, references, hover, symbols, status.
+
+        This versatile read-only tool interacts with the project's language servers.
+        Different operations require different arguments — see the operation list below.
+
+        Operations and required arguments:
+        - ``diagnostics`` — errors/warnings/hints for a file (``path``)
+        - ``definition`` — go-to-definition (``path``, ``line``, ``symbol``)
+        - ``type_definition`` — go-to-type-definition (``path``, ``line``, ``symbol``)
+        - ``implementation`` — find implementations (``path``, ``line``, ``symbol``)
+        - ``references`` — find all references (``path``, ``line``, ``symbol``)
+        - ``hover`` — hover/type info (``path``, ``line``, ``symbol``)
+        - ``call_hierarchy`` — incoming/outgoing calls (``path``, ``line``, ``symbol``)
+        - ``code_actions`` — list fixes/refactors without applying them (``path``, ``line``, ``symbol``)
+        - ``document_symbols`` — symbols in a file (``path``)
+        - ``workspace_symbols`` — project-wide symbol search (``query``)
+        - ``status`` — LSP server status (no args)
+        - ``capabilities`` — server capabilities (optional ``path``)
+        - ``reload`` — restart servers and re-detect (no args)
+
+        For position operations, ``line`` is 1-based and ``symbol`` is the name to
+        find on that line. Use ``name#N`` for the Nth occurrence.
+
+        Args:
+            operation: One of the operations listed above.
+            path: File path (relative to project root preferred).
+            line: 1-based line number for position operations.
+            symbol: Symbol name to resolve on the line (supports ``name#N``).
+            query: Search query for ``workspace_symbols``.
+            end_line: Optional 1-based end line for ``code_actions``.
+            kind: Optional code action kind filter, e.g. ``quickfix``.
+            timeout: Per-call timeout in seconds (default: 30).
+
+        Returns:
+            Markdown-formatted results for the requested operation.
+        """
+        return await self.lsp_tool.lsp(operation, path, line, symbol, query, end_line, kind, timeout)
+
+    async def lsp_edit(
+        self,
+        operation: str,
+        path: Optional[str] = None,
+        line: Optional[int] = None,
+        symbol: Optional[str] = None,
+        new_name: Optional[str] = None,
+        new_path: Optional[str] = None,
+        query: Optional[str] = None,
+        action_id: Optional[str] = None,
+        end_line: Optional[int] = None,
+        kind: Optional[str] = None,
+        apply: bool = True,
+        timeout: Optional[float] = None,
+    ) -> str:
+        """Apply trusted LSP edits such as rename, file rename, formatting, and code actions.
+
+        This is the mutating companion to the read-only ``lsp`` tool. Use
+        ``apply=False`` to preview the server-provided WorkspaceEdit without
+        writing files.
+        """
+        return await self.lsp_edit_tool.lsp_edit(
+            operation,
+            path,
+            line,
+            symbol,
+            new_name,
+            new_path,
+            query,
+            action_id,
+            end_line,
+            kind,
+            apply,
+            timeout,
+        )
+
     async def get_host(self, port: int) -> str:
         """
         Get the hostname for accessing a service on the specified port.
@@ -1570,18 +1823,34 @@ class ToolCollection(LogMixin):
         # Include all other core tools by default
         return True
 
+    async def initialize(self) -> list[str]:
+        """Perform async one-time initialization (LSP auto-detection, etc.).
+
+        Safe to call multiple times — ``LspManager.initialize()`` is idempotent.
+        Returns status messages that the caller may display (e.g., detected
+        languages, install prompts for missing servers).
+        """
+        if self.lsp_manager is not None:
+            return await self.lsp_manager.initialize()
+        return []
+
     async def cleanup(self):
         """Clean up all tool resources"""
         try:
+            # Clean up LSP resources
+            if hasattr(self, "lsp_manager") and self.lsp_manager is not None:
+                await self.lsp_manager.shutdown()
+                await self.log_info("Cleaned up LSP resources", sender="ToolCollection")
+
             # Clean up terminal resources
             if hasattr(self, "terminal_tool") and hasattr(self.terminal_tool, "terminal_manager"):
                 await self.terminal_tool.terminal_manager.cleanup_all()
-                print("Cleaned up terminal resources")
+                await self.log_info("Cleaned up terminal resources", sender="ToolCollection")
 
             # Clean up any browser resources
             if hasattr(self, "browser_tool") and hasattr(self.browser_tool, "cleanup"):
                 await self.browser_tool.cleanup()
-                print("Cleaned up browser resources")
+                await self.log_info("Cleaned up browser resources", sender="ToolCollection")
 
             # Clean up any sub-agents
             if hasattr(self, "agent_tool") and hasattr(self.agent_tool, "agents"):
@@ -1589,9 +1858,11 @@ class ToolCollection(LogMixin):
                     if hasattr(agent, "cleanup"):
                         try:
                             await agent.cleanup()
-                            print(f"Cleaned up sub-agent: {agent_id}")
+                            await self.log_info(f"Cleaned up sub-agent: {agent_id}", sender="ToolCollection")
                         except Exception as e:
-                            print(f"Error cleaning up sub-agent {agent_id}: {e}")
+                            await self.log_warning(
+                                f"Error cleaning up sub-agent {agent_id}: {e}", sender="ToolCollection"
+                            )
 
             # Clean up host-provided tool extensions (MCP transports, etc.).
             for extension in self.tool_extensions:
@@ -1603,7 +1874,9 @@ class ToolCollection(LogMixin):
                     if inspect.isawaitable(result):
                         await result
                 except Exception as e:
-                    print(f"Error cleaning up tool extension {extension.name}: {e}")
+                    await self.log_warning(
+                        f"Error cleaning up tool extension {extension.name}: {e}", sender="ToolCollection"
+                    )
 
         except Exception as e:
             await self.log_error(f"Error during tool cleanup: {str(e)}", sender="ToolCollection")

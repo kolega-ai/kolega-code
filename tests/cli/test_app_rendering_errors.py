@@ -6,8 +6,6 @@ import time
 
 import pytest
 
-from kolega_code.cli.tui import agent_runtime as agent_runtime_module
-
 from kolega_code.config import ModelProvider
 from kolega_code.llm.exceptions import (
     LLMBillingError,
@@ -30,6 +28,7 @@ from kolega_code.cli.session_store import SessionStore
 from kolega_code.cli.settings import CliSettings, SettingsStore
 
 from ._app_test_utils import (
+    FakeCoderAgent,
     _build_mention_test_app,
     _build_sub_agent_test_app,
     _sub_agent_context_event,
@@ -39,6 +38,7 @@ from ._app_test_utils import (
     build_test_config,
     extension_by_name,
     first_text_styles,
+    install_fake_agents,
     question_payload,
     renderable_text,
 )
@@ -56,32 +56,14 @@ async def test_textual_app_cancellation_is_visible_in_chat(tmp_path: Path, monke
 
     started = asyncio.Event()
 
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-        def restore_message_history(self, history):
-            return None
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return []
-
-        async def cleanup(self):
-            return None
-
+    class _HangingCoderAgent(FakeCoderAgent):
         async def process_message_stream(self, message):
             started.set()
             while True:
                 await asyncio.sleep(1)
                 yield {"type": "thinking", "content": "still working", "complete": False, "uuid": "thinking-1"}
 
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    install_fake_agents(monkeypatch, coder_cls=_HangingCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -193,30 +175,12 @@ async def test_textual_app_handles_llm_error_without_worker_traceback(
     from kolega_code.cli.tui.widgets import ChatComposer
     from kolega_code.cli.messages import COMPOSER_PLACEHOLDER
 
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-        def restore_message_history(self, history):
-            return None
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return []
-
-        async def cleanup(self):
-            return None
-
+    class _LLMErrorCoderAgent(FakeCoderAgent):
         async def process_message_stream(self, message):
             raise error
             yield {"type": "response", "content": "unreachable"}
 
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    install_fake_agents(monkeypatch, coder_cls=_LLMErrorCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -253,30 +217,12 @@ async def test_textual_app_reraises_non_llm_error(tmp_path: Path, monkeypatch: p
     from kolega_code.cli.tui.state import TurnState
     from kolega_code.cli.tui.widgets import ChatComposer
 
-    class FakeCoderAgent:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-        def restore_message_history(self, history):
-            return None
-
-        def dump_compaction_state(self):
-            return {}
-
-        def restore_compaction_state(self, data):
-            pass
-
-        def dump_message_history(self):
-            return []
-
-        async def cleanup(self):
-            return None
-
+    class _RuntimeErrorCoderAgent(FakeCoderAgent):
         async def process_message_stream(self, message):
             raise RuntimeError("tool host exploded")
             yield {"type": "response", "content": "unreachable"}
 
-    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+    install_fake_agents(monkeypatch, coder_cls=_RuntimeErrorCoderAgent)
 
     project = tmp_path / "project"
     project.mkdir()
