@@ -307,6 +307,105 @@ async def test_textual_app_composer_preserves_multiline_paste(tmp_path: Path, mo
 
 
 @pytest.mark.asyncio
+async def test_textual_app_composer_long_cr_separated_paste_does_not_crash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from textual import events
+
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.widgets import ChatComposer
+
+    install_fake_agents(monkeypatch)
+
+    # macOS Terminal delivers pasted line breaks as carriage returns, not LF.
+    # A few thousand chars reproduces the OSError [Errno 63] from GitHub #218.
+    pasted = "\r".join("line of text " * 50 for _ in range(30))
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test():
+        composer = app.query_one("#composer", ChatComposer)
+        composer.focus()
+
+        # The custom handler must not raise and must not queue an image attachment.
+        await composer.on_paste(events.Paste(pasted))
+        assert app._pending_image_attachments == []
+
+        # Text is inserted by the default TextArea handler. TextArea normalizes
+        # CR line breaks to LF on insertion, so compare against the normalized form.
+        await composer._on_paste(events.Paste(pasted))
+        assert composer.text == pasted.replace("\r", "\n")
+
+
+@pytest.mark.asyncio
+async def test_textual_app_composer_long_single_line_paste_does_not_crash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from textual import events
+
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.widgets import ChatComposer
+
+    install_fake_agents(monkeypatch)
+
+    # A single very long line with no line breaks and no image extension.
+    pasted = "x" * 5000
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test():
+        composer = app.query_one("#composer", ChatComposer)
+        composer.focus()
+
+        await composer.on_paste(events.Paste(pasted))
+        assert app._pending_image_attachments == []
+
+
+@pytest.mark.asyncio
+async def test_textual_app_composer_paste_image_file_path_still_attaches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from textual import events
+
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.widgets import ChatComposer
+
+    install_fake_agents(monkeypatch)
+
+    png = tmp_path / "shot.png"
+    png.write_bytes(b"\x89PNG\r\n\x1a\nfake-image-bytes")
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test():
+        composer = app.query_one("#composer", ChatComposer)
+        composer.focus()
+
+        await composer.on_paste(events.Paste(str(png)))
+        assert len(app._pending_image_attachments) == 1
+        assert app._pending_image_attachments[0]["path"] == str(png)
+
+
+@pytest.mark.asyncio
 async def test_textual_app_composer_auto_grows_caps_and_shrinks(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

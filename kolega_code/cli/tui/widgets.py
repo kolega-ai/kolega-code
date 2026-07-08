@@ -757,14 +757,25 @@ class ChatComposer(TextArea):
             event.prevent_default()
             event.stop()
             return
-        if stripped and "\n" not in stripped and _Path(stripped).exists() and image_media_type(stripped) is not None:
-            att = encode_image_file(_Path(stripped))
-            if att is not None:
-                att["path"] = stripped
-                self.app.add_pending_image_attachment(att)
-                event.prevent_default()
-                event.stop()
-                return
+        # Treat pasted text as an image file path only when it is a single line
+        # (CR or LF) and has a supported image extension. The cheap extension
+        # check runs before the filesystem probe so ordinary pasted text never
+        # reaches os.stat(), which raises OSError [Errno 63] (ENAMETOOLONG) on
+        # long inputs. See GitHub #218.
+        if stripped and "\n" not in stripped and "\r" not in stripped and image_media_type(stripped) is not None:
+            try:
+                path_exists = _Path(stripped).exists()
+            except OSError:
+                # e.g. path too long or otherwise inaccessible — not a usable image path.
+                path_exists = False
+            if path_exists:
+                att = encode_image_file(_Path(stripped))
+                if att is not None:
+                    att["path"] = stripped
+                    self.app.add_pending_image_attachment(att)
+                    event.prevent_default()
+                    event.stop()
+                    return
         # No image detected — let TextArea's default _on_paste insert the text.
         return
 
