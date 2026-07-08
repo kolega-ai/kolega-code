@@ -9,6 +9,7 @@ from .edit_preview import build_diff_preview, build_head_preview
 
 if TYPE_CHECKING:
     from kolega_code.services.lsp import LspManager
+    from kolega_code.services.snapshots import SnapshotService
 
 
 _BLOCK_PATTERN = re.compile(r"<<<<<<< SEARCH\r?\n(.*?)\r?\n=======\r?\n(.*?)\r?\n>>>>>>> REPLACE", re.DOTALL)
@@ -43,9 +44,16 @@ class ResolvedReplacement:
 
 
 class EditTool(BaseTool):
-    def __init__(self, *args, lsp_manager: Optional["LspManager"] = None, **kwargs) -> None:
+    def __init__(
+        self,
+        *args,
+        lsp_manager: Optional["LspManager"] = None,
+        snapshot_service: Optional["SnapshotService"] = None,
+        **kwargs,
+    ) -> None:
         super().__init__(*args, **kwargs)
         self._lsp_manager = lsp_manager
+        self._snapshot_service = snapshot_service
 
     async def edit(self, path: str, block: str) -> str:
         """
@@ -115,8 +123,6 @@ class EditTool(BaseTool):
                     old_content = None
 
             parent_dir = self.filesystem.get_parent(path)
-            if parent_dir and parent_dir != "." and not self.filesystem.exists(parent_dir):
-                self.filesystem.create_directory(parent_dir)
 
             # Preserve the file's dominant line ending on overwrite; new files
             # keep the line endings the caller provided (typically LF).
@@ -124,7 +130,17 @@ class EditTool(BaseTool):
                 line_ending = self._detect_dominant_line_ending(path, old_content)
                 content = self._normalize_line_endings(content, line_ending)
 
-            self.filesystem.write_text(path, content)
+            def _write() -> None:
+                if parent_dir and parent_dir != "." and not self.filesystem.exists(parent_dir):
+                    self.filesystem.create_directory(parent_dir)
+                self.filesystem.write_text(path, content)
+
+            self._record_snapshot_mutation(
+                tool_name="write",
+                reason=f"write {path}",
+                paths=self._snapshot_paths_for_write(path),
+                mutate=_write,
+            )
 
             preview = (
                 build_diff_preview(old_content, content, path)
@@ -180,7 +196,12 @@ class EditTool(BaseTool):
             blocked_msg = self._enforce_vibe_edit_policy(path)
             if blocked_msg:
                 return blocked_msg
-            self.filesystem.write_text(path, normalized_updated)
+            self._record_snapshot_mutation(
+                tool_name=tool_name,
+                reason=f"{tool_name} {path}",
+                paths=[path],
+                mutate=lambda: self.filesystem.write_text(path, normalized_updated),
+            )
 
             await self.send_edit_preview(
                 build_diff_preview(original_content, normalized_updated, path),
@@ -222,6 +243,33 @@ class EditTool(BaseTool):
                 )
             )
         return parsed_blocks
+
+    def _record_snapshot_mutation(
+        self,
+        *,
+        tool_name: str,
+        reason: str,
+        paths: list[str],
+        mutate: Callable[[], None],
+    ) -> None:
+        if self._snapshot_service is None or not self._snapshot_service.can_snapshot_paths(paths):
+            mutate()
+            return
+        self._snapshot_service.record_mutation(
+            tool_name=tool_name,
+            tool_call_id=getattr(self.caller, "current_tool_execution_id", None),
+            reason=reason,
+            paths=paths,
+            mutate=mutate,
+        )
+
+    def _snapshot_paths_for_write(self, path: str) -> list[str]:
+        paths = [path]
+        parent = self.filesystem.get_parent(path)
+        while parent and parent != "." and not self.filesystem.exists(parent):
+            paths.append(parent)
+            parent = self.filesystem.get_parent(parent)
+        return paths
 
     def _resolve_replacement(self, content: str, block: SearchReplaceBlock) -> ResolvedReplacement:
         passes: list[tuple[str, Callable[[str, str], list[tuple[int, int]]]]] = [

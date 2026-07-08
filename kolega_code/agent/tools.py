@@ -21,6 +21,7 @@ from .tool_backend.memory_tool import MemoryTool
 from .tool_backend.read_file_tool import ReadFileTool
 from .tool_backend.read_image_tool import ReadImageTool
 from .tool_backend.search_codebase_tool import SearchCodebaseTool
+from .tool_backend.snapshot_tool import SnapshotTool
 from .tool_backend.web_fetch_tool import WebFetchTool
 from .tool_backend.web_search_tool import WebSearchTool
 from .tool_backend.terminal_tool import TerminalTool
@@ -31,6 +32,7 @@ from .tool_backend.workflow_tool import RUN_WORKFLOW_INPUT_SCHEMA, WorkflowTool
 from .tool_backend.build_tool import BuildTool
 from .tool_backend.lsp_tool import LspEditTool, LspTool
 from kolega_code.services.lsp import LspManager
+from kolega_code.services.snapshots import SnapshotService
 
 # Explicit input schema for the generic ``lsp`` tool.  The ``operation`` parameter
 # is an enum that signature introspection cannot express.
@@ -154,6 +156,54 @@ _LSP_EDIT_INPUT_SCHEMA: dict[str, Any] = {
         },
     },
     "required": ["operation"],
+}
+
+_SNAPSHOT_INPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "action": {
+            "type": "string",
+            "enum": ["list", "show", "create", "restore"],
+            "description": "Snapshot operation. Use restore with snapshot_id='latest' to undo the latest snapshot.",
+        },
+        "snapshot_id": {
+            "type": "string",
+            "description": "Snapshot id for show/restore. Use 'latest' to restore the newest snapshot.",
+        },
+        "paths": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Project-relative paths for action=create.",
+        },
+        "force": {
+            "type": "boolean",
+            "description": "Restore even when tracked files changed after the snapshot.",
+        },
+        "limit": {
+            "type": "integer",
+            "description": "Maximum number of snapshots to list.",
+        },
+    },
+}
+
+_RESOLVE_INPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "action_id": {
+            "type": "string",
+            "description": "Pending action id returned by a preview-only tool.",
+        },
+        "decision": {
+            "type": "string",
+            "enum": ["apply", "discard"],
+            "description": "Apply or discard the pending preview action.",
+        },
+        "force": {
+            "type": "boolean",
+            "description": "Apply even if source hashes no longer match.",
+        },
+    },
+    "required": ["action_id", "decision"],
 }
 
 
@@ -425,6 +475,15 @@ class ToolCollection(LogMixin):
         else:
             self.lsp_manager = None
 
+        snapshot_session_id = str(getattr(self.caller, "session_id", None) or self.thread_id)
+        self.snapshot_service = SnapshotService(
+            self.project_path,
+            self.workspace_id,
+            self.thread_id,
+            snapshot_session_id,
+            self.filesystem,
+        )
+
         self.think_hard_tool = ThinkHardTool(
             self.project_path,
             self.workspace_id,
@@ -443,6 +502,17 @@ class ToolCollection(LogMixin):
             self.caller,
             self.filesystem,
             lsp_manager=self.lsp_manager,
+            snapshot_service=self.snapshot_service,
+        )
+        self.snapshot_tool = SnapshotTool(
+            self.project_path,
+            self.workspace_id,
+            self.thread_id,
+            self.connection_manager,
+            self.config,
+            self.caller,
+            self.filesystem,
+            snapshot_service=self.snapshot_service,
         )
         self.list_directory_tool = ListDirectoryTool(
             self.project_path,
@@ -557,6 +627,8 @@ class ToolCollection(LogMixin):
         # can't express, so register an explicit input schema.
         self.extension_schemas["lsp"] = _LSP_INPUT_SCHEMA
         self.extension_schemas["lsp_edit"] = _LSP_EDIT_INPUT_SCHEMA
+        self.extension_schemas["snapshot"] = _SNAPSHOT_INPUT_SCHEMA
+        self.extension_schemas["resolve"] = _RESOLVE_INPUT_SCHEMA
         self.browser_tool = BrowserTool(
             self.project_path,
             self.workspace_id,
@@ -600,6 +672,7 @@ class ToolCollection(LogMixin):
             self.caller,
             self.filesystem,
             lsp_manager=self.lsp_manager,
+            snapshot_service=self.snapshot_service,
         )
 
     async def launch_browser(self, url: str) -> str:
@@ -1427,6 +1500,56 @@ class ToolCollection(LogMixin):
             PermissionError: If the file cannot be written to
         """
         return await self.edit_tool.write(path, content)
+
+    async def snapshot(
+        self,
+        action: str = "list",
+        snapshot_id: str = "",
+        paths: Optional[list[str]] = None,
+        force: bool = False,
+        limit: int = 20,
+    ) -> str:
+        """Manage file snapshots for undo, inspection, and manual checkpoints.
+
+        Use action="list" to see recent snapshots, action="show" with a snapshot_id
+        to inspect one, action="create" with paths to make a manual checkpoint, and
+        action="restore" to restore a snapshot's before-state. Use snapshot_id="latest"
+        with restore as an undo for the newest snapshot.
+
+        Args:
+            action: One of list, show, create, or restore.
+            snapshot_id: Snapshot id for show/restore; use latest for newest.
+            paths: Project-relative paths for create.
+            force: Restore even when tracked files changed after the snapshot.
+            limit: Maximum number of snapshots to list.
+
+        Returns:
+            Markdown summary of the snapshot operation.
+        """
+        return await self.snapshot_tool.snapshot(
+            action=action,
+            snapshot_id=snapshot_id,
+            paths=paths,
+            force=force,
+            limit=limit,
+        )
+
+    async def resolve(self, action_id: str, decision: str, force: bool = False) -> str:
+        """Apply or discard a pending preview action.
+
+        Pending actions are created by preview-only tools such as lsp_edit(apply=false).
+        Applying a pending action checks that the source files still match the preview
+        inputs before writing, unless force=true is explicitly provided.
+
+        Args:
+            action_id: Pending action id returned by a preview-only tool.
+            decision: apply or discard.
+            force: Apply even if source hashes no longer match.
+
+        Returns:
+            Markdown summary of the resolve operation.
+        """
+        return await self.snapshot_tool.resolve(action_id=action_id, decision=decision, force=force)
 
     async def read_memory(self) -> str:
         """
