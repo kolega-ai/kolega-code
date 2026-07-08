@@ -5,13 +5,16 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
-from typing import Any, Optional, cast
+from typing import TYPE_CHECKING, Any, Optional, cast
 from urllib.parse import unquote, urlparse
 
 from .base_tool import BaseTool
 from .edit_preview import build_diff_preview
 from kolega_code.services.lsp import LspManager, format_diagnostics, format_no_diagnostics
 from kolega_code.services.lsp.edits import WorkspaceEditApplier, WorkspaceEditError, WorkspaceEditResult
+
+if TYPE_CHECKING:
+    from kolega_code.services.snapshots import SnapshotService
 
 
 class LspTool(BaseTool):
@@ -563,9 +566,16 @@ class LspEditTool(BaseTool):
 
     _ALL_OPS = {"rename", "rename_file", "format_document", "format_range", "apply_code_action"}
 
-    def __init__(self, *args, lsp_manager: Optional[LspManager] = None, **kwargs) -> None:
+    def __init__(
+        self,
+        *args,
+        lsp_manager: Optional[LspManager] = None,
+        snapshot_service: Optional["SnapshotService"] = None,
+        **kwargs,
+    ) -> None:
         super().__init__(*args, **kwargs)
         self._lsp_manager = lsp_manager
+        self._snapshot_service = snapshot_service
 
     async def lsp_edit(
         self,
@@ -842,7 +852,17 @@ class LspEditTool(BaseTool):
                         blocked = self._first_blocked_path(preview.touched_paths)
                         if blocked:
                             return {"applied": False, "failureReason": blocked}
-                        applied = applier.apply(workspace_edit)
+                        if self._snapshot_service is not None:
+                            mutation = self._snapshot_service.record_mutation(
+                                tool_name="lsp_edit",
+                                tool_call_id=getattr(self.caller, "current_tool_execution_id", None),
+                                reason="lsp apply_code_action workspace/applyEdit",
+                                paths=preview.touched_paths,
+                                mutate=lambda: applier.apply(workspace_edit),
+                            )
+                            applied = mutation.result
+                        else:
+                            applied = applier.apply(workspace_edit)
                         server_results.append(applied)
                         return {"applied": True}
                     except WorkspaceEditError as exc:
@@ -896,9 +916,33 @@ class LspEditTool(BaseTool):
         if should_apply and blocked:
             return blocked
 
-        result = applier.apply(edit) if should_apply else preview
+        if should_apply:
+            if self._snapshot_service is not None:
+                mutation = self._snapshot_service.record_mutation(
+                    tool_name="lsp_edit",
+                    tool_call_id=getattr(self.caller, "current_tool_execution_id", None),
+                    reason=f"lsp_edit {operation}",
+                    paths=preview.touched_paths,
+                    mutate=lambda: applier.apply(edit),
+                )
+                result = mutation.result
+            else:
+                result = applier.apply(edit)
+        else:
+            result = preview
         await self._send_previews(result, operation)
         lines = [self._format_workspace_edit_result(operation, result)]
+        if not should_apply and self._snapshot_service is not None:
+            pending = self._snapshot_service.create_pending_workspace_edit(
+                tool_name="lsp_edit",
+                tool_call_id=getattr(self.caller, "current_tool_execution_id", None),
+                operation=operation,
+                workspace_edit=edit,
+                touched_paths=preview.touched_paths,
+                summaries=preview.summaries,
+                previews=self._preview_payloads(preview),
+            )
+            lines.append(f'Pending action: `{pending.action_id}`. Use resolve(decision="apply") to apply it.')
         if should_apply and include_diagnostics:
             diagnostics = await self._diagnostics_for_paths(result.touched_paths)
             if diagnostics:
@@ -909,14 +953,22 @@ class LspEditTool(BaseTool):
         return WorkspaceEditApplier(self.project_path, self.filesystem).preview(edit)
 
     async def _send_previews(self, result: WorkspaceEditResult, operation: str) -> None:
-        for change in result.text_changes:
-            if change.old_text == change.new_text:
-                continue
+        for preview in self._preview_payloads(result):
             await self.send_edit_preview(
-                build_diff_preview(change.old_text, change.new_text, change.path),
+                preview,
                 tool_call_id=getattr(self.caller, "current_tool_execution_id", None),
                 tool_name="lsp_edit",
             )
+
+    def _preview_payloads(self, result: WorkspaceEditResult) -> list[dict[str, Any]]:
+        previews: list[dict[str, Any]] = []
+        for change in result.text_changes:
+            if change.old_text == change.new_text:
+                continue
+            preview = build_diff_preview(change.old_text, change.new_text, change.path)
+            if preview:
+                previews.append(preview)
+        return previews
 
     def _format_workspace_edit_result(self, operation: str, result: WorkspaceEditResult) -> str:
         label = "Applied" if result.applied else "Preview"
