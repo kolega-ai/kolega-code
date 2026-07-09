@@ -6,6 +6,8 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.16.0 - 2026-07-09
+
 ### Added
 
 - Added support for xAI Grok 4.5 (`grok-4.5`): 500K-token context, vision input,
@@ -13,6 +15,10 @@ This project uses GitHub Releases for detailed generated release notes. This fil
   `/model` picker, CLI flags, and env vars; now the default `xai` model.
 - Send a stable `x-grok-conv-id` header on xAI Chat Completions requests so
   multi-turn agent loops pin to a cache-warm server (xAI prompt-caching guidance).
+- Added session-scoped workspace snapshots for agent file mutations: `snapshot`
+  (list/show/create/restore, including `snapshot_id='latest'` undo) and `resolve`
+  for applying or discarding pending `lsp_edit` preview actions. Restore refuses
+  on post-snapshot drift unless `force=true`.
 - Improved TUI usability inside tmux/screen when Shift-modified keys never reach
   the app: `/attach` with no path pastes an image from the system clipboard,
   `Alt+V` is a portable image-paste binding alongside `Ctrl+Shift+V`, startup
@@ -22,6 +28,10 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ### Fixed
 
+- Prevented a TUI crash when pasting long multi-line text into the composer
+  (`OSError: File name too long` from treating paste content as a path).
+- Stopped advertising host lifecycle `initialize` as a model-callable tool while
+  keeping it available for CLI/TUI startup (LSP setup).
 - Bumped `lxml-html-clean` to 0.4.5 (and transitive `lxml` to 6.1.1) to clear
   GHSA-4jhm-jv67-739f from the dependency audit.
 
