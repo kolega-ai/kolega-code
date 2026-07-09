@@ -71,6 +71,7 @@ MODEL_LABELS: dict[str, str] = {
     "gemini-3.1-pro-preview": "Gemini 3.1 Pro",
     "gemini-3.5-flash": "Gemini 3.5 Flash",
     # xAI
+    "grok-4.5": "Grok 4.5",
     "grok-4.3": "Grok 4.3",
     "grok-build-0.1": "Grok Build 0.1",
     # Fireworks
@@ -129,7 +130,7 @@ PROVIDER_DEFAULT_MODEL: dict[ModelProvider, str] = {
     ModelProvider.OPENAI: "gpt-5.5",
     ModelProvider.OPENAI_CHATGPT: "gpt-5.5",
     ModelProvider.GOOGLE: "gemini-3.1-pro-preview",
-    ModelProvider.XAI: "grok-4.3",
+    ModelProvider.XAI: "grok-4.5",
     ModelProvider.FIREWORKS: "accounts/fireworks/models/glm-5p2",
     ModelProvider.TOGETHER: "moonshotai/Kimi-K2.7-Code",
     ModelProvider.DASHSCOPE: "qwen3-coder-plus",
