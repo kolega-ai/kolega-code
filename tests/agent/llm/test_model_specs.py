@@ -11,6 +11,18 @@ def test_openai_chatgpt_gpt55_context_length():
     assert specs["thinking_effort"].default == "medium"
 
 
+def test_grok_45_model_specs():
+    specs = get_model_specs("xai", "grok-4.5")
+
+    assert specs["context_length"] == 500000
+    assert specs["max_completion_tokens"] == 32768
+    assert specs["default_temperature"] == 0.7
+    assert specs["supports_vision"] is True
+    assert specs["thinking_effort"].options == ("low", "medium", "high")
+    assert specs["thinking_effort"].default == "medium"
+    assert specs["thinking_effort"].mode == "openai_reasoning_effort"
+
+
 def test_kimi_k27_code_model_specs():
     specs = get_model_specs("moonshot", "kimi-k2.7-code")
 
