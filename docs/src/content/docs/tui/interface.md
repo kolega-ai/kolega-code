@@ -82,14 +82,16 @@ the turn keeps running while you look around.
 
 | Keys | Action |
 | --- | --- |
-| `Shift+Tab` | Toggle Build ⇄ Plan mode |
+| `Shift+Tab` | Toggle Build ⇄ Plan mode (`/plan` / `/build` if Shift is unavailable) |
 | `Ctrl+P` | Toggle shell/edit permissions between Ask ⇄ Auto |
 | `Ctrl+O` | Show or hide the side panel |
 | `Ctrl+G` | Open the sub-agent inspector |
 | `Enter` | Send the prompt |
 | `Shift+Enter` / `Ctrl+J` | Insert a newline |
+| `Ctrl+Shift+V` / `Alt+V` | Paste an image from the system clipboard (`/attach` also works) |
 | `Ctrl+C` / `Escape` | Cancel the current generation |
 | `Ctrl+Q` | Save the session and quit |
 
 A complete composer-and-completion key reference is in
-[Chat Composer](../composer/).
+[Chat Composer](../composer/). If Shift chords fail inside tmux, see
+[Terminal & tmux shortcuts](../../troubleshooting/terminal-tmux/).

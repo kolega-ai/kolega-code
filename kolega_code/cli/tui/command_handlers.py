@@ -129,7 +129,7 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
         Centralized vision check: when the current model does not support vision,
         shows a combined warning-tone hint (attachment confirmation + vision
         mismatch) and a persistent system message in the transcript. This is the
-        single funnel for clipboard paste (both Ctrl+Shift+V and on_paste) and
+        single funnel for clipboard paste (Ctrl+Shift+V / Alt+V and on_paste) and
         /attach, so the warning is consistent across all three paths.
         """
         self._pending_image_attachments.append(attachment)
@@ -144,9 +144,14 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
             self._show_composer_hint(f"Attached images: {names} (press Enter to send, × to remove)", tone="info")
 
     async def _command_attach(self, args: str) -> None:
+        """Attach an image: clipboard when no path is given, otherwise a file path.
+
+        Empty args is the portable path under tmux / terminals that cannot
+        deliver Ctrl+Shift+V — same system-clipboard reader as the key binding.
+        """
         arg = args.strip()
         if not arg:
-            self._show_composer_hint("Usage: /attach <path-to-image>  (PNG, JPEG, GIF, WebP, BMP)", tone="warning")
+            await self._paste_clipboard_image_worker()
             return
         from pathlib import Path as _Path
 
@@ -158,7 +163,8 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
         attachment = encode_image_file(candidate)
         if attachment is None:
             self._show_composer_hint(
-                f"Could not attach {arg}: not a supported image, missing, or too large (>20MB). Use /attach <path>",
+                f"Could not attach {arg}: not a supported image, missing, or too large (>20MB). "
+                "Use /attach <path> or /attach with an image on the clipboard.",
                 tone="warning",
             )
             return
@@ -185,11 +191,7 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
 
         result = await read_clipboard_image()
         if result is None:
-            self._show_composer_hint(
-                "No image on the clipboard, or your terminal doesn't support image paste. "
-                "Use /attach <path> or @image.png instead.",
-                tone="warning",
-            )
+            self._show_composer_hint(messages.ATTACH_CLIPBOARD_EMPTY, tone="warning")
             return
         data, media_type = result
         attachment = encode_image_attachment(data, media_type, path="clipboard")

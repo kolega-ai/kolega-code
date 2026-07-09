@@ -13,6 +13,12 @@ This project uses GitHub Releases for detailed generated release notes. This fil
   `/model` picker, CLI flags, and env vars; now the default `xai` model.
 - Send a stable `x-grok-conv-id` header on xAI Chat Completions requests so
   multi-turn agent loops pin to a cache-warm server (xAI prompt-caching guidance).
+- Improved TUI usability inside tmux/screen when Shift-modified keys never reach
+  the app: `/attach` with no path pastes an image from the system clipboard,
+  `Alt+V` is a portable image-paste binding alongside `Ctrl+Shift+V`, startup
+  help highlights `Ctrl+J` / `/plan` / `/build` fallbacks, and a one-time
+  startup hint appears under tmux. Documented optional tmux extended-keys config
+  under Troubleshooting.
 
 ### Fixed
 

@@ -44,7 +44,11 @@ SKILLS_LIST_COMMAND = "/skills"
 
 TUI_COMMAND_ENTRIES: tuple[SlashCommandEntry, ...] = (
     SlashCommandEntry("skills", "List available Agent Skills", CommandScope.TUI),
-    SlashCommandEntry("attach", "Attach an image file to your next message", CommandScope.TUI),
+    SlashCommandEntry(
+        "attach",
+        "Attach an image (clipboard if no path, or a file path)",
+        CommandScope.TUI,
+    ),
     SlashCommandEntry("detach", "Remove pending image attachments", CommandScope.TUI),
     SlashCommandEntry("init", "Create or update AGENTS.md for this repository", CommandScope.TUI),
     SlashCommandEntry("plan", "Switch to plan mode", CommandScope.TUI),

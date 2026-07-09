@@ -34,6 +34,8 @@ These control the app and your session.
 | --- | --- |
 | `/skills` | List available Agent Skills |
 | `/init` | Create or update `AGENTS.md` for this repository |
+| `/attach` | Attach an image: clipboard if no path, or `/attach <path>` for a file |
+| `/detach` | Remove pending image attachments |
 | `/plan` | Switch to [Plan mode](../modes/) |
 | `/build` | Switch to [Build mode](../modes/) |
 | `/sidebar` | Show or hide the side panel |

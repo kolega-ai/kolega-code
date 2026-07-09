@@ -120,6 +120,10 @@ export default defineConfig({
               label: "Diagnostics & Bug Reports",
               slug: "troubleshooting/diagnostics",
             },
+            {
+              label: "Terminal & tmux shortcuts",
+              slug: "troubleshooting/terminal-tmux",
+            },
           ],
         },
         {
