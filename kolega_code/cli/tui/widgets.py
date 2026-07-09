@@ -564,7 +564,11 @@ class ChatComposer(TextArea):
         *TextArea.BINDINGS,
         Binding("enter", "submit", "Send", priority=True),
         Binding(
-            "shift+enter,ctrl+enter,ctrl+j", "insert_newline", "New line", key_display="Shift+Enter", priority=True
+            "shift+enter,ctrl+enter,ctrl+j",
+            "insert_newline",
+            "New line",
+            key_display="Shift+Enter / Ctrl+J",
+            priority=True,
         ),
         Binding("ctrl+l", "select_all", "Select all", key_display="Ctrl+L", priority=True),
         Binding("super+a", "select_all", "Select all", show=False, key_display="Cmd+A", priority=True),
@@ -572,7 +576,15 @@ class ChatComposer(TextArea):
         Binding("down", "mention_next", "Next match", show=False, priority=True),
         Binding("tab", "mention_accept", "Complete path", show=False, priority=True),
         Binding("escape", "mention_dismiss", "Dismiss matches", show=False, priority=True),
-        Binding("ctrl+shift+v", "paste_clipboard_image", "Paste image", key_display="Ctrl+Shift+V", priority=True),
+        # Ctrl+Shift+V needs extended key encoding (often missing in plain tmux).
+        # Alt+V is a portable fallback; /attach with no path also reads the clipboard.
+        Binding(
+            "ctrl+shift+v,alt+v",
+            "paste_clipboard_image",
+            "Paste image",
+            key_display="Ctrl+Shift+V / Alt+V",
+            priority=True,
+        ),
     ]
 
     MENTION_QUERY_RE = re.compile(r"(?:^|(?<=\s))@(\S*)$")

@@ -13,16 +13,23 @@ multi-line input, and drives the option lists the agent shows you.
 | --- | --- |
 | `Enter` | Send the prompt |
 | `Shift+Enter` | Insert a newline (keep typing) |
-| `Ctrl+J` | Insert a newline (alternative) |
+| `Ctrl+J` / `Ctrl+Enter` | Insert a newline (portable alternatives; prefer these inside tmux) |
 | `Ctrl+L` | Select all composer text |
 | `Cmd+A` / `⌘A` | Select all composer text on macOS, when forwarded by the terminal |
 | `Ctrl+A` | Move to the start of the current line (intentionally not select-all) |
 | `Ctrl+U` | Delete backward to the start of the line; at line start, delete the previous line |
+| `Ctrl+Shift+V` | Paste an image from the system clipboard |
+| `Alt+V` | Paste an image from the system clipboard (portable alternative when Shift chords fail) |
 
 `Ctrl+L` is the portable select-all shortcut because `Ctrl+A` is preserved for
 terminal-style line navigation. Some macOS terminal emulators reserve `Cmd+A` for
 terminal scrollback selection before the TUI can see it; `Ctrl+L` still works in
 the composer.
+
+Inside **tmux** or **screen**, Shift-modified keys often never reach the app.
+Use `Ctrl+J` for newlines and `Alt+V` or `/attach` for images. See
+[Terminal & tmux shortcuts](../../troubleshooting/terminal-tmux/) for optional
+tmux config to restore Shift+Enter.
 
 ## Queuing follow-up prompts
 
@@ -44,6 +51,19 @@ follow-ups can drain.
 If you cancel the active turn with `Ctrl+C` or `Escape`, queued follow-ups are
 restored into the composer instead of being silently sent. To discard pending
 follow-ups without stopping the active turn, run [`/queue-clear`](../slash-commands/).
+
+## Attaching images
+
+You can attach images for vision-capable models in several ways:
+
+| Method | How |
+| --- | --- |
+| System clipboard | `Ctrl+Shift+V` or `Alt+V`, or run `/attach` with no path |
+| File path | `/attach path/to/image.png` |
+| File mention | `@screenshot.png` (supported image extensions only) |
+
+Use `/detach` to clear pending attachments before sending. On a non-vision
+model, Kolega Code warns and blocks the send until you detach or switch models.
 
 ## File mentions with `@`
 

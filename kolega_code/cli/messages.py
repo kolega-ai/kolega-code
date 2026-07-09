@@ -26,6 +26,17 @@ DISCONNECTED_ACTIVITY = "Open Settings and connect a provider to start chatting.
 DISCONNECTED_MODEL = "not connected"
 TASK_LIST_EMPTY_MESSAGE = "No task list has been set."
 PLAN_EMPTY_MESSAGE = "No plan captured yet."
+# Shown once in the startup block when running inside tmux/screen, where Shift
+# chords often never reach the app.
+TMUX_SHORTCUT_HINT = (
+    "tmux/screen: Shift shortcuts may not reach the app. "
+    "Use Ctrl+J for newline, /plan or /build for mode, Alt+V or /attach for images. "
+    "See docs: Terminal & tmux shortcuts."
+)
+ATTACH_CLIPBOARD_EMPTY = (
+    "No image on the clipboard, or no clipboard tool is available. "
+    "Copy an image first, or use /attach <path> or @image.png."
+)
 
 # Turn progress
 WORKING = "Working…"

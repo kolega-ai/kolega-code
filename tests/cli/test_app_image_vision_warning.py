@@ -1,10 +1,10 @@
 # ruff: noqa: F401,F811,E402
 """Tests for vision mismatch warnings when attaching/sending images on non-vision models.
 
-Covers all four image attachment entry points:
-  1. Clipboard paste (Ctrl+Shift+V)  — _paste_clipboard_image_worker
+Covers image attachment entry points:
+  1. Clipboard paste (Ctrl+Shift+V / Alt+V) — _paste_clipboard_image_worker
   2. on_paste event (data-URI / file path) — ChatComposer.on_paste -> add_pending_image_attachment
-  3. /attach <path> slash command      — _command_attach -> add_pending_image_attachment
+  3. /attach (clipboard or path) slash command — _command_attach -> add_pending_image_attachment
   4. @file.png mention + submit        — _build_mention_attachments at submit time
 
 Plus the centralised vision check in ``add_pending_image_attachment`` and the

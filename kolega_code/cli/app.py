@@ -1905,6 +1905,7 @@ class KolegaCodeApp(
                     "",
                 ]
             )
+        bullet = theme.g(Glyph.BULLET_SEP)
         startup_lines.extend(
             [
                 f"Project: {self.project_path}",
@@ -1919,11 +1920,29 @@ class KolegaCodeApp(
                 f"Thinking effort: {effort}",
                 f"API key: {api_key}",
                 *self._startup_lsp_lines(),
-                f"Enter send {theme.g(Glyph.BULLET_SEP)} Shift+Enter newline {theme.g(Glyph.BULLET_SEP)} Shift+Tab plan/build {theme.g(Glyph.BULLET_SEP)} Ctrl+P permissions {theme.g(Glyph.BULLET_SEP)} Ctrl+O sidebar",
-                f"Ctrl+C stop turn {theme.g(Glyph.BULLET_SEP)} Cmd+C copy selection {theme.g(Glyph.BULLET_SEP)} / commands",
+                (
+                    f"Enter send {bullet} Shift+Enter/Ctrl+J newline {bullet} "
+                    f"Shift+Tab or /plan /build {bullet} Ctrl+P permissions {bullet} Ctrl+O sidebar"
+                ),
+                (f"Alt+V or /attach image {bullet} Ctrl+C stop turn {bullet} Cmd+C copy selection {bullet} / commands"),
             ]
         )
+        if self._running_under_tmux_or_screen():
+            startup_lines.extend(["", messages.TMUX_SHORTCUT_HINT])
         return "\n".join(startup_lines)
+
+    @staticmethod
+    def _running_under_tmux_or_screen() -> bool:
+        """True when the process is nested under tmux or GNU screen.
+
+        Shift-modified keys often never reach the TUI in those multiplexers
+        unless extended-keys / CSI-u is configured. Used only for a one-time
+        startup hint with portable fallbacks.
+        """
+        if os.environ.get("TMUX"):
+            return True
+        term = os.environ.get("TERM", "").strip().lower()
+        return term.startswith("screen") or term.startswith("tmux")
 
     def _startup_lsp_lines(self) -> list[str]:
         """Plain-text LSP status lines for the startup block (above command summary)."""
