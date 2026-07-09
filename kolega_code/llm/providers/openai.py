@@ -5,6 +5,7 @@ import json
 import logging
 import math
 import threading
+import uuid
 
 import tiktoken
 from openai import AsyncOpenAI
@@ -204,9 +205,20 @@ class OpenAIProvider(BaseLLMProvider):
         # OpenAI-compatible providers (xai, together, fireworks, dashscope, ...) reuse this
         # provider; provider_name is used to look up the model's thinking-effort spec.
         self.provider_name = provider_name
+        # Sticky conversation id for providers that pin requests to a cache-warm server.
+        # xAI documents this as the Chat Completions header ``x-grok-conv-id`` (Responses
+        # API uses body ``prompt_cache_key`` on the dedicated Responses providers).
+        self._session_id = str(uuid.uuid4())
+        client_kwargs: Dict[str, Any] = {
+            "api_key": api_key,
+            "base_url": base_url,
+            "max_retries": max_retries,
+        }
+        if self.provider_name == "xai":
+            client_kwargs["default_headers"] = {"x-grok-conv-id": self._session_id}
         # Forward max_retries so the SDK's built-in exponential backoff + jitter (which
         # honors retry-after and retries 429/5xx + connection errors) is actually used.
-        self.async_client = AsyncOpenAI(api_key=api_key, base_url=base_url, max_retries=max_retries)
+        self.async_client = AsyncOpenAI(**client_kwargs)
         # Per-message / per-tool token-count memos. count_tokens runs every agent-loop
         # iteration over the whole history; without this it re-encodes the entire
         # conversation each time (O(history) on the event loop, the streaming-turn
