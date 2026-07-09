@@ -12,6 +12,11 @@ This project uses GitHub Releases for detailed generated release notes. This fil
   and `low`/`medium`/`high` reasoning effort. Selectable in the Settings UI,
   `/model` picker, CLI flags, and env vars; now the default `xai` model.
 
+### Fixed
+
+- Bumped `lxml-html-clean` to 0.4.5 (and transitive `lxml` to 6.1.1) to clear
+  GHSA-4jhm-jv67-739f from the dependency audit.
+
 ## 0.15.0 - 2026-07-07
 
 ### Added
