@@ -9,7 +9,7 @@ resolution-markers = [
 
 [options]
 prerelease-mode = "allow"
-exclude-newer = "2026-07-02T09:06:13.008444Z"
+exclude-newer = "2026-07-02T08:47:45.93029Z"
 exclude-newer-span = "P1W"
 
 [[package]]

@@ -26,6 +26,7 @@ def test_supports_vision_flag_present_on_every_entry():
         ("moonshot", "kimi-k2.7-code", True),
         ("moonshot", "kimi-k2.6", True),
         ("kimi_coding", "kimi-for-coding", True),
+        ("xai", "grok-4.5", True),
         ("xai", "grok-4.3", True),
         ("fireworks", "accounts/fireworks/models/minimax-m3", True),
         ("fireworks", "accounts/fireworks/models/kimi-k2p7-code", True),

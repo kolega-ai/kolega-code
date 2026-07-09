@@ -6,6 +6,19 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+### Added
+
+- Added support for xAI Grok 4.5 (`grok-4.5`): 500K-token context, vision input,
+  and `low`/`medium`/`high` reasoning effort. Selectable in the Settings UI,
+  `/model` picker, CLI flags, and env vars; now the default `xai` model.
+- Send a stable `x-grok-conv-id` header on xAI Chat Completions requests so
+  multi-turn agent loops pin to a cache-warm server (xAI prompt-caching guidance).
+
+### Fixed
+
+- Bumped `lxml-html-clean` to 0.4.5 (and transitive `lxml` to 6.1.1) to clear
+  GHSA-4jhm-jv67-739f from the dependency audit.
+
 ## 0.15.0 - 2026-07-07
 
 ### Added

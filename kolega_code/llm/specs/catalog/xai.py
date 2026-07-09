@@ -2,6 +2,19 @@ from kolega_code.llm.specs.types import ThinkingEffortSpec
 
 # X.ai models
 XAI_SPECS = {
+    ("xai", "grok-4.5"): {
+        "context_length": 500000,
+        "max_completion_tokens": 32768,
+        # 0.7 matches xAI/Vals AI benchmark defaults (temp 0.7 + high reasoning).
+        "default_temperature": 0.7,
+        "supports_vision": True,
+        "thinking_effort": ThinkingEffortSpec(
+            # "none" is rejected by the API (verified live); only low/medium/high.
+            options=("low", "medium", "high"),
+            default="medium",
+            mode="openai_reasoning_effort",
+        ),
+    },
     ("xai", "grok-4.3"): {
         "context_length": 1000000,
         "max_completion_tokens": 16384,
