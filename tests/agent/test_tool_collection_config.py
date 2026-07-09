@@ -17,6 +17,7 @@ INTERNAL_TOOL_NAMES = {
     "has_tool",
     "call",
     "cleanup",
+    "initialize",
     "get_tool_list",
     "log_error",
     "log_warning",
@@ -117,6 +118,8 @@ class TestToolCollection:
         tool_names = [tool.name for tool in tool_list]
         assert "exec_command" in tool_names
         assert "write_stdin" in tool_names
+        assert "initialize" in excluded_tools
+        assert "initialize" not in tool_names
         assert INTERNAL_TOOL_NAMES.isdisjoint(tool_names)
         for excluded_tool in excluded_tools:
             assert excluded_tool not in tool_names
