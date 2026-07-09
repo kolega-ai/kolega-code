@@ -430,6 +430,7 @@ class ToolCollection(LogMixin):
             "has_tool",
             "call",
             "cleanup",
+            "initialize",
             "log_error",
             "log_warning",
             "log_info",

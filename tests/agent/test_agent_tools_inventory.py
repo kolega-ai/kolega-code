@@ -16,7 +16,7 @@ from kolega_code.agent.planningagent import PlanningAgent
 from kolega_code.agent.prompt_provider import AgentMode, PromptProvider
 
 
-INTERNAL_TOOL_NAMES = {"registry", "has_tool", "call", "cleanup"}
+INTERNAL_TOOL_NAMES = {"registry", "has_tool", "call", "cleanup", "initialize"}
 
 
 def assert_internal_tools_not_exposed(tool_names):
