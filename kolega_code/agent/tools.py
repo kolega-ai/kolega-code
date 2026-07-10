@@ -13,7 +13,7 @@ from kolega_code.services.base import TerminalManager, BrowserManager
 from kolega_code.services.terminal import LocalTerminalManager
 from kolega_code.services.browser import PlaywrightBrowserManager
 from .tool_backend.agent_tool import AgentTool
-from .tool_backend.browser_tool import BrowserTool
+from .tool_backend.browser_tool import BROWSER_TOOL_SCHEMAS, BrowserTool
 from .tool_backend.edit_tool import EditTool
 from .tool_backend.glob_tool import GlobTool
 from .tool_backend.list_directory_tool import ListDirectoryTool
@@ -287,14 +287,29 @@ class ToolCollection(LogMixin):
     ]
 
     browser_tools = [
-        "launch_browser",
-        "list_browsers",
-        "get_browser_interactive_elements",
-        "get_browser_console_logs",
-        "take_browser_screenshot",
-        "interact_with_browser",
-        "set_browser_select_value",
-        "close_browser",
+        "browser_navigate",
+        "browser_navigate_back",
+        "browser_snapshot",
+        "browser_find",
+        "browser_wait_for",
+        "browser_resize",
+        "browser_click",
+        "browser_type",
+        "browser_fill_form",
+        "browser_select_option",
+        "browser_hover",
+        "browser_drag",
+        "browser_drop",
+        "browser_press_key",
+        "browser_tabs",
+        "browser_handle_dialog",
+        "browser_file_upload",
+        "browser_console_messages",
+        "browser_network_requests",
+        "browser_network_request",
+        "browser_take_screenshot",
+        "browser_evaluate",
+        "browser_close",
     ]
 
     # Agent dispatch tools group - includes all agent dispatch functionality
@@ -630,6 +645,7 @@ class ToolCollection(LogMixin):
         self.extension_schemas["lsp_edit"] = _LSP_EDIT_INPUT_SCHEMA
         self.extension_schemas["snapshot"] = _SNAPSHOT_INPUT_SCHEMA
         self.extension_schemas["resolve"] = _RESOLVE_INPUT_SCHEMA
+        self.extension_schemas.update(BROWSER_TOOL_SCHEMAS)
         self.browser_tool = BrowserTool(
             self.project_path,
             self.workspace_id,
@@ -676,276 +692,242 @@ class ToolCollection(LogMixin):
             snapshot_service=self.snapshot_service,
         )
 
-    async def launch_browser(self, url: str) -> str:
-        """
-        Launch a browser and navigate to a specified URL.
-
-        This tool opens a new browser window, navigates to the provided URL,
-        and returns a unique browser ID that can be used to interact with this browser instance
-        through other browser-related tools.
-
-        When to use this tool:
-        - When you need to visit a website to gather information
-        - When you need to interact with web applications
-        - When you need to test web functionality
-        - When you need to demonstrate web-based features to the user
-
-        Usage notes:
-        1. The browser uses a standard viewport size (1280x720) and Chrome user agent
-        2. The returned browser ID must be saved if you plan to interact with this browser later
-        3. Each call creates a new browser instance - use judiciously to avoid resource consumption
+    async def browser_navigate(self, url: str) -> str:
+        """Navigate the current browser tab to a URL, starting a session when needed.
 
         Args:
-            url: The complete URL to navigate to (must include http:// or https://)
-
-        Returns:
-            A confirmation message with the unique browser ID for future reference
+            url: HTTP or HTTPS URL to navigate to.
         """
+        return await self.browser_tool.browser_navigate(url)
 
-        return await self.browser_tool.launch_browser(url)
+    async def browser_navigate_back(self) -> str:
+        """Go back to the previous page and return the updated page snapshot."""
+        return await self.browser_tool.browser_navigate_back()
 
-    async def list_browsers(self) -> str:
+    async def browser_snapshot(self, target: Optional[str] = None, depth: Optional[int] = None) -> str:
+        """Capture the current page's accessibility snapshot.
+
+        Prefer this over screenshots when deciding what to interact with. Interactive
+        nodes include stable refs such as e12 that can be passed to action tools.
+
+        Args:
+            target: Optional snapshot ref or unique selector for a subtree.
+            depth: Optional maximum accessibility-tree depth.
         """
-        List all currently running browser instances.
+        return await self.browser_tool.browser_snapshot(target, depth)
 
-        This tool provides a formatted overview of all active browser sessions, displaying
-        their unique browser IDs, the URLs they're currently visiting, and when they were launched.
+    async def browser_find(self, text: Optional[str] = None, regex: Optional[str] = None) -> str:
+        """Find text or a regular expression in the accessibility snapshot.
 
-        When to use this tool:
-        - When you need to check which browser instances are currently active
-        - When you need to retrieve a browser ID for use with other browser tools
-        - When you want to see which URLs are currently being accessed
-        - When you need to manage multiple browser sessions
+        Provide exactly one of text or regex. This is cheaper than requesting a
+        full snapshot when locating a specific element.
 
-        Usage notes:
-        1. The output is formatted as a markdown table for easy readability
-        2. If no browsers are running, the tool will indicate this
-        3. Browser IDs can be used with other browser tools like close_browser
-        4. This tool is useful for cleanup to ensure all browser instances are properly closed
-
-        Returns:
-            A markdown-formatted table listing all active browser instances with their details
+        Args:
+            text: Case-insensitive text to find.
+            regex: Regular expression to find.
         """
-        return await self.browser_tool.list_browsers()
+        return await self.browser_tool.browser_find(text, regex)
 
-    async def get_browser_console_logs(
-        self,
-        browser_id: str,
-        max_logs: int = 50,
-        log_types: Optional[list] = None,
-        minutes_back: Optional[int] = None,
-        max_chars: int = 8000,
+    async def browser_wait_for(
+        self, time: Optional[float] = None, text: Optional[str] = None, text_gone: Optional[str] = None
     ) -> str:
-        """
-        Retrieve filtered console logs from a browser instance by its browser ID.
-
-        This tool captures console messages (info, warnings, errors) that have been logged
-        in the browser's JavaScript console and returns them in a formatted markdown document.
-        The logs are filtered to prevent context window overflow while focusing on the most relevant information.
-
-        When to use this tool:
-        - When you need to debug JavaScript errors on a webpage
-        - When you want to see application messages logged to the console
-        - When you need to diagnose network or rendering issues
-        - When you're working with web applications that use console logging
-
-        Usage notes:
-        1. You must provide a valid browser_id from a previous launch_browser call
-        2. Console logs are filtered by default to show only errors, warnings, and assertions
-        3. By default, only the most recent 50 logs are returned with a character limit of 8000
-        4. Each log entry includes its type, timestamp, and message text
-        5. Use this after interacting with a page to see what messages were generated
+        """Wait for time to pass, text to appear, or text to disappear.
 
         Args:
-            browser_id: The unique identifier of the browser instance to get console logs from
-            max_logs: Maximum number of logs to return (default: 50, most recent)
-            log_types: List of log types to include (default: ['error', 'warning', 'assert'])
-            minutes_back: Only return logs from the last N minutes (optional)
-            max_chars: Maximum total character count for all log messages (default: 8000)
-
-        Returns:
-            A markdown-formatted document containing the filtered browser console logs
+            time: Seconds to wait, capped at 30.
+            text: Text to wait for until visible.
+            text_gone: Text to wait for until hidden.
         """
-        return await self.browser_tool.get_browser_console_logs(
-            browser_id, max_logs=max_logs, log_types=log_types, minutes_back=minutes_back, max_chars=max_chars
-        )
+        return await self.browser_tool.browser_wait_for(time, text, text_gone)
 
-    async def get_browser_interactive_elements(self, browser_id: str) -> str:
-        """
-        Identify and extract all interactive elements from a browser page.
-
-        This tool analyzes the current state of a browser page and identifies all interactive elements
-        such as buttons, links, form inputs, and other clickable components, returning them in a
-        structured markdown format with their selectors and attributes.
-
-        When to use this tool:
-        - When you need to discover what actions are possible on a webpage
-        - When you need to find specific interactive elements to interact with
-        - When you're exploring a new website and need to understand its interface
-        - When you need to automate interactions with a webpage
-        - When you need precise selectors for use with the interact_with_browser or set_browser_select_value tools
-
-        Usage notes:
-        1. You must provide a valid browser_id from a previous launch_browser call
-        2. The tool returns a comprehensive list of all interactive elements with their types, text content, and selectors
-        3. The selector column provides CSS selectors that can be used with interact_with_browser or set_browser_select_value
-        4. The attributes column provides additional information about each element
-        5. Use this tool before performing interactions to identify the correct elements to target
+    async def browser_resize(self, width: int, height: int) -> str:
+        """Resize the current browser viewport.
 
         Args:
-            browser_id: The unique identifier of the browser instance to analyze
-
-        Returns:
-            A markdown-formatted document listing all interactive elements on the page with their details
+            width: Viewport width in CSS pixels.
+            height: Viewport height in CSS pixels.
         """
-        return await self.browser_tool.get_browser_interactive_elements(browser_id)
+        return await self.browser_tool.browser_resize(width, height)
 
-    async def take_browser_screenshot(self, browser_id: str) -> List[ImageBlock]:
-        """
-        Take a screenshot of the current browser page.
-
-        This tool captures the current visual state of a browser page and returns it as an image,
-        along with relevant metadata such as the current URL and page title.
-
-        When to use this tool:
-        - When you need to visually inspect the current state of a webpage
-        - When you need to capture visual evidence of a web application's behavior
-        - When text-based content extraction is insufficient to understand the page layout
-        - When you need to verify the visual appearance of a web interface
-
-        Usage notes:
-        1. You must provide a valid browser_id from a previous launch_browser call
-        2. The screenshot captures the entire visible viewport of the browser
-        3. The returned image is in base64-encoded format
-        4. The tool also returns metadata about the page including title and URL
+    async def browser_click(
+        self,
+        target: str,
+        double_click: bool = False,
+        button: str = "left",
+        modifiers: Optional[list[str]] = None,
+    ) -> str:
+        """Click an element identified by a snapshot ref or unique selector.
 
         Args:
-            browser_id: The unique identifier of the browser instance to screenshot
-
-        Returns:
-            A list containing a text description and the screenshot image
+            target: Exact snapshot ref or unique selector.
+            double_click: Perform a double click.
+            button: Mouse button: left, right, or middle.
+            modifiers: Keyboard modifiers held during the click.
         """
-        result = await self.browser_tool.take_browser_screenshot(browser_id)
+        return await self.browser_tool.browser_click(target, double_click, button, modifiers)
 
-        # Create an image block with the screenshot data
-        image_block = ImageBlock(image_type="base64", media_type="image/png", data=result["screenshot"])
+    async def browser_type(self, target: str, text: str, submit: bool = False, slowly: bool = False) -> str:
+        """Enter text into an editable element.
 
-        return [image_block]
+        Args:
+            target: Exact snapshot ref or unique selector.
+            text: Text to enter.
+            submit: Press Enter after entering text.
+            slowly: Type character by character instead of filling.
+        """
+        return await self.browser_tool.browser_type(target, text, submit, slowly)
+
+    async def browser_fill_form(self, fields: list[dict[str, Any]]) -> str:
+        """Fill several textbox, checkbox, radio, combobox, or slider fields.
+
+        Args:
+            fields: Structured field descriptions with name, target, type, and value.
+        """
+        return await self.browser_tool.browser_fill_form(fields)
+
+    async def browser_select_option(self, target: str, values: list[str]) -> str:
+        """Select one or more values in a dropdown.
+
+        Args:
+            target: Exact snapshot ref or unique selector.
+            values: Option values to select.
+        """
+        return await self.browser_tool.browser_select_option(target, values)
+
+    async def browser_hover(self, target: str) -> str:
+        """Hover over an element and return the updated snapshot.
+
+        Args:
+            target: Exact snapshot ref or unique selector.
+        """
+        return await self.browser_tool.browser_hover(target)
+
+    async def browser_drag(self, start_target: str, end_target: str) -> str:
+        """Drag one page element to another.
+
+        Args:
+            start_target: Source snapshot ref or unique selector.
+            end_target: Destination snapshot ref or unique selector.
+        """
+        return await self.browser_tool.browser_drag(start_target, end_target)
+
+    async def browser_drop(
+        self, target: str, paths: Optional[list[str]] = None, data: Optional[dict[str, str]] = None
+    ) -> str:
+        """Drop workspace files or MIME-typed string data onto an element.
+
+        Args:
+            target: Destination snapshot ref or unique selector.
+            paths: Workspace file paths to drop.
+            data: MIME type to string value mapping.
+        """
+        return await self.browser_tool.browser_drop(target, paths, data)
+
+    async def browser_press_key(self, key: str) -> str:
+        """Press a keyboard key in the current tab.
+
+        Args:
+            key: Key name or character, such as ArrowLeft or a.
+        """
+        return await self.browser_tool.browser_press_key(key)
+
+    async def browser_tabs(self, action: str, index: Optional[int] = None, url: Optional[str] = None) -> str:
+        """List, create, close, or select browser tabs.
+
+        Args:
+            action: One of list, new, close, or select.
+            index: Tab index for close or select.
+            url: Optional URL for a new tab.
+        """
+        return await self.browser_tool.browser_tabs(action, index, url)
+
+    async def browser_handle_dialog(self, accept: bool, prompt_text: Optional[str] = None) -> str:
+        """Accept or dismiss the currently waiting JavaScript dialog.
+
+        Args:
+            accept: Accept rather than dismiss the dialog.
+            prompt_text: Text to submit to a prompt dialog.
+        """
+        return await self.browser_tool.browser_handle_dialog(accept, prompt_text)
+
+    async def browser_file_upload(self, paths: list[str]) -> str:
+        """Upload workspace files through the currently waiting file chooser.
+
+        Args:
+            paths: Workspace file paths to upload. Use an empty list to cancel.
+        """
+        return await self.browser_tool.browser_file_upload(paths)
+
+    async def browser_console_messages(self, level: str = "info", all_messages: bool = False) -> str:
+        """Return console messages for the current tab.
+
+        Args:
+            level: Minimum severity: error, warning, info, or debug.
+            all_messages: Include the full session instead of only messages since navigation.
+        """
+        return await self.browser_tool.browser_console_messages(level, all_messages)
+
+    async def browser_network_requests(self, include_static: bool = False, filter_pattern: Optional[str] = None) -> str:
+        """List network requests made by the current tab since navigation.
+
+        Args:
+            include_static: Include images, fonts, scripts, and styles.
+            filter_pattern: Optional URL regular expression.
+        """
+        return await self.browser_tool.browser_network_requests(include_static, filter_pattern)
+
+    async def browser_network_request(self, index: int, part: Optional[str] = None) -> str:
+        """Return headers or body details for one indexed network request.
+
+        Args:
+            index: 1-based index from browser_network_requests.
+            part: Optional request_headers, request_body, response_headers, or response_body.
+        """
+        return await self.browser_tool.browser_network_request(index, part)
+
+    async def browser_take_screenshot(
+        self,
+        target: Optional[str] = None,
+        image_type: str = "png",
+        full_page: bool = False,
+        scale: str = "css",
+    ) -> List[ImageBlock]:
+        """Capture a visual screenshot of the page or one element.
+
+        Use browser_snapshot, not the screenshot, to choose interaction targets.
+
+        Args:
+            target: Optional snapshot ref or unique selector.
+            image_type: png or jpeg.
+            full_page: Capture the full scrollable page.
+            scale: css or device pixel scale.
+        """
+        result = await self.browser_tool.browser_take_screenshot(target, image_type, full_page, scale)
+        return [ImageBlock(image_type="base64", media_type=result["media_type"], data=result["image"])]
 
     async def read_image(self, path: str) -> List[Any]:
-        """
-        Read an image file from the project directory so you can see it. Use when the user references a screenshot, diagram, mockup, or other visual asset, or when visual inspection of a file in the workspace is needed. The image is returned for you to view directly.
+        """Read an image file from the project directory so you can see it.
 
-        When to use: the user asks you to look at an image/screenshot/mockup; you need to inspect a visual asset in the project; text-based reading is insufficient to understand a visual file.
+        Use when the user references a screenshot, diagram, mockup, or other
+        visual asset and text-based inspection is insufficient.
 
         Args:
-            path: Path to the image file. Relative to the project root is preferred; an absolute path is also accepted.
-
-        Returns:
-            The image, viewable directly.
-
-        Supported formats: PNG, JPEG, GIF, WebP, BMP.
+            path: Path relative to the project root, or an allowed absolute path.
         """
         return await self.read_image_tool.read_image(path)
 
-    async def interact_with_browser(
-        self, browser_id: str, action: str, selector: str, text: str, scroll_px: int
-    ) -> str:
-        """
-        Interact with a browser by performing actions on web elements.
-
-        This tool allows you to control a browser programmatically by executing common actions
-        like clicking elements, typing text, or navigating to new URLs. It provides a way to
-        automate web interactions within an existing browser session.
-
-        When to use this tool:
-        - When you need to click buttons, links, or other interactive elements on a webpage
-        - When you need to fill out forms by typing text into input fields
-        - When you need to navigate to a different URL within an existing browser session
-        - When you need to automate a sequence of interactions with a web application
-
-        When NOT to use this tool:
-        - When you need to interact with a dropdown or select input. Use set_browser_select_value for that.
-
-        Usage notes:
-        1. You must provide a valid browser_id from a previous launch_browser call
-        2. The action parameter must be one of: 'click', 'type', 'scroll' or 'navigate'
-        3. For 'click' actions, provide a CSS or XPath selector that identifies the element to click
-        4. For 'type' actions, provide both a selector for the input field and the text to type
-        5. For 'scroll' actions, provide a scroll_px (positive to scroll down the page, negative to scroll up)
-        5. For 'navigate' actions, provide the URL in the text parameter (selector can be empty)
-        6. The tool waits for the page to stabilize after the action before returning
-        7. The return value includes the current URL after the action is performed
+    async def browser_evaluate(self, function: str, target: Optional[str] = None) -> str:
+        """Evaluate JavaScript in the page or against one target element.
 
         Args:
-            browser_id: The unique identifier of the browser instance to interact with
-            action: The type of interaction to perform ('click', 'type', or 'navigate')
-            selector: CSS or XPath selector identifying the element to interact with
-            text: Text to type (for 'type' action) or URL to navigate to (for 'navigate' action)
-
-        Returns:
-            A markdown-formatted report of the interaction result, including the current URL
+            function: JavaScript function to evaluate.
+            target: Optional snapshot ref or unique selector passed as the function argument.
         """
-        return await self.browser_tool.interact_with_browser(browser_id, action, selector, text, scroll_px)
+        return await self.browser_tool.browser_evaluate(function, target)
 
-    async def set_browser_select_value(self, browser_id: str, selector: str, value: str) -> str:
-        """
-        Set the value of a select box (dropdown) in a browser page.
-
-        This tool allows you to programmatically select an option from a dropdown menu (select element)
-        on a webpage. It validates that the element is indeed a select box and that the specified value
-        exists among the available options before making the selection.
-
-        When to use this tool:
-        - When you need to select an option from a dropdown menu on a form
-        - When you need to change the selected value in a select box
-        - When automating form filling that includes dropdown selections
-        - When you need to test different options in a select element
-
-        Usage notes:
-        1. You must provide a valid browser_id from a previous launch_browser call
-        2. The selector must identify a <select> HTML element - the tool will fail if used on other element types
-        3. The value parameter should match the 'value' attribute of the <option> you want to select, not the visible text
-        4. Use get_browser_interactive_elements first to find the correct selector and see available option values
-        5. The tool validates that the specified value exists in the select options before attempting to set it
-        6. The response will confirm whether the selection was successful and show the actual selected value
-
-        Args:
-            browser_id: The unique identifier of the browser instance to interact with
-            selector: CSS selector that uniquely identifies the select element
-            value: The value attribute of the option to select (not the display text)
-
-        Returns:
-            A markdown-formatted report showing the result of the selection, including success/error status
-        """
-        return await self.browser_tool.set_browser_select_value(browser_id, selector, value)
-
-    async def close_browser(self, browser_id: str) -> str:
-        """
-        Close a specific browser instance by its ID.
-
-        This tool terminates a browser session that was previously launched with the launch_browser tool,
-        freeing up system resources and cleaning up the browser process.
-
-        When to use this tool:
-        - When you've completed tasks in a specific browser instance
-        - When you need to clean up resources after web-based operations
-        - When you want to start fresh with a new browser session
-        - When you're managing multiple browser instances and need to close specific ones
-
-        Usage notes:
-        1. You must provide a valid browser ID that was returned from a previous launch_browser call
-        2. Once closed, the browser ID becomes invalid and cannot be used again
-        3. It's good practice to close browsers when you're done with them to free up resources
-        4. If you're unsure which browser IDs are available, use the list_browsers tool first
-
-        Args:
-            browser_id: The unique identifier of the browser instance to close
-
-        Returns:
-            A confirmation message indicating the browser has been closed
-        """
-        return await self.browser_tool.close_browser(browser_id)
+    async def browser_close(self) -> str:
+        """Close the current browser session and release its resources."""
+        return await self.browser_tool.browser_close()
 
     async def build_backend(self) -> str:
         """
@@ -1048,14 +1030,11 @@ class ToolCollection(LogMixin):
         5. The agent's report is not automatically shown to the user - you should summarize key findings
 
         IMPORTANT: The browser agent specializes in these tools:
-            - launch_browser
-            - list_browsers
-            - get_browser_content
-            - get_browser_console_logs
-            - take_browser_screenshot
-            - interact_with_browser
-            - set_browser_select_value
-            - close_browser
+            - browser_navigate, browser_snapshot, and browser_find
+            - browser_click, browser_type, browser_fill_form, and browser_select_option
+            - browser_tabs, browser_wait_for, browser_handle_dialog, and browser_file_upload
+            - browser_console_messages, browser_network_requests, and browser_take_screenshot
+            - browser_close
 
         Args:
             task: A detailed description of the browser task to perform

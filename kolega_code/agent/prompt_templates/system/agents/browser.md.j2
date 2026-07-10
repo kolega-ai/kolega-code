@@ -45,6 +45,15 @@ If you are asked for links to assets such as images, do not answer from your mem
 
 1. If a website has a cookie consent popup, avoid it. Try another website if you can.
 2. Your search engine of choice is duckduckgo.com
+3. Navigate with `browser_navigate`; it starts the browser session automatically.
+4. Use `browser_snapshot` to understand the page. Prefer exact element refs such as `e12` from the snapshot
+   over manually invented selectors.
+5. Every state-changing action returns an updated snapshot. Use the new refs from that result because refs can
+   become stale when the page changes.
+6. On large pages, use `browser_find` to locate relevant snapshot nodes without loading the entire tree again.
+7. Use `browser_take_screenshot` only for visual inspection. Do not choose interaction targets from screenshots.
+8. Use explicit waits for visible or disappearing text when an application updates asynchronously.
+9. If an action reports a dialog or file chooser, handle that modal before attempting another browser action.
 
 ## **CRITICAL: URL Navigation Guidelines**
 

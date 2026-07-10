@@ -106,6 +106,24 @@ explicitly when you want a cloud provider or a self-hosted SearXNG instance.
 | `TAVILY_API_KEY` | Tavily API key |
 | `SEARXNG_BASE_URL` | Base URL for a self-hosted SearXNG instance |
 
+## Browser automation
+
+Local browser automation needs no credentials. Hosted sandbox deployments can
+connect the same browser agent to Browserless.
+
+| Variable | Purpose |
+| --- | --- |
+| `BROWSERLESS_API_KEY` | Browserless cloud API token |
+| `BROWSERLESS_WS_ENDPOINT` | Optional cloud or self-hosted WebSocket endpoint |
+| `BROWSERLESS_REGION` | Cloud region used when no endpoint is supplied: `sfo`, `lon`, or `ams` |
+| `BROWSERLESS_PROTOCOL` | Connection protocol: `cdp` (default) or `playwright` |
+| `BROWSERLESS_TIMEOUT_MS` | Optional maximum Browserless session duration; must fit the account plan |
+| `BROWSER_CONNECT_TIMEOUT_MS` | Browser transport connection timeout (default 30000 ms) |
+
+Custom endpoint query parameters are preserved, including Browserless proxy,
+stealth, profile, and recording options. If `BROWSERLESS_TIMEOUT_MS` is unset,
+Browserless applies the account's default session duration.
+
 ## Telemetry (Langfuse)
 
 Optional [Langfuse](https://langfuse.com/) tracing of LLM usage.

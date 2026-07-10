@@ -538,6 +538,13 @@ class ToolDefinition(ContentBlock):
             kwargs["items"] = cls._dict_to_google_schema(schema["items"])
         if schema.get("required"):
             kwargs["required"] = schema["required"]
+        if schema.get("enum"):
+            kwargs["enum"] = schema["enum"]
+        if "additionalProperties" in schema:
+            additional = schema["additionalProperties"]
+            kwargs["additional_properties"] = (
+                cls._dict_to_google_schema(additional) if isinstance(additional, dict) else additional
+            )
         return genai_types.Schema(**kwargs)
 
     def to_anthropic(self) -> Dict[str, Any]:
