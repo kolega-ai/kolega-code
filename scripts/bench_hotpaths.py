@@ -7,7 +7,7 @@ turn into a multi-minute event-loop-blocking crawl on slow machines (see the
 
   1. token counting      - OpenAIProvider.count_tokens over the whole history
   2. stream accumulation  - ConversationEntry text growth per chunk
-  3. streaming render      - _format_inset_text over the whole growing buffer per flush
+  3. streaming render      - _format_indented_text over the whole growing buffer per flush
 
 Run it before and after the optimizations and compare the printed tables:
 
@@ -121,7 +121,7 @@ def _bench_accumulation() -> None:
 # 3. Streaming render
 # --------------------------------------------------------------------------- #
 def _bench_render() -> None:
-    from kolega_code.cli.tui.transcript import _InsetRenderState
+    from kolega_code.cli.tui.transcript import _IndentedRenderState
 
     print("\n== 3. Streaming render (flush-as-it-grows, step=4KB) ==")
     print(f"{'buffer chars':>12} {'OLD reformat-each-flush':>26} {'NEW incremental':>18}")
@@ -136,15 +136,15 @@ def _bench_render() -> None:
             pos = 0
             while pos < len(content):
                 pos = min(len(content), pos + step)
-                mixin._format_inset_text(content[:pos])
+                mixin._format_indented_text(content[:pos])
 
         # NEW: append only the newly-arrived slice each flush (O(delta), O(n) total).
         def new() -> None:
-            state = _InsetRenderState(None)
+            state = _IndentedRenderState(None)
             pos = 0
             while pos < len(content):
                 nxt = min(len(content), pos + step)
-                mixin._extend_inset(state, content[pos:nxt])
+                mixin._extend_indented(state, content[pos:nxt])
                 pos = nxt
 
         print(f"{size:>12} {_ms(_best(old)):>26} {_ms(_best(new)):>18}")

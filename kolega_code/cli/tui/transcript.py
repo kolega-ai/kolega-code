@@ -33,24 +33,23 @@ from .sub_agent_screen import SubAgentEntryWidget
 from .widgets import ConversationEntryWidget, JumpToBottomBar, ToolEntryWidget
 
 
-class _InsetRenderState:
-    """Incremental render cache for a streaming inset body (assistant/thinking).
+class _IndentedRenderState:
+    """Incremental render cache for an indented streaming body (assistant/thinking).
 
     Holds the Rich ``Text`` built so far plus enough state to append only newly
     arrived characters on each flush, instead of re-splitting the whole growing
-    buffer. The output matches ``_format_inset_text`` for ``\\n``-delimited content
+    buffer. The output matches ``_format_indented_text`` for ``\\n``-delimited content
     (the common case); completion does a canonical full reformat as a safety net.
     """
 
-    __slots__ = ("text", "length", "started", "open_has_content", "deferred_newline", "style")
+    __slots__ = ("text", "length", "started", "deferred_newline", "style")
 
     def __init__(self, style):
         self.text = Text()
         self.length = 0  # chars of entry.content already folded into `text`
-        self.started = False  # has the first line's inset bar been emitted?
-        self.open_has_content = False  # has the current (last) line emitted its " " + text?
+        self.started = False  # has the first line's indentation been emitted?
         # One pending line break: a "\n" defers its new line until either more content or
-        # another "\n" arrives, so a *trailing* terminator leaves no empty inset line
+        # another "\n" arrives, so a *trailing* terminator leaves no empty indented line
         # (matching str.splitlines, which drops only the final terminator).
         self.deferred_newline = False
         self.style = style
@@ -1087,13 +1086,12 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
 
     def _workflow_phase_rows(self, activity: WorkflowActivity) -> list[Text]:
         sep = theme.g(Glyph.BULLET_SEP)
-        bar = f"  {theme.g(Glyph.INSET_BAR)}"
+        indent = " " * theme.TRANSCRIPT_INDENT
         rows: list[Text] = []
         for phase in activity.phases:
             glyph, color = self._workflow_phase_glyph(phase)
             line = Text()
-            line.append(bar, style="dim")
-            line.append(" ")
+            line.append(indent)
             line.append(f"{theme.g(glyph)} ", style=color)
             title_style = "bold" if phase.state == "active" else ("dim" if phase.state == "pending" else "")
             line.append(phase.title, style=title_style)
@@ -1107,11 +1105,11 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
     def _format_workflow_renderable(self, activity: WorkflowActivity) -> Group:
         parts: list = [Text.from_markup(self._workflow_header(activity))]
         if activity.description:
-            parts.append(self._format_inset_text(activity.description, style="dim"))
+            parts.append(self._format_indented_text(activity.description, style="dim"))
         parts.extend(self._workflow_phase_rows(activity))
         footer = self._workflow_footer_line(activity)
         if footer:
-            parts.append(self._format_inset_text(footer, style="dim"))
+            parts.append(self._format_indented_text(footer, style="dim"))
         return Group(*parts)
 
     def _format_workflow_content(self, activity: WorkflowActivity) -> str:
@@ -1339,7 +1337,7 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
     def _format_conversation_entry(self, entry: ConversationEntry) -> Text | Group:
         """Render an entry using the shared header grammar.
 
-        GRAMMAR: <colored glyph> <bold label> [ · state] — body inset beneath.
+        GRAMMAR: <colored glyph> <bold label> [ · state] — body indented beneath.
         """
         if entry.kind == "startup":
             return self._format_startup_entry(entry)
@@ -1352,14 +1350,14 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
             if entry.complete and entry.content.strip():
                 return self._markdown_entry(header, entry.content)
             if not entry.complete:
-                return self._streaming_inset_renderable(entry, header)
+                return self._streaming_indented_renderable(entry, header)
             return self._entry_renderable(header, entry.content)
         if entry.kind == "thinking":
             header = theme.role_header(
                 Glyph.STATUS, "Thinking", Color.THINKING, label_style="dim italic", state=streaming
             )
             if not entry.complete:
-                return self._streaming_inset_renderable(entry, header, body_style="italic dim")
+                return self._streaming_indented_renderable(entry, header, body_style="italic dim")
             return self._entry_renderable(header, entry.content, body_style="italic dim")
         if entry.kind == "progress":
             color = Color.ERROR if entry.tone == "error" else Color.WARNING
@@ -1414,10 +1412,10 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
         header_text = Text.from_markup(header)
         if body is None:
             return header_text
-        return Group(header_text, self._format_inset_text(body, style=body_style))
+        return Group(header_text, self._format_indented_text(body, style=body_style))
 
-    def _streaming_inset_renderable(self, entry, header: str, *, body_style: Optional[str] = None) -> Group:
-        """Inset body for a still-streaming entry, built incrementally (O(delta) per flush).
+    def _streaming_indented_renderable(self, entry, header: str, *, body_style: Optional[str] = None) -> Group:
+        """Indented body for a still-streaming entry, built incrementally (O(delta) per flush).
 
         Caches the rendered Text on the entry so each flush only appends the newly
         arrived characters instead of re-splitting and re-rendering the whole buffer
@@ -1426,39 +1424,37 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
         """
         state = entry.render_cache
         content = entry.content
-        if not isinstance(state, _InsetRenderState) or state.style != body_style or state.length > len(content):
+        if not isinstance(state, _IndentedRenderState) or state.style != body_style or state.length > len(content):
             # First render for this entry, a body-style change, or a defensive shrink:
             # fold the whole current buffer once.
-            state = _InsetRenderState(body_style)
+            state = _IndentedRenderState(body_style)
             entry.render_cache = state
-            self._extend_inset(state, content)
+            self._extend_indented(state, content)
         elif state.length < len(content):
-            self._extend_inset(state, content[state.length :])
+            self._extend_indented(state, content[state.length :])
         return Group(Text.from_markup(header), state.text)
 
-    def _extend_inset(self, state: "_InsetRenderState", delta: str) -> None:
-        """Append ``delta`` to the cached inset Text, matching _format_inset_text for "\\n".
+    def _extend_indented(self, state: "_IndentedRenderState", delta: str) -> None:
+        """Append ``delta`` to cached indented Text, matching _format_indented_text for "\\n".
 
         A pending newline is flushed (its new line materialized) as soon as another
         newline *or* content follows it; only a still-pending terminator at the very end
-        is left unrendered, so the result equals ``_format_inset_text`` over the buffer.
+        is left unrendered, so the result equals ``_format_indented_text`` over the buffer.
         """
         if not delta and state.started:
             return
-        bar = f"  {theme.g(Glyph.INSET_BAR)}"
+        indent = " " * theme.TRANSCRIPT_INDENT
         text = state.text
 
         def flush_deferred() -> None:
             if state.deferred_newline:
                 text.append("\n")
-                text.append(bar, style="dim")
+                text.append(indent)
                 state.deferred_newline = False
-                state.open_has_content = False
 
         if not state.started:
-            text.append(bar, style="dim")
+            text.append(indent)
             state.started = True
-            state.open_has_content = False
 
         for index, segment in enumerate(delta.split("\n")):
             if index > 0:
@@ -1467,9 +1463,6 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
                 state.deferred_newline = True
             if segment:
                 flush_deferred()
-                if not state.open_has_content:
-                    text.append(" ")
-                    state.open_has_content = True
                 text.append(segment, style=state.style)
         state.length += len(delta)
 
@@ -1478,7 +1471,7 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
             Text.from_markup(header),
             Padding(
                 RichMarkdown(content, code_theme=theme.markdown_code_theme()),
-                (0, 0, 0, theme.INSET_WIDTH),
+                (0, 0, 0, theme.TRANSCRIPT_INDENT),
             ),
         )
 
@@ -1567,14 +1560,13 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
         else:
             body = self._edit_preview_diff(lines)
 
-        parts: list = [meta, Padding(body, (0, 0, 0, theme.INSET_WIDTH))]
+        parts: list = [meta, body]
         if more > 0:
             footer = Text(f"{theme.g(Glyph.ELLIPSIS)} +{more} more lines", style="dim")
-            parts.append(Padding(footer, (0, 0, 0, theme.INSET_WIDTH)))
+            parts.append(footer)
         return Group(*parts)
 
     def _edit_preview_diff(self, lines: list) -> Text:
-        bar = f"{theme.g(Glyph.INSET_BAR)} "
         styles = {"add": Color.SUCCESS, "del": Color.ERROR, "meta": "dim", "context": "dim"}
         rendered = Text()
         for index, row in enumerate(lines):
@@ -1584,7 +1576,6 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
                 tag, text = "context", str(row)
             if index:
                 rendered.append("\n")
-            rendered.append(bar, style="dim")
             rendered.append(text, style=styles.get(tag))
         return rendered
 
@@ -1600,25 +1591,22 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
                 word_wrap=False,
             )
         except Exception:
-            # Unknown lexer / pathological content: fall back to plain inset text.
-            bar = f"{theme.g(Glyph.INSET_BAR)} "
+            # Unknown lexer / pathological content: fall back to plain text.
             rendered = Text()
             for index, line in enumerate(code.split("\n")):
                 if index:
                     rendered.append("\n")
-                rendered.append(bar, style="dim")
                 rendered.append(line)
             return rendered
 
-    def _format_inset_text(self, content: str, style: Optional[str] = None) -> Text:
-        bar = f"  {theme.g(Glyph.INSET_BAR)}"
+    def _format_indented_text(self, content: str, style: Optional[str] = None) -> Text:
+        indent = " " * theme.TRANSCRIPT_INDENT
         lines = content.splitlines() or [""]
         rendered = Text()
         for index, line in enumerate(lines):
             if index:
                 rendered.append("\n")
-            rendered.append(bar, style="dim")
+            rendered.append(indent)
             if line:
-                rendered.append(" ")
                 rendered.append(line, style=style)
         return rendered

@@ -87,6 +87,14 @@ ConversationEntryWidget {
     padding-bottom: 1;
 }
 
+ConversationEntryWidget.entry-thinking,
+ConversationEntryWidget.entry-progress,
+ConversationEntryWidget.entry-skill,
+ConversationEntryWidget.entry-sub_agent,
+ConversationEntryWidget.entry-workflow {
+    padding-left: 2;
+}
+
 ToolEntryWidget {
     height: auto;
     padding-bottom: 1;
@@ -99,8 +107,29 @@ ToolEntryWidget Collapsible {
     padding-left: 0;
 }
 
+ToolEntryWidget CollapsibleTitle {
+    padding: 0 1 0 0;
+}
+
 ToolEntryWidget Collapsible Contents {
-    padding-left: 3;
+    padding-left: 2;
+}
+
+ToolEntryWidget .tool-preview {
+    height: auto;
+    padding-left: 2;
+}
+
+ToolEntryWidget.agent-activity CollapsibleTitle {
+    padding: 0 1 0 2;
+}
+
+ToolEntryWidget.agent-activity Collapsible Contents {
+    padding-left: 4;
+}
+
+ToolEntryWidget.agent-activity .tool-preview {
+    padding-left: 4;
 }
 
 ToolEntryWidget .tool-body {

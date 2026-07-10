@@ -374,9 +374,9 @@ async def test_collapsed_tool_title_supports_drag_selection_and_toggle(
         collapsible = widget.query_one(Collapsible)
         title = widget.query_one(CollapsibleTitle)
 
-        await pilot.mouse_down(title, offset=(1, 0))
-        await pilot._post_mouse_events([events.MouseMove], title, offset=(20, 0), button=1)
-        await pilot.mouse_up(title, offset=(20, 0))
+        await pilot.mouse_down(title, offset=(2, 0))
+        await pilot._post_mouse_events([events.MouseMove], title, offset=(21, 0), button=1)
+        await pilot.mouse_up(title, offset=(21, 0))
 
         selected_text = app.screen.get_selected_text()
         assert selected_text is not None
@@ -426,12 +426,12 @@ async def test_expanded_tool_body_line_start_selection_copies(tmp_path: Path, mo
 
         body = widget.query_one(".tool-body", Static)
         assert widget.query_one(Collapsible).collapsed is False
-        assert body.region.x == widget.region.x + 3
+        assert body.region.x == widget.region.x + 4
 
         body_y = body.region.y - widget.region.y
         await pilot.mouse_down(widget, offset=(0, body_y))
-        await pilot._post_mouse_events([events.MouseMove], widget, offset=(11, body_y + 1), button=1)
-        await pilot.mouse_up(widget, offset=(11, body_y + 1))
+        await pilot._post_mouse_events([events.MouseMove], widget, offset=(12, body_y + 1), button=1)
+        await pilot.mouse_up(widget, offset=(12, body_y + 1))
 
         selected_text = app.screen.get_selected_text()
         assert selected_text is not None

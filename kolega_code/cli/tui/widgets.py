@@ -225,7 +225,7 @@ class SelectableCollapsibleTitle(CollapsibleTitle):
 
 
 class SelectableCollapsible(Collapsible):
-    """Collapsible with a selectable title, used for transcript tool entries."""
+    """Collapsible with a selectable title and optional always-visible content."""
 
     class Contents(Collapsible.Contents):
         """Selectable padding/content wrapper so drags can start in the expanded tool indent."""
@@ -245,6 +245,7 @@ class SelectableCollapsible(Collapsible):
         collapsed: bool = True,
         collapsed_symbol: str = "▶",
         expanded_symbol: str = "▼",
+        persistent_children=(),
         **kwargs,
     ) -> None:
         super().__init__(
@@ -255,12 +256,19 @@ class SelectableCollapsible(Collapsible):
             expanded_symbol=expanded_symbol,
             **kwargs,
         )
+        self._persistent_children = list(persistent_children)
         self._title = SelectableCollapsibleTitle(
             label=title,
             collapsed_symbol=collapsed_symbol,
             expanded_symbol=expanded_symbol,
             collapsed=collapsed,
         )
+
+    def compose(self) -> ComposeResult:
+        yield self._title
+        yield from self._persistent_children
+        with self.Contents():
+            yield from self._contents_list
 
 
 class ToolEntryWidget(Vertical):
@@ -272,7 +280,8 @@ class ToolEntryWidget(Vertical):
         title_factory: Callable[[ConversationEntry], str],
         preview_factory: Optional[Callable[[ConversationEntry], Any]] = None,
     ) -> None:
-        super().__init__()
+        classes = "agent-activity" if entry.kind in {"tool_call", "tool_result", "tool_error"} else None
+        super().__init__(classes=classes)
         self.entry = entry
         self._title_factory = title_factory
         self._preview_factory = preview_factory
@@ -285,12 +294,18 @@ class ToolEntryWidget(Vertical):
         self._preview_visible = False
 
     def compose(self) -> ComposeResult:
-        # Always-visible inline preview (diff/file-head) for edit tools; hidden otherwise.
+        # Keep the title first, followed by the always-visible edit preview and then
+        # the expandable raw output. The preview is a persistent child of the
+        # collapsible so collapsing only hides Contents, not the preview itself.
         self._preview = Static("", markup=False, classes="tool-preview")
         self._preview.display = False
-        yield self._preview
         self._body = Static("", markup=False, classes="tool-body")
-        self._collapsible = SelectableCollapsible(self._body, title=self._title_factory(self.entry), collapsed=True)
+        self._collapsible = SelectableCollapsible(
+            self._body,
+            title=self._title_factory(self.entry),
+            collapsed=True,
+            persistent_children=(self._preview,),
+        )
         yield self._collapsible
 
     def on_mount(self) -> None:

@@ -245,6 +245,101 @@ async def test_textual_app_formats_agent_and_tool_chat_entries(tmp_path: Path, m
 
 
 @pytest.mark.asyncio
+async def test_transcript_bodies_share_two_cell_indent_without_guides(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from kolega_code.cli.tui.state import ConversationEntry
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        entries = [
+            ConversationEntry(kind="user", content="body text"),
+            ConversationEntry(kind="assistant", content="body text", complete=True),
+            ConversationEntry(kind="assistant", content="body text", complete=False),
+            ConversationEntry(kind="thinking", content="body text", complete=True),
+            ConversationEntry(kind="question", content="body text"),
+            ConversationEntry(kind="plan", content="body text"),
+            ConversationEntry(kind="lsp", content="body text"),
+        ]
+
+        for entry in entries:
+            lines = renderable_text(app._format_conversation_entry(entry)).splitlines()
+            assert lines[1].startswith("  body text"), entry.kind
+            assert "│" not in lines[1], entry.kind
+
+
+@pytest.mark.asyncio
+async def test_transcript_activity_hierarchy_uses_two_cell_steps(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from textual.widgets import Collapsible, Static
+    from textual.widgets._collapsible import CollapsibleTitle
+
+    from kolega_code.cli.tui.state import ConversationEntry
+    from kolega_code.cli.tui.widgets import ConversationEntryWidget, ToolEntryWidget
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+    top_level = [
+        ConversationEntry(kind="user", content="user"),
+        ConversationEntry(kind="assistant", content="agent"),
+        ConversationEntry(kind="plan", content="plan"),
+        ConversationEntry(kind="question", content="question"),
+        ConversationEntry(kind="lsp", content="lsp"),
+        ConversationEntry(kind="system", content="system"),
+    ]
+    activities = [
+        ConversationEntry(kind="thinking", content="thinking"),
+        ConversationEntry(kind="progress", content="status"),
+        ConversationEntry(kind="skill", content="skill"),
+        ConversationEntry(kind="sub_agent", content="sub-agent"),
+        ConversationEntry(kind="workflow", content="workflow"),
+    ]
+    tool = ConversationEntry(
+        kind="tool_result",
+        content="preview",
+        full_content="full output",
+        tool_name="read_file",
+    )
+    compaction = ConversationEntry(kind="compaction_summary", content="summary")
+
+    async with app.run_test(size=(72, 70)) as pilot:
+        app.conversation_entries = [*top_level, *activities, tool, compaction]
+        app._render_conversation()
+        await pilot.pause()
+
+        for entry in top_level:
+            widget = app._entry_widgets[entry.entry_id]
+            assert isinstance(widget, ConversationEntryWidget)
+            assert widget.content_region.x == widget.region.x, entry.kind
+
+        for entry in activities:
+            widget = app._entry_widgets[entry.entry_id]
+            assert isinstance(widget, ConversationEntryWidget)
+            assert widget.content_region.x == widget.region.x + 2, entry.kind
+
+        tool_widget = app._entry_widgets[tool.entry_id]
+        assert isinstance(tool_widget, ToolEntryWidget)
+        assert tool_widget.has_class("agent-activity")
+        tool_collapsible = tool_widget.query_one(Collapsible)
+        tool_title = tool_widget.query_one(CollapsibleTitle)
+        assert tool_collapsible.region.x == tool_widget.region.x
+        assert tool_title.content_region.x == tool_widget.region.x + 2
+
+        compaction_widget = app._entry_widgets[compaction.entry_id]
+        assert isinstance(compaction_widget, ToolEntryWidget)
+        assert not compaction_widget.has_class("agent-activity")
+        compaction_title = compaction_widget.query_one(CollapsibleTitle)
+        assert compaction_title.content_region.x == compaction_widget.region.x
+
+        tool_collapsible.collapsed = False
+        await pilot.pause()
+        body = tool_widget.query_one(".tool-body", Static)
+        assert body.region.x == tool_widget.region.x + 4
+        assert body.region.right <= app._conversation.content_region.right
+
+
+@pytest.mark.asyncio
 async def test_conversation_body_renders_rich_markup_tokens_literally(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -79,8 +79,8 @@ class ConversationEntry:
     # Streaming buffers (UI-only, excluded from equality/repr). Deltas accumulate in
     # stream_parts and are joined into content once per render flush, not per chunk, to
     # avoid O(n^2) attribute concatenation. render_cache holds the incrementally-built
-    # inset renderable so each flush appends only the new text rather than re-splitting
-    # the whole buffer. See transcript._apply_stream_chunk / _streaming_inset_renderable.
+    # indented renderable so each flush appends only the new text rather than re-splitting
+    # the whole buffer. See transcript._apply_stream_chunk / _streaming_indented_renderable.
     stream_parts: list[str] = field(default_factory=list, compare=False, repr=False)
     render_cache: object = field(default=None, compare=False, repr=False)
 

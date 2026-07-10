@@ -537,6 +537,58 @@ async def test_tool_entries_render_as_collapsibles_with_full_output(
 
 
 @pytest.mark.asyncio
+async def test_tool_edit_preview_stays_between_title_and_expanded_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from textual.widgets import Collapsible, Static
+    from textual.widgets._collapsible import CollapsibleTitle
+
+    from kolega_code.cli.tui.state import ConversationEntry
+    from kolega_code.cli.tui.widgets import ToolEntryWidget
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+    entry = ConversationEntry(
+        kind="tool_result",
+        content="Edited src/a.py",
+        full_content="raw tool output",
+        tool_name="edit",
+        edit_preview={
+            "kind": "diff",
+            "path": "src/a.py",
+            "language": "python",
+            "lines": [["meta", "@@ -1 +1 @@"], ["del", "-old"], ["add", "+new"]],
+            "more": 0,
+            "adds": 1,
+            "dels": 1,
+        },
+    )
+
+    async with app.run_test(size=(100, 45)) as pilot:
+        app.conversation_entries = [entry]
+        app._render_conversation()
+        await pilot.pause()
+
+        widget = app.query(ToolEntryWidget).last()
+        collapsible = widget.query_one(Collapsible)
+        title = widget.query_one(CollapsibleTitle)
+        preview = widget.query_one(".tool-preview", Static)
+        body = widget.query_one(".tool-body", Static)
+
+        assert collapsible.collapsed is True
+        assert preview.display is True
+        assert title.region.y < preview.region.y
+        assert preview.content_region.x == widget.region.x + 4
+
+        collapsible.collapsed = False
+        await pilot.pause()
+
+        assert title.region.y < preview.region.y < body.region.y
+        assert body.region.x == widget.region.x + 4
+
+
+@pytest.mark.asyncio
 async def test_tool_entry_title_shows_lsp_badge_for_diagnostics(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
