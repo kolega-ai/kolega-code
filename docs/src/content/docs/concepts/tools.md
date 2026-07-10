@@ -42,12 +42,22 @@ the [TUI](../../cli/overview/) or [`ask`](../../cli/ask/).
 ### Web
 
 - `web_search` — search the web for relevant pages and return ranked results.
-- `web_fetch` — fetch and parse a web page without a full browser.
+- `web_fetch` — retrieve a URL, extract local-readable content, and answer an
+  instruction with source evidence. It handles HTML, plain text, Markdown,
+  JSON/XML/feeds, PDF, DOCX, PPTX, XLSX, and XLS. HTML extraction uses a
+  quality-gated local chain (Trafilatura, Readability, semantic DOM, then full
+  visible text) and automatically selects the best result.
 
 Use `web_search` when you do not already know the right URL, then follow up with
 `web_fetch` to read a result in depth. The default backend is keyless DuckDuckGo;
 Firecrawl, Tavily, and self-hosted SearXNG can be selected in Settings or with
 environment variables.
+
+`web_fetch` never sends the URL or page content to a third-party reader service
+and does not launch a browser. If a page appears to be a JavaScript-rendered SPA,
+the result says that its content may be incomplete so the agent can use the
+browser tools instead. Scanned/image-only PDFs and legacy DOC/PPT files require
+OCR/conversion outside this tool.
 
 ### Reasoning & memory
 

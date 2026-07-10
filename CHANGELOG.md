@@ -6,6 +6,22 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+### Added
+
+- Rebuilt `web_fetch` as a fully local, content-type-aware pipeline with bounded
+  HTTP retries, automatic quality-gated Trafilatura/Readability/DOM extraction,
+  JSON/text/feed handling, and local PDF/Office conversion.
+- Added grounded fast-model answers with verified page excerpts, long-content
+  chunking, and bounded extracted-content fallback when answering fails.
+
+### Fixed
+
+- `web_fetch` now reports HTTP, extraction, unsupported-content, scanned-document,
+  and JavaScript-rendered SPA failures precisely instead of collapsing them into
+  empty Trafilatura output, and UI progress failures no longer discard results.
+- Removed the arbitrary 512-character answer clipping and first-100,000-character
+  page truncation that could omit valid answers near the end of a resource.
+
 ## 0.16.0 - 2026-07-09
 
 ### Added

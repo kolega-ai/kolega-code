@@ -524,8 +524,8 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
             screen.note_change_updated(change)
 
     def _find_tool_entry(self, tool_call_id: str, tool_name: str) -> Optional[ConversationEntry]:
-        if tool_call_id and tool_call_id in self._tool_entries:
-            return self._tool_entries[tool_call_id]
+        if tool_call_id:
+            return self._tool_entries.get(tool_call_id)
         for entry in reversed(self.conversation_entries):
             if entry.kind not in {"tool_call", "tool_result", "tool_error"}:
                 continue

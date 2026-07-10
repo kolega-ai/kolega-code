@@ -108,6 +108,65 @@ async def test_textual_app_renders_tool_events_in_chat(tmp_path: Path, monkeypat
 
 
 @pytest.mark.asyncio
+async def test_parallel_same_name_tool_calls_keep_separate_rows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.app import KolegaCodeApp
+
+    install_fake_agents(monkeypatch)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+    tool_call_ids = [f"web-fetch-{index}" for index in range(5)]
+
+    async with app.run_test():
+        for tool_call_id in tool_call_ids:
+            app._render_event(
+                AgentEvent(
+                    event_type="chat_message",
+                    sender="coder",
+                    content={
+                        "message_type": "tool_call",
+                        "text": "Calling web_fetch",
+                        "tool_description": "web_fetch",
+                        "tool_call_id": tool_call_id,
+                    },
+                )
+            )
+
+        tool_entries = [entry for entry in app.conversation_entries if entry.kind.startswith("tool")]
+        assert len(tool_entries) == 5
+        assert [entry.tool_call_id for entry in tool_entries] == tool_call_ids
+        assert len({id(entry) for entry in tool_entries}) == 5
+
+        for index in reversed(range(5)):
+            app._render_event(
+                AgentEvent(
+                    event_type="chat_message",
+                    sender="coder",
+                    content={
+                        "message_type": "tool_result",
+                        "text": f"result {index}",
+                        "tool_description": "web_fetch",
+                        "tool_call_id": tool_call_ids[index],
+                    },
+                )
+            )
+
+        assert [entry.kind for entry in tool_entries] == ["tool_result"] * 5
+        assert [entry.content for entry in tool_entries] == [f"result {index}" for index in range(5)]
+        assert all(
+            app._tool_entries[tool_call_id] is tool_entries[index] for index, tool_call_id in enumerate(tool_call_ids)
+        )
+
+
+@pytest.mark.asyncio
 async def test_textual_app_appends_append_mode_tool_streaming_events_in_chat(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
