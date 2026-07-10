@@ -152,6 +152,7 @@ class ModelOption:
     api_key_env: str
     context_length: int
     max_completion_tokens: int
+    supports_vision: bool
     thinking_efforts: tuple[str, ...]
     default_thinking_effort: str | None
 
@@ -183,6 +184,7 @@ def _model_option(provider: ModelProvider, model: str) -> ModelOption:
         api_key_env=_api_key_env(provider),
         context_length=int(specs["context_length"]),
         max_completion_tokens=int(specs["max_completion_tokens"]),
+        supports_vision=bool(specs.get("supports_vision", False)),
         thinking_efforts=thinking_effort_options(provider, model),
         default_thinking_effort=default_thinking_effort(provider, model),
     )
@@ -217,9 +219,13 @@ def ui_provider_options() -> list[tuple[str, str]]:
     return options
 
 
-def ui_model_options(provider: str) -> list[tuple[str, str]]:
+def ui_model_options(provider: str, *, vision_only: bool = False) -> list[tuple[str, str]]:
     """Return Textual Select options for supported UI models."""
-    return [(option.model_label, option.model) for option in UI_MODEL_OPTIONS if option.provider == provider]
+    return [
+        (option.model_label, option.model)
+        for option in UI_MODEL_OPTIONS
+        if option.provider == provider and (option.supports_vision or not vision_only)
+    ]
 
 
 def ui_thinking_effort_options(provider: str, model: str) -> list[tuple[str, str]]:

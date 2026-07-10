@@ -149,6 +149,12 @@ In the **Settings tab**, the **Agent Models** section (below the main Model sect
 has a provider/model/effort group per role. Leave a role on **Default** to inherit;
 pick a provider, model, and thinking effort to override it.
 
+The **Browser** role requires a model whose catalog entry supports vision. It does
+not fall back to another model or run in a text-only mode. If **Default** resolves
+to a non-vision model, Settings shows a warning and the browser agent fails with a
+configuration error when dispatched. Select an explicit vision-capable Browser
+model to enable it.
+
 Or use environment variables, named `KOLEGA_CODE_<ROLE>_PROVIDER` / `_MODEL` / `_EFFORT`:
 
 ```bash
@@ -156,6 +162,10 @@ Or use environment variables, named `KOLEGA_CODE_<ROLE>_PROVIDER` / `_MODEL` / `
 export KOLEGA_CODE_INVESTIGATION_PROVIDER=deepseek
 export KOLEGA_CODE_INVESTIGATION_MODEL=deepseek-v4-flash
 export KOLEGA_CODE_INVESTIGATION_EFFORT=high
+
+# Browser overrides must name a vision-capable model.
+export KOLEGA_CODE_BROWSER_PROVIDER=anthropic
+export KOLEGA_CODE_BROWSER_MODEL=claude-sonnet-4-6
 ```
 
 Resolution order for a role (first match wins): **env var → saved Settings → the

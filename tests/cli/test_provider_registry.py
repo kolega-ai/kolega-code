@@ -20,6 +20,16 @@ def test_fireworks_default_model_is_glm_52():
     assert default_model_for_provider(ModelProvider.FIREWORKS) == "accounts/fireworks/models/glm-5p2"
 
 
+def test_vision_only_model_options_follow_catalog_capabilities():
+    fireworks = dict(ui_model_options("fireworks", vision_only=True))
+
+    assert fireworks == {
+        "Kimi K2.7 Code": "accounts/fireworks/models/kimi-k2p7-code",
+        "MiniMax M3": "accounts/fireworks/models/minimax-m3",
+    }
+    assert ui_model_options("deepseek", vision_only=True) == []
+
+
 def test_ollama_cloud_smoke_model_is_available_without_live_call():
     options = dict(ui_model_options("ollama_cloud"))
 

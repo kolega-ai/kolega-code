@@ -5,6 +5,7 @@ from .baseagent import BaseAgent
 from kolega_code.config import AgentConfig
 from kolega_code.events import AgentConnectionManager
 from kolega_code.llm.models import Message, TextBlock
+from kolega_code.llm.specs import supports_vision as model_supports_vision
 from .prompt_provider import AgentMode, AgentType, PromptExtension, PromptProvider
 from .tools import ToolCollection
 
@@ -18,6 +19,19 @@ class BrowserAgent(BaseAgent):
     """
 
     agent_name = "browser-agent"
+
+    @classmethod
+    def validate_model_capabilities(cls, config: AgentConfig) -> None:
+        """Require the resolved browser-agent model to accept image input."""
+        model_config = config.model_config_for_agent(cls.agent_name)
+        provider = getattr(model_config.provider, "value", model_config.provider)
+        if model_supports_vision(provider, model_config.model):
+            return
+        raise ValueError(
+            "BrowserAgent requires a vision-capable model, but "
+            f"{provider}/{model_config.model} does not support image input. "
+            "Configure a vision-capable model for the Browser agent."
+        )
 
     def __init__(
         self,
@@ -74,6 +88,7 @@ class BrowserAgent(BaseAgent):
             usage_recorder: Optional callback for recording normalized LLM usage
             sub_agent_recorder: Optional callback for persisting sub-agent conversation state
         """
+        self.validate_model_capabilities(config)
         super().__init__(
             project_path,
             workspace_id,

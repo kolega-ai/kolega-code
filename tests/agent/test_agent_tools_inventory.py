@@ -8,12 +8,14 @@ import pytest
 
 from kolega_code.agent.browseragent import BrowserAgent
 from kolega_code.agent.coder import CoderAgent
-from kolega_code.config import AgentConfig
+from kolega_code.config import AgentConfig, ModelConfig, ModelProvider
 from kolega_code.events import AgentConnectionManager
 from kolega_code.agent.generalagent import GeneralAgent
 from kolega_code.agent.investigationagent import InvestigationAgent
 from kolega_code.agent.planningagent import PlanningAgent
 from kolega_code.agent.prompt_provider import AgentMode, PromptProvider
+from kolega_code.agent.tools import ToolCollection
+from kolega_code.llm.specs import MODEL_SPECS
 
 
 INTERNAL_TOOL_NAMES = {"registry", "has_tool", "call", "cleanup", "initialize"}
@@ -104,6 +106,60 @@ def test_browser_agent_tools(project_path, mock_connection_manager, agent_config
 
     assert len(tools) == len(expected_tools)
     assert set(tool_names) == set(expected_tools)
+
+
+@pytest.mark.parametrize("use_override", [False, True], ids=["inherited", "explicit"])
+def test_browser_agent_rejects_nonvision_model_before_initialization(tmp_path, mock_connection_manager, use_override):
+    long_context = ModelConfig(
+        provider=ModelProvider.ANTHROPIC,
+        model="claude-sonnet-4-5-20250929",
+    )
+    agent_models = {}
+    if use_override:
+        agent_models["browser"] = ModelConfig(provider=ModelProvider.DEEPSEEK, model="deepseek-v4-pro")
+    else:
+        long_context = ModelConfig(provider=ModelProvider.DEEPSEEK, model="deepseek-v4-pro")
+    config = AgentConfig(
+        anthropic_api_key="anthropic-key",
+        deepseek_api_key="deepseek-key",
+        long_context_config=long_context,
+        agent_models=agent_models,
+    )
+
+    missing_project = tmp_path / "not-created"
+    with pytest.raises(
+        ValueError,
+        match=r"BrowserAgent requires a vision-capable model.*deepseek/deepseek-v4-pro",
+    ):
+        BrowserAgent(
+            project_path=missing_project,
+            workspace_id="test_workspace",
+            thread_id=str(uuid.uuid4()),
+            connection_manager=mock_connection_manager,
+            config=config,
+        )
+
+
+def test_browser_agent_treats_missing_vision_metadata_as_unsupported(tmp_path, mock_connection_manager, monkeypatch):
+    model = "test-model-without-vision-metadata"
+    monkeypatch.setitem(
+        MODEL_SPECS,
+        (ModelProvider.ANTHROPIC.value, model),
+        {"context_length": 1_000, "max_completion_tokens": 100},
+    )
+    config = AgentConfig(
+        anthropic_api_key="anthropic-key",
+        agent_models={"browser": ModelConfig(provider=ModelProvider.ANTHROPIC, model=model)},
+    )
+
+    with pytest.raises(ValueError, match=r"does not support image input"):
+        BrowserAgent(
+            project_path=tmp_path,
+            workspace_id="test_workspace",
+            thread_id=str(uuid.uuid4()),
+            connection_manager=mock_connection_manager,
+            config=config,
+        )
 
 
 def test_investigation_agent_tools(project_path, mock_connection_manager, agent_config):
@@ -199,6 +255,7 @@ def test_coder_agent_exposes_dispatch_general_agent(project_path, mock_connectio
     assert "dispatch_general_agent" in tool_names
     assert "dispatch_investigation_agent" in tool_names
     assert "dispatch_coding_agent" not in tool_names
+    assert not tool_names.intersection(ToolCollection.browser_tools)
 
 
 def test_sub_agent_coder_cannot_dispatch_general_agent(project_path, mock_connection_manager, agent_config):
@@ -240,6 +297,7 @@ def test_general_agent_tool_inventory(project_path, mock_connection_manager, age
     assert "write" in tool_names
     assert "lsp_edit" in tool_names
     assert "exec_command" in tool_names
+    assert not tool_names.intersection(ToolCollection.browser_tools)
     # Recursion guard: no dispatch tools at all
     assert not any(name.startswith("dispatch_") for name in tool_names)
 

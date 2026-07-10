@@ -84,6 +84,10 @@ jobs:
         if: needs.changes.outputs.coverage-badge-only != 'true'
         run: uv sync --extra dev --frozen
 
+      - name: Install Playwright Chromium
+        if: needs.changes.outputs.coverage-badge-only != 'true'
+        run: uv run playwright install --with-deps chromium
+
       - name: Run pre-commit hooks
         if: needs.changes.outputs.coverage-badge-only != 'true'
         run: uv run pre-commit run --all-files --show-diff-on-failure

@@ -806,3 +806,92 @@ async def test_agent_models_section_populates_and_clears_to_inherit(
         await app._save_settings_from_ui()
 
         assert settings_store.load().get_agent_model("investigation") is None
+
+
+@pytest.mark.asyncio
+async def test_browser_model_settings_preserve_and_reject_nonvision_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
+) -> None:
+    pytest.importorskip("textual")
+
+    from textual.widgets import Select, Static
+
+    from kolega_code.cli.app import KolegaCodeApp
+
+    install_fake_agents(monkeypatch)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    state_dir = tmp_path / "state"
+    store = SessionStore(state_dir)
+    settings_store = SettingsStore(state_dir)
+    settings = CliSettings(active_provider=UI_DEFAULT_PROVIDER, active_model=UI_DEFAULT_MODEL)
+    settings.set_api_key(UI_DEFAULT_PROVIDER, "moonshot-key")
+    settings.set_api_key(ModelProvider.DEEPSEEK.value, "deepseek-key")
+    settings.set_agent_model("browser", ModelProvider.DEEPSEEK.value, DEEPSEEK_DEFAULT_MODEL)
+    settings_store.save(settings)
+    session = store.create(project, "code", {})
+    app = KolegaCodeApp(
+        project_path=project,
+        mode="code",
+        store=store,
+        settings_store=settings_store,
+        session=session,
+    )
+
+    async with app.run_test():
+        assert app.query_one("#am_provider_browser", Select).value == ModelProvider.DEEPSEEK.value
+        assert app.query_one("#am_model_browser", Select).value == DEEPSEEK_DEFAULT_MODEL
+        assert "does not support vision" in str(app.query_one("#am_status_browser", Static).render())
+
+        await app._save_settings_from_ui()
+
+        saved = settings_store.load().get_agent_model("browser")
+        assert saved is not None
+        assert saved["provider"] == ModelProvider.DEEPSEEK.value
+        assert saved["model"] == DEEPSEEK_DEFAULT_MODEL
+        assert "does not support vision" in str(app.query_one("#settings_status", Static).render())
+
+
+@pytest.mark.asyncio
+async def test_browser_model_settings_allow_nonvision_inheritance_with_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
+) -> None:
+    pytest.importorskip("textual")
+
+    from textual.widgets import Select, Static
+
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.provider_registry import INHERIT_SENTINEL
+
+    install_fake_agents(monkeypatch)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    state_dir = tmp_path / "state"
+    store = SessionStore(state_dir)
+    settings_store = SettingsStore(state_dir)
+    settings = CliSettings(
+        active_provider=ModelProvider.DEEPSEEK.value,
+        active_model=DEEPSEEK_DEFAULT_MODEL,
+    )
+    settings.set_api_key(ModelProvider.DEEPSEEK.value, "deepseek-key")
+    settings_store.save(settings)
+    session = store.create(project, "code", {})
+    app = KolegaCodeApp(
+        project_path=project,
+        mode="code",
+        store=store,
+        settings_store=settings_store,
+        session=session,
+    )
+
+    async with app.run_test():
+        assert app.query_one("#am_provider_browser", Select).value == INHERIT_SENTINEL
+        hint = str(app.query_one("#am_status_browser", Static).render())
+        assert "Browser agent is unavailable" in hint
+        assert "does not support vision" in hint
+
+        await app._save_settings_from_ui()
+
+        assert settings_store.load().get_agent_model("browser") is None

@@ -145,6 +145,18 @@ SETTINGS_ACTIVE_MODEL_UNCONFIGURED = "Active model: not configured"
 SETTINGS_API_KEY_LINE = "API key: {status}"
 SETTINGS_THINKING_EFFORT_LINE = "Thinking effort: {effort}"
 SETTINGS_ACTIVE_THEME = "Active theme: {theme}"
+BROWSER_MODEL_VISION_READY = "Browser agent model supports vision."
+BROWSER_MODEL_INHERIT_VISION_READY = "Browser agent inherits a vision-capable model."
+BROWSER_MODEL_INHERIT_NO_VISION = (
+    "Browser agent is unavailable: inherited model {provider}/{model} does not support vision. "
+    "Choose a vision-capable Browser model."
+)
+BROWSER_MODEL_EXPLICIT_NO_VISION = (
+    "Browser model {provider}/{model} does not support vision. Choose a vision-capable model or Default (inherit)."
+)
+BROWSER_MODEL_PROVIDER_NO_VISION = (
+    "Provider {provider} has no vision-capable Browser models. Choose another provider or Default (inherit)."
+)
 
 # Status dashboard
 STATUS_TOKENS_UNKNOWN = "Token counts unavailable."

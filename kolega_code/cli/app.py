@@ -380,6 +380,8 @@ class KolegaCodeApp(
                                         with Horizontal(classes="agent-model-field"):
                                             yield Label("Effort", classes="agent-model-field-label")
                                             yield Select([], id=f"am_effort_{role_value}", allow_blank=True, prompt="—")
+                                        if role_value == "browser":
+                                            yield Static("", id="am_status_browser", classes="settings-hint")
                             with Vertical(classes="settings-section", id="settings_web_search") as web_search_section:
                                 web_search_section.border_title = "Web Search"
                                 yield Static(

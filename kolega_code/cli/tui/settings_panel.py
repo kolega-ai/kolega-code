@@ -218,6 +218,7 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
         if select_id == "provider_select":
             provider = str(event.value)
             self._repopulate_model_select(provider, "model_select", "thinking_effort_select")
+            self._update_browser_model_hint()
             try:
                 api_key_input = self.query_one("#api_key_input", Input)
                 api_key_input.placeholder = self._api_key_placeholder(provider)
@@ -233,6 +234,7 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             except NoMatches:
                 return
             self._set_effort_select_default(provider, str(event.value))
+            self._update_browser_model_hint()
             return
 
         if select_id == "web_search_backend_select":
@@ -262,6 +264,8 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
                 self._repopulate_model_select(
                     provider, f"am_model_{role}", f"am_effort_{role}", model_value=model_value
                 )
+            if role == "browser":
+                self._update_browser_model_hint()
             return
 
         if select_id.startswith("am_model_"):
@@ -275,6 +279,8 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
                 # model change has none pending and falls back to preserve/default.
                 preferred = self._pending_agent_efforts.pop(f"am_effort_{role}", None)
                 self._set_effort_select_default(provider, str(event.value), f"am_effort_{role}", preferred=preferred)
+            if role == "browser":
+                self._update_browser_model_hint()
             return
 
         if select_id == "theme_select":
@@ -322,6 +328,7 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
         api_key_input.placeholder = self._api_key_placeholder(provider)
         api_key_input.disabled = provider == chatgpt_constants.PROVIDER_KEY
         self._populate_agent_model_rows()
+        self._update_browser_model_hint()
         self._populate_web_search_controls()
         self._populate_mcp_controls()
         self._populate_lsp_controls()
@@ -361,6 +368,65 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             self._repopulate_model_select(
                 provider, model_id, effort_id, model_value=model_value, effort_value=effort_value
             )
+
+    def _browser_model_status(self) -> tuple[str, str, bool]:
+        """Return the Browser-role model message, tone, and whether saving must stop."""
+        try:
+            browser_provider = str(self.query_one("#am_provider_browser", Select).value)
+        except NoMatches:
+            return "", "info", False
+
+        inherited = browser_provider == INHERIT_SENTINEL
+        if inherited:
+            try:
+                provider = str(self.query_one("#provider_select", Select).value)
+                model = str(self.query_one("#model_select", Select).value)
+            except NoMatches:
+                return "", "info", False
+        else:
+            provider = browser_provider
+            try:
+                model_value = self.query_one("#am_model_browser", Select).value
+            except NoMatches:
+                return "", "info", False
+            if model_value is Select.NULL:
+                return messages.BROWSER_MODEL_PROVIDER_NO_VISION.format(provider=provider), "error", True
+            model = str(model_value)
+
+        option = get_ui_model(provider, model)
+        supports_vision = bool(option and option.supports_vision)
+        if supports_vision:
+            message = messages.BROWSER_MODEL_INHERIT_VISION_READY if inherited else messages.BROWSER_MODEL_VISION_READY
+            return message, "ok", False
+        if inherited:
+            return (
+                messages.BROWSER_MODEL_INHERIT_NO_VISION.format(provider=provider, model=model),
+                "warning",
+                False,
+            )
+        return (
+            messages.BROWSER_MODEL_EXPLICIT_NO_VISION.format(provider=provider, model=model),
+            "error",
+            True,
+        )
+
+    def _update_browser_model_hint(self) -> None:
+        """Keep the Browser-role capability hint synchronized with its resolved model."""
+        message, tone, _ = self._browser_model_status()
+        if not message:
+            return
+        glyph, style = {
+            "ok": (Glyph.CHECK, Color.SUCCESS),
+            "error": (Glyph.CROSS, Color.ERROR),
+            "warning": (Glyph.STATUS, Color.WARNING),
+        }.get(tone, (Glyph.STATUS, Color.MUTED))
+        content = Text()
+        content.append(theme.g(glyph) + " ", style=style)
+        content.append(message)
+        try:
+            self.query_one("#am_status_browser", Static).update(content)
+        except NoMatches:
+            return
 
     def _update_search_backend_fields(self, backend: str) -> None:
         """Show only the inputs the selected web-search backend needs.
@@ -869,7 +935,13 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
         if model_value is None:
             current = model_select.value
             model_value = None if current is Select.NULL else str(current)
-        model_options = ui_model_options(provider)
+        browser_role = model_id == "am_model_browser"
+        model_options = ui_model_options(provider, vision_only=True) if browser_role else ui_model_options(provider)
+        valid_models = {value for _, value in model_options}
+        if browser_role and model_value and model_value not in valid_models:
+            stale_option = get_ui_model(provider, model_value)
+            if stale_option is not None:
+                model_options.append((f"{stale_option.model_label} (vision required)", model_value))
         model_select.set_options(model_options)
         valid_models = {value for _, value in model_options}
         model = model_value if (model_value and model_value in valid_models) else None
@@ -950,6 +1022,12 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
     async def _save_settings_from_ui(self) -> None:
         provider = str(self.query_one("#provider_select", Select).value)
         model = str(self.query_one("#model_select", Select).value)
+        browser_message, browser_tone, browser_blocks_save = self._browser_model_status()
+        if browser_blocks_save:
+            self._update_browser_model_hint()
+            self._set_settings_status(browser_message, "error")
+            self._notify_user(browser_message, severity="error")
+            return
         effort = str(self.query_one("#thinking_effort_select", Select).value)
         valid_efforts = {value for _, value in ui_thinking_effort_options(provider, model)}
         if effort not in valid_efforts:
@@ -980,6 +1058,8 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             )
             if override_message:
                 self._notify_user(f"{messages.SETTINGS_SAVED} {override_message}", severity="warning")
+            elif browser_tone == "warning":
+                self._notify_user(f"{messages.SETTINGS_SAVED} {browser_message}", severity="warning")
             else:
                 self._notify_user(messages.SETTINGS_SAVED)
 
@@ -1050,6 +1130,10 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             if override_message:
                 lines.append(override_message)
                 tone = "warning"
+        browser_message, browser_tone, _ = self._browser_model_status()
+        if browser_message and browser_tone in {"warning", "error"}:
+            lines.append(browser_message)
+            tone = browser_tone
         self._set_settings_status("\n".join(lines), tone)
         self._refresh_status_dashboard()
 

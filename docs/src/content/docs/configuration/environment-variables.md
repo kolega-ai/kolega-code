@@ -86,6 +86,12 @@ section.
 | `KOLEGA_CODE_<ROLE>_MODEL` | Model for that agent |
 | `KOLEGA_CODE_<ROLE>_EFFORT` | Thinking effort for that agent |
 
+The `BROWSER` role requires a vision-capable model. An incompatible explicit or
+inherited model is never replaced automatically; dispatching the browser agent
+fails with a configuration error until `KOLEGA_CODE_BROWSER_PROVIDER` and
+`KOLEGA_CODE_BROWSER_MODEL` (or the equivalent Settings override) select a model
+with vision support.
+
 ## State & environment
 
 | Variable | Purpose |
