@@ -1612,18 +1612,21 @@ class ToolCollection(LogMixin):
 
     async def web_fetch(self, url: str, instruction: str) -> str:
         """
-        Fetch web page content, follow an instruction, and return a concise response.
+        Fetch URL content locally, follow an instruction, and return a grounded response.
 
-        This tool downloads the specified URL, extracts readable text using Trafilatura,
-        and asks the fast LLM model to apply the provided instruction. Useful for gathering
-        information from public web pages without launching an interactive browser session.
+        This tool handles HTML through a quality-gated local extractor chain, reads
+        textual formats directly, converts PDF and modern Office documents locally,
+        and asks the fast model to apply the instruction with source evidence. It does
+        not run JavaScript or send content to a third-party reader service. For a page
+        reported as JavaScript-rendered, use the browser tools instead.
 
         Args:
             url: Full http(s) URL to fetch.
             instruction: Guidance for how to use the extracted content.
 
         Returns:
-            The model's response derived from the fetched content, truncated to an internal character limit if needed.
+            A source-attributed answer with evidence, or bounded extracted content if
+            the internal answering stage cannot complete.
         """
         return await self.web_fetch_tool.web_fetch(url, instruction)
 

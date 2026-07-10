@@ -2,25 +2,17 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from kolega_code.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
+from kolega_code.agent.tool_backend.web_fetch.answering import MAX_COMPLETION_TOKENS
+from kolega_code.agent.tool_backend.web_fetch.pipeline import WebContent, WebContentError
 from kolega_code.agent.tool_backend.web_fetch_tool import WebFetchTool
-
-
-@pytest.fixture
-def mock_connection_manager():
-    return AsyncMock()
-
-
-@pytest.fixture
-def project_path(tmp_path):
-    return tmp_path
+from kolega_code.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
+from kolega_code.tools import ToolError
 
 
 @pytest.fixture
 def agent_config():
     return AgentConfig(
         anthropic_api_key="test_key",
-        openai_api_key="test_key",
         long_context_config=ModelConfig(
             provider=ModelProvider.ANTHROPIC, model="long-model", rate_limits=RateLimitConfig()
         ),
@@ -35,183 +27,161 @@ def agent_config():
 
 
 @pytest.fixture
-def mock_caller():
-    caller = Mock()
-    caller.agent_name = "coder"
-    caller.current_tool_call_id = None
-    caller.workspace_id = "test_workspace"
-    caller.thread_id = "test_thread"
-    caller.llm = None
-    caller.user_id = "user-123"
-    caller.user_email = "user@example.com"
-    return caller
+def caller():
+    value = Mock()
+    value.agent_name = "coder"
+    value.current_tool_call_id = None
+    value.workspace_id = "test_workspace"
+    value.thread_id = "test_thread"
+    value.llm = None
+    value.user_id = "user-123"
+    value.user_email = "user@example.com"
+    return value
 
 
 @pytest.fixture
-def web_fetch_tool(project_path, mock_connection_manager, agent_config, mock_caller):
-    return WebFetchTool(
-        project_path, "test_workspace", "test_thread", mock_connection_manager, agent_config, mock_caller
+def tool(tmp_path, agent_config, caller):
+    return WebFetchTool(tmp_path, "test_workspace", "test_thread", AsyncMock(), agent_config, caller)
+
+
+def _content(text: str = "Extracted content with the important fact.", **kwargs) -> WebContent:
+    return WebContent(
+        requested_url="https://example.com/",
+        final_url="https://example.com/final",
+        content=text,
+        content_type="text/html",
+        method="trafilatura",
+        byte_count=512,
+        **kwargs,
     )
 
 
-class TestWebFetchTool:
-    @pytest.mark.asyncio
-    async def test_web_fetch_success(self, web_fetch_tool, agent_config):
-        with (
-            patch(
-                "kolega_code.agent.tool_backend.web_fetch_tool.trafilatura.fetch_url",
-                return_value="<html>content</html>",
-            ) as mock_fetch,
-            patch(
-                "kolega_code.agent.tool_backend.web_fetch_tool.trafilatura.extract", return_value="Extracted content"
-            ) as mock_extract,
-            patch(
-                "kolega_code.agent.tool_backend.web_fetch_tool.get_model_specs",
-                return_value={"max_completion_tokens": 1024},
-            ) as mock_specs,
-            patch("kolega_code.agent.tool_backend.web_fetch_tool.LLMClient") as mock_llm_class,
-        ):
-            mock_response = Mock()
-            mock_response.get_text_content.return_value = "Summarized answer"
-            mock_llm_instance = mock_llm_class.return_value
-            mock_llm_instance.generate = AsyncMock(return_value=mock_response)
+def _model_response(text: str):
+    response = Mock()
+    response.get_text_content.return_value = text
+    return response
 
-            result = await web_fetch_tool.web_fetch("https://example.com", "Summarize the page")
 
-            assert result == "Summarized answer"
-            mock_fetch.assert_called_once_with("https://example.com")
-            mock_extract.assert_called_once()
-            mock_specs.assert_called_once()
-            mock_llm_instance.generate.assert_awaited_once()
+def _configure_success(tool: WebFetchTool, content: WebContent | None = None, response_text: str | None = None):
+    tool.content_pipeline.load = AsyncMock(return_value=content or _content())
+    client = Mock()
+    client.generate = AsyncMock(
+        return_value=_model_response(
+            response_text or '{"answer":"The important fact.","evidence":["the important fact"],"insufficient":false}'
+        )
+    )
+    return client
 
-            assert mock_llm_instance.generate.await_args is not None
-            await_args, await_kwargs = mock_llm_instance.generate.await_args
-            assert await_kwargs["model"] == agent_config.fast_config.model
-            assert await_kwargs["max_completion_tokens"] == 1024
 
-    @pytest.mark.asyncio
-    async def test_web_fetch_applies_char_limit(self, web_fetch_tool):
-        with (
-            patch.object(WebFetchTool, "DEFAULT_RESPONSE_CHAR_LIMIT", 10),
-            patch(
-                "kolega_code.agent.tool_backend.web_fetch_tool.trafilatura.fetch_url",
-                return_value="<html>content</html>",
-            ),
-            patch(
-                "kolega_code.agent.tool_backend.web_fetch_tool.trafilatura.extract", return_value="Extracted content"
-            ),
-            patch(
-                "kolega_code.agent.tool_backend.web_fetch_tool.get_model_specs",
-                return_value={"max_completion_tokens": 1024},
-            ),
-            patch("kolega_code.agent.tool_backend.web_fetch_tool.LLMClient") as mock_llm_class,
-        ):
-            long_text = "Alpha Beta Gamma Delta"
-            mock_response = Mock()
-            mock_response.get_text_content.return_value = long_text
-            mock_llm_instance = mock_llm_class.return_value
-            mock_llm_instance.generate = AsyncMock(return_value=mock_response)
+@pytest.mark.asyncio
+async def test_web_fetch_returns_source_grounded_answer_and_evidence(tool):
+    client = _configure_success(tool)
+    with (
+        patch.object(tool, "_build_client", return_value=client),
+        patch(
+            "kolega_code.agent.tool_backend.web_fetch_tool.get_model_specs",
+            return_value={"context_length": 200_000, "max_completion_tokens": 1024},
+        ),
+    ):
+        result = await tool.web_fetch("example.com", "Find the important fact")
 
-            result = await web_fetch_tool.web_fetch("https://example.com", "Summarize")
+    assert "Source: https://example.com/final" in result
+    assert "Answer:\nThe important fact." in result
+    assert '- "the important fact"' in result
+    tool.content_pipeline.load.assert_awaited_once_with("example.com")
+    assert client.generate.await_args.kwargs["max_completion_tokens"] == 1024
 
-            assert result == "Alpha…"
 
-    @pytest.mark.asyncio
-    async def test_web_fetch_caps_large_model_token_limit(self, web_fetch_tool):
-        with (
-            patch(
-                "kolega_code.agent.tool_backend.web_fetch_tool.trafilatura.fetch_url",
-                return_value="<html>content</html>",
-            ),
-            patch(
-                "kolega_code.agent.tool_backend.web_fetch_tool.trafilatura.extract", return_value="Extracted content"
-            ),
-            patch(
-                "kolega_code.agent.tool_backend.web_fetch_tool.get_model_specs",
-                return_value={"max_completion_tokens": 384000},
-            ),
-            patch("kolega_code.agent.tool_backend.web_fetch_tool.LLMClient") as mock_llm_class,
-        ):
-            mock_response = Mock()
-            mock_response.get_text_content.return_value = "Summarized answer"
-            mock_llm_instance = mock_llm_class.return_value
-            mock_llm_instance.generate = AsyncMock(return_value=mock_response)
+@pytest.mark.asyncio
+async def test_web_fetch_caps_completion_tokens_without_clipping_answer_chars(tool):
+    long_answer = "word " * 300
+    response = (
+        '{"answer":' + repr(long_answer).replace("'", '"') + ',"evidence":["important fact"],"insufficient":false}'
+    )
+    client = _configure_success(tool, response_text=response)
+    with (
+        patch.object(tool, "_build_client", return_value=client),
+        patch(
+            "kolega_code.agent.tool_backend.web_fetch_tool.get_model_specs",
+            return_value={"context_length": 200_000, "max_completion_tokens": 384_000},
+        ),
+    ):
+        result = await tool.web_fetch("https://example.com", "Explain")
 
-            result = await web_fetch_tool.web_fetch("https://example.com", "Summarize")
+    assert "word word word" in result
+    assert len(result) > 512
+    assert client.generate.await_args.kwargs["max_completion_tokens"] == MAX_COMPLETION_TOKENS
 
-            assert result == "Summarized answer"
-            assert mock_llm_instance.generate.await_args is not None
-            await_args, await_kwargs = mock_llm_instance.generate.await_args
-            assert await_kwargs["max_completion_tokens"] == WebFetchTool.WEB_FETCH_MAX_COMPLETION_TOKENS
 
-    @pytest.mark.asyncio
-    async def test_web_fetch_preserves_smaller_model_token_limit(self, web_fetch_tool):
-        with (
-            patch(
-                "kolega_code.agent.tool_backend.web_fetch_tool.trafilatura.fetch_url",
-                return_value="<html>content</html>",
-            ),
-            patch(
-                "kolega_code.agent.tool_backend.web_fetch_tool.trafilatura.extract", return_value="Extracted content"
-            ),
-            patch(
-                "kolega_code.agent.tool_backend.web_fetch_tool.get_model_specs",
-                return_value={"max_completion_tokens": 512},
-            ),
-            patch("kolega_code.agent.tool_backend.web_fetch_tool.LLMClient") as mock_llm_class,
-        ):
-            mock_response = Mock()
-            mock_response.get_text_content.return_value = "Summarized answer"
-            mock_llm_instance = mock_llm_class.return_value
-            mock_llm_instance.generate = AsyncMock(return_value=mock_response)
+@pytest.mark.asyncio
+async def test_web_fetch_model_failure_returns_bounded_extracted_content(tool):
+    text = "HEAD-" + ("x" * 90_000) + "-TAIL"
+    client = _configure_success(tool, _content(text))
+    client.generate.side_effect = RuntimeError("provider unavailable")
+    with (
+        patch.object(tool, "_build_client", return_value=client),
+        patch(
+            "kolega_code.agent.tool_backend.web_fetch_tool.get_model_specs",
+            return_value={"context_length": 200_000, "max_completion_tokens": 1024},
+        ),
+    ):
+        result = await tool.web_fetch("https://example.com", "Explain")
 
-            result = await web_fetch_tool.web_fetch("https://example.com", "Summarize")
+    assert "Extracted content:" in result
+    assert "HEAD-" in result and "-TAIL" in result
+    assert "characters omitted from the middle" in result
+    assert "Fast-model answering failed" in result
 
-            assert result == "Summarized answer"
-            assert mock_llm_instance.generate.await_args is not None
-            await_args, await_kwargs = mock_llm_instance.generate.await_args
-            assert await_kwargs["max_completion_tokens"] == 512
 
-    @pytest.mark.asyncio
-    async def test_web_fetch_reports_empty_model_response(self, web_fetch_tool):
-        with (
-            patch(
-                "kolega_code.agent.tool_backend.web_fetch_tool.trafilatura.fetch_url",
-                return_value="<html>content</html>",
-            ),
-            patch(
-                "kolega_code.agent.tool_backend.web_fetch_tool.trafilatura.extract", return_value="Extracted content"
-            ),
-            patch(
-                "kolega_code.agent.tool_backend.web_fetch_tool.get_model_specs",
-                return_value={"max_completion_tokens": 1024},
-            ),
-            patch("kolega_code.agent.tool_backend.web_fetch_tool.LLMClient") as mock_llm_class,
-        ):
-            mock_response = Mock()
-            mock_response.get_text_content.return_value = ""
-            mock_llm_instance = mock_llm_class.return_value
-            mock_llm_instance.generate = AsyncMock(return_value=mock_response)
+@pytest.mark.asyncio
+async def test_web_fetch_insufficient_answer_degrades_to_content(tool):
+    client = _configure_success(
+        tool,
+        response_text='{"answer":"Not present","evidence":[],"insufficient":true}',
+    )
+    with (
+        patch.object(tool, "_build_client", return_value=client),
+        patch(
+            "kolega_code.agent.tool_backend.web_fetch_tool.get_model_specs",
+            return_value={"context_length": 200_000, "max_completion_tokens": 1024},
+        ),
+    ):
+        result = await tool.web_fetch("https://example.com", "Find absent data")
 
-            result = await web_fetch_tool.web_fetch("https://example.com", "Summarize")
+    assert "Extracted content:" in result
+    assert "could not find enough grounded evidence" in result
 
-            assert result == "Error: Fast model returned an empty response for fetched content."
-            mock_llm_instance.generate.assert_awaited_once()
 
-    @pytest.mark.asyncio
-    async def test_web_fetch_invalid_url(self, web_fetch_tool):
-        result = await web_fetch_tool.web_fetch("ftp://example.com", "Summarize")
-        assert result.startswith("Error: Provide a valid http(s) URL.")
+@pytest.mark.asyncio
+async def test_web_fetch_terminal_content_failure_raises_tool_error(tool):
+    tool.content_pipeline.load = AsyncMock(side_effect=WebContentError("HTTP 404 while fetching URL."))
+    with pytest.raises(ToolError, match="HTTP 404"):
+        await tool.web_fetch("https://example.com/missing", "Summarize")
 
-    @pytest.mark.asyncio
-    async def test_web_fetch_no_content_downloaded(self, web_fetch_tool):
-        with (
-            patch(
-                "kolega_code.agent.tool_backend.web_fetch_tool.trafilatura.fetch_url",
-                return_value=None,
-            ),
-            patch("kolega_code.agent.tool_backend.web_fetch_tool.LLMClient") as mock_llm_class,
-        ):
-            result = await web_fetch_tool.web_fetch("https://example.com", "Summarize")
-            assert result.startswith("Error: No content retrieved from https://example.com")
-            mock_llm_class.assert_not_called()
+
+@pytest.mark.asyncio
+async def test_web_fetch_rejects_empty_instruction_before_network(tool):
+    with pytest.raises(ToolError, match="non-empty instruction"):
+        await tool.web_fetch("https://example.com", "  ")
+
+
+def test_safe_display_url_removes_credentials_and_query() -> None:
+    assert WebFetchTool._safe_display_url("https://user:secret@example.com/private?token=secret") == "the requested URL"
+    assert WebFetchTool._safe_display_url("example.com/path?token=secret") == "https://example.com/path"
+
+
+@pytest.mark.asyncio
+async def test_progress_broadcast_failure_does_not_destroy_result(tool, caller):
+    caller.current_tool_call_id = "call-1"
+    tool.connection_manager.broadcast_event.side_effect = RuntimeError("UI disconnected")
+    client = _configure_success(tool)
+    with (
+        patch.object(tool, "_build_client", return_value=client),
+        patch(
+            "kolega_code.agent.tool_backend.web_fetch_tool.get_model_specs",
+            return_value={"context_length": 200_000, "max_completion_tokens": 1024},
+        ),
+    ):
+        result = await tool.web_fetch("https://example.com", "Summarize")
+
+    assert "The important fact." in result
