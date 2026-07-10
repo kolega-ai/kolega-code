@@ -6,13 +6,15 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
-### Added
+## 0.16.1 - 2026-07-10
+
+### Changed
 
 - Rebuilt `web_fetch` as a fully local, content-type-aware pipeline with bounded
   HTTP retries, automatic quality-gated Trafilatura/Readability/DOM extraction,
   JSON/text/feed handling, and local PDF/Office conversion.
-- Added grounded fast-model answers with verified page excerpts, long-content
-  chunking, and bounded extracted-content fallback when answering fails.
+- `web_fetch` now returns grounded fast-model answers with verified page excerpts,
+  long-content chunking, and a bounded extracted-content fallback when answering fails.
 
 ### Fixed
 
