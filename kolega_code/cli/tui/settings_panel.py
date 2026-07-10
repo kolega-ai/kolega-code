@@ -993,8 +993,16 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             return
         detected_names = [d["display_name"] for d in lsp_status.get("detected", [])]
         missing_names = [m["display_name"] for m in lsp_status.get("missing", [])]
+        incomplete = not lsp_status.get("scan_complete", True)
+        incomplete_text = (
+            "Detection incomplete "
+            f"({lsp_status.get('scan_stop_reason') or 'scan limit'}, "
+            f"{lsp_status.get('scanned_entries', 0)} entries)."
+        )
         if detected_names:
             parts = [f"Detected: {', '.join(detected_names)}"]
+            if incomplete:
+                parts.append(incomplete_text)
             if missing_names:
                 parts.append(f"Missing servers: {', '.join(missing_names)}")
             # Show active sessions with live state
@@ -1008,6 +1016,8 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             if active:
                 parts.append(f"Active: {', '.join(active)}")
             status.update(" ".join(parts))
+        elif incomplete:
+            status.update(incomplete_text)
         else:
             status.update("No supported languages detected in this project.")
 

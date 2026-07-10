@@ -135,6 +135,20 @@ def test_status_returns_expected_fields(manager: LspManager):
     assert status["diagnostic_counts"] == {}
 
 
+def test_status_exposes_incomplete_detection(manager: LspManager):
+    assert manager.report is not None
+    manager.report.scan_complete = False
+    manager.report.scan_stop_reason = "deadline"
+    manager.report.scanned_entries = 50_000
+    manager.report.scan_elapsed_seconds = 5.0
+
+    status = manager.status()
+
+    assert status["scan_complete"] is False
+    assert status["scan_stop_reason"] == "deadline"
+    assert status["scanned_entries"] == 50_000
+
+
 def test_status_includes_session_info(manager: LspManager):
     """status() includes active session details."""
     fake_client = MagicMock()

@@ -4,9 +4,14 @@ import os
 import re
 import shlex
 import shutil
+import threading
+import time
 from base64 import b64decode
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, List, Optional, Tuple, cast
+
+from kolega_code.services.workspace_scan import ScanLimits, ScanOutcome, scan_workspace
 
 from .base_tool import BaseTool
 
@@ -20,6 +25,20 @@ _MAX_FILES = 128
 _MAX_LINES_PER_FILE = 5
 _MAX_LINE_LENGTH = 200
 _MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
+_SEARCH_TIMEOUT_SECONDS = 60.0
+_SCAN_TIMEOUT_SECONDS = 30.0
+_SCAN_MAX_ENTRIES = 500_000
+_BROAD_ROOT_EXCLUDE_DIRS = {
+    "Applications",
+    "Applications (Parallels)",
+    "Library",
+    "Movies",
+    "Music",
+    "Parallels",
+    "Pictures",
+    "calibre_library",
+    "models",
+}
 
 
 class _EngineUnavailable(Exception):
@@ -27,9 +46,22 @@ class _EngineUnavailable(Exception):
     flag, non-regex error) so the caller falls back to the next engine tier."""
 
 
+class _SearchTimedOut(Exception):
+    """Raised when an otherwise valid search exceeds its execution budget."""
+
+
 # One normalized match line, shared currency between every engine and the formatter.
 # (relative_path, line_number, raw_line_text)
 Record = Tuple[str, int, str]
+
+
+@dataclass
+class SearchRun:
+    records: List[Record]
+    complete: bool = True
+    stop_reason: Optional[str] = None
+    visited_entries: int = 0
+    elapsed_seconds: float = 0.0
 
 
 class SearchCodebaseTool(BaseTool):
@@ -103,6 +135,18 @@ class SearchCodebaseTool(BaseTool):
         """The sandbox handle (only present on sandbox filesystems)."""
         return cast(Any, self.filesystem).sandbox
 
+    def _is_broad_local_root(self) -> bool:
+        if hasattr(self.filesystem, "sandbox"):
+            return False
+        root = Path(self._fs_root).expanduser().resolve()
+        return root == Path.home().resolve() or root == Path(root.anchor)
+
+    def _search_exclude_dirs(self) -> set[str]:
+        excluded = set(self.EXCLUDE_DIRS)
+        if self._is_broad_local_root():
+            excluded.update(_BROAD_ROOT_EXCLUDE_DIRS)
+        return excluded
+
     async def search_codebase(
         self, pattern: str, file_pattern: str = "*", case_sensitive: bool = False, literal: bool = False
     ) -> str:
@@ -151,10 +195,19 @@ class SearchCodebaseTool(BaseTool):
             # Run the first available engine; fall back down the tiers on failure.
             for runner in await self._engine_chain():
                 try:
-                    records = await runner(pattern, file_pattern, case_sensitive, literal, regex)
+                    run = await runner(pattern, file_pattern, case_sensitive, literal, regex)
                 except _EngineUnavailable:
                     continue
-                return self._format_results(records, pattern)
+                except _SearchTimedOut:
+                    run = SearchRun([], complete=False, stop_reason="deadline", elapsed_seconds=_SEARCH_TIMEOUT_SECONDS)
+                if not run.complete:
+                    await self.log_warning(
+                        "Code search stopped before completion "
+                        f"(reason={run.stop_reason}, visited={run.visited_entries}, "
+                        f"elapsed={run.elapsed_seconds:.2f}s)",
+                        sender=self.caller.agent_name,
+                    )
+                return self._format_results(run, pattern)
 
             # The Python tier never raises _EngineUnavailable, so this is unreachable.
             return f"No matches found for pattern '{pattern}'"
@@ -210,7 +263,6 @@ class SearchCodebaseTool(BaseTool):
     def _rg_args(self, pattern: str, file_pattern: str, case_sensitive: bool, literal: bool) -> List[str]:
         args = [
             "--json",
-            "--hidden",
             "--no-config",
             "--no-ignore-parent",
             "--no-ignore-global",
@@ -218,12 +270,18 @@ class SearchCodebaseTool(BaseTool):
             "--max-filesize",
             "10M",
         ]
+        # Hidden project files matter for a normal repository. At a home/filesystem
+        # root, however, --hidden expands the search into package caches and tool
+        # state that dwarf the user's source trees. Keep broad-root search useful by
+        # searching visible workspaces and pruning platform data directories.
+        if not self._is_broad_local_root():
+            args.append("--hidden")
         if not case_sensitive:
             args.append("-i")
         if literal:
             args.append("-F")
         # --hidden re-includes .git etc., so explicitly re-exclude the dirs.
-        for exclude_dir in sorted(self.EXCLUDE_DIRS):
+        for exclude_dir in sorted(self._search_exclude_dirs()):
             args += ["-g", f"!{exclude_dir}/"]
         # Also drop a *file* literally named .env (the glob above only excludes dirs).
         args += ["-g", "!.env"]
@@ -240,7 +298,7 @@ class SearchCodebaseTool(BaseTool):
 
     async def _run_rg_local(
         self, pattern: str, file_pattern: str, case_sensitive: bool, literal: bool, regex
-    ) -> List[Record]:
+    ) -> SearchRun:
         if shutil.which("rg") is None:
             raise _EngineUnavailable()
         args = self._rg_args(pattern, file_pattern, case_sensitive, literal)
@@ -255,29 +313,36 @@ class SearchCodebaseTool(BaseTool):
                 stderr=asyncio.subprocess.PIPE,
                 env=env,
             )
-            stdout, _stderr = await proc.communicate()
+            stdout, _stderr = await self._communicate_local_process(proc)
         except (OSError, ValueError):
             raise _EngineUnavailable()
         # 0 = matches, 1 = no matches; anything else (2 = usage/regex error on an
         # old rg, etc.) falls back to the next tier.
         if proc.returncode not in (0, 1):
             raise _EngineUnavailable()
-        return self._parse_rg_json(stdout.decode("utf-8", "replace"))
+        return SearchRun(self._parse_rg_json(stdout.decode("utf-8", "replace")))
 
     async def _run_rg_sandbox(
         self, pattern: str, file_pattern: str, case_sensitive: bool, literal: bool, regex
-    ) -> List[Record]:
+    ) -> SearchRun:
         args = self._rg_args(pattern, file_pattern, case_sensitive, literal)
         cmd = "RIPGREP_CONFIG_FILE= rg " + " ".join(shlex.quote(a) for a in args)
         full_cmd = f"cd {shlex.quote(self._fs_root)} && {cmd} ; echo {_RC_MARKER}=$?"
         try:
-            result = await self._fs_sandbox.commands.run(full_cmd)
+            result = await asyncio.wait_for(
+                self._fs_sandbox.commands.run(full_cmd, timeout=_SEARCH_TIMEOUT_SECONDS),
+                timeout=_SEARCH_TIMEOUT_SECONDS + 1.0,
+            )
+        except asyncio.CancelledError:
+            raise
+        except (asyncio.TimeoutError, TimeoutError):
+            raise _SearchTimedOut()
         except Exception:
             raise _EngineUnavailable()
         rc, out = self._split_rc(result.stdout or "")
         if rc not in (0, 1):
             raise _EngineUnavailable()
-        return self._parse_rg_json(out)
+        return SearchRun(self._parse_rg_json(out))
 
     def _parse_rg_json(self, stdout_text: str) -> List[Record]:
         records: List[Record] = []
@@ -326,8 +391,10 @@ class SearchCodebaseTool(BaseTool):
         argv.append("-F" if literal else "-E")
         if file_pattern != "*":
             argv.append(f"--include={file_pattern}")
-        for exclude_dir in sorted(self.EXCLUDE_DIRS):
+        for exclude_dir in sorted(self._search_exclude_dirs()):
             argv.append(f"--exclude-dir={exclude_dir}")
+        if self._is_broad_local_root():
+            argv.append("--exclude-dir=.*")
         for ext in sorted(self.BINARY_EXTENSIONS):
             argv.append(f"--exclude=*{ext}")
         # -e guards a pattern that starts with '-'; '.' is the search root.
@@ -336,7 +403,7 @@ class SearchCodebaseTool(BaseTool):
 
     async def _run_grep_local(
         self, pattern: str, file_pattern: str, case_sensitive: bool, literal: bool, regex
-    ) -> List[Record]:
+    ) -> SearchRun:
         if shutil.which("grep") is None:
             raise _EngineUnavailable()
         argv = self._grep_argv(pattern, file_pattern, case_sensitive, literal)
@@ -348,29 +415,36 @@ class SearchCodebaseTool(BaseTool):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            stdout, _stderr = await proc.communicate()
+            stdout, _stderr = await self._communicate_local_process(proc)
         except (OSError, ValueError):
             raise _EngineUnavailable()
         if proc.returncode not in (0, 1):
             raise _EngineUnavailable()
         records = self._parse_grep(stdout.decode("utf-8", "replace"))
         # grep has no --max-filesize; reproduce the 10MB skip via stat (local only).
-        return self._drop_oversize_local(records)
+        return SearchRun(self._drop_oversize_local(records))
 
     async def _run_grep_sandbox(
         self, pattern: str, file_pattern: str, case_sensitive: bool, literal: bool, regex
-    ) -> List[Record]:
+    ) -> SearchRun:
         argv = self._grep_argv(pattern, file_pattern, case_sensitive, literal)
         cmd = " ".join(shlex.quote(a) for a in argv)
         full_cmd = f"cd {shlex.quote(self._fs_root)} && {cmd} ; echo {_RC_MARKER}=$?"
         try:
-            result = await self._fs_sandbox.commands.run(full_cmd)
+            result = await asyncio.wait_for(
+                self._fs_sandbox.commands.run(full_cmd, timeout=_SEARCH_TIMEOUT_SECONDS),
+                timeout=_SEARCH_TIMEOUT_SECONDS + 1.0,
+            )
+        except asyncio.CancelledError:
+            raise
+        except (asyncio.TimeoutError, TimeoutError):
+            raise _SearchTimedOut()
         except Exception:
             raise _EngineUnavailable()
         rc, out = self._split_rc(result.stdout or "")
         if rc not in (0, 1):
             raise _EngineUnavailable()
-        return self._parse_grep(out)
+        return SearchRun(self._parse_grep(out))
 
     def _parse_grep(self, stdout_text: str) -> List[Record]:
         """Parse `grep -rn` output lines of the form `<path>:<lineno>:<content>`.
@@ -395,6 +469,37 @@ class SearchCodebaseTool(BaseTool):
             records.append((self._normalize_path(path), int(num_str), content))
         return records
 
+    async def _communicate_local_process(self, proc: asyncio.subprocess.Process) -> tuple[bytes, bytes]:
+        """Wait asynchronously and never leave a child behind on cancellation.
+
+        Local ripgrep/grep work does not block the event loop, so imposing a short
+        wall-clock timeout only creates false negatives on broad workspaces. The
+        user can cancel the turn at any time; cancellation terminates the child.
+        """
+        try:
+            return await proc.communicate()
+        except asyncio.CancelledError:
+            await self._stop_local_process(proc)
+            raise
+
+    @staticmethod
+    async def _stop_local_process(proc: asyncio.subprocess.Process) -> None:
+        if proc.returncode is not None:
+            return
+        try:
+            proc.terminate()
+            await asyncio.wait_for(proc.wait(), timeout=1.0)
+        except (ProcessLookupError, asyncio.TimeoutError):
+            if proc.returncode is None:
+                try:
+                    proc.kill()
+                except ProcessLookupError:
+                    return
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=1.0)
+                except asyncio.TimeoutError:
+                    pass
+
     def _drop_oversize_local(self, records: List[Record]) -> List[Record]:
         sizes: dict = {}
         kept: List[Record] = []
@@ -414,36 +519,125 @@ class SearchCodebaseTool(BaseTool):
 
     async def _run_python(
         self, pattern: str, file_pattern: str, case_sensitive: bool, literal: bool, regex
-    ) -> List[Record]:
-        files_with_info = await self._get_files_batch_local(file_pattern)
-        records: List[Record] = []
-        for file_path, file_size in files_with_info:
-            if file_size > _MAX_FILE_SIZE:
-                continue
-            if self._is_likely_binary_by_extension(file_path):
-                continue
-            try:
-                content = self.filesystem.read_text(file_path)
-                if "\x00" in content[:1024]:
+    ) -> SearchRun:
+        if hasattr(self.filesystem, "sandbox"):
+            return await self._run_python_sandbox_fallback(file_pattern, regex)
+
+        normalized_pattern = "**/*" if file_pattern == "*" else f"**/{file_pattern}"
+        self._load_gitignore_patterns()
+        scan = await scan_workspace(
+            Path(self._fs_root),
+            pattern=normalized_pattern,
+            include_files=True,
+            include_directories=False,
+            exclude_directories=frozenset(self._search_exclude_dirs()),
+            skip_hidden_directories=self._is_broad_local_root(),
+            binary_extensions=frozenset(self.BINARY_EXTENSIONS),
+            max_file_size=_MAX_FILE_SIZE,
+            ignore_spec=getattr(self, "_gitignore_spec", None),
+            limits=ScanLimits(timeout_seconds=_SCAN_TIMEOUT_SECONDS, max_entries=_SCAN_MAX_ENTRIES),
+        )
+        return await self._search_scanned_files(scan, regex)
+
+    async def _search_scanned_files(self, scan: ScanOutcome, regex) -> SearchRun:
+        cancel_event = threading.Event()
+        started = time.monotonic()
+        remaining = max(0.01, _SEARCH_TIMEOUT_SECONDS - scan.elapsed_seconds)
+        deadline = started + remaining
+
+        def search() -> SearchRun:
+            records: List[Record] = []
+            matched_files: set[str] = set()
+            for scanned in scan.paths:
+                if cancel_event.is_set():
+                    return SearchRun(records, False, "cancelled", scan.visited_entries, time.monotonic() - started)
+                if time.monotonic() >= deadline:
+                    return SearchRun(records, False, "deadline", scan.visited_entries, time.monotonic() - started)
+                try:
+                    content = self.filesystem.read_text(scanned.path)
+                    if "\x00" in content[:1024]:
+                        continue
+                except Exception:
                     continue
-            except Exception:
-                continue
-            norm = self._normalize_path(file_path)
-            for line_num, line in enumerate(content.splitlines(), start=1):
-                if regex.search(line):
-                    records.append((norm, line_num, line))
-        return records
+                norm = self._normalize_path(scanned.path)
+                for line_num, line in enumerate(content.splitlines(), start=1):
+                    if regex.search(line):
+                        records.append((norm, line_num, line))
+                        matched_files.add(norm)
+                if len(matched_files) > _MAX_FILES:
+                    return SearchRun(
+                        records,
+                        False,
+                        "result_limit",
+                        scan.visited_entries,
+                        scan.elapsed_seconds + time.monotonic() - started,
+                    )
+            return SearchRun(
+                records,
+                scan.complete,
+                scan.stop_reason,
+                scan.visited_entries,
+                scan.elapsed_seconds + time.monotonic() - started,
+            )
+
+        task = asyncio.create_task(asyncio.to_thread(search))
+        try:
+            return await asyncio.wait_for(asyncio.shield(task), timeout=remaining + 1.0)
+        except asyncio.CancelledError:
+            cancel_event.set()
+            task.cancel()
+            raise
+        except asyncio.TimeoutError:
+            cancel_event.set()
+            task.cancel()
+            return SearchRun([], False, "deadline", scan.visited_entries, _SEARCH_TIMEOUT_SECONDS)
+
+    async def _run_python_sandbox_fallback(self, file_pattern: str, regex) -> SearchRun:
+        """Keep the legacy remote-files fallback off-loop and time bounded."""
+        cancel_event = threading.Event()
+        started = time.monotonic()
+
+        def search() -> SearchRun:
+            records: List[Record] = []
+            for file_path, file_size in self._get_files_batch_sync(file_pattern):
+                if cancel_event.is_set() or time.monotonic() - started >= _SEARCH_TIMEOUT_SECONDS:
+                    return SearchRun(records, False, "deadline", elapsed_seconds=time.monotonic() - started)
+                if file_size > _MAX_FILE_SIZE or self._is_likely_binary_by_extension(file_path):
+                    continue
+                try:
+                    content = self.filesystem.read_text(file_path)
+                    if "\x00" in content[:1024]:
+                        continue
+                except Exception:
+                    continue
+                norm = self._normalize_path(file_path)
+                for line_num, line in enumerate(content.splitlines(), start=1):
+                    if regex.search(line):
+                        records.append((norm, line_num, line))
+            return SearchRun(records, elapsed_seconds=time.monotonic() - started)
+
+        task = asyncio.create_task(asyncio.to_thread(search))
+        try:
+            return await asyncio.wait_for(asyncio.shield(task), timeout=_SEARCH_TIMEOUT_SECONDS + 1.0)
+        except asyncio.CancelledError:
+            cancel_event.set()
+            task.cancel()
+            raise
+        except asyncio.TimeoutError:
+            cancel_event.set()
+            task.cancel()
+            return SearchRun([], False, "deadline", elapsed_seconds=_SEARCH_TIMEOUT_SECONDS)
 
     # ------------------------------------------------------------------
     # Shared output formatting
     # ------------------------------------------------------------------
 
-    def _format_results(self, records: List[Record], original_pattern: str) -> str:
+    def _format_results(self, run: SearchRun, original_pattern: str) -> str:
         """Group records by file (first-seen order), apply the display caps, and
         render the markdown output. `(N matches)` is the matching-line count."""
         files: dict = {}
         limit_hit = False
-        for path, line_num, raw in records:
+        for path, line_num, raw in run.records:
             if path in files:
                 files[path].append((line_num, raw))
             elif len(files) < _MAX_FILES:
@@ -451,8 +645,14 @@ class SearchCodebaseTool(BaseTool):
             else:
                 limit_hit = True
 
-        if not files:
+        if not files and run.complete:
             return f"No matches found for pattern '{original_pattern}'"
+        if not files:
+            return (
+                f"Search for pattern '{original_pattern}' stopped before completion because of "
+                f"{run.stop_reason or 'a search limit'}. No matches were observed; narrow the query "
+                "or project root for exhaustive results."
+            )
 
         blocks = []
         for path, hits in files.items():
@@ -469,9 +669,14 @@ class SearchCodebaseTool(BaseTool):
             blocks.append(block)
 
         output = f"# Search Results for '{original_pattern}'\n\n"
-        if limit_hit:
+        if limit_hit or run.stop_reason == "result_limit":
             output += (
                 f"⚠️ **Note:** Showing only the first {_MAX_FILES} results. There are more matches in the codebase.\n\n"
+            )
+        elif not run.complete:
+            output += (
+                f"⚠️ **Incomplete search:** stopped because of {run.stop_reason or 'a search limit'}. "
+                "Narrow the query or project root for exhaustive results.\n\n"
             )
         output += "\n\n".join(blocks)
         return output
@@ -503,7 +708,7 @@ class SearchCodebaseTool(BaseTool):
             path = path[2:]
         return path
 
-    async def _get_files_batch_local(self, file_pattern: str) -> List[Tuple[str, int]]:
+    def _get_files_batch_sync(self, file_pattern: str) -> List[Tuple[str, int]]:
         """
         Get files for local filesystem with minimal stat calls.
         """
