@@ -31,10 +31,14 @@ Run shell commands in the project and stream their output to the **Terminal** ta
 
 Drive a real browser (Playwright) for web tasks:
 
-- `launch_browser`, `list_browsers`, `close_browser`
-- `get_browser_interactive_elements`, `get_browser_console_logs`
-- `take_browser_screenshot`
-- `interact_with_browser`, `set_browser_select_value`
+- `browser_navigate`, `browser_snapshot`, `browser_find`, `browser_close`
+- `browser_click`, `browser_type`, `browser_fill_form`, `browser_select_option`
+- `browser_tabs`, `browser_wait_for`, `browser_handle_dialog`, `browser_file_upload`
+- `browser_console_messages`, `browser_network_requests`, `browser_take_screenshot`
+
+The browser agent uses accessibility snapshots with element refs such as `e12`.
+Actions return an updated snapshot, so the agent can interact deterministically
+without inventing CSS selectors or relying on screenshots.
 
 Launch visible browser windows (instead of headless) with `--browser-visible` on
 the [TUI](../../cli/overview/) or [`ask`](../../cli/ask/).

@@ -86,6 +86,12 @@ section.
 | `KOLEGA_CODE_<ROLE>_MODEL` | Model for that agent |
 | `KOLEGA_CODE_<ROLE>_EFFORT` | Thinking effort for that agent |
 
+The `BROWSER` role requires a vision-capable model. An incompatible explicit or
+inherited model is never replaced automatically; dispatching the browser agent
+fails with a configuration error until `KOLEGA_CODE_BROWSER_PROVIDER` and
+`KOLEGA_CODE_BROWSER_MODEL` (or the equivalent Settings override) select a model
+with vision support.
+
 ## State & environment
 
 | Variable | Purpose |
@@ -105,6 +111,24 @@ explicitly when you want a cloud provider or a self-hosted SearXNG instance.
 | `FIRECRAWL_API_KEY` | Optional Firecrawl key for higher rate limits |
 | `TAVILY_API_KEY` | Tavily API key |
 | `SEARXNG_BASE_URL` | Base URL for a self-hosted SearXNG instance |
+
+## Browser automation
+
+Local browser automation needs no credentials. Hosted sandbox deployments can
+connect the same browser agent to Browserless.
+
+| Variable | Purpose |
+| --- | --- |
+| `BROWSERLESS_API_KEY` | Browserless cloud API token |
+| `BROWSERLESS_WS_ENDPOINT` | Optional cloud or self-hosted WebSocket endpoint |
+| `BROWSERLESS_REGION` | Cloud region used when no endpoint is supplied: `sfo`, `lon`, or `ams` |
+| `BROWSERLESS_PROTOCOL` | Connection protocol: `cdp` (default) or `playwright` |
+| `BROWSERLESS_TIMEOUT_MS` | Optional maximum Browserless session duration; must fit the account plan |
+| `BROWSER_CONNECT_TIMEOUT_MS` | Browser transport connection timeout (default 30000 ms) |
+
+Custom endpoint query parameters are preserved, including Browserless proxy,
+stealth, profile, and recording options. If `BROWSERLESS_TIMEOUT_MS` is unset,
+Browserless applies the account's default session duration.
 
 ## Telemetry (Langfuse)
 

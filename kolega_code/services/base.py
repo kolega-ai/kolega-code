@@ -97,137 +97,103 @@ class TerminalManager(ABC):
 
 
 class BrowserManager(ABC):
-    """
-    Abstract base class for browser management.
-    Defines the interface for browser operations.
-    """
+    """Abstract single-session browser interface used by the browser agent."""
 
     @abstractmethod
-    async def launch_browser(self, url: str) -> str:
-        """
-        Launch a new browser instance and navigate to the specified URL.
-
-        Args:
-            url: The URL to navigate to
-
-        Returns:
-            Browser ID string
-
-        Raises:
-            Exception: If browser launch fails
-        """
+    async def navigate(self, url: str) -> Dict[str, Any]: ...
 
     @abstractmethod
-    async def list_browsers(self) -> dict:
-        """
-        Get information about all active browser instances.
-
-        Returns:
-            Dictionary mapping browser IDs to browser information
-        """
+    async def snapshot(self, target: Optional[str] = None, depth: Optional[int] = None) -> Dict[str, Any]: ...
 
     @abstractmethod
-    async def get_browser_console_logs(
+    async def find(self, *, text: Optional[str] = None, regex: Optional[str] = None) -> Dict[str, Any]: ...
+
+    @abstractmethod
+    async def click(
         self,
-        browser_id: str,
-        max_logs: int = 50,
-        log_types: Optional[List[str]] = None,
-        minutes_back: Optional[int] = None,
-        max_chars: Optional[int] = 8000,
-    ) -> dict:
-        """
-        Get console logs from a specific browser with configurable filtering.
-
-        Args:
-            browser_id: ID of the browser to get logs from
-            max_logs: Maximum number of logs to return (most recent)
-            log_types: List of log types to include (e.g., ['error', 'warning', 'assert'])
-            minutes_back: Only return logs from the last N minutes
-            max_chars: Maximum total character count for all log messages combined
-
-        Returns:
-            Dictionary containing filtered console logs and metadata
-
-        Raises:
-            KeyError: If browser_id doesn't exist
-        """
+        target: str,
+        *,
+        double_click: bool = False,
+        button: str = "left",
+        modifiers: Optional[List[str]] = None,
+    ) -> Dict[str, Any]: ...
 
     @abstractmethod
-    async def get_browser_interactive_elements(self, browser_id: str) -> list:
-        """
-        Get interactive elements from a specific browser.
-
-        Args:
-            browser_id: ID of the browser to get elements from
-
-        Returns:
-            Dictionary containing current URL, title, and interactive elements
-
-        Raises:
-            KeyError: If browser_id doesn't exist
-        """
+    async def type_text(
+        self, target: str, text: str, *, submit: bool = False, slowly: bool = False
+    ) -> Dict[str, Any]: ...
 
     @abstractmethod
-    async def take_browser_screenshot(self, browser_id: str) -> dict:
-        """
-        Take a screenshot of a specific browser.
-
-        Args:
-            browser_id: ID of the browser to take screenshot of
-
-        Returns:
-            Dictionary containing current URL, title, and base64-encoded screenshot
-
-        Raises:
-            KeyError: If browser_id doesn't exist
-        """
+    async def fill_form(self, fields: List[Dict[str, Any]]) -> Dict[str, Any]: ...
 
     @abstractmethod
-    async def interact_with_browser(self, browser_id: str, action: str, selector: str, text: str, scroll_px) -> dict:
-        """
-        Interact with a specific browser.
-
-        Args:
-            browser_id: ID of the browser to interact with
-            action: Type of interaction (click, type, scroll, navigate)
-            selector: CSS selector for the element to interact with
-            text: Text to type or URL to navigate to
-            scroll_px: Number of pixels to scroll
-
-        Returns:
-            Dictionary containing status and interaction details
-
-        Raises:
-            KeyError: If browser_id doesn't exist
-            ValueError: If action is unknown
-        """
+    async def select_option(self, target: str, values: List[str]) -> Dict[str, Any]: ...
 
     @abstractmethod
-    async def set_select_value(self, browser_id: str, selector: str, value: str) -> dict:
-        """
-        Set the value of a select box in a specific browser.
-
-        Args:
-            browser_id: ID of the browser to interact with
-            selector: CSS selector for the select element
-            value: The value to set for the select option
-
-        Returns:
-            Dictionary containing status, current URL, and selected value
-
-        Raises:
-            KeyError: If browser_id doesn't exist
-            ValueError: If the element is not a select box or value doesn't exist
-        """
+    async def hover(self, target: str) -> Dict[str, Any]: ...
 
     @abstractmethod
-    async def close_browser(self, browser_id: str) -> None:
-        """
-        Close a specific browser.
+    async def drag(self, start_target: str, end_target: str) -> Dict[str, Any]: ...
 
-        Args:
-            browser_id: ID of the browser to close
+    @abstractmethod
+    async def drop(
+        self,
+        target: str,
+        *,
+        files: Optional[List[Dict[str, Any]]] = None,
+        data: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, Any]: ...
 
-        Raises:
-            KeyError: If browser_id doesn't exist
-        """
+    @abstractmethod
+    async def press_key(self, key: str) -> Dict[str, Any]: ...
+
+    @abstractmethod
+    async def navigate_back(self) -> Dict[str, Any]: ...
+
+    @abstractmethod
+    async def wait_for(
+        self, *, time: Optional[float] = None, text: Optional[str] = None, text_gone: Optional[str] = None
+    ) -> Dict[str, Any]: ...
+
+    @abstractmethod
+    async def resize(self, width: int, height: int) -> Dict[str, Any]: ...
+
+    @abstractmethod
+    async def tabs(self, action: str, *, index: Optional[int] = None, url: Optional[str] = None) -> Dict[str, Any]: ...
+
+    @abstractmethod
+    async def handle_dialog(self, accept: bool, prompt_text: Optional[str] = None) -> Dict[str, Any]: ...
+
+    @abstractmethod
+    async def file_upload(self, files: List[Dict[str, Any]]) -> Dict[str, Any]: ...
+
+    @abstractmethod
+    async def console_messages(self, level: str = "info", *, all_messages: bool = False) -> Dict[str, Any]: ...
+
+    @abstractmethod
+    async def network_requests(
+        self, *, include_static: bool = False, filter_pattern: Optional[str] = None
+    ) -> Dict[str, Any]: ...
+
+    @abstractmethod
+    async def network_request(self, index: int, part: Optional[str] = None) -> Dict[str, Any]: ...
+
+    @abstractmethod
+    async def screenshot(
+        self,
+        *,
+        target: Optional[str] = None,
+        image_type: str = "png",
+        full_page: bool = False,
+        scale: str = "css",
+    ) -> Dict[str, Any]: ...
+
+    @abstractmethod
+    async def evaluate(self, function: str, target: Optional[str] = None) -> Dict[str, Any]: ...
+
+    @abstractmethod
+    async def close(self) -> Optional[str]: ...
+
+    async def cleanup_all_browsers(self) -> None:
+        """Close the current browser session during agent teardown."""
+        await self.close()

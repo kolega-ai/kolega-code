@@ -1,314 +1,129 @@
-# ruff: noqa: F401,F811,E402
-import datetime
-import os
+import asyncio
+import re
+
 import pytest
-from unittest.mock import AsyncMock
-from kolega_code.services.browser import PlaywrightBrowserManager
+import pytest_asyncio
 
-# Check if running in CI environment
-SKIP_IN_CI = bool(os.getenv("CI")) or bool(os.getenv("GITLAB_CI"))
+from kolega_code.services.browser import PlaywrightBrowserManager, file_payload
 
 
-class TestPlaywrightBrowserManager:
-    @pytest.fixture
-    def browser_manager(self):
-        """Create a browser manager instance for testing."""
-        return PlaywrightBrowserManager()
+@pytest_asyncio.fixture
+async def browser_manager():
+    manager = PlaywrightBrowserManager()
+    manager.headless = True
+    try:
+        yield manager
+    finally:
+        await manager.close()
 
-    @pytest.fixture
-    def mock_browser_info(self):
-        """Create mock browser info with sample console logs."""
-        now = datetime.datetime.now()
-        console_logs = [
-            {
-                "type": "log",
-                "text": "Regular log message 1",
-                "timestamp": (now - datetime.timedelta(minutes=10)).isoformat(),
-                "location": None,
-            },
-            {
-                "type": "error",
-                "text": "JavaScript error occurred",
-                "timestamp": (now - datetime.timedelta(minutes=8)).isoformat(),
-                "location": {"url": "test.js", "lineNumber": 42, "columnNumber": 10},
-            },
-            {
-                "type": "warning",
-                "text": "Deprecated API usage",
-                "timestamp": (now - datetime.timedelta(minutes=6)).isoformat(),
-                "location": None,
-            },
-            {
-                "type": "log",
-                "text": "Regular log message 2",
-                "timestamp": (now - datetime.timedelta(minutes=4)).isoformat(),
-                "location": None,
-            },
-            {
-                "type": "assert",
-                "text": "Assertion failed: condition not met",
-                "timestamp": (now - datetime.timedelta(minutes=2)).isoformat(),
-                "location": None,
-            },
-            {
-                "type": "info",
-                "text": "Information message",
-                "timestamp": now.isoformat(),
-                "location": None,
-            },
-        ]
 
-        return {
-            "type": "chromium",
-            "url": "https://example.com",
-            "console_logs": console_logs,
-            "launched_at": now.isoformat(),
-        }
+@pytest.mark.asyncio
+async def test_console_messages_filter_by_severity(browser_manager):
+    await browser_manager.evaluate("() => { console.log('hello'); console.warn('careful'); console.error('broken'); }")
 
-    @pytest.mark.asyncio
-    async def test_get_browser_console_logs_default_filtering(self, browser_manager, mock_browser_info):
-        """Test default console log filtering (errors, warnings, assertions only)."""
-        browser_id = "test-browser-id"
-        browser_manager.browsers[browser_id] = mock_browser_info
+    warnings = await browser_manager.console_messages("warning")
+    assert warnings["total"] == 3
+    assert warnings["errors"] == 1
+    assert warnings["warnings"] == 1
+    assert [message["text"] for message in warnings["messages"]] == ["careful", "broken"]
 
-        result = await browser_manager.get_browser_console_logs(browser_id)
 
-        assert result["total_logs_count"] == 6
-        assert result["returned_count"] == 3  # Only error, warning, assert
-        assert result["filters_applied"]["log_types"] == ["error", "warning", "assert"]
-        assert result["filters_applied"]["max_logs"] == 50
-        assert result["filters_applied"]["max_chars"] == 8000
+@pytest.mark.asyncio
+async def test_console_recent_is_cleared_by_navigation(browser_manager, unused_tcp_port):
+    await browser_manager.evaluate("() => console.error('before navigation')")
 
-        # Check that only the correct log types are returned
-        returned_types = [log["type"] for log in result["console_logs"]]
-        assert "error" in returned_types
-        assert "warning" in returned_types
-        assert "assert" in returned_types
-        assert "log" not in returned_types
-        assert "info" not in returned_types
+    # A failed navigation still starts a new navigation scope before Playwright reports the connection error.
+    with pytest.raises(Exception):
+        await browser_manager.navigate(f"http://127.0.0.1:{unused_tcp_port}")
 
-    @pytest.mark.asyncio
-    async def test_get_browser_console_logs_custom_log_types(self, browser_manager, mock_browser_info):
-        """Test filtering by custom log types."""
-        browser_id = "test-browser-id"
-        browser_manager.browsers[browser_id] = mock_browser_info
+    recent = await browser_manager.console_messages("debug")
+    assert all(message["text"] != "before navigation" for message in recent["messages"])
 
-        result = await browser_manager.get_browser_console_logs(browser_id, log_types=["log", "info"])
 
-        assert result["total_logs_count"] == 6
-        assert result["returned_count"] == 3  # 2 log + 1 info
-        assert result["filters_applied"]["log_types"] == ["log", "info"]
+@pytest.mark.asyncio
+async def test_dialog_returns_modal_state_and_can_be_handled(browser_manager):
+    await browser_manager.evaluate(
+        "() => { document.body.innerHTML = `<button onclick=\"alert('hello')\">Open</button>`; }"
+    )
+    snapshot = (await browser_manager.snapshot())["snapshot"]
+    match = re.search(r"button.*?\[ref=(e\d+)\]", snapshot)
+    assert match is not None
+    target = match.group(1)
 
-        # Check that only the correct log types are returned
-        returned_types = [log["type"] for log in result["console_logs"]]
-        assert "log" in returned_types
-        assert "info" in returned_types
-        assert "error" not in returned_types
+    modal = await browser_manager.click(target)
+    assert modal["modal"] == {"type": "dialog", "dialog_type": "alert", "message": "hello"}
 
-    @pytest.mark.asyncio
-    async def test_get_browser_console_logs_max_logs_limit(self, browser_manager, mock_browser_info):
-        """Test limiting the number of logs returned."""
-        browser_id = "test-browser-id"
-        browser_manager.browsers[browser_id] = mock_browser_info
+    result = await browser_manager.handle_dialog(True)
+    assert "snapshot" in result
+    assert result.get("modal") is None
 
-        result = await browser_manager.get_browser_console_logs(
-            browser_id,
-            max_logs=2,
-            log_types=[],  # Empty list to include all types
+
+@pytest.mark.asyncio
+async def test_action_is_blocked_until_modal_is_handled(browser_manager):
+    await browser_manager.evaluate(
+        "() => { document.body.innerHTML = `<button onclick=\"confirm('continue?')\">Open</button>`; }"
+    )
+    snapshot = (await browser_manager.snapshot())["snapshot"]
+    match = re.search(r"button.*?\[ref=(e\d+)\]", snapshot)
+    assert match is not None
+    target = match.group(1)
+    await browser_manager.click(target)
+
+    with pytest.raises(RuntimeError, match="browser_handle_dialog"):
+        await browser_manager.press_key("Enter")
+
+    await browser_manager.handle_dialog(False)
+
+
+@pytest.mark.asyncio
+async def test_file_chooser_returns_modal_state_and_accepts_payload(browser_manager):
+    await browser_manager.evaluate("() => { document.body.innerHTML = `<input type=file aria-label='Upload'>`; }")
+    snapshot = (await browser_manager.snapshot())["snapshot"]
+    match = re.search(r"button.*?\[ref=(e\d+)\]", snapshot)
+    assert match is not None
+    target = match.group(1)
+
+    modal = await browser_manager.click(target)
+    assert modal["modal"] == {"type": "file_chooser", "multiple": False}
+
+    result = await browser_manager.file_upload([file_payload("avatar.txt", b"hello")])
+    assert "snapshot" in result
+    uploaded = await browser_manager.evaluate("() => document.querySelector('input').files[0].name")
+    assert uploaded["result"] == "avatar.txt"
+
+
+@pytest.mark.asyncio
+async def test_evaluate_result_is_size_capped(browser_manager):
+    result = await browser_manager.evaluate("() => 'x'.repeat(25000)")
+
+    assert result["result_truncated"] is True
+    assert len(result["result"]) == 20_000
+
+
+@pytest.mark.asyncio
+async def test_network_requests_are_indexed_and_details_are_retrievable(browser_manager):
+    async def handle_request(reader, writer):
+        await reader.readuntil(b"\r\n\r\n")
+        body = b"hello from server"
+        writer.write(
+            b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: "
+            + str(len(body)).encode()
+            + b"\r\nConnection: close\r\n\r\n"
+            + body
         )
+        await writer.drain()
+        writer.close()
 
-        assert result["total_logs_count"] == 6
-        assert result["returned_count"] == 2  # Limited to 2 most recent
-        assert result["filters_applied"]["max_logs"] == 2
+    server = await asyncio.start_server(handle_request, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    try:
+        await browser_manager.navigate(f"http://127.0.0.1:{port}/hello")
+        requests = await browser_manager.network_requests()
+        document = next(request for request in requests["requests"] if request["resource_type"] == "document")
+        details = await browser_manager.network_request(document["index"], "response_body")
+    finally:
+        server.close()
+        await server.wait_closed()
 
-        # Should return the 2 most recent logs
-        returned_logs = result["console_logs"]
-        assert len(returned_logs) == 2
-        assert returned_logs[-1]["type"] == "info"  # Most recent
-        assert returned_logs[-2]["type"] == "assert"  # Second most recent
-
-    @pytest.mark.asyncio
-    async def test_get_browser_console_logs_time_filtering(self, browser_manager, mock_browser_info):
-        """Test filtering logs by time window."""
-        browser_id = "test-browser-id"
-        browser_manager.browsers[browser_id] = mock_browser_info
-
-        result = await browser_manager.get_browser_console_logs(
-            browser_id,
-            minutes_back=5,
-            log_types=[],  # Include all types, filter by time
-        )
-
-        assert result["total_logs_count"] == 6
-        assert result["returned_count"] == 3  # Only logs from last 5 minutes
-        assert result["filters_applied"]["minutes_back"] == 5
-
-        # All returned logs should be within the time window
-        cutoff_time = datetime.datetime.now() - datetime.timedelta(minutes=5)
-        for log in result["console_logs"]:
-            log_time = datetime.datetime.fromisoformat(log["timestamp"])
-            assert log_time > cutoff_time
-
-    @pytest.mark.asyncio
-    async def test_get_browser_console_logs_character_limit(self, browser_manager, mock_browser_info):
-        """Test limiting logs by character count."""
-        browser_id = "test-browser-id"
-        browser_manager.browsers[browser_id] = mock_browser_info
-
-        # Set a very low character limit to test truncation
-        result = await browser_manager.get_browser_console_logs(
-            browser_id,
-            max_chars=50,
-            log_types=[],  # Include all types
-        )
-
-        assert result["total_logs_count"] == 6
-        assert result["returned_count"] <= 6  # Should be limited by character count
-
-        # Calculate total character count of returned logs
-        total_chars = sum(len(f"{log['type']}: {log['text']}") for log in result["console_logs"])
-        assert total_chars <= 50
-
-    @pytest.mark.asyncio
-    async def test_get_browser_console_logs_combined_filters(self, browser_manager, mock_browser_info):
-        """Test applying multiple filters simultaneously."""
-        browser_id = "test-browser-id"
-        browser_manager.browsers[browser_id] = mock_browser_info
-
-        result = await browser_manager.get_browser_console_logs(
-            browser_id, max_logs=10, log_types=["error", "warning"], minutes_back=10, max_chars=1000
-        )
-
-        assert result["total_logs_count"] == 6
-        assert result["filters_applied"]["log_types"] == ["error", "warning"]
-        assert result["filters_applied"]["minutes_back"] == 10
-        assert result["filters_applied"]["max_logs"] == 10
-        assert result["filters_applied"]["max_chars"] == 1000
-
-        # Should only contain error and warning logs
-        returned_types = [log["type"] for log in result["console_logs"]]
-        for log_type in returned_types:
-            assert log_type in ["error", "warning"]
-
-    @pytest.mark.asyncio
-    async def test_get_browser_console_logs_empty_logs(self, browser_manager):
-        """Test behavior when no console logs exist."""
-        browser_id = "test-browser-id"
-        browser_manager.browsers[browser_id] = {
-            "console_logs": [],
-            "launched_at": datetime.datetime.now().isoformat(),
-        }
-
-        result = await browser_manager.get_browser_console_logs(browser_id)
-
-        assert result["total_logs_count"] == 0
-        assert result["returned_count"] == 0
-        assert result["console_logs"] == []
-
-    @pytest.mark.asyncio
-    async def test_get_browser_console_logs_browser_not_found(self, browser_manager):
-        """Test error handling when browser ID doesn't exist."""
-        with pytest.raises(KeyError, match="Browser with ID nonexistent not found"):
-            await browser_manager.get_browser_console_logs("nonexistent")
-
-    def test_circular_buffer_implementation(self, browser_manager):
-        """Test that the circular buffer prevents unlimited log growth."""
-        # Set a small buffer size for testing
-        browser_manager.max_console_logs_per_browser = 3
-
-        console_logs = []
-
-        # Simulate the console log handler behavior
-        def simulate_console_log_handler(msg_text, msg_type="log"):
-            log_entry = {
-                "type": msg_type,
-                "text": msg_text,
-                "timestamp": datetime.datetime.now().isoformat(),
-                "location": None,
-            }
-            console_logs.append(log_entry)
-
-            # Implement circular buffer logic
-            if len(console_logs) > browser_manager.max_console_logs_per_browser:
-                console_logs.pop(0)  # Remove oldest log
-
-        # Add more logs than the buffer size
-        simulate_console_log_handler("Log 1")
-        simulate_console_log_handler("Log 2")
-        simulate_console_log_handler("Log 3")
-        assert len(console_logs) == 3
-
-        simulate_console_log_handler("Log 4")
-        assert len(console_logs) == 3  # Should still be 3
-        assert console_logs[0]["text"] == "Log 2"  # First log should be removed
-        assert console_logs[-1]["text"] == "Log 4"  # Last log should be the newest
-
-        simulate_console_log_handler("Log 5")
-        assert len(console_logs) == 3
-        assert console_logs[0]["text"] == "Log 3"
-        assert console_logs[-1]["text"] == "Log 5"
-
-    @pytest.mark.asyncio
-    async def test_no_log_types_filter_includes_all(self, browser_manager, mock_browser_info):
-        """Test that passing an empty list for log_types includes all log types."""
-        browser_id = "test-browser-id"
-        browser_manager.browsers[browser_id] = mock_browser_info
-
-        result = await browser_manager.get_browser_console_logs(
-            browser_id,
-            log_types=[],  # Empty list should include all types
-        )
-
-        assert result["total_logs_count"] == 6
-        assert result["returned_count"] == 6  # All logs should be included
-        assert result["filters_applied"]["log_types"] == []
-
-        # Should include all log types
-        returned_types = [log["type"] for log in result["console_logs"]]
-        assert "log" in returned_types
-        assert "error" in returned_types
-        assert "warning" in returned_types
-        assert "assert" in returned_types
-        assert "info" in returned_types
-
-    @pytest.mark.asyncio
-    async def test_character_limit_preserves_most_recent(self, browser_manager):
-        """Test that character limit preserves the most recent logs."""
-        browser_id = "test-browser-id"
-
-        # Create logs with known character counts
-        console_logs = [
-            {
-                "type": "log",
-                "text": "A" * 10,  # 10 chars + "log: " = 14 chars
-                "timestamp": datetime.datetime.now().isoformat(),
-                "location": None,
-            },
-            {
-                "type": "log",
-                "text": "B" * 10,  # 10 chars + "log: " = 14 chars
-                "timestamp": datetime.datetime.now().isoformat(),
-                "location": None,
-            },
-            {
-                "type": "log",
-                "text": "C" * 10,  # 10 chars + "log: " = 14 chars (most recent)
-                "timestamp": datetime.datetime.now().isoformat(),
-                "location": None,
-            },
-        ]
-
-        browser_manager.browsers[browser_id] = {
-            "console_logs": console_logs,
-            "launched_at": datetime.datetime.now().isoformat(),
-        }
-
-        # Set character limit to allow only 1 log (14 chars) to test the logic
-        result = await browser_manager.get_browser_console_logs(browser_id, max_chars=14, log_types=[])
-
-        assert result["returned_count"] == 1
-        # Should preserve the most recent log (C)
-        returned_texts = [log["text"] for log in result["console_logs"]]
-        assert "C" * 10 in returned_texts
-        assert "A" * 10 not in returned_texts
-        assert "B" * 10 not in returned_texts
+    assert details["status"] == 200
+    assert details["response_body"] == "hello from server"

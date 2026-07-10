@@ -1,335 +1,167 @@
-import datetime
-import pytest
 import uuid
 from unittest.mock import AsyncMock, MagicMock
-from kolega_code.agent.tool_backend.browser_tool import BrowserTool
+
+import pytest
+
+from kolega_code.agent.tool_backend.browser_tool import BROWSER_TOOL_SCHEMAS, BrowserTool
 from kolega_code.config import AgentConfig
+from kolega_code.llm.models import ToolDefinition
+from kolega_code.services.file_system import LocalFileSystem
 
 
-class TestBrowserTool:
-    """Test suite for BrowserTool console log filtering functionality."""
-
-    @pytest.fixture
-    def mock_config(self):
-        """Create a mock agent config."""
-        return MagicMock(spec=AgentConfig)
-
-    @pytest.fixture
-    def mock_connection_manager(self):
-        """Create a mock connection manager."""
-        return AsyncMock()
-
-    @pytest.fixture
-    def mock_caller(self):
-        """Create a mock caller."""
-        caller = MagicMock()
-        caller.agent_name = "test-agent"
-        return caller
-
-    @pytest.fixture
-    def browser_tool(self, mock_config, mock_connection_manager, mock_caller):
-        """Create a browser tool instance for testing."""
-        return BrowserTool(
-            project_path="/test/path",
-            workspace_id="test-workspace",
-            thread_id=str(uuid.uuid4()),
-            connection_manager=mock_connection_manager,
-            config=mock_config,
-            caller=mock_caller,
-        )
-
-    @pytest.fixture
-    def mock_console_logs_result(self):
-        """Create mock console logs result from browser manager."""
-        return {
-            "console_logs": [
-                {
-                    "type": "error",
-                    "text": "JavaScript error occurred",
-                    "timestamp": datetime.datetime.now().isoformat(),
-                    "location": {"url": "test.js", "lineNumber": 42, "columnNumber": 10},
-                },
-                {
-                    "type": "warning",
-                    "text": "Deprecated API usage",
-                    "timestamp": datetime.datetime.now().isoformat(),
-                    "location": None,
-                },
-            ],
-            "total_logs_count": 10,
-            "returned_count": 2,
-            "filters_applied": {
-                "max_logs": 50,
-                "log_types": ["error", "warning", "assert"],
-                "minutes_back": None,
-                "max_chars": 8000,
-            },
+@pytest.fixture
+def browser_manager():
+    manager = MagicMock()
+    manager.session_id = None
+    manager.navigate = AsyncMock(
+        return_value={
+            "session_id": "session-1",
+            "url": "https://example.com",
+            "title": "Example",
+            "snapshot": '- heading "Example" [ref=e2]',
         }
+    )
+    manager.click = AsyncMock()
+    manager.screenshot = AsyncMock()
+    manager.close = AsyncMock()
+    manager.cleanup_all_browsers = AsyncMock()
+    return manager
 
-    @pytest.mark.asyncio
-    async def test_get_browser_console_logs_default_parameters(self, browser_tool, mock_console_logs_result):
-        """Test get_browser_console_logs with default parameters."""
-        browser_tool.browser_manager.get_browser_console_logs = AsyncMock(return_value=mock_console_logs_result)
 
-        result = await browser_tool.get_browser_console_logs("test-browser-id")
+@pytest.fixture
+def browser_tool(tmp_path, browser_manager):
+    caller = MagicMock()
+    caller.agent_name = "test-agent"
+    return BrowserTool(
+        project_path=tmp_path,
+        workspace_id="workspace",
+        thread_id=str(uuid.uuid4()),
+        connection_manager=AsyncMock(),
+        config=MagicMock(spec=AgentConfig),
+        caller=caller,
+        filesystem=LocalFileSystem(root_path=tmp_path),
+        browser_manager=browser_manager,
+    )
 
-        # Verify the browser manager was called with default parameters
-        browser_tool.browser_manager.get_browser_console_logs.assert_called_once_with(
-            "test-browser-id", max_logs=50, log_types=None, minutes_back=None, max_chars=8000
-        )
 
-        # Check that the result contains expected markdown formatting
-        assert "## Console Logs" in result
-        assert "**Showing 2 of 10 total logs**" in result
-        assert "**Filtered by types:** error, warning, assert" in result
-        assert "**Max logs:** 50" in result
-        assert "| Type | Timestamp | Message | Location |" in result
-        assert "| error |" in result
-        assert "| warning |" in result
-        assert "JavaScript error occurred" in result
-        assert "Deprecated API usage" in result
+@pytest.mark.asyncio
+async def test_navigate_formats_snapshot_and_broadcasts_launch(browser_tool, browser_manager):
+    result = await browser_tool.browser_navigate("https://example.com")
 
-    @pytest.mark.asyncio
-    async def test_get_browser_console_logs_custom_parameters(self, browser_tool, mock_console_logs_result):
-        """Test get_browser_console_logs with custom parameters."""
-        # Update mock result to reflect custom parameters
-        mock_console_logs_result["filters_applied"] = {
-            "max_logs": 10,
-            "log_types": ["error"],
-            "minutes_back": 5,
-            "max_chars": 1000,
+    browser_manager.navigate.assert_awaited_once_with("https://example.com")
+    assert result == "\n".join(
+        [
+            "## Page",
+            "- URL: https://example.com",
+            "- Title: Example",
+            "",
+            "## Snapshot",
+            "```yaml",
+            '- heading "Example" [ref=e2]',
+            "```",
+        ]
+    )
+    browser_tool.connection_manager.broadcast_event.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_click_forwards_snake_case_options(browser_tool, browser_manager):
+    browser_manager.click.return_value = {
+        "session_id": "session-1",
+        "url": "https://example.com",
+        "title": "Example",
+        "snapshot": '- button "Saved" [ref=e3]',
+    }
+
+    await browser_tool.browser_click("e2", double_click=True, button="right", modifiers=["Shift"])
+
+    browser_manager.click.assert_awaited_once_with("e2", double_click=True, button="right", modifiers=["Shift"])
+
+
+@pytest.mark.asyncio
+async def test_file_upload_reads_only_through_workspace_filesystem(browser_tool, browser_manager, tmp_path):
+    upload = tmp_path / "avatar.txt"
+    upload.write_text("hello", encoding="utf-8")
+    browser_manager.file_upload = AsyncMock(
+        return_value={
+            "session_id": "session-1",
+            "url": "about:blank",
+            "title": "",
+            "snapshot": "- document",
         }
+    )
 
-        browser_tool.browser_manager.get_browser_console_logs = AsyncMock(return_value=mock_console_logs_result)
+    await browser_tool.browser_file_upload(["avatar.txt"])
 
-        result = await browser_tool.get_browser_console_logs(
-            "test-browser-id", max_logs=10, log_types=["error"], minutes_back=5, max_chars=1000
-        )
+    call = browser_manager.file_upload.await_args
+    assert call is not None
+    payload = call.args[0][0]
+    assert payload["name"] == "avatar.txt"
+    assert payload["buffer"] == b"hello"
 
-        # Verify the browser manager was called with custom parameters
-        browser_tool.browser_manager.get_browser_console_logs.assert_called_once_with(
-            "test-browser-id", max_logs=10, log_types=["error"], minutes_back=5, max_chars=1000
-        )
 
-        # Check that the result reflects custom filtering
-        assert "**Filtered by types:** error" in result
-        assert "**Time window:** Last 5 minutes" in result
-        assert "**Character limit:** 1000" in result
-        assert "**Max logs:** 10" in result
+@pytest.mark.asyncio
+async def test_file_upload_rejects_path_outside_workspace(browser_tool, browser_manager, tmp_path):
+    outside = tmp_path.parent / "outside.txt"
+    outside.write_text("secret", encoding="utf-8")
 
-    @pytest.mark.asyncio
-    async def test_get_browser_console_logs_no_logs(self, browser_tool):
-        """Test get_browser_console_logs when no logs are found."""
-        mock_empty_result = {
-            "console_logs": [],
-            "total_logs_count": 0,
-            "returned_count": 0,
-            "filters_applied": {
-                "max_logs": 50,
-                "log_types": ["error", "warning", "assert"],
-                "minutes_back": None,
-                "max_chars": 8000,
-            },
-        }
+    with pytest.raises(ValueError, match="outside the allowed root"):
+        await browser_tool.browser_file_upload([str(outside)])
 
-        browser_tool.browser_manager.get_browser_console_logs = AsyncMock(return_value=mock_empty_result)
+    browser_manager.file_upload.assert_not_called()
 
-        result = await browser_tool.get_browser_console_logs("test-browser-id")
 
-        assert result == "## Console Logs\n\nNo console logs found."
+@pytest.mark.asyncio
+async def test_close_is_idempotent_and_broadcasts_only_for_live_session(browser_tool, browser_manager):
+    browser_manager.close.return_value = None
+    assert await browser_tool.browser_close() == "No browser session is running."
+    browser_tool.connection_manager.broadcast_event.assert_not_awaited()
 
-    @pytest.mark.asyncio
-    async def test_get_browser_console_logs_location_formatting(self, browser_tool):
-        """Test that console log locations are formatted correctly."""
-        mock_result = {
-            "console_logs": [
-                {
-                    "type": "error",
-                    "text": "Error with location",
-                    "timestamp": datetime.datetime.now().isoformat(),
-                    "location": {"url": "test.js", "lineNumber": 42, "columnNumber": 10},
-                },
-                {
-                    "type": "warning",
-                    "text": "Warning without location",
-                    "timestamp": datetime.datetime.now().isoformat(),
-                    "location": None,
-                },
-            ],
-            "total_logs_count": 2,
-            "returned_count": 2,
-            "filters_applied": {
-                "max_logs": 50,
-                "log_types": ["error", "warning", "assert"],
-                "minutes_back": None,
-                "max_chars": 8000,
-            },
-        }
+    browser_manager.close.return_value = "session-1"
+    assert await browser_tool.browser_close() == "Browser session closed."
+    browser_tool.connection_manager.broadcast_event.assert_awaited_once()
 
-        browser_tool.browser_manager.get_browser_console_logs = AsyncMock(return_value=mock_result)
 
-        result = await browser_tool.get_browser_console_logs("test-browser-id")
+def test_browser_tool_schemas_use_snake_case_and_exclude_legacy_contract():
+    assert "double_click" in BROWSER_TOOL_SCHEMAS["browser_click"]["properties"]
+    assert "full_page" in BROWSER_TOOL_SCHEMAS["browser_take_screenshot"]["properties"]
+    assert "text_gone" in BROWSER_TOOL_SCHEMAS["browser_wait_for"]["properties"]
+    assert "doubleClick" not in BROWSER_TOOL_SCHEMAS["browser_click"]["properties"]
 
-        # Check location formatting
-        assert "test.js:42:10" in result  # Formatted location
-        assert "N/A" in result  # No location case
+    legacy = {
+        "launch_browser",
+        "list_browsers",
+        "get_browser_content",
+        "get_browser_interactive_elements",
+        "interact_with_browser",
+        "set_browser_select_value",
+        "close_browser",
+    }
+    assert legacy.isdisjoint(BROWSER_TOOL_SCHEMAS)
 
-    @pytest.mark.asyncio
-    async def test_get_browser_console_logs_escapes_pipe_characters(self, browser_tool):
-        """Test that pipe characters in log messages are escaped for markdown tables."""
-        mock_result = {
-            "console_logs": [
-                {
-                    "type": "error",
-                    "text": "Error with | pipe character",
-                    "timestamp": datetime.datetime.now().isoformat(),
-                    "location": None,
-                },
-            ],
-            "total_logs_count": 1,
-            "returned_count": 1,
-            "filters_applied": {
-                "max_logs": 50,
-                "log_types": ["error", "warning", "assert"],
-                "minutes_back": None,
-                "max_chars": 8000,
-            },
-        }
 
-        browser_tool.browser_manager.get_browser_console_logs = AsyncMock(return_value=mock_result)
+def test_browser_schema_enums_serialize_for_google():
+    definition = ToolDefinition(
+        name="browser_click",
+        description="Click",
+        parameters=[],
+        input_schema=BROWSER_TOOL_SCHEMAS["browser_click"],
+    )
 
-        result = await browser_tool.get_browser_console_logs("test-browser-id")
+    declarations = definition.to_google().function_declarations
+    assert declarations is not None
+    parameters = declarations[0].parameters
+    assert parameters is not None
+    assert parameters.properties is not None
+    button = parameters.properties["button"]
+    modifiers = parameters.properties["modifiers"]
+    assert modifiers.items is not None
 
-        # Check that pipe character is escaped
-        assert "Error with \\| pipe character" in result
-
-    @pytest.mark.asyncio
-    async def test_get_browser_content_with_console_log_filtering(self, browser_tool):
-        """Test get_browser_content with console log filtering."""
-        mock_content_result = {
-            "current_url": "https://example.com",
-            "title": "Test Page",
-            "html": "<html><body>Test</body></html>",
-            "console_logs": [
-                {
-                    "type": "error",
-                    "text": "JavaScript error",
-                    "timestamp": datetime.datetime.now().isoformat(),
-                    "location": None,
-                },
-            ],
-            "console_log_metadata": {
-                "total_logs_count": 5,
-                "returned_count": 1,
-                "filters_applied": {"max_logs": 10, "log_types": ["error"], "minutes_back": None, "max_chars": 1000},
-            },
-        }
-
-        browser_tool.browser_manager.get_browser_content = AsyncMock(return_value=mock_content_result)
-
-        result = await browser_tool.get_browser_content(
-            "test-browser-id", max_logs=10, log_types=["error"], max_chars=1000
-        )
-
-        # Verify the browser manager was called with filtering parameters
-        browser_tool.browser_manager.get_browser_content.assert_called_once_with(
-            "test-browser-id", max_logs=10, log_types=["error"], minutes_back=None, max_chars=1000
-        )
-
-        # Check that the result contains expected content
-        assert "# Browser Content: Test Page" in result
-        assert "**Current URL:** https://example.com" in result
-        assert "## Console Logs" in result
-        assert "**Showing 1 of 5 total logs**" in result
-        assert "**Filtered by types:** error" in result
-        assert "**Character limit:** 1000" in result
-        assert "**Max logs:** 10" in result
-        assert "## Page HTML" in result
-        assert "<html><body>Test</body></html>" in result
-
-    @pytest.mark.asyncio
-    async def test_get_browser_content_no_console_logs(self, browser_tool):
-        """Test get_browser_content when there are no console logs."""
-        mock_content_result = {
-            "current_url": "https://example.com",
-            "title": "Test Page",
-            "html": "<html><body>Test</body></html>",
-            "console_logs": [],
-            "console_log_metadata": {
-                "total_logs_count": 0,
-                "returned_count": 0,
-                "filters_applied": {
-                    "max_logs": 50,
-                    "log_types": ["error", "warning", "assert"],
-                    "minutes_back": None,
-                    "max_chars": 8000,
-                },
-            },
-        }
-
-        browser_tool.browser_manager.get_browser_content = AsyncMock(return_value=mock_content_result)
-
-        result = await browser_tool.get_browser_content("test-browser-id")
-
-        # Should not contain console logs section when there are no logs
-        assert "# Browser Content: Test Page" in result
-        assert "**Current URL:** https://example.com" in result
-        assert "## Console Logs" not in result
-        assert "## Page HTML" in result
-
-    @pytest.mark.asyncio
-    async def test_get_browser_content_truncates_large_html(self, browser_tool):
-        mock_content_result = {
-            "current_url": "https://example.com",
-            "title": "Large Page",
-            "html": "a" * 100_050,
-            "console_logs": [],
-            "console_log_metadata": {
-                "total_logs_count": 0,
-                "returned_count": 0,
-                "filters_applied": {
-                    "max_logs": 50,
-                    "log_types": ["error", "warning", "assert"],
-                    "minutes_back": None,
-                    "max_chars": 8000,
-                },
-            },
-        }
-
-        browser_tool.browser_manager.get_browser_content = AsyncMock(return_value=mock_content_result)
-
-        result = await browser_tool.get_browser_content("test-browser-id")
-
-        assert "HTML truncated by size: Showing first 100,000 of 100,050 characters" in result
-        html_content = result.split("```html\n", 1)[1].rsplit("\n```", 1)[0]
-        assert len(html_content) == 100_000
-
-    @pytest.mark.asyncio
-    async def test_get_browser_content_without_metadata(self, browser_tool):
-        """Test get_browser_content when console_log_metadata is missing."""
-        mock_content_result = {
-            "current_url": "https://example.com",
-            "title": "Test Page",
-            "html": "<html><body>Test</body></html>",
-            "console_logs": [
-                {
-                    "type": "error",
-                    "text": "JavaScript error",
-                    "timestamp": datetime.datetime.now().isoformat(),
-                    "location": None,
-                },
-            ],
-            # Missing console_log_metadata
-        }
-
-        browser_tool.browser_manager.get_browser_content = AsyncMock(return_value=mock_content_result)
-
-        result = await browser_tool.get_browser_content("test-browser-id")
-
-        # Should still work without metadata
-        assert "# Browser Content: Test Page" in result
-        assert "## Console Logs" in result
-        assert "JavaScript error" in result
-        # Should not contain metadata information
-        assert "**Showing" not in result
-        assert "**Filtered by types:**" not in result
+    assert button.enum == ["left", "right", "middle"]
+    assert modifiers.items.enum == [
+        "Alt",
+        "Control",
+        "ControlOrMeta",
+        "Meta",
+        "Shift",
+    ]

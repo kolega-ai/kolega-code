@@ -32,6 +32,10 @@ agents (planning, building, investigation, general, browser) their own provider,
 model, and effort. Leave a role on **Default** to inherit the active model. See
 [Per-agent models](../providers-and-models/#per-agent-models).
 
+The Browser role only accepts vision-capable model overrides. If it inherits a
+non-vision active model, Settings allows the inheritance but warns that the browser
+agent is unavailable until you choose a compatible Browser model.
+
 The **Web Search** section configures the `web_search` tool. DuckDuckGo is the
 default and needs no key. Firecrawl can also run without a key, with an optional
 key for higher rate limits. Tavily requires a key, and SearXNG requires the base
