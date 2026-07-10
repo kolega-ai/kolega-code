@@ -1,10 +1,12 @@
+import asyncio
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 import uuid
 
 from kolega_code.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
-from kolega_code.agent.tool_backend.glob_tool import GlobTool
+from kolega_code.agent.tool_backend.glob_tool import GlobSearchResult, GlobTool
+from kolega_code.services.workspace_scan import ScanOutcome, ScannedPath
 
 
 @pytest.fixture
@@ -159,7 +161,7 @@ class TestGlobTool:
 
         result = await glob_tool.find_files_by_pattern("*.txt")
 
-        assert "Found 150 matching items" in result
+        assert "Found at least 129 matching items" in result
         assert "showing first 128" in result
 
     @pytest.mark.asyncio
@@ -197,3 +199,78 @@ class TestGlobTool:
 
         assert "**main.py**" in result
         assert "**utils.py**" in result
+
+    @pytest.mark.asyncio
+    async def test_local_search_does_not_use_unbounded_filesystem_glob(self, glob_tool, sample_files, monkeypatch):
+        monkeypatch.setattr(
+            glob_tool.filesystem,
+            "glob",
+            Mock(side_effect=AssertionError("unbounded glob should not be called")),
+        )
+
+        result = await glob_tool.find_files_by_pattern("**/*.py")
+
+        assert "**main.py**" in result
+
+    @pytest.mark.asyncio
+    async def test_incomplete_empty_search_does_not_claim_no_files(self, glob_tool, monkeypatch):
+        async def incomplete(*args, **kwargs):
+            return GlobSearchResult([], 0, False, "deadline", visited_entries=100, elapsed_seconds=5.0)
+
+        monkeypatch.setattr(glob_tool, "_search_files_local", incomplete)
+        result = await glob_tool.find_files_by_pattern("**/missing.txt")
+
+        assert "No files found" not in result
+        assert "Incomplete search" in result
+        assert "deadline" in result
+
+    @pytest.mark.asyncio
+    async def test_no_find_falls_back_to_off_thread_scanner(self, glob_tool, monkeypatch):
+        async def fallback_scan(*args, **kwargs):
+            return ScanOutcome(paths=[ScannedPath("main.py", False, 4, 1)], visited_entries=1)
+
+        monkeypatch.setattr("kolega_code.agent.tool_backend.glob_tool.shutil.which", lambda name: None)
+        monkeypatch.setattr("kolega_code.agent.tool_backend.glob_tool.scan_workspace", fallback_scan)
+
+        result = await glob_tool.find_files_by_pattern("**/*.py")
+
+        assert "**main.py**" in result
+
+    @pytest.mark.asyncio
+    async def test_cancelling_native_find_terminates_child(self, glob_tool, monkeypatch):
+        class BlockingStdout:
+            async def readuntil(self, separator):
+                await asyncio.Event().wait()
+
+        class BlockingProcess:
+            def __init__(self):
+                self.stdout = BlockingStdout()
+                self.returncode = None
+                self.terminated = False
+
+            def terminate(self):
+                self.terminated = True
+                self.returncode = -15
+
+            def kill(self):
+                self.returncode = -9
+
+            async def wait(self):
+                return self.returncode
+
+        proc = BlockingProcess()
+
+        async def create_process(*args, **kwargs):
+            return proc
+
+        monkeypatch.setattr(
+            "kolega_code.agent.tool_backend.glob_tool.asyncio.create_subprocess_exec",
+            create_process,
+        )
+        task = asyncio.create_task(glob_tool._search_files_local_process("**/*.py", True, 128))
+        await asyncio.sleep(0)
+        task.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert proc.terminated is True

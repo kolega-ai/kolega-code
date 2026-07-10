@@ -7,10 +7,13 @@ language servers via the ``LspRegistry``.
 from __future__ import annotations
 
 import logging
-import os
+import asyncio
+import fnmatch
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
+
+from kolega_code.services.workspace_scan import ScanLimits, scan_workspace
 
 from .registry import LspRegistry
 
@@ -92,6 +95,10 @@ class DetectionReport:
     detected: list[DetectionResult] = field(default_factory=list)
     resolved: list[ResolvedLanguage] = field(default_factory=list)
     missing: list[ResolvedLanguage] = field(default_factory=list)
+    scan_complete: bool = True
+    scan_stop_reason: Optional[str] = None
+    scanned_entries: int = 0
+    scan_elapsed_seconds: float = 0.0
 
 
 async def detect_languages(project_path: str | Path, registry: LspRegistry) -> DetectionReport:
@@ -110,43 +117,31 @@ async def detect_languages(project_path: str | Path, registry: LspRegistry) -> D
     root = Path(project_path).resolve()
     all_languages = registry.languages
 
-    # Phase A: config file scan (root + one level deep for monorepos)
-    config_hits: dict[str, list[str]] = {}  # language_id → [config file paths]
-    for lang_id, spec in all_languages.items():
-        found: list[str] = []
-        for pattern in spec.config_files:
-            # Check root
-            if _matches_config(root, pattern):
-                found.append(pattern)
-            # Check one level deep (monorepo support)
-            try:
-                for child in root.iterdir():
-                    if child.is_dir() and child.name not in _SKIP_DIRS and not child.name.startswith("."):
-                        if _matches_config(child, pattern):
-                            found.append(f"{child.name}/{pattern}")
-            except PermissionError:
-                pass
-        if found:
-            config_hits[lang_id] = found
-
-    # Phase A.5: exact filename scan (e.g. Dockerfile)
-    filename_hits: dict[str, list[str]] = {}
-    for lang_id, spec in all_languages.items():
-        found: list[str] = []
-        for fname in spec.filename_map:
-            if (root / fname).exists():
-                found.append(fname)
-        if found:
-            filename_hits[lang_id] = found
+    # A single bounded traversal supplies both shallow config signals and the
+    # recursive extension survey. This avoids a separate unbounded root probe.
+    scan = await scan_workspace(
+        root,
+        pattern="**/*",
+        include_files=True,
+        include_directories=False,
+        exclude_directories=frozenset(_SKIP_DIRS),
+        skip_hidden_directories=True,
+        collect_metadata=False,
+        limits=ScanLimits(timeout_seconds=5.0, max_entries=50_000),
+    )
+    scanned_paths = [scanned.path for scanned in scan.paths]
+    config_hits, filename_hits = await asyncio.to_thread(
+        _detect_config_signals,
+        scanned_paths,
+        all_languages,
+    )
 
     # Phase B: extension survey
     ext_counts: dict[str, int] = {}
-    ext_to_lang: dict[str, str] = {}
-    for lang_id, spec in all_languages.items():
-        for ext in spec.extensions:
-            ext_to_lang[ext.lower()] = lang_id
-
-    _count_extensions(root, ext_counts)
+    for scanned in scan.paths:
+        suffix = Path(scanned.path).suffix.lower()
+        if suffix:
+            ext_counts[suffix] = ext_counts.get(suffix, 0) + 1
 
     # Phase C: merge signals
     detected: list[DetectionResult] = []
@@ -227,7 +222,15 @@ async def detect_languages(project_path: str | Path, registry: LspRegistry) -> D
         else:
             missing.append(rl)
 
-    return DetectionReport(detected=detected, resolved=resolved, missing=missing)
+    return DetectionReport(
+        detected=detected,
+        resolved=resolved,
+        missing=missing,
+        scan_complete=scan.complete,
+        scan_stop_reason=scan.stop_reason,
+        scanned_entries=scan.visited_entries,
+        scan_elapsed_seconds=scan.elapsed_seconds,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -235,38 +238,29 @@ async def detect_languages(project_path: str | Path, registry: LspRegistry) -> D
 # ---------------------------------------------------------------------------
 
 
-def _matches_config(directory: Path, pattern: str) -> bool:
-    """Check whether *pattern* (a filename or glob) exists in *directory*."""
-    if "*" in pattern or "?" in pattern:
-        return any(True for _ in directory.glob(pattern))
-    return (directory / pattern).exists()
+def _detect_config_signals(
+    scanned_paths: list[str], all_languages: dict[str, Any]
+) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+    """Derive root/one-level signals from the already bounded path snapshot."""
+    shallow = [path for path in (Path(raw_path) for raw_path in scanned_paths) if len(path.parts) <= 2]
+    root_names = {path.name for path in shallow if len(path.parts) == 1}
 
+    config_hits: dict[str, list[str]] = {}
+    filename_hits: dict[str, list[str]] = {}
+    for lang_id, spec in all_languages.items():
+        configs: list[str] = []
+        for pattern in spec.config_files:
+            for path in shallow:
+                if fnmatch.fnmatchcase(path.name, pattern):
+                    configs.append(path.as_posix())
+        if configs:
+            config_hits[lang_id] = sorted(dict.fromkeys(configs))
 
-def _count_extensions(root: Path, counts: dict[str, int]) -> None:
-    """Walk *root* and increment *counts* keyed by lowercase file extension.
+        filenames = [fname for fname in spec.filename_map if fname in root_names]
+        if filenames:
+            filename_hits[lang_id] = filenames
 
-    Skips directories and files matching common ignore patterns.
-    """
-    try:
-        for entry in os.scandir(root):
-            name = entry.name
-            # Skip hidden and ignored directories
-            if entry.is_dir(follow_symlinks=False):
-                if name in _SKIP_DIRS or name.startswith("."):
-                    continue
-                try:
-                    _count_extensions(Path(entry.path), counts)
-                except PermissionError:
-                    pass
-            elif entry.is_file(follow_symlinks=False):
-                _, ext = os.path.splitext(name)
-                if ext:
-                    counts[ext.lower()] = counts.get(ext.lower(), 0) + 1
-                else:
-                    # No extension — count under empty string key
-                    pass
-    except PermissionError:
-        pass
+    return config_hits, filename_hits
 
 
 def _relative(root: Path, path: Path) -> str:

@@ -6,6 +6,7 @@ import pytest
 
 from kolega_code.services.lsp import LspRegistry
 from kolega_code.services.lsp.detector import DetectionReport, detect_languages
+from kolega_code.services.workspace_scan import ScanOutcome, ScannedPath
 
 
 @pytest.mark.asyncio
@@ -74,3 +75,23 @@ async def test_detect_empty_project(tmp_path: Path):
     assert report.detected == []
     assert report.resolved == []
     assert report.missing == []
+
+
+@pytest.mark.asyncio
+async def test_detect_languages_retains_partial_scan_status(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    async def partial_scan(*args, **kwargs):
+        return ScanOutcome(
+            paths=[ScannedPath("main.py", is_dir=False)],
+            visited_entries=50_000,
+            elapsed_seconds=5.0,
+            complete=False,
+            stop_reason="entry_limit",
+        )
+
+    monkeypatch.setattr("kolega_code.services.lsp.detector.scan_workspace", partial_scan)
+    report = await detect_languages(tmp_path, LspRegistry())
+
+    assert report.scan_complete is False
+    assert report.scan_stop_reason == "entry_limit"
+    assert report.scanned_entries == 50_000
+    assert any(language.language_id == "python" for language in report.detected)

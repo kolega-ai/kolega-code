@@ -765,6 +765,13 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         resolved = {r["language_id"]: r for r in status.get("resolved", [])}
         missing = status.get("missing", [])
 
+        if not status.get("scan_complete", True):
+            lines.append(
+                "\n**⚠️ Detection incomplete:** filesystem scan stopped because of "
+                f"{status.get('scan_stop_reason') or 'a scan limit'} after "
+                f"{status.get('scanned_entries', 0)} entries."
+            )
+
         if detected:
             lines.append(f"\n**Detected {len(detected)} language(s):**")
             for d in detected:

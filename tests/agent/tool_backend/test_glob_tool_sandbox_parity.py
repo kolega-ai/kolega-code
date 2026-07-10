@@ -98,7 +98,7 @@ def _make_mock_sandbox_for_glob(tmp_path: Path) -> Any:
     exclude_dirs = GlobTool.EXCLUDE_DIRS
     bin_exts = GlobTool.BINARY_EXTENSIONS
 
-    def run_side_effect(cmd: str):
+    def run_side_effect(cmd: str, **kwargs):
         result = Mock()
         result.exit_code = 0
         result.stderr = ""

@@ -198,6 +198,16 @@ class LspManager:
 
             messages: list[str] = []
 
+            if not self.report.scan_complete:
+                scan_warning = (
+                    "LSP language detection used partial filesystem results "
+                    f"(reason={self.report.scan_stop_reason or 'scan limit'}, "
+                    f"visited={self.report.scanned_entries}, "
+                    f"elapsed={self.report.scan_elapsed_seconds:.2f}s)."
+                )
+                logger.warning(scan_warning)
+                messages.append(scan_warning)
+
             # Summary of detected languages
             detected_lines = []
             for dr in self.report.detected:
@@ -887,6 +897,10 @@ class LspManager:
         return {
             "enabled": self._config.enabled,
             "initialized": self._initialized,
+            "scan_complete": self.report.scan_complete if self.report is not None else True,
+            "scan_stop_reason": self.report.scan_stop_reason if self.report is not None else None,
+            "scanned_entries": self.report.scanned_entries if self.report is not None else 0,
+            "scan_elapsed_seconds": self.report.scan_elapsed_seconds if self.report is not None else 0.0,
             "detected": detected,
             "resolved": resolved,
             "missing": missing,

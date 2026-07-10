@@ -68,6 +68,7 @@ class _LspEnabledFakeAgent(FakeCoderAgent):
         manager.status = lambda: {
             "enabled": True,
             "initialized": True,
+            "scan_complete": True,
             "detected": [
                 {
                     "language_id": "python",
@@ -94,6 +95,30 @@ async def test_lsp_status_shows_detected_languages_after_build(tmp_path: Path, m
         text = _static_text(status)
         assert "not active" not in text
         assert "Python" in text
+
+
+@pytest.mark.asyncio
+async def test_lsp_status_warns_when_detection_is_incomplete(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from textual.widgets import Static
+
+    class _PartialLspAgent(_LspEnabledFakeAgent):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            manager = self.tool_collection.lsp_manager
+            assert manager is not None
+            original_status = manager.status
+            manager.status = lambda: {
+                **original_status(),
+                "scan_complete": False,
+                "scan_stop_reason": "entry_limit",
+                "scanned_entries": 50_000,
+            }
+
+    app = _make_app(tmp_path, monkeypatch, coder_cls=_PartialLspAgent)
+    async with app.run_test():
+        text = _static_text(app.query_one("#lsp_status", Static))
+        assert "Detection incomplete" in text
+        assert "entry_limit" in text
 
 
 @pytest.mark.asyncio

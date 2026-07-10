@@ -1,4 +1,6 @@
 import shutil
+import asyncio
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -7,6 +9,7 @@ import uuid
 
 from kolega_code.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
 from kolega_code.agent.tool_backend.search_codebase_tool import SearchCodebaseTool
+from kolega_code.services.file_system import LocalFileSystem
 
 _WHICH_PATH = "kolega_code.agent.tool_backend.search_codebase_tool.shutil.which"
 
@@ -308,6 +311,81 @@ def func():
         alt = await search_codebase_tool.search_codebase("def|return")
         assert "src/main.py" in alt
         assert "src/utils.py" in alt
+
+    async def test_python_fallback_does_not_use_unbounded_filesystem_glob(
+        self, search_codebase_tool, sample_files, monkeypatch
+    ):
+        monkeypatch.setattr(_WHICH_PATH, _which_factory(set()))
+        monkeypatch.setattr(
+            search_codebase_tool.filesystem,
+            "glob",
+            Mock(side_effect=AssertionError("unbounded glob should not be called")),
+        )
+
+        result = await search_codebase_tool.search_codebase("print")
+
+        assert "src/main.py" in result
+
+    async def test_cancelling_local_search_terminates_child(self, search_codebase_tool):
+        class BlockingProcess:
+            def __init__(self):
+                self.returncode = None
+                self.terminated = False
+                self.killed = False
+                self._never = asyncio.Event()
+
+            async def communicate(self):
+                await self._never.wait()
+                return b"", b""
+
+            def terminate(self):
+                self.terminated = True
+                self.returncode = -15
+
+            def kill(self):
+                self.killed = True
+                self.returncode = -9
+
+            async def wait(self):
+                return self.returncode
+
+        proc = BlockingProcess()
+        task = asyncio.create_task(search_codebase_tool._communicate_local_process(proc))
+        await asyncio.sleep(0)
+        task.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert proc.terminated is True
+        assert proc.killed is False
+
+    async def test_local_search_is_not_cut_off_by_fallback_deadline(self, search_codebase_tool, monkeypatch):
+        monkeypatch.setattr(
+            "kolega_code.agent.tool_backend.search_codebase_tool._SEARCH_TIMEOUT_SECONDS",
+            0.001,
+        )
+
+        class CompletingProcess:
+            returncode = 0
+
+            async def communicate(self):
+                await asyncio.sleep(0.02)
+                return b"complete", b""
+
+        stdout, stderr = await search_codebase_tool._communicate_local_process(CompletingProcess())
+
+        assert stdout == b"complete"
+        assert stderr == b""
+
+    async def test_home_root_search_prunes_platform_data_without_hiding_visible_workspaces(self):
+        tool = object.__new__(SearchCodebaseTool)
+        tool.filesystem = LocalFileSystem(root_path=Path.home())
+
+        args = tool._rg_args("needle", "*", case_sensitive=False, literal=False)
+
+        assert "--hidden" not in args
+        assert "!Library/" in args
+        assert args[-1] == "."
 
     async def test_search_codebase_sandbox_ripgrep(self, search_codebase_tool):
         """Sandbox path: probe finds rg, parse rg --json, format identically."""
