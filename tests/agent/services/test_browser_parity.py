@@ -32,6 +32,13 @@ def test_browserless_self_hosted_endpoint_does_not_require_token(monkeypatch):
     assert manager._browserless_url() == "ws://localhost:3000"
 
 
+def test_browserless_cloud_hostname_requires_domain_boundary(monkeypatch):
+    monkeypatch.delenv("BROWSERLESS_API_KEY", raising=False)
+    manager = PlaywrightBrowserManager("browserless", browserless_endpoint="wss://notbrowserless.io")
+
+    assert manager._browserless_url() == "wss://notbrowserless.io"
+
+
 def test_browserless_endpoint_preserves_query_and_adds_configured_values(browserless_env):
     manager = PlaywrightBrowserManager(
         "browserless",

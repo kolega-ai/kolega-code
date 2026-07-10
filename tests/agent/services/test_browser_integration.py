@@ -1,5 +1,6 @@
 import os
 import re
+import urllib.parse
 
 import pytest
 
@@ -15,14 +16,18 @@ async def test_live_browserless_snapshot_action_and_screenshot():
     manager = PlaywrightBrowserManager("browserless")
     try:
         state = await manager.navigate("https://example.com")
-        assert state["url"].startswith("https://example.com")
+        current_url = urllib.parse.urlsplit(state["url"])
+        assert current_url.scheme == "https"
+        assert current_url.hostname == "example.com"
         assert "Example Domain" in state["snapshot"]
 
         match = re.search(r"link .*?\[ref=((?:f\d+)?e\d+)\]", state["snapshot"])
         assert match is not None
         link_ref = match.group(1)
         clicked = await manager.click(link_ref)
-        assert clicked["url"].startswith("https://www.iana.org")
+        clicked_url = urllib.parse.urlsplit(clicked["url"])
+        assert clicked_url.scheme == "https"
+        assert clicked_url.hostname == "www.iana.org"
 
         screenshot = await manager.screenshot()
         assert screenshot["media_type"] == "image/png"

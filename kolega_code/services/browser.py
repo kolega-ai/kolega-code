@@ -141,7 +141,8 @@ class PlaywrightBrowserManager(BrowserManager):
         endpoint = self.browserless_endpoint or ""
         parsed = urllib.parse.urlsplit(endpoint.replace("{token}", "placeholder"))
         embedded_token = "{token}" in endpoint or "token" in urllib.parse.parse_qs(parsed.query)
-        is_cloud = bool(parsed.hostname and parsed.hostname.endswith("browserless.io"))
+        hostname = parsed.hostname or ""
+        is_cloud = hostname == "browserless.io" or hostname.endswith(".browserless.io")
         if is_cloud and not embedded_token and not self.browserless_api_key:
             raise ValueError(
                 "Browserless credentials not found. Set BROWSERLESS_API_KEY or include token= in "

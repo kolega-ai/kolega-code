@@ -49,10 +49,18 @@ async def test_navigate_formats_snapshot_and_broadcasts_launch(browser_tool, bro
     result = await browser_tool.browser_navigate("https://example.com")
 
     browser_manager.navigate.assert_awaited_once_with("https://example.com")
-    assert "## Page" in result
-    assert "https://example.com" in result
-    assert "## Snapshot" in result
-    assert 'heading "Example" [ref=e2]' in result
+    assert result == "\n".join(
+        [
+            "## Page",
+            "- URL: https://example.com",
+            "- Title: Example",
+            "",
+            "## Snapshot",
+            "```yaml",
+            '- heading "Example" [ref=e2]',
+            "```",
+        ]
+    )
     browser_tool.connection_manager.broadcast_event.assert_awaited_once()
 
 
