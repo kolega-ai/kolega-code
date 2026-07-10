@@ -6,6 +6,30 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.17.0 - 2026-07-10
+
+### Changed
+
+- Rebuilt the browser agent on a Playwright MCP-style accessibility-snapshot
+  toolset (`browser_navigate`, `browser_snapshot`, `browser_find`,
+  `browser_click`, `browser_type`, and more). Actions use stable element refs
+  (e.g. `e12`) and return an updated snapshot, so the agent interacts
+  deterministically without inventing CSS selectors or relying on screenshots.
+- The browser agent now requires a vision-capable model. Models without image
+  input support are rejected with guidance to choose a vision-capable model or
+  inherit the default.
+
+### Fixed
+
+- Prevented `glob`, `search_codebase`, and LSP language detection from hanging
+  on large or broad project directories by adding bounded, cancellable,
+  timeout-limited workspace traversal.
+- Normalized TUI transcript indentation for consistent rendering.
+
+### Security
+
+- Hardened browser URL validation to address CodeQL static-analysis findings.
+
 ## 0.16.1 - 2026-07-10
 
 ### Changed

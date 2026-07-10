@@ -115,8 +115,8 @@ the organization request.
 
 2. In GitHub, create an environment named `pypi`.
 
-   Require approval from trusted maintainers before deployment. The release
-   workflow will pause before publishing to PyPI.
+   The release workflow publishes to PyPI automatically when a release tag is
+   pushed; no manual deployment approval is required.
 
 ## Installer handoff
 
