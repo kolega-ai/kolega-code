@@ -1,12 +1,12 @@
-"""Incremental streaming-inset rendering must match the canonical renderer and stay O(n).
+"""Incremental indented streaming rendering must match the canonical renderer and stay O(n).
 
 The live (incomplete) assistant/thinking entries are rendered by appending only the newly
-arrived characters to a cached Rich Text (_extend_inset), instead of re-splitting and
+arrived characters to a cached Rich Text (_extend_indented), instead of re-splitting and
 re-rendering the whole growing buffer on every ~50ms flush (the O(n^2) freeze on slow
 machines). These tests pin two properties:
 
   1. correctness  - the incremental result is character-for-character / style-for-style
-                    identical to _format_inset_text for any chunk splitting.
+                    identical to _format_indented_text for any chunk splitting.
   2. scaling      - building a large stream incrementally stays well under a generous
                     wall-clock bound (it was ~6s of O(n^2) CPU before; ~50ms after).
 """
@@ -15,12 +15,12 @@ import time
 
 import pytest
 
-from kolega_code.cli.tui.transcript import TranscriptRenderingMixin, _InsetRenderState
+from kolega_code.cli.tui.transcript import TranscriptRenderingMixin, _IndentedRenderState
 
 
 @pytest.fixture
 def mixin() -> TranscriptRenderingMixin:
-    # _format_inset_text / _extend_inset use no instance state.
+    # _format_indented_text / _extend_indented use no instance state.
     return TranscriptRenderingMixin.__new__(TranscriptRenderingMixin)
 
 
@@ -34,12 +34,12 @@ def _per_char(text):
 
 
 def _incremental(mixin, content: str, style, chunk_sizes):
-    state = _InsetRenderState(style)
+    state = _IndentedRenderState(style)
     pos = 0
     for size in chunk_sizes:
-        mixin._extend_inset(state, content[pos : pos + size])
+        mixin._extend_indented(state, content[pos : pos + size])
         pos += size
-    mixin._extend_inset(state, content[pos:])  # remainder (also handles empty content)
+    mixin._extend_indented(state, content[pos:])  # remainder (also handles empty content)
     return state.text
 
 
@@ -65,10 +65,17 @@ CASES = [
 ]
 
 
+def test_canonical_render_uses_two_space_indent_without_guide(mixin):
+    rendered = mixin._format_indented_text("first\nsecond")
+
+    assert rendered.plain == "  first\n  second"
+    assert "│" not in rendered.plain
+
+
 @pytest.mark.parametrize("content", CASES)
 @pytest.mark.parametrize("style", [None, "italic dim"])
 def test_incremental_matches_canonical_for_uniform_chunks(mixin, content, style):
-    canonical = _per_char(mixin._format_inset_text(content, style=style))
+    canonical = _per_char(mixin._format_indented_text(content, style=style))
     for chunk in (1, 2, 3, 7, 4096):
         sizes = [chunk] * (len(content) // chunk + 1)
         assert _per_char(_incremental(mixin, content, style, sizes)) == canonical
@@ -80,7 +87,7 @@ def test_incremental_matches_canonical_for_irregular_chunks(mixin):
     rng = random.Random(2024)
     content = "".join(rng.choice(["alpha beta", "gamma", "\n", "  ", "delta epsilon zeta", "\n\n"]) for _ in range(400))
     for style in (None, "italic dim"):
-        canonical = _per_char(mixin._format_inset_text(content, style=style))
+        canonical = _per_char(mixin._format_indented_text(content, style=style))
         for _ in range(20):
             sizes = []
             remaining = len(content)
@@ -93,7 +100,7 @@ def test_incremental_matches_canonical_for_irregular_chunks(mixin):
 
 def test_incremental_final_state_equals_canonical_for_large_stream(mixin):
     content = "a moderately sized line of reasoning output\n" * 12_000  # ~520 KB, many lines
-    canonical = _per_char(mixin._format_inset_text(content))
+    canonical = _per_char(mixin._format_indented_text(content))
     incremental = _per_char(_incremental(mixin, content, None, [4000] * (len(content) // 4000 + 1)))
     assert incremental == canonical
 
@@ -107,13 +114,13 @@ def test_large_stream_builds_in_linear_time(mixin):
     """
     content = "a moderately sized line of reasoning output\n" * 23_000  # ~1 MB
     step = 4000
-    state = _InsetRenderState(None)
+    state = _IndentedRenderState(None)
     start = time.perf_counter()
     pos = 0
     while pos < len(content):
         nxt = min(len(content), pos + step)
-        mixin._extend_inset(state, content[pos:nxt])
+        mixin._extend_indented(state, content[pos:nxt])
         pos = nxt
     elapsed = time.perf_counter() - start
     assert elapsed < 2.0, f"incremental 1MB stream took {elapsed:.2f}s (O(n^2) regression?)"
-    assert state.text.plain == mixin._format_inset_text(content).plain
+    assert state.text.plain == mixin._format_indented_text(content).plain
