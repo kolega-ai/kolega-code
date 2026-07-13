@@ -6,6 +6,7 @@ import asyncio
 
 from kolega_code.agent import AgentConfig, AgentEvent, CoderAgent, PlanningAgent, PromptExtension, ToolExtension
 from kolega_code.agent.prompt_provider import AgentMode
+from kolega_code.agent.custom_agents import discover_custom_agents, validate_custom_agent_models
 from kolega_code.agent.prompts import build_current_plan_artifact_prompt
 from kolega_code.hooks import HookDispatcher, HookEvent, load_hook_config, project_hooks_present
 from kolega_code.llm.exceptions import LLMError, llm_error_message
@@ -658,6 +659,10 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         browser_manager.headless = not self.browser_visible
         agent_class = PlanningAgent if self.interaction_mode == tui_constants.PLAN_INTERACTION_MODE else CoderAgent
         self.skill_catalog = discover_skills(self.project_path)
+        self.custom_agent_catalog = validate_custom_agent_models(
+            discover_custom_agents(self.project_path, self.settings_store.root),
+            config,
+        ).for_mode(self.interaction_mode)
         prompt_extensions: list[PromptExtension] = []
         tool_extensions: list[ToolExtension] = []
         # The shared task list is build-mode execution tracking; plan mode produces
@@ -725,6 +730,7 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             permission_mode=self.permission_mode,
             permission_callback=self._permission_callback,
             hook_dispatcher=self._session_hook_dispatcher(),
+            custom_agent_catalog=self.custom_agent_catalog,
         )
         assert self.agent is not None
         # Initialize LSP (language detection + server resolution)

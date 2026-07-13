@@ -73,6 +73,7 @@ from .provider_registry import (
 )
 from .session_store import SessionRecord, SessionStore
 from .settings import CliSettings, SettingsStore
+from kolega_code.agent.custom_agents import CustomAgentCatalog, discover_custom_agents
 from .skills import (
     SkillCatalog,
     discover_skills,
@@ -171,6 +172,10 @@ class KolegaCodeApp(
         self.overrides = overrides or CliConfigOverrides()
         self.settings: CliSettings = CliSettings()
         self.skill_catalog: SkillCatalog = discover_skills(self.project_path)
+        self.custom_agent_catalog: CustomAgentCatalog = discover_custom_agents(
+            self.project_path,
+            self.settings_store.root,
+        )
         self.file_index = WorkspaceFileIndex(self.project_path)
         self._file_index_refreshing = False
         # Local diagnostics (constructed on mount, once settings/secrets are loaded).
@@ -1881,6 +1886,15 @@ class KolegaCodeApp(
             lines.extend(f"- {error}" for error in errors)
         return lines
 
+    def _startup_custom_agent_lines(self) -> list[str]:
+        lines: list[str] = []
+        if self.custom_agent_catalog.has_agents():
+            lines.append(f"Custom agents: {', '.join(self.custom_agent_catalog.names())}")
+        if self.custom_agent_catalog.diagnostics:
+            lines.append("Custom agent diagnostics:")
+            lines.extend(f"- {diagnostic.format()}" for diagnostic in self.custom_agent_catalog.diagnostics)
+        return lines
+
     def _startup_content(self) -> str:
         session_id = str(self.session.session_id)[:8]
         provider, model = self._startup_model()
@@ -1919,6 +1933,7 @@ class KolegaCodeApp(
                 f"Model: {model_display}",
                 *([override_message] if override_message else []),
                 *self._startup_prompt_override_lines(),
+                *self._startup_custom_agent_lines(),
                 f"Thinking effort: {effort}",
                 f"API key: {api_key}",
                 *self._startup_lsp_lines(),

@@ -140,6 +140,7 @@ class BaseAgent(LogMixin):
         hook_dispatcher: Optional[HookDispatcher] = None,
         context: Optional[AgentContext] = None,
         max_iterations: Optional[int] = None,
+        custom_agent_catalog: Optional[Any] = None,
     ) -> None:
         """
         Initialize a new BaseAgent instance.
@@ -261,6 +262,7 @@ class BaseAgent(LogMixin):
         self.hook_dispatcher = context.hook_dispatcher or NO_OP_DISPATCHER
         self.usage_recorder = context.telemetry.usage_recorder
         self.sub_agent_recorder = context.telemetry.sub_agent_recorder
+        self.custom_agent_catalog = custom_agent_catalog
 
         # gigacode (workflow orchestration) opt-in. Off by default; the host toggles
         # it via apply_gigacode(). The run_workflow tool gate reads this live, so

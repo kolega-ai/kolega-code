@@ -50,6 +50,7 @@ class CoderAgent(BaseAgent, LogMixin):
         sub_agent_recorder: Optional[Any] = None,
         hook_dispatcher: Optional[Any] = None,
         max_iterations: Optional[int] = None,
+        custom_agent_catalog: Optional[Any] = None,
     ) -> None:
         """
         Initialize a new CoderAgent instance.
@@ -78,6 +79,9 @@ class CoderAgent(BaseAgent, LogMixin):
             usage_recorder: Optional callback for recording normalized LLM usage
             sub_agent_recorder: Optional callback for persisting sub-agent conversation state
         """
+        if custom_agent_catalog is not None:
+            custom_agent_catalog = custom_agent_catalog.for_mode("build")
+
         # Call parent constructor
         super().__init__(
             project_path,
@@ -106,6 +110,7 @@ class CoderAgent(BaseAgent, LogMixin):
             sub_agent_recorder=sub_agent_recorder,
             hook_dispatcher=hook_dispatcher,
             max_iterations=max_iterations,
+            custom_agent_catalog=custom_agent_catalog,
         )
 
         # Configure tool collection with custom coder agent tools
