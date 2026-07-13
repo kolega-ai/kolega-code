@@ -7,6 +7,7 @@ from typing import Awaitable, Callable, Optional
 
 
 from kolega_code.agent import PromptExtension
+from kolega_code.agent.custom_agents import discover_custom_agents, validate_custom_agent_models
 from kolega_code.agent.prompt_dump import (
     dump_prompt_overrides,
     format_prompt_dump_result,
@@ -48,6 +49,7 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
     def _tui_command_handlers(self) -> dict[str, Callable[[str], Awaitable[None]]]:
         return {
             "/attach": self._command_attach,
+            "/agents": self._command_agents,
             "/detach": self._command_detach,
             "/init": self._command_init,
             "/plan": self._command_plan,
@@ -408,6 +410,26 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
             return
 
         self._add_conversation_entry(tui_state.ConversationEntry(kind="system", content=usage))
+
+    async def _command_agents(self, args: str) -> None:
+        command = args.strip().lower()
+        usage = "Usage: /agents [list|validate]"
+        if command not in {"", "list", "validate"}:
+            self._add_conversation_entry(tui_state.ConversationEntry(kind="system", content=usage))
+            return
+
+        catalog = discover_custom_agents(self.project_path, self.settings_store.root)
+        if self.config is not None:
+            catalog = validate_custom_agent_models(catalog, self.config)
+
+        content = catalog.format_catalog()
+        content += (
+            "\n\nCustom-agent file changes become dispatchable after the active agent is rebuilt "
+            "(for example, by switching modes) or the TUI is restarted."
+        )
+        self._add_conversation_entry(tui_state.ConversationEntry(kind="system", content=content))
+        if command == "validate" and catalog.has_errors():
+            self._notify_user("Some custom-agent definitions are invalid.", severity="error")
 
     async def _command_sidebar(self, args: str) -> None:
         await self.action_toggle_sidebar()

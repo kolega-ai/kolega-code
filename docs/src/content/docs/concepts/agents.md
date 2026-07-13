@@ -93,6 +93,11 @@ kolega-code agents list --project .
 kolega-code agents validate --project .
 ```
 
+Inside the TUI, use `/agents` (or `/agents list`) to inspect all effective
+definitions and `/agents validate` to rescan and report invalid files. Definitions
+changed while the TUI is running become dispatchable after the active agent is
+rebuilt, such as when switching modes, or after restarting the TUI.
+
 The Build or Plan agent sees the names and descriptions enabled for its mode and
 can select one through `dispatch_custom_agent`. Build is the safe default; an
 agent must explicitly declare `mode: plan` or `mode: all` before Plan can use it.
