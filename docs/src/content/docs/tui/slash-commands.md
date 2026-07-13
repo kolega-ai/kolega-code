@@ -33,6 +33,7 @@ These control the app and your session.
 | Command | Description |
 | --- | --- |
 | `/skills` | List available Agent Skills |
+| `/agents` | List or validate custom agents (`/agents validate`) |
 | `/init` | Create or update `AGENTS.md` for this repository |
 | `/attach` | Attach an image: clipboard if no path, or `/attach <path>` for a file |
 | `/detach` | Remove pending image attachments |
@@ -75,6 +76,12 @@ without an API key; `/logout chatgpt` removes the stored credentials. See
 Run `/queue-clear` to discard follow-up prompts that you queued while the current
 turn is running. It removes their `Queued` transcript entries, but it does not
 cancel or otherwise stop the active agent turn.
+
+Run `/agents` or `/agents list` to inspect all effective user and project custom-agent
+definitions, including agents configured for the other interaction mode. Run
+`/agents validate` to rescan the files and report invalid definitions. File changes
+become dispatchable after the active agent is rebuilt (for example, by switching
+modes) or the TUI is restarted.
 
 Run `/diagnostics` to print a snapshot of this session — version, platform and
 terminal, active model and endpoint, which providers have keys, and how many

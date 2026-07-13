@@ -32,6 +32,7 @@ def test_agent_command_names_match_command_processor():
     assert agent_command_names() == {spec.name for spec in CommandProcessor.SPECS}
     assert THREAD_RESET_COMMANDS <= agent_command_names()
     assert SKILLS_LIST_COMMAND in TUI_COMMAND_NAMES
+    assert "/agents" in TUI_COMMAND_NAMES
     assert "/init" in TUI_COMMAND_NAMES
     assert "/sidebar" in TUI_COMMAND_NAMES
     assert "/prompts" in TUI_COMMAND_NAMES
@@ -52,6 +53,7 @@ def test_all_command_entries_include_each_scope():
     entries = all_command_entries(_catalog("demo-skill"))
     by_name = {entry.name: entry for entry in entries}
     assert by_name["help"].scope is CommandScope.AGENT
+    assert by_name["agents"].scope is CommandScope.TUI
     assert by_name["init"].scope is CommandScope.TUI
     assert by_name["plan"].scope is CommandScope.TUI
     assert by_name["effort"].scope is CommandScope.TUI
@@ -64,10 +66,11 @@ def test_all_command_entries_include_each_scope():
 
 
 def test_builtin_command_shadows_skill_with_same_name():
-    entries = all_command_entries(_catalog("init"))
-    matches = [entry for entry in entries if entry.name == "init"]
-    assert len(matches) == 1
-    assert matches[0].scope is CommandScope.TUI
+    entries = all_command_entries(_catalog("agents", "init"))
+    for name in ("agents", "init"):
+        matches = [entry for entry in entries if entry.name == name]
+        assert len(matches) == 1
+        assert matches[0].scope is CommandScope.TUI
 
 
 def test_search_commands_prefix_matches_first():

@@ -44,6 +44,7 @@ SKILLS_LIST_COMMAND = "/skills"
 
 TUI_COMMAND_ENTRIES: tuple[SlashCommandEntry, ...] = (
     SlashCommandEntry("skills", "List available Agent Skills", CommandScope.TUI),
+    SlashCommandEntry("agents", "List and validate custom agents", CommandScope.TUI),
     SlashCommandEntry(
         "attach",
         "Attach an image (clipboard if no path, or a file path)",
