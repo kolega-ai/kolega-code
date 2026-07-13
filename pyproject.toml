@@ -42,7 +42,7 @@ dependencies = [
     "openai==1.109.1",
     "packaging==25.0",
     "pathspec==1.1.1",
-    "pillow==12.2.0",
+    "pillow==12.3.0",
     "playwright==1.59.0",
     "psutil==7.2.2",
     "pydantic==2.13.4",

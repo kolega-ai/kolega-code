@@ -205,4 +205,27 @@ jobs:
 
       - name: Audit locked dependencies
         if: needs.changes.outputs.coverage-badge-only != 'true'
-        run: uv audit --locked
+        run: |
+          set +e
+          uv audit --locked --output-format json > /tmp/uv-audit.json
+          audit_status=$?
+          set -e
+
+          cat /tmp/uv-audit.json
+
+          # Exit codes above 1 indicate that the audit itself failed, rather than
+          # that it found reportable dependency issues.
+          if [ "$audit_status" -gt 1 ]; then
+            exit "$audit_status"
+          fi
+
+          # socksio is an archived but vulnerability-free transitive dependency
+          # required by ddgs through HTTPX's SOCKS proxy support. uv currently
+          # has no adverse-status allowlist, so filter only this known status and
+          # continue to fail on every vulnerability or other adverse status.
+          jq -e '
+            (.vulnerabilities | length == 0) and
+            ([.adverse_statuses[] |
+              select(.name != "socksio" or .status != "archived")
+            ] | length == 0)
+          ' /tmp/uv-audit.json
