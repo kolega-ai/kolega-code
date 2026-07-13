@@ -70,6 +70,7 @@ provider's default model, or set both provider and model.
 | `KOLEGA_CODE_FAST_PROVIDER` / `KOLEGA_CODE_FAST_MODEL` | Fast utility model |
 | `KOLEGA_CODE_THINKING_PROVIDER` / `KOLEGA_CODE_THINKING_MODEL` | Thinking model |
 | `KOLEGA_CODE_THINKING_EFFORT` | Model-specific thinking effort |
+| `KOLEGA_CODE_EDIT_PROTOCOL` | File edit language: `search_replace` (default) or `codex_apply_patch` |
 
 See [Providers & Models](../providers-and-models/) for what each role does.
 

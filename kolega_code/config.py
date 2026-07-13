@@ -27,6 +27,13 @@ class ModelProvider(str, Enum):
     OLLAMA_CLOUD = "ollama_cloud"
 
 
+class EditProtocol(str, Enum):
+    """Model-facing language used for ordinary file edits."""
+
+    SEARCH_REPLACE = "search_replace"
+    CODEX_APPLY_PATCH = "codex_apply_patch"
+
+
 class AgentRole(str, Enum):
     """Configurable agent roles that can each run on their own model.
 
@@ -161,6 +168,10 @@ class AgentConfig(BaseModel):
     langfuse_public_key: Optional[str] = Field(default=None, description="Langfuse public key")
     langfuse_secret_key: Optional[str] = Field(default=None, description="Langfuse secret key")
     environment: Optional[str] = Field(default="development", description="Environment name (development, production)")
+    edit_protocol: EditProtocol = Field(
+        default=EditProtocol.SEARCH_REPLACE,
+        description="Model-facing edit tool protocol",
+    )
 
     # Model configurations
     long_context_config: ModelConfig = Field(

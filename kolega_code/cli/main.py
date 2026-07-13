@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Iterable, Optional
 
 from kolega_code.agent import CoderAgent
+from kolega_code.config import EditProtocol
 from kolega_code.agent.custom_agents import discover_custom_agents, validate_custom_agent_models
 from kolega_code.agent.prompt_provider import PromptExtension
 from kolega_code.agent.prompt_dump import (
@@ -182,6 +183,11 @@ def _add_common_model_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--thinking-effort", help="Model-specific thinking effort for the active model.")
     parser.add_argument("--thinking-tokens", dest="deprecated_thinking_tokens", type=int, help=argparse.SUPPRESS)
     parser.add_argument("--environment", help="Environment label for tracing/metadata.")
+    parser.add_argument(
+        "--edit-protocol",
+        choices=[protocol.value for protocol in EditProtocol],
+        help="File edit protocol exposed to coding models.",
+    )
 
 
 def _add_session_args(parser: argparse.ArgumentParser, session_help: str = "Session ID to resume or create.") -> None:
@@ -402,6 +408,7 @@ def _overrides_from_args(args: argparse.Namespace) -> CliConfigOverrides:
         thinking_model=getattr(args, "thinking_model", None),
         thinking_effort=getattr(args, "thinking_effort", None),
         environment=getattr(args, "environment", None),
+        edit_protocol=getattr(args, "edit_protocol", None),
     )
 
 

@@ -38,6 +38,7 @@ COMMAND_PERMISSION_TOOLS = frozenset(
 EDIT_PERMISSION_TOOLS = frozenset(
     {
         "edit",
+        "apply_patch",
         "lsp_edit",
         "multi_edit",
         "write",
@@ -210,7 +211,7 @@ def permission_request_for_tool(tool_name: str, inputs: dict[str, Any]) -> Optio
         )
 
     if tool_name in EDIT_PERMISSION_TOOLS:
-        path = _path_from_edit_inputs(inputs)
+        path = _path_from_edit_inputs(inputs, tool_name=tool_name)
         return PermissionRequest(
             kind=PermissionKind.EDIT,
             tool_name=tool_name,
@@ -298,7 +299,24 @@ def _mcp_target_from_tool_name(tool_name: str) -> Optional[tuple[str, str]]:
     return server_id, mcp_tool
 
 
-def _path_from_edit_inputs(inputs: dict[str, Any]) -> str:
+def _path_from_edit_inputs(inputs: dict[str, Any], *, tool_name: str = "") -> str:
+    if tool_name == "apply_patch":
+        raw = inputs.get("input")
+        if not isinstance(raw, str):
+            return ""
+        try:
+            from kolega_code.agent.tool_backend.codex_patch import parse_codex_patch
+
+            operations = parse_codex_patch(raw)
+        except (ValueError, TypeError):
+            return ""
+        paths = list(
+            dict.fromkeys(
+                path for operation in operations for path in (operation.path, operation.move_to) if path is not None
+            )
+        )
+        # A path-scoped rule is safe only when the patch affects that one path.
+        return paths[0] if len(paths) == 1 else ""
     value = inputs.get("path")
     path = str(value).strip() if value is not None else ""
     if inputs.get("operation") == "rename_file" and inputs.get("new_path"):

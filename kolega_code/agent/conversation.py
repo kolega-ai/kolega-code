@@ -52,11 +52,12 @@ def _provider_value(provider: Any) -> str:
 
 
 def _message_with_content(message: Message, content: List[Any]) -> Message:
+    tool_calls = [block for block in content if isinstance(block, ToolCall)]
     return Message(
         role=message.role,
         content=content,
         stop_reason=message.stop_reason,
-        tool_calls=message.tool_calls,
+        tool_calls=tool_calls,
         usage_metadata=message.usage_metadata,
     )
 
@@ -69,6 +70,7 @@ def _tool_result_with_content(tool_result: ToolResult, content: List[Any]) -> To
         is_error=tool_result.is_error,
         cache_checkpoint=tool_result.cache_checkpoint,
         execution_id=tool_result.execution_id,
+        input_kind=tool_result.input_kind,
     )
 
 
@@ -122,12 +124,17 @@ def replace_image_blocks_with_placeholders(messages: List[Message], model_name: 
 _REASONING_COMPATIBLE_GROUPS: tuple[frozenset[str], ...] = (frozenset({"openai", "openai_chatgpt"}),)
 
 
-def _preserve_reasoning_block(block: Any, *, source_provider: str, target_provider: str) -> bool:
+def _providers_replay_compatible(source_provider: str, target_provider: str) -> bool:
     if not source_provider:
         return False
     if source_provider == target_provider:
         return True
     return any(source_provider in group and target_provider in group for group in _REASONING_COMPATIBLE_GROUPS)
+
+
+def _preserve_reasoning_block(block: Any, *, source_provider: str, target_provider: str) -> bool:
+    _ = block
+    return _providers_replay_compatible(source_provider, target_provider)
 
 
 def _reasoning_placeholder(block: Any, source_provider: str) -> TextBlock:
@@ -137,8 +144,35 @@ def _reasoning_placeholder(block: Any, source_provider: str) -> TextBlock:
     return TextBlock(text=f"[Prior reasoning from {source} omitted for compatibility.]")
 
 
+def _preserve_freeform_exchange(
+    *, source_provider: str, target_provider: str, target_edit_protocol: Optional[str]
+) -> bool:
+    if target_edit_protocol is not None and target_edit_protocol != "codex_apply_patch":
+        return False
+    return _providers_replay_compatible(source_provider, target_provider)
+
+
+def _freeform_call_placeholder(block: ToolCall, source_provider: str) -> TextBlock:
+    source = source_provider or "unknown provider"
+    return TextBlock(text=f"[Prior freeform tool call `{block.name}` from {source} omitted for compatibility.]")
+
+
+def _freeform_result_placeholder(block: ToolResult, source_provider: str) -> TextBlock:
+    source = source_provider or "unknown provider"
+    content = block.content if isinstance(block.content, str) else block.to_markdown()
+    status = "failed" if block.is_error else "completed"
+    return TextBlock(text=f"[Prior `{block.name}` call from {source} {status}: {content}]")
+
+
 def _adapt_content_blocks_for_provider(
-    blocks: List[Any], *, source_provider: str, target_provider: str, target_model: str, supports_vision: bool
+    blocks: List[Any],
+    *,
+    source_provider: str,
+    target_provider: str,
+    target_model: str,
+    supports_vision: bool,
+    target_edit_protocol: Optional[str] = None,
+    tool_call_providers: Optional[Dict[str, str]] = None,
 ) -> tuple[List[Any], bool]:
     adapted: List[Any] = []
     changed = False
@@ -153,6 +187,27 @@ def _adapt_content_blocks_for_provider(
             else:
                 adapted.append(_reasoning_placeholder(block, source_provider))
                 changed = True
+        elif isinstance(block, ToolCall) and block.input_kind == "freeform":
+            if _preserve_freeform_exchange(
+                source_provider=source_provider,
+                target_provider=target_provider,
+                target_edit_protocol=target_edit_protocol,
+            ):
+                adapted.append(block)
+            else:
+                adapted.append(_freeform_call_placeholder(block, source_provider))
+                changed = True
+        elif isinstance(block, ToolResult) and block.input_kind == "freeform":
+            call_source = (tool_call_providers or {}).get(block.tool_use_id, source_provider)
+            if _preserve_freeform_exchange(
+                source_provider=call_source,
+                target_provider=target_provider,
+                target_edit_protocol=target_edit_protocol,
+            ):
+                adapted.append(block)
+            else:
+                adapted.append(_freeform_result_placeholder(block, call_source))
+                changed = True
         elif isinstance(block, ToolResult) and isinstance(block.content, list):
             inner, inner_changed = _adapt_content_blocks_for_provider(
                 block.content,
@@ -160,6 +215,8 @@ def _adapt_content_blocks_for_provider(
                 target_provider=target_provider,
                 target_model=target_model,
                 supports_vision=supports_vision,
+                target_edit_protocol=target_edit_protocol,
+                tool_call_providers=tool_call_providers,
             )
             if inner_changed:
                 adapted.append(_tool_result_with_content(block, inner))
@@ -173,7 +230,12 @@ def _adapt_content_blocks_for_provider(
 
 
 def adapt_history_for_provider(
-    messages: List[Message], *, target_provider: str, target_model: str, supports_vision: bool
+    messages: List[Message],
+    *,
+    target_provider: str,
+    target_model: str,
+    supports_vision: bool,
+    target_edit_protocol: Optional[Any] = None,
 ) -> List[Message]:
     """Return a request-safe history for the target provider without mutating storage.
 
@@ -185,8 +247,17 @@ def adapt_history_for_provider(
     image compatibility behavior.
     """
     target_provider = _provider_value(target_provider)
+    if target_edit_protocol is not None:
+        target_edit_protocol = _provider_value(target_edit_protocol)
     result: List[Message] = []
     changed_any = False
+    tool_call_providers: Dict[str, str] = {}
+    for message in messages:
+        source_provider = _provider_value((message.usage_metadata or {}).get("provider"))
+        if isinstance(message.content, list):
+            for block in message.content:
+                if isinstance(block, ToolCall):
+                    tool_call_providers[block.id] = source_provider
 
     for message in messages:
         if not isinstance(message.content, list):
@@ -200,6 +271,8 @@ def adapt_history_for_provider(
             target_provider=target_provider,
             target_model=target_model,
             supports_vision=supports_vision,
+            target_edit_protocol=target_edit_protocol,
+            tool_call_providers=tool_call_providers,
         )
         if changed:
             result.append(_message_with_content(message, adapted_content))
@@ -572,6 +645,7 @@ class Conversation:
                                     content="Operation was interrupted. Please retry if needed.",
                                     name=tool_call.name,
                                     is_error=True,
+                                    input_kind=tool_call.input_kind,
                                 )
                             )
 

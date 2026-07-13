@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from kolega_code.config import ModelProvider
+from kolega_code.config import EditProtocol, ModelProvider
 from kolega_code.cli.config import (
     DEFAULT_LONG_MODEL,
     CliConfigError,
@@ -105,6 +105,28 @@ def test_build_agent_config_flags_override_env(tmp_path: Path) -> None:
     assert config.long_context_config.model == "claude-opus-4-7"
     assert config.long_context_config.thinking_effort == "xhigh"
     assert config.thinking_config.thinking_effort == "xhigh"
+
+
+def test_build_agent_config_edit_protocol_flag_overrides_env(tmp_path: Path) -> None:
+    config = build_agent_config(
+        tmp_path,
+        CliConfigOverrides(model="claude-opus-4-7", edit_protocol="codex_apply_patch"),
+        env={
+            "ANTHROPIC_API_KEY": "test-key",
+            "KOLEGA_CODE_EDIT_PROTOCOL": "search_replace",
+        },
+    )
+
+    assert config.edit_protocol == EditProtocol.CODEX_APPLY_PATCH
+
+
+def test_build_agent_config_rejects_unknown_edit_protocol(tmp_path: Path) -> None:
+    with pytest.raises(CliConfigError, match="Unsupported edit protocol"):
+        build_agent_config(
+            tmp_path,
+            CliConfigOverrides(model="claude-opus-4-7", edit_protocol="not-real"),
+            env={"ANTHROPIC_API_KEY": "test-key"},
+        )
 
 
 def test_build_agent_config_rejects_deprecated_thinking_tokens_env(tmp_path: Path) -> None:

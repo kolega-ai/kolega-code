@@ -158,6 +158,14 @@ def test_parse_permission_mode_flags() -> None:
     assert ask_args.permission_mode == "ask"
 
 
+def test_parse_edit_protocol_flags() -> None:
+    tui_args = parse_args(["/tmp/project", "--edit-protocol", "codex_apply_patch"])
+    ask_args = parse_args(["ask", "hello", "--project", "/tmp/project", "--edit-protocol", "codex_apply_patch"])
+
+    assert tui_args.edit_protocol == "codex_apply_patch"
+    assert ask_args.edit_protocol == "codex_apply_patch"
+
+
 def test_parse_sessions_list_subcommand() -> None:
     args = parse_args(["sessions", "list", "--project", "/tmp/project"])
 

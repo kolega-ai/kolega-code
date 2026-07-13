@@ -15,6 +15,7 @@ from kolega_code.services.browser import PlaywrightBrowserManager
 from .tool_backend.agent_tool import AgentTool
 from .tool_backend.browser_tool import BROWSER_TOOL_SCHEMAS, BrowserTool
 from .tool_backend.edit_tool import EditTool
+from .tool_backend.codex_patch import CODEX_APPLY_PATCH_GRAMMAR
 from .tool_backend.glob_tool import GlobTool
 from .tool_backend.list_directory_tool import ListDirectoryTool
 from .tool_backend.memory_tool import MemoryTool
@@ -1298,6 +1299,21 @@ class ToolCollection(LogMixin):
         """
         return await self.edit_tool.edit(path, block)
 
+    async def apply_patch(self, input: str) -> str:
+        """Use the `apply_patch` tool to edit files.
+
+        This is a FREEFORM tool, so do not wrap the patch in JSON. Supply one
+        complete patch beginning with `*** Begin Patch` and ending with
+        `*** End Patch`. A patch may add, update, move, or delete multiple files.
+
+        Args:
+            input: The raw Codex apply_patch payload.
+
+        Returns:
+            A summary of added, modified, moved, and deleted files.
+        """
+        return await self.edit_tool.apply_patch(input)
+
     async def multi_edit(self, path: str, blocks: str) -> str:
         """
         Edit a file using one or more search and replace blocks.
@@ -1807,6 +1823,16 @@ class ToolCollection(LogMixin):
     def _tool_definition_from_callable(self, method_name: str, method: Callable[..., Any]) -> ToolDefinition:
         """Build a provider-agnostic tool definition from a Python callable."""
         definition = tool_definition_from_callable(method_name, method)
+        if method_name == "apply_patch":
+            definition.description = (
+                "Use the `apply_patch` tool to edit files. This is a FREEFORM tool, so do not wrap the patch in JSON."
+            )
+            definition.input_kind = "freeform"
+            definition.freeform_format = {
+                "type": "grammar",
+                "syntax": "lark",
+                "definition": CODEX_APPLY_PATCH_GRAMMAR,
+            }
         if method_name == "dispatch_custom_agent":
             catalog = getattr(self.caller, "custom_agent_catalog", None)
             if catalog is not None and catalog.has_agents():
@@ -1920,6 +1946,15 @@ class ToolCollection(LogMixin):
             catalog = getattr(self.caller, "custom_agent_catalog", None)
             if getattr(self.caller, "sub_agent", False) or catalog is None or not catalog.has_agents():
                 return False
+
+        config = getattr(self, "config", None)
+        edit_protocol = getattr(getattr(config, "edit_protocol", None), "value", None) or getattr(
+            config, "edit_protocol", "search_replace"
+        )
+        if method_name == "apply_patch" and edit_protocol != "codex_apply_patch":
+            return False
+        if method_name in {"edit", "multi_edit", "write"} and edit_protocol == "codex_apply_patch":
+            return False
 
         if self.tool_config.allowed_tools is not None and method_name not in self.tool_config.allowed_tools:
             return False

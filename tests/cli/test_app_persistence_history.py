@@ -211,6 +211,44 @@ async def test_textual_app_history_save_persists_session_and_compaction(
     assert loaded.compaction == saved_compaction
 
 
+def test_session_store_round_trips_freeform_tool_exchange(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", {})
+    raw = "*** Begin Patch\n*** Add File: a.txt\n+x\n*** End Patch\n"
+    session.history = [
+        Message(
+            role="assistant",
+            content=[ToolCall(id="call-1", name="apply_patch", input=raw, input_kind="freeform")],
+            usage_metadata={"provider": "openai"},
+        ).to_dict(),
+        Message(
+            role="user",
+            content=[
+                ToolResult(
+                    tool_use_id="call-1",
+                    name="apply_patch",
+                    content="Success",
+                    is_error=False,
+                    input_kind="freeform",
+                )
+            ],
+        ).to_dict(),
+    ]
+    store.save(session)
+
+    restored = [Message.from_dict(item) for item in store.load(session.session_id).history]
+
+    assert isinstance(restored[0].content, list)
+    assert isinstance(restored[0].content[0], ToolCall)
+    assert restored[0].content[0].input == raw
+    assert restored[0].content[0].input_kind == "freeform"
+    assert isinstance(restored[1].content, list)
+    assert isinstance(restored[1].content[0], ToolResult)
+    assert restored[1].content[0].input_kind == "freeform"
+
+
 @pytest.mark.asyncio
 async def test_textual_app_overlapping_saves_preserve_later_state(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch

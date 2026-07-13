@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Optional
 
 from .base_tool import BaseTool
+from .codex_patch import PatchOperation, apply_update_chunks, parse_codex_patch
 from .edit_preview import build_diff_preview, build_head_preview
 
 if TYPE_CHECKING:
@@ -165,6 +167,170 @@ class EditTool(BaseTool):
             error_msg = f"Failed to write to file {path}: {str(e)}"
             await self.log_error(error_msg, sender=self.caller.agent_name)
             raise
+
+    async def apply_patch(self, patch: str) -> str:
+        """Apply a complete Codex patch atomically after in-memory validation."""
+        operations = parse_codex_patch(patch)
+        normalized_operations = [self._normalize_patch_operation(operation) for operation in operations]
+
+        affected = list(
+            dict.fromkeys(
+                path
+                for operation in normalized_operations
+                for path in (operation.path, operation.move_to)
+                if path is not None
+            )
+        )
+        for path in affected:
+            blocked = self._enforce_vibe_edit_policy(path)
+            if blocked:
+                return blocked
+
+        initial: dict[str, Optional[str]] = {}
+        working: dict[str, Optional[str]] = {}
+
+        def load(path: str, *, must_exist: bool = False) -> Optional[str]:
+            if path in working:
+                value = working[path]
+            elif self.filesystem.exists(path):
+                if not self.filesystem.is_file(path):
+                    raise IsADirectoryError(f"Patch path is not a file: {path}")
+                value = self.filesystem.read_text(path)
+                initial[path] = value
+                working[path] = value
+            else:
+                value = None
+                initial[path] = None
+                working[path] = None
+            if must_exist and value is None:
+                raise FileNotFoundError(f"File not found: {path}")
+            return value
+
+        for operation in normalized_operations:
+            if operation.kind == "add":
+                previous = load(operation.path)
+                content = "\n".join(operation.add_lines) + "\n"
+                if previous is not None:
+                    content = self._normalize_line_endings(
+                        content, self._detect_dominant_line_ending(operation.path, previous)
+                    )
+                working[operation.path] = content
+                continue
+
+            if operation.kind == "delete":
+                load(operation.path, must_exist=True)
+                working[operation.path] = None
+                continue
+
+            original = load(operation.path, must_exist=True)
+            assert original is not None
+            updated = apply_update_chunks(original, operation.chunks, operation.path)
+            if operation.move_to:
+                load(operation.move_to)
+                working[operation.path] = None
+                working[operation.move_to] = updated
+            else:
+                working[operation.path] = updated
+
+        for path, content in working.items():
+            if content is not None:
+                self._validate_patch_parent(path)
+
+        changed = [path for path in working if initial.get(path) != working[path]]
+        snapshot_paths = list(changed)
+        for path in changed:
+            if working[path] is not None:
+                snapshot_paths.extend(self._snapshot_paths_for_write(path))
+        snapshot_paths = list(dict.fromkeys(snapshot_paths))
+
+        def mutate() -> None:
+            for path in sorted(
+                (item for item in changed if working[item] is None),
+                key=lambda item: len(Path(item).parts),
+                reverse=True,
+            ):
+                if self.filesystem.exists(path):
+                    self.filesystem.remove(path, missing_ok=True)
+            for path in sorted(
+                (item for item in changed if working[item] is not None), key=lambda item: len(Path(item).parts)
+            ):
+                parent = self.filesystem.get_parent(path)
+                if parent and parent != "." and not self.filesystem.exists(parent):
+                    self.filesystem.create_directory(parent)
+                self.filesystem.write_text(path, working[path] or "")
+
+        self._record_snapshot_mutation(
+            tool_name="apply_patch",
+            reason=f"apply_patch ({len(normalized_operations)} operations)",
+            paths=snapshot_paths,
+            mutate=mutate,
+        )
+
+        for path in changed:
+            old = initial.get(path)
+            new = working[path]
+            if new is None:
+                preview = build_diff_preview(old or "", "", path)
+            elif old is None:
+                preview = build_head_preview(new, path)
+            else:
+                preview = build_diff_preview(old, new, path)
+            await self.send_edit_preview(
+                preview,
+                tool_call_id=getattr(self.caller, "current_tool_execution_id", None),
+                tool_name="apply_patch",
+            )
+
+        summaries: list[str] = []
+        for operation in normalized_operations:
+            if operation.kind == "add":
+                summaries.append(f"A {operation.path}")
+            elif operation.kind == "delete":
+                summaries.append(f"D {operation.path}")
+            elif operation.move_to:
+                summaries.append(f"M {operation.path} -> {operation.move_to}")
+            else:
+                summaries.append(f"M {operation.path}")
+
+        result = "Success. Updated the following files:\n" + "\n".join(summaries)
+        diagnostics: list[str] = []
+        for path in changed:
+            if working[path] is not None:
+                item = await self._maybe_append_lsp_diagnostics(path)
+                if item:
+                    diagnostics.append(item.strip())
+        if diagnostics:
+            result += "\n\n" + "\n\n".join(diagnostics)
+        return result
+
+    def _normalize_patch_operation(self, operation: PatchOperation) -> PatchOperation:
+        return PatchOperation(
+            kind=operation.kind,
+            path=self._normalize_patch_path(operation.path),
+            move_to=self._normalize_patch_path(operation.move_to) if operation.move_to else None,
+            add_lines=operation.add_lines,
+            chunks=operation.chunks,
+        )
+
+    def _normalize_patch_path(self, path: str) -> str:
+        candidate = Path(path)
+        if candidate.is_absolute():
+            raise ValueError(f"Patch paths must be relative to the project: {path}")
+        try:
+            relative = (self.project_path / candidate).resolve(strict=False).relative_to(self.project_path.resolve())
+        except ValueError as exc:
+            raise ValueError(f"Patch path is outside the project: {path}") from exc
+        normalized = relative.as_posix()
+        if normalized in {"", "."}:
+            raise ValueError("Patch path must not be the project root.")
+        return normalized
+
+    def _validate_patch_parent(self, path: str) -> None:
+        parent = self.filesystem.get_parent(path)
+        while parent and parent != ".":
+            if self.filesystem.exists(parent) and not self.filesystem.is_dir(parent):
+                raise NotADirectoryError(f"Patch parent is not a directory: {parent}")
+            parent = self.filesystem.get_parent(parent)
 
     async def _edit_blocks(self, path: str, blocks: list[SearchReplaceBlock], *, tool_name: str) -> str:
         if not self.filesystem.exists(path):

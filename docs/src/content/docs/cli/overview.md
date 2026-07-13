@@ -61,6 +61,7 @@ for the run.
 | `--thinking-provider` | Provider for think-hard operations |
 | `--thinking-model` | Model for think-hard operations |
 | `--thinking-effort` | Model-specific thinking effort, such as `auto`, `medium`, `high`, or `max` |
+| `--edit-protocol` | File edit language: `search_replace` (default) or `codex_apply_patch` |
 | `--environment` | Environment label for tracing/metadata |
 
 ## Session-state options
