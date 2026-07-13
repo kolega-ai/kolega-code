@@ -1,0 +1,5 @@
+schema_version: 1
+id: edit-coder-agent
+description: Curated production CoderAgent validation cases.
+curated_sources: [curated.yaml]
+default_repetitions: 1

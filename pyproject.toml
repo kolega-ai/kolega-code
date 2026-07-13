@@ -104,7 +104,7 @@ prerelease = "allow"
 exclude-newer = "1 week"
 
 [tool.pyright]
-include = ["kolega_code", "tests"]
+include = ["kolega_code", "benchmarks", "tests"]
 typeCheckingMode = "basic"
 pythonVersion = "3.11"
 venvPath = "."
