@@ -145,11 +145,26 @@ def _reasoning_placeholder(block: Any, source_provider: str) -> TextBlock:
 
 
 def _preserve_freeform_exchange(
-    *, source_provider: str, target_provider: str, target_edit_protocol: Optional[str]
+    *,
+    source_provider: str,
+    target_provider: str,
+    source_edit_protocol: Optional[str],
+    target_edit_protocol: Optional[str],
 ) -> bool:
-    if target_edit_protocol is not None and target_edit_protocol != "codex_apply_patch":
+    if target_edit_protocol is not None and source_edit_protocol != target_edit_protocol:
         return False
     return _providers_replay_compatible(source_provider, target_provider)
+
+
+def _source_edit_protocol(block: Any, usage_metadata: Optional[Dict[str, Any]]) -> Optional[str]:
+    value = _provider_value((usage_metadata or {}).get("edit_protocol"))
+    if value:
+        return str(value)
+    # Sessions created before protocol metadata was recorded can be identified
+    # by the only production freeform edit tool that existed at the time.
+    if getattr(block, "name", None) == "apply_patch":
+        return "codex_apply_patch"
+    return None
 
 
 def _freeform_call_placeholder(block: ToolCall, source_provider: str) -> TextBlock:
@@ -173,6 +188,8 @@ def _adapt_content_blocks_for_provider(
     supports_vision: bool,
     target_edit_protocol: Optional[str] = None,
     tool_call_providers: Optional[Dict[str, str]] = None,
+    tool_call_protocols: Optional[Dict[str, Optional[str]]] = None,
+    source_usage_metadata: Optional[Dict[str, Any]] = None,
 ) -> tuple[List[Any], bool]:
     adapted: List[Any] = []
     changed = False
@@ -191,6 +208,7 @@ def _adapt_content_blocks_for_provider(
             if _preserve_freeform_exchange(
                 source_provider=source_provider,
                 target_provider=target_provider,
+                source_edit_protocol=_source_edit_protocol(block, source_usage_metadata),
                 target_edit_protocol=target_edit_protocol,
             ):
                 adapted.append(block)
@@ -199,9 +217,13 @@ def _adapt_content_blocks_for_provider(
                 changed = True
         elif isinstance(block, ToolResult) and block.input_kind == "freeform":
             call_source = (tool_call_providers or {}).get(block.tool_use_id, source_provider)
+            call_protocol = (tool_call_protocols or {}).get(
+                block.tool_use_id, _source_edit_protocol(block, source_usage_metadata)
+            )
             if _preserve_freeform_exchange(
                 source_provider=call_source,
                 target_provider=target_provider,
+                source_edit_protocol=call_protocol,
                 target_edit_protocol=target_edit_protocol,
             ):
                 adapted.append(block)
@@ -217,6 +239,8 @@ def _adapt_content_blocks_for_provider(
                 supports_vision=supports_vision,
                 target_edit_protocol=target_edit_protocol,
                 tool_call_providers=tool_call_providers,
+                tool_call_protocols=tool_call_protocols,
+                source_usage_metadata=source_usage_metadata,
             )
             if inner_changed:
                 adapted.append(_tool_result_with_content(block, inner))
@@ -252,12 +276,14 @@ def adapt_history_for_provider(
     result: List[Message] = []
     changed_any = False
     tool_call_providers: Dict[str, str] = {}
+    tool_call_protocols: Dict[str, Optional[str]] = {}
     for message in messages:
         source_provider = _provider_value((message.usage_metadata or {}).get("provider"))
         if isinstance(message.content, list):
             for block in message.content:
                 if isinstance(block, ToolCall):
                     tool_call_providers[block.id] = source_provider
+                    tool_call_protocols[block.id] = _source_edit_protocol(block, message.usage_metadata)
 
     for message in messages:
         if not isinstance(message.content, list):
@@ -273,6 +299,8 @@ def adapt_history_for_provider(
             supports_vision=supports_vision,
             target_edit_protocol=target_edit_protocol,
             tool_call_providers=tool_call_providers,
+            tool_call_protocols=tool_call_protocols,
+            source_usage_metadata=message.usage_metadata,
         )
         if changed:
             result.append(_message_with_content(message, adapted_content))

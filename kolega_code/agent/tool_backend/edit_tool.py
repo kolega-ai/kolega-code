@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from hashlib import sha256
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -56,6 +57,142 @@ class EditTool(BaseTool):
         super().__init__(*args, **kwargs)
         self._lsp_manager = lsp_manager
         self._snapshot_service = snapshot_service
+        self._read_versions: dict[str, str] = {}
+
+    def observe_read(self, path: str) -> None:
+        """Record the current contents after a successful model-facing read."""
+
+        normalized = self._normalize_claude_path(path)
+        if self.filesystem.exists(normalized) and self.filesystem.is_file(normalized):
+            self._read_versions[normalized] = self._content_digest(self.filesystem.read_text(normalized))
+
+    async def claude_edit(
+        self,
+        file_path: str,
+        old_string: str,
+        new_string: str,
+        replace_all: bool = False,
+    ) -> str:
+        """Apply a Claude-style exact string replacement."""
+
+        path = self._normalize_claude_path(file_path)
+        if old_string == new_string:
+            raise ValueError("No changes to make: old_string and new_string are exactly the same.")
+
+        exists = self.filesystem.exists(path)
+        if exists and not self.filesystem.is_file(path):
+            raise IsADirectoryError(f"Path is a directory, not a file: {path}")
+        if not exists and old_string:
+            raise FileNotFoundError(f"File does not exist: {path}")
+
+        original_content: Optional[str] = None
+        if exists:
+            original_content = self.filesystem.read_text(path)
+            self._require_claude_read(path, original_content)
+            if old_string == "":
+                raise ValueError(
+                    "old_string cannot be empty when editing an existing file. "
+                    "Use write for an intentional full-file replacement."
+                )
+
+            line_ending = self._detect_dominant_line_ending(path, original_content)
+            bom = "\ufeff" if original_content.startswith("\ufeff") else ""
+            logical_original = self._normalize_line_endings(original_content[len(bom) :], "\n")
+            logical_old = self._normalize_line_endings(old_string, "\n")
+            logical_new = self._normalize_line_endings(new_string, "\n")
+            occurrences = logical_original.count(logical_old)
+            if occurrences == 0:
+                raise ValueError("String to replace not found in file.")
+            if occurrences > 1 and not replace_all:
+                raise ValueError(
+                    f"Found {occurrences} matches for old_string. "
+                    "Provide more surrounding text to make it unique or set replace_all=true."
+                )
+            logical_updated = logical_original.replace(logical_old, logical_new, -1 if replace_all else 1)
+            updated_content = bom + self._normalize_line_endings(logical_updated, line_ending)
+        else:
+            updated_content = new_string
+
+        blocked_msg = self._enforce_vibe_edit_policy(path)
+        if blocked_msg:
+            return blocked_msg
+
+        def _write() -> None:
+            parent = self.filesystem.get_parent(path)
+            if parent and parent != "." and not self.filesystem.exists(parent):
+                self.filesystem.create_directory(parent)
+            self.filesystem.write_text(path, updated_content)
+
+        self._record_snapshot_mutation(
+            tool_name="edit",
+            reason=f"claude edit {path}",
+            paths=self._snapshot_paths_for_write(path),
+            mutate=_write,
+        )
+        preview = (
+            build_diff_preview(original_content, updated_content, path)
+            if original_content is not None
+            else build_head_preview(updated_content, path)
+        )
+        await self.send_edit_preview(
+            preview,
+            tool_call_id=getattr(self.caller, "current_tool_execution_id", None),
+            tool_name="edit",
+        )
+        self._read_versions[path] = self._content_digest(self.filesystem.read_text(path))
+        result = f"Edited {path}" if exists else f"Created {path}"
+        diagnostics = await self._maybe_append_lsp_diagnostics(path)
+        return result + diagnostics
+
+    async def claude_write(self, file_path: str, content: str) -> str:
+        """Create or overwrite a file using the Claude-style write contract."""
+
+        path = self._normalize_claude_path(file_path)
+        exists = self.filesystem.exists(path)
+        if exists and not self.filesystem.is_file(path):
+            raise IsADirectoryError(f"Path is a directory, not a file: {path}")
+
+        original_content: Optional[str] = None
+        if exists:
+            original_content = self.filesystem.read_text(path)
+            self._require_claude_read(path, original_content)
+            source_has_bom = original_content.startswith("\ufeff")
+            content_has_bom = content.startswith("\ufeff")
+            content_body = content[1:] if content_has_bom else content
+            content = ("\ufeff" if source_has_bom or content_has_bom else "") + self._normalize_line_endings(
+                content_body, self._detect_dominant_line_ending(path, original_content)
+            )
+
+        blocked_msg = self._enforce_vibe_edit_policy(path)
+        if blocked_msg:
+            return blocked_msg
+
+        def _write() -> None:
+            parent = self.filesystem.get_parent(path)
+            if parent and parent != "." and not self.filesystem.exists(parent):
+                self.filesystem.create_directory(parent)
+            self.filesystem.write_text(path, content)
+
+        self._record_snapshot_mutation(
+            tool_name="write",
+            reason=f"claude write {path}",
+            paths=self._snapshot_paths_for_write(path),
+            mutate=_write,
+        )
+        preview = (
+            build_diff_preview(original_content, content, path)
+            if original_content is not None
+            else build_head_preview(content, path)
+        )
+        await self.send_edit_preview(
+            preview,
+            tool_call_id=getattr(self.caller, "current_tool_execution_id", None),
+            tool_name="write",
+        )
+        self._read_versions[path] = self._content_digest(self.filesystem.read_text(path))
+        result = f"Wrote {path}"
+        diagnostics = await self._maybe_append_lsp_diagnostics(path)
+        return result + diagnostics
 
     async def edit(self, path: str, block: str) -> str:
         """
@@ -324,6 +461,36 @@ class EditTool(BaseTool):
         if normalized in {"", "."}:
             raise ValueError("Patch path must not be the project root.")
         return normalized
+
+    def _normalize_claude_path(self, path: str) -> str:
+        """Return a project-relative path and reject workspace escapes."""
+
+        if not path or not path.strip():
+            raise ValueError("file_path is required")
+        root = self.project_path.resolve()
+        candidate = Path(path)
+        resolved = (
+            candidate.resolve(strict=False) if candidate.is_absolute() else (root / candidate).resolve(strict=False)
+        )
+        try:
+            relative = resolved.relative_to(root)
+        except ValueError as exc:
+            raise ValueError(f"File path is outside the project: {path}") from exc
+        normalized = relative.as_posix()
+        if normalized in {"", "."}:
+            raise ValueError("file_path must identify a file inside the project")
+        return normalized
+
+    @staticmethod
+    def _content_digest(content: str) -> str:
+        return sha256(content.encode("utf-8")).hexdigest()
+
+    def _require_claude_read(self, path: str, content: str) -> None:
+        observed = self._read_versions.get(path)
+        if observed is None:
+            raise ValueError(f"File has not been read yet: {path}. Read it first before editing it.")
+        if observed != self._content_digest(content):
+            raise ValueError(f"File has changed since it was read: {path}. Read it again before editing it.")
 
     def _validate_patch_parent(self, path: str) -> None:
         parent = self.filesystem.get_parent(path)

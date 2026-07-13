@@ -112,6 +112,16 @@ def test_edit_permission_rule_can_scope_to_path():
     assert rule.matches(request)
 
 
+def test_claude_edit_permission_uses_file_path():
+    request = permission_request_for_tool(
+        "edit",
+        {"file_path": "src/app.py", "old_string": "old", "new_string": "new"},
+    )
+
+    assert request is not None
+    assert request.path == "src/app.py"
+
+
 def test_single_file_apply_patch_permission_can_scope_to_path():
     request = permission_request_for_tool(
         "apply_patch",

@@ -53,3 +53,33 @@ def test_read_only_agent_never_gets_apply_patch(tmp_path: Path) -> None:
     registry = collection(tmp_path, EditProtocol.CODEX_APPLY_PATCH, read_only=True).registry()
 
     assert "apply_patch" not in registry
+
+
+def test_claude_protocol_reuses_lowercase_names_with_exact_string_schema(tmp_path: Path) -> None:
+    registry = collection(tmp_path, EditProtocol.CLAUDE_CODE).registry()
+
+    assert {"edit", "write"}.issubset(registry.names())
+    assert "multi_edit" not in registry
+    assert "apply_patch" not in registry
+    edit_parameters = registry.get("edit").definition.parameters
+    write_parameters = registry.get("write").definition.parameters
+    assert {parameter.name for parameter in edit_parameters} == {
+        "file_path",
+        "old_string",
+        "new_string",
+        "replace_all",
+    }
+    assert {parameter.name for parameter in edit_parameters if parameter.required} == {
+        "file_path",
+        "old_string",
+        "new_string",
+    }
+    assert {parameter.name for parameter in write_parameters} == {"file_path", "content"}
+    assert all(parameter.required for parameter in write_parameters)
+
+
+def test_read_only_agent_never_gets_claude_edit_tools(tmp_path: Path) -> None:
+    registry = collection(tmp_path, EditProtocol.CLAUDE_CODE, read_only=True).registry()
+
+    assert "edit" not in registry
+    assert "write" not in registry

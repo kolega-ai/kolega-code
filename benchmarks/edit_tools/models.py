@@ -145,7 +145,7 @@ class SuiteSpec(BaseModel):
 class ModelRunSpec(BaseModel):
     provider: str
     model: str
-    protocols: list[str] = Field(default_factory=lambda: ["search_replace", "codex_apply_patch"])
+    protocols: list[str] = Field(default_factory=lambda: ["search_replace", "codex_apply_patch", "claude_code"])
     temperature: Optional[float] = Field(default=None, ge=0, le=2)
     thinking_effort: Optional[str] = None
     max_output_tokens: int = Field(default=8192, ge=128, le=131_072)

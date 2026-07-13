@@ -479,7 +479,7 @@ def build_agent_config(
     try:
         edit_protocol_value = overrides.edit_protocol or loaded_env.get("KOLEGA_CODE_EDIT_PROTOCOL")
         try:
-            edit_protocol = EditProtocol(edit_protocol_value or EditProtocol.SEARCH_REPLACE.value)
+            edit_protocol = EditProtocol(edit_protocol_value) if edit_protocol_value else None
         except ValueError as exc:
             valid = ", ".join(protocol.value for protocol in EditProtocol)
             raise CliConfigError(
@@ -582,9 +582,11 @@ def config_summary(config: AgentConfig) -> dict[str, object]:
     mcp_config = getattr(config, "mcp_config", None)
     mcp_servers = getattr(mcp_config, "servers", {}) or {}
     mcp_enabled = [server for server in mcp_servers.values() if getattr(server, "enabled", False)]
+    edit_protocol, edit_protocol_source = config.resolve_edit_protocol_with_source(config.long_context_config)
     return {
         "environment": config.environment,
-        "edit_protocol": config.edit_protocol.value,
+        "edit_protocol": edit_protocol.value,
+        "edit_protocol_source": edit_protocol_source,
         "long_provider": config.long_context_config.provider.value,
         "long_model": config.long_context_config.model,
         "fast_provider": config.fast_config.provider.value,

@@ -69,6 +69,30 @@ async def test_codex_adapter_normalizes_json_fallback_and_applies_patch(tmp_path
 
 
 @pytest.mark.asyncio
+async def test_claude_adapter_uses_lowercase_production_tools(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "a.txt").write_text("before\n")
+    adapter = get_protocol("claude_code")
+    collection, _, caller = create_tool_collection(workspace, config(EditProtocol.CLAUDE_CODE), adapter, tmp_path)
+    definitions = {item.name: item for item in adapter.definitions(collection)}
+    try:
+        await collection.call("read_entire_file", path="a.txt")
+        call = ToolCall(
+            id="call-1",
+            name="edit",
+            input={"file_path": "a.txt", "old_string": "before", "new_string": "after"},
+        )
+        result, attempt = await execute_call(collection, caller, call, definitions, 1)
+    finally:
+        await collection.cleanup()
+
+    assert not result.is_error
+    assert attempt.apply_ok
+    assert (workspace / "a.txt").read_text() == "after\n"
+
+
+@pytest.mark.asyncio
 async def test_malformed_freeform_envelope_is_a_parse_failure(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()

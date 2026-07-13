@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, List, Optional, Union
 
 from .common import LogMixin
-from kolega_code.config import AgentConfig
+from kolega_code.config import AgentConfig, EditProtocol
 from kolega_code.llm.models import ImageBlock, ToolDefinition
 from kolega_code.tools import Tool, ToolRegistry, tool_definition_from_callable
 from kolega_code.services.file_system import FileSystem, LocalFileSystem
@@ -28,6 +28,7 @@ from .tool_backend.web_search_tool import WebSearchTool
 from .tool_backend.terminal_tool import TerminalTool
 from .tool_backend.think_hard_tool import ThinkHardTool
 from .tool_backend.workflow_tool import RUN_WORKFLOW_INPUT_SCHEMA, WorkflowTool
+from .edit_protocols import EDIT_HANDLER_NAMES, edit_protocol_spec
 
 # Import additional tools for consolidated functionality
 from .tool_backend.build_tool import BuildTool
@@ -435,6 +436,19 @@ class ToolCollection(LogMixin):
         self.connection_manager = connection_manager
         self.config = config
         self.caller = caller
+        caller_protocol = getattr(caller, "edit_protocol", None)
+        if isinstance(caller_protocol, EditProtocol):
+            self.edit_protocol = caller_protocol
+        else:
+            model_config = getattr(caller, "primary_model_config", None)
+            if not hasattr(model_config, "provider") or not hasattr(model_config, "model"):
+                model_config = config.long_context_config
+            resolved_edit_protocol = config.resolve_edit_protocol(model_config)
+            self.edit_protocol = (
+                resolved_edit_protocol
+                if isinstance(resolved_edit_protocol, EditProtocol)
+                else EditProtocol.SEARCH_REPLACE
+            )
         self.langfuse_client = langfuse_client
         self.tool_extensions = tool_extensions or []
         self.extension_callbacks = {}
@@ -1299,6 +1313,30 @@ class ToolCollection(LogMixin):
         """
         return await self.edit_tool.edit(path, block)
 
+    async def claude_edit(
+        self,
+        file_path: str,
+        old_string: str,
+        new_string: str,
+        replace_all: bool = False,
+    ) -> str:
+        """Perform an exact string replacement in a file.
+
+        Read the file before editing it. ``old_string`` must match exactly and
+        be unique unless ``replace_all`` is true.
+
+        Args:
+            file_path: Absolute or project-relative path to the file to modify.
+            old_string: Exact text to replace.
+            new_string: Replacement text, which must differ from old_string.
+            replace_all: Replace every exact occurrence instead of requiring a unique match.
+
+        Returns:
+            A short summary of the edit.
+        """
+
+        return await self.edit_tool.claude_edit(file_path, old_string, new_string, replace_all)
+
     async def apply_patch(self, input: str) -> str:
         """Use the `apply_patch` tool to edit files.
 
@@ -1354,6 +1392,21 @@ class ToolCollection(LogMixin):
             PermissionError: If the file cannot be written to
         """
         return await self.edit_tool.multi_edit(path, blocks)
+
+    async def claude_write(self, file_path: str, content: str) -> str:
+        """Write a file, overwriting it if it already exists.
+
+        Existing files must be read first. Prefer edit for partial changes.
+
+        Args:
+            file_path: Absolute or project-relative path to create or overwrite.
+            content: Complete content to write to the file.
+
+        Returns:
+            A short summary of the write.
+        """
+
+        return await self.edit_tool.claude_write(file_path, content)
 
     async def list_directory(self, path: str = "") -> str:
         """
@@ -1485,7 +1538,10 @@ class ToolCollection(LogMixin):
         Raises:
             FileNotFoundError: If the file doesn't exist
         """
-        return await self.read_file_tool.read_entire_file(path)
+        result = await self.read_file_tool.read_entire_file(path)
+        if self.edit_protocol == EditProtocol.CLAUDE_CODE:
+            self.edit_tool.observe_read(path)
+        return result
 
     async def read_file_section(self, path: str, start_line: int, end_line: int) -> str:
         """
@@ -1503,7 +1559,10 @@ class ToolCollection(LogMixin):
             FileNotFoundError: If the file doesn't exist
             ValueError: If start_line or end_line are invalid
         """
-        return await self.read_file_tool.read_file_section(path, start_line, end_line)
+        result = await self.read_file_tool.read_file_section(path, start_line, end_line)
+        if self.edit_protocol == EditProtocol.CLAUDE_CODE:
+            self.edit_tool.observe_read(path)
+        return result
 
     async def write(self, path: str, content: str) -> str:
         """
@@ -1885,9 +1944,16 @@ class ToolCollection(LogMixin):
         for method_name, method in inspect.getmembers(self, predicate=inspect.ismethod):
             if method_name.startswith("_") or method_name in self.tool_exclusions:
                 continue
+            if method_name in EDIT_HANDLER_NAMES:
+                continue
             if not self._should_include_tool(method_name):
                 continue
             registry.add(self._build_tool(method_name, method))
+
+        for binding in edit_protocol_spec(self.edit_protocol).tools:
+            if binding.name in self.tool_exclusions or not self._should_include_tool(binding.name):
+                continue
+            registry.add(self._build_tool(binding.name, getattr(self, binding.handler_name)))
 
         for method_name, method in self.extension_callbacks.items():
             if method_name in registry or method_name in self.tool_exclusions:
@@ -1946,15 +2012,6 @@ class ToolCollection(LogMixin):
             catalog = getattr(self.caller, "custom_agent_catalog", None)
             if getattr(self.caller, "sub_agent", False) or catalog is None or not catalog.has_agents():
                 return False
-
-        config = getattr(self, "config", None)
-        edit_protocol = getattr(getattr(config, "edit_protocol", None), "value", None) or getattr(
-            config, "edit_protocol", "search_replace"
-        )
-        if method_name == "apply_patch" and edit_protocol != "codex_apply_patch":
-            return False
-        if method_name in {"edit", "multi_edit", "write"} and edit_protocol == "codex_apply_patch":
-            return False
 
         if self.tool_config.allowed_tools is not None and method_name not in self.tool_config.allowed_tools:
             return False

@@ -62,7 +62,7 @@ Synthetic cases use seeded inverse mutations and are fully materialized into the
 run directory. The saved before and expected trees remain reproducible even if a
 future generator version changes.
 
-The main suites compare capabilities shared by both current protocols: file
+The main suites compare capabilities shared by all current protocols: file
 updates, creation, and multi-file edits. Delete and move tasks belong in a
 separate capability suite so they do not silently bias the shared score against
 search/replace.
@@ -87,7 +87,7 @@ names a leader only when the paired 95% interval excludes zero.
 
 ## Complete provider smoke
 
-The catalog gate runs one create-file task through both production protocols for
+The catalog gate runs one create-file task through every production protocol for
 one model from every provider in `MODEL_SPECS`:
 
 ```bash

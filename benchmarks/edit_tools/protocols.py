@@ -99,6 +99,13 @@ PROTOCOLS: dict[str, ProtocolAdapter] = {
         tool_names=("apply_patch",),
         capabilities=frozenset({"update", "create", "delete", "move", "multi_file"}),
     ),
+    "claude_code": ProtocolAdapter(
+        id="claude_code",
+        version="1",
+        production_protocol=EditProtocol.CLAUDE_CODE,
+        tool_names=("edit", "write"),
+        capabilities=frozenset({"update", "create", "multi_file"}),
+    ),
 }
 
 

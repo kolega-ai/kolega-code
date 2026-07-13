@@ -343,6 +343,51 @@ def test_switching_edit_protocol_neutralizes_freeform_exchange() -> None:
     assert isinstance(adapted[0].content[0], TextBlock)
 
 
+def test_protocol_metadata_prevents_replaying_another_freeform_language() -> None:
+    history = [
+        Message(
+            role="assistant",
+            content=[ToolCall(id="call-1", name="apply_patch", input="RAW", input_kind="freeform")],
+            usage_metadata={"provider": "anthropic", "edit_protocol": "future_hashline"},
+        )
+    ]
+
+    adapted = adapt_history_for_provider(
+        history,
+        target_provider="anthropic",
+        target_model="claude-test",
+        supports_vision=True,
+        target_edit_protocol="codex_apply_patch",
+    )
+
+    assert isinstance(adapted[0].content[0], TextBlock)
+
+
+def test_json_edit_history_stays_portable_when_surface_schema_changes() -> None:
+    call = ToolCall(
+        id="call-1",
+        name="edit",
+        input={"file_path": "a.txt", "old_string": "old", "new_string": "new"},
+    )
+    history = [
+        Message(
+            role="assistant",
+            content=[call],
+            usage_metadata={"provider": "anthropic", "edit_protocol": "claude_code"},
+        )
+    ]
+
+    adapted = adapt_history_for_provider(
+        history,
+        target_provider="openai",
+        target_model="gpt-test",
+        supports_vision=True,
+        target_edit_protocol="search_replace",
+    )
+
+    assert adapted is history
+
+
 @pytest.mark.asyncio
 async def test_agent_normalizes_provider_fallback_before_storage_and_execution(tmp_path) -> None:
     captured = AsyncMock(return_value="Success")

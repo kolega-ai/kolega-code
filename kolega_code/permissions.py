@@ -317,7 +317,7 @@ def _path_from_edit_inputs(inputs: dict[str, Any], *, tool_name: str = "") -> st
         )
         # A path-scoped rule is safe only when the patch affects that one path.
         return paths[0] if len(paths) == 1 else ""
-    value = inputs.get("path")
+    value = inputs.get("path") if inputs.get("path") is not None else inputs.get("file_path")
     path = str(value).strip() if value is not None else ""
     if inputs.get("operation") == "rename_file" and inputs.get("new_path"):
         return f"{path} -> {str(inputs['new_path']).strip()}"

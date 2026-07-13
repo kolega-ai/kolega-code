@@ -18,7 +18,7 @@ from .common import LogMixin
 from .compression import CompactionResult, HistoryCompressor
 from .errors import MaxAgentIterationsExceeded
 from .goal import GoalVerdict, build_goal_verifier_instruction, parse_goal_verdict
-from kolega_code.config import AgentConfig, ModelProvider
+from kolega_code.config import AgentConfig, EditProtocol, ModelProvider
 from kolega_code.events import AgentConnectionManager
 from .context import AgentContext, AgentServices, Telemetry, WorkspaceInfo
 from .conversation import Conversation, adapt_history_for_provider
@@ -244,6 +244,10 @@ class BaseAgent(LogMixin):
         # The model this agent runs its main loop on: the per-role override when one
         # is configured for this agent_name, otherwise the global long-context model.
         self.primary_model_config = self.config.model_config_for_agent(self.agent_name)
+        resolved_edit_protocol = self.config.resolve_edit_protocol(self.primary_model_config)
+        self.edit_protocol = (
+            resolved_edit_protocol if isinstance(resolved_edit_protocol, EditProtocol) else EditProtocol.SEARCH_REPLACE
+        )
         self.filesystem = context.services.filesystem
         self.terminal_manager = context.services.terminal_manager
         self.browser_manager = context.services.browser_manager
@@ -422,7 +426,7 @@ class BaseAgent(LogMixin):
             target_provider=str(provider),
             target_model=self.primary_model_config.model,
             supports_vision=self.supports_vision,
-            target_edit_protocol=getattr(self.config, "edit_protocol", "search_replace"),
+            target_edit_protocol=self.edit_protocol,
         )
         return MessageHistory(fixed)
 
@@ -1658,6 +1662,7 @@ class BaseAgent(LogMixin):
 
                 assistant_message = await stream.get_final_message()
                 self._normalize_freeform_tool_calls(assistant_message)
+                assistant_message.usage_metadata["edit_protocol"] = self.edit_protocol.value
                 stop_reason = assistant_message.stop_reason
                 await self.emitter.llm_request(
                     "end",

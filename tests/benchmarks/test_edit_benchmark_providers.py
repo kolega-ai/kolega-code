@@ -33,7 +33,7 @@ def test_provider_smoke_matrix_covers_every_catalog_provider() -> None:
 
     assert [item.provider for item in matrix.models] == catalog_providers()
     assert len(matrix.models) == 13
-    assert all(item.protocols == ["search_replace", "codex_apply_patch"] for item in matrix.models)
+    assert all(item.protocols == ["search_replace", "codex_apply_patch", "claude_code"] for item in matrix.models)
 
 
 @pytest.mark.parametrize("provider", catalog_providers())
@@ -61,6 +61,36 @@ async def test_every_catalog_provider_has_a_freeform_transport_contract(provider
             assert definition.to_anthropic()["input_schema"]["required"] == ["input"]
         else:
             assert definition.to_openai()["function"]["parameters"]["required"] == ["input"]
+    finally:
+        await collection.cleanup()
+
+
+@pytest.mark.parametrize("provider", catalog_providers())
+@pytest.mark.asyncio
+async def test_every_catalog_provider_has_a_claude_json_transport_contract(provider: str, tmp_path: Path) -> None:
+    workspace = tmp_path / f"{provider}-claude"
+    workspace.mkdir()
+    adapter = get_protocol("claude_code")
+    collection, _, _ = create_tool_collection(workspace, config(), adapter, tmp_path / "artifacts")
+    try:
+        definition = next(item for item in adapter.definitions(collection) if item.name == "edit")
+        required = ["file_path", "old_string", "new_string"]
+
+        if provider in {"openai", "openai_chatgpt"}:
+            tools = responses_tools(GenerationParams(tools=[definition]))
+            assert tools is not None
+            assert tools[0]["type"] == "function"
+            assert tools[0]["parameters"]["required"] == required
+        elif provider == "google":
+            declarations = definition.to_google().function_declarations
+            assert declarations is not None
+            declaration = declarations[0]
+            assert declaration.parameters is not None
+            assert declaration.parameters.required == required
+        elif provider in {"anthropic", "moonshot", "zai", "kimi_coding"}:
+            assert definition.to_anthropic()["input_schema"]["required"] == required
+        else:
+            assert definition.to_openai()["function"]["parameters"]["required"] == required
     finally:
         await collection.cleanup()
 

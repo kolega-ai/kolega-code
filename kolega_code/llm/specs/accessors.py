@@ -54,3 +54,18 @@ def default_thinking_effort(provider: str, model_name: str) -> Optional[str]:
     """Return Kolega's default thinking effort for a model."""
     spec = get_thinking_effort_spec(provider, model_name)
     return spec.default if spec else None
+
+
+def preferred_edit_protocol(provider: str, model_name: str) -> Optional[str]:
+    """Return the catalogue-preferred edit protocol, when one is configured.
+
+    Unknown models and entries without a preference deliberately return ``None``
+    so callers can retain the stable search/replace fallback.
+    """
+
+    provider_str = _provider_value(provider)
+    specs = MODEL_SPECS.get((provider_str, model_name))
+    if specs is None:
+        return None
+    value = specs.get("preferred_edit_protocol")
+    return str(value) if value is not None else None

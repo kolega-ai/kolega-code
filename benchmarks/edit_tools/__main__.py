@@ -11,6 +11,7 @@ import yaml
 
 from kolega_code.cli.provider_registry import default_model_for_provider
 from kolega_code.config import ModelProvider
+from kolega_code.agent.edit_protocols import production_edit_protocols
 from kolega_code.llm.specs import MODEL_SPECS
 
 from .artifacts import load_trial_records, write_json, write_materialized_cases
@@ -167,7 +168,7 @@ def _catalog_smoke_matrix() -> MatrixSpec:
             ModelRunSpec(
                 provider=provider_value,
                 model=model,
-                protocols=["search_replace", "codex_apply_patch"],
+                protocols=[protocol.value for protocol in production_edit_protocols()],
                 max_output_tokens=4096,
             )
         )
@@ -217,7 +218,7 @@ async def _provider_smoke(args: argparse.Namespace) -> int:
         rerun_infrastructure_failures=args.rerun_infrastructure_failures,
     )
     write_report(run_dir, records)
-    expected = len(matrix.models) * 2
+    expected = sum(len(model.protocols) for model in matrix.models)
     passed = sum(record.status == "passed" for record in records)
     incomplete = [record for record in records if record.status != "passed"]
     print(f"Provider smoke: {passed}/{expected} passed. Artifacts: {run_dir}")

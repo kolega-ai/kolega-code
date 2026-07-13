@@ -120,6 +120,20 @@ def test_build_agent_config_edit_protocol_flag_overrides_env(tmp_path: Path) -> 
     assert config.edit_protocol == EditProtocol.CODEX_APPLY_PATCH
 
 
+def test_build_agent_config_leaves_protocol_unset_for_catalog_resolution(tmp_path: Path) -> None:
+    config = build_agent_config(
+        tmp_path,
+        CliConfigOverrides(model="claude-opus-4-7"),
+        env={"ANTHROPIC_API_KEY": "test-key"},
+    )
+
+    summary = config_summary(config)
+
+    assert config.edit_protocol is None
+    assert summary["edit_protocol"] == "search_replace"
+    assert summary["edit_protocol_source"] == "default"
+
+
 def test_build_agent_config_rejects_unknown_edit_protocol(tmp_path: Path) -> None:
     with pytest.raises(CliConfigError, match="Unsupported edit protocol"):
         build_agent_config(

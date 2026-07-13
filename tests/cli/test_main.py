@@ -165,6 +165,9 @@ def test_parse_edit_protocol_flags() -> None:
     assert tui_args.edit_protocol == "codex_apply_patch"
     assert ask_args.edit_protocol == "codex_apply_patch"
 
+    claude_args = parse_args(["/tmp/project", "--edit-protocol", "claude_code"])
+    assert claude_args.edit_protocol == "claude_code"
+
 
 def test_parse_sessions_list_subcommand() -> None:
     args = parse_args(["sessions", "list", "--project", "/tmp/project"])

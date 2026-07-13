@@ -32,6 +32,7 @@ class EditProtocol(str, Enum):
 
     SEARCH_REPLACE = "search_replace"
     CODEX_APPLY_PATCH = "codex_apply_patch"
+    CLAUDE_CODE = "claude_code"
 
 
 class AgentRole(str, Enum):
@@ -168,9 +169,9 @@ class AgentConfig(BaseModel):
     langfuse_public_key: Optional[str] = Field(default=None, description="Langfuse public key")
     langfuse_secret_key: Optional[str] = Field(default=None, description="Langfuse secret key")
     environment: Optional[str] = Field(default="development", description="Environment name (development, production)")
-    edit_protocol: EditProtocol = Field(
-        default=EditProtocol.SEARCH_REPLACE,
-        description="Model-facing edit tool protocol",
+    edit_protocol: Optional[EditProtocol] = Field(
+        default=None,
+        description="Optional session-wide edit protocol override; model catalog preference is used when unset",
     )
 
     # Model configurations
@@ -228,6 +229,25 @@ class AgentConfig(BaseModel):
             if override is not None:
                 return override
         return self.long_context_config
+
+    def resolve_edit_protocol(self, model_config: Optional[ModelConfig] = None) -> EditProtocol:
+        """Resolve the model-facing edit protocol for one effective model."""
+
+        return self.resolve_edit_protocol_with_source(model_config)[0]
+
+    def resolve_edit_protocol_with_source(self, model_config: Optional[ModelConfig] = None) -> tuple[EditProtocol, str]:
+        """Resolve an edit protocol and report which configuration layer chose it."""
+
+        if self.edit_protocol is not None:
+            return self.edit_protocol, "session_override"
+
+        effective_model = model_config or self.long_context_config
+        from kolega_code.llm.specs import preferred_edit_protocol
+
+        preferred = preferred_edit_protocol(effective_model.provider, effective_model.model)
+        if preferred is not None:
+            return EditProtocol(preferred), "model_catalog"
+        return EditProtocol.SEARCH_REPLACE, "default"
 
     def get_api_key(self, provider: ModelProvider) -> Optional[str]:
         """Get the API key for a specific provider."""
