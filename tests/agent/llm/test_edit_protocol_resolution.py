@@ -66,3 +66,14 @@ def test_every_catalog_protocol_preference_is_a_production_protocol() -> None:
     }
 
     assert invalid == {}
+
+
+def test_all_openai_catalog_models_prefer_codex_apply_patch() -> None:
+    openai_models = {
+        key: specs.get("preferred_edit_protocol")
+        for key, specs in MODEL_SPECS.items()
+        if key[0] in {"openai", "openai_chatgpt"}
+    }
+
+    assert openai_models
+    assert set(openai_models.values()) == {EditProtocol.CODEX_APPLY_PATCH.value}

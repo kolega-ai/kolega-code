@@ -11,6 +11,7 @@ OPENAI_SPECS = {
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
+        "preferred_edit_protocol": "codex_apply_patch",
         "thinking_effort": ThinkingEffortSpec(
             options=("none", "low", "medium", "high", "xhigh", "max"),
             default="medium",
@@ -23,6 +24,7 @@ OPENAI_SPECS = {
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
+        "preferred_edit_protocol": "codex_apply_patch",
         "thinking_effort": ThinkingEffortSpec(
             options=("none", "low", "medium", "high", "xhigh", "max"),
             default="medium",
@@ -35,6 +37,7 @@ OPENAI_SPECS = {
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
+        "preferred_edit_protocol": "codex_apply_patch",
         "thinking_effort": ThinkingEffortSpec(
             options=("none", "low", "medium", "high", "xhigh", "max"),
             default="medium",
@@ -47,6 +50,7 @@ OPENAI_SPECS = {
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
+        "preferred_edit_protocol": "codex_apply_patch",
         "thinking_effort": ThinkingEffortSpec(
             options=("minimal", "low", "medium", "high", "xhigh"),
             default="medium",
@@ -59,6 +63,7 @@ OPENAI_SPECS = {
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
+        "preferred_edit_protocol": "codex_apply_patch",
         "thinking_effort": ThinkingEffortSpec(
             options=("minimal", "low", "medium", "high"),
             default="medium",
@@ -71,6 +76,7 @@ OPENAI_SPECS = {
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
+        "preferred_edit_protocol": "codex_apply_patch",
         "thinking_effort": ThinkingEffortSpec(
             options=("minimal", "low", "medium", "high"),
             default="medium",
