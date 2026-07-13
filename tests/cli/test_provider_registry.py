@@ -1,6 +1,31 @@
-from kolega_code.cli.provider_registry import default_model_for_provider, ui_model_options
+from kolega_code.cli.provider_registry import (
+    default_model_for_provider,
+    ui_model_options,
+    ui_thinking_effort_options,
+)
 from kolega_code.config import ModelProvider
 from kolega_code.llm.specs import get_model_specs
+
+
+def test_gpt56_models_are_first_and_sol_is_default_for_openai_providers():
+    expected = [
+        ("GPT-5.6 Sol", "gpt-5.6-sol"),
+        ("GPT-5.6 Terra", "gpt-5.6-terra"),
+        ("GPT-5.6 Luna", "gpt-5.6-luna"),
+    ]
+
+    for provider in (ModelProvider.OPENAI, ModelProvider.OPENAI_CHATGPT):
+        assert ui_model_options(provider.value)[:3] == expected
+        assert default_model_for_provider(provider) == "gpt-5.6-sol"
+
+    assert ui_thinking_effort_options("openai", "gpt-5.6-sol") == [
+        ("None", "none"),
+        ("Low", "low"),
+        ("Medium", "medium"),
+        ("High", "high"),
+        ("Extra high", "xhigh"),
+        ("Max", "max"),
+    ]
 
 
 def test_fireworks_ui_model_options_include_serverless_catalog():

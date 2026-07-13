@@ -6,6 +6,12 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+### Added
+
+- Added GPT-5.6 Sol, Terra, and Luna to the OpenAI API-key and ChatGPT-subscription
+  model catalogs, with vision and `none` through `max` reasoning effort. GPT-5.6
+  Sol is now the default for both OpenAI providers.
+
 ## 0.17.0 - 2026-07-10
 
 ### Changed
