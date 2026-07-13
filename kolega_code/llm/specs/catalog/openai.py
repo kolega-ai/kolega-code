@@ -5,6 +5,42 @@ from kolega_code.llm.specs.types import ThinkingEffortSpec
 # function tools + reasoning_effort on Chat Completions). These mirror the
 # ("openai_chatgpt", …) specs below: nested reasoning + no temperature.
 OPENAI_SPECS = {
+    ("openai", "gpt-5.6-sol"): {
+        "context_length": 1050000,
+        "max_completion_tokens": 128000,
+        "default_temperature": 1.0,
+        "supports_temperature": False,
+        "supports_vision": True,
+        "thinking_effort": ThinkingEffortSpec(
+            options=("none", "low", "medium", "high", "xhigh", "max"),
+            default="medium",
+            mode="openai_responses_reasoning",
+        ),
+    },
+    ("openai", "gpt-5.6-terra"): {
+        "context_length": 1050000,
+        "max_completion_tokens": 128000,
+        "default_temperature": 1.0,
+        "supports_temperature": False,
+        "supports_vision": True,
+        "thinking_effort": ThinkingEffortSpec(
+            options=("none", "low", "medium", "high", "xhigh", "max"),
+            default="medium",
+            mode="openai_responses_reasoning",
+        ),
+    },
+    ("openai", "gpt-5.6-luna"): {
+        "context_length": 1050000,
+        "max_completion_tokens": 128000,
+        "default_temperature": 1.0,
+        "supports_temperature": False,
+        "supports_vision": True,
+        "thinking_effort": ThinkingEffortSpec(
+            options=("none", "low", "medium", "high", "xhigh", "max"),
+            default="medium",
+            mode="openai_responses_reasoning",
+        ),
+    },
     ("openai", "gpt-5.5"): {
         "context_length": 1050000,
         "max_completion_tokens": 128000,

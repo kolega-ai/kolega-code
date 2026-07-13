@@ -42,6 +42,12 @@ def _tokens():
     return OAuthTokens(access_token="at", refresh_token="rt", expires_at=10**12, account_id="acct_1", plan_type="pro")
 
 
+def test_provider_default_model_is_gpt56_sol():
+    provider = ChatGPTOAuthProvider(token_manager=ChatGPTTokenManager(_tokens()))
+
+    assert provider._default_model() == "gpt-5.6-sol"
+
+
 class _FakeStream:
     def __init__(self, events):
         self._events = events

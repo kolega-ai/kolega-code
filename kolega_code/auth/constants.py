@@ -36,7 +36,7 @@ EXTRA_AUTHORIZE_PARAMS = {
 # Inference backend (Responses API only).
 INFERENCE_BASE_URL = "https://chatgpt.com/backend-api/codex"
 # Default model selected after a successful ChatGPT sign-in.
-DEFAULT_MODEL = "gpt-5.5"
+DEFAULT_MODEL = "gpt-5.6-sol"
 # Codex identifies itself with these on the backend; the originator + a
 # codex_cli_rs User-Agent are what the backend expects from the Codex client.
 ORIGINATOR = "codex_cli_rs"

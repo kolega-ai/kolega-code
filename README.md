@@ -171,7 +171,7 @@ can use cheaper models where they fit and stronger models where they matter.
 If you have a paid **ChatGPT** plan (Plus, Pro, or Business), you can use it to run
 OpenAI models instead of a separate API key. Run `/login chatgpt` in the TUI,
 complete the browser sign-in, and Kolega Code switches to the **OpenAI (ChatGPT
-subscription)** provider (default `gpt-5.5`). Tokens are stored locally (chmod
+subscription)** provider (default `gpt-5.6-sol`). Tokens are stored locally (chmod
 `600`) and refreshed automatically; `/logout chatgpt` removes them. See
 [Sign in with ChatGPT](https://kolega-ai.github.io/kolega-code/configuration/sign-in-with-chatgpt/).
 

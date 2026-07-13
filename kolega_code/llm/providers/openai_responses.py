@@ -23,7 +23,7 @@ from .base import BaseLLMProvider
 from .responses_common import ResponsesProviderBase
 
 DEFAULT_BASE_URL = "https://api.openai.com/v1"
-DEFAULT_MODEL = "gpt-5.5"
+DEFAULT_MODEL = "gpt-5.6-sol"
 
 
 class OpenAIResponsesProvider(ResponsesProviderBase):

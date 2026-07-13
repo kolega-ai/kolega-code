@@ -1,4 +1,21 @@
+import pytest
+
 from kolega_code.llm.specs import get_model_specs, thinking_effort_options
+
+
+@pytest.mark.parametrize("model", ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"])
+@pytest.mark.parametrize("provider,context_length", [("openai", 1050000), ("openai_chatgpt", 272000)])
+def test_gpt56_model_specs(provider, context_length, model):
+    specs = get_model_specs(provider, model)
+
+    assert specs["context_length"] == context_length
+    assert specs["max_completion_tokens"] == 128000
+    assert specs["default_temperature"] == 1.0
+    assert specs["supports_temperature"] is False
+    assert specs["supports_vision"] is True
+    assert specs["thinking_effort"].options == ("none", "low", "medium", "high", "xhigh", "max")
+    assert specs["thinking_effort"].default == "medium"
+    assert specs["thinking_effort"].mode == "openai_responses_reasoning"
 
 
 def test_openai_chatgpt_gpt55_context_length():

@@ -107,7 +107,7 @@ def test_build_request_default_model_and_no_reasoning_without_thinking():
         GenerationParams(),
         {},
     )
-    assert request["model"] == "gpt-5.5"
+    assert request["model"] == "gpt-5.6-sol"
     assert "reasoning" not in request
     assert "include" not in request
 

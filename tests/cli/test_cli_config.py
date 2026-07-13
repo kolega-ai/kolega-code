@@ -50,7 +50,7 @@ def test_build_agent_config_coerces_stale_active_model(tmp_path: Path) -> None:
     config = build_agent_config(tmp_path, env={}, settings=settings)
 
     assert config.long_context_config.provider == ModelProvider.OPENAI_CHATGPT
-    assert config.long_context_config.model == "gpt-5.5"  # coerced from the removed slug
+    assert config.long_context_config.model == "gpt-5.6-sol"  # coerced from the removed slug
 
 
 def test_build_agent_config_unknown_saved_provider_is_unconfigured(tmp_path: Path) -> None:
