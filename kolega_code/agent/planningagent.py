@@ -45,7 +45,11 @@ class PlanningAgent(BaseAgent):
         sub_agent_recorder: Optional[Any] = None,
         hook_dispatcher: Optional[Any] = None,
         max_iterations: Optional[int] = None,
+        custom_agent_catalog: Optional[Any] = None,
     ) -> None:
+        if custom_agent_catalog is not None:
+            custom_agent_catalog = custom_agent_catalog.for_mode("plan")
+
         super().__init__(
             project_path,
             workspace_id,
@@ -73,6 +77,7 @@ class PlanningAgent(BaseAgent):
             sub_agent_recorder=sub_agent_recorder,
             hook_dispatcher=hook_dispatcher,
             max_iterations=max_iterations,
+            custom_agent_catalog=custom_agent_catalog,
         )
 
         self._completed_plan: Optional[str] = None
@@ -95,7 +100,10 @@ class PlanningAgent(BaseAgent):
             self.connection_manager,
             self.config,
             caller=self,
-            tool_config=ToolCollectionConfig(read_only=True, custom_tool_groups=["planning_tools", "command_tools"]),
+            tool_config=ToolCollectionConfig(
+                read_only=True,
+                custom_tool_groups=["planning_tools", "command_tools", "custom_agent_tools"],
+            ),
             filesystem=self.filesystem,
             terminal_manager=self.terminal_manager,
             browser_manager=self.browser_manager,

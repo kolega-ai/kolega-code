@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Iterable, Optional
 
 from kolega_code.agent import CoderAgent
+from kolega_code.agent.custom_agents import discover_custom_agents, validate_custom_agent_models
 from kolega_code.agent.prompt_provider import PromptExtension
 from kolega_code.agent.prompt_dump import (
     dump_prompt_overrides,
@@ -81,7 +82,7 @@ from .skills import (
 )
 from .updater import check_for_update, run_self_update, update_status_message
 
-SUBCOMMANDS = {"ask", "sessions", "doctor", "update", "prompts", "mcp", "tui"}
+SUBCOMMANDS = {"ask", "sessions", "doctor", "update", "prompts", "agents", "mcp", "tui"}
 RESUME_LATEST = "__latest__"
 CLI_AGENT_MODE = AgentMode.CLI.value
 ASK_DEFAULT_PERMISSION_MODE = PermissionMode.AUTO.value
@@ -117,6 +118,8 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
             return _run_doctor(args)
         if args.command == "prompts":
             return _run_prompts(args)
+        if args.command == "agents":
+            return _run_agents(args)
         if args.command == "mcp":
             return asyncio.run(_run_mcp(args))
         if args.command == "update":
@@ -329,6 +332,15 @@ def _build_subcommand_parser() -> argparse.ArgumentParser:
     prompts_list.add_argument("--project", default=".", type=Path, help="Project directory to inspect.")
     prompts_validate = prompts_sub.add_parser("validate", help="Validate existing prompt override files.")
     prompts_validate.add_argument("--project", default=".", type=Path, help="Project directory to inspect.")
+
+    agents = subparsers.add_parser("agents", help="Inspect user and project custom-agent definitions.")
+    agents_sub = agents.add_subparsers(dest="agents_command", required=True)
+    agents_list = agents_sub.add_parser("list", help="List effective custom agents and discovery diagnostics.")
+    agents_list.add_argument("--project", default=".", type=Path, help="Project directory to inspect.")
+    agents_list.add_argument("--state-dir", type=Path, help="Directory containing user-level custom agents.")
+    agents_validate = agents_sub.add_parser("validate", help="Validate user and project custom-agent definitions.")
+    agents_validate.add_argument("--project", default=".", type=Path, help="Project directory to inspect.")
+    agents_validate.add_argument("--state-dir", type=Path, help="Directory containing user-level custom agents.")
 
     mcp = subparsers.add_parser("mcp", help="Manage MCP servers and verification state.")
     mcp.add_argument(
@@ -737,6 +749,7 @@ async def _run_ask(args: argparse.Namespace) -> int:
     store = _store_from_args(args)
     settings_store = _settings_store_from_args(args)
     settings = settings_store.load()
+    custom_agent_catalog = discover_custom_agents(project_path, settings_store.root)
     settings_changed = False
     if getattr(args, "trust_hooks", False):
         settings.trust_hook_project(project_path)
@@ -752,6 +765,10 @@ async def _run_ask(args: argparse.Namespace) -> int:
     config = build_agent_config(
         project_path, _overrides_from_args(args), settings=settings, settings_store=settings_store
     )
+    custom_agent_catalog = validate_custom_agent_models(custom_agent_catalog, config).for_mode("build")
+    if not args.json:
+        for diagnostic in custom_agent_catalog.diagnostics:
+            print(f"agents: {diagnostic.format()}", file=sys.stderr)
     summary = config_summary(config)
 
     hook_config = load_hook_config(
@@ -819,6 +836,7 @@ async def _run_ask(args: argparse.Namespace) -> int:
         if permission_mode == PermissionMode.ASK
         else None,
         hook_dispatcher=hook_dispatcher,
+        custom_agent_catalog=custom_agent_catalog,
     )
     agent_ref["agent"] = agent
     lsp_messages = await agent.tool_collection.initialize()
@@ -1108,6 +1126,18 @@ def _run_prompts(args: argparse.Namespace) -> int:
         print(format_prompt_validation_result(result))
         return 0 if result.ok else 1
     raise ValueError(f"Unknown prompts command: {args.prompts_command}")
+
+
+def _run_agents(args: argparse.Namespace) -> int:
+    project_path = _validate_project(args.project)
+    state_dir = _settings_store_from_args(args).root
+    catalog = discover_custom_agents(project_path, state_dir)
+    print(catalog.format_catalog())
+    if args.agents_command == "list":
+        return 0
+    if args.agents_command == "validate":
+        return 1 if catalog.has_errors() else 0
+    raise ValueError(f"Unknown agents command: {args.agents_command}")
 
 
 async def _run_mcp(args: argparse.Namespace) -> int:

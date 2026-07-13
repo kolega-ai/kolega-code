@@ -241,6 +241,7 @@ class ToolCollectionConfig:
         custom_tool_groups: Optional[List[str]] = None,
         enabled_tool_groups: Optional[List[str]] = None,
         restrict_to_tool_groups: bool = False,
+        allowed_tools: Optional[List[str]] = None,
     ):
         """
         Initialize tool collection configuration.
@@ -254,6 +255,8 @@ class ToolCollectionConfig:
             custom_tool_groups: Additional custom tool groups to include
             enabled_tool_groups: Additional custom tool groups to include
             restrict_to_tool_groups: If True, ONLY include tools from specified groups, excluding all other core tools
+            allowed_tools: Optional exact allowlist applied after hard runtime gates. None inherits normal behavior;
+                an empty list exposes no tools.
         """
         self.read_only = read_only
         self.browser_only = browser_only
@@ -262,6 +265,7 @@ class ToolCollectionConfig:
         self.tool_exclusions = tool_exclusions or []
         self.custom_tool_groups = list(dict.fromkeys((custom_tool_groups or []) + (enabled_tool_groups or [])))
         self.restrict_to_tool_groups = restrict_to_tool_groups
+        self.allowed_tools = None if allowed_tools is None else list(dict.fromkeys(allowed_tools))
 
 
 class ToolCollection(LogMixin):
@@ -318,6 +322,7 @@ class ToolCollection(LogMixin):
         "dispatch_browser_agent",
         "dispatch_coding_agent",
         "dispatch_general_agent",
+        "dispatch_custom_agent",
     ]
 
     # Legacy name for backward compatibility
@@ -328,6 +333,11 @@ class ToolCollection(LogMixin):
         "dispatch_investigation_agent",
         "dispatch_browser_agent",
         "dispatch_general_agent",
+        "dispatch_custom_agent",
+    ]
+
+    custom_agent_tools = [
+        "dispatch_custom_agent",
     ]
 
     # Memory tools group
@@ -1097,6 +1107,23 @@ class ToolCollection(LogMixin):
         """
         return await self.agent_tool.dispatch_general_agent(task)
 
+    async def dispatch_custom_agent(self, agent: str, task: str) -> str:
+        """Dispatch a named custom agent defined in project or user Markdown.
+
+        Select an agent whose description matches a self-contained task. The agent
+        runs in a fresh context, cannot spawn other agents, and returns one final
+        report. Its tools can only be a subset of the tools available in this
+        session. Multiple independent calls may run in parallel.
+
+        Args:
+            agent: Name of the custom agent to run.
+            task: Detailed, self-contained task including relevant context and expected output.
+
+        Returns:
+            The custom agent's final report.
+        """
+        return await self.agent_tool.dispatch_custom_agent(agent, task)
+
     async def run_workflow(
         self,
         script: str = "",
@@ -1779,7 +1806,30 @@ class ToolCollection(LogMixin):
 
     def _tool_definition_from_callable(self, method_name: str, method: Callable[..., Any]) -> ToolDefinition:
         """Build a provider-agnostic tool definition from a Python callable."""
-        return tool_definition_from_callable(method_name, method)
+        definition = tool_definition_from_callable(method_name, method)
+        if method_name == "dispatch_custom_agent":
+            catalog = getattr(self.caller, "custom_agent_catalog", None)
+            if catalog is not None and catalog.has_agents():
+                routing_catalog = catalog.model_catalog()
+                definition.description = f"{definition.description}\n\nAvailable custom agents:\n{routing_catalog}"
+                definition.input_schema = {
+                    "type": "object",
+                    "properties": {
+                        "agent": {
+                            "type": "string",
+                            "enum": catalog.names(),
+                            "description": "Name of the custom agent to run.",
+                        },
+                        "task": {
+                            "type": "string",
+                            "description": (
+                                "Detailed, self-contained task including relevant context and expected output."
+                            ),
+                        },
+                    },
+                    "required": ["agent", "task"],
+                }
+        return definition
 
     def _groups_for(self, method_name: str) -> frozenset:
         """Group tags for a tool, from the core group lists plus extension groups."""
@@ -1788,6 +1838,7 @@ class ToolCollection(LogMixin):
             "browser_tools",
             "agent_dispatch_tools",
             "coder_agent_tools",
+            "custom_agent_tools",
             "memory_tools",
             "orchestration_tools",
             *self._extension_group_names,
@@ -1865,6 +1916,14 @@ class ToolCollection(LogMixin):
         Returns:
             True if the tool should be included, False otherwise
         """
+        if method_name == "dispatch_custom_agent":
+            catalog = getattr(self.caller, "custom_agent_catalog", None)
+            if getattr(self.caller, "sub_agent", False) or catalog is None or not catalog.has_agents():
+                return False
+
+        if self.tool_config.allowed_tools is not None and method_name not in self.tool_config.allowed_tools:
+            return False
+
         # gigacode orchestration: only the top-level (non-sub) agent may run
         # workflows, and only when gigacode has been enabled for the session.
         # This both prevents sub-agents from recursively spawning workflows and

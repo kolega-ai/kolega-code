@@ -151,7 +151,15 @@ class AgentTool(BaseTool):
             result = f"{result}\n\n[hook] {outcome.reason}"
         return result
 
-    async def _dispatch_agent(self, agent_class_import: str, task: str) -> str:
+    async def _dispatch_agent(
+        self,
+        agent_class_import: str,
+        task: str,
+        *,
+        agent_name_override: Optional[str] = None,
+        agent_kwargs: Optional[dict[str, Any]] = None,
+        sub_agent_info_extra: Optional[dict[str, Any]] = None,
+    ) -> str:
         """
         Generic method to dispatch any agent type.
 
@@ -168,7 +176,7 @@ class AgentTool(BaseTool):
         # Import the module and get the class
         module = __import__(module_path, fromlist=[class_name])
         agent_class = getattr(module, class_name)
-        agent_name = agent_class.agent_name
+        agent_name = agent_name_override or agent_class.agent_name
 
         # Create a unique agent ID
         agent_id = str(uuid.uuid4())
@@ -210,6 +218,8 @@ class AgentTool(BaseTool):
             "parent_tool_call_id": tool_call_id,
             "depth": parent_depth + 1,
         }
+        if sub_agent_info_extra:
+            sub_agent_info.update(sub_agent_info_extra)
 
         # Send start status
         await self._send_status_event("GENERATING", f"Starting {agent_name} task", sub_agent_info=sub_agent_info)
@@ -250,6 +260,7 @@ class AgentTool(BaseTool):
                 sub_agent_recorder=getattr(self.caller, "sub_agent_recorder", None) if self.caller else None,
                 hook_dispatcher=getattr(self.caller, "hook_dispatcher", None) if self.caller else None,
                 max_iterations=getattr(self.caller, "max_iterations", None),
+                **(agent_kwargs or {}),
             )
 
             # Store agent reference
@@ -475,6 +486,63 @@ class AgentTool(BaseTool):
         return await self._dispatch_agent(
             agent_class_import="kolega_code.agent.generalagent.GeneralAgent",
             task=task,
+        )
+
+    def _eligible_custom_agent_tools(self) -> set[str]:
+        """Return the caller's propagatable, non-recursive tool surface."""
+        collection = getattr(self.caller, "tool_collection", None)
+        if collection is None:
+            raise RuntimeError("Custom agents require an initialized parent tool collection.")
+
+        eligible = set(collection.registry().names())
+        from ..tools import ToolCollection  # lazy import: tools.py imports AgentTool
+
+        eligible.difference_update(ToolCollection.agent_dispatch_tools)
+        eligible.difference_update(ToolCollection.orchestration_tools)
+
+        for extension in getattr(self.caller, "tool_extensions", None) or []:
+            if not getattr(extension, "propagate_to_sub_agents", True):
+                eligible.difference_update(getattr(extension, "tools", {}).keys())
+        return eligible
+
+    async def dispatch_custom_agent(self, agent: str, task: str) -> str:
+        """Dispatch a discovered custom agent within the caller's capability ceiling."""
+        if getattr(self.caller, "sub_agent", False):
+            raise ValueError("Custom agents cannot be dispatched from another sub-agent.")
+
+        catalog = getattr(self.caller, "custom_agent_catalog", None)
+        if catalog is None or not catalog.has_agents():
+            raise ValueError("No custom agents are available in this session.")
+        definition = catalog.get(agent)
+        if definition is None:
+            available = ", ".join(catalog.names()) or "none"
+            raise ValueError(f"Unknown custom agent `{agent}`. Available agents: {available}.")
+
+        eligible = self._eligible_custom_agent_tools()
+        if definition.tools is None:
+            allowed_tools = eligible
+        else:
+            requested = set(definition.tools)
+            unavailable = sorted(requested - eligible)
+            if unavailable:
+                raise ValueError(
+                    f"Custom agent `{definition.name}` requests unavailable tool(s): {', '.join(unavailable)}. "
+                    "A custom agent may only narrow the invoking agent's tool set."
+                )
+            allowed_tools = requested
+
+        return await self._dispatch_agent(
+            agent_class_import="kolega_code.agent.custom_agents.CustomAgent",
+            task=task,
+            agent_name_override=definition.name,
+            agent_kwargs={
+                "definition": definition,
+                "allowed_tools": sorted(allowed_tools),
+            },
+            sub_agent_info_extra={
+                "agent_scope": definition.scope,
+                "agent_definition_path": str(definition.source_path),
+            },
         )
 
     # ------------------------------------------------------------------

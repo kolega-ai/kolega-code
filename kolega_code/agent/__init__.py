@@ -7,6 +7,7 @@ from .investigationagent import InvestigationAgent
 from .browseragent import BrowserAgent
 from .generalagent import GeneralAgent
 from .planningagent import PlanningAgent
+from .custom_agents import CustomAgent, CustomAgentCatalog, CustomAgentDefinition
 
 # Export agent errors
 from .errors import AgentError, MaxAgentIterationsExceeded
@@ -28,6 +29,9 @@ __all__ = [
     "BrowserAgent",
     "GeneralAgent",
     "PlanningAgent",
+    "CustomAgent",
+    "CustomAgentCatalog",
+    "CustomAgentDefinition",
     "AgentError",
     "MaxAgentIterationsExceeded",
     "AgentStatus",
