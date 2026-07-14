@@ -152,6 +152,31 @@ ToolEntryWidget .tool-body {
     padding: 1;
 }
 
+#settings_form {
+    display: none;
+}
+
+#settings_summary_panel {
+    height: 1fr;
+    padding: 1;
+    background: $background;
+}
+
+#settings_summary {
+    height: auto;
+    padding: 1 0;
+}
+
+#settings_summary_status {
+    height: auto;
+    margin-top: 1;
+}
+
+#open_settings {
+    width: 100%;
+    margin-top: 1;
+}
+
 #status_dashboard {
     height: auto;
     min-height: 15;
@@ -257,6 +282,220 @@ ToolEntryWidget .tool-body {
     height: auto;
     padding: 0 1;
     margin-top: 1;
+}
+
+SettingsScreen {
+    align: center middle;
+    background: $background;
+    color: $text;
+}
+
+SettingsScreen #settings_screen_header {
+    height: 3;
+    padding: 1 2 0 2;
+    text-style: bold;
+    background: $surface;
+}
+
+SettingsScreen #settings_screen_body {
+    height: 1fr;
+    width: 100%;
+}
+
+SettingsScreen #settings_categories {
+    width: 24;
+    height: 100%;
+    border: none;
+    border-right: solid $surface-lighten-2;
+    background: $background;
+    padding: 1;
+}
+
+SettingsScreen #settings_screen_detail {
+    width: 1fr;
+    height: 100%;
+    background: $background;
+}
+
+SettingsScreen .settings-page {
+    width: 100%;
+    height: 1fr;
+    padding: 1 2;
+    background: $background;
+}
+
+SettingsScreen Select > SelectCurrent,
+SettingsScreen Select > SelectOverlay {
+    background: $panel;
+    border: round $surface-lighten-2;
+    color: $text;
+}
+
+SettingsScreen Select:focus > SelectCurrent {
+    background: $panel;
+    border: round $surface-lighten-2;
+    background-tint: transparent;
+}
+
+SettingsScreen Label,
+SettingsScreen Button {
+    margin-top: 1;
+}
+
+SettingsScreen #settings_screen_footer {
+    height: auto;
+    min-height: 5;
+    padding: 0 2 1 2;
+    border-top: solid $surface-lighten-2;
+    background: $surface;
+}
+
+SettingsScreen #settings_screen_actions {
+    height: auto;
+    align-horizontal: right;
+}
+
+SettingsScreen #settings_screen_actions Button {
+    width: 20;
+    margin-left: 1;
+}
+
+SettingsScreen #settings_status,
+SettingsScreen #settings_connection_status {
+    height: auto;
+    margin-top: 1;
+}
+
+ConfirmDiscardSettingsScreen,
+ConfirmSettingsActionScreen {
+    align: center middle;
+    background: $background 80%;
+}
+
+#settings_discard_dialog {
+    width: 64;
+    height: auto;
+    padding: 1 2;
+    border: round $surface-lighten-2;
+    background: $surface;
+}
+
+#settings_discard_title {
+    height: auto;
+    text-style: bold;
+}
+
+#settings_discard_copy {
+    height: auto;
+    margin-top: 1;
+}
+
+#settings_discard_actions {
+    height: auto;
+    align-horizontal: right;
+}
+
+#settings_discard_actions Button {
+    width: 18;
+    margin-left: 1;
+}
+
+#settings_action_dialog {
+    width: 68;
+    max-width: 94%;
+    height: auto;
+    padding: 1 2;
+    border: round $surface-lighten-2;
+    background: $surface;
+}
+
+#settings_action_title {
+    height: auto;
+    text-style: bold;
+}
+
+#settings_action_copy {
+    height: auto;
+    margin-top: 1;
+}
+
+#settings_action_buttons {
+    height: auto;
+    align-horizontal: right;
+}
+
+#settings_action_buttons Button {
+    width: 18;
+    margin-left: 1;
+}
+
+OnboardingScreen {
+    align: center middle;
+    background: $background;
+    color: $text;
+}
+
+#onboarding_dialog {
+    width: 76;
+    max-width: 96%;
+    height: auto;
+    max-height: 94%;
+    padding: 1 2;
+    border: round $surface-lighten-2;
+    background: $surface;
+}
+
+#onboarding_title {
+    height: auto;
+    text-style: bold;
+}
+
+#onboarding_progress,
+.onboarding-hint {
+    height: auto;
+    color: $text-muted;
+}
+
+#onboarding_pages,
+.onboarding-step,
+#onboarding_chatgpt_panel,
+#onboarding_api_panel {
+    height: auto;
+}
+
+.onboarding-step {
+    margin-top: 1;
+}
+
+OnboardingScreen Label,
+OnboardingScreen Button {
+    margin-top: 1;
+}
+
+OnboardingScreen Select > SelectCurrent,
+OnboardingScreen Select > SelectOverlay {
+    background: $panel;
+    border: round $surface-lighten-2;
+    color: $text;
+}
+
+#onboarding_status,
+#onboarding_chatgpt_status,
+#onboarding_test_status,
+#onboarding_summary {
+    height: auto;
+    margin-top: 1;
+}
+
+#onboarding_actions {
+    height: auto;
+    margin-top: 1;
+    align-horizontal: right;
+}
+
+#onboarding_actions Button {
+    width: 18;
+    margin-left: 1;
 }
 
 #status_form PlanningMarkdown,

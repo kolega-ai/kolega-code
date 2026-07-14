@@ -90,7 +90,9 @@ from .tui import agent_runtime as tui_agent_runtime
 from .tui import changes_screen as tui_changes
 from .tui import command_handlers as tui_command_handlers
 from .tui import prompt_flows as tui_prompt_flows
+from .tui import onboarding_screen as tui_onboarding
 from .tui import settings_panel as tui_settings_panel
+from .tui import settings_screen as tui_settings_screen
 from .tui import session_diff as tui_session_diff
 from .tui import status_dashboard as tui_status_dashboard
 from .tui import state as tui_state
@@ -153,6 +155,7 @@ class KolegaCodeApp(
         browser_visible: bool = False,
         check_for_updates: bool = False,
         show_logs: bool = False,
+        startup_config_error: Optional[str] = None,
     ) -> None:
         super().__init__()
         self.project_path = project_path
@@ -185,6 +188,7 @@ class KolegaCodeApp(
         self.sidebar_visible = True
         self.check_for_updates = check_for_updates
         self.show_logs = show_logs
+        self.startup_config_error = startup_config_error
         self.connection_manager = CliConnectionManager()
         self._hook_dispatcher: Optional[HookDispatcher] = None
         self._session_started = False
@@ -224,6 +228,9 @@ class KolegaCodeApp(
         # Dedup flag: one vision-mismatch system message per non-vision model
         # session. Reset in _switch_model so a new model gets a fresh warning.
         self._vision_warning_shown = False
+        self._settings_screen: Optional[tui_settings_screen.SettingsScreen] = None
+        self._onboarding_screen: Optional[tui_onboarding.OnboardingScreen] = None
+        self._onboarding_skipped = False
         self._permission_lock = asyncio.Lock()
         self._persistence_lock = asyncio.Lock()
         self._pending_model_selection: Optional[tui_state.PendingModelSelection] = None
@@ -335,6 +342,12 @@ class KolegaCodeApp(
                                     empty_source=messages.PLAN_EMPTY_MESSAGE,
                                 )
                     with TabPane("Settings", id="settings_pane"):
+                        with Vertical(id="settings_summary_panel"):
+                            with Vertical(classes="settings-section", id="settings_summary_section") as summary_section:
+                                summary_section.border_title = "Settings"
+                                yield Static("", id="settings_summary")
+                                yield Button("Open Settings", variant="primary", id="open_settings")
+                                yield Static("", id="settings_summary_status")
                         with VerticalScroll(id="settings_form"):
                             with Vertical(classes="settings-section", id="settings_model") as model_section:
                                 model_section.border_title = "Model"
@@ -584,6 +597,8 @@ class KolegaCodeApp(
             self._schedule_primary_focus_restore()
         else:
             await self._ensure_agent_from_settings()
+        if self.config is None and not self._onboarding_skipped:
+            self.call_after_refresh(self.action_open_onboarding)
 
     @property
     def _conversation(self) -> tui_widgets.ConversationView:
@@ -1094,8 +1109,26 @@ class KolegaCodeApp(
         if event.button.id == "detach_btn":
             await self._command_detach("")
             return
+        if event.button.id == "open_settings":
+            if self.config is None:
+                self.action_open_onboarding()
+            else:
+                self.action_open_settings()
+            return
         if event.button.id == "save_settings":
             await self._save_settings_from_ui()
+            return
+        if event.button.id == "settings_chatgpt_login":
+            await self._settings_login_chatgpt()
+            return
+        if event.button.id == "settings_chatgpt_logout":
+            self._settings_logout_chatgpt()
+            return
+        if event.button.id == "settings_remove_api_key":
+            self._settings_remove_api_key()
+            return
+        if event.button.id == "settings_test_connection":
+            await self._test_settings_connection()
             return
         if event.button.id and event.button.id.startswith("mcp_"):
             if await self._handle_mcp_settings_button(event.button.id):
@@ -1157,6 +1190,25 @@ class KolegaCodeApp(
         self._set_sidebar_visible(not self.sidebar_visible)
         message = messages.SIDEBAR_SHOWN if self.sidebar_visible else messages.SIDEBAR_HIDDEN
         self._notify_user(message)
+
+    def action_open_settings(self, category: str = "model") -> None:
+        """Open the full-screen settings editor."""
+        if self._settings_screen is not None or self._onboarding_screen is not None:
+            return
+        if self._pending_approval is not None or self._pending_question is not None or self._plan_decision_active:
+            self._notify_user("Resolve the active prompt before opening Settings.", severity="warning")
+            return
+        screen = tui_settings_screen.SettingsScreen(self, category=category)
+        self._settings_screen = screen
+        self.push_screen(screen)
+
+    def action_open_onboarding(self) -> None:
+        """Open the independent connection wizard."""
+        if self.config is not None or self._onboarding_screen is not None or self._settings_screen is not None:
+            return
+        screen = tui_onboarding.OnboardingScreen(self)
+        self._onboarding_screen = screen
+        self.push_screen(screen)
 
     def action_open_sub_agent(self, key: Optional[str] = None) -> None:
         """Open the full-screen sub-agent inspector (mission control)."""

@@ -526,6 +526,8 @@ def build_agent_config(
 def key_status(provider: str, project_path: Path, settings: Optional[CliSettings] = None) -> str:
     """Return the API-key (or sign-in) status for display without exposing secrets."""
     provider_value = _provider(provider)
+    if provider_value == ModelProvider.LLAMA:
+        return "not required for the local provider"
     if provider_value in OAUTH_PROVIDERS:
         if settings and settings.has_oauth_token(provider_value.value):
             token = settings.get_oauth_token(provider_value.value) or {}

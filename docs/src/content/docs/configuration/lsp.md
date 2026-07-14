@@ -9,7 +9,7 @@ project languages. LSP is enabled by default and is used for:
 - diagnostics after `edit`, `multi_edit`, and `write`;
 - the generic read-only `lsp` tool;
 - the permission-gated `lsp_edit` tool;
-- `/lsp` and the Settings tab status display.
+- `/lsp` and the Settings screen's Tools status display.
 
 The `lsp` tool remains read-only. Mutating LSP operations are exposed through
 `lsp_edit`, which is treated like `edit`, `multi_edit`, and `write` for
@@ -112,8 +112,8 @@ responses, keyed first by server name and then by requested section.
 ## Status and troubleshooting
 
 Run `/lsp` in the TUI to see detected languages, missing servers, active
-sessions, and recent diagnostic counts. The Settings tab has a global LSP toggle;
-changing it requires restarting the agent session.
+sessions, and recent diagnostic counts. The full Settings screen's **Tools**
+category has a global LSP toggle; applying a change rebuilds the agent.
 
 If a server is missing, `/lsp` shows the server name and install guidance from
 Kolega Code's bundled registry. You can suppress a language with

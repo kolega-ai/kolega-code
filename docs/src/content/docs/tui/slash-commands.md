@@ -40,6 +40,7 @@ These control the app and your session.
 | `/plan` | Switch to [Plan mode](../modes/) |
 | `/build` | Switch to [Build mode](../modes/) |
 | `/sidebar` | Show or hide the side panel |
+| `/settings` | Open the full-screen Settings editor |
 | `/permissions` | Show or switch the shell/edit permission mode |
 | `/model` | Choose the active model |
 | `/effort` | Choose the active model's thinking effort |
@@ -65,6 +66,9 @@ examples.
 
 Run `/model` to open a selectable list of supported models for the current
 provider. You can also switch directly with `/model <name>`.
+
+Run `/settings` to open the categorized Settings editor without navigating to the
+sidebar tab. Unsaved changes remain a draft until you select **Apply Changes**.
 
 Run `/effort` to open a selectable list of supported effort values for the
 active model. You can also switch directly with `/effort <level>`.

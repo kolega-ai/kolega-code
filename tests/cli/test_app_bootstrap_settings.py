@@ -318,25 +318,23 @@ async def test_textual_app_mounts_settings_without_api_key(
         assert app.agent is None
         composer = app.query_one("#composer", ChatComposer)
         assert composer.disabled is True
-        assert composer.placeholder == "Connect a model in Settings before chatting."
+        assert composer.placeholder == "Finish setup or connect a model in Settings before chatting."
         assert app.query_one("#events", TabbedContent).active == "status_pane"
         startup = app.conversation_entries[0].content
         assert "Not connected." in startup
-        assert "Choose a provider and add an API key or sign in from the Settings tab before chatting." in startup
-        assert "Press Ctrl+O to open the sidebar, then select Settings." in startup
+        assert "Complete onboarding, or open Settings, to choose a provider and connect a credential." in startup
+        assert "Press Ctrl+O, select Settings, then choose Continue Setup." in startup
         assert "Model: not configured" in startup
         assert "API key: not checked until a model is configured" in startup
         dashboard = str(app.query_one("#status_dashboard").render())
         assert "not connected" in dashboard
-        assert "Open Settings and connect a provider to start chatting." in dashboard
+        assert "Complete setup or open Settings to connect a provider." in dashboard
         status = str(app.query_one("#settings_status").render())
         assert "Configuration incomplete" in status
         assert "No provider/model configured" in status
         await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, "fix this"))
-        assert composer.placeholder == "Connect a model in Settings before chatting."
-        assert "Open Settings and connect a provider to start chatting." in str(
-            app.query_one("#composer_hint").render()
-        )
+        assert composer.placeholder == "Finish setup or connect a model in Settings before chatting."
+        assert "Complete setup or open Settings to connect a provider." in str(app.query_one("#composer_hint").render())
         stored_settings = settings_store.load()
         assert stored_settings.active_provider is None
         assert stored_settings.active_model is None
@@ -373,7 +371,7 @@ async def test_textual_app_does_not_select_model_from_api_key_env(
         assert app.agent is None
         composer = app.query_one("#composer", ChatComposer)
         assert composer.disabled is True
-        assert composer.placeholder == "Connect a model in Settings before chatting."
+        assert composer.placeholder == "Finish setup or connect a model in Settings before chatting."
         startup = app.conversation_entries[0].content
         assert "Not connected." in startup
         assert "Model: not configured" in startup

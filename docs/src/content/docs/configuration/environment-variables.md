@@ -78,8 +78,8 @@ See [Providers & Models](../providers-and-models/) for what each role does.
 
 Give an individual agent its own model. `<ROLE>` is one of `PLANNING`, `BUILDING`,
 `INVESTIGATION`, `GENERAL`, or `BROWSER`. A role with no override inherits the main
-model. These also override anything saved in the Settings tab's **Agent Models**
-section.
+model. These also override anything saved in the Settings screen's **Agent Models**
+category.
 
 | Variable | Purpose |
 | --- | --- |
@@ -157,7 +157,7 @@ export KOLEGA_CODE_MODEL=kimi-k2.7-code
 kolega-code
 ```
 
-Or save the provider, model, and API key in the TUI Settings tab. Settings are
+Or save the provider, model, and API key in the TUI Settings screen. Settings are
 the recommended persistent configuration path for interactive use.
 
 :::caution

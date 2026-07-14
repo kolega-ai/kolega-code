@@ -55,6 +55,7 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
             "/plan": self._command_plan,
             "/build": self._command_build,
             "/sidebar": self._command_sidebar,
+            "/settings": self._command_settings,
             "/permissions": self._command_permissions,
             "/model": self._command_model,
             "/effort": self._command_effort,
@@ -433,6 +434,9 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
 
     async def _command_sidebar(self, args: str) -> None:
         await self.action_toggle_sidebar()
+
+    async def _command_settings(self, args: str) -> None:
+        self.action_open_settings()
 
     async def _command_init(self, args: str) -> None:
         if self._pending_question is not None:

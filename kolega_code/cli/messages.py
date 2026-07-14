@@ -9,7 +9,7 @@ from __future__ import annotations
 
 # Composer placeholders and modal prompts
 COMPOSER_PLACEHOLDER = "Ask Kolega Code..."
-DISCONNECTED_COMPOSER_PLACEHOLDER = "Connect a model in Settings before chatting."
+DISCONNECTED_COMPOSER_PLACEHOLDER = "Finish setup or connect a model in Settings before chatting."
 PLAN_READY_PLACEHOLDER = "Plan ready. Choose Implement plan or Discuss further."
 QUESTION_PLACEHOLDER = "Choose an option below or type a custom answer..."
 APPROVAL_PLACEHOLDER = "Choose whether to allow this action..."
@@ -20,9 +20,9 @@ THEME_PLACEHOLDER = "Choose a theme below or type a theme name..."
 # Durable transcript messages
 THREAD_RESET_MESSAGE = "Thread reset. Previous messages were cleared."
 DISCONNECTED_HEADLINE = "Not connected."
-DISCONNECTED_STARTUP_GUIDANCE = "Choose a provider and add an API key or sign in from the Settings tab before chatting."
-DISCONNECTED_SIDEBAR_GUIDANCE = "Press Ctrl+O to open the sidebar, then select Settings."
-DISCONNECTED_ACTIVITY = "Open Settings and connect a provider to start chatting."
+DISCONNECTED_STARTUP_GUIDANCE = "Complete onboarding, or open Settings, to choose a provider and connect a credential."
+DISCONNECTED_SIDEBAR_GUIDANCE = "Press Ctrl+O, select Settings, then choose Continue Setup."
+DISCONNECTED_ACTIVITY = "Complete setup or open Settings to connect a provider."
 DISCONNECTED_MODEL = "not connected"
 TASK_LIST_EMPTY_MESSAGE = "No task list has been set."
 PLAN_EMPTY_MESSAGE = "No plan captured yet."

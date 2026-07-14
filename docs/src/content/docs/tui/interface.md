@@ -31,7 +31,11 @@ appears above the composer until those prompts are sent. See
 | **Logs** | Optional. Launch with `--show-logs` to show a timestamped, color-coded diagnostic activity log. New entries preserve manual scrollback and an indicator flags unseen entries when you're on another tab. |
 | **Terminal** | Live output from commands the agent runs. |
 | **Planning** | The current **Plan** (markdown from the planning agent) and the shared **Task List** that both modes can edit. |
-| **Settings** | Provider, model, thinking effort, and API-key configuration. See [Settings & API Keys](../../configuration/settings-and-api-keys/). |
+| **Settings** | A compact summary of the model, credential source, agent overrides, tools, and theme. Select **Open Settings** for the categorized full-screen editor, or **Continue Setup** when disconnected. See [Settings & API Keys](../../configuration/settings-and-api-keys/). |
+
+When no valid model configuration exists, a separate first-run wizard opens over
+the interface. It handles only the initial account/provider connection and model
+choice; the full editor remains available for every advanced setting.
 
 ## Conversation details
 
