@@ -42,9 +42,13 @@ class FakeCoderAgent:
         self.attachments: list = []
         self.active_goal_condition = None
         self.session_recorder = kwargs.get("session_recorder")
+        self.queued_input_provider = None
 
     def apply_goal(self, condition, prompt_extension=None):
         self.active_goal_condition = condition
+
+    def set_queued_input_provider(self, provider):
+        self.queued_input_provider = provider
 
     def append_user_message(self, content):
         self.history.append(Message(role="user", content=content))

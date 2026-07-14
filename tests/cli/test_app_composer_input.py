@@ -729,3 +729,156 @@ async def test_textual_app_cancel_restores_queued_followups_to_composer(
         assert app.query_one("#queued_messages").display is False
         assert composer.text == expected_text
         assert not [entry for entry in app.conversation_entries if entry.content in {"second", "third"}]
+
+
+@pytest.mark.asyncio
+async def test_textual_app_queued_message_delivered_mid_turn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.widgets import ChatComposer
+
+    turn_started = asyncio.Event()
+    reach_boundary = asyncio.Event()
+    delivered_ready = asyncio.Event()
+    release_finish = asyncio.Event()
+
+    class _ToolBoundaryCoderAgent(FakeCoderAgent):
+        """Simulates a turn that hits a tool boundary and pulls queued input."""
+
+        async def process_message_stream(self, message, attachments=None):
+            self.messages.append(message)
+            turn_started.set()
+            await reach_boundary.wait()
+            provider = self.queued_input_provider
+            assert provider is not None
+            inputs = await provider()
+            self.delivered = [(item.text, item.attachments) for item in inputs]
+            delivered_ready.set()
+            await release_finish.wait()
+            yield {"type": "response", "content": "done", "complete": True, "uuid": "response-1"}
+
+    install_fake_agents(monkeypatch, coder_cls=_ToolBoundaryCoderAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test() as pilot:
+        composer = app.query_one("#composer", ChatComposer)
+        composer.focus()
+
+        composer.load_text("first")
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+        worker = app.agent_worker
+        assert worker is not None
+        await asyncio.wait_for(turn_started.wait(), timeout=2)
+
+        composer.load_text("second")
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+        await pilot.pause()
+        assert [item.text for item in app._queued_messages] == ["second"]
+        assert app.query_one("#queued_messages").display is True
+
+        reach_boundary.set()
+        await asyncio.wait_for(delivered_ready.wait(), timeout=2)
+        await pilot.pause()
+
+        # Mid-turn: the message was handed to the running turn, not a new one.
+        assert app.agent_worker is not None
+        assert app.agent is not None
+        assert getattr(app.agent, "delivered") == [("second", None)]
+        assert app._queued_messages == []
+        assert app.query_one("#queued_messages").display is False
+        second_entries = [entry for entry in app.conversation_entries if entry.content == "second"]
+        assert [entry.kind for entry in second_entries] == ["user"]
+
+        release_finish.set()
+        await worker.wait()
+        for _ in range(10):
+            await pilot.pause()
+            if app.agent_worker is None:
+                break
+
+        # No second turn started for the delivered message.
+        assert app.agent_worker is None
+        assert getattr(app.agent, "messages") == ["first"]
+        user_contents = [entry.content for entry in app.conversation_entries if entry.kind == "user"]
+        assert user_contents.count("second") == 1
+        assert not [entry for entry in app.conversation_entries if entry.kind == "queued"]
+
+
+@pytest.mark.asyncio
+async def test_textual_app_cancel_restores_only_undelivered(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.widgets import ChatComposer
+
+    turn_started = asyncio.Event()
+    reach_boundary = asyncio.Event()
+    delivered_ready = asyncio.Event()
+
+    class _ToolBoundaryCoderAgent(FakeCoderAgent):
+        """Delivers queued input at one boundary, then blocks until cancelled."""
+
+        async def process_message_stream(self, message, attachments=None):
+            self.messages.append(message)
+            turn_started.set()
+            await reach_boundary.wait()
+            provider = self.queued_input_provider
+            assert provider is not None
+            inputs = await provider()
+            self.delivered = [item.text for item in inputs]
+            delivered_ready.set()
+            await asyncio.Event().wait()
+            yield {"type": "response", "content": "unreachable", "complete": True, "uuid": "response-1"}
+
+    install_fake_agents(monkeypatch, coder_cls=_ToolBoundaryCoderAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test() as pilot:
+        composer = app.query_one("#composer", ChatComposer)
+        composer.focus()
+
+        composer.load_text("first")
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+        assert app.agent_worker is not None
+        await asyncio.wait_for(turn_started.wait(), timeout=2)
+
+        composer.load_text("second")
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+        reach_boundary.set()
+        await asyncio.wait_for(delivered_ready.wait(), timeout=2)
+        await pilot.pause()
+        assert app.agent is not None
+        assert getattr(app.agent, "delivered") == ["second"]
+
+        composer.load_text("third")
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+        assert [item.text for item in app._queued_messages] == ["third"]
+
+        composer.load_text("")
+        app.action_cancel_generation()
+        for _ in range(10):
+            await pilot.pause()
+            if app.agent_worker is None:
+                break
+
+        # Only the undelivered follow-up returns to the composer; the delivered
+        # one stays in the transcript as a user message.
+        assert app.agent_worker is None
+        assert app._queued_messages == []
+        assert composer.text == "third"
+        second_entries = [entry for entry in app.conversation_entries if entry.content == "second"]
+        assert [entry.kind for entry in second_entries] == ["user"]
+        assert not [entry for entry in app.conversation_entries if entry.content == "third"]

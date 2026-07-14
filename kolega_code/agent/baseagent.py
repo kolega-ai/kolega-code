@@ -1,5 +1,6 @@
 import asyncio
 import contextvars
+from dataclasses import dataclass
 import logging
 import os
 import random
@@ -10,7 +11,7 @@ import uuid
 from email.utils import parsedate_to_datetime
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional, cast
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Awaitable, Callable, Dict, List, Optional, cast
 from contextlib import AbstractAsyncContextManager
 from collections.abc import Coroutine
 
@@ -77,6 +78,12 @@ HOOK_DECISION_SYSTEM_PROMPT = (
     '{"ok": false, "reason": "<short explanation>"} to block it. The reason is shown to the '
     "agent. Output nothing other than the JSON object."
 )
+
+
+@dataclass
+class QueuedUserInput:
+    text: str
+    attachments: Optional[List[Dict[str, Any]]] = None
 
 
 class BaseAgent(LogMixin):
@@ -340,6 +347,7 @@ class BaseAgent(LogMixin):
         self.sub_agent_context = None  # Dispatch metadata (agent_id, task) set by AgentTool
         # Set by a blocking PostToolUse hook to end the turn after the current tool batch.
         self._hook_end_turn = False
+        self.queued_input_provider: Optional[Callable[[], Awaitable[List[QueuedUserInput]]]] = None
 
     # ------------------------------------------------------------------
     # Conversation delegation
@@ -835,6 +843,14 @@ class BaseAgent(LogMixin):
         """Update the host callback used when permission mode is ask."""
         self.permission_callback = permission_callback or auto_allow_permission_callback
         self.context.permission_callback = self.permission_callback
+
+    def set_queued_input_provider(self, provider: Callable[[], Awaitable[List[QueuedUserInput]]]) -> None:
+        """Set the host-supplied async callable that drains queued UI messages.
+
+        It drains user messages queued while a turn runs and is wired on the
+        main agent only, never on sub-agents.
+        """
+        self.queued_input_provider = provider
 
     @property
     def current_tool_call_id(self):
@@ -1500,6 +1516,29 @@ class BaseAgent(LogMixin):
         """Return the agent's final report: the text of the last message in history."""
         return self.history[-1].get_text_content()
 
+    async def _deliver_queued_user_inputs(self) -> None:
+        """Append user inputs drained from the host while the current turn is running."""
+        if self.queued_input_provider is None:
+            return
+
+        inputs = await self.queued_input_provider()
+        if not inputs:
+            return
+
+        for item in inputs:
+            blocks = await self.build_user_content(item.text, item.attachments)
+            if self.session_recorder is not None:
+                await asyncio.to_thread(
+                    self.session_recorder.record_context_message,
+                    Message(role="user", content=blocks),
+                )
+            self.append_user_message(blocks)
+
+        await self.log_info(
+            f"Delivered {len(inputs)} queued user message(s)",
+            sender=self.agent_name,
+        )
+
     async def process_message_stream(
         self, message: str, attachments: Optional[List[Dict[str, Any]]] = None
     ) -> AsyncGenerator[Dict[str, Any], None]:
@@ -1760,6 +1799,10 @@ class BaseAgent(LogMixin):
                         # A blocking PostToolUse hook asked to end the turn.
                         self._hook_end_turn = False
                         break
+
+                    # The loop will continue — deliver any user messages queued in the
+                    # host UI so the next model request sees them.
+                    await self._deliver_queued_user_inputs()
 
                 # Stop hooks (main agent only). On a natural turn end, a hook may
                 # keep the agent working by blocking the stop and returning a reason.

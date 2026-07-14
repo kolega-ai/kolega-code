@@ -349,6 +349,43 @@ def test_interrupted_tool_call_gets_synthetic_error_and_is_not_rerun(tmp_path: P
     assert store.journal(record.session_id).read_events()[-1].event_type == "turn.failed"
 
 
+def test_interrupted_turn_after_injected_context_message_is_recovered(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    store = SessionStore(tmp_path / "state")
+    record = store.create(project, "code", {})
+    interrupted = SessionRecorder(store.journal(record.session_id), recover=False)
+    tool_call = ToolCall(id="read-1", name="read_file", input={"path": "a.txt"})
+    interrupted.start_turn(Message(role="user", content=[TextBlock("read it")]))
+    interrupted.record_assistant(
+        Message(
+            role="assistant",
+            content=[tool_call],
+            stop_reason="tool_use",
+            tool_calls=[tool_call],
+        )
+    )
+    interrupted.record_tool_results(
+        [ToolResult(tool_use_id="read-1", name="read_file", content="contents", is_error=False)]
+    )
+    interrupted.record_context_message(Message(role="user", content=[TextBlock("also do Y")]))
+
+    event_types = [event.event_type for event in store.journal(record.session_id).read_events()]
+    assert event_types[-2:] == ["tool.results", "context.message"]
+
+    recovery = SessionRecorder(store.journal(record.session_id), recover=False)
+    assert recovery.recover_interrupted_turn() is True
+    assert recovery.current_turn_id is None
+    assert store.journal(record.session_id).read_events()[-1].event_type == "turn.failed"
+
+    replayed = [Message.from_dict(item) for item in store.load(record.session_id).history]
+    assert [message.role for message in replayed] == ["user", "assistant", "user", "user"]
+    assert isinstance(replayed[2].content[0], ToolResult)
+    assert replayed[2].content[0].content == "contents"
+    assert isinstance(replayed[3].content[0], TextBlock)
+    assert replayed[3].content[0].text == "also do Y"
+
+
 def test_terminal_assistant_message_is_recovered_when_only_marker_is_missing(tmp_path: Path) -> None:
     project = tmp_path / "project"
     project.mkdir()
