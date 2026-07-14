@@ -137,6 +137,7 @@ class BaseAgent(LogMixin):
         permission_callback: Optional[Any] = None,
         usage_recorder: Optional[Any] = None,
         sub_agent_recorder: Optional[Any] = None,
+        session_recorder: Optional[Any] = None,
         hook_dispatcher: Optional[HookDispatcher] = None,
         context: Optional[AgentContext] = None,
         max_iterations: Optional[int] = None,
@@ -171,6 +172,7 @@ class BaseAgent(LogMixin):
             tool_extensions: Host-provided tool providers for app-specific tools
             usage_recorder: Optional callback for recording normalized LLM usage
             sub_agent_recorder: Optional callback for persisting sub-agent conversation state
+            session_recorder: Optional durable recorder for the top-level CLI session
             context: Pre-built AgentContext; takes precedence over the flat keywords
         """
         if context is None:
@@ -266,6 +268,7 @@ class BaseAgent(LogMixin):
         self.hook_dispatcher = context.hook_dispatcher or NO_OP_DISPATCHER
         self.usage_recorder = context.telemetry.usage_recorder
         self.sub_agent_recorder = context.telemetry.sub_agent_recorder
+        self.session_recorder = None if sub_agent else session_recorder
         self.custom_agent_catalog = custom_agent_catalog
 
         # gigacode (workflow orchestration) opt-in. Off by default; the host toggles
@@ -801,6 +804,8 @@ class BaseAgent(LogMixin):
                 on_error=on_error,
                 system_prompt_text=compaction_system_prompt,
             )
+            if result.ok and self.session_recorder is not None:
+                await asyncio.to_thread(self.session_recorder.record_compaction, self.dump_compaction_state())
         finally:
             # Recount + emit so the context gauge reflects post-compaction reality
             # (even on a no-op the UI may have been stale).
@@ -813,6 +818,8 @@ class BaseAgent(LogMixin):
 
     def clear_history(self) -> None:
         """Drop all history and reset compaction state."""
+        if self.session_recorder is not None:
+            self.session_recorder.start_epoch("agent_clear_command")
         self.conversation.clear()
 
     # ------------------------------------------------------------------
@@ -1496,6 +1503,28 @@ class BaseAgent(LogMixin):
     async def process_message_stream(
         self, message: str, attachments: Optional[List[Dict[str, Any]]] = None
     ) -> AsyncGenerator[Dict[str, Any], None]:
+        """Run one durable top-level turn and record its terminal outcome."""
+        try:
+            async for chunk in self._process_message_stream_impl(message, attachments):
+                yield chunk
+        except asyncio.CancelledError:
+            await self._finish_recorded_turn("cancelled")
+            raise
+        except Exception as exc:
+            await self._finish_recorded_turn("failed", error=str(exc))
+            raise
+        else:
+            await self._finish_recorded_turn("completed")
+
+    async def _finish_recorded_turn(self, status: str, *, error: Optional[str] = None) -> None:
+        recorder = self.session_recorder
+        if recorder is None or recorder.current_turn_id is None:
+            return
+        await asyncio.to_thread(recorder.finish_turn, status, error=error)
+
+    async def _process_message_stream_impl(
+        self, message: str, attachments: Optional[List[Dict[str, Any]]] = None
+    ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         Process a user message and yield response/thinking chunks while the agent works.
 
@@ -1525,6 +1554,11 @@ class BaseAgent(LogMixin):
             if submit.additional_context:
                 content_blocks.append(TextBlock(text=submit.additional_context))
 
+        if self.session_recorder is not None:
+            await asyncio.to_thread(
+                self.session_recorder.start_turn,
+                Message(role="user", content=content_blocks),
+            )
         self.append_user_message(content_blocks)
 
         stop_reason = None
@@ -1672,6 +1706,8 @@ class BaseAgent(LogMixin):
                     stop_reason=stop_reason,
                 )
 
+                if self.session_recorder is not None:
+                    await asyncio.to_thread(self.session_recorder.record_assistant, assistant_message)
                 self.append_assistant_message(assistant_message)
                 # A clean stream resets the transient-failure budget, so the cap measures
                 # only consecutive failures, not lifetime failures across the turn.
@@ -1688,17 +1724,11 @@ class BaseAgent(LogMixin):
                         f"Received {len(assistant_message.tool_calls)} tool call(s)", sender=self.agent_name
                     )
 
+                    tools_succeeded = True
                     try:
                         tool_responses = await self.process_tool_calls(assistant_message.tool_calls)
-                        self.append_user_message(tool_responses)
-
-                        if self.should_stop_after_tools():
-                            break
-                        if self._hook_end_turn:
-                            # A blocking PostToolUse hook asked to end the turn.
-                            self._hook_end_turn = False
-                            break
                     except Exception as ex:
+                        tools_succeeded = False
                         error_message = f"Error processing tool calls: {str(ex)}"
                         await self.log_error(error_message, sender=self.agent_name)
 
@@ -1712,7 +1742,24 @@ class BaseAgent(LogMixin):
                             )
                             for tool_call in assistant_message.tool_calls
                         ]
-                        self.append_user_message(error_responses)
+                        tool_responses = error_responses
+
+                    # Persistence is deliberately outside the tool-execution handler:
+                    # a journal failure is terminal and must not be mistaken for a tool
+                    # failure that the model can continue past.
+                    if self.session_recorder is not None:
+                        tool_responses = await asyncio.to_thread(
+                            self.session_recorder.record_tool_results,
+                            tool_responses,
+                        )
+                    self.append_user_message(tool_responses)
+
+                    if tools_succeeded and self.should_stop_after_tools():
+                        break
+                    if tools_succeeded and self._hook_end_turn:
+                        # A blocking PostToolUse hook asked to end the turn.
+                        self._hook_end_turn = False
+                        break
 
                 # Stop hooks (main agent only). On a natural turn end, a hook may
                 # keep the agent working by blocking the stop and returning a reason.
@@ -1720,10 +1767,17 @@ class BaseAgent(LogMixin):
                     keep_working = await self._fire_stop_hook(stop_reason)
                     if keep_working is not None and stop_overrides < self.MAX_STOP_HOOK_OVERRIDES:
                         stop_overrides += 1
+                        if self.session_recorder is not None:
+                            await asyncio.to_thread(
+                                self.session_recorder.record_context_message,
+                                Message(role="user", content=[TextBlock(text=keep_working)]),
+                            )
                         self.append_user_message([TextBlock(text=keep_working)])
                         stop_reason = None
 
             except Exception as ex:
+                if getattr(ex, "session_persistence_error", False):
+                    raise
                 await self.handle_llm_error(ex)
 
         await self.log_info(self.completion_log_message, sender=self.agent_name)

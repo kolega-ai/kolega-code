@@ -36,6 +36,7 @@ if TYPE_CHECKING:
     from ..diagnostics import DiagnosticsLog, ResponsivenessWatchdog
     from ..file_index import WorkspaceFileIndex
     from ..goal import GoalState
+    from ..session_journal import SessionRecorder
     from ..session_store import SessionRecord, SessionStore
     from ..settings import CliSettings, SettingsStore
     from ..skills import SkillCatalog
@@ -67,6 +68,7 @@ class KolegaAppBase(App):
         mode: str
         store: SessionStore
         session: SessionRecord
+        _session_recorder: SessionRecorder
         interaction_mode: str
         permission_mode: PermissionMode
         settings_store: SettingsStore

@@ -29,6 +29,25 @@ def write_private_text(path: Path, content: str, *, encoding: str = "utf-8") -> 
     _chmod(path, PRIVATE_FILE_MODE)
 
 
+def write_private_bytes(path: Path, content: bytes) -> None:
+    """Atomically write binary local state with owner-only permissions."""
+    ensure_private_dir(path.parent)
+    temp = path.with_suffix(path.suffix + ".tmp")
+    fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, PRIVATE_FILE_MODE)
+    try:
+        view = memoryview(content)
+        while view:
+            written = os.write(fd, view)
+            if written <= 0:
+                raise OSError("short write while persisting local state")
+            view = view[written:]
+    finally:
+        os.close(fd)
+    _chmod(temp, PRIVATE_FILE_MODE)
+    temp.replace(path)
+    _chmod(path, PRIVATE_FILE_MODE)
+
+
 def write_private_secret_text(path: Path, content: str, *, encoding: str = "utf-8") -> None:
     """Atomically write deliberate local credential state to an owner-only file.
 

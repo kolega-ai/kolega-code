@@ -14,6 +14,7 @@ import pytest
 
 from kolega_code.cli.config import config_summary
 from kolega_code.cli.session_store import SessionStore
+from kolega_code.llm.models import Message
 
 
 from ._app_test_utils import build_test_config, install_fake_agents
@@ -25,6 +26,17 @@ def _text_message(role: str, text: str) -> dict:
 
 def _build_history(n: int) -> list[dict]:
     return [_text_message("user" if i % 2 == 0 else "assistant", f"msg-{i}") for i in range(n)]
+
+
+def _persist_history(store: SessionStore, session, history: list[dict], compaction: dict) -> None:
+    recorder = store.recorder(session.session_id)
+    for payload in history:
+        message = Message.from_dict(payload)
+        recorder.record_context_message(message, actor=message.role)
+    recorder.record_compaction(compaction)
+    restored = store.load(session.session_id)
+    session.history = restored.history
+    session.compaction = restored.compaction
 
 
 @pytest.mark.asyncio
@@ -45,13 +57,12 @@ async def test_restore_places_summary_after_retained_tail(tmp_path: Path, monkey
     # The retained tail was messages 4..9 (6 messages). After compaction,
     # 2 more turns were added, so history is now 12 long.
     history = _build_history(12)
-    session.history = history
-    session.compaction = {
+    compaction = {
         "summary": "THE SUMMARY",
         "compacted_through": 4,
         "compacted_history_length": 10,
     }
-    store.save(session)
+    _persist_history(store, session, history, compaction)
 
     app = KolegaCodeApp(
         project_path=project,
@@ -97,9 +108,8 @@ async def test_restore_old_session_without_history_length_falls_back(tmp_path: P
 
     # Old session: no compacted_history_length key.
     history = _build_history(12)
-    session.history = history
-    session.compaction = {"summary": "OLD SUMMARY", "compacted_through": 4}
-    store.save(session)
+    compaction = {"summary": "OLD SUMMARY", "compacted_through": 4}
+    _persist_history(store, session, history, compaction)
 
     app = KolegaCodeApp(
         project_path=project,

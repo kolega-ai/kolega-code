@@ -9,12 +9,14 @@ from dotenv import load_dotenv
 
 from kolega_code.agent.baseagent import BaseAgent
 from kolega_code.agent.errors import MaxAgentIterationsExceeded
+from kolega_code.cli.session_store import SessionStore
 from kolega_code.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
 from kolega_code.events import AgentConnectionManager
 from kolega_code.llm.exceptions import (
     LLMBillingError,
     LLMAuthenticationError,
     LLMContextWindowExceededError,
+    LLMError,
     LLMInternalServerError,
     LLMRateLimitError,
 )
@@ -111,6 +113,139 @@ class TestBaseAgent:
 
         assert chunks[-1]["complete"] is True
         assert base_agent.history[-1].stop_reason == "end_turn"
+
+    @pytest.mark.asyncio
+    async def test_turn_persists_semantic_boundaries_incrementally(self, base_agent, tmp_path):
+        project = tmp_path / "project"
+        project.mkdir()
+        store = SessionStore(tmp_path / "state")
+        session = store.create(project, "code", {})
+        base_agent.session_recorder = store.recorder(session.session_id)
+        base_agent.system_prompt = Message(role="system", content=[TextBlock(text="sys")])
+        base_agent.tool_collection = MagicMock()
+        base_agent.tool_collection.get_tool_list = MagicMock(return_value=[])
+        base_agent.llm = FakeLLM(
+            token_script=[100],
+            final_message=Message(role="assistant", content=[TextBlock(text="done")], stop_reason="end_turn"),
+        )
+        base_agent.log_info = AsyncMock()
+
+        chunks = [chunk async for chunk in base_agent.process_message_stream("finish")]
+
+        assert chunks[-1]["complete"] is True
+        assert [event.event_type for event in store.journal(session.session_id).read_events()][-3:] == [
+            "turn.started",
+            "assistant.message",
+            "turn.completed",
+        ]
+        assert [Message.from_dict(item).get_text_content() for item in store.load(session.session_id).history] == [
+            "finish",
+            "done",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_persistence_failure_before_turn_stops_before_model_request(self, base_agent):
+        class FailingRecorder:
+            current_turn_id = None
+
+            def start_turn(self, message):
+                raise OSError("journal unavailable")
+
+        base_agent.session_recorder = FailingRecorder()
+        base_agent.system_prompt = Message(role="system", content=[TextBlock(text="sys")])
+        base_agent.tool_collection = MagicMock()
+        base_agent.tool_collection.get_tool_list = MagicMock(return_value=[])
+        base_agent.llm = FakeLLM(token_script=[100])
+
+        with pytest.raises(OSError, match="journal unavailable"):
+            async for _chunk in base_agent.process_message_stream("must not run"):
+                pass
+
+        base_agent.llm.stream.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_assistant_persistence_failure_stops_before_tool_execution(self, base_agent):
+        class FailingRecorder:
+            current_turn_id = None
+            terminal_status = None
+
+            def start_turn(self, message):
+                self.current_turn_id = "turn"
+
+            def record_assistant(self, message):
+                raise OSError("assistant event failed")
+
+            def finish_turn(self, status, *, error=None):
+                self.terminal_status = status
+                self.current_turn_id = None
+
+        tool_call = ToolCall(id="tool-1", name="read_file", input={})
+        base_agent.session_recorder = FailingRecorder()
+        base_agent.system_prompt = Message(role="system", content=[TextBlock(text="sys")])
+        base_agent.tool_collection = MagicMock()
+        base_agent.tool_collection.get_tool_list = MagicMock(return_value=[])
+        base_agent.llm = FakeLLM(
+            token_script=[100],
+            final_message=Message(
+                role="assistant",
+                content=[tool_call],
+                tool_calls=[tool_call],
+                stop_reason="tool_use",
+            ),
+        )
+        base_agent.process_tool_calls = AsyncMock()
+
+        with pytest.raises(LLMError, match="assistant event failed"):
+            async for _chunk in base_agent.process_message_stream("edit"):
+                pass
+
+        base_agent.process_tool_calls.assert_not_awaited()
+        assert base_agent.session_recorder.terminal_status == "failed"
+
+    @pytest.mark.asyncio
+    async def test_tool_result_persistence_failure_stops_before_next_model_request(self, base_agent):
+        class FailingRecorder:
+            current_turn_id = None
+            terminal_status = None
+
+            def start_turn(self, message):
+                self.current_turn_id = "turn"
+
+            def record_assistant(self, message):
+                return None
+
+            def record_tool_results(self, results):
+                raise OSError("tool result event failed")
+
+            def finish_turn(self, status, *, error=None):
+                self.terminal_status = status
+                self.current_turn_id = None
+
+        tool_call = ToolCall(id="tool-1", name="read_file", input={})
+        base_agent.session_recorder = FailingRecorder()
+        base_agent.system_prompt = Message(role="system", content=[TextBlock(text="sys")])
+        base_agent.tool_collection = MagicMock()
+        base_agent.tool_collection.get_tool_list = MagicMock(return_value=[])
+        base_agent.llm = FakeLLM(
+            token_script=[100],
+            final_message=Message(
+                role="assistant",
+                content=[tool_call],
+                tool_calls=[tool_call],
+                stop_reason="tool_use",
+            ),
+        )
+        base_agent.process_tool_calls = AsyncMock(
+            return_value=[ToolResult(tool_use_id="tool-1", name="read_file", content="ok", is_error=False)]
+        )
+
+        with pytest.raises(LLMError, match="tool result event failed"):
+            async for _chunk in base_agent.process_message_stream("read"):
+                pass
+
+        base_agent.process_tool_calls.assert_awaited_once()
+        assert base_agent.llm.stream.await_count == 1
+        assert base_agent.session_recorder.terminal_status == "failed"
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(

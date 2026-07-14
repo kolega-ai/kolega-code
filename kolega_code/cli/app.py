@@ -145,7 +145,8 @@ class KolegaCodeApp(
         self.config = config
         self.mode = CLI_AGENT_MODE
         self.store = store
-        self.session = session
+        self._session_recorder = store.recorder(session.session_id)
+        self.session = store.load(session.session_id)
         self.session.mode = CLI_AGENT_MODE
         self.interaction_mode = self._validated_interaction_mode(self.session.interaction_mode)
         self.session.interaction_mode = self.interaction_mode
@@ -685,7 +686,12 @@ class KolegaCodeApp(
             self.session.updated_at = snapshot.updated_at
 
     async def _save_session_history_async(self) -> None:
-        """Dump agent history and persist the session off the UI loop."""
+        """Flush metadata and refresh the in-memory projection off the UI loop.
+
+        The history dump is not written by ``SessionStore.save``; canonical history
+        has already been appended at semantic turn boundaries. Keeping this local
+        projection current avoids replaying the entire JSONL log after every turn.
+        """
         async with self._persistence_lock:
             agent = self.agent
             if agent is None:
@@ -695,8 +701,6 @@ class KolegaCodeApp(
             def dump_and_save() -> tuple[list[dict], dict, str]:
                 history = agent.dump_message_history()
                 compaction = agent.dump_compaction_state()
-                snapshot.history = history
-                snapshot.compaction = compaction
                 self.store.save(snapshot)
                 return history, compaction, snapshot.updated_at
 
@@ -1306,7 +1310,7 @@ class KolegaCodeApp(
         self._plan_reofferable = False
         self._plan_decision_active = False
         if clear_context:
-            self._clear_agent_context()
+            self._clear_agent_context(reason="implement_plan_with_cleared_context")
         await self._save_session_async()
         await self._set_interaction_mode(tui_constants.BUILD_INTERACTION_MODE)
         self._refresh_planning_sidebar()
@@ -1667,9 +1671,10 @@ class KolegaCodeApp(
             return
         btn.display = bool(self._pending_image_attachments)
 
-    def _clear_agent_context(self) -> None:
+    def _clear_agent_context(self, *, reason: str = "context_cleared") -> None:
         """Wipe the agent's LLM history so the build agent starts fresh, while leaving
         the visible transcript and the captured plan intact."""
+        self._session_recorder.start_epoch(reason)
         if self.agent is not None:
             self.agent.history = MessageHistory()
             self.agent.last_compression_index = None
@@ -1679,6 +1684,7 @@ class KolegaCodeApp(
 
     async def _reset_current_thread(self) -> None:
         self._close_sub_agent_inspector()
+        await asyncio.to_thread(self._session_recorder.start_epoch, "thread_reset")
         if self.agent is not None:
             self.agent.history = MessageHistory()
         self.session.history = []

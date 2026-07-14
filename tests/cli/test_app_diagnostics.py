@@ -58,7 +58,7 @@ async def test_diagnostics_and_bug_commands(tmp_path: Path, monkeypatch: pytest.
         assert app._diag is not None
         diag_dir = app._diag.dir
 
-    # /bug wrote a shareable zip with the summary + the full session JSON.
+    # /bug wrote a shareable zip with the projection, canonical events, and artifact manifest.
     bundles = list(diag_dir.glob("bug-*.zip"))
     assert bundles, "/bug did not write a zip"
     bundle = bundles[0]
@@ -66,6 +66,8 @@ async def test_diagnostics_and_bug_commands(tmp_path: Path, monkeypatch: pytest.
         names = zf.namelist()
     assert "summary.md" in names
     assert "session.json" in names
+    assert "session-events.jsonl" in names
+    assert "session-artifacts.json" in names
 
     system_entries = [e.content for e in app.conversation_entries if e.kind == "system"]
     assert any("Diagnostics log" in c for c in system_entries)  # /diagnostics summary

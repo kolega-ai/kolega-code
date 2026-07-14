@@ -25,9 +25,12 @@ import traceback
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import TYPE_CHECKING, Any, Iterable, Optional
 
 from kolega_code.local_state import ensure_private_dir, ensure_private_file
+
+if TYPE_CHECKING:
+    from .session_store import SessionBugExport
 
 DIAGNOSTICS_DISABLED_ENV = "KOLEGA_CODE_NO_DIAGNOSTICS"
 SECRET_PLACEHOLDER = "‹secret›"  # ‹secret›
@@ -278,14 +281,20 @@ def write_crash_log(
         return None
 
 
-def assemble_bug_bundle(diag: DiagnosticsLog, *, summary: str, session_json: Optional[Path]) -> Optional[Path]:
+def assemble_bug_bundle(
+    diag: DiagnosticsLog,
+    *,
+    summary: str,
+    session_export: Optional["SessionBugExport"],
+) -> Optional[Path]:
     """Build a shareable zip: summary + diagnostics timeline + crash/stall dumps + the
-    (full, unredacted-content) session JSON. Secrets are scrubbed throughout. Returns the
+    session projection, canonical events, and artifact manifest. Oversized artifact bodies
+    are not included. Secrets are scrubbed throughout. Returns the
     zip path, or None if diagnostics are disabled / on error.
 
     Entries are written flat at the archive root (same layout the old bundle directory
     had). Diagnostics artifacts are already scrubbed at write time, so they are added
-    verbatim; the summary and session JSON are scrubbed here."""
+    verbatim; generated session exports are scrubbed here."""
     if not diag.enabled:
         return None
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -299,12 +308,16 @@ def assemble_bug_bundle(diag: DiagnosticsLog, *, summary: str, session_json: Opt
                     zf.write(artifact, artifact.name)
                 except OSError:
                     pass
-            if session_json and session_json.exists():
-                try:
-                    scrubbed = scrub_secrets(session_json.read_text(encoding="utf-8"), diag._secret_values)
-                    zf.writestr("session.json", scrubbed)
-                except OSError:
-                    pass
+            if session_export is not None:
+                zf.writestr("session.json", scrub_secrets(session_export.session_json, diag._secret_values))
+                zf.writestr(
+                    "session-events.jsonl",
+                    scrub_secrets(session_export.events_jsonl, diag._secret_values),
+                )
+                zf.writestr(
+                    "session-artifacts.json",
+                    scrub_secrets(session_export.artifact_manifest_json, diag._secret_values),
+                )
         ensure_private_file(zip_path)
         return zip_path
     except OSError:

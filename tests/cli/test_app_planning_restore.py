@@ -70,11 +70,11 @@ async def test_textual_app_restores_saved_plan_and_interaction_mode(
     config = build_test_config(project)
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
-    session.history = saved_history
     session.latest_plan_markdown = saved_plan
     session.plan_pending = True
     session.interaction_mode = "plan"
     store.save(session)
+    store.recorder(session.session_id).record_context_message(Message.from_dict(saved_history[0]), actor="assistant")
 
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
 

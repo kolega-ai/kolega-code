@@ -60,6 +60,24 @@ class _RestoredHistoryFakeAgent(FakeCoderAgent):
         return self.restored_history or []
 
 
+def _persist_history(
+    store: SessionStore,
+    session,
+    history: list[dict],
+    compaction: dict | None = None,
+) -> None:
+    """Seed canonical journal events for app resume tests."""
+    recorder = store.recorder(session.session_id)
+    for payload in history:
+        message = Message.from_dict(payload)
+        recorder.record_context_message(message, actor=message.role)
+    if compaction is not None:
+        recorder.record_compaction(compaction)
+    loaded = store.load(session.session_id)
+    session.history = loaded.history
+    session.compaction = loaded.compaction
+
+
 @pytest.mark.asyncio
 async def test_textual_app_startup_entry_updates_incrementally(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
@@ -127,14 +145,15 @@ async def test_textual_app_does_not_save_startup_entry_to_history(
     config = build_test_config(project)
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
+    _persist_history(store, session, saved_history)
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
 
     async with app.run_test():
         assert app.conversation_entries[0].kind == "startup"
         await app._save_session_history_async()
 
-        assert session.history == saved_history
-        assert all("Kolega Code" not in str(item) for item in session.history)
+        assert app.session.history == saved_history
+        assert all("Kolega Code" not in str(item) for item in app.session.history)
 
 
 @pytest.mark.asyncio
@@ -154,6 +173,7 @@ async def test_textual_app_history_save_runs_off_event_loop(tmp_path: Path, monk
     config = build_test_config(project)
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
+    _persist_history(store, session, saved_history)
     original_save = store.save
 
     def slow_save(record):
@@ -198,6 +218,7 @@ async def test_textual_app_history_save_persists_session_and_compaction(
     config = build_test_config(project)
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
+    _persist_history(store, session, saved_history, saved_compaction)
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
     fake_agent = FakeAgent()
     monkeypatch.setattr(app, "agent", fake_agent)
@@ -217,7 +238,7 @@ def test_session_store_round_trips_freeform_tool_exchange(tmp_path: Path) -> Non
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", {})
     raw = "*** Begin Patch\n*** Add File: a.txt\n+x\n*** End Patch\n"
-    session.history = [
+    history = [
         Message(
             role="assistant",
             content=[ToolCall(id="call-1", name="apply_patch", input=raw, input_kind="freeform")],
@@ -236,7 +257,7 @@ def test_session_store_round_trips_freeform_tool_exchange(tmp_path: Path) -> Non
             ],
         ).to_dict(),
     ]
-    store.save(session)
+    _persist_history(store, session, history)
 
     restored = [Message.from_dict(item) for item in store.load(session.session_id).history]
 
@@ -268,6 +289,7 @@ async def test_textual_app_overlapping_saves_preserve_later_state(
     config = build_test_config(project)
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
+    _persist_history(store, session, saved_history)
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
     fake_agent = FakeAgent()
     monkeypatch.setattr(app, "agent", fake_agent)
@@ -327,10 +349,10 @@ async def test_textual_app_reset_command_clears_current_thread(
     config = build_test_config(project)
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
-    session.history = saved_history
     session.task_list_markdown = "- [ ] old task"
     session.latest_plan_markdown = "# Plan\n\nOld plan."
     store.save(session)
+    _persist_history(store, session, saved_history)
 
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
 
@@ -395,8 +417,7 @@ async def test_textual_app_reset_command_waits_for_active_turn(tmp_path: Path, m
     config = build_test_config(project)
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
-    session.history = saved_history
-    store.save(session)
+    _persist_history(store, session, saved_history)
 
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
 
@@ -429,7 +450,7 @@ async def test_textual_app_renders_resumed_history_in_chat(tmp_path: Path, monke
     config = build_test_config(project)
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
-    session.history = [
+    history = [
         Message(role="user", content=[TextBlock("Please read the README")]).to_dict(),
         Message(
             role="assistant",
@@ -449,11 +470,12 @@ async def test_textual_app_renders_resumed_history_in_chat(tmp_path: Path, monke
         Message(role="assistant", content=[TextBlock("Done.")]).to_dict(),
     ]
 
+    _persist_history(store, session, history)
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
 
     async with app.run_test():
         assert isinstance(app.agent, _RestoredHistoryFakeAgent)
-        assert app.agent.restored_history == session.history
+        assert app.agent.restored_history == history
         assert app.conversation_entries[0].kind == "startup"
         startup = app.conversation_entries[0].content
         expected_model = f"{config.long_context_config.provider.value}/{config.long_context_config.model}"
@@ -545,7 +567,8 @@ async def test_textual_app_restore_tool_history_matches_legacy_and_execution_ids
         role="user",
         content=[ToolResult(tool_use_id="provider-orphan", content="orphan failed", name="write_file", is_error=True)],
     ).to_dict()
-    session.history = [legacy_call, legacy_result, execution_call, execution_result, pending_call, orphan_result]
+    history = [legacy_call, legacy_result, execution_call, execution_result, pending_call, orphan_result]
+    _persist_history(store, session, history)
 
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
 
@@ -612,6 +635,7 @@ async def test_textual_app_model_rebuild_rerenders_completed_tool_once(
 
     async with app.run_test():
         assert app.agent is not None
+        _persist_history(store, app.session, history)
         app.agent.history = history
         await app._build_agent(config, rebuild=True)
 

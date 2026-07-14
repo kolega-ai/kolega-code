@@ -19,7 +19,7 @@ from kolega_code.agent.prompt_dump import (
 from kolega_code.agent.prompts import build_init_agents_prompt
 from kolega_code.auth import constants as chatgpt_constants
 from kolega_code.auth.chatgpt_oauth import run_login_flow
-from kolega_code.llm.models import TextBlock
+from kolega_code.llm.models import Message, TextBlock
 from kolega_code.permissions import normalize_permission_mode
 
 from .. import messages, theme
@@ -38,6 +38,7 @@ from ..provider_registry import (
 from ..skills import activated_skill_names
 from ..slash_commands import SKILLS_LIST_COMMAND, TUI_COMMAND_NAMES, agent_command_names
 from ..diagnostics import assemble_bug_bundle
+from ..session_store import SessionStoreError
 from ..updater import check_for_update, current_version, run_self_update, update_status_message
 from . import app_base as tui_app_base
 from . import constants as tui_constants
@@ -940,8 +941,16 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
             )
             return
         summary = "\n".join(self._diagnostics_summary_lines())
-        session_json = self.store.path_for(self.session.session_id)
-        bundle = await asyncio.to_thread(assemble_bug_bundle, diag, summary=summary, session_json=session_json)
+        try:
+            session_export = await asyncio.to_thread(self.store.bug_export, self.session.session_id)
+            bundle = await asyncio.to_thread(
+                assemble_bug_bundle,
+                diag,
+                summary=summary,
+                session_export=session_export,
+            )
+        except SessionStoreError:
+            bundle = None
         if bundle is None:
             self._add_conversation_entry(
                 tui_state.ConversationEntry(kind="system", content="Could not assemble the bug bundle.")
@@ -1096,5 +1105,6 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
         active_names = activated_skill_names(self.agent.history)
         content = self.skill_catalog.activation_content(skill_name, active_names=active_names)
         if skill_name not in active_names:
+            self._session_recorder.record_context_message(Message(role="user", content=[TextBlock(text=content)]))
             self.agent.append_user_message([TextBlock(text=content)])
         return content

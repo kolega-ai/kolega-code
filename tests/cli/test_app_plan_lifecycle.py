@@ -319,10 +319,14 @@ async def test_textual_app_clear_context_and_implement_plan_starts_build_agent_f
 
         assert app.interaction_mode == "build"
         assert isinstance(app.agent, FakeCoderAgent)
-        # The build agent starts fresh: the planning conversation was wiped before the
-        # mode switch, so it never reached the new agent.
-        assert app.agent.history == []
-        assert app.session.history == []
+        # The build agent started a new epoch: the planning conversation never reached
+        # it, while the new implement-plan turn was durably recorded.
+        history_text = [
+            message if isinstance(message, str) else message.get_text_content() for message in app.agent.history
+        ]
+        assert "planning message 1" not in history_text
+        assert "planning message 2" not in history_text
+        assert len(app.session.history) == 2
         # The plan is still delivered to the build agent via the implement prompt.
         assert app.agent.messages
         assert "# Plan\n\nBuild it." in app.agent.messages[-1]
