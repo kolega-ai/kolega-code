@@ -388,6 +388,80 @@ def test_json_edit_history_stays_portable_when_surface_schema_changes() -> None:
     assert adapted is history
 
 
+def test_switching_away_from_hashline_strips_read_and_search_anchors_without_mutating_history() -> None:
+    read_call = ToolCall(id="read-1", name="read_entire_file", input={"path": "a.py"})
+    search_call = ToolCall(id="search-1", name="search_codebase", input={"pattern": "return"})
+    read_result = ToolResult(
+        tool_use_id="read-1",
+        name="read_entire_file",
+        content="# a.py\n\n```\n1#HK:hello\n2#ZR:\n```",
+        is_error=False,
+    )
+    search_result = ToolResult(
+        tool_use_id="search-1",
+        name="search_codebase",
+        content="# Search Results\n\n- **a.py**\n  7#KZ:    return 42;",
+        is_error=False,
+    )
+    history = [
+        Message(
+            role="assistant",
+            content=[read_call, search_call],
+            usage_metadata={"provider": "anthropic", "edit_protocol": "hashline_v2"},
+        ),
+        Message(role="user", content=[read_result, search_result]),
+    ]
+
+    adapted = adapt_history_for_provider(
+        history,
+        target_provider="anthropic",
+        target_model="claude-test",
+        supports_vision=True,
+        target_edit_protocol="claude_code",
+    )
+
+    adapted_content = adapted[1].content
+    assert isinstance(adapted_content, list)
+    adapted_read = adapted_content[0]
+    adapted_search = adapted_content[1]
+    assert isinstance(adapted_read, ToolResult)
+    assert isinstance(adapted_search, ToolResult)
+    assert "1#HK:" not in adapted_read.content
+    assert "hello" in adapted_read.content
+    assert "Line 7:     return 42;" in adapted_search.content
+    assert "1#HK:hello" in read_result.content
+    assert "7#KZ:" in search_result.content
+
+
+def test_staying_on_hashline_preserves_prior_anchors() -> None:
+    call = ToolCall(id="read-1", name="read_file_section", input={"path": "a.py", "start_line": 1, "end_line": 1})
+    result = ToolResult(
+        tool_use_id="read-1",
+        name="read_file_section",
+        content="1#HK:hello",
+        is_error=False,
+    )
+    history = [
+        Message(
+            role="assistant",
+            content=[call],
+            usage_metadata={"provider": "anthropic", "edit_protocol": "hashline_v2"},
+        ),
+        Message(role="user", content=[result]),
+    ]
+
+    assert (
+        adapt_history_for_provider(
+            history,
+            target_provider="anthropic",
+            target_model="claude-test",
+            supports_vision=True,
+            target_edit_protocol="hashline_v2",
+        )
+        is history
+    )
+
+
 @pytest.mark.asyncio
 async def test_agent_normalizes_provider_fallback_before_storage_and_execution(tmp_path) -> None:
     captured = AsyncMock(return_value="Success")

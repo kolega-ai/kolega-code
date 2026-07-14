@@ -23,6 +23,7 @@ from kolega_code.llm.models import (
     ToolCall,
     ToolResult,
 )
+from kolega_code.agent.tool_backend.hashline_v2 import strip_hashline_read_output
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +63,7 @@ def _message_with_content(message: Message, content: List[Any]) -> Message:
     )
 
 
-def _tool_result_with_content(tool_result: ToolResult, content: List[Any]) -> ToolResult:
+def _tool_result_with_content(tool_result: ToolResult, content: Any) -> ToolResult:
     return ToolResult(
         tool_use_id=tool_result.tool_use_id,
         content=content,
@@ -230,6 +231,26 @@ def _adapt_content_blocks_for_provider(
             else:
                 adapted.append(_freeform_result_placeholder(block, call_source))
                 changed = True
+        elif isinstance(block, ToolResult) and isinstance(block.content, str):
+            call_protocol = (tool_call_protocols or {}).get(
+                block.tool_use_id, _source_edit_protocol(block, source_usage_metadata)
+            )
+            is_hashline_read = block.name in {"read_entire_file", "read_file_section", "search_codebase"}
+            if (
+                is_hashline_read
+                and call_protocol == "hashline_v2"
+                and target_edit_protocol is not None
+                and target_edit_protocol != "hashline_v2"
+            ):
+                adapted.append(
+                    _tool_result_with_content(
+                        block,
+                        strip_hashline_read_output(block.content, search=block.name == "search_codebase"),
+                    )
+                )
+                changed = True
+            else:
+                adapted.append(block)
         elif isinstance(block, ToolResult) and isinstance(block.content, list):
             inner, inner_changed = _adapt_content_blocks_for_provider(
                 block.content,

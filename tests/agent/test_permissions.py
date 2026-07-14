@@ -122,6 +122,17 @@ def test_claude_edit_permission_uses_file_path():
     assert request.path == "src/app.py"
 
 
+def test_hashline_rename_permission_includes_source_and_destination():
+    request = permission_request_for_tool(
+        "edit",
+        {"path": "src/old.py", "edits": [], "rename": "src/new.py"},
+    )
+
+    assert request is not None
+    assert request.path == "src/old.py -> src/new.py"
+    assert request.summary == "edit src/old.py -> src/new.py"
+
+
 def test_single_file_apply_patch_permission_can_scope_to_path():
     request = permission_request_for_tool(
         "apply_patch",

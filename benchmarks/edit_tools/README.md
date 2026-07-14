@@ -33,8 +33,8 @@ uv run python -m benchmarks.edit_tools run \
   --confirm-live
 ```
 
-For the full DeepSeek V4 Pro/Flash comparison, the checked-in matrix plans 600
-trials (100 tasks × 3 protocols × 2 models):
+For the full DeepSeek V4 Pro/Flash comparison, the checked-in matrix plans 800
+trials (100 tasks × 4 protocols × 2 models):
 
 ```bash
 uv run python -m benchmarks.edit_tools run \
@@ -169,6 +169,10 @@ The core suite compares capabilities shared by all current protocols: file
 updates, creation, and multi-file edits. Recipe operations may remove regions
 inside a file, but they do not delete or move files.
 
+Production protocol IDs are `search_replace`, `codex_apply_patch`,
+`claude_code`, and `hashline_v2`. Hashline v2 uses JSON line-anchor edits and
+adds anchors to read/search output only while its `edit` tool is exposed.
+
 ## Results
 
 Runs are written under `.benchmark-runs/<run-id>/` and contain:
@@ -187,6 +191,12 @@ the model success denominator.
 Success rates include Wilson intervals. Protocol comparisons pair identical
 task/repetition outcomes and bootstrap over tasks with a fixed seed. The report
 names a leader only when the paired 95% interval excludes zero.
+
+Reports keep task success and exact workspace matching separate. They also
+record first-edit-attempt success as both a count and a rate: the number of
+trials whose first edit-tool call applied successfully divided by the number of
+trials that made an edit-tool call. Trials that never attempt an edit are
+reported separately by `no_edit_rate` rather than included in that denominator.
 
 ## Complete provider smoke
 

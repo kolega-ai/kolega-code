@@ -550,9 +550,24 @@ class ToolDefinition(ContentBlock):
     @classmethod
     def _dict_to_google_schema(cls, schema: Dict[str, Any]) -> genai_types.Schema:
         """Recursively convert a JSON-schema dict to a google.genai Schema."""
-        kwargs: Dict[str, Any] = {"type": str(schema.get("type", "string")).upper()}
+        kwargs: Dict[str, Any] = {}
+        schema_type = schema.get("type")
+        if schema_type == "null":
+            # Google represents a nullable union as nullable non-null branches,
+            # rather than a standalone NULL schema.
+            kwargs["type"] = "STRING"
+            kwargs["nullable"] = True
+        elif schema_type is not None:
+            kwargs["type"] = str(schema_type).upper()
+        elif "anyOf" not in schema:
+            kwargs["type"] = "STRING"
         if schema.get("description"):
             kwargs["description"] = schema["description"]
+        if "anyOf" in schema:
+            branches = [branch for branch in schema["anyOf"] if branch.get("type") != "null"]
+            kwargs["any_of"] = [cls._dict_to_google_schema(branch) for branch in branches]
+            if len(branches) != len(schema["anyOf"]):
+                kwargs["nullable"] = True
         if "properties" in schema:
             kwargs["properties"] = {
                 key: cls._dict_to_google_schema(value) for key, value in schema["properties"].items()
@@ -563,6 +578,14 @@ class ToolDefinition(ContentBlock):
             kwargs["required"] = schema["required"]
         if schema.get("enum"):
             kwargs["enum"] = schema["enum"]
+        for json_name, google_name in (
+            ("minItems", "min_items"),
+            ("maxItems", "max_items"),
+            ("minLength", "min_length"),
+            ("maxLength", "max_length"),
+        ):
+            if json_name in schema:
+                kwargs[google_name] = schema[json_name]
         if "additionalProperties" in schema:
             additional = schema["additionalProperties"]
             kwargs["additional_properties"] = (

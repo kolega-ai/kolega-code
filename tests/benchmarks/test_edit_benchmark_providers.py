@@ -33,7 +33,10 @@ def test_provider_smoke_matrix_covers_every_catalog_provider() -> None:
 
     assert [item.provider for item in matrix.models] == catalog_providers()
     assert len(matrix.models) == 13
-    assert all(item.protocols == ["search_replace", "codex_apply_patch", "claude_code"] for item in matrix.models)
+    assert all(
+        item.protocols == ["search_replace", "codex_apply_patch", "claude_code", "hashline_v2"]
+        for item in matrix.models
+    )
 
 
 @pytest.mark.parametrize("provider", catalog_providers())
@@ -91,6 +94,44 @@ async def test_every_catalog_provider_has_a_claude_json_transport_contract(provi
             assert definition.to_anthropic()["input_schema"]["required"] == required
         else:
             assert definition.to_openai()["function"]["parameters"]["required"] == required
+    finally:
+        await collection.cleanup()
+
+
+@pytest.mark.parametrize("provider", catalog_providers())
+@pytest.mark.asyncio
+async def test_every_catalog_provider_has_a_hashline_json_transport_contract(provider: str, tmp_path: Path) -> None:
+    workspace = tmp_path / f"{provider}-hashline"
+    workspace.mkdir()
+    adapter = get_protocol("hashline_v2")
+    collection, _, _ = create_tool_collection(workspace, config(), adapter, tmp_path / "artifacts")
+    try:
+        definition = next(item for item in adapter.definitions(collection) if item.name == "edit")
+
+        if provider in {"openai", "openai_chatgpt"}:
+            tools = responses_tools(GenerationParams(tools=[definition]))
+            assert tools is not None
+            assert tools[0]["type"] == "function"
+            schema = tools[0]["parameters"]
+        elif provider == "google":
+            declarations = definition.to_google().function_declarations
+            assert declarations is not None
+            parameters = declarations[0].parameters
+            assert parameters is not None
+            assert parameters.required == ["path", "edits"]
+            assert parameters.properties is not None
+            edits = parameters.properties["edits"]
+            assert edits.items is not None
+            assert edits.items.any_of is not None
+            assert len(edits.items.any_of) == 5
+            return
+        elif provider in {"anthropic", "moonshot", "zai", "kimi_coding"}:
+            schema = definition.to_anthropic()["input_schema"]
+        else:
+            schema = definition.to_openai()["function"]["parameters"]
+
+        assert schema["required"] == ["path", "edits"]
+        assert len(schema["properties"]["edits"]["items"]["anyOf"]) == 5
     finally:
         await collection.cleanup()
 

@@ -53,6 +53,13 @@ EDIT_PROTOCOL_SPECS: dict[EditProtocol, EditProtocolSpec] = {
             EditToolBinding("write", "claude_write"),
         ),
     ),
+    EditProtocol.HASHLINE_V2: EditProtocolSpec(
+        protocol=EditProtocol.HASHLINE_V2,
+        tools=(
+            EditToolBinding("edit", "hashline_edit"),
+            EditToolBinding("write", "hashline_write"),
+        ),
+    ),
 }
 
 EDIT_HANDLER_NAMES = frozenset(binding.handler_name for spec in EDIT_PROTOCOL_SPECS.values() for binding in spec.tools)

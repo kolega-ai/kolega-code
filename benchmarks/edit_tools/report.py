@@ -45,6 +45,12 @@ def aggregate(records: Iterable[TrialRecord]) -> list[dict[str, Any]]:
         low, high = wilson_interval(successes, len(scored))
         edit_names = set(get_protocol(protocol).tool_names)
         edit_attempts = [attempt for item in scored for attempt in item.tool_attempts if attempt.name in edit_names]
+        first_edit_attempts = [
+            attempts[0]
+            for item in scored
+            if (attempts := [attempt for attempt in item.tool_attempts if attempt.name in edit_names])
+        ]
+        first_edit_attempt_successes = sum(attempt.apply_ok for attempt in first_edit_attempts)
         latency = [item.elapsed_ms for item in scored]
         family_groups: dict[str, list[TrialRecord]] = defaultdict(list)
         for item in scored:
@@ -83,8 +89,16 @@ def aggregate(records: Iterable[TrialRecord]) -> list[dict[str, Any]]:
                 ),
                 "success_ci_low": low if scored else None,
                 "success_ci_high": high if scored else None,
+                # Retained for report consumers created before the metric was
+                # given an explicit edit-tool name. Its denominator is all
+                # scored trials, so no-edit trials count as unsuccessful.
                 "first_attempt_rate": (
                     sum(item.first_attempt_success for item in scored) / len(scored) if scored else None
+                ),
+                "first_edit_attempt_successes": first_edit_attempt_successes,
+                "first_edit_attempts": len(first_edit_attempts),
+                "first_edit_attempt_success_rate": (
+                    first_edit_attempt_successes / len(first_edit_attempts) if first_edit_attempts else None
                 ),
                 "parse_success_rate": (
                     sum(attempt.parse_ok for attempt in edit_attempts) / len(edit_attempts) if edit_attempts else None
@@ -140,6 +154,13 @@ def breakdown(records: Iterable[TrialRecord], dimension: str) -> list[dict[str, 
     rows: list[dict[str, Any]] = []
     for (provider, model, protocol, lane, value), items in sorted(groups.items()):
         scored = [item for item in items if item.scored]
+        edit_names = set(get_protocol(protocol).tool_names)
+        first_edit_attempts = [
+            attempts[0]
+            for item in scored
+            if (attempts := [attempt for attempt in item.tool_attempts if attempt.name in edit_names])
+        ]
+        first_edit_attempt_successes = sum(attempt.apply_ok for attempt in first_edit_attempts)
         rows.append(
             {
                 "provider": provider,
@@ -153,6 +174,11 @@ def breakdown(records: Iterable[TrialRecord], dimension: str) -> list[dict[str, 
                     sum(item.functional_success for item in scored) / len(scored) if scored else None
                 ),
                 "exact_match_rate": sum(item.exact_match for item in scored) / len(scored) if scored else None,
+                "first_edit_attempt_successes": first_edit_attempt_successes,
+                "first_edit_attempts": len(first_edit_attempts),
+                "first_edit_attempt_success_rate": (
+                    first_edit_attempt_successes / len(first_edit_attempts) if first_edit_attempts else None
+                ),
                 "operation_success_rate": (
                     sum(item.completed_operations for item in scored) / sum(item.total_operations for item in scored)
                     if sum(item.total_operations for item in scored)
@@ -232,6 +258,12 @@ def _format_rate(value: Any) -> str:
     return "—" if value is None else f"{100 * float(value):.1f}%"
 
 
+def _format_counted_rate(value: Any, successes: int, attempts: int) -> str:
+    if value is None:
+        return "—"
+    return f"{_format_rate(value)} ({successes}/{attempts})"
+
+
 def markdown_report(
     rows: list[dict[str, Any]],
     comparisons: list[dict[str, Any]],
@@ -241,9 +273,12 @@ def markdown_report(
         "# Edit-tool benchmark report",
         "",
         "Provider and harness failures are not included in scored success-rate denominators.",
+        "Task success means all configured oracle checks passed; exact match means the resulting workspace "
+        "matched the expected workspace exactly. First edit attempt measures successful first edit-tool "
+        "applications among trials that made an edit attempt.",
         "",
-        "| Provider/model | Lane | Protocol | Scored | Exact success | Operations | Family macro | 95% CI | First edit | Apply | Infra/not run |",
-        "| --- | --- | --- | ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: |",
+        "| Provider/model | Lane | Protocol | Scored | Task success | Exact match | Operations | Family macro | 95% CI | First edit attempt | Apply | Infra/not run |",
+        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: |",
     ]
     for row in rows:
         ci = (
@@ -254,8 +289,10 @@ def markdown_report(
         infra = row["provider_errors"] + row["harness_errors"] + row["not_run"]
         lines.append(
             f"| {row['provider']}/{row['model']} | {row['lane']} | {row['protocol']} | {row['scored']} | "
-            f"{_format_rate(row['success_rate'])} | {_format_rate(row['operation_success_rate'])} | "
-            f"{_format_rate(row['macro_family_success_rate'])} | {ci} | {_format_rate(row['first_attempt_rate'])} | "
+            f"{_format_rate(row['success_rate'])} | {_format_rate(row['exact_match_rate'])} | "
+            f"{_format_rate(row['operation_success_rate'])} | "
+            f"{_format_rate(row['macro_family_success_rate'])} | {ci} | "
+            f"{_format_counted_rate(row['first_edit_attempt_success_rate'], row['first_edit_attempt_successes'], row['first_edit_attempts'])} | "
             f"{_format_rate(row['apply_success_rate'])} | {infra} |"
         )
     for dimension in ("language", "family", "target_length", "payload_size", "target_file_count"):
@@ -264,14 +301,16 @@ def markdown_report(
                 "",
                 f"## By {dimension}",
                 "",
-                f"| Provider/model | Lane | Protocol | {dimension.replace('_', ' ').title()} | Scored | Exact success | Operations |",
-                "| --- | --- | --- | --- | ---: | ---: | ---: |",
+                f"| Provider/model | Lane | Protocol | {dimension.replace('_', ' ').title()} | Scored | Task success | Exact match | First edit attempt | Operations |",
+                "| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: |",
             ]
         )
         for item in breakdowns[dimension]:
             lines.append(
                 f"| {item['provider']}/{item['model']} | {item['lane']} | {item['protocol']} | "
                 f"{item[dimension]} | {item['scored']} | {_format_rate(item['success_rate'])} | "
+                f"{_format_rate(item['exact_match_rate'])} | "
+                f"{_format_counted_rate(item['first_edit_attempt_success_rate'], item['first_edit_attempt_successes'], item['first_edit_attempts'])} | "
                 f"{_format_rate(item['operation_success_rate'])} |"
             )
     lines.extend(

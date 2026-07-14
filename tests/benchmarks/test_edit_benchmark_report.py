@@ -1,5 +1,11 @@
-from benchmarks.edit_tools.models import TrialRecord
-from benchmarks.edit_tools.report import aggregate, breakdown, paired_comparisons, wilson_interval
+from benchmarks.edit_tools.models import ToolAttempt, TrialRecord
+from benchmarks.edit_tools.report import (
+    aggregate,
+    breakdown,
+    markdown_report,
+    paired_comparisons,
+    wilson_interval,
+)
 
 
 def record(protocol: str, repetition: int, success: bool) -> TrialRecord:
@@ -63,3 +69,64 @@ def test_aggregate_and_paired_comparison_do_not_count_infrastructure() -> None:
 def test_wilson_interval_is_bounded() -> None:
     low, high = wilson_interval(8, 10)
     assert 0 < low < 0.8 < high < 1
+
+
+def test_report_distinguishes_task_exact_and_first_edit_success() -> None:
+    recovered = record("hashline_v2", 1, True).model_copy(
+        update={
+            "exact_match": False,
+            "first_attempt_success": False,
+            "tool_attempts": [
+                ToolAttempt(
+                    iteration=1,
+                    name="edit",
+                    input_kind="json",
+                    raw_input={"path": "example.py", "edits": []},
+                    apply_ok=False,
+                    is_error=True,
+                    error="invalid anchor",
+                ),
+                ToolAttempt(
+                    iteration=2,
+                    name="edit",
+                    input_kind="json",
+                    raw_input={"path": "example.py", "edits": []},
+                    apply_ok=True,
+                ),
+            ],
+        }
+    )
+    first_try = record("hashline_v2", 2, True).model_copy(
+        update={
+            "exact_match": True,
+            "first_attempt_success": True,
+            "tool_attempts": [
+                ToolAttempt(
+                    iteration=1,
+                    name="edit",
+                    input_kind="json",
+                    raw_input={"path": "example.py", "edits": []},
+                    apply_ok=True,
+                )
+            ],
+        }
+    )
+    records = [recovered, first_try]
+
+    rows = aggregate(records)
+    row = rows[0]
+    assert row["success_rate"] == 1.0
+    assert row["exact_match_rate"] == 0.5
+    assert row["first_edit_attempt_successes"] == 1
+    assert row["first_edit_attempts"] == 2
+    assert row["first_edit_attempt_success_rate"] == 0.5
+
+    breakdowns = {
+        dimension: breakdown(records, dimension)
+        for dimension in ("language", "family", "target_length", "payload_size", "target_file_count")
+    }
+    markdown = markdown_report(rows, [], breakdowns)
+    assert "| Scored | Task success | Exact match |" in markdown
+    assert "| 2 | 100.0% | 50.0% |" in markdown
+    assert "First edit attempt" in markdown
+    assert "50.0% (1/2)" in markdown

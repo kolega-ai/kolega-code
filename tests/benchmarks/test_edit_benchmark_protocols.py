@@ -93,6 +93,31 @@ async def test_claude_adapter_uses_lowercase_production_tools(tmp_path: Path) ->
 
 
 @pytest.mark.asyncio
+async def test_hashline_adapter_uses_anchored_production_tools(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "a.txt").write_text("before\n")
+    adapter = get_protocol("hashline_v2")
+    collection, _, caller = create_tool_collection(workspace, config(EditProtocol.HASHLINE_V2), adapter, tmp_path)
+    definitions = {item.name: item for item in adapter.definitions(collection)}
+    try:
+        read = await collection.call("read_entire_file", path="a.txt")
+        tag = next(line.split(":", 1)[0] for line in read.splitlines() if line.startswith("1#"))
+        call = ToolCall(
+            id="call-1",
+            name="edit",
+            input={"path": "a.txt", "edits": [{"op": "set", "tag": tag, "content": ["after"]}]},
+        )
+        result, attempt = await execute_call(collection, caller, call, definitions, 1)
+    finally:
+        await collection.cleanup()
+
+    assert not result.is_error
+    assert attempt.apply_ok
+    assert (workspace / "a.txt").read_text() == "after\n"
+
+
+@pytest.mark.asyncio
 async def test_malformed_freeform_envelope_is_a_parse_failure(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()

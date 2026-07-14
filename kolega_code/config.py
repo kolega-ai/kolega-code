@@ -33,6 +33,7 @@ class EditProtocol(str, Enum):
     SEARCH_REPLACE = "search_replace"
     CODEX_APPLY_PATCH = "codex_apply_patch"
     CLAUDE_CODE = "claude_code"
+    HASHLINE_V2 = "hashline_v2"
 
 
 class AgentRole(str, Enum):

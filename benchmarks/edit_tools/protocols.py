@@ -106,6 +106,13 @@ PROTOCOLS: dict[str, ProtocolAdapter] = {
         tool_names=("edit", "write"),
         capabilities=frozenset({"update", "create", "multi_file"}),
     ),
+    "hashline_v2": ProtocolAdapter(
+        id="hashline_v2",
+        version="2",
+        production_protocol=EditProtocol.HASHLINE_V2,
+        tool_names=("edit", "write"),
+        capabilities=frozenset({"update", "create", "delete", "move", "multi_file"}),
+    ),
 }
 
 

@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Callable, Optional
 from .base_tool import BaseTool
 from .codex_patch import PatchOperation, apply_update_chunks, parse_codex_patch
 from .edit_preview import build_diff_preview, build_head_preview
+from .hashline_v2 import apply_hashline_edits, parse_edits
 
 if TYPE_CHECKING:
     from kolega_code.services.lsp import LspManager
@@ -304,6 +305,154 @@ class EditTool(BaseTool):
             error_msg = f"Failed to write to file {path}: {str(e)}"
             await self.log_error(error_msg, sender=self.caller.agent_name)
             raise
+
+    async def hashline_edit(
+        self,
+        path: str,
+        edits: list[dict[str, object]],
+        delete: bool = False,
+        rename: Optional[str] = None,
+    ) -> str:
+        """Apply one original Hashline v2 edit transaction to a file."""
+
+        if not isinstance(delete, bool):
+            raise ValueError("delete must be a boolean.")
+        if rename is not None and not isinstance(rename, str):
+            raise ValueError("rename must be a string path.")
+        source = self._normalize_claude_path(path)
+        destination = self._normalize_claude_path(rename) if rename else None
+        if destination == source:
+            destination = None
+        if delete and destination is not None:
+            raise ValueError("delete and rename cannot be combined.")
+        if delete and edits:
+            raise ValueError("delete requires an empty edits array.")
+
+        for affected in dict.fromkeys(item for item in (source, destination) if item is not None):
+            blocked = self._enforce_vibe_edit_policy(affected)
+            if blocked:
+                return blocked
+
+        exists = self.filesystem.exists(source)
+        if exists and not self.filesystem.is_file(source):
+            raise IsADirectoryError(f"Path is a directory, not a file: {source}")
+
+        parsed = parse_edits(edits)
+        if delete:
+            original = self.filesystem.read_text(source) if exists else None
+
+            def _delete() -> None:
+                if self.filesystem.exists(source):
+                    self.filesystem.remove(source, missing_ok=True)
+
+            self._record_snapshot_mutation(
+                tool_name="edit",
+                reason=f"hashline delete {source}",
+                paths=[source],
+                mutate=_delete,
+            )
+            if original is not None:
+                await self.send_edit_preview(
+                    build_diff_preview(original, "", source),
+                    tool_call_id=getattr(self.caller, "current_tool_execution_id", None),
+                    tool_name="edit",
+                )
+            return f"Deleted {source}"
+
+        if not exists and destination is not None:
+            raise ValueError("Cannot rename a file that does not exist.")
+
+        original: Optional[str] = self.filesystem.read_text(source) if exists else None
+        if original is None:
+            if any(
+                edit.op not in {"append", "prepend"}
+                or (edit.op == "append" and edit.after is not None)
+                or (edit.op == "prepend" and edit.before is not None)
+                for edit in parsed
+            ):
+                raise FileNotFoundError(
+                    f"File not found: {source}. A missing file can only be created with unanchored append/prepend."
+                )
+            logical_original = ""
+        else:
+            logical_original = original
+
+        bom = "\ufeff" if logical_original.startswith("\ufeff") else ""
+        logical_original = logical_original[len(bom) :]
+        line_ending = self._detect_dominant_line_ending(source, original) if original is not None else "\n"
+        normalized_original = self._normalize_line_endings(logical_original, "\n")
+
+        if original is None and not parsed:
+            normalized_updated = ""
+        elif parsed:
+            normalized_updated = apply_hashline_edits(normalized_original, parsed)
+        elif destination is not None:
+            normalized_updated = normalized_original
+        else:
+            raise ValueError("No changes made. The edits array is empty.")
+
+        updated = bom + self._normalize_line_endings(normalized_updated, line_ending)
+        target = destination or source
+        if self.filesystem.exists(target) and not self.filesystem.is_file(target):
+            raise IsADirectoryError(f"Destination is a directory, not a file: {target}")
+        self._validate_patch_parent(target)
+
+        snapshot_paths = [source]
+        if destination is not None:
+            snapshot_paths.append(destination)
+        snapshot_paths.extend(self._snapshot_paths_for_write(target))
+        snapshot_paths = list(dict.fromkeys(snapshot_paths))
+
+        def _write() -> None:
+            parent = self.filesystem.get_parent(target)
+            if parent and parent != "." and not self.filesystem.exists(parent):
+                self.filesystem.create_directory(parent)
+            self.filesystem.write_text(target, updated)
+            if destination is not None and self.filesystem.exists(source):
+                self.filesystem.remove(source, missing_ok=True)
+
+        self._record_snapshot_mutation(
+            tool_name="edit",
+            reason=(f"hashline move {source} -> {destination}" if destination else f"hashline edit {source}"),
+            paths=snapshot_paths,
+            mutate=_write,
+        )
+
+        if destination is not None:
+            await self.send_edit_preview(
+                build_diff_preview(original or "", "", source),
+                tool_call_id=getattr(self.caller, "current_tool_execution_id", None),
+                tool_name="edit",
+            )
+            await self.send_edit_preview(
+                build_head_preview(updated, destination),
+                tool_call_id=getattr(self.caller, "current_tool_execution_id", None),
+                tool_name="edit",
+            )
+            result = f"Updated and moved {source} to {destination}"
+        elif original is None:
+            await self.send_edit_preview(
+                build_head_preview(updated, source),
+                tool_call_id=getattr(self.caller, "current_tool_execution_id", None),
+                tool_name="edit",
+            )
+            result = f"Created {source}"
+        else:
+            await self.send_edit_preview(
+                build_diff_preview(original, updated, source),
+                tool_call_id=getattr(self.caller, "current_tool_execution_id", None),
+                tool_name="edit",
+            )
+            result = f"Updated {source}"
+
+        diagnostics = await self._maybe_append_lsp_diagnostics(target)
+        return result + diagnostics
+
+    async def hashline_write(self, path: str, content: str) -> str:
+        """Create or overwrite a project file for the Hashline v2 surface."""
+
+        normalized = self._normalize_claude_path(path)
+        return await self.write(normalized, content)
 
     async def apply_patch(self, patch: str) -> str:
         """Apply a complete Codex patch atomically after in-memory validation."""
