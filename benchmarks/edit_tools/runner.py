@@ -16,7 +16,7 @@ from kolega_code.agent.errors import MaxAgentIterationsExceeded
 from kolega_code.agent.prompt_provider import AgentMode
 from kolega_code.cli.config import CliConfigError, CliConfigOverrides, build_agent_config
 from kolega_code.cli.settings import SettingsStore
-from kolega_code.config import AgentConfig, ModelProvider
+from kolega_code.config import AgentConfig, EditProtocol, ModelProvider
 from kolega_code.llm.client import LLMClient
 from kolega_code.llm.exceptions import LLMError
 from kolega_code.llm.models import (
@@ -51,6 +51,7 @@ from .protocols import (
     execute_call,
     get_protocol,
 )
+from .scoring import score_first_attempts_by_file
 from .usage import add_usage
 from .workspace import collateral_paths, materialize_task, oracle_to_dict, verify_task, workspace_diff
 
@@ -140,15 +141,15 @@ def plan_trials(
             continue
         model_parameters = _model_parameters(model)
         model_parameters["max_iterations"] = matrix.max_iterations
-        for protocol_id in model.protocols:
-            if protocols and protocol_id not in protocols:
+        for lane in matrix.lanes:
+            if lanes and lane not in lanes:
                 continue
-            adapter = get_protocol(protocol_id)
-            for lane in matrix.lanes:
-                if lanes and lane not in lanes:
-                    continue
-                for task in selected_tasks:
-                    for repetition in range(1, repetitions + 1):
+            for task in selected_tasks:
+                for repetition in range(1, repetitions + 1):
+                    for protocol_id in model.protocols:
+                        if protocols and protocol_id not in protocols:
+                            continue
+                        adapter = get_protocol(protocol_id)
                         seed = (task.seed or 0) + repetition
                         identifier = trial_id(
                             suite=suite,
@@ -179,6 +180,7 @@ def plan_trials(
 
 
 def _build_config(project_path: Path, spec: PlannedTrial) -> AgentConfig:
+    adapter = get_protocol(spec.protocol)
     settings_store = SettingsStore()
     settings = settings_store.load()
     override = CliConfigOverrides(
@@ -190,7 +192,7 @@ def _build_config(project_path: Path, spec: PlannedTrial) -> AgentConfig:
         thinking_model=spec.model.model,
         thinking_effort=spec.model_parameters["thinking_effort"],
         environment="benchmark",
-        edit_protocol=spec.protocol,
+        edit_protocol=(adapter.production_protocol or EditProtocol.SEARCH_REPLACE).value,
     )
     config = build_agent_config(
         project_path,
@@ -546,7 +548,13 @@ async def run_trial(
                 tool_attempts=execution.attempts,
             )
         edit_attempts = [attempt for attempt in execution.attempts if attempt.name in adapter.tool_names]
-        first_attempt_success = bool(edit_attempts and edit_attempts[0].apply_ok)
+        first_attempt_file_successes, first_attempt_files = score_first_attempts_by_file(
+            trial.task,
+            execution.attempts,
+            set(adapter.tool_names),
+            workspace=workspace,
+        )
+        first_attempt_success = bool(first_attempt_files and first_attempt_file_successes == first_attempt_files)
         status = "passed" if oracle.success else "failed"
         failure_stage = None
         if not oracle.success:
@@ -573,6 +581,8 @@ async def run_trial(
             suite_id=suite.id,
             status=status,
             task_success=oracle.success,
+            first_attempt_file_successes=first_attempt_file_successes,
+            first_attempt_files=first_attempt_files,
             first_attempt_success=first_attempt_success,
             oracle_success=oracle.success,
             functional_success=oracle.functional_success,
@@ -592,9 +602,10 @@ async def run_trial(
                 "iteration_exhausted": execution.iteration_exhausted,
                 "transport_kind": (
                     "native_freeform"
-                    if trial.protocol == "codex_apply_patch" and trial.model.provider in {"openai", "openai_chatgpt"}
+                    if adapter.production_protocol == EditProtocol.CODEX_APPLY_PATCH
+                    and trial.model.provider in {"openai", "openai_chatgpt"}
                     else "json_envelope"
-                    if trial.protocol == "codex_apply_patch"
+                    if adapter.production_protocol == EditProtocol.CODEX_APPLY_PATCH
                     else "json"
                 ),
             },

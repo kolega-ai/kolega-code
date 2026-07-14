@@ -33,8 +33,9 @@ uv run python -m benchmarks.edit_tools run \
   --confirm-live
 ```
 
-For the full DeepSeek V4 Pro/Flash comparison, the checked-in matrix plans 800
-trials (100 tasks × 4 protocols × 2 models):
+For the full DeepSeek V4 Pro/Flash comparison, the checked-in matrix plans 600
+trials (100 tasks × 3 protocols × 2 models). Codex apply-patch is deliberately
+excluded because it is not a viable default for these models:
 
 ```bash
 uv run python -m benchmarks.edit_tools run \
@@ -193,10 +194,12 @@ task/repetition outcomes and bootstrap over tasks with a fixed seed. The report
 names a leader only when the paired 95% interval excludes zero.
 
 Reports keep task success and exact workspace matching separate. They also
-record first-edit-attempt success as both a count and a rate: the number of
-trials whose first edit-tool call applied successfully divided by the number of
-trials that made an edit-tool call. Trials that never attempt an edit are
-reported separately by `no_edit_rate` rather than included in that denominator.
+record first-edit-attempt success per changed file as a primary outcome: the
+earliest edit call targeting each file must parse and apply. A failed call that
+is fixed on a later attempt remains a first-attempt failure for that file, and a
+target file with no edit call is unsuccessful. Reports separately show the
+share of trials where every changed file succeeded on its first attempt, a
+conditional first-call rate, and `no_edit_rate` as diagnostics.
 
 ## Complete provider smoke
 

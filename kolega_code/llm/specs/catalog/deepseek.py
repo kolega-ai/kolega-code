@@ -7,6 +7,7 @@ DEEPSEEK_SPECS = {
         "max_completion_tokens": 384000,
         "default_temperature": 1.0,
         "supports_vision": False,
+        "preferred_edit_protocol": "claude_code",
         "thinking_effort": ThinkingEffortSpec(
             options=("none", "high", "max"),
             default="high",
@@ -18,6 +19,7 @@ DEEPSEEK_SPECS = {
         "max_completion_tokens": 384000,
         "default_temperature": 1.0,
         "supports_vision": False,
+        "preferred_edit_protocol": "claude_code",
         "thinking_effort": ThinkingEffortSpec(
             options=("none", "high", "max"),
             default="high",
