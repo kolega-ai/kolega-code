@@ -252,29 +252,60 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
             return "\n\n".join(item.to_markdown() if hasattr(item, "to_markdown") else str(item) for item in content)
         return str(content)
 
-    def _apply_stream_chunk(self, chunk: dict, *, kind: str) -> None:
-        chunk_uuid = str(chunk.get("uuid") or "")
-        content = str(chunk.get("content") or "")
-        complete = bool(chunk.get("complete"))
+    def _accumulate_stream_entry(
+        self,
+        entries: list[ConversationEntry],
+        stream_index: dict[str, ConversationEntry],
+        *,
+        kind: str,
+        chunk_uuid: str,
+        text: str,
+        complete: bool,
+        merge_into_completed_no_uuid: bool,
+    ) -> Optional[ConversationEntry]:
+        """One streamed thinking/response chunk → its transcript entry, shared by the
+        main transcript and sub-agent trajectories so the semantics cannot drift.
+
+        Empty first chunks never create an entry: the agent flushes an empty complete
+        response after every tool-call round, and rendering one is a bare glyph line.
+        Deltas land in stream_parts (O(1)) and fold into content on completion (and at
+        render time by ConversationEntryWidget.refresh_content) — a per-delta
+        `content += text` is O(n^2) over a long reasoning stream.
+
+        merge_into_completed_no_uuid: uuid-less chunks share a kind-qualified sentinel
+        key; when the sentinel's entry is already complete, the sub-agent trajectory
+        merges the next chunk into it (compact steps) while the main transcript starts
+        a new entry (a new bubble for a new segment).
+
+        Returns the entry, or None when the chunk was dropped.
+        """
         cache_key = chunk_uuid or f"__nouuid__:{kind}"
-
-        entry = self._stream_entries.get(cache_key)
-        if entry is None or (not chunk_uuid and entry.complete):
-            if not content:
-                return
+        entry = stream_index.get(cache_key)
+        if entry is None or (not merge_into_completed_no_uuid and not chunk_uuid and entry.complete):
+            if not text:
+                return None
             entry = ConversationEntry(kind=kind, content="", complete=complete, uuid=chunk_uuid or None)
-            self.conversation_entries.append(entry)
-            self._stream_entries[cache_key] = entry
-
-        # Defer concatenation to the next render flush (see ConversationEntryWidget.
-        # refresh_content): per-chunk `content += content` is O(n^2) over the stream.
-        # On completion, materialize now so entry.content is current the moment the
-        # segment ends (one O(n) join), without waiting for the flush.
-        entry.stream_parts.append(content)
+            entries.append(entry)
+            stream_index[cache_key] = entry
+        if text:
+            entry.stream_parts.append(text)
         entry.complete = complete
         if complete:
             entry.materialize()
-        self._invalidate_conversation(entry)
+        return entry
+
+    def _apply_stream_chunk(self, chunk: dict, *, kind: str) -> None:
+        entry = self._accumulate_stream_entry(
+            self.conversation_entries,
+            self._stream_entries,
+            kind=kind,
+            chunk_uuid=str(chunk.get("uuid") or ""),
+            text=str(chunk.get("content") or ""),
+            complete=bool(chunk.get("complete")),
+            merge_into_completed_no_uuid=False,
+        )
+        if entry is not None:
+            self._invalidate_conversation(entry)
 
     def _begin_turn_progress(self) -> None:
         self._close_sub_agent_inspector()
@@ -698,33 +729,15 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
         return None
 
     def _accumulate_sub_agent_stream(self, activity: SubAgentActivity, kind: str, event: AgentEvent, text: str) -> None:
-        """Accumulate streamed thinking/response chunks into one step per chunk uuid,
-        mirroring the main transcript's _apply_stream_chunk.
-
-        Events normally carry a uuid; the kind-qualified sentinel for the no-uuid case keeps
-        consecutive uuid-less chunks of the same kind merged into one step (rather than
-        fragmenting) while never merging thinking into response.
-        """
-        complete = not event.is_streaming
-        chunk_uuid = str(event.uuid or "")
-        cache_key = chunk_uuid or f"__nouuid__:{kind}"
-        step = activity.stream_steps.get(cache_key)
-        if step is None:
-            if not text and not complete:
-                return
-            step = ConversationEntry(kind=kind, content="", complete=complete, uuid=chunk_uuid or None)
-            activity.steps.append(step)
-            activity.stream_steps[cache_key] = step
-        # Defer concatenation: deltas land in stream_parts (O(1)) and are folded into
-        # content once on completion (and at render time by ConversationEntryWidget.
-        # refresh_content), mirroring _apply_stream_chunk. A per-delta `step.content +=
-        # text` is O(n^2) over a long reasoning stream — on DeepSeek-class sub-agents it
-        # grew to seconds of event-loop CPU and froze scrolling while sub-agents ran.
-        if text:
-            step.stream_parts.append(text)
-        step.complete = complete
-        if complete:
-            step.materialize()
+        self._accumulate_stream_entry(
+            activity.steps,
+            activity.stream_steps,
+            kind=kind,
+            chunk_uuid=str(event.uuid or ""),
+            text=text,
+            complete=not event.is_streaming,
+            merge_into_completed_no_uuid=True,
+        )
 
     def _note_sub_agent_tool_stream(self, event: AgentEvent) -> None:
         activity = self._ensure_sub_agent_activity(event)
