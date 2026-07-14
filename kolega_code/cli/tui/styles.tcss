@@ -87,12 +87,15 @@ ConversationEntryWidget {
     padding-bottom: 1;
 }
 
-ConversationEntryWidget.entry-thinking,
+/* Activity entries nest one 2-cell step under the message flow. All four
+   padding edges must be set together: Textual keeps only the most-specific
+   rule per style key, and `padding` is ONE key — a bare padding-left here
+   would silently zero the base rule's padding-bottom. */
 ConversationEntryWidget.entry-progress,
 ConversationEntryWidget.entry-skill,
 ConversationEntryWidget.entry-sub_agent,
 ConversationEntryWidget.entry-workflow {
-    padding-left: 2;
+    padding: 0 0 1 2;
 }
 
 ToolEntryWidget {

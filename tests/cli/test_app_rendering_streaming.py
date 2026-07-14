@@ -144,9 +144,12 @@ async def test_textual_app_formats_thinking_as_italic_chat_entry(
         )
         rendered = renderable_text(formatted)
 
-        assert "Thinking" in rendered
+        # Bare dim-italic text at the shared indent — no label, glyph, or spinner.
+        assert rendered.startswith("  inspect")
+        assert "Thinking" not in rendered
+        assert "●" not in rendered
+        assert "…" not in rendered
         assert "[red]markup[/red]" in rendered
-        assert "…" in rendered  # streaming indicator in the header
         assert any("italic" in style and "dim" in style for style in first_text_styles(formatted))
 
 

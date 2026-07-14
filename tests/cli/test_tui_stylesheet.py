@@ -390,3 +390,22 @@ def test_tui_stylesheet_explicitly_themes_footer_select_overlay_and_output_scrol
     select_overlay_block = css.rsplit("\nSelect > SelectOverlay", 1)[1].split("}", 1)[0]
     assert "background: $surface" in select_overlay_block
     assert "color: $text" in select_overlay_block
+
+
+def test_tui_stylesheet_keeps_transcript_entry_bottom_gap() -> None:
+    """Textual keeps only the most-specific rule per style key, and all four padding
+    edges share the ONE `padding` key — so any per-kind transcript rule must restate
+    the bottom gap or it silently drops to 0 (the missing-blank-line-after-thinking bug)."""
+    stylesheet = Path(__file__).parents[2] / "kolega_code" / "cli" / EXPECTED_CSS_PATH
+    css = stylesheet.read_text()
+
+    base_block = css.split("ConversationEntryWidget {", 1)[1].split("}", 1)[0]
+    assert "padding-bottom: 1" in base_block
+
+    # Thinking aligns with the message flow — no per-kind rule may re-indent it
+    # (or zero its bottom gap as a side effect).
+    assert "entry-thinking" not in css
+
+    activity_block = css.split("ConversationEntryWidget.entry-progress,", 1)[1].split("}", 1)[0]
+    assert "padding: 0 0 1 2" in activity_block
+    assert "padding-left" not in activity_block

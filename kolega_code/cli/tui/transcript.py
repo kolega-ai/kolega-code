@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from typing import Callable, Optional
 
-from rich.console import Group
+from rich.console import Group, RenderableType
 from rich.markdown import Markdown as RichMarkdown
 from rich.markup import escape
 from rich.padding import Padding
+from rich.table import Table
 from rich.text import Text
 
 from kolega_code.agent import AgentEvent
@@ -42,9 +43,9 @@ class _IndentedRenderState:
     (the common case); completion does a canonical full reformat as a safety net.
     """
 
-    __slots__ = ("text", "length", "started", "deferred_newline", "style")
+    __slots__ = ("text", "length", "started", "deferred_newline", "style", "prefix")
 
-    def __init__(self, style):
+    def __init__(self, style, prefix=None):
         self.text = Text()
         self.length = 0  # chars of entry.content already folded into `text`
         self.started = False  # has the first line's indentation been emitted?
@@ -53,6 +54,9 @@ class _IndentedRenderState:
         # (matching str.splitlines, which drops only the final terminator).
         self.deferred_newline = False
         self.style = style
+        # Optional (text, style) pair emitted instead of the first line's indent —
+        # the inline role glyph, sized to exactly TRANSCRIPT_INDENT cells.
+        self.prefix = prefix
 
 
 class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
@@ -1334,31 +1338,31 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
     def on_jump_to_bottom_bar_pressed(self, message: JumpToBottomBar.Pressed) -> None:
         self._schedule_conversation_bottom_anchor()
 
-    def _format_conversation_entry(self, entry: ConversationEntry) -> Text | Group:
-        """Render an entry using the shared header grammar.
+    def _format_conversation_entry(self, entry: ConversationEntry) -> RenderableType:
+        """Render an entry.
 
-        GRAMMAR: <colored glyph> <bold label> [ · state] — body indented beneath.
+        User and assistant messages open with an inline role glyph (`❯ ` / `● `)
+        sized to the transcript indent, so bodies align at column 2 with no label
+        line; thinking is bare dim-italic text at the same indent. Every other
+        kind keeps the shared header grammar:
+        <colored glyph> <bold label> [ · state] — body indented beneath.
         """
         if entry.kind == "startup":
             return self._format_startup_entry(entry)
         streaming = None if entry.complete else theme.g(Glyph.ELLIPSIS)
         if entry.kind == "user":
-            header = theme.role_header(Glyph.USER, "You", Color.USER)
-            return self._entry_renderable(header, entry.content)
+            return self._format_indented_text(entry.content, prefix=(theme.g(Glyph.USER) + " ", Color.USER))
         if entry.kind == "assistant":
-            header = theme.role_header(Glyph.AGENT, "Agent", Color.AGENT, state=streaming)
+            prefix = (theme.g(Glyph.AGENT) + " ", Color.AGENT)
             if entry.complete and entry.content.strip():
-                return self._markdown_entry(header, entry.content)
+                return self._glyph_markdown_entry(prefix, entry.content)
             if not entry.complete:
-                return self._streaming_indented_renderable(entry, header)
-            return self._entry_renderable(header, entry.content)
+                return self._streaming_indented_renderable(entry, prefix=prefix)
+            return self._format_indented_text(entry.content, prefix=prefix)
         if entry.kind == "thinking":
-            header = theme.role_header(
-                Glyph.STATUS, "Thinking", Color.THINKING, label_style="dim italic", state=streaming
-            )
             if not entry.complete:
-                return self._streaming_indented_renderable(entry, header, body_style="italic dim")
-            return self._entry_renderable(header, entry.content, body_style="italic dim")
+                return self._streaming_indented_renderable(entry, body_style="italic dim")
+            return self._format_indented_text(entry.content, style="italic dim")
         if entry.kind == "progress":
             color = Color.ERROR if entry.tone == "error" else Color.WARNING
             header = theme.role_header(Glyph.STATUS, "Status", color, state=streaming)
@@ -1414,25 +1418,36 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
             return header_text
         return Group(header_text, self._format_indented_text(body, style=body_style))
 
-    def _streaming_indented_renderable(self, entry, header: str, *, body_style: Optional[str] = None) -> Group:
+    def _streaming_indented_renderable(
+        self,
+        entry,
+        *,
+        body_style: Optional[str] = None,
+        prefix: Optional[tuple[str, str]] = None,
+    ) -> Text:
         """Indented body for a still-streaming entry, built incrementally (O(delta) per flush).
 
         Caches the rendered Text on the entry so each flush only appends the newly
         arrived characters instead of re-splitting and re-rendering the whole buffer
-        (the O(n^2) cliff). The header is small and rebuilt each call. On completion the
-        dispatcher routes to the canonical _entry_renderable/_markdown_entry instead.
+        (the O(n^2) cliff). On completion the dispatcher routes to the canonical
+        _format_indented_text/_glyph_markdown_entry instead.
         """
         state = entry.render_cache
         content = entry.content
-        if not isinstance(state, _IndentedRenderState) or state.style != body_style or state.length > len(content):
-            # First render for this entry, a body-style change, or a defensive shrink:
-            # fold the whole current buffer once.
-            state = _IndentedRenderState(body_style)
+        if (
+            not isinstance(state, _IndentedRenderState)
+            or state.style != body_style
+            or state.prefix != prefix
+            or state.length > len(content)
+        ):
+            # First render for this entry, a style/prefix change (e.g. theme switch
+            # mid-stream), or a defensive shrink: fold the whole current buffer once.
+            state = _IndentedRenderState(body_style, prefix)
             entry.render_cache = state
             self._extend_indented(state, content)
         elif state.length < len(content):
             self._extend_indented(state, content[state.length :])
-        return Group(Text.from_markup(header), state.text)
+        return state.text
 
     def _extend_indented(self, state: "_IndentedRenderState", delta: str) -> None:
         """Append ``delta`` to cached indented Text, matching _format_indented_text for "\\n".
@@ -1453,7 +1468,10 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
                 state.deferred_newline = False
 
         if not state.started:
-            text.append(indent)
+            if state.prefix is not None:
+                text.append(state.prefix[0], style=state.prefix[1])
+            else:
+                text.append(indent)
             state.started = True
 
         for index, segment in enumerate(delta.split("\n")):
@@ -1474,6 +1492,22 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
                 (0, 0, 0, theme.TRANSCRIPT_INDENT),
             ),
         )
+
+    def _glyph_markdown_entry(self, prefix: tuple[str, str], content: str) -> Table:
+        """Markdown body opening with an inline role glyph.
+
+        A two-column grid keeps the glyph at column 0 of the first line while
+        every markdown line — including soft-wrapped ones — aligns at the
+        transcript indent, matching the plain-Text glyph entries.
+        """
+        grid = Table.grid(expand=True)
+        grid.add_column(width=theme.TRANSCRIPT_INDENT)
+        grid.add_column(ratio=1)
+        grid.add_row(
+            Text(prefix[0], style=prefix[1]),
+            RichMarkdown(content, code_theme=theme.markdown_code_theme()),
+        )
+        return grid
 
     def _format_startup_entry(self, entry: ConversationEntry) -> Text:
         lines = entry.content.splitlines()
@@ -1599,14 +1633,23 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
                 rendered.append(line)
             return rendered
 
-    def _format_indented_text(self, content: str, style: Optional[str] = None) -> Text:
+    def _format_indented_text(
+        self,
+        content: str,
+        style: Optional[str] = None,
+        prefix: Optional[tuple[str, str]] = None,
+    ) -> Text:
         indent = " " * theme.TRANSCRIPT_INDENT
         lines = content.splitlines() or [""]
         rendered = Text()
         for index, line in enumerate(lines):
             if index:
                 rendered.append("\n")
-            rendered.append(indent)
+                rendered.append(indent)
+            elif prefix is not None:
+                rendered.append(prefix[0], style=prefix[1])
+            else:
+                rendered.append(indent)
             if line:
                 rendered.append(line, style=style)
         return rendered
