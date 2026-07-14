@@ -405,6 +405,8 @@ class TrialRecord(BaseModel):
     operation_success_rate: float = Field(default=0.0, ge=0.0, le=1.0)
     completed_operations: int = Field(default=0, ge=0)
     total_operations: int = Field(default=0, ge=0)
+    first_attempt_file_successes: int = Field(default=0, ge=0)
+    first_attempt_files: int = Field(default=0, ge=0)
     first_attempt_success: bool = False
     oracle_success: bool = False
     terminal_stop: bool = False

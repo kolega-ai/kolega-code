@@ -34,6 +34,21 @@ def _percentile(values: list[int], fraction: float) -> float:
     return float(ordered[index])
 
 
+def _first_attempt_file_totals(records: Iterable[TrialRecord]) -> tuple[int, int]:
+    successes = 0
+    files = 0
+    for record in records:
+        if record.first_attempt_files:
+            successes += record.first_attempt_file_successes
+            files += record.first_attempt_files
+        else:
+            # Historical records predate file-level counters. Preserve their
+            # old one-outcome-per-trial interpretation when rebuilding reports.
+            successes += int(record.first_attempt_success)
+            files += 1
+    return successes, files
+
+
 def aggregate(records: Iterable[TrialRecord]) -> list[dict[str, Any]]:
     groups: dict[tuple[str, str, str, str], list[TrialRecord]] = defaultdict(list)
     for record in records:
@@ -51,6 +66,8 @@ def aggregate(records: Iterable[TrialRecord]) -> list[dict[str, Any]]:
             if (attempts := [attempt for attempt in item.tool_attempts if attempt.name in edit_names])
         ]
         first_edit_attempt_successes = sum(attempt.apply_ok for attempt in first_edit_attempts)
+        first_attempt_file_successes, first_attempt_files = _first_attempt_file_totals(scored)
+        all_files_first_attempt_successes = sum(item.first_attempt_success for item in scored)
         latency = [item.elapsed_ms for item in scored]
         family_groups: dict[str, list[TrialRecord]] = defaultdict(list)
         for item in scored:
@@ -89,12 +106,22 @@ def aggregate(records: Iterable[TrialRecord]) -> list[dict[str, Any]]:
                 ),
                 "success_ci_low": low if scored else None,
                 "success_ci_high": high if scored else None,
-                # Retained for report consumers created before the metric was
-                # given an explicit edit-tool name. Its denominator is all
-                # scored trials, so no-edit trials count as unsuccessful.
+                # Legacy names remain aliases for the primary per-file metric.
                 "first_attempt_rate": (
-                    sum(item.first_attempt_success for item in scored) / len(scored) if scored else None
+                    first_attempt_file_successes / first_attempt_files if first_attempt_files else None
                 ),
+                "first_attempt_successes": first_attempt_file_successes,
+                "first_attempt_trials": first_attempt_files,
+                "first_attempt_file_success_rate": (
+                    first_attempt_file_successes / first_attempt_files if first_attempt_files else None
+                ),
+                "first_attempt_file_successes": first_attempt_file_successes,
+                "first_attempt_files": first_attempt_files,
+                "all_files_first_attempt_success_rate": (
+                    all_files_first_attempt_successes / len(scored) if scored else None
+                ),
+                "all_files_first_attempt_successes": all_files_first_attempt_successes,
+                "all_files_first_attempt_trials": len(scored),
                 "first_edit_attempt_successes": first_edit_attempt_successes,
                 "first_edit_attempts": len(first_edit_attempts),
                 "first_edit_attempt_success_rate": (
@@ -161,6 +188,8 @@ def breakdown(records: Iterable[TrialRecord], dimension: str) -> list[dict[str, 
             if (attempts := [attempt for attempt in item.tool_attempts if attempt.name in edit_names])
         ]
         first_edit_attempt_successes = sum(attempt.apply_ok for attempt in first_edit_attempts)
+        first_attempt_file_successes, first_attempt_files = _first_attempt_file_totals(scored)
+        all_files_first_attempt_successes = sum(item.first_attempt_success for item in scored)
         rows.append(
             {
                 "provider": provider,
@@ -174,6 +203,21 @@ def breakdown(records: Iterable[TrialRecord], dimension: str) -> list[dict[str, 
                     sum(item.functional_success for item in scored) / len(scored) if scored else None
                 ),
                 "exact_match_rate": sum(item.exact_match for item in scored) / len(scored) if scored else None,
+                "first_attempt_successes": first_attempt_file_successes,
+                "first_attempt_trials": first_attempt_files,
+                "first_attempt_rate": (
+                    first_attempt_file_successes / first_attempt_files if first_attempt_files else None
+                ),
+                "first_attempt_file_success_rate": (
+                    first_attempt_file_successes / first_attempt_files if first_attempt_files else None
+                ),
+                "first_attempt_file_successes": first_attempt_file_successes,
+                "first_attempt_files": first_attempt_files,
+                "all_files_first_attempt_success_rate": (
+                    all_files_first_attempt_successes / len(scored) if scored else None
+                ),
+                "all_files_first_attempt_successes": all_files_first_attempt_successes,
+                "all_files_first_attempt_trials": len(scored),
                 "first_edit_attempt_successes": first_edit_attempt_successes,
                 "first_edit_attempts": len(first_edit_attempts),
                 "first_edit_attempt_success_rate": (
@@ -274,11 +318,12 @@ def markdown_report(
         "",
         "Provider and harness failures are not included in scored success-rate denominators.",
         "Task success means all configured oracle checks passed; exact match means the resulting workspace "
-        "matched the expected workspace exactly. First edit attempt measures successful first edit-tool "
-        "applications among trials that made an edit attempt.",
+        "matched the expected workspace exactly. First attempt/file scores the earliest edit call targeting each "
+        "changed file; it must parse and apply, and a missing call is unsuccessful. All files first try requires "
+        "that outcome for every changed file in a trial. Conditional first call excludes no-edit trials.",
         "",
-        "| Provider/model | Lane | Protocol | Scored | Task success | Exact match | Operations | Family macro | 95% CI | First edit attempt | Apply | Infra/not run |",
-        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: |",
+        "| Provider/model | Lane | Protocol | Scored | Task success | Exact match | Operations | Family macro | 95% CI | First attempt/file | All files first try | Conditional first call | Apply | No edit | Infra/not run |",
+        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for row in rows:
         ci = (
@@ -292,8 +337,10 @@ def markdown_report(
             f"{_format_rate(row['success_rate'])} | {_format_rate(row['exact_match_rate'])} | "
             f"{_format_rate(row['operation_success_rate'])} | "
             f"{_format_rate(row['macro_family_success_rate'])} | {ci} | "
+            f"{_format_counted_rate(row['first_attempt_rate'], row['first_attempt_successes'], row['first_attempt_trials'])} | "
+            f"{_format_counted_rate(row['all_files_first_attempt_success_rate'], row['all_files_first_attempt_successes'], row['all_files_first_attempt_trials'])} | "
             f"{_format_counted_rate(row['first_edit_attempt_success_rate'], row['first_edit_attempt_successes'], row['first_edit_attempts'])} | "
-            f"{_format_rate(row['apply_success_rate'])} | {infra} |"
+            f"{_format_rate(row['apply_success_rate'])} | {_format_rate(row['no_edit_rate'])} | {infra} |"
         )
     for dimension in ("language", "family", "target_length", "payload_size", "target_file_count"):
         lines.extend(
@@ -301,8 +348,8 @@ def markdown_report(
                 "",
                 f"## By {dimension}",
                 "",
-                f"| Provider/model | Lane | Protocol | {dimension.replace('_', ' ').title()} | Scored | Task success | Exact match | First edit attempt | Operations |",
-                "| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: |",
+                f"| Provider/model | Lane | Protocol | {dimension.replace('_', ' ').title()} | Scored | Task success | Exact match | First attempt/file | All files first try | Conditional first call | Operations |",
+                "| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
             ]
         )
         for item in breakdowns[dimension]:
@@ -310,6 +357,8 @@ def markdown_report(
                 f"| {item['provider']}/{item['model']} | {item['lane']} | {item['protocol']} | "
                 f"{item[dimension]} | {item['scored']} | {_format_rate(item['success_rate'])} | "
                 f"{_format_rate(item['exact_match_rate'])} | "
+                f"{_format_counted_rate(item['first_attempt_rate'], item['first_attempt_successes'], item['first_attempt_trials'])} | "
+                f"{_format_counted_rate(item['all_files_first_attempt_success_rate'], item['all_files_first_attempt_successes'], item['all_files_first_attempt_trials'])} | "
                 f"{_format_counted_rate(item['first_edit_attempt_success_rate'], item['first_edit_attempt_successes'], item['first_edit_attempts'])} | "
                 f"{_format_rate(item['operation_success_rate'])} |"
             )
