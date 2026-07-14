@@ -256,7 +256,7 @@ def test_tui_stylesheet_keeps_sidebar_tabs_consistent_and_restores_card_contrast
     assert "background: $surface" not in settings_select_block
 
     settings_select_focus_block = css.split("SettingsScreen Select:focus > SelectCurrent", 1)[1].split("}", 1)[0]
-    assert "background: $panel" in settings_select_focus_block
+    assert "background: $surface-lighten-2" in settings_select_focus_block
     assert "background-tint: transparent" in settings_select_focus_block
 
     onboarding_select_block = css.split("OnboardingScreen Select > SelectCurrent,", 1)[1].split("}", 1)[0]

@@ -332,7 +332,7 @@ class KolegaCodeApp(
                                 yield Button(
                                     "Open Settings →",
                                     id="open_settings",
-                                    classes="settings-action",
+                                    classes="quiet",
                                 )
                                 yield Static("", id="settings_summary_status")
         yield Footer()

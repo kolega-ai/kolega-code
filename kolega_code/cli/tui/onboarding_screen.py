@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, Select, Static
 
@@ -60,10 +60,10 @@ class OnboardingScreen(ModalScreen[None]):
             if self.draft.active_thinking_effort in valid_efforts
             else default_ui_thinking_effort(initial_provider, initial_model)
         )
-        with Vertical(id="onboarding_dialog"):
+        with Vertical(id="onboarding_dialog", classes="modal-dialog"):
             yield Static("Welcome to Kolega Code", id="onboarding_title")
             yield Static("Step 1 of 4", id="onboarding_progress")
-            with Vertical(id="onboarding_pages"):
+            with VerticalScroll(id="onboarding_pages"):
                 with Vertical(id="onboarding_step_welcome", classes="onboarding-step"):
                     yield Static(
                         "Connect a model to start coding. Onboarding only handles the initial "
@@ -89,7 +89,7 @@ class OnboardingScreen(ModalScreen[None]):
                             "Use models available through your ChatGPT subscription.",
                             classes="onboarding-hint",
                         )
-                        yield Button("Sign in with ChatGPT", variant="primary", id="onboarding_chatgpt_login")
+                        yield Button("Sign in with ChatGPT", id="onboarding_chatgpt_login", classes="quiet")
                         yield Static("", id="onboarding_chatgpt_status")
                     with Vertical(id="onboarding_api_panel"):
                         yield Label("Provider")
@@ -121,7 +121,7 @@ class OnboardingScreen(ModalScreen[None]):
                 with Vertical(id="onboarding_step_ready", classes="onboarding-step"):
                     yield Static("Ready to start", id="onboarding_ready_title")
                     yield Static("", id="onboarding_summary")
-                    yield Button("Test Connection", id="onboarding_test_connection")
+                    yield Button("Test Connection", id="onboarding_test_connection", classes="quiet")
                     yield Static(
                         "Optional: sends only “Reply with OK.” as a tiny, potentially billable request.",
                         classes="onboarding-hint",
@@ -129,9 +129,10 @@ class OnboardingScreen(ModalScreen[None]):
                     yield Static("", id="onboarding_test_status")
             yield Static("", id="onboarding_status")
             with Horizontal(id="onboarding_actions"):
-                yield Button("Skip for now", id="onboarding_skip")
-                yield Button("Back", id="onboarding_back")
-                yield Button("Continue", variant="primary", id="onboarding_next")
+                yield Static("esc Skip", classes="dialog-hint")
+                yield Button("Skip for now", id="onboarding_skip", classes="quiet")
+                yield Button("Back", id="onboarding_back", classes="quiet")
+                yield Button("Continue", id="onboarding_next", classes="solid-primary")
 
     def on_mount(self) -> None:
         self.owner._onboarding_screen = self

@@ -214,7 +214,7 @@ ToolEntryWidget .tool-body {
 .settings-button-row Button {
     width: auto;
     min-width: 12;
-    margin: 0 1 0 0;
+    margin-right: 1;
 }
 
 .settings-hint {
@@ -243,10 +243,6 @@ ToolEntryWidget .tool-body {
     color: $text-muted;
 }
 
-.agent-model-field Select {
-    width: 1fr;
-}
-
 SettingsScreen {
     align: center middle;
     background: $background;
@@ -256,8 +252,21 @@ SettingsScreen {
 SettingsScreen #settings_screen_header {
     height: 3;
     padding: 1 2 0 2;
-    text-style: bold;
     background: $surface;
+    border-bottom: solid $surface-lighten-2;
+}
+
+SettingsScreen #settings_screen_title {
+    width: auto;
+    height: auto;
+    text-style: bold;
+}
+
+SettingsScreen #settings_screen_hint {
+    width: 1fr;
+    height: auto;
+    text-align: right;
+    color: $text-muted;
 }
 
 SettingsScreen #settings_screen_body {
@@ -287,118 +296,164 @@ SettingsScreen .settings-page {
     background: $background;
 }
 
+/* Slim, neutral scrollbars inside the editors (scrollbar-* does not
+   inherit, so the Screen-level palette must be restated here). */
+SettingsScreen .settings-page,
+SettingsScreen #settings_categories,
+#onboarding_pages {
+    scrollbar-size-vertical: 1;
+    scrollbar-color: $surface-lighten-2;
+    scrollbar-color-hover: $text-muted;
+    scrollbar-color-active: $text;
+}
+
+SettingsScreen .settings-page,
+SettingsScreen #settings_categories {
+    scrollbar-background: $background;
+}
+
+#onboarding_pages {
+    scrollbar-background: $surface;
+}
+
+/* Flat control chrome. Border glyphs never fill their cells cleanly against
+   the $panel fill (rounded lines leave a squared halo, tall bars leave
+   notches), so controls are borderless flat boxes: explicit height keeps the
+   3-row shape and focus is shown by brightening the fill. */
 SettingsScreen Select > SelectCurrent,
-SettingsScreen Select > SelectOverlay {
+SettingsScreen .settings-page Input {
     background: $panel;
-    border: round $surface-lighten-2;
+    border: none;
+    height: 3;
+    padding: 1 2;
     color: $text;
 }
 
-SettingsScreen Select:focus > SelectCurrent {
+SettingsScreen Select > SelectOverlay {
     background: $panel;
-    border: round $surface-lighten-2;
+    border: solid $surface-lighten-2;
+    color: $text;
+}
+
+SettingsScreen Select:focus > SelectCurrent,
+SettingsScreen .settings-page Input:focus {
+    background: $surface-lighten-2;
+    border: none;
     background-tint: transparent;
 }
 
-SettingsScreen Select.settings-select-small {
+/* One uniform width for every form control. 46 = longest option label
+   (38 cells, "Server-Sent Events (legacy/deprecated)") + Select chrome
+   (2 border + 4 padding + 2 arrow). The overlay is 1fr of its Select, so
+   it inherits the same width. */
+SettingsScreen .settings-page Select,
+SettingsScreen .settings-page Input,
+#onboarding_dialog Select,
+#onboarding_dialog Input {
     width: 1fr;
-    max-width: 22;
+    max-width: 46;
 }
 
-SettingsScreen Select.settings-select-medium {
+/* Agent-model rows: 10-col label + 36-col control aligns the right edge
+   with the 46-col controls above. Must come after the shared rule (equal
+   specificity, later wins). */
+SettingsScreen .agent-model-field Select {
     width: 1fr;
-    max-width: 34;
+    max-width: 36;
 }
 
-SettingsScreen Select.settings-select-wide {
-    width: 1fr;
-    max-width: 50;
-}
-
-Button.settings-action {
+/* Quiet buttons: text-only secondary actions. Borderless with an explicit
+   height — every border glyph style (tall/round/block) leaves visible seams
+   against a fill — so the pill stays 3 rows tall with perfectly clean edges;
+   hover/focus fill it. */
+Button.quiet {
     width: auto;
     min-width: 12;
+    height: 3;
+    padding: 0 2;
     background: transparent;
-    border: tall $surface-lighten-2;
+    border: none;
     color: $text;
     text-style: none;
     background-tint: transparent;
 }
 
-Button.settings-action:hover,
-Button.settings-action:focus,
-Button.settings-action.-active {
+Button.quiet:hover,
+Button.quiet:focus,
+Button.quiet.-active {
     background: $surface-lighten-2;
-    border: tall $surface-lighten-2;
+    border: none;
     background-tint: transparent;
     tint: transparent;
 }
 
-Button.settings-action.-primary {
-    background: transparent;
-    border: tall $primary;
-    color: $primary;
-}
-
-Button.settings-action.-primary:hover,
-Button.settings-action.-primary:focus,
-Button.settings-action.-primary.-active {
-    background: $surface-lighten-2;
-    border: tall $primary;
-    color: $primary;
-}
-
-Button.settings-action.-warning {
-    background: transparent;
-    border: tall $warning;
-    color: $warning;
-}
-
-Button.settings-action.-warning:hover,
-Button.settings-action.-warning:focus,
-Button.settings-action.-warning.-active {
-    background: $surface-lighten-2;
-    border: tall $warning;
-    color: $warning;
-}
-
-Button.settings-action.-error {
-    background: transparent;
-    border: tall $error;
+Button.quiet.danger {
     color: $error;
 }
 
-Button.settings-action.-error:hover,
-Button.settings-action.-error:focus,
-Button.settings-action.-error.-active {
-    background: $surface-lighten-2;
-    border: tall $error;
-    color: $error;
-}
-
-Button.settings-action:disabled {
+Button.quiet:disabled {
     background: transparent;
-    border: tall $surface;
+    border: none;
     color: $text-muted;
     text-opacity: 0.6;
 }
 
-SettingsScreen Label,
-SettingsScreen Button {
+/* The one solid call-to-action per surface. Owned here rather than via
+   variant="primary" so no default bevel borders leak edge artifacts. */
+Button.solid-primary {
+    width: auto;
+    min-width: 12;
+    height: 3;
+    padding: 0 2;
+    background: $primary;
+    border: none;
+    color: $text;
+    text-style: bold;
+    background-tint: transparent;
+}
+
+Button.solid-primary:hover,
+Button.solid-primary:focus,
+Button.solid-primary.-active {
+    background: $primary-darken-1;
+    border: none;
+    background-tint: transparent;
+    tint: transparent;
+}
+
+Button.solid-primary:disabled {
+    background: $panel;
+    border: none;
+    color: $text-muted;
+    text-style: none;
+    text-opacity: 0.6;
+}
+
+SettingsScreen .settings-section > Label,
+SettingsScreen .settings-section > Button {
     margin-top: 1;
 }
 
+/* Single-row footer: the status text sits left on the same band as the
+   action buttons, so the footer is only as tall as the buttons. */
 SettingsScreen #settings_screen_footer {
     height: auto;
-    min-height: 5;
-    padding: 0 2 1 2;
+    padding: 0 2;
     border-top: solid $surface-lighten-2;
     background: $surface;
 }
 
-SettingsScreen #settings_screen_actions {
+SettingsScreen #settings_status {
+    width: 1fr;
     height: auto;
-    align-horizontal: right;
+    min-height: 3;
+    content-align: left middle;
+    margin-right: 2;
+}
+
+SettingsScreen #settings_screen_actions {
+    width: auto;
+    height: auto;
 }
 
 SettingsScreen #settings_screen_actions Button {
@@ -407,7 +462,6 @@ SettingsScreen #settings_screen_actions Button {
     margin-left: 1;
 }
 
-SettingsScreen #settings_status,
 SettingsScreen #settings_connection_status {
     height: auto;
     margin-top: 1;
@@ -419,79 +473,58 @@ ConfirmSettingsActionScreen {
     background: $background 80%;
 }
 
-#settings_discard_dialog {
-    width: 64;
+/* One shared card style for every centered dialog. */
+.modal-dialog {
+    width: 72;
+    max-width: 90%;
     height: auto;
+    max-height: 90%;
     padding: 1 2;
     border: round $surface-lighten-2;
     background: $surface;
 }
 
-#settings_discard_title {
-    height: auto;
-    text-style: bold;
-}
-
-#settings_discard_copy {
-    height: auto;
-    margin-top: 1;
-}
-
-#settings_discard_actions {
-    height: auto;
-    align-horizontal: right;
-}
-
-#settings_discard_actions Button {
-    width: auto;
-    min-width: 12;
-    margin-left: 1;
-}
-
-#settings_action_dialog {
-    width: 68;
-    max-width: 94%;
-    height: auto;
-    padding: 1 2;
-    border: round $surface-lighten-2;
-    background: $surface;
-}
-
+#settings_discard_title,
 #settings_action_title {
     height: auto;
     text-style: bold;
 }
 
+#settings_discard_copy,
 #settings_action_copy {
     height: auto;
     margin-top: 1;
 }
 
-#settings_action_buttons {
+#settings_discard_actions,
+#settings_action_buttons,
+#onboarding_actions {
     height: auto;
+    margin-top: 1;
     align-horizontal: right;
 }
 
-#settings_action_buttons Button {
+#settings_discard_actions Button,
+#settings_action_buttons Button,
+#onboarding_actions Button {
     width: auto;
     min-width: 12;
     margin-left: 1;
+}
+
+/* Muted keybinding hint sitting left of a right-aligned action row; its
+   1fr width pushes the buttons to the right edge. */
+.dialog-hint {
+    width: 1fr;
+    height: auto;
+    margin-top: 1;
+    color: $text-muted;
 }
 
 OnboardingScreen {
     align: center middle;
     background: $background;
     color: $text;
-}
-
-#onboarding_dialog {
-    width: 76;
-    max-width: 96%;
-    height: auto;
-    max-height: 94%;
-    padding: 1 2;
-    border: round $surface-lighten-2;
-    background: $surface;
 }
 
 #onboarding_title {
@@ -505,7 +538,18 @@ OnboardingScreen {
     color: $text-muted;
 }
 
-#onboarding_pages,
+/* Fixed-height wizard card: the frame (title, progress, status, actions)
+   never moves between steps, and the step content scrolls in the middle
+   when the terminal is short — the action row can never fall off-screen.
+   27 = tallest step (16 rows, connection with the API panel) + frame (11). */
+#onboarding_dialog {
+    height: 27;
+}
+
+#onboarding_pages {
+    height: 1fr;
+}
+
 .onboarding-step,
 #onboarding_chatgpt_panel,
 #onboarding_api_panel {
@@ -516,16 +560,31 @@ OnboardingScreen {
     margin-top: 1;
 }
 
-OnboardingScreen Label,
-OnboardingScreen Button {
+#onboarding_pages Label,
+#onboarding_pages Button {
     margin-top: 1;
 }
 
 OnboardingScreen Select > SelectCurrent,
+#onboarding_dialog Input {
+    background: $panel;
+    border: none;
+    height: 3;
+    padding: 1 2;
+    color: $text;
+}
+
 OnboardingScreen Select > SelectOverlay {
     background: $panel;
-    border: round $surface-lighten-2;
+    border: solid $surface-lighten-2;
     color: $text;
+}
+
+OnboardingScreen Select:focus > SelectCurrent,
+#onboarding_dialog Input:focus {
+    background: $surface-lighten-2;
+    border: none;
+    background-tint: transparent;
 }
 
 #onboarding_status,
@@ -534,17 +593,6 @@ OnboardingScreen Select > SelectOverlay {
 #onboarding_summary {
     height: auto;
     margin-top: 1;
-}
-
-#onboarding_actions {
-    height: auto;
-    margin-top: 1;
-    align-horizontal: right;
-}
-
-#onboarding_actions Button {
-    width: 18;
-    margin-left: 1;
 }
 
 #status_form PlanningMarkdown,
