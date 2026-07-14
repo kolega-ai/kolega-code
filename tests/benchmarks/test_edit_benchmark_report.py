@@ -128,5 +128,53 @@ def test_report_distinguishes_task_exact_and_first_edit_success() -> None:
     markdown = markdown_report(rows, [], breakdowns)
     assert "| Scored | Task success | Exact match |" in markdown
     assert "| 2 | 100.0% | 50.0% |" in markdown
-    assert "First edit attempt" in markdown
+    assert "First attempt" in markdown
     assert "50.0% (1/2)" in markdown
+
+
+def test_end_to_end_first_attempt_counts_no_edit_as_failure() -> None:
+    no_edit = record("codex_apply_patch", 1, False)
+    first_try = record("codex_apply_patch", 2, True).model_copy(
+        update={
+            "first_attempt_success": True,
+            "tool_attempts": [
+                ToolAttempt(
+                    iteration=1,
+                    name="apply_patch",
+                    input_kind="freeform",
+                    raw_input="*** Begin Patch\n*** Add File: a\n+x\n*** End Patch",
+                    apply_ok=True,
+                )
+            ],
+        }
+    )
+
+    row = aggregate([no_edit, first_try])[0]
+
+    assert row["first_attempt_rate"] == 0.5
+    assert row["first_edit_attempt_success_rate"] == 1.0
+    assert row["no_edit_rate"] == 0.5
+
+
+def test_first_attempt_rate_is_weighted_per_target_file() -> None:
+    partial = record("claude_code", 1, True).model_copy(
+        update={
+            "first_attempt_file_successes": 1,
+            "first_attempt_files": 2,
+            "first_attempt_success": False,
+        }
+    )
+    complete = record("claude_code", 2, True).model_copy(
+        update={
+            "first_attempt_file_successes": 2,
+            "first_attempt_files": 2,
+            "first_attempt_success": True,
+        }
+    )
+
+    row = aggregate([partial, complete])[0]
+
+    assert row["first_attempt_file_success_rate"] == 0.75
+    assert row["first_attempt_file_successes"] == 3
+    assert row["first_attempt_files"] == 4
+    assert row["all_files_first_attempt_success_rate"] == 0.5

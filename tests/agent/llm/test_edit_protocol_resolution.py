@@ -77,3 +77,14 @@ def test_all_openai_catalog_models_prefer_codex_apply_patch() -> None:
 
     assert openai_models
     assert set(openai_models.values()) == {EditProtocol.CODEX_APPLY_PATCH.value}
+
+
+def test_direct_deepseek_models_prefer_claude_code() -> None:
+    deepseek_models = {
+        key: specs.get("preferred_edit_protocol") for key, specs in MODEL_SPECS.items() if key[0] == "deepseek"
+    }
+
+    assert deepseek_models == {
+        ("deepseek", "deepseek-v4-pro"): EditProtocol.CLAUDE_CODE.value,
+        ("deepseek", "deepseek-v4-flash"): EditProtocol.CLAUDE_CODE.value,
+    }

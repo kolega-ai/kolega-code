@@ -9,6 +9,7 @@ from typing import Any, Callable
 
 from kolega_code.agent.prompt_provider import AgentMode
 from kolega_code.agent.tools import ToolCollection, ToolCollectionConfig, ToolExtension
+from kolega_code.agent.tool_backend.codex_patch import CodexPatchParseError
 from kolega_code.config import AgentConfig, EditProtocol
 from kolega_code.events import AgentConnectionManager, AgentEvent
 from kolega_code.llm.models import ToolCall, ToolDefinition, ToolResult
@@ -215,6 +216,8 @@ async def execute_call(
                 raise ValueError(f"tool {call.name!r} requires object input")
             output = str(await registry.call(call.name, **inputs))
         except Exception as exc:  # noqa: BLE001 - the model may recover on its next iteration
+            if isinstance(exc, CodexPatchParseError):
+                parse_ok = False
             is_error = True
             error = str(exc)
             output = f"Tool error: {error}"

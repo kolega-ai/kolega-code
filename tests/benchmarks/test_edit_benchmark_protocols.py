@@ -137,6 +137,24 @@ async def test_malformed_freeform_envelope_is_a_parse_failure(tmp_path: Path) ->
 
 
 @pytest.mark.asyncio
+async def test_malformed_patch_payload_is_a_parse_failure(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    adapter = get_protocol("codex_apply_patch")
+    collection, _, caller = create_tool_collection(workspace, config(EditProtocol.CODEX_APPLY_PATCH), adapter, tmp_path)
+    definitions = {item.name: item for item in adapter.definitions(collection)}
+    call = ToolCall(id="call-1", name="apply_patch", input="not a patch", input_kind="freeform")
+    try:
+        result, attempt = await execute_call(collection, caller, call, definitions, 1)
+    finally:
+        await collection.cleanup()
+
+    assert result.is_error
+    assert not attempt.parse_ok
+    assert not attempt.apply_ok
+
+
+@pytest.mark.asyncio
 async def test_research_adapter_can_run_without_production_edit_enum(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
