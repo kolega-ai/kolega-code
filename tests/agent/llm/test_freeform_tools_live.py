@@ -1,4 +1,4 @@
-"""Credential- and opt-in-gated live provider smokes for the edit protocol."""
+"""Credential-gated OpenAI smoke for the native freeform edit protocol."""
 
 import os
 from pathlib import Path
@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from kolega_code.agent.conversation import adapt_history_for_provider
 from kolega_code.agent.tool_backend.codex_patch import CODEX_APPLY_PATCH_GRAMMAR
 from kolega_code.agent.tool_backend.edit_tool import EditTool
 from kolega_code.config import AgentConfig, ModelConfig, ModelProvider
@@ -16,20 +15,14 @@ from kolega_code.llm.models import Message, MessageHistory, TextBlock, ToolCall,
 
 pytestmark = [pytest.mark.slow, pytest.mark.integration]
 
-_PROVIDERS = {
-    "openai": ("OPENAI_API_KEY", "gpt-5.5"),
-    "anthropic": ("ANTHROPIC_API_KEY", "claude-haiku-4-5-20251001"),
-    "google": ("GOOGLE_API_KEY", "gemini-3.1-pro-preview"),
-}
+_API_KEY_ENV = "OPENAI_API_KEY"
+_MODEL = "gpt-5.5"
 
 
-def _enabled_key(provider: str) -> str:
-    if os.getenv("KOLEGA_RUN_LIVE_EDIT_TOOL_TESTS") != "1":
-        pytest.skip("Set KOLEGA_RUN_LIVE_EDIT_TOOL_TESTS=1 to run live edit-tool smokes.")
-    env_name, _ = _PROVIDERS[provider]
-    value = os.getenv(env_name)
+def _enabled_key() -> str:
+    value = os.getenv(_API_KEY_ENV)
     if not value:
-        pytest.skip(f"{env_name} not set")
+        pytest.skip(f"{_API_KEY_ENV} not set")
     return value
 
 
@@ -54,12 +47,10 @@ def _normalize(call: ToolCall) -> ToolCall:
     return call
 
 
-async def _execute(tmp_path: Path, call: ToolCall, provider: str, api_key: str) -> ToolResult:
-    model = ModelConfig(provider=ModelProvider(provider), model=_PROVIDERS[provider][1])
+async def _execute(tmp_path: Path, call: ToolCall, api_key: str) -> ToolResult:
+    model = ModelConfig(provider=ModelProvider.OPENAI, model=_MODEL)
     config = AgentConfig(
-        openai_api_key=api_key if provider == "openai" else None,
-        anthropic_api_key=api_key if provider == "anthropic" else None,
-        google_api_key=api_key if provider == "google" else None,
+        openai_api_key=api_key,
         long_context_config=model,
         fast_config=model,
         thinking_config=model,
@@ -76,12 +67,10 @@ async def _execute(tmp_path: Path, call: ToolCall, provider: str, api_key: str) 
     )
 
 
-@pytest.mark.parametrize("provider", ["openai", "anthropic", "google"])
 @pytest.mark.asyncio
-async def test_live_provider_generates_executes_and_consumes_patch(provider: str, tmp_path: Path) -> None:
-    api_key = _enabled_key(provider)
-    _, model = _PROVIDERS[provider]
-    client = LLMClient(provider, api_key)
+async def test_live_openai_generates_executes_and_consumes_patch(tmp_path: Path) -> None:
+    api_key = _enabled_key()
+    client = LLMClient("openai", api_key)
     system = Message("system", [TextBlock("Use the supplied edit tool exactly when requested. Be concise.")])
     user = Message(
         "user",
@@ -90,62 +79,23 @@ async def test_live_provider_generates_executes_and_consumes_patch(provider: str
     response = await client.generate(
         messages=MessageHistory([user]),
         system=system,
-        model=model,
+        model=_MODEL,
         tools=[_definition()],
         max_completion_tokens=1024,
         temperature=0,
     )
     assert response.tool_calls
     call = _normalize(response.tool_calls[0])
-    result = await _execute(tmp_path, call, provider, api_key)
+    result = await _execute(tmp_path, call, api_key)
     assert (tmp_path / "live-smoke.txt").read_text() == "provider-ok\n"
 
     follow_up = Message("user", [result, TextBlock("Reply with exactly live-edit-ok.")])
     continued = await client.generate(
         messages=MessageHistory([user, response, follow_up]),
         system=system,
-        model=model,
+        model=_MODEL,
         tools=[],
         max_completion_tokens=128,
         temperature=0,
     )
     assert "live-edit-ok" in continued.get_text_content().lower()
-
-
-@pytest.mark.asyncio
-async def test_live_openai_to_anthropic_cross_provider_continuation(tmp_path: Path) -> None:
-    openai_key = _enabled_key("openai")
-    anthropic_key = _enabled_key("anthropic")
-    definition = _definition()
-    system = Message("system", [TextBlock("Use the supplied edit tool exactly when requested. Be concise.")])
-    user = Message("user", [TextBlock("Call apply_patch to create switched.txt containing `switched`.")])
-    openai = LLMClient("openai", openai_key)
-    response = await openai.generate(
-        messages=MessageHistory([user]),
-        system=system,
-        model=_PROVIDERS["openai"][1],
-        tools=[definition],
-        max_completion_tokens=1024,
-        temperature=0,
-    )
-    call = _normalize(response.tool_calls[0])
-    result = await _execute(tmp_path, call, "openai", openai_key)
-    stored = [user, response, Message("user", [result]), Message("user", [TextBlock("Reply switched-ok.")])]
-    adapted = adapt_history_for_provider(
-        stored,
-        target_provider="anthropic",
-        target_model=_PROVIDERS["anthropic"][1],
-        supports_vision=True,
-        target_edit_protocol="codex_apply_patch",
-    )
-
-    anthropic = LLMClient("anthropic", anthropic_key)
-    continued = await anthropic.generate(
-        messages=MessageHistory(adapted),
-        system=system,
-        model=_PROVIDERS["anthropic"][1],
-        tools=[],
-        max_completion_tokens=128,
-        temperature=0,
-    )
-    assert "switched-ok" in continued.get_text_content().lower()
