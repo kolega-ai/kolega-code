@@ -28,6 +28,14 @@ def test_openai_chatgpt_gpt55_context_length():
     assert specs["thinking_effort"].default == "medium"
 
 
+@pytest.mark.parametrize("provider", ["openai", "openai_chatgpt"])
+def test_gpt54_mini_thinking_efforts(provider):
+    specs = get_model_specs(provider, "gpt-5.4-mini")
+
+    assert specs["thinking_effort"].options == ("none", "low", "medium", "high", "xhigh")
+    assert specs["thinking_effort"].default == "medium"
+
+
 def test_grok_45_model_specs():
     specs = get_model_specs("xai", "grok-4.5")
 

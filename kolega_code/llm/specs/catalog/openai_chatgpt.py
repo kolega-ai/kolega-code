@@ -80,7 +80,7 @@ OPENAI_CHATGPT_SPECS = {
         "supports_vision": True,
         "preferred_edit_protocol": "codex_apply_patch",
         "thinking_effort": ThinkingEffortSpec(
-            options=("minimal", "low", "medium", "high"),
+            options=("none", "low", "medium", "high", "xhigh"),
             default="medium",
             mode="openai_responses_reasoning",
         ),
