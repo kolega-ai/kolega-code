@@ -25,7 +25,7 @@ from kolega_code.agent.prompt_dump import (
 )
 from kolega_code.hooks import HookDispatcher, HookEvent, load_hook_config
 from kolega_code.llm.exceptions import LLMBillingError, billing_error_message
-from kolega_code.llm.models import TextBlock
+from kolega_code.llm.models import Message, TextBlock
 from kolega_code.mcp.config import (
     MCPConfigError,
     MCPServerConfig,
@@ -797,6 +797,11 @@ async def _run_ask(args: argparse.Namespace) -> int:
     else:
         session = SessionRecord.create(project_path, CLI_AGENT_MODE, summary)
 
+    session_recorder = None
+    if args.save or args.session:
+        session_recorder = store.recorder(session.session_id)
+        session = store.load(session.session_id)
+
     manager = CliConnectionManager()
     browser_manager = PlaywrightBrowserManager()
     browser_manager.headless = not args.browser_visible
@@ -845,6 +850,7 @@ async def _run_ask(args: argparse.Namespace) -> int:
         permission_callback=_permission_callback_for_ask(project_path)
         if permission_mode == PermissionMode.ASK
         else None,
+        session_recorder=session_recorder,
         hook_dispatcher=hook_dispatcher,
         custom_agent_catalog=custom_agent_catalog,
     )
@@ -861,6 +867,10 @@ async def _run_ask(args: argparse.Namespace) -> int:
     if fire_hook is not None:
         session_start = await fire_hook(HookEvent.SESSION_START, {"source": "startup"})
         if session_start.additional_context:
+            if session_recorder is not None:
+                session_recorder.record_context_message(
+                    Message(role="user", content=[TextBlock(text=session_start.additional_context)])
+                )
             agent.append_user_message([TextBlock(text=session_start.additional_context)])
 
     prompt = raw_prompt
@@ -869,6 +879,10 @@ async def _run_ask(args: argparse.Namespace) -> int:
         active_names = activated_skill_names(agent.history)
         activation_content = skill_catalog.activation_content(skill_name, active_names=active_names)
         if skill_name not in active_names:
+            if session_recorder is not None:
+                session_recorder.record_context_message(
+                    Message(role="user", content=[TextBlock(text=activation_content)])
+                )
             agent.append_user_message([TextBlock(text=activation_content)])
         if args.json:
             print(
@@ -890,8 +904,6 @@ async def _run_ask(args: argparse.Namespace) -> int:
             else:
                 print(activation_content)
             if args.save or args.session:
-                session.history = agent.dump_message_history()
-                session.compaction = agent.dump_compaction_state()
                 session.config = summary
                 store.save(session)
             await agent.cleanup()
@@ -1003,8 +1015,6 @@ async def _run_ask(args: argparse.Namespace) -> int:
                 exit_code = 1
 
         if args.save or args.session:
-            session.history = agent.dump_message_history()
-            session.compaction = agent.dump_compaction_state()
             session.config = summary
             store.save(session)
     except LLMBillingError as exc:

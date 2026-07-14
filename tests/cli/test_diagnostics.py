@@ -14,6 +14,7 @@ from kolega_code.cli.diagnostics import (
     scrub_secrets,
     write_crash_log,
 )
+from kolega_code.cli.session_store import SessionBugExport
 
 
 def _read(path: Path) -> list[dict]:
@@ -129,12 +130,16 @@ def test_write_crash_log_scrubs_configured_secret_values(tmp_path: Path):
 def test_assemble_bug_bundle_scrubs_secrets_keeps_content(tmp_path: Path):
     diag = DiagnosticsLog(tmp_path, "sess5", secret_values=["sk-deadbeef-secret-9999"])
     diag.record("session_start", version="0.11.1", provider="deepseek", term="xterm-ghostty")
-    session_json = tmp_path / "session.json"
-    session_json.write_text(
-        '{"history": [{"role": "user", "content": "fix my bug, key=sk-deadbeef-secret-9999"}]}',
-        encoding="utf-8",
+    session_export = SessionBugExport(
+        session_json='{"history": [{"role": "user", "content": "fix my bug, key=sk-deadbeef-secret-9999"}]}',
+        events_jsonl='{"type":"turn.started","payload":{"key":"sk-deadbeef-secret-9999"}}\n',
+        artifact_manifest_json='{"artifacts_included":false,"artifacts":[]}',
     )
-    bundle = assemble_bug_bundle(diag, summary="kolega diag\nkey sk-deadbeef-secret-9999", session_json=session_json)
+    bundle = assemble_bug_bundle(
+        diag,
+        summary="kolega diag\nkey sk-deadbeef-secret-9999",
+        session_export=session_export,
+    )
     assert bundle is not None and bundle.is_file()
     assert bundle.suffix == ".zip"
 
@@ -142,7 +147,10 @@ def test_assemble_bug_bundle_scrubs_secrets_keeps_content(tmp_path: Path):
         names = zf.namelist()
         summary = zf.read("summary.md").decode("utf-8")
         session = zf.read("session.json").decode("utf-8")
+        events = zf.read("session-events.jsonl").decode("utf-8")
     assert "sk-deadbeef-secret-9999" not in summary and "sk-deadbeef-secret-9999" not in session
+    assert "sk-deadbeef-secret-9999" not in events
     # Ordinary conversation content is preserved (unredacted):
     assert "fix my bug" in session
     assert "session-sess5.jsonl" in names
+    assert "session-artifacts.json" in names

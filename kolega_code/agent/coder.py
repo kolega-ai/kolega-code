@@ -48,6 +48,7 @@ class CoderAgent(BaseAgent, LogMixin):
         permission_callback: Optional[Any] = None,
         usage_recorder: Optional[Any] = None,
         sub_agent_recorder: Optional[Any] = None,
+        session_recorder: Optional[Any] = None,
         hook_dispatcher: Optional[Any] = None,
         max_iterations: Optional[int] = None,
         custom_agent_catalog: Optional[Any] = None,
@@ -78,6 +79,7 @@ class CoderAgent(BaseAgent, LogMixin):
             tool_extensions: Host-provided tool providers for app-specific tools
             usage_recorder: Optional callback for recording normalized LLM usage
             sub_agent_recorder: Optional callback for persisting sub-agent conversation state
+            session_recorder: Optional durable recorder for the top-level CLI session
         """
         if custom_agent_catalog is not None:
             custom_agent_catalog = custom_agent_catalog.for_mode("build")
@@ -108,6 +110,7 @@ class CoderAgent(BaseAgent, LogMixin):
             permission_callback=permission_callback,
             usage_recorder=usage_recorder,
             sub_agent_recorder=sub_agent_recorder,
+            session_recorder=session_recorder,
             hook_dispatcher=hook_dispatcher,
             max_iterations=max_iterations,
             custom_agent_catalog=custom_agent_catalog,

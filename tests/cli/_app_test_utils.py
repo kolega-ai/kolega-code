@@ -8,7 +8,7 @@ from kolega_code.cli.tui import agent_runtime as agent_runtime_module
 from kolega_code.cli.config import build_agent_config, config_summary
 from kolega_code.cli.session_store import SessionStore
 from kolega_code.events import AgentEvent
-from kolega_code.llm.models import Message
+from kolega_code.llm.models import Message, TextBlock
 
 
 class _FakeToolCollection:
@@ -41,6 +41,7 @@ class FakeCoderAgent:
         self.messages: list = []
         self.attachments: list = []
         self.active_goal_condition = None
+        self.session_recorder = kwargs.get("session_recorder")
 
     def apply_goal(self, condition, prompt_extension=None):
         self.active_goal_condition = condition
@@ -66,6 +67,13 @@ class FakeCoderAgent:
     async def process_message_stream(self, message, attachments=None):
         self.messages.append(message)
         self.attachments.append(attachments)
+        user_message = Message(role="user", content=[TextBlock(message)])
+        assistant_message = Message(role="assistant", content=[TextBlock("done")], stop_reason="end_turn")
+        if self.session_recorder is not None:
+            self.session_recorder.start_turn(user_message)
+            self.session_recorder.record_assistant(assistant_message)
+            self.session_recorder.finish_turn("completed")
+        self.history.extend([user_message, assistant_message])
         yield {"type": "response", "content": "done", "complete": True, "uuid": "response-1"}
 
 

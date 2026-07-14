@@ -314,6 +314,13 @@ async def test_textual_app_mode_switch_rebuild_skips_transcript_restore(
         monkeypatch.setattr(app, "_restore_conversation_history", spy_restore)
         monkeypatch.setattr(app, "_render_conversation", spy_render)
 
+        recorder = store.recorder(session.session_id)
+        recorder.record_context_message(Message.from_dict(history[0]), actor="user")
+        recorder.record_compaction(compaction)
+        restored_session = store.load(session.session_id)
+        app.session.history = restored_session.history
+        app.session.compaction = restored_session.compaction
+
         await app._set_interaction_mode("plan")
 
         assert restore_calls == []
