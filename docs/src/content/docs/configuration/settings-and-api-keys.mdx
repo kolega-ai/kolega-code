@@ -8,16 +8,51 @@ import { Aside, FileTree } from '@astrojs/starlight/components';
 Kolega Code keeps a small amount of state on your machine: your provider/model
 selection, API keys, and saved sessions.
 
-## The Settings tab
+## First-run onboarding
 
-The fastest way to configure the CLI is the **Settings** tab in the side panel of
-the TUI:
+When the TUI starts without a working model configuration, it opens a short setup
+wizard. Choose either **Sign in with ChatGPT** or **Use an API key**, select the
+model and thinking effort, review the result, and finish. The API-key path detects
+credentials already supplied through the environment or local settings, so you do
+not need to paste the key again.
 
-1. **Provider** — choose your AI provider.
-2. **Model** — choose a model for that provider.
-3. **Thinking effort** — choose one of the effort values supported by that model.
-4. **API Key** — paste your key (entered as a password field).
-5. **Save Settings** — persists everything locally.
+The final step includes an optional **Test Connection** action. It sends only
+`Reply with OK.` to the selected model, with no tools and a 32-token completion
+limit. This is a real provider request, so it can be billable. Finishing persists
+the complete setup at once; going back or choosing **Skip for now** does not write
+a partial draft. Skipping lasts only for the current TUI session.
+
+## The Settings screen
+
+The **Settings** sidebar tab is a compact read-only summary. Select **Open
+Settings**, or run `/settings`, to open the full-screen editor. Its category rail
+separates the controls into:
+
+| Category | What it configures |
+| --- | --- |
+| **Model & Account** | Provider, model, thinking effort, API key or ChatGPT sign-in, and connection testing |
+| **Agent Models** | Optional provider/model/effort override for each agent role |
+| **Tools** | Web-search backend and global LSP toggle |
+| **MCP Servers** | Global and trusted-project MCP server management |
+| **Appearance** | TUI theme |
+
+Provider, model, agent, tool, credential, and appearance changes stay in a draft
+until you select **Apply Changes**. Kolega Code validates the complete candidate
+before replacing the saved settings and rebuilding the agent. If validation fails,
+the previous settings remain saved and the draft stays open for correction. Closing
+a changed draft asks before discarding it. Theme changes preview immediately but
+follow the same Apply/discard behavior.
+
+The API-key input never echoes a saved secret. Leave it blank to retain the current
+key, paste a value to replace it, or select **Remove Stored Key** to stage its
+removal. Environment variables are only reported, never changed by the TUI.
+ChatGPT sign-in and sign-out are staged the same way. **Test Connection** uses the
+current draft and has the same small, potentially billable request behavior as the
+onboarding test.
+
+MCP actions are the exception to the global Apply button: their server config,
+verification, enable/disable state, trust, and OAuth actions save immediately.
+Settings labels this explicitly and confirms trust, deletion, and token removal.
 
 When you switch models, the thinking effort resets to the new model's default.
 
@@ -27,16 +62,16 @@ variables and `--provider` / `--model` flags continue to override it — see
 API key environment variables are credentials only; they do not choose the active
 provider or model.
 
-The **Agent Models** section beneath the main Model section lets you give individual
-agents (planning, building, investigation, general, browser) their own provider,
-model, and effort. Leave a role on **Default** to inherit the active model. See
+The **Agent Models** category lets you give individual agents (planning, building,
+investigation, general, browser) their own provider, model, and effort. Leave a
+role on **Default** to inherit the active model. See
 [Per-agent models](../providers-and-models/#per-agent-models).
 
 The Browser role only accepts vision-capable model overrides. If it inherits a
 non-vision active model, Settings allows the inheritance but warns that the browser
 agent is unavailable until you choose a compatible Browser model.
 
-The **Web Search** section configures the `web_search` tool. DuckDuckGo is the
+The **Tools** category configures the `web_search` tool. DuckDuckGo is the
 default and needs no key. Firecrawl can also run without a key, with an optional
 key for higher rate limits. Tavily requires a key, and SearXNG requires the base
 URL of your self-hosted instance. The same settings can be supplied with

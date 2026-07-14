@@ -167,13 +167,18 @@ kolega-code mcp --project . remove docs
 
 ## TUI management
 
-Open the **Settings** tab and use the **MCP Servers** section to:
+Open the full Settings screen (from the sidebar summary or with `/settings`) and
+choose **MCP Servers** to:
 
 - Refresh status.
 - Trust project MCP config.
 - Create, update, delete, enable, and disable global MCP servers.
 - Verify a selected server.
 - Clear stored OAuth tokens for a selected server.
+
+MCP actions save immediately rather than waiting for the Settings **Apply Changes**
+button. Trusting project configuration, deleting a server, and clearing tokens ask
+for confirmation first.
 
 Project servers are shown in the TUI but are read-only there. Edit `.kolega/mcp_servers.json` directly or use `kolega-code mcp ... --project-config`.
 

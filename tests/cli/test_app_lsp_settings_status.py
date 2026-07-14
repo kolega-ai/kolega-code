@@ -14,7 +14,7 @@ from typing import Any
 
 import pytest
 
-from ._app_test_utils import FakeCoderAgent, build_test_config, install_fake_agents
+from ._app_test_utils import FakeCoderAgent, build_test_config, install_fake_agents, open_settings_screen
 
 
 def _static_text(widget) -> str:
@@ -90,8 +90,9 @@ async def test_lsp_status_shows_detected_languages_after_build(tmp_path: Path, m
     from textual.widgets import Static
 
     app = _make_app(tmp_path, monkeypatch, coder_cls=_LspEnabledFakeAgent)
-    async with app.run_test():
-        status = app.query_one("#lsp_status", Static)
+    async with app.run_test() as pilot:
+        screen = await open_settings_screen(app, pilot, "tools")
+        status = screen.query_one("#lsp_status", Static)
         text = _static_text(status)
         assert "not active" not in text
         assert "Python" in text
@@ -115,8 +116,9 @@ async def test_lsp_status_warns_when_detection_is_incomplete(tmp_path: Path, mon
             }
 
     app = _make_app(tmp_path, monkeypatch, coder_cls=_PartialLspAgent)
-    async with app.run_test():
-        text = _static_text(app.query_one("#lsp_status", Static))
+    async with app.run_test() as pilot:
+        screen = await open_settings_screen(app, pilot, "tools")
+        text = _static_text(screen.query_one("#lsp_status", Static))
         assert "Detection incomplete" in text
         assert "entry_limit" in text
 
@@ -128,8 +130,9 @@ async def test_lsp_status_shows_not_active_when_disabled(tmp_path: Path, monkeyp
 
     # Default FakeCoderAgent -> tool_collection.lsp_manager is None.
     app = _make_app(tmp_path, monkeypatch)
-    async with app.run_test():
-        status = app.query_one("#lsp_status", Static)
+    async with app.run_test() as pilot:
+        screen = await open_settings_screen(app, pilot, "tools")
+        status = screen.query_one("#lsp_status", Static)
         text = _static_text(status)
         assert "not active" in text
 

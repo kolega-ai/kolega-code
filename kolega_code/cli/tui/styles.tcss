@@ -87,12 +87,15 @@ ConversationEntryWidget {
     padding-bottom: 1;
 }
 
-ConversationEntryWidget.entry-thinking,
+/* Activity entries nest one 2-cell step under the message flow. All four
+   padding edges must be set together: Textual keeps only the most-specific
+   rule per style key, and `padding` is ONE key — a bare padding-left here
+   would silently zero the base rule's padding-bottom. */
 ConversationEntryWidget.entry-progress,
 ConversationEntryWidget.entry-skill,
 ConversationEntryWidget.entry-sub_agent,
 ConversationEntryWidget.entry-workflow {
-    padding-left: 2;
+    padding: 0 0 1 2;
 }
 
 ToolEntryWidget {
@@ -145,11 +148,33 @@ ToolEntryWidget .tool-body {
     text-align: center;
 }
 
-#status_form, #settings_form, #planning_form {
+#status_form, #planning_form {
     height: 1fr;
     background: $background;
     color: $text;
     padding: 1;
+}
+
+#settings_summary_panel {
+    height: 1fr;
+    padding: 1;
+    background: $background;
+}
+
+#settings_summary {
+    height: auto;
+    padding: 1 0;
+}
+
+#settings_summary_status {
+    height: auto;
+    margin-top: 1;
+}
+
+#open_settings {
+    width: auto;
+    min-width: 12;
+    margin-top: 1;
 }
 
 #status_dashboard {
@@ -177,50 +202,22 @@ ToolEntryWidget .tool-body {
     margin-bottom: 1;
 }
 
-#settings_form Select > SelectCurrent {
-    background: $panel;
-    border: round $surface-lighten-2;
-    color: $text;
-}
-
-#settings_form Select:focus > SelectCurrent {
-    background: $panel;
-    border: round $surface-lighten-2;
-    background-tint: transparent;
-}
-
-#settings_form Select > SelectOverlay {
-    background: $panel;
-    border: round $surface-lighten-2;
-    color: $text;
-}
-
-#settings_status {
-    margin-top: 1;
-}
-
 #mcp_status {
     height: auto;
     margin-bottom: 1;
 }
 
-#settings_form Label {
-    margin-top: 1;
-}
-
-#settings_form Button {
-    margin-top: 1;
-}
-
 .settings-button-row {
     height: auto;
-    min-height: 4;
+    min-height: 3;
     margin-top: 1;
+    align-horizontal: left;
 }
 
 .settings-button-row Button {
-    margin-top: 0;
-    width: 1fr;
+    width: auto;
+    min-width: 12;
+    margin-right: 1;
 }
 
 .settings-hint {
@@ -249,13 +246,355 @@ ToolEntryWidget .tool-body {
     color: $text-muted;
 }
 
-.agent-model-field Select {
-    width: 1fr;
+SettingsScreen {
+    align: center middle;
+    background: $background;
+    color: $text;
 }
 
-#settings_actions {
+SettingsScreen #settings_screen_header {
+    height: 3;
+    padding: 1 2 0 2;
+    background: $surface;
+    border-bottom: solid $surface-lighten-2;
+}
+
+SettingsScreen #settings_screen_title {
+    width: auto;
     height: auto;
-    padding: 0 1;
+    text-style: bold;
+}
+
+SettingsScreen #settings_screen_hint {
+    width: 1fr;
+    height: auto;
+    text-align: right;
+    color: $text-muted;
+}
+
+SettingsScreen #settings_screen_body {
+    height: 1fr;
+    width: 100%;
+}
+
+SettingsScreen #settings_categories {
+    width: 24;
+    height: 100%;
+    border: none;
+    border-right: solid $surface-lighten-2;
+    background: $background;
+    padding: 1;
+}
+
+SettingsScreen #settings_screen_detail {
+    width: 1fr;
+    height: 100%;
+    background: $background;
+}
+
+SettingsScreen .settings-page {
+    width: 100%;
+    height: 1fr;
+    padding: 1 2;
+    background: $background;
+}
+
+/* Slim, neutral scrollbars inside the editors (scrollbar-* does not
+   inherit, so the Screen-level palette must be restated here). */
+SettingsScreen .settings-page,
+SettingsScreen #settings_categories,
+#onboarding_pages {
+    scrollbar-size-vertical: 1;
+    scrollbar-color: $surface-lighten-2;
+    scrollbar-color-hover: $text-muted;
+    scrollbar-color-active: $text;
+}
+
+SettingsScreen .settings-page,
+SettingsScreen #settings_categories {
+    scrollbar-background: $background;
+}
+
+#onboarding_pages {
+    scrollbar-background: $surface;
+}
+
+/* Flat control chrome. Border glyphs never fill their cells cleanly against
+   the $panel fill (rounded lines leave a squared halo, tall bars leave
+   notches), so controls are borderless flat boxes: explicit height keeps the
+   3-row shape and focus is shown by brightening the fill. */
+SettingsScreen Select > SelectCurrent,
+SettingsScreen .settings-page Input {
+    background: $panel;
+    border: none;
+    height: 3;
+    padding: 1 2;
+    color: $text;
+}
+
+SettingsScreen Select > SelectOverlay {
+    background: $panel;
+    border: solid $surface-lighten-2;
+    color: $text;
+}
+
+SettingsScreen Select:focus > SelectCurrent,
+SettingsScreen .settings-page Input:focus {
+    background: $surface-lighten-2;
+    border: none;
+    background-tint: transparent;
+}
+
+/* One uniform width for every form control. 46 = longest option label
+   (38 cells, "Server-Sent Events (legacy/deprecated)") + Select chrome
+   (2 border + 4 padding + 2 arrow). The overlay is 1fr of its Select, so
+   it inherits the same width. */
+SettingsScreen .settings-page Select,
+SettingsScreen .settings-page Input,
+#onboarding_dialog Select,
+#onboarding_dialog Input {
+    width: 1fr;
+    max-width: 46;
+}
+
+/* Agent-model rows: 10-col label + 36-col control aligns the right edge
+   with the 46-col controls above. Must come after the shared rule (equal
+   specificity, later wins). */
+SettingsScreen .agent-model-field Select {
+    width: 1fr;
+    max-width: 36;
+}
+
+/* Quiet buttons: text-only secondary actions. Borderless with an explicit
+   height — every border glyph style (tall/round/block) leaves visible seams
+   against a fill — so the pill stays 3 rows tall with perfectly clean edges;
+   hover/focus fill it. */
+Button.quiet {
+    width: auto;
+    min-width: 12;
+    height: 3;
+    padding: 0 2;
+    background: transparent;
+    border: none;
+    color: $text;
+    text-style: none;
+    background-tint: transparent;
+}
+
+Button.quiet:hover,
+Button.quiet:focus,
+Button.quiet.-active {
+    background: $surface-lighten-2;
+    border: none;
+    background-tint: transparent;
+    tint: transparent;
+}
+
+Button.quiet.danger {
+    color: $error;
+}
+
+Button.quiet:disabled {
+    background: transparent;
+    border: none;
+    color: $text-muted;
+    text-opacity: 0.6;
+}
+
+/* The one solid call-to-action per surface. Owned here rather than via
+   variant="primary" so no default bevel borders leak edge artifacts. */
+Button.solid-primary {
+    width: auto;
+    min-width: 12;
+    height: 3;
+    padding: 0 2;
+    background: $primary;
+    border: none;
+    color: $text;
+    text-style: bold;
+    background-tint: transparent;
+}
+
+Button.solid-primary:hover,
+Button.solid-primary:focus,
+Button.solid-primary.-active {
+    background: $primary-darken-1;
+    border: none;
+    background-tint: transparent;
+    tint: transparent;
+}
+
+Button.solid-primary:disabled {
+    background: $panel;
+    border: none;
+    color: $text-muted;
+    text-style: none;
+    text-opacity: 0.6;
+}
+
+SettingsScreen .settings-section > Label,
+SettingsScreen .settings-section > Button {
+    margin-top: 1;
+}
+
+/* Single-row footer: the status text sits left on the same band as the
+   action buttons, so the footer is only as tall as the buttons. */
+SettingsScreen #settings_screen_footer {
+    height: auto;
+    padding: 0 2;
+    border-top: solid $surface-lighten-2;
+    background: $surface;
+}
+
+SettingsScreen #settings_status {
+    width: 1fr;
+    height: auto;
+    min-height: 3;
+    content-align: left middle;
+    margin-right: 2;
+}
+
+SettingsScreen #settings_screen_actions {
+    width: auto;
+    height: auto;
+}
+
+SettingsScreen #settings_screen_actions Button {
+    width: auto;
+    min-width: 12;
+    margin-left: 1;
+}
+
+SettingsScreen #settings_connection_status {
+    height: auto;
+    margin-top: 1;
+}
+
+ConfirmDiscardSettingsScreen,
+ConfirmSettingsActionScreen {
+    align: center middle;
+    background: $background 80%;
+}
+
+/* One shared card style for every centered dialog. */
+.modal-dialog {
+    width: 72;
+    max-width: 90%;
+    height: auto;
+    max-height: 90%;
+    padding: 1 2;
+    border: round $surface-lighten-2;
+    background: $surface;
+}
+
+#settings_discard_title,
+#settings_action_title {
+    height: auto;
+    text-style: bold;
+}
+
+#settings_discard_copy,
+#settings_action_copy {
+    height: auto;
+    margin-top: 1;
+}
+
+#settings_discard_actions,
+#settings_action_buttons,
+#onboarding_actions {
+    height: auto;
+    margin-top: 1;
+    align-horizontal: right;
+}
+
+#settings_discard_actions Button,
+#settings_action_buttons Button,
+#onboarding_actions Button {
+    width: auto;
+    min-width: 12;
+    margin-left: 1;
+}
+
+/* Muted keybinding hint sitting left of a right-aligned action row; its
+   1fr width pushes the buttons to the right edge. */
+.dialog-hint {
+    width: 1fr;
+    height: auto;
+    margin-top: 1;
+    color: $text-muted;
+}
+
+OnboardingScreen {
+    align: center middle;
+    background: $background;
+    color: $text;
+}
+
+#onboarding_title {
+    height: auto;
+    text-style: bold;
+}
+
+#onboarding_progress,
+.onboarding-hint {
+    height: auto;
+    color: $text-muted;
+}
+
+/* Fixed-height wizard card: the frame (title, progress, status, actions)
+   never moves between steps, and the step content scrolls in the middle
+   when the terminal is short — the action row can never fall off-screen.
+   27 = tallest step (16 rows, connection with the API panel) + frame (11). */
+#onboarding_dialog {
+    height: 27;
+}
+
+#onboarding_pages {
+    height: 1fr;
+}
+
+.onboarding-step,
+#onboarding_chatgpt_panel,
+#onboarding_api_panel {
+    height: auto;
+}
+
+.onboarding-step {
+    margin-top: 1;
+}
+
+#onboarding_pages Label,
+#onboarding_pages Button {
+    margin-top: 1;
+}
+
+OnboardingScreen Select > SelectCurrent,
+#onboarding_dialog Input {
+    background: $panel;
+    border: none;
+    height: 3;
+    padding: 1 2;
+    color: $text;
+}
+
+OnboardingScreen Select > SelectOverlay {
+    background: $panel;
+    border: solid $surface-lighten-2;
+    color: $text;
+}
+
+OnboardingScreen Select:focus > SelectCurrent,
+#onboarding_dialog Input:focus {
+    background: $surface-lighten-2;
+    border: none;
+    background-tint: transparent;
+}
+
+#onboarding_status,
+#onboarding_chatgpt_status,
+#onboarding_test_status,
+#onboarding_summary {
+    height: auto;
     margin-top: 1;
 }
 

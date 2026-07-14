@@ -232,7 +232,8 @@ async def test_textual_app_formats_agent_and_tool_chat_entries(tmp_path: Path, m
         tool_result_text = renderable_text(tool_result)
         tool_error_text = renderable_text(tool_error)
 
-        assert "● Agent" in assistant_text
+        assert assistant_text.splitlines()[0] == "● hello"
+        assert "Agent" not in assistant_text
         assert "Kolega" not in assistant_text
         assert "⏺ read_file" in tool_call_text
         assert "· running" in tool_call_text
@@ -253,17 +254,41 @@ async def test_transcript_bodies_share_two_cell_indent_without_guides(
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
 
     async with app.run_test():
-        entries = [
-            ConversationEntry(kind="user", content="body text"),
-            ConversationEntry(kind="assistant", content="body text", complete=True),
-            ConversationEntry(kind="assistant", content="body text", complete=False),
-            ConversationEntry(kind="thinking", content="body text", complete=True),
+        # Glyph-first kinds: the role glyph opens line 1, continuations align at 2.
+        user_lines = renderable_text(
+            app._format_conversation_entry(ConversationEntry(kind="user", content="body text\nsecond line"))
+        ).splitlines()
+        assert user_lines[0] == "❯ body text"
+        assert user_lines[1] == "  second line"
+
+        streaming_lines = renderable_text(
+            app._format_conversation_entry(
+                ConversationEntry(kind="assistant", content="body text\nsecond line", complete=False)
+            )
+        ).splitlines()
+        assert streaming_lines[0] == "● body text"
+        assert streaming_lines[1] == "  second line"
+
+        complete_lines = renderable_text(
+            app._format_conversation_entry(ConversationEntry(kind="assistant", content="body text", complete=True))
+        ).splitlines()
+        assert complete_lines[0].startswith("● body text")
+
+        # Thinking is bare dim-italic text at the shared indent — no glyph, no label.
+        thinking_lines = renderable_text(
+            app._format_conversation_entry(
+                ConversationEntry(kind="thinking", content="body text\nsecond line", complete=True)
+            )
+        ).splitlines()
+        assert thinking_lines[0] == "  body text"
+        assert thinking_lines[1] == "  second line"
+
+        # Header kinds keep the label line with the body indented beneath.
+        for entry in [
             ConversationEntry(kind="question", content="body text"),
             ConversationEntry(kind="plan", content="body text"),
             ConversationEntry(kind="lsp", content="body text"),
-        ]
-
-        for entry in entries:
+        ]:
             lines = renderable_text(app._format_conversation_entry(entry)).splitlines()
             assert lines[1].startswith("  body text"), entry.kind
             assert "│" not in lines[1], entry.kind
@@ -283,13 +308,14 @@ async def test_transcript_activity_hierarchy_uses_two_cell_steps(
     top_level = [
         ConversationEntry(kind="user", content="user"),
         ConversationEntry(kind="assistant", content="agent"),
+        # Thinking aligns with the message flow (its 2-cell indent lives in the text).
+        ConversationEntry(kind="thinking", content="thinking"),
         ConversationEntry(kind="plan", content="plan"),
         ConversationEntry(kind="question", content="question"),
         ConversationEntry(kind="lsp", content="lsp"),
         ConversationEntry(kind="system", content="system"),
     ]
     activities = [
-        ConversationEntry(kind="thinking", content="thinking"),
         ConversationEntry(kind="progress", content="status"),
         ConversationEntry(kind="skill", content="skill"),
         ConversationEntry(kind="sub_agent", content="sub-agent"),
@@ -312,11 +338,16 @@ async def test_transcript_activity_hierarchy_uses_two_cell_steps(
             widget = app._entry_widgets[entry.entry_id]
             assert isinstance(widget, ConversationEntryWidget)
             assert widget.content_region.x == widget.region.x, entry.kind
+            # The blank line between entries comes from padding-bottom; a more
+            # specific padding rule must never zero it (Textual keeps only the
+            # most-specific rule per style key, and padding is one key).
+            assert widget.styles.padding.bottom == 1, entry.kind
 
         for entry in activities:
             widget = app._entry_widgets[entry.entry_id]
             assert isinstance(widget, ConversationEntryWidget)
             assert widget.content_region.x == widget.region.x + 2, entry.kind
+            assert widget.styles.padding.bottom == 1, entry.kind
 
         tool_widget = app._entry_widgets[tool.entry_id]
         assert isinstance(tool_widget, ToolEntryWidget)
@@ -386,6 +417,7 @@ async def test_assistant_entries_render_markdown_when_complete(tmp_path: Path, m
 
     from rich.console import Group
     from rich.markdown import Markdown as RichMarkdown
+    from rich.table import Table
 
     from kolega_code.cli.tui.state import ConversationEntry
 
@@ -395,17 +427,48 @@ async def test_assistant_entries_render_markdown_when_complete(tmp_path: Path, m
         streaming = app._format_conversation_entry(
             ConversationEntry(kind="assistant", content="# Title\n\nsome `code`", complete=False)
         )
-        assert not isinstance(streaming, str)
-        assert "…" in renderable_text(streaming)  # header carries the streaming indicator
+        assert renderable_text(streaming).splitlines()[0] == "● # Title"
 
         complete = app._format_conversation_entry(
             ConversationEntry(kind="assistant", content="# Title\n\nsome `code`", complete=True)
         )
-        assert isinstance(complete, Group)
-        renderables = list(complete.renderables)
-        assert any(isinstance(getattr(item, "renderable", item), RichMarkdown) for item in renderables)
+        assert isinstance(complete, Table)
+        cells = [cell for column in complete.columns for cell in column._cells]
+        assert any(isinstance(cell, RichMarkdown) for cell in cells)
+        assert "●" in renderable_text(complete)
 
         plan = app._format_conversation_entry(
             ConversationEntry(kind="plan", content="- step one\n- step two", complete=True)
         )
         assert isinstance(plan, Group)
+
+
+@pytest.mark.asyncio
+async def test_user_and_assistant_entries_render_inline_glyphs_without_labels(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from rich.text import Text
+
+    from kolega_code.cli import theme
+    from kolega_code.cli.tui.state import ConversationEntry
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        user = app._format_conversation_entry(ConversationEntry(kind="user", content="hi\nthere"))
+        assert isinstance(user, Text)
+        assert user.plain == "❯ hi\n  there"
+        span = user._spans[0]
+        assert (span.start, span.end, str(span.style)) == (0, 2, theme.Color.USER)
+
+        streaming = app._format_conversation_entry(ConversationEntry(kind="assistant", content="reply", complete=False))
+        assert isinstance(streaming, Text)
+        span = streaming._spans[0]
+        assert (span.start, span.end, str(span.style)) == (0, 2, theme.Color.AGENT)
+
+        for rendered in (user, streaming):
+            text = renderable_text(rendered)
+            assert "You" not in text
+            assert "Agent" not in text

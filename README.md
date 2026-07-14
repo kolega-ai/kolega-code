@@ -99,9 +99,10 @@ kolega-code --version
 kolega-code .
 ```
 
-**3. Add a provider key.** Open the **Settings** tab to pick a provider/model and
-save your API key. Use `Shift+Tab` to switch between **Plan** and **Build** mode,
-or run `/gigacode on` when a task is broad enough for fan-out.
+**3. Connect a model.** Complete the first-run wizard with ChatGPT sign-in or an
+API key. Later, open the categorized Settings screen from the sidebar or with
+`/settings`. Use `Shift+Tab` to switch between **Plan** and **Build** mode, or run
+`/gigacode on` when a task is broad enough for fan-out.
 
 Resume a previous conversation:
 
@@ -177,8 +178,9 @@ subscription)** provider (default `gpt-5.6-sol`). Tokens are stored locally (chm
 
 ## Configuration
 
-Set your provider, model, and API keys from the **Settings** tab in the UI, or via
-environment variables and flags for non-interactive use:
+Set your provider, model, and API keys from first-run onboarding or the full-screen
+Settings editor in the UI, or via environment variables and flags for
+non-interactive use:
 
 ```bash
 export KOLEGA_CODE_PROVIDER=deepseek

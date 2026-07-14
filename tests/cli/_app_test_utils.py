@@ -134,6 +134,43 @@ def build_test_config(project: Path):
     )
 
 
+async def wait_for_onboarding_screen(app, pilot):
+    """Wait until the auto-opened onboarding wizard is up AND fully composed.
+
+    The app pushes OnboardingScreen via call_after_refresh and the screen's
+    children mount a further message-pump cycle later, so a single
+    pilot.pause() can lose the race on slow CI runners (NoMatches on
+    #onboarding_next). Pause until the screen and its widgets both exist.
+    """
+    from kolega_code.cli.tui.onboarding_screen import OnboardingScreen
+
+    for _ in range(20):
+        await pilot.pause()
+        screen = app.screen
+        if isinstance(screen, OnboardingScreen) and screen.query("#onboarding_next"):
+            return screen
+    raise AssertionError("onboarding screen did not finish mounting")
+
+
+async def open_settings_screen(app, pilot, category: str = "model"):
+    """Open the full-screen settings editor, skipping auto-onboarding if it is up."""
+    from kolega_code.cli.tui.settings_screen import SettingsScreen
+
+    # The wizard auto-opens whenever config is None; wait for it deterministically
+    # (not just one pause) before skipping, or it can land after the settings screen.
+    if app.config is None and not app._onboarding_skipped:
+        onboarding = await wait_for_onboarding_screen(app, pilot)
+        onboarding.action_skip()
+        await pilot.pause()
+    else:
+        await pilot.pause()
+    app.action_open_settings(category)
+    await pilot.pause()
+    screen = app.screen
+    assert isinstance(screen, SettingsScreen)
+    return screen
+
+
 def _build_sub_agent_test_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, **app_kwargs):
     pytest.importorskip("textual")
 

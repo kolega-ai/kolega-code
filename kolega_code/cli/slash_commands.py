@@ -55,6 +55,7 @@ TUI_COMMAND_ENTRIES: tuple[SlashCommandEntry, ...] = (
     SlashCommandEntry("plan", "Switch to plan mode", CommandScope.TUI),
     SlashCommandEntry("build", "Switch to build mode", CommandScope.TUI),
     SlashCommandEntry("sidebar", "Show or hide the side panel", CommandScope.TUI),
+    SlashCommandEntry("settings", "Open Settings", CommandScope.TUI),
     SlashCommandEntry("permissions", "Show or switch shell/edit permission mode", CommandScope.TUI),
     SlashCommandEntry("model", "Show or switch the active model", CommandScope.TUI),
     SlashCommandEntry("effort", "Show or set the active thinking effort", CommandScope.TUI),

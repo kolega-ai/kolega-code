@@ -33,8 +33,8 @@ def _per_char(text):
     return text.plain, styles
 
 
-def _incremental(mixin, content: str, style, chunk_sizes):
-    state = _IndentedRenderState(style)
+def _incremental(mixin, content: str, style, chunk_sizes, prefix=None):
+    state = _IndentedRenderState(style, prefix)
     pos = 0
     for size in chunk_sizes:
         mixin._extend_indented(state, content[pos : pos + size])
@@ -72,22 +72,32 @@ def test_canonical_render_uses_two_space_indent_without_guide(mixin):
     assert "│" not in rendered.plain
 
 
+def test_canonical_render_prefix_replaces_first_line_indent_without_style_bleed(mixin):
+    rendered = mixin._format_indented_text("first\nsecond", prefix=("● ", "bright_magenta"))
+
+    assert rendered.plain == "● first\n  second"
+    span = rendered._spans[0]
+    assert (span.start, span.end, str(span.style)) == (0, 2, "bright_magenta")
+
+
 @pytest.mark.parametrize("content", CASES)
 @pytest.mark.parametrize("style", [None, "italic dim"])
-def test_incremental_matches_canonical_for_uniform_chunks(mixin, content, style):
-    canonical = _per_char(mixin._format_indented_text(content, style=style))
+@pytest.mark.parametrize("prefix", [None, ("● ", "bright_magenta")])
+def test_incremental_matches_canonical_for_uniform_chunks(mixin, content, style, prefix):
+    canonical = _per_char(mixin._format_indented_text(content, style=style, prefix=prefix))
     for chunk in (1, 2, 3, 7, 4096):
         sizes = [chunk] * (len(content) // chunk + 1)
-        assert _per_char(_incremental(mixin, content, style, sizes)) == canonical
+        assert _per_char(_incremental(mixin, content, style, sizes, prefix)) == canonical
 
 
-def test_incremental_matches_canonical_for_irregular_chunks(mixin):
+@pytest.mark.parametrize("prefix", [None, ("● ", "bright_magenta")])
+def test_incremental_matches_canonical_for_irregular_chunks(mixin, prefix):
     import random
 
     rng = random.Random(2024)
     content = "".join(rng.choice(["alpha beta", "gamma", "\n", "  ", "delta epsilon zeta", "\n\n"]) for _ in range(400))
     for style in (None, "italic dim"):
-        canonical = _per_char(mixin._format_indented_text(content, style=style))
+        canonical = _per_char(mixin._format_indented_text(content, style=style, prefix=prefix))
         for _ in range(20):
             sizes = []
             remaining = len(content)
@@ -95,7 +105,7 @@ def test_incremental_matches_canonical_for_irregular_chunks(mixin):
                 step = rng.randint(1, min(11, remaining))
                 sizes.append(step)
                 remaining -= step
-            assert _per_char(_incremental(mixin, content, style, sizes)) == canonical
+            assert _per_char(_incremental(mixin, content, style, sizes, prefix)) == canonical
 
 
 def test_incremental_final_state_equals_canonical_for_large_stream(mixin):

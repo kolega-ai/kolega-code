@@ -23,10 +23,7 @@ from textual.worker import WorkerState
 from textual.widgets import (
     Button,
     Footer,
-    Input,
-    Label,
     OptionList,
-    Select,
     Static,
     TabbedContent,
     TabPane,
@@ -39,10 +36,6 @@ from kolega_code.agent.prompt_dump import list_prompt_overrides
 from kolega_code.agent.prompt_provider import AgentMode
 from kolega_code.agent.prompts import (
     build_implement_plan_prompt,
-)
-from kolega_code.agent.tool_backend.search_backends import (
-    DEFAULT_BACKEND as DEFAULT_WEB_SEARCH_BACKEND,
-    available_backends,
 )
 from kolega_code.hooks import HookDispatcher, HookEvent
 from kolega_code.llm.models import MessageHistory
@@ -60,17 +53,7 @@ from .goal import GoalState
 from .diagnostics import DiagnosticsLog, ResponsivenessWatchdog
 from .file_index import WorkspaceFileIndex
 from .mentions import build_file_attachments
-from .provider_registry import (
-    INHERIT_SENTINEL,
-    UI_DEFAULT_MODEL,
-    UI_DEFAULT_PROVIDER,
-    agent_role_options,
-    agent_role_provider_options,
-    default_ui_thinking_effort,
-    ui_model_options,
-    ui_provider_options,
-    ui_thinking_effort_options,
-)
+from .provider_registry import default_ui_thinking_effort
 from .session_store import SessionRecord, SessionStore
 from .settings import CliSettings, SettingsStore
 from kolega_code.agent.custom_agents import CustomAgentCatalog, discover_custom_agents
@@ -90,7 +73,9 @@ from .tui import agent_runtime as tui_agent_runtime
 from .tui import changes_screen as tui_changes
 from .tui import command_handlers as tui_command_handlers
 from .tui import prompt_flows as tui_prompt_flows
+from .tui import onboarding_screen as tui_onboarding
 from .tui import settings_panel as tui_settings_panel
+from .tui import settings_screen as tui_settings_screen
 from .tui import session_diff as tui_session_diff
 from .tui import status_dashboard as tui_status_dashboard
 from .tui import state as tui_state
@@ -153,6 +138,7 @@ class KolegaCodeApp(
         browser_visible: bool = False,
         check_for_updates: bool = False,
         show_logs: bool = False,
+        startup_config_error: Optional[str] = None,
     ) -> None:
         super().__init__()
         self.project_path = project_path
@@ -185,6 +171,7 @@ class KolegaCodeApp(
         self.sidebar_visible = True
         self.check_for_updates = check_for_updates
         self.show_logs = show_logs
+        self.startup_config_error = startup_config_error
         self.connection_manager = CliConnectionManager()
         self._hook_dispatcher: Optional[HookDispatcher] = None
         self._session_started = False
@@ -224,6 +211,9 @@ class KolegaCodeApp(
         # Dedup flag: one vision-mismatch system message per non-vision model
         # session. Reset in _switch_model so a new model gets a fresh warning.
         self._vision_warning_shown = False
+        self._settings_screen: Optional[tui_settings_screen.SettingsScreen] = None
+        self._onboarding_screen: Optional[tui_onboarding.OnboardingScreen] = None
+        self._onboarding_skipped = False
         self._permission_lock = asyncio.Lock()
         self._persistence_lock = asyncio.Lock()
         self._pending_model_selection: Optional[tui_state.PendingModelSelection] = None
@@ -335,168 +325,16 @@ class KolegaCodeApp(
                                     empty_source=messages.PLAN_EMPTY_MESSAGE,
                                 )
                     with TabPane("Settings", id="settings_pane"):
-                        with VerticalScroll(id="settings_form"):
-                            with Vertical(classes="settings-section", id="settings_model") as model_section:
-                                model_section.border_title = "Model"
-                                yield Label("Provider")
-                                yield Select(
-                                    ui_provider_options(),
-                                    id="provider_select",
-                                    allow_blank=False,
-                                    value=UI_DEFAULT_PROVIDER,
+                        with Vertical(id="settings_summary_panel"):
+                            with Vertical(classes="settings-section", id="settings_summary_section") as summary_section:
+                                summary_section.border_title = "Settings"
+                                yield Static("", id="settings_summary")
+                                yield Button(
+                                    "Open Settings →",
+                                    id="open_settings",
+                                    classes="quiet",
                                 )
-                                yield Label("Model")
-                                yield Select(
-                                    ui_model_options(UI_DEFAULT_PROVIDER),
-                                    id="model_select",
-                                    allow_blank=False,
-                                    value=UI_DEFAULT_MODEL,
-                                )
-                                yield Label("Thinking effort")
-                                yield Select(
-                                    ui_thinking_effort_options(UI_DEFAULT_PROVIDER, UI_DEFAULT_MODEL),
-                                    id="thinking_effort_select",
-                                    allow_blank=True,
-                                    value=default_ui_thinking_effort(UI_DEFAULT_PROVIDER, UI_DEFAULT_MODEL),
-                                )
-                                yield Label("API key")
-                                yield Input(password=True, id="api_key_input")
-                            with Vertical(classes="settings-section", id="settings_agent_models") as agents_section:
-                                agents_section.border_title = "Agent Models"
-                                yield Static(
-                                    "Give individual agents their own model. "
-                                    "Leave a role on “Default” to use the model above.",
-                                    classes="settings-hint",
-                                )
-                                for role_label, role_value in agent_role_options():
-                                    with Vertical(classes="agent-model-group"):
-                                        yield Static(role_label, classes="agent-model-role")
-                                        with Horizontal(classes="agent-model-field"):
-                                            yield Label("Provider", classes="agent-model-field-label")
-                                            yield Select(
-                                                agent_role_provider_options(),
-                                                id=f"am_provider_{role_value}",
-                                                allow_blank=False,
-                                                value=INHERIT_SENTINEL,
-                                            )
-                                        with Horizontal(classes="agent-model-field"):
-                                            yield Label("Model", classes="agent-model-field-label")
-                                            yield Select([], id=f"am_model_{role_value}", allow_blank=True, prompt="—")
-                                        with Horizontal(classes="agent-model-field"):
-                                            yield Label("Effort", classes="agent-model-field-label")
-                                            yield Select([], id=f"am_effort_{role_value}", allow_blank=True, prompt="—")
-                                        if role_value == "browser":
-                                            yield Static("", id="am_status_browser", classes="settings-hint")
-                            with Vertical(classes="settings-section", id="settings_web_search") as web_search_section:
-                                web_search_section.border_title = "Web Search"
-                                yield Static(
-                                    "Backend for the web_search tool. DuckDuckGo and Firecrawl work "
-                                    "without a key; add a key for higher rate limits.",
-                                    classes="settings-hint",
-                                )
-                                yield Label("Backend")
-                                yield Select(
-                                    available_backends(),
-                                    id="web_search_backend_select",
-                                    allow_blank=False,
-                                    value=DEFAULT_WEB_SEARCH_BACKEND,
-                                )
-                                yield Label("API key", id="web_search_api_key_label")
-                                yield Input(password=True, id="web_search_api_key_input")
-                                yield Label("SearXNG base URL", id="web_search_base_url_label")
-                                yield Input(
-                                    id="web_search_base_url_input",
-                                    placeholder="https://searxng.example.com",
-                                )
-                            with Vertical(classes="settings-section", id="settings_mcp") as mcp_section:
-                                mcp_section.border_title = "MCP Servers"
-                                yield Static("", id="mcp_status")
-                                yield Label("Server")
-                                yield Select(
-                                    [("New user server", tui_settings_panel.MCP_NEW_SERVER_VALUE)],
-                                    id="mcp_server_select",
-                                    allow_blank=False,
-                                    value=tui_settings_panel.MCP_NEW_SERVER_VALUE,
-                                )
-                                yield Static("", id="mcp_source_hint", classes="settings-hint")
-                                with Horizontal(classes="settings-button-row"):
-                                    yield Button("Reload MCP List", id="mcp_refresh")
-                                    yield Button("Trust Project MCP", id="mcp_trust_project")
-                                yield Label("Display name")
-                                yield Input(id="mcp_name_input", placeholder="GitHub MCP")
-                                yield Label("Transport")
-                                yield Select(
-                                    tui_settings_panel.MCP_TRANSPORT_OPTIONS,
-                                    id="mcp_transport_select",
-                                    allow_blank=False,
-                                    value="streamable_http",
-                                )
-                                yield Label("Enabled")
-                                yield Select(
-                                    tui_settings_panel.MCP_ENABLED_OPTIONS,
-                                    id="mcp_enabled_select",
-                                    allow_blank=False,
-                                    value="true",
-                                )
-                                yield Label("HTTP URL", id="mcp_url_label")
-                                yield Input(id="mcp_url_input", placeholder="https://example.com/mcp")
-                                yield Label("HTTP headers JSON", id="mcp_headers_label")
-                                yield Input(
-                                    id="mcp_headers_input",
-                                    placeholder='{"Authorization":"Bearer ..."}',
-                                    password=True,
-                                )
-                                yield Label("OAuth", id="mcp_oauth_label")
-                                yield Select(
-                                    [("Disabled", "false"), ("Enabled", "true")],
-                                    id="mcp_oauth_select",
-                                    allow_blank=False,
-                                    value="false",
-                                )
-                                yield Label("Command", id="mcp_command_label")
-                                yield Input(id="mcp_command_input", placeholder="npx")
-                                yield Label("Arguments", id="mcp_args_label")
-                                yield Input(id="mcp_args_input", placeholder="-y @vendor/mcp-server")
-                                yield Label("Environment JSON", id="mcp_env_label")
-                                yield Input(id="mcp_env_input", placeholder='{"TOKEN":"..."}', password=True)
-                                yield Label("Working directory", id="mcp_cwd_label")
-                                yield Input(id="mcp_cwd_input", placeholder="optional project-relative path")
-                                with Horizontal(classes="settings-button-row"):
-                                    yield Button("Save MCP Server", variant="primary", id="mcp_save_server")
-                                    yield Button("Verify", id="mcp_verify_server")
-                                with Horizontal(classes="settings-button-row"):
-                                    yield Button("Delete", variant="error", id="mcp_delete_server")
-                                    yield Button("Clear OAuth Tokens", id="mcp_clear_tokens")
-                                with Horizontal(classes="settings-button-row"):
-                                    yield Button("Enable", id="mcp_enable_server")
-                                    yield Button("Disable", id="mcp_disable_server")
-                            with Vertical(classes="settings-section", id="settings_lsp") as lsp_section:
-                                lsp_section.border_title = "Language Servers (LSP)"
-                                yield Static(
-                                    "Auto-detect project languages and run language servers for diagnostics. "
-                                    "Requires agent restart when toggled.",
-                                    classes="settings-hint",
-                                )
-                                yield Static("", id="lsp_status")
-                                yield Label("LSP")
-                                yield Select(
-                                    [("Enabled", "true"), ("Disabled", "false")],
-                                    id="lsp_enabled_select",
-                                    allow_blank=False,
-                                    value="true",
-                                )
-                            with Vertical(classes="settings-section", id="settings_appearance") as appearance_section:
-                                appearance_section.border_title = "Appearance"
-                                yield Label("Theme")
-                                yield Select(
-                                    [(name, name) for name in theme.available_themes()],
-                                    id="theme_select",
-                                    allow_blank=False,
-                                    value=theme.DEFAULT_THEME_NAME,
-                                )
-                            with Vertical(id="settings_actions"):
-                                yield Button("Save Settings", variant="primary", id="save_settings")
-                                yield Static("", id="settings_status")
+                                yield Static("", id="settings_summary_status")
         yield Footer()
 
     def _diagnostics_header(self) -> dict:
@@ -560,7 +398,7 @@ class KolegaCodeApp(
             self.theme = theme.textual_theme_name(self.settings.active_theme)
         except Exception:
             pass
-        self._populate_settings_controls()
+        self._update_settings_status()
         self._initialize_session_diff_tracker()
         self._refresh_status_dashboard()
         self._restore_plan_action_visibility()
@@ -584,6 +422,8 @@ class KolegaCodeApp(
             self._schedule_primary_focus_restore()
         else:
             await self._ensure_agent_from_settings()
+        if self.config is None and not self._onboarding_skipped:
+            self.call_after_refresh(self.action_open_onboarding)
 
     @property
     def _conversation(self) -> tui_widgets.ConversationView:
@@ -1094,8 +934,26 @@ class KolegaCodeApp(
         if event.button.id == "detach_btn":
             await self._command_detach("")
             return
+        if event.button.id == "open_settings":
+            if self.config is None:
+                self.action_open_onboarding()
+            else:
+                self.action_open_settings()
+            return
         if event.button.id == "save_settings":
             await self._save_settings_from_ui()
+            return
+        if event.button.id == "settings_chatgpt_login":
+            await self._settings_login_chatgpt()
+            return
+        if event.button.id == "settings_chatgpt_logout":
+            self._settings_logout_chatgpt()
+            return
+        if event.button.id == "settings_remove_api_key":
+            self._settings_remove_api_key()
+            return
+        if event.button.id == "settings_test_connection":
+            await self._test_settings_connection()
             return
         if event.button.id and event.button.id.startswith("mcp_"):
             if await self._handle_mcp_settings_button(event.button.id):
@@ -1157,6 +1015,25 @@ class KolegaCodeApp(
         self._set_sidebar_visible(not self.sidebar_visible)
         message = messages.SIDEBAR_SHOWN if self.sidebar_visible else messages.SIDEBAR_HIDDEN
         self._notify_user(message)
+
+    def action_open_settings(self, category: str = "model") -> None:
+        """Open the full-screen settings editor."""
+        if self._settings_screen is not None or self._onboarding_screen is not None:
+            return
+        if self._pending_approval is not None or self._pending_question is not None or self._plan_decision_active:
+            self._notify_user("Resolve the active prompt before opening Settings.", severity="warning")
+            return
+        screen = tui_settings_screen.SettingsScreen(self, category=category)
+        self._settings_screen = screen
+        self.push_screen(screen)
+
+    def action_open_onboarding(self) -> None:
+        """Open the independent connection wizard."""
+        if self.config is not None or self._onboarding_screen is not None or self._settings_screen is not None:
+            return
+        screen = tui_onboarding.OnboardingScreen(self)
+        self._onboarding_screen = screen
+        self.push_screen(screen)
 
     def action_open_sub_agent(self, key: Optional[str] = None) -> None:
         """Open the full-screen sub-agent inspector (mission control)."""

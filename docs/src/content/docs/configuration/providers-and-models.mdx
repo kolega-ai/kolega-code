@@ -70,7 +70,7 @@ models return `reasoning_content`; Kolega Code exposes `none`, `low`, `medium`,
 </Aside>
 
 <Aside type="note">
-The **Settings tab** in the TUI is generated from Kolega Code's model registry, so
+The full Settings screen in the TUI is generated from Kolega Code's model registry, so
 new entries in the supported model catalog appear there automatically. You can also
 select any supported provider/model through environment variables and CLI flags.
 See [Settings & API Keys](../settings-and-api-keys/).
@@ -104,7 +104,7 @@ match wins):
 1. **CLI flags** — e.g. `--provider`, `--model`, `--fast-model`, …
 2. **Environment variables** — e.g. `KOLEGA_CODE_PROVIDER`, `KOLEGA_CODE_MODEL`, the
    per-role variants, and a project-local `.env` file.
-3. **Saved Settings** — the active provider/model from the Settings tab.
+3. **Saved Settings** — the active provider/model from the Settings screen.
 </Steps>
 
 A configuration is only valid if a provider/model has been selected and every
@@ -145,8 +145,8 @@ agents and to the sub-agents they dispatch.
 Each role **inherits the active (long-context) model** unless you give it an override —
 so with nothing configured, behavior is unchanged.
 
-In the **Settings tab**, the **Agent Models** section (below the main Model section)
-has a provider/model/effort group per role. Leave a role on **Default** to inherit;
+In the full Settings screen, the **Agent Models** category lets you select a role
+and set its provider, model, and effort. Leave a role on **Default** to inherit;
 pick a provider, model, and thinking effort to override it.
 
 The **Browser** role requires a model whose catalog entry supports vision. It does

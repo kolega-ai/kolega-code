@@ -39,6 +39,7 @@ from ._app_test_utils import (
     extension_by_name,
     first_text_styles,
     install_fake_agents,
+    open_settings_screen,
     question_payload,
     renderable_text,
 )
@@ -179,48 +180,6 @@ async def test_textual_app_status_tab_is_default_dashboard(tmp_path: Path, monke
 
 
 @pytest.mark.asyncio
-async def test_settings_tab_grouped_into_model_and_appearance_sections(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    pytest.importorskip("textual")
-
-    from kolega_code.cli.app import KolegaCodeApp
-
-    install_fake_agents(monkeypatch)
-
-    project = tmp_path / "project"
-    project.mkdir()
-    config = build_test_config(project)
-    store = SessionStore(tmp_path / "state")
-    session = store.create(project, "code", config_summary(config))
-    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
-
-    async with app.run_test():
-        # Bordered, titled section.
-        assert app.query_one("#settings_model").border_title == "Model"
-        assert app.query_one("#settings_agent_models").border_title == "Agent Models"
-        assert app.query_one("#settings_appearance").border_title == "Appearance"
-        # Every control still resolves by id (wiring is unchanged).
-        for control_id in (
-            "#provider_select",
-            "#model_select",
-            "#thinking_effort_select",
-            "#api_key_input",
-            "#save_settings",
-            "#settings_status",
-            "#theme_select",
-        ):
-            app.query_one(control_id)
-        # Grouping: model controls in the Model card, theme in the Appearance card.
-        assert app.query_one("#settings_model #provider_select")
-        assert app.query_one("#settings_appearance #theme_select")
-        assert not list(app.query("#settings_model #theme_select"))
-        # Save is a form-level action, not nested inside the Model card.
-        assert app.query_one("#settings_actions #save_settings")
-        assert not list(app.query("#settings_model #save_settings"))
-
-
-@pytest.mark.asyncio
 async def test_web_search_settings_section_reveal_and_save(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
 
@@ -249,39 +208,40 @@ async def test_web_search_settings_section_reveal_and_save(tmp_path: Path, monke
     )
 
     async with app.run_test() as pilot:
-        assert app.query_one("#settings_web_search").border_title == "Web Search"
-        backend_select = app.query_one("#web_search_backend_select", Select)
+        screen = await open_settings_screen(app, pilot, "tools")
+        assert screen.query_one("#settings_web_search").border_title == "Web Search"
+        backend_select = screen.query_one("#web_search_backend_select", Select)
         # Keyless DuckDuckGo is the default; key + base-url fields are hidden.
         assert str(backend_select.value) == "duckduckgo"
-        assert app.query_one("#web_search_api_key_input").display is False
-        assert app.query_one("#web_search_base_url_input").display is False
+        assert screen.query_one("#web_search_api_key_input").display is False
+        assert screen.query_one("#web_search_base_url_input").display is False
 
         # A cloud backend reveals the key field (no NoMatches on the initial Changed).
         backend_select.value = "tavily"
         await pilot.pause()
-        assert app.query_one("#web_search_api_key_input").display is True
-        assert app.query_one("#web_search_base_url_input").display is False
+        assert screen.query_one("#web_search_api_key_input").display is True
+        assert screen.query_one("#web_search_base_url_input").display is False
 
         # SearXNG reveals the base-url field instead.
         backend_select.value = "searxng"
         await pilot.pause()
-        assert app.query_one("#web_search_base_url_input").display is True
-        assert app.query_one("#web_search_api_key_input").display is False
+        assert screen.query_one("#web_search_base_url_input").display is True
+        assert screen.query_one("#web_search_api_key_input").display is False
 
         # Firecrawl is keyless-capable but still offers an OPTIONAL key field.
         backend_select.value = "firecrawl"
         await pilot.pause()
-        assert app.query_one("#web_search_api_key_input").display is True
-        assert app.query_one("#web_search_base_url_input").display is False
-        assert "Optional" in app.query_one("#web_search_api_key_input", Input).placeholder
+        assert screen.query_one("#web_search_api_key_input").display is True
+        assert screen.query_one("#web_search_base_url_input").display is False
+        assert "Optional" in screen.query_one("#web_search_api_key_input", Input).placeholder
 
         # Configure Tavily with a key and save.
         backend_select.value = "tavily"
         await pilot.pause()
-        app.query_one("#web_search_api_key_input", Input).value = "tvly-secret"
+        screen.query_one("#web_search_api_key_input", Input).value = "tvly-secret"
         await app._save_settings_from_ui()
         # Secret is never echoed back into the field after saving.
-        assert app.query_one("#web_search_api_key_input", Input).value == ""
+        assert screen.query_one("#web_search_api_key_input", Input).value == ""
 
     stored = settings_store.load()
     assert stored.web_search_backend == "tavily"
@@ -318,25 +278,23 @@ async def test_textual_app_mounts_settings_without_api_key(
         assert app.agent is None
         composer = app.query_one("#composer", ChatComposer)
         assert composer.disabled is True
-        assert composer.placeholder == "Connect a model in Settings before chatting."
+        assert composer.placeholder == "Finish setup or connect a model in Settings before chatting."
         assert app.query_one("#events", TabbedContent).active == "status_pane"
         startup = app.conversation_entries[0].content
         assert "Not connected." in startup
-        assert "Choose a provider and add an API key or sign in from the Settings tab before chatting." in startup
-        assert "Press Ctrl+O to open the sidebar, then select Settings." in startup
+        assert "Complete onboarding, or open Settings, to choose a provider and connect a credential." in startup
+        assert "Press Ctrl+O, select Settings, then choose Continue Setup." in startup
         assert "Model: not configured" in startup
         assert "API key: not checked until a model is configured" in startup
         dashboard = str(app.query_one("#status_dashboard").render())
         assert "not connected" in dashboard
-        assert "Open Settings and connect a provider to start chatting." in dashboard
-        status = str(app.query_one("#settings_status").render())
+        assert "Complete setup or open Settings to connect a provider." in dashboard
+        status = str(app.query_one("#settings_summary_status").render())
         assert "Configuration incomplete" in status
         assert "No provider/model configured" in status
         await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, "fix this"))
-        assert composer.placeholder == "Connect a model in Settings before chatting."
-        assert "Open Settings and connect a provider to start chatting." in str(
-            app.query_one("#composer_hint").render()
-        )
+        assert composer.placeholder == "Finish setup or connect a model in Settings before chatting."
+        assert "Complete setup or open Settings to connect a provider." in str(app.query_one("#composer_hint").render())
         stored_settings = settings_store.load()
         assert stored_settings.active_provider is None
         assert stored_settings.active_model is None
@@ -373,7 +331,7 @@ async def test_textual_app_does_not_select_model_from_api_key_env(
         assert app.agent is None
         composer = app.query_one("#composer", ChatComposer)
         assert composer.disabled is True
-        assert composer.placeholder == "Connect a model in Settings before chatting."
+        assert composer.placeholder == "Finish setup or connect a model in Settings before chatting."
         startup = app.conversation_entries[0].content
         assert "Not connected." in startup
         assert "Model: not configured" in startup
@@ -493,7 +451,7 @@ async def test_textual_app_shows_process_env_model_override_warning(
         session=session,
     )
 
-    async with app.run_test():
+    async with app.run_test() as pilot:
         assert isinstance(app.agent, FakeCoderAgent)
         assert app.agent.kwargs["config"].long_context_config.provider == ModelProvider.OPENAI
         startup = app.conversation_entries[0].content
@@ -503,7 +461,8 @@ async def test_textual_app_shows_process_env_model_override_warning(
             f"{UI_DEFAULT_PROVIDER}/{UI_DEFAULT_MODEL}."
         ) in startup
         assert "API key: present via OPENAI_API_KEY" in startup
-        status = str(app.query_one("#settings_status", Static).render())
+        screen = await open_settings_screen(app, pilot)
+        status = str(screen.query_one("#settings_status", Static).render())
         assert "Environment/CLI override active" in status
 
 
@@ -572,9 +531,10 @@ async def test_textual_app_saves_settings_and_builds_agent(
         session=session,
     )
 
-    async with app.run_test():
+    async with app.run_test() as pilot:
         assert app.agent is None
-        app.query_one("#api_key_input", Input).value = "moonshot-key"
+        screen = await open_settings_screen(app, pilot)
+        screen.query_one("#api_key_input", Input).value = "moonshot-key"
         await app._save_settings_from_ui()
 
         assert isinstance(app.agent, FakeCoderAgent)
@@ -617,13 +577,14 @@ async def test_textual_app_saves_deepseek_settings_and_builds_agent(
         session=session,
     )
 
-    async with app.run_test():
+    async with app.run_test() as pilot:
         assert app.agent is None
-        app.query_one("#provider_select", Select).value = ModelProvider.DEEPSEEK.value
-        model_select = app.query_one("#model_select", Select)
+        screen = await open_settings_screen(app, pilot)
+        screen.query_one("#provider_select", Select).value = ModelProvider.DEEPSEEK.value
+        model_select = screen.query_one("#model_select", Select)
         model_select.set_options([("DeepSeek V4 Pro", DEEPSEEK_DEFAULT_MODEL)])
         model_select.value = DEEPSEEK_DEFAULT_MODEL
-        app.query_one("#api_key_input", Input).value = "deepseek-key"
+        screen.query_one("#api_key_input", Input).value = "deepseek-key"
         await app._save_settings_from_ui()
 
         assert isinstance(app.agent, FakeCoderAgent)
@@ -643,7 +604,7 @@ async def test_save_settings_logs_on_success_without_toast(tmp_path: Path, monke
 
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
 
-    async with app.run_test():
+    async with app.run_test() as pilot:
         logged: list[tuple[str, str]] = []
 
         def fake_notify(message, *, severity="information", title=None, **kwargs):
@@ -658,11 +619,12 @@ async def test_save_settings_logs_on_success_without_toast(tmp_path: Path, monke
         monkeypatch.setattr(app, "notify", fake_notify)
         monkeypatch.setattr(app, "_log_status", spy_log_status)
 
-        app.query_one("#api_key_input", Input).value = "moonshot-key"
+        screen = await open_settings_screen(app, pilot)
+        screen.query_one("#api_key_input", Input).value = "moonshot-key"
         await app._save_settings_from_ui()
 
         assert ("Settings saved.", "ok") in logged
-        status_text = str(app.query_one("#settings_status").render())
+        status_text = str(screen.query_one("#settings_status").render())
         assert "Active model:" in status_text
 
 
@@ -696,17 +658,18 @@ async def test_mcp_server_save_auto_generates_id_without_visible_id_field(tmp_pa
         session=session,
     )
 
-    async with app.run_test():
+    async with app.run_test() as pilot:
+        screen = await open_settings_screen(app, pilot, "mcp")
         with pytest.raises(NoMatches):
-            app.query_one("#mcp_server_id_input", Input)
+            screen.query_one("#mcp_server_id_input", Input)
 
-        app.query_one("#mcp_name_input", Input).value = "DeepWiki Docs"
-        app.query_one("#mcp_transport_select", Select).value = "streamable_http"
-        app.query_one("#mcp_url_input", Input).value = "https://mcp.deepwiki.com/mcp"
+        screen.query_one("#mcp_name_input", Input).value = "DeepWiki Docs"
+        screen.query_one("#mcp_transport_select", Select).value = "streamable_http"
+        screen.query_one("#mcp_url_input", Input).value = "https://mcp.deepwiki.com/mcp"
 
         await app._save_mcp_server_from_ui()
 
-        assert app.query_one("#mcp_server_select", Select).value == "deepwiki-docs"
+        assert screen.query_one("#mcp_server_select", Select).value == "deepwiki-docs"
         payload = json.loads(global_mcp_config_path(state_dir).read_text(encoding="utf-8"))
         assert len(payload["servers"]) == 1
         server = payload["servers"][0]
@@ -744,11 +707,12 @@ async def test_agent_models_section_saves_override_and_builds_agent(
     )
 
     async with app.run_test() as pilot:
-        app.query_one("#api_key_input", Input).value = "moonshot-key"
+        screen = await open_settings_screen(app, pilot)
+        screen.query_one("#api_key_input", Input).value = "moonshot-key"
         # Give the investigation role its own model (same provider keeps one API key).
-        app.query_one("#am_provider_investigation", Select).value = UI_DEFAULT_PROVIDER
+        screen.query_one("#am_provider_investigation", Select).value = UI_DEFAULT_PROVIDER
         await pilot.pause()  # let the provider->model cascade settle
-        app.query_one("#am_model_investigation", Select).value = MOONSHOT_K26_MODEL
+        screen.query_one("#am_model_investigation", Select).value = MOONSHOT_K26_MODEL
         await pilot.pause()
         await app._save_settings_from_ui()
 
@@ -796,12 +760,13 @@ async def test_agent_models_section_populates_and_clears_to_inherit(
     )
 
     async with app.run_test() as pilot:
-        # The saved override is reflected in the row on mount.
-        assert app.query_one("#am_provider_investigation", Select).value == UI_DEFAULT_PROVIDER
-        assert app.query_one("#am_model_investigation", Select).value == MOONSHOT_K26_MODEL
+        screen = await open_settings_screen(app, pilot, "agents")
+        # The saved override is reflected in the row when the editor opens.
+        assert screen.query_one("#am_provider_investigation", Select).value == UI_DEFAULT_PROVIDER
+        assert screen.query_one("#am_model_investigation", Select).value == MOONSHOT_K26_MODEL
 
         # Switching the row back to "Default" clears the override on save.
-        app.query_one("#am_provider_investigation", Select).value = INHERIT_SENTINEL
+        screen.query_one("#am_provider_investigation", Select).value = INHERIT_SENTINEL
         await pilot.pause()
         await app._save_settings_from_ui()
 
@@ -839,10 +804,11 @@ async def test_browser_model_settings_preserve_and_reject_nonvision_override(
         session=session,
     )
 
-    async with app.run_test():
-        assert app.query_one("#am_provider_browser", Select).value == ModelProvider.DEEPSEEK.value
-        assert app.query_one("#am_model_browser", Select).value == DEEPSEEK_DEFAULT_MODEL
-        assert "does not support vision" in str(app.query_one("#am_status_browser", Static).render())
+    async with app.run_test() as pilot:
+        screen = await open_settings_screen(app, pilot, "agents")
+        assert screen.query_one("#am_provider_browser", Select).value == ModelProvider.DEEPSEEK.value
+        assert screen.query_one("#am_model_browser", Select).value == DEEPSEEK_DEFAULT_MODEL
+        assert "does not support vision" in str(screen.query_one("#am_status_browser", Static).render())
 
         await app._save_settings_from_ui()
 
@@ -850,7 +816,7 @@ async def test_browser_model_settings_preserve_and_reject_nonvision_override(
         assert saved is not None
         assert saved["provider"] == ModelProvider.DEEPSEEK.value
         assert saved["model"] == DEEPSEEK_DEFAULT_MODEL
-        assert "does not support vision" in str(app.query_one("#settings_status", Static).render())
+        assert "does not support vision" in str(screen.query_one("#settings_status", Static).render())
 
 
 @pytest.mark.asyncio
@@ -886,9 +852,10 @@ async def test_browser_model_settings_allow_nonvision_inheritance_with_warning(
         session=session,
     )
 
-    async with app.run_test():
-        assert app.query_one("#am_provider_browser", Select).value == INHERIT_SENTINEL
-        hint = str(app.query_one("#am_status_browser", Static).render())
+    async with app.run_test() as pilot:
+        screen = await open_settings_screen(app, pilot, "agents")
+        assert screen.query_one("#am_provider_browser", Select).value == INHERIT_SENTINEL
+        hint = str(screen.query_one("#am_status_browser", Static).render())
         assert "Browser agent is unavailable" in hint
         assert "does not support vision" in hint
 

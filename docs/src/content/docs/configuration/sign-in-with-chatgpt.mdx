@@ -56,9 +56,9 @@ model line-up:
 | `gpt-5.4-mini` | GPT-5.4 Mini — fast and economical |
 | `gpt-5.3-codex-spark` | GPT-5.3 Codex Spark — ultra-fast |
 
-Switch between them with [`/model`](../../tui/slash-commands/) or from the
-**Settings** tab. Each model supports a reasoning **thinking effort** you can set
-with [`/effort`](../../tui/slash-commands/).
+Switch between them with [`/model`](../../tui/slash-commands/) or from **Model &
+Account** in the full Settings screen. Each model supports a reasoning **thinking
+effort** you can set with [`/effort`](../../tui/slash-commands/).
 
 ## Where credentials live
 
@@ -86,6 +86,9 @@ To remove your stored ChatGPT credentials:
 ```text
 /logout chatgpt
 ```
+
+You can also choose **Sign out** under **Settings → Model & Account**, then select
+**Apply Changes**. The token is not removed until the draft is applied.
 
 After signing out, switch to another provider — or sign in again with
 `/login chatgpt` — to keep working.

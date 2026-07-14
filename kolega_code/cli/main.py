@@ -563,6 +563,7 @@ def _run_tui(args: argparse.Namespace) -> int:
     if settings_changed:
         settings_store.save(settings)
     summary = {}
+    startup_config_error = None
     try:
         config = build_agent_config(
             project_path, _overrides_from_args(args), settings=settings, settings_store=settings_store
@@ -572,6 +573,7 @@ def _run_tui(args: argparse.Namespace) -> int:
         if str(exc) == DEPRECATED_THINKING_TOKENS_MESSAGE:
             raise
         config = None
+        startup_config_error = str(exc)
     session = _resolve_tui_session(
         store,
         project_path,
@@ -603,6 +605,7 @@ def _run_tui(args: argparse.Namespace) -> int:
         browser_visible=args.browser_visible,
         check_for_updates=True,
         show_logs=args.show_logs,
+        startup_config_error=startup_config_error,
     )
     try:
         app.run()
