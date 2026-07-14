@@ -10,7 +10,7 @@ from typing import Mapping, Optional
 from pydantic import ValidationError
 
 from kolega_code.auth.tokens import ChatGPTTokenManager, OAuthTokens
-from kolega_code.config import AgentConfig, AgentRole, ModelConfig, ModelProvider, RateLimitConfig
+from kolega_code.config import AgentConfig, AgentRole, EditProtocol, ModelConfig, ModelProvider, RateLimitConfig
 from kolega_code.llm.specs import MODEL_SPECS, get_model_specs, normalize_thinking_effort
 from kolega_code.mcp.config import load_mcp_config
 from kolega_code.services.lsp.config import LspConfig
@@ -78,6 +78,7 @@ class CliConfigOverrides:
     thinking_model: Optional[str] = None
     thinking_effort: Optional[str] = None
     environment: Optional[str] = None
+    edit_protocol: Optional[str] = None
 
 
 def load_cli_env(project_path: Path, env: Optional[Mapping[str, str]] = None) -> dict[str, str]:
@@ -476,6 +477,14 @@ def build_agent_config(
         raise CliConfigError("Not signed in to ChatGPT. Run /login chatgpt to sign in with your ChatGPT subscription.")
 
     try:
+        edit_protocol_value = overrides.edit_protocol or loaded_env.get("KOLEGA_CODE_EDIT_PROTOCOL")
+        try:
+            edit_protocol = EditProtocol(edit_protocol_value) if edit_protocol_value else None
+        except ValueError as exc:
+            valid = ", ".join(protocol.value for protocol in EditProtocol)
+            raise CliConfigError(
+                f"Unsupported edit protocol '{edit_protocol_value}'. Valid protocols: {valid}"
+            ) from exc
         config = AgentConfig(
             anthropic_api_key=_api_key_for_provider(ModelProvider.ANTHROPIC, loaded_env, settings),
             openai_api_key=_api_key_for_provider(ModelProvider.OPENAI, loaded_env, settings),
@@ -491,6 +500,7 @@ def build_agent_config(
             kimi_coding_api_key=_api_key_for_provider(ModelProvider.KIMI_CODING, loaded_env, settings),
             ollama_cloud_api_key=_api_key_for_provider(ModelProvider.OLLAMA_CLOUD, loaded_env, settings),
             environment=overrides.environment or loaded_env.get("KOLEGA_CODE_ENVIRONMENT", "development"),
+            edit_protocol=edit_protocol,
             long_context_config=_model_config(long_provider, long_model, thinking_effort=active_thinking_effort),
             fast_config=_model_config(fast_provider, fast_model),
             thinking_config=_model_config(thinking_provider, thinking_model, thinking_effort=think_hard_effort),
@@ -572,8 +582,11 @@ def config_summary(config: AgentConfig) -> dict[str, object]:
     mcp_config = getattr(config, "mcp_config", None)
     mcp_servers = getattr(mcp_config, "servers", {}) or {}
     mcp_enabled = [server for server in mcp_servers.values() if getattr(server, "enabled", False)]
+    edit_protocol, edit_protocol_source = config.resolve_edit_protocol_with_source(config.long_context_config)
     return {
         "environment": config.environment,
+        "edit_protocol": edit_protocol.value,
+        "edit_protocol_source": edit_protocol_source,
         "long_provider": config.long_context_config.provider.value,
         "long_model": config.long_context_config.model,
         "fast_provider": config.fast_config.provider.value,

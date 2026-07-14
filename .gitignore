@@ -16,3 +16,5 @@ coverage.xml
 htmlcov/
 docs/kolega_reskin_project/
 docs/agent-harness-frontier-roadmap.md
+.benchmark-runs/
+.corpus-builds/

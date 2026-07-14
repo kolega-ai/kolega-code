@@ -9,7 +9,7 @@ import time
 from base64 import b64decode
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, List, Optional, Tuple, cast
+from typing import Any, Callable, List, Optional, Tuple, cast
 
 from kolega_code.services.workspace_scan import ScanLimits, ScanOutcome, scan_workspace
 
@@ -148,7 +148,13 @@ class SearchCodebaseTool(BaseTool):
         return excluded
 
     async def search_codebase(
-        self, pattern: str, file_pattern: str = "*", case_sensitive: bool = False, literal: bool = False
+        self,
+        pattern: str,
+        file_pattern: str = "*",
+        case_sensitive: bool = False,
+        literal: bool = False,
+        *,
+        line_formatter: Optional[Callable[[int, str], str]] = None,
     ) -> str:
         """
         Search the codebase for lines matching a regular expression (grep/ripgrep).
@@ -207,7 +213,7 @@ class SearchCodebaseTool(BaseTool):
                         f"elapsed={run.elapsed_seconds:.2f}s)",
                         sender=self.caller.agent_name,
                     )
-                return self._format_results(run, pattern)
+                return self._format_results(run, pattern, line_formatter=line_formatter)
 
             # The Python tier never raises _EngineUnavailable, so this is unreachable.
             return f"No matches found for pattern '{pattern}'"
@@ -632,7 +638,13 @@ class SearchCodebaseTool(BaseTool):
     # Shared output formatting
     # ------------------------------------------------------------------
 
-    def _format_results(self, run: SearchRun, original_pattern: str) -> str:
+    def _format_results(
+        self,
+        run: SearchRun,
+        original_pattern: str,
+        *,
+        line_formatter: Optional[Callable[[int, str], str]] = None,
+    ) -> str:
         """Group records by file (first-seen order), apply the display caps, and
         render the markdown output. `(N matches)` is the matching-line count."""
         files: dict = {}
@@ -659,10 +671,18 @@ class SearchCodebaseTool(BaseTool):
             count = len(hits)
             shown = []
             for line_num, raw in hits[:_MAX_LINES_PER_FILE]:
-                content = raw.strip()
-                if len(content) > _MAX_LINE_LENGTH:
-                    content = content[:_MAX_LINE_LENGTH] + "..."
-                shown.append(f"  Line {line_num}: {content}")
+                if line_formatter is None:
+                    content = raw.strip()
+                    if len(content) > _MAX_LINE_LENGTH:
+                        content = content[:_MAX_LINE_LENGTH] + "..."
+                    rendered = f"Line {line_num}: {content}"
+                else:
+                    # Compute the anchor from the complete source line, then cap
+                    # only the rendered representation.
+                    rendered = line_formatter(line_num, raw)
+                    if len(rendered) > _MAX_LINE_LENGTH:
+                        rendered = rendered[:_MAX_LINE_LENGTH] + "..."
+                shown.append(f"  {rendered}")
             block = f"- **{path}** ({count} matches)\n" + "\n".join(shown)
             if count > _MAX_LINES_PER_FILE:
                 block += f"\n  ... and {count - _MAX_LINES_PER_FILE} more matches"

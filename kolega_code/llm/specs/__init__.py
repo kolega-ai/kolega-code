@@ -2,6 +2,7 @@ from .accessors import (
     default_thinking_effort,
     get_model_specs,
     get_thinking_effort_spec,
+    preferred_edit_protocol,
     supports_vision,
     thinking_effort_options,
 )
@@ -19,6 +20,7 @@ __all__ = [
     "get_model_specs",
     "supports_vision",
     "get_thinking_effort_spec",
+    "preferred_edit_protocol",
     "thinking_effort_options",
     "default_thinking_effort",
     "validate_thinking_effort",

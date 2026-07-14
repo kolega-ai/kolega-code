@@ -18,7 +18,7 @@ from .common import LogMixin
 from .compression import CompactionResult, HistoryCompressor
 from .errors import MaxAgentIterationsExceeded
 from .goal import GoalVerdict, build_goal_verifier_instruction, parse_goal_verdict
-from kolega_code.config import AgentConfig, ModelProvider
+from kolega_code.config import AgentConfig, EditProtocol, ModelProvider
 from kolega_code.events import AgentConnectionManager
 from .context import AgentContext, AgentServices, Telemetry, WorkspaceInfo
 from .conversation import Conversation, adapt_history_for_provider
@@ -244,6 +244,10 @@ class BaseAgent(LogMixin):
         # The model this agent runs its main loop on: the per-role override when one
         # is configured for this agent_name, otherwise the global long-context model.
         self.primary_model_config = self.config.model_config_for_agent(self.agent_name)
+        resolved_edit_protocol = self.config.resolve_edit_protocol(self.primary_model_config)
+        self.edit_protocol = (
+            resolved_edit_protocol if isinstance(resolved_edit_protocol, EditProtocol) else EditProtocol.SEARCH_REPLACE
+        )
         self.filesystem = context.services.filesystem
         self.terminal_manager = context.services.terminal_manager
         self.browser_manager = context.services.browser_manager
@@ -422,8 +426,26 @@ class BaseAgent(LogMixin):
             target_provider=str(provider),
             target_model=self.primary_model_config.model,
             supports_vision=self.supports_vision,
+            target_edit_protocol=self.edit_protocol,
         )
         return MessageHistory(fixed)
+
+    def _normalize_freeform_tool_calls(self, message: Message) -> None:
+        """Normalize JSON fallback envelopes before calls enter stored history."""
+        if not message.tool_calls or self.tool_collection is None:
+            return
+        registry = self.tool_collection.registry()
+        for call in message.tool_calls:
+            if call.name not in registry:
+                continue
+            definition = registry.get(call.name).definition
+            if definition.input_kind != "freeform":
+                continue
+            if isinstance(call.input, dict):
+                raw = call.input.get("input")
+                if isinstance(raw, str):
+                    call.input = raw
+            call.input_kind = "freeform"
 
     def mark_cache_checkpoint(self) -> None:
         """
@@ -837,7 +859,13 @@ class BaseAgent(LogMixin):
     async def execute_single_tool(self, tool_use_block: ToolCall) -> ToolResult:
         """Execute a single tool and return its result with metadata"""
         tool_name = tool_use_block.name
-        inputs = tool_use_block.input
+        inputs = (
+            {"input": tool_use_block.input}
+            if tool_use_block.input_kind == "freeform" and isinstance(tool_use_block.input, str)
+            else tool_use_block.input
+        )
+        if not isinstance(inputs, dict):
+            inputs = {"input": str(inputs)}
         provider_tool_call_id = tool_use_block.id
         tool_execution_id = getattr(tool_use_block, "execution_id", provider_tool_call_id)
 
@@ -1049,7 +1077,9 @@ class BaseAgent(LogMixin):
         """
         # If only one tool call, just execute it directly
         if len(tool_use_blocks) == 1:
-            return [await self.execute_single_tool(tool_use_blocks[0])]
+            result = await self.execute_single_tool(tool_use_blocks[0])
+            result.input_kind = tool_use_blocks[0].input_kind
+            return [result]
 
         assert self.tool_collection is not None, "tool_collection must be initialized before processing tool calls"
         # A batch runs concurrently only when every tool in it is marked
@@ -1069,7 +1099,9 @@ class BaseAgent(LogMixin):
 
             async def run_limited(block: ToolCall) -> ToolResult:
                 async with semaphore:
-                    return await self.execute_single_tool(block)
+                    result = await self.execute_single_tool(block)
+                    result.input_kind = block.input_kind
+                    return result
 
             # Wait for all tasks to complete; gather preserves input order so
             # tool results stay aligned with their tool calls in history.
@@ -1084,6 +1116,7 @@ class BaseAgent(LogMixin):
             results = []
             for block in tool_use_blocks:
                 result = await self.execute_single_tool(block)
+                result.input_kind = block.input_kind
                 results.append(result)
             return results
 
@@ -1628,6 +1661,8 @@ class BaseAgent(LogMixin):
                             await self.on_tool_use_start(event.tool_call_delta)
 
                 assistant_message = await stream.get_final_message()
+                self._normalize_freeform_tool_calls(assistant_message)
+                assistant_message.usage_metadata["edit_protocol"] = self.edit_protocol.value
                 stop_reason = assistant_message.stop_reason
                 await self.emitter.llm_request(
                     "end",
@@ -1673,6 +1708,7 @@ class BaseAgent(LogMixin):
                                 content=f"Failed to process tool calls: {str(ex)}",
                                 name=tool_call.name,
                                 is_error=True,
+                                input_kind=tool_call.input_kind,
                             )
                             for tool_call in assistant_message.tool_calls
                         ]

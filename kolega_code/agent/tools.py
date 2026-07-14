@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, List, Optional, Union
 
 from .common import LogMixin
-from kolega_code.config import AgentConfig
+from kolega_code.config import AgentConfig, EditProtocol
 from kolega_code.llm.models import ImageBlock, ToolDefinition
 from kolega_code.tools import Tool, ToolRegistry, tool_definition_from_callable
 from kolega_code.services.file_system import FileSystem, LocalFileSystem
@@ -15,7 +15,9 @@ from kolega_code.services.browser import PlaywrightBrowserManager
 from .tool_backend.agent_tool import AgentTool
 from .tool_backend.browser_tool import BROWSER_TOOL_SCHEMAS, BrowserTool
 from .tool_backend.edit_tool import EditTool
+from .tool_backend.codex_patch import CODEX_APPLY_PATCH_GRAMMAR
 from .tool_backend.glob_tool import GlobTool
+from .tool_backend.hashline_v2 import format_hash_lines, format_line_tag
 from .tool_backend.list_directory_tool import ListDirectoryTool
 from .tool_backend.memory_tool import MemoryTool
 from .tool_backend.read_file_tool import ReadFileTool
@@ -27,6 +29,7 @@ from .tool_backend.web_search_tool import WebSearchTool
 from .tool_backend.terminal_tool import TerminalTool
 from .tool_backend.think_hard_tool import ThinkHardTool
 from .tool_backend.workflow_tool import RUN_WORKFLOW_INPUT_SCHEMA, WorkflowTool
+from .edit_protocols import EDIT_HANDLER_NAMES, edit_protocol_spec
 
 # Import additional tools for consolidated functionality
 from .tool_backend.build_tool import BuildTool
@@ -204,6 +207,106 @@ _RESOLVE_INPUT_SCHEMA: dict[str, Any] = {
         },
     },
     "required": ["action_id", "decision"],
+}
+
+_HASHLINE_REPLACE_CONTENT_SCHEMA: dict[str, Any] = {
+    "anyOf": [
+        {"type": "string"},
+        {"type": "array", "items": {"type": "string"}},
+        {"type": "null"},
+    ],
+    "description": (
+        "Replacement file text as one string, an array of complete lines, or null to delete the line(s). "
+        "Never include a display-only LINE#ID: prefix in this content."
+    ),
+}
+_HASHLINE_INSERT_CONTENT_SCHEMA: dict[str, Any] = {
+    "anyOf": [
+        {"type": "string", "minLength": 1},
+        {"type": "array", "items": {"type": "string"}, "minItems": 1},
+    ],
+    "description": (
+        "Non-empty inserted file text as one string or an array of complete lines. "
+        "Never include a display-only LINE#ID: prefix in this content."
+    ),
+}
+
+
+def _hashline_operation_schema(
+    op: str,
+    properties: dict[str, Any],
+    required: list[str],
+) -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {"op": {"type": "string", "enum": [op]}, **properties},
+        "required": ["op", *required],
+        "additionalProperties": False,
+    }
+
+
+_HASHLINE_V2_INPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "path": {"type": "string", "description": "Project-relative path to edit."},
+        "edits": {
+            "type": "array",
+            "description": (
+                "All operations for this file, validated against one pre-edit snapshot. In displayed "
+                "LINE#ID:CONTENT rows, pass LINE#ID to anchor fields and only CONTENT to content fields."
+            ),
+            "items": {
+                "anyOf": [
+                    _hashline_operation_schema(
+                        "set",
+                        {
+                            "tag": {"type": "string", "description": "Target LINE#ID."},
+                            "content": _HASHLINE_REPLACE_CONTENT_SCHEMA,
+                        },
+                        ["tag", "content"],
+                    ),
+                    _hashline_operation_schema(
+                        "replace",
+                        {
+                            "first": {"type": "string", "description": "First LINE#ID, inclusive."},
+                            "last": {"type": "string", "description": "Last LINE#ID, inclusive."},
+                            "content": _HASHLINE_REPLACE_CONTENT_SCHEMA,
+                        },
+                        ["first", "last", "content"],
+                    ),
+                    _hashline_operation_schema(
+                        "append",
+                        {
+                            "after": {"type": "string", "description": "Optional LINE#ID to insert after."},
+                            "content": _HASHLINE_INSERT_CONTENT_SCHEMA,
+                        },
+                        ["content"],
+                    ),
+                    _hashline_operation_schema(
+                        "prepend",
+                        {
+                            "before": {"type": "string", "description": "Optional LINE#ID to insert before."},
+                            "content": _HASHLINE_INSERT_CONTENT_SCHEMA,
+                        },
+                        ["content"],
+                    ),
+                    _hashline_operation_schema(
+                        "insert",
+                        {
+                            "after": {"type": "string", "description": "Optional preceding LINE#ID."},
+                            "before": {"type": "string", "description": "Optional following LINE#ID."},
+                            "content": _HASHLINE_INSERT_CONTENT_SCHEMA,
+                        },
+                        ["content"],
+                    ),
+                ]
+            },
+        },
+        "delete": {"type": "boolean", "description": "Delete path; requires edits=[] and no rename."},
+        "rename": {"type": "string", "description": "Move the edited result to this project-relative path."},
+    },
+    "required": ["path", "edits"],
+    "additionalProperties": False,
 }
 
 
@@ -434,6 +537,19 @@ class ToolCollection(LogMixin):
         self.connection_manager = connection_manager
         self.config = config
         self.caller = caller
+        caller_protocol = getattr(caller, "edit_protocol", None)
+        if isinstance(caller_protocol, EditProtocol):
+            self.edit_protocol = caller_protocol
+        else:
+            model_config = getattr(caller, "primary_model_config", None)
+            if not hasattr(model_config, "provider") or not hasattr(model_config, "model"):
+                model_config = config.long_context_config
+            resolved_edit_protocol = config.resolve_edit_protocol(model_config)
+            self.edit_protocol = (
+                resolved_edit_protocol
+                if isinstance(resolved_edit_protocol, EditProtocol)
+                else EditProtocol.SEARCH_REPLACE
+            )
         self.langfuse_client = langfuse_client
         self.tool_extensions = tool_extensions or []
         self.extension_callbacks = {}
@@ -1298,6 +1414,100 @@ class ToolCollection(LogMixin):
         """
         return await self.edit_tool.edit(path, block)
 
+    async def claude_edit(
+        self,
+        file_path: str,
+        old_string: str,
+        new_string: str,
+        replace_all: bool = False,
+    ) -> str:
+        """Perform an exact string replacement in a file.
+
+        Read the file before editing it. ``old_string`` must match exactly and
+        be unique unless ``replace_all`` is true.
+
+        Args:
+            file_path: Absolute or project-relative path to the file to modify.
+            old_string: Exact text to replace.
+            new_string: Replacement text, which must differ from old_string.
+            replace_all: Replace every exact occurrence instead of requiring a unique match.
+
+        Returns:
+            A short summary of the edit.
+        """
+
+        return await self.edit_tool.claude_edit(file_path, old_string, new_string, replace_all)
+
+    async def apply_patch(self, input: str) -> str:
+        """Use the `apply_patch` tool to edit files.
+
+        This is a FREEFORM tool, so do not wrap the patch in JSON. Supply one
+        complete patch beginning with `*** Begin Patch` and ending with
+        `*** End Patch`. A patch may add, update, move, or delete multiple files.
+
+        Args:
+            input: The raw Codex apply_patch payload.
+
+        Returns:
+            A summary of added, modified, moved, and deleted files.
+        """
+        return await self.edit_tool.apply_patch(input)
+
+    async def hashline_edit(
+        self,
+        path: str,
+        edits: list[dict[str, object]],
+        delete: bool = False,
+        rename: Optional[str] = None,
+    ) -> str:
+        """Apply precise edits using Hashline v2 ``LINE#ID`` anchors.
+
+        Read the target range immediately before editing and copy its anchors
+        exactly. Every operation is validated against the same pre-edit file
+        snapshot and applied bottom-up. Re-read the file before a later edit
+        call because successful edits change its anchors.
+
+        Read results render each source line as ``LINE#ID:CONTENT``. The
+        ``LINE#ID:`` prefix is display-only metadata, not part of the file. For
+        example, given ``1#BM:MAX_RETRIES = 3``, use ``1#BM`` as the anchor and
+        ``MAX_RETRIES = 5`` as replacement content. Never copy ``1#BM:`` or any
+        other anchor prefix into ``content``.
+
+        Use ``set`` for one line, ``replace`` for an inclusive range,
+        ``append``/``prepend`` for insertion after/before an optional anchor,
+        and ``insert`` for one- or two-sided anchored insertion. ``content`` may
+        be a string or an array of complete lines; null deletes set/replace
+        targets. Use ``delete=true`` with an empty edits array to delete a file,
+        or ``rename`` to move the edited result.
+
+        Args:
+            path: Project-relative file path.
+            edits: Hashline v2 operations for this file.
+            delete: Delete the file; cannot be combined with edits or rename.
+            rename: Optional project-relative destination path.
+
+        Returns:
+            A short summary, or fresh tagged context when an anchor is stale.
+        """
+
+        return await self.edit_tool.hashline_edit(path, edits, delete, rename)
+
+    async def hashline_write(self, path: str, content: str) -> str:
+        """Create or replace a complete file while using Hashline v2.
+
+        Prefer the anchored `edit` tool for changes to an existing file. Use
+        this tool for deliberate complete-file writes.
+
+        Args:
+            path: Project-relative path to create or replace.
+            content: Complete file content.
+
+        Returns:
+            A short summary of the write.
+        """
+
+        return await self.edit_tool.hashline_write(path, content)
+
     async def multi_edit(self, path: str, blocks: str) -> str:
         """
         Edit a file using one or more search and replace blocks.
@@ -1338,6 +1548,21 @@ class ToolCollection(LogMixin):
             PermissionError: If the file cannot be written to
         """
         return await self.edit_tool.multi_edit(path, blocks)
+
+    async def claude_write(self, file_path: str, content: str) -> str:
+        """Write a file, overwriting it if it already exists.
+
+        Existing files must be read first. Prefer edit for partial changes.
+
+        Args:
+            file_path: Absolute or project-relative path to create or overwrite.
+            content: Complete content to write to the file.
+
+        Returns:
+            A short summary of the write.
+        """
+
+        return await self.edit_tool.claude_write(file_path, content)
 
     async def list_directory(self, path: str = "") -> str:
         """
@@ -1469,7 +1694,14 @@ class ToolCollection(LogMixin):
         Raises:
             FileNotFoundError: If the file doesn't exist
         """
-        return await self.read_file_tool.read_entire_file(path)
+        formatter = format_hash_lines if self._hashline_output_enabled() else None
+        if formatter is None:
+            result = await self.read_file_tool.read_entire_file(path)
+        else:
+            result = await self.read_file_tool.read_entire_file(path, line_formatter=formatter)
+        if self.edit_protocol == EditProtocol.CLAUDE_CODE:
+            self.edit_tool.observe_read(path)
+        return result
 
     async def read_file_section(self, path: str, start_line: int, end_line: int) -> str:
         """
@@ -1487,7 +1719,19 @@ class ToolCollection(LogMixin):
             FileNotFoundError: If the file doesn't exist
             ValueError: If start_line or end_line are invalid
         """
-        return await self.read_file_tool.read_file_section(path, start_line, end_line)
+        formatter = format_hash_lines if self._hashline_output_enabled() else None
+        if formatter is None:
+            result = await self.read_file_tool.read_file_section(path, start_line, end_line)
+        else:
+            result = await self.read_file_tool.read_file_section(
+                path,
+                start_line,
+                end_line,
+                line_formatter=formatter,
+            )
+        if self.edit_protocol == EditProtocol.CLAUDE_CODE:
+            self.edit_tool.observe_read(path)
+        return result
 
     async def write(self, path: str, content: str) -> str:
         """
@@ -1612,9 +1856,24 @@ class ToolCollection(LogMixin):
         Raises:
             Exception: If any error occurs during the search operation
         """
-        return await self.search_codebase_tool.search_codebase(
-            pattern, file_pattern=file_pattern, case_sensitive=case_sensitive, literal=literal
-        )
+        formatter: Callable[[int, str], str] | None = None
+        if self._hashline_output_enabled():
+
+            def hashline_formatter(line_number: int, content: str) -> str:
+                if line_number == 1 and content.startswith("\ufeff"):
+                    content = content[1:]
+                return f"{format_line_tag(line_number, content)}:{content}"
+
+            formatter = hashline_formatter
+
+        kwargs = {
+            "file_pattern": file_pattern,
+            "case_sensitive": case_sensitive,
+            "literal": literal,
+        }
+        if formatter is not None:
+            kwargs["line_formatter"] = formatter
+        return await self.search_codebase_tool.search_codebase(pattern, **kwargs)
 
     async def web_fetch(self, url: str, instruction: str) -> str:
         """
@@ -1807,6 +2066,18 @@ class ToolCollection(LogMixin):
     def _tool_definition_from_callable(self, method_name: str, method: Callable[..., Any]) -> ToolDefinition:
         """Build a provider-agnostic tool definition from a Python callable."""
         definition = tool_definition_from_callable(method_name, method)
+        if method_name == "apply_patch":
+            definition.description = (
+                "Use the `apply_patch` tool to edit files. This is a FREEFORM tool, so do not wrap the patch in JSON."
+            )
+            definition.input_kind = "freeform"
+            definition.freeform_format = {
+                "type": "grammar",
+                "syntax": "lark",
+                "definition": CODEX_APPLY_PATCH_GRAMMAR,
+            }
+        if method_name == "edit" and self.edit_protocol == EditProtocol.HASHLINE_V2:
+            definition.input_schema = _HASHLINE_V2_INPUT_SCHEMA
         if method_name == "dispatch_custom_agent":
             catalog = getattr(self.caller, "custom_agent_catalog", None)
             if catalog is not None and catalog.has_agents():
@@ -1830,6 +2101,15 @@ class ToolCollection(LogMixin):
                     "required": ["agent", "task"],
                 }
         return definition
+
+    def _hashline_output_enabled(self) -> bool:
+        """Whether this collection actually exposes the Hashline edit binding."""
+
+        return (
+            self.edit_protocol == EditProtocol.HASHLINE_V2
+            and "edit" not in self.tool_exclusions
+            and self._should_include_tool("edit")
+        )
 
     def _groups_for(self, method_name: str) -> frozenset:
         """Group tags for a tool, from the core group lists plus extension groups."""
@@ -1859,9 +2139,16 @@ class ToolCollection(LogMixin):
         for method_name, method in inspect.getmembers(self, predicate=inspect.ismethod):
             if method_name.startswith("_") or method_name in self.tool_exclusions:
                 continue
+            if method_name in EDIT_HANDLER_NAMES:
+                continue
             if not self._should_include_tool(method_name):
                 continue
             registry.add(self._build_tool(method_name, method))
+
+        for binding in edit_protocol_spec(self.edit_protocol).tools:
+            if binding.name in self.tool_exclusions or not self._should_include_tool(binding.name):
+                continue
+            registry.add(self._build_tool(binding.name, getattr(self, binding.handler_name)))
 
         for method_name, method in self.extension_callbacks.items():
             if method_name in registry or method_name in self.tool_exclusions:

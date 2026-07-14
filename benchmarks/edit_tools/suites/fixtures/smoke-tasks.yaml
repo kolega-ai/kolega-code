@@ -1,0 +1,234 @@
+- id: python-literal
+  prompt: Set `MAX_RETRIES` to 5 in `src/config.py`. Do not change `TIMEOUT`.
+  before_files:
+    src/config.py: |
+      MAX_RETRIES = 3
+      TIMEOUT = 30
+  expected_files:
+    src/config.py: |
+      MAX_RETRIES = 5
+      TIMEOUT = 30
+  tags: [curated, single-file, replace]
+  required_capabilities: [update]
+  language: python
+  family: localized-replacement
+  difficulty: easy
+  shape: micro
+
+- id: python-insert-function
+  prompt: Add `is_even(value)` above `double` in `math_utils.py`; it must return `value % 2 == 0`.
+  before_files:
+    math_utils.py: |
+      def double(value):
+          return value * 2
+  expected_files:
+    math_utils.py: |
+      def is_even(value):
+          return value % 2 == 0
+
+      def double(value):
+          return value * 2
+  tags: [curated, single-file, insert]
+  required_capabilities: [update]
+  language: python
+  family: block-insertion
+  difficulty: medium
+  shape: micro
+  oracle:
+    exact_tree: false
+    functional_assertions:
+      - {kind: contains, path: math_utils.py, value: 'def is_even(value):'}
+      - {kind: contains, path: math_utils.py, value: 'return value % 2 == 0'}
+    instruction_assertions:
+      - {kind: contains, path: math_utils.py, value: 'return value * 2'}
+
+- id: typescript-remove-export
+  prompt: Remove only the `legacyMode` export from `src/flags.ts`.
+  before_files:
+    src/flags.ts: |
+      export const darkMode = true;
+      export const legacyMode = false;
+      export const tracing = true;
+  expected_files:
+    src/flags.ts: |
+      export const darkMode = true;
+      export const tracing = true;
+  tags: [curated, single-file, remove]
+  required_capabilities: [update]
+  language: typescript
+  family: targeted-removal
+  difficulty: easy
+  shape: micro
+
+- id: create-changelog
+  prompt: Create `CHANGELOG.md` containing exactly an `Unreleased` H1, a blank line, and `- Initial benchmark.`
+  before_files:
+    README.md: |
+      # Demo
+  expected_files:
+    README.md: |
+      # Demo
+    CHANGELOG.md: |
+      # Unreleased
+
+      - Initial benchmark.
+  tags: [curated, create-file]
+  required_capabilities: [create]
+  language: markdown
+  family: nested-file-creation
+  difficulty: easy
+  shape: micro
+
+- id: rust-two-constants
+  prompt: In `src/limits.rs`, set `SOFT_LIMIT` to 80 and `HARD_LIMIT` to 100, leaving the comment unchanged.
+  before_files:
+    src/limits.rs: |
+      // Request limits
+      pub const SOFT_LIMIT: u16 = 50;
+      pub const HARD_LIMIT: u16 = 75;
+  expected_files:
+    src/limits.rs: |
+      // Request limits
+      pub const SOFT_LIMIT: u16 = 80;
+      pub const HARD_LIMIT: u16 = 100;
+  tags: [curated, single-file, multi-hunk]
+  required_capabilities: [update]
+  language: rust
+  family: same-file-multi-hunk
+  difficulty: medium
+  shape: micro
+
+- id: coordinated-version
+  prompt: Update the version to `2.4.0` in both `package.json` and `src/version.ts`.
+  before_files:
+    package.json: |
+      {"name":"demo","version":"1.0.0"}
+    src/version.ts: |
+      export const VERSION = "1.0.0";
+  expected_files:
+    package.json: |
+      {"name":"demo","version":"2.4.0"}
+    src/version.ts: |
+      export const VERSION = "2.4.0";
+  tags: [curated, multi-file, replace]
+  required_capabilities: [update, multi_file]
+  language: typescript
+  family: coordinated-multi-file
+  difficulty: medium
+  shape: micro
+
+- id: ambiguous-second-handler
+  prompt: Change only `secondary()` so it returns `"ready"`; leave `primary()` returning `"pending"`.
+  before_files:
+    handlers.py: |
+      def primary():
+          return "pending"
+
+      def secondary():
+          return "pending"
+  expected_files:
+    handlers.py: |
+      def primary():
+          return "pending"
+
+      def secondary():
+          return "ready"
+  tags: [curated, ambiguous-context, replace]
+  required_capabilities: [update]
+  language: python
+  family: ambiguous-context
+  difficulty: hard
+  shape: micro
+
+- id: unicode-message
+  prompt: In `messages.txt`, replace `It’s queued.` with `It’s ready.` and preserve the curly apostrophe.
+  before_files:
+    messages.txt: |
+      Status
+      It’s queued.
+      End
+  expected_files:
+    messages.txt: |
+      Status
+      It’s ready.
+      End
+  tags: [curated, unicode, replace]
+  required_capabilities: [update]
+  language: text
+  family: localized-replacement
+  difficulty: medium
+  shape: micro
+
+- id: crlf-preservation
+  prompt: In `windows.ini`, change `enabled=false` to `enabled=true` while preserving CRLF line endings.
+  before_files:
+    windows.ini: {text: "[feature]\r\nenabled=false\r\n"}
+  expected_files:
+    windows.ini: {text: "[feature]\r\nenabled=true\r\n"}
+  tags: [curated, crlf, replace]
+  required_capabilities: [update]
+  language: text
+  family: localized-replacement
+  difficulty: hard
+  shape: micro
+  oracle:
+    instruction_assertions:
+      - {kind: line_endings, path: windows.ini, value: crlf}
+
+- id: json-timeout
+  prompt: Change only `timeout_seconds` to 45 in `config.json` and preserve the existing compact formatting.
+  before_files:
+    config.json: |
+      {"timeout_seconds":30,"retries":3}
+  expected_files:
+    config.json: |
+      {"timeout_seconds":45,"retries":3}
+  tags: [curated, json, replace]
+  required_capabilities: [update]
+  language: structured
+  family: structured-data
+  difficulty: medium
+  shape: micro
+  oracle:
+    instruction_assertions:
+      - {kind: json_value, path: config.json, key_path: [timeout_seconds], value: 45}
+
+- id: markdown-append
+  prompt: Append a `## Usage` section and the sentence `Run the demo.` to `README.md`, separated from the existing text by one blank line.
+  before_files:
+    README.md: |
+      # Demo
+
+      A small project.
+  expected_files:
+    README.md: |
+      # Demo
+
+      A small project.
+
+      ## Usage
+
+      Run the demo.
+  tags: [curated, markdown, insert]
+  required_capabilities: [update]
+  language: markdown
+  family: block-insertion
+  difficulty: medium
+  shape: micro
+
+- id: create-nested-module
+  prompt: Create `src/generated/constants.py` containing exactly `ANSWER = 42` followed by a newline. Do not alter `src/main.py`.
+  before_files:
+    src/main.py: |
+      print("hello")
+  expected_files:
+    src/main.py: |
+      print("hello")
+    src/generated/constants.py: |
+      ANSWER = 42
+  tags: [curated, create-file, nested-path]
+  required_capabilities: [create]
+  language: python
+  family: nested-file-creation
+  difficulty: medium
+  shape: micro

@@ -140,18 +140,30 @@ def to_responses_input(messages: MessageHistory) -> List[Dict[str, Any]]:
                 # reasoning block first in the assistant message.
                 items.append(block.to_responses_item())
             elif isinstance(block, ToolCall):
-                items.append(
-                    {
-                        "type": "function_call",
-                        "call_id": block.id,
-                        "name": block.name,
-                        "arguments": block.input if isinstance(block.input, str) else json.dumps(block.input),
-                    }
-                )
+                if block.input_kind == "freeform":
+                    items.append(
+                        {
+                            "type": "custom_tool_call",
+                            "call_id": block.id,
+                            "name": block.name,
+                            "input": str(block.input),
+                        }
+                    )
+                else:
+                    items.append(
+                        {
+                            "type": "function_call",
+                            "call_id": block.id,
+                            "name": block.name,
+                            "arguments": block.input if isinstance(block.input, str) else json.dumps(block.input),
+                        }
+                    )
             elif isinstance(block, ToolResult):
                 items.append(
                     {
-                        "type": "function_call_output",
+                        "type": (
+                            "custom_tool_call_output" if block.input_kind == "freeform" else "function_call_output"
+                        ),
                         "call_id": block.tool_use_id,
                         "output": _tool_result_text(block),
                     }
@@ -191,6 +203,16 @@ def responses_tools(params: Optional[GenerationParams]) -> Optional[List[Dict[st
         return None
     tools: List[Dict[str, Any]] = []
     for definition in params.tools:
+        if definition.input_kind == "freeform":
+            tool: Dict[str, Any] = {
+                "type": "custom",
+                "name": definition.name,
+                "description": definition.description,
+            }
+            if definition.freeform_format:
+                tool["format"] = definition.freeform_format
+            tools.append(tool)
+            continue
         chat_shape = definition.to_openai()
         fn = chat_shape.get("function", chat_shape)
         tools.append(
@@ -237,13 +259,19 @@ def _blocks_from_response(response: Any, tool_execution_ids: ToolExecutionIdRegi
                 text = getattr(part, "text", None)
                 if getattr(part, "type", None) in ("output_text", "text") and text:
                     content_blocks.append(TextBlock(text=text))
-        elif item_type == "function_call":
+        elif item_type in ("function_call", "custom_tool_call"):
             call_id = getattr(item, "call_id", None) or getattr(item, "id", None) or ""
+            is_freeform = item_type == "custom_tool_call"
             tool_call = ToolCall(
                 id=call_id,
                 name=getattr(item, "name", "") or "",
-                input=safe_parse_tool_arguments(getattr(item, "arguments", "") or ""),
+                input=(
+                    getattr(item, "input", "") or ""
+                    if is_freeform
+                    else safe_parse_tool_arguments(getattr(item, "arguments", "") or "")
+                ),
                 execution_id=tool_execution_ids.get_or_create(call_id),
+                input_kind="freeform" if is_freeform else "json",
             )
             content_blocks.append(tool_call)
             tool_use_blocks.append(tool_call)
@@ -325,27 +353,54 @@ class ResponsesStreamWrapper:
             return MessageChunk(type="thinking", thinking=delta)
         if event_type == "response.output_item.added":
             item = getattr(event, "item", None)
-            if getattr(item, "type", None) == "function_call":
+            if getattr(item, "type", None) in ("function_call", "custom_tool_call"):
                 # Key accumulators by the stream item id (what argument-delta events
                 # reference); remember the call_id used to link the tool result.
                 item_id = getattr(item, "id", None) or getattr(item, "call_id", "")
                 call_id = getattr(item, "call_id", None) or item_id
                 name = getattr(item, "name", "") or ""
-                self._function_calls.setdefault(item_id, {"call_id": call_id, "name": name, "arguments": ""})
+                item_kind = getattr(item, "type", None)
+                self._function_calls.setdefault(
+                    item_id,
+                    {
+                        "call_id": call_id,
+                        "name": name,
+                        "arguments": "",
+                        "input_kind": "freeform" if item_kind == "custom_tool_call" else "json",
+                    },
+                )
                 if item_id not in self._started_calls:
                     self._started_calls.add(item_id)
                     return MessageChunk(
                         type="tool_use_start",
                         tool_call_delta={"id": call_id, "name": name, "input": ""},
                     )
-        elif event_type == "response.function_call_arguments.delta":
+        elif event_type in ("response.function_call_arguments.delta", "response.custom_tool_call_input.delta"):
             call_id = getattr(event, "item_id", None) or getattr(event, "call_id", "")
-            record = self._function_calls.setdefault(call_id, {"call_id": call_id, "name": "", "arguments": ""})
+            record = self._function_calls.setdefault(
+                call_id,
+                {
+                    "call_id": call_id,
+                    "name": "",
+                    "arguments": "",
+                    "input_kind": "freeform" if "custom_tool" in event_type else "json",
+                },
+            )
             record["arguments"] += getattr(event, "delta", "") or ""
-        elif event_type == "response.function_call_arguments.done":
+        elif event_type in ("response.function_call_arguments.done", "response.custom_tool_call_input.done"):
             call_id = getattr(event, "item_id", None) or getattr(event, "call_id", "")
-            record = self._function_calls.setdefault(call_id, {"call_id": call_id, "name": "", "arguments": ""})
+            record = self._function_calls.setdefault(
+                call_id,
+                {
+                    "call_id": call_id,
+                    "name": "",
+                    "arguments": "",
+                    "input_kind": "freeform" if "custom_tool" in event_type else "json",
+                },
+            )
             arguments = getattr(event, "arguments", None)
+            if arguments is None:
+                arguments = getattr(event, "input", None)
             if arguments is not None:
                 record["arguments"] = arguments
         elif event_type == "response.output_item.done":
@@ -357,16 +412,26 @@ class ResponsesStreamWrapper:
                 captured = self._reasoning_dict(item)
                 if captured:
                     self._reasoning_items.append(captured)
-            elif item_kind == "function_call":
+            elif item_kind in ("function_call", "custom_tool_call"):
                 # The completed function_call item carries the final name +
                 # arguments; capture it so tool calls survive even if argument
                 # deltas were sparse.
                 item_id = getattr(item, "id", None) or getattr(item, "call_id", "")
                 call_id = getattr(item, "call_id", None) or item_id
-                record = self._function_calls.setdefault(item_id, {"call_id": call_id, "name": "", "arguments": ""})
+                record = self._function_calls.setdefault(
+                    item_id,
+                    {
+                        "call_id": call_id,
+                        "name": "",
+                        "arguments": "",
+                        "input_kind": "freeform" if item_kind == "custom_tool_call" else "json",
+                    },
+                )
                 record["call_id"] = call_id or record["call_id"]
                 name = getattr(item, "name", None)
                 arguments = getattr(item, "arguments", None)
+                if arguments is None:
+                    arguments = getattr(item, "input", None)
                 if name:
                     record["name"] = name
                 if arguments:
@@ -469,11 +534,13 @@ class ResponsesStreamWrapper:
         if self._text:
             content_blocks.append(TextBlock(text=self._text))
         for record in self._function_calls.values():
+            is_freeform = record.get("input_kind") == "freeform"
             tool_call = ToolCall(
                 id=record["call_id"],
                 name=record["name"],
-                input=safe_parse_tool_arguments(record["arguments"]),
+                input=record["arguments"] if is_freeform else safe_parse_tool_arguments(record["arguments"]),
                 execution_id=self._tool_execution_ids.get_or_create(record["call_id"]),
+                input_kind="freeform" if is_freeform else "json",
             )
             content_blocks.append(tool_call)
             tool_use_blocks.append(tool_call)

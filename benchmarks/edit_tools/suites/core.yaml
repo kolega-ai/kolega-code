@@ -1,0 +1,5 @@
+schema_version: 1
+id: edit-core
+description: Exact mechanical edits over 100 pinned real-world source files in twelve languages.
+curated_sources: [corpora/edit-core.yaml]
+default_repetitions: 1

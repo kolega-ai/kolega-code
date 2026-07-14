@@ -7,7 +7,7 @@ import base64
 import importlib
 import json
 import logging
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Union, cast
 
 from kolega_code.utils.images import ascii_thumbnail_from_base64
 
@@ -46,6 +46,8 @@ else:
 # Mapping from type string to class
 CONTENT_BLOCK_CLASSES = {}
 logger = logging.getLogger(__name__)
+
+ToolInputKind = Literal["json", "freeform"]
 
 
 def _remove_trailing_commas(payload: str) -> str:
@@ -500,6 +502,8 @@ class ToolDefinition(ContentBlock):
         parameters: List[ToolParameter],
         cache_checkpoint: bool = False,
         input_schema: Optional[Dict[str, Any]] = None,
+        input_kind: ToolInputKind = "json",
+        freeform_format: Optional[Dict[str, str]] = None,
     ):
         super().__init__(type="tool_definition", cache_checkpoint=cache_checkpoint)
         self.name = name
@@ -510,6 +514,10 @@ class ToolDefinition(ContentBlock):
         # declare nested shapes (arrays of objects, etc.) that the callable
         # introspection in tool_definition_from_callable cannot express.
         self.input_schema = input_schema
+        self.input_kind: ToolInputKind = input_kind
+        # Provider-native constraint for a freeform tool. OpenAI Responses accepts
+        # {type: "grammar", syntax: "lark"|"regex", definition: "..."}.
+        self.freeform_format = freeform_format
 
     def _object_schema(self) -> Dict[str, Any]:
         """The JSON-schema object describing this tool's input."""
@@ -524,12 +532,42 @@ class ToolDefinition(ContentBlock):
                 required.append(param.name)
         return {"type": "object", "properties": properties, "required": required}
 
+    def _fallback_object_schema(self) -> Dict[str, Any]:
+        """JSON envelope used by providers without native freeform tools."""
+        if self.input_kind == "freeform":
+            return {
+                "type": "object",
+                "properties": {
+                    "input": {
+                        "type": "string",
+                        "description": "Raw freeform tool input. Do not JSON-encode the value itself.",
+                    }
+                },
+                "required": ["input"],
+            }
+        return self._object_schema()
+
     @classmethod
     def _dict_to_google_schema(cls, schema: Dict[str, Any]) -> genai_types.Schema:
         """Recursively convert a JSON-schema dict to a google.genai Schema."""
-        kwargs: Dict[str, Any] = {"type": str(schema.get("type", "string")).upper()}
+        kwargs: Dict[str, Any] = {}
+        schema_type = schema.get("type")
+        if schema_type == "null":
+            # Google represents a nullable union as nullable non-null branches,
+            # rather than a standalone NULL schema.
+            kwargs["type"] = "STRING"
+            kwargs["nullable"] = True
+        elif schema_type is not None:
+            kwargs["type"] = str(schema_type).upper()
+        elif "anyOf" not in schema:
+            kwargs["type"] = "STRING"
         if schema.get("description"):
             kwargs["description"] = schema["description"]
+        if "anyOf" in schema:
+            branches = [branch for branch in schema["anyOf"] if branch.get("type") != "null"]
+            kwargs["any_of"] = [cls._dict_to_google_schema(branch) for branch in branches]
+            if len(branches) != len(schema["anyOf"]):
+                kwargs["nullable"] = True
         if "properties" in schema:
             kwargs["properties"] = {
                 key: cls._dict_to_google_schema(value) for key, value in schema["properties"].items()
@@ -540,6 +578,14 @@ class ToolDefinition(ContentBlock):
             kwargs["required"] = schema["required"]
         if schema.get("enum"):
             kwargs["enum"] = schema["enum"]
+        for json_name, google_name in (
+            ("minItems", "min_items"),
+            ("maxItems", "max_items"),
+            ("minLength", "min_length"),
+            ("maxLength", "max_length"),
+        ):
+            if json_name in schema:
+                kwargs[google_name] = schema[json_name]
         if "additionalProperties" in schema:
             additional = schema["additionalProperties"]
             kwargs["additional_properties"] = (
@@ -557,7 +603,7 @@ class ToolDefinition(ContentBlock):
         result = {
             "name": self.name,
             "description": self.description,
-            "input_schema": self._object_schema(),
+            "input_schema": self._fallback_object_schema(),
         }
 
         if self.cache_checkpoint:
@@ -577,12 +623,14 @@ class ToolDefinition(ContentBlock):
             "function": {
                 "name": self.name,
                 "description": self.description,
-                "parameters": self._object_schema(),
+                "parameters": self._fallback_object_schema(),
             },
         }
 
     def to_google(self) -> genai_types.Tool:
-        if self.input_schema is not None:
+        if self.input_kind == "freeform":
+            parameters = self._dict_to_google_schema(self._fallback_object_schema())
+        elif self.input_schema is not None:
             parameters = self._dict_to_google_schema(self.input_schema)
         else:
             properties = {}
@@ -614,15 +662,17 @@ class ToolCall(ContentBlock):
         self,
         id: str,
         name: str,
-        input: Dict[str, Any],
+        input: Union[Dict[str, Any], str],
         cache_checkpoint: bool = False,
         execution_id: Optional[str] = None,
         thought_signature: Optional[bytes] = None,
+        input_kind: ToolInputKind = "json",
     ):
         super().__init__(type=self.TYPE_NAME, cache_checkpoint=cache_checkpoint)
         self.id = id
         self.name = name
         self.input = input
+        self.input_kind: ToolInputKind = input_kind
         self.execution_id = execution_id or new_tool_execution_id()
         # Google (Gemini 3.x) returns an encrypted thought_signature on each function-call
         # part that must be echoed back verbatim when the history is resent, or the API 400s.
@@ -636,6 +686,7 @@ class ToolCall(ContentBlock):
             "input": self.input,
             "cache_checkpoint": self.cache_checkpoint,
             "execution_id": self.execution_id,
+            "input_kind": self.input_kind,
         }
         if self.thought_signature is not None:
             # bytes aren't JSON-serializable; base64-encode for the session store.
@@ -652,6 +703,7 @@ class ToolCall(ContentBlock):
             cache_checkpoint=data.get("cache_checkpoint", False),
             execution_id=data.get("execution_id"),
             thought_signature=base64.b64decode(encoded_signature) if encoded_signature else None,
+            input_kind=data.get("input_kind", "json"),
         )
 
     def to_anthropic(self) -> Dict[str, Any]:
@@ -661,7 +713,8 @@ class ToolCall(ContentBlock):
         Returns:
             Dict[str, Any]: A dictionary with the structure expected by Anthropic API
         """
-        result = {"type": "tool_use", "id": self.id, "name": self.name, "input": self.input}
+        provider_input = {"input": self.input} if self.input_kind == "freeform" else self.input
+        result = {"type": "tool_use", "id": self.id, "name": self.name, "input": provider_input}
 
         if self.cache_checkpoint:
             result["cache_control"] = {"type": "ephemeral"}
@@ -675,11 +728,17 @@ class ToolCall(ContentBlock):
         Returns:
             Dict[str, Any]: A dictionary with the structure expected by OpenAI API
         """
-        return {"id": self.id, "type": "function", "function": {"name": self.name, "arguments": json.dumps(self.input)}}
+        provider_input = {"input": self.input} if self.input_kind == "freeform" else self.input
+        return {
+            "id": self.id,
+            "type": "function",
+            "function": {"name": self.name, "arguments": json.dumps(provider_input)},
+        }
 
     def to_google(self) -> genai_types.Part:
+        provider_input = {"input": self.input} if self.input_kind == "freeform" else cast(Dict[str, Any], self.input)
         return genai_types.Part(
-            function_call=genai_types.FunctionCall(id=self.id, name=self.name, args=self.input),
+            function_call=genai_types.FunctionCall(id=self.id, name=self.name, args=provider_input),
             thought_signature=self.thought_signature,
         )
 
@@ -690,8 +749,16 @@ class ToolCall(ContentBlock):
         Returns:
             str: A markdown formatted representation of the tool call
         """
-        formatted_input = json.dumps(self.input, indent=2)
-        return f"**{self.type.replace('_', ' ').capitalize()}**: `{self.name}`\n\n```json\n{formatted_input}\n```\n\n*Tool ID: {self.id}*"
+        if self.input_kind == "freeform":
+            formatted_input = str(self.input)
+            fence = "text"
+        else:
+            formatted_input = json.dumps(self.input, indent=2)
+            fence = "json"
+        return (
+            f"**{self.type.replace('_', ' ').capitalize()}**: `{self.name}`\n\n"
+            f"```{fence}\n{formatted_input}\n```\n\n*Tool ID: {self.id}*"
+        )
 
 
 @register_content_block
@@ -708,6 +775,7 @@ class ToolResult(ContentBlock):
         is_error: bool,
         cache_checkpoint: bool = False,
         execution_id: Optional[str] = None,
+        input_kind: ToolInputKind = "json",
     ):
         super().__init__(type=self.TYPE_NAME, cache_checkpoint=cache_checkpoint)
 
@@ -716,6 +784,7 @@ class ToolResult(ContentBlock):
         self.name = name
         self.is_error = bool(is_error)
         self.execution_id = execution_id
+        self.input_kind: ToolInputKind = input_kind
 
     def to_dict(self) -> Dict[str, Any]:
         serialized_content: Union[str, List[Dict[str, Any]]]
@@ -734,6 +803,7 @@ class ToolResult(ContentBlock):
             "name": self.name,
             "is_error": self.is_error,
             "cache_checkpoint": self.cache_checkpoint,
+            "input_kind": self.input_kind,
         }
         if self.execution_id:
             result["execution_id"] = self.execution_id
@@ -760,6 +830,7 @@ class ToolResult(ContentBlock):
             is_error=data["is_error"],
             cache_checkpoint=data.get("cache_checkpoint", False),
             execution_id=data.get("execution_id"),
+            input_kind=data.get("input_kind", "json"),
         )
 
     def to_anthropic(self) -> Dict[str, Any]:
@@ -1142,19 +1213,7 @@ class Message:
         )
 
         if tool_calls:
-            result["tool_calls"] = [
-                {
-                    "id": tool_call.id,
-                    "type": "function",
-                    "function": {
-                        "name": tool_call.name,
-                        "arguments": (
-                            json.dumps(tool_call.input) if not isinstance(tool_call.input, str) else tool_call.input
-                        ),
-                    },
-                }
-                for tool_call in tool_calls
-            ]
+            result["tool_calls"] = [tool_call.to_openai() for tool_call in tool_calls]
 
         return result
 
@@ -1456,7 +1515,7 @@ class Message:
             content=content_blocks,
             tool_calls=tool_use_blocks if tool_use_blocks else None,
             stop_reason=mapped_stop_reason,
-            usage_metadata={},
+            usage_metadata={"provider": "google"},
         )
 
     def to_dict(self) -> Dict[str, Any]:

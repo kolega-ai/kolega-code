@@ -1,0 +1,19 @@
+schema_version: 1
+id: example-model-matrix
+lanes: [controlled]
+repetitions: 3
+concurrency: 1
+trial_timeout_seconds: 480
+models:
+  - provider: openai
+    model: gpt-5.5
+    protocols: [search_replace, codex_apply_patch, claude_code, hashline_v2]
+    max_output_tokens: 8192
+  - provider: anthropic
+    model: claude-haiku-4-5-20251001
+    protocols: [search_replace, codex_apply_patch, claude_code, hashline_v2]
+    max_output_tokens: 8192
+  - provider: google
+    model: gemini-3.1-pro-preview
+    protocols: [search_replace, codex_apply_patch, claude_code, hashline_v2]
+    max_output_tokens: 8192

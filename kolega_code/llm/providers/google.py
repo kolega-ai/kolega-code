@@ -63,13 +63,15 @@ class GoogleStreamWrapper:
             raise
 
     async def get_final_message(self):
-        return Message.from_google_stream(
+        message = Message.from_google_stream(
             role="assistant",
             content=self.final_content,
             tool_calls=self.final_tool_calls,
             stop_reason=self.stop_reason,
             tool_execution_ids=self.tool_execution_ids,
         )
+        message.usage_metadata["provider"] = "google"
+        return message
 
 
 class GoogleProvider(BaseLLMProvider):

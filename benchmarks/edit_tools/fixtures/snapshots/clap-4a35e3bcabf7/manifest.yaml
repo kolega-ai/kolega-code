@@ -1,0 +1,60 @@
+schema_version: 1
+id: clap-4a35e3bcabf7
+language: rust
+repository: https://github.com/clap-rs/clap.git
+commit: 4a35e3bcabf7b6326e646f88ef9cf312ac0fa2da
+license: MIT OR Apache-2.0
+license_files:
+- licenses/LICENSE-MIT
+- licenses/LICENSE-APACHE
+files:
+  clap_builder/Cargo.toml:
+    sha256: 0efb971fa4957af87b129691dcbe4858d853328ec0615c5886e4d66c97a96877
+    bytes: 2267
+    lines: 77
+    git_blob: 6a1497c2897bd616b57a50b24569740e072b6074
+  clap_builder/src/builder/arg.rs:
+    sha256: 863efa4acbfff4b4c7ab4d16dbe0831421d29e4d68c5f4c5d2b9870c54b84f2e
+    bytes: 171222
+    lines: 5153
+    git_blob: c199d4b4c3e4c0cd6426d4c388f27036609f9eab
+  clap_builder/src/builder/arg_group.rs:
+    sha256: fdbf126726840340dc7fde5a088d899a1aa59dbb291f26cf23850130045306ea
+    bytes: 21090
+    lines: 615
+    git_blob: 0f207a9999f2a83053df1cff8b63952e463927d5
+  clap_builder/src/builder/value_parser.rs:
+    sha256: 4342c19e43fc783b7adea44c74d3bd35a13ee0f7982d79e63867c9d7258d4042
+    bytes: 84026
+    lines: 2699
+    git_blob: 65257275e98de1d66b272c7dcc6ebdf1c7094033
+  clap_builder/src/derive.rs:
+    sha256: dc791dba6b131831902ff1b38943b73a0b1ec22e9ae7d7243557d34a63d3f8e6
+    bytes: 15050
+    lines: 453
+    git_blob: 9b165dca86f7b961597d9cfad52ccf43e2ebe6bf
+  clap_builder/src/error/context.rs:
+    sha256: 156d2611a349ce826378476c9dcb3242a01ad834a095baad096a10cc2f73e1ed
+    bytes: 3576
+    lines: 114
+    git_blob: 045923c477113e74a52bddda81c8fe6d6456ab46
+  clap_builder/src/error/mod.rs:
+    sha256: deb632e970f060d95ba944f0cb273434b3fc94e4a47e5c6bc08672dc47d8e749
+    bytes: 28799
+    lines: 946
+    git_blob: c9c9c07f6563d2a3282395a8a8fed7b4fad92636
+  clap_builder/src/output/help_template.rs:
+    sha256: 5cbbeb4b3f6bb2b2edbefea0c1de11de3d4ec875b9cd74dbb5ed6381ce9f2e8c
+    bytes: 40517
+    lines: 1183
+    git_blob: 07152877b556665b3297ef9d16fb4909e892da31
+  clap_builder/src/parser/matches/arg_matches.rs:
+    sha256: bff90ec6afeaa8133369277036ab7c191274fe6751ed0c78b621d9ad6addedba
+    bytes: 66814
+    lines: 2045
+    git_blob: cff31a2090aaa3f6246deb2f56a117ee16a50d52
+  clap_builder/src/parser/parser.rs:
+    sha256: 0347f3b3f6fc4665634050cbbe3dd88a9b98474e1312bdccfa8e9c119935faf3
+    bytes: 66351
+    lines: 1685
+    git_blob: 3f4ac278888d1d42010f6a57802266d05c33f597

@@ -1,0 +1,54 @@
+schema_version: 1
+id: okhttp-6a237f781144
+language: kotlin
+repository: https://github.com/square/okhttp.git
+commit: 6a237f781144a7d388c734ab86de7aa52127035b
+license: Apache-2.0
+license_files:
+- licenses/LICENSE.txt
+files:
+  build.gradle.kts:
+    sha256: 9a977ed84d3d665f6f4cea4504f1312026216f7e4a3ae9d5dba3f9abb364966d
+    bytes: 839
+    lines: 22
+    git_blob: 1f9643db20f0290ea5842db4b0a920799c166d41
+  okhttp/src/commonJvmAndroid/kotlin/okhttp3/CipherSuite.kt:
+    sha256: 2bf1b54b93e9e476faf2c83af49cb2e32aca1c2dd2e95a98edd05cb58f8b33af
+    bytes: 40808
+    lines: 584
+    git_blob: 4a980f6ce46ed5ed931476bf058af45fad58e22a
+  okhttp/src/commonJvmAndroid/kotlin/okhttp3/Headers.kt:
+    sha256: 45d114a17adbecef717d75e11550980bd1a7243508bf96f6245906b2a051b8d7
+    bytes: 11899
+    lines: 363
+    git_blob: 29730628c93d11845bf0b9bc48044cf7abbeaaa6
+  okhttp/src/commonJvmAndroid/kotlin/okhttp3/MultipartBody.kt:
+    sha256: 16ccb27c3f7a0c2ee7ce6f7243b709ec8eb9061ec63a51b0ca744506fb9448ed
+    bytes: 11179
+    lines: 380
+    git_blob: 6407ce29ea6b63084795dbfff41b66ea15ddf6ab
+  okhttp/src/commonJvmAndroid/kotlin/okhttp3/MultipartReader.kt:
+    sha256: 6c769d8b5d7140c006f96787784470d186cf1ef352eae79e96b6554640d60542
+    bytes: 7514
+    lines: 235
+    git_blob: 790c3a2ef19e9c5c9235405982286c5f7d791e49
+  okhttp/src/commonJvmAndroid/kotlin/okhttp3/OkHttpClient.kt:
+    sha256: b3da56258229e38a67e0c44260b6baabab4128cb2b9ed97306ff5eb48b56e7fb
+    bytes: 52741
+    lines: 1394
+    git_blob: bea47f62e8993b1194f37cab6b1fc1b618495c20
+  okhttp/src/commonJvmAndroid/kotlin/okhttp3/internal/http2/Http2Connection.kt:
+    sha256: a269d5b0d6859c7efbfda896c1b4b27a9672d65b157776360970ed96eea2247c
+    bytes: 32626
+    lines: 1046
+    git_blob: b79401a79f64289b0ff178d508f3189b8ad39125
+  okhttp/src/commonJvmAndroid/kotlin/okhttp3/internal/http2/Settings.kt:
+    sha256: c6e86b60d0d577bbff2b685504adb29bbd8cdfeeb08b153d0913d8da9511ef61
+    bytes: 3924
+    lines: 133
+    git_blob: a52bd3321037ced11536a55f43d1d62ac5c6b34d
+  okhttp/src/jvmMain/kotlin/okhttp3/internal/platform/Jdk8WithJettyBootPlatform.kt:
+    sha256: 7a8836eaeb4930d7584a58058245b54822ed930c5c6dff9432d1e9a0a71a7855
+    bytes: 6205
+    lines: 170
+    git_blob: 5ae0567cd21250d3bb0b59be13e3f8f78b422131

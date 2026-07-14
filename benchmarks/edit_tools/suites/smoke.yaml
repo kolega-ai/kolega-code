@@ -1,0 +1,6 @@
+schema_version: 1
+id: edit-smoke
+description: Four fast shared-capability edit cases.
+curated_sources: [fixtures/smoke-tasks.yaml]
+curated_task_ids: [python-literal, python-insert-function, create-changelog, coordinated-version]
+default_repetitions: 1

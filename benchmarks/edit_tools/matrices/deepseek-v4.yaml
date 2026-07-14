@@ -1,0 +1,19 @@
+schema_version: 1
+id: deepseek-v4-edit-formats
+lanes: [controlled]
+concurrency: 2
+trial_timeout_seconds: 480
+max_iterations: 30
+models:
+  - provider: deepseek
+    model: deepseek-v4-pro
+    protocols: [search_replace, codex_apply_patch, claude_code, hashline_v2]
+    temperature: 1.0
+    thinking_effort: high
+    max_output_tokens: 8192
+  - provider: deepseek
+    model: deepseek-v4-flash
+    protocols: [search_replace, codex_apply_patch, claude_code, hashline_v2]
+    temperature: 1.0
+    thinking_effort: high
+    max_output_tokens: 8192

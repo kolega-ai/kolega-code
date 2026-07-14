@@ -1,0 +1,54 @@
+schema_version: 1
+id: gson-c9f3fd55854a
+language: java
+repository: https://github.com/google/gson.git
+commit: c9f3fd55854a743b66f857ace3c7b268ea3e2ef7
+license: Apache-2.0
+license_files:
+- licenses/LICENSE
+files:
+  gson/pom.xml:
+    sha256: 66c81d5bd02732e8a2b0391df123f3bb77c069fd9db174b074fa24623424d45a
+    bytes: 22647
+    lines: 515
+    git_blob: b482d77e2060971acd4bbc42a68518783c85e1cf
+  gson/src/main/java/com/google/gson/FormattingStyle.java:
+    sha256: 4b9523019664aa402e340e5f8fa5686fc631943c4eb6c1880c0417b7de0bc1a0
+    bytes: 5105
+    lines: 156
+    git_blob: 8b0ba173327d71230489b07ba57621d3a0826fdd
+  gson/src/main/java/com/google/gson/Gson.java:
+    sha256: bab4d10bb5f8328f6ad1883f11751be532c1ff142eaca091fba3f51b874e523e
+    bytes: 59641
+    lines: 1286
+    git_blob: e0025ed27597d94ea371e7d453d5df4751749eab
+  gson/src/main/java/com/google/gson/GsonBuilder.java:
+    sha256: 560e2ff54276d4bbc43607e559d2edae4c639f4dbf3b978180a44716ed4b9a49
+    bytes: 48210
+    lines: 1076
+    git_blob: df2c4acb8e4ca06d28f60f8eb3f258847bb6738a
+  gson/src/main/java/com/google/gson/JsonElement.java:
+    sha256: 3215d81cdf2b213c7250cbb7703c793595819b9bac4ffd246034d4eb9fdf5e19
+    bytes: 16146
+    lines: 434
+    git_blob: 127b96078c9c22e9d5f75f3e2b684103bd951752
+  gson/src/main/java/com/google/gson/internal/ReflectionAccessFilterHelper.java:
+    sha256: f0f50f30231438d0ca8ca08cad7e1e76eeeeba6ed6ef52d6a9bbe6c5693f3ef0
+    bytes: 4430
+    lines: 122
+    git_blob: d55048e08310698558bb2c25782d77c6ea7437cc
+  gson/src/main/java/com/google/gson/internal/bind/TypeAdapters.java:
+    sha256: eeb77519ed32f831d42440260f42501d19a86040ae6901217f10ef81ece3ec9b
+    bytes: 36218
+    lines: 1084
+    git_blob: 6e0f85ad6d78f8a796b6b8492e342df7af6c483b
+  gson/src/main/java/com/google/gson/internal/bind/util/ISO8601Utils.java:
+    sha256: ae515fc0a17f15c919a152a3004d874a81d1466d39bdf163bd45d468a3faeba5
+    bytes: 13827
+    lines: 386
+    git_blob: 6709b6e0b1e44fc2c66f33e40773ae6a514fe59d
+  gson/src/main/java/module-info.java:
+    sha256: 52b1aa6d35aaafedb89e48367cca6eb66cec7ef310b3a69eae22c44af9ae3ccf
+    bytes: 1118
+    lines: 36
+    git_blob: 6692639673305d1753316ca82fa9c867cc994d5e

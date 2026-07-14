@@ -1,0 +1,59 @@
+schema_version: 1
+id: click-b67832c2167e
+language: python
+repository: https://github.com/pallets/click.git
+commit: b67832c2167e5b0ff6764a8c04a0a9087e697b5a
+license: BSD-3-Clause
+license_files:
+- licenses/LICENSE.txt
+files:
+  pyproject.toml:
+    sha256: 87bf078e2c9357d8121391441d97737332190d2fcbd608853f7b70347a94bd1e
+    bytes: 5325
+    lines: 231
+    git_blob: 0156d5e8ac07342d892d1fbe6b4a42b5bd034b74
+  src/click/__init__.py:
+    sha256: 4455f99fa47aca1a60c3e8e072cf91a07cb55a83caa5d556ea4dc98a819698c6
+    bytes: 4705
+    lines: 127
+    git_blob: 2d9918bced6c1bb709efbf53fbf0e310fe5215f3
+  src/click/_termui_impl.py:
+    sha256: 086760db801e5e28de192cdbbb467bc7773869a6a15458d506911b6e3850e4ae
+    bytes: 31730
+    lines: 945
+    git_blob: fadae940625f8275fed17833d527c19e2422ef4e
+  src/click/_winconsole.py:
+    sha256: 292c5f35b3256116ba18e26e08b82c8363dbddd56480934fa8b24f69ef8f6b5d
+    bytes: 8543
+    lines: 297
+    git_blob: d25178d66ff7a9c8a1da52e61379da240be625b6
+  src/click/core.py:
+    sha256: ef569e8a4fcb1fa2f5548b06a02d41c32a17eda164dcd3ecae897740c10c7f06
+    bytes: 143959
+    lines: 3723
+    git_blob: cc8fb47d835950eb12fdb21465bbe71351dc29ab
+  src/click/exceptions.py:
+    sha256: 1ef498df81b86ae8ff6d8451f3e4fc094f09c2aff5f8e72c454e1ecdfa337849
+    bytes: 11862
+    lines: 378
+    git_blob: 6272c38a448d57241d9a6bff4191897f4a9bb7d6
+  src/click/globals.py:
+    sha256: 80cf8d87a0383341c1fd2824685e4ce2770618c0c773f7e51d7bbdfe88781845
+    bytes: 1923
+    lines: 67
+    git_blob: a2f91723d21cefdf658be327174e1f8ccdc20fcd
+  src/click/termui.py:
+    sha256: c0b4ef4f752163308e65aa7c4e688a8ca2f50efe94c950ed969d8824a500bf5d
+    bytes: 33815
+    lines: 960
+    git_blob: 4bd74ed19ac1852557259706ea21d0e697b9f5b5
+  src/click/types.py:
+    sha256: d47837f5fe6839d0527524419a7128cfa0db417794171e454e3e9f71d6febba3
+    bytes: 44835
+    lines: 1375
+    git_blob: a27983b3a2431de9e221cbcfdd780a7b6f236956
+  src/click/utils.py:
+    sha256: a0ecf3298a515efdd687d4c5af4eed348c271c49b0bcb7a2d9ec7d09aaa6e138
+    bytes: 20700
+    lines: 646
+    git_blob: 4d4d52ac3be0b90a8087a465901bb698e5150664

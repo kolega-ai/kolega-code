@@ -112,6 +112,69 @@ def test_edit_permission_rule_can_scope_to_path():
     assert rule.matches(request)
 
 
+def test_claude_edit_permission_uses_file_path():
+    request = permission_request_for_tool(
+        "edit",
+        {"file_path": "src/app.py", "old_string": "old", "new_string": "new"},
+    )
+
+    assert request is not None
+    assert request.path == "src/app.py"
+
+
+def test_hashline_rename_permission_includes_source_and_destination():
+    request = permission_request_for_tool(
+        "edit",
+        {"path": "src/old.py", "edits": [], "rename": "src/new.py"},
+    )
+
+    assert request is not None
+    assert request.path == "src/old.py -> src/new.py"
+    assert request.summary == "edit src/old.py -> src/new.py"
+
+
+def test_single_file_apply_patch_permission_can_scope_to_path():
+    request = permission_request_for_tool(
+        "apply_patch",
+        {"input": "*** Begin Patch\n*** Add File: src/new.py\n+x = 1\n*** End Patch\n"},
+    )
+    assert request is not None
+    rule = PermissionRule.create(
+        kind=PermissionKind.EDIT,
+        tool="apply_patch",
+        match_type="path",
+        pattern="src/new.py",
+    )
+
+    assert request.path == "src/new.py"
+    assert rule.matches(request)
+
+
+def test_path_rule_never_authorizes_multi_file_apply_patch():
+    request = permission_request_for_tool(
+        "apply_patch",
+        {
+            "input": (
+                "*** Begin Patch\n"
+                "*** Add File: src/one.py\n+one = 1\n"
+                "*** Add File: src/two.py\n+two = 2\n"
+                "*** End Patch\n"
+            )
+        },
+    )
+    assert request is not None
+    rule = PermissionRule.create(
+        kind=PermissionKind.EDIT,
+        tool="apply_patch",
+        match_type="path",
+        pattern="src/one.py",
+    )
+
+    assert request.path == ""
+    assert not rule.matches(request)
+    assert all(option.rule.match_type != "path" for option in allow_rule_options(request))
+
+
 def test_lsp_edit_permission_is_gated_as_edit():
     request = permission_request_for_tool(
         "lsp_edit",
