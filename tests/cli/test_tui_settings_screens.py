@@ -99,6 +99,59 @@ async def test_settings_screen_is_categorized_and_stages_credentials_atomically(
 
 
 @pytest.mark.asyncio
+async def test_settings_layout_uses_compact_controls_and_spaced_outlined_actions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    isolated_cli_env: None,
+) -> None:
+    pytest.importorskip("textual")
+    from textual.containers import Vertical
+    from textual.widgets import Button, Select, TabbedContent
+
+    from kolega_code.cli.tui.settings_screen import SettingsScreen
+
+    app, _ = _configured_app(tmp_path, monkeypatch)
+
+    async with app.run_test(size=(140, 40)) as pilot:
+        app.query_one("#events", TabbedContent).active = "settings_pane"
+        await pilot.pause()
+        open_settings = app.query_one("#open_settings", Button)
+        assert open_settings.has_class("settings-action")
+        assert open_settings.styles.background.a == 0
+        summary_section = app.query_one("#settings_summary_section", Vertical)
+        assert open_settings.region.width < summary_section.region.width
+
+        app.action_open_settings()
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+
+        provider = screen.query_one("#provider_select", Select)
+        model = screen.query_one("#model_select", Select)
+        effort = screen.query_one("#thinking_effort_select", Select)
+        assert provider.region.width <= 34
+        assert model.region.width <= 50
+        assert effort.region.width <= 22
+
+        apply_button = screen.query_one("#save_settings", Button)
+        assert apply_button.has_class("settings-action")
+        assert apply_button.styles.background.a == 0
+
+        screen._show_category("mcp")
+        await pilot.pause()
+        server = screen.query_one("#mcp_server_select", Select)
+        enabled = screen.query_one("#mcp_enabled_select", Select)
+        assert server.region.width <= 50
+        assert enabled.region.width <= 22
+
+        reload_button = screen.query_one("#mcp_refresh", Button)
+        trust_button = screen.query_one("#mcp_trust_project", Button)
+        assert reload_button.region.x + reload_button.region.width < trust_button.region.x
+        assert list(screen.query("#mcp_enable_server")) == []
+        assert list(screen.query("#mcp_disable_server")) == []
+
+
+@pytest.mark.asyncio
 async def test_first_run_onboarding_finishes_without_writing_partial_drafts(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

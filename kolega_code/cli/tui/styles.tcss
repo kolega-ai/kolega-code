@@ -173,7 +173,8 @@ ToolEntryWidget .tool-body {
 }
 
 #open_settings {
-    width: 100%;
+    width: auto;
+    min-width: 12;
     margin-top: 1;
 }
 
@@ -239,13 +240,15 @@ ToolEntryWidget .tool-body {
 
 .settings-button-row {
     height: auto;
-    min-height: 4;
+    min-height: 3;
     margin-top: 1;
+    align-horizontal: left;
 }
 
 .settings-button-row Button {
-    margin-top: 0;
-    width: 1fr;
+    width: auto;
+    min-width: 12;
+    margin: 0 1 0 0;
 }
 
 .settings-hint {
@@ -337,6 +340,89 @@ SettingsScreen Select:focus > SelectCurrent {
     background-tint: transparent;
 }
 
+SettingsScreen Select.settings-select-small {
+    width: 1fr;
+    max-width: 22;
+}
+
+SettingsScreen Select.settings-select-medium {
+    width: 1fr;
+    max-width: 34;
+}
+
+SettingsScreen Select.settings-select-wide {
+    width: 1fr;
+    max-width: 50;
+}
+
+Button.settings-action {
+    width: auto;
+    min-width: 12;
+    background: transparent;
+    border: tall $surface-lighten-2;
+    color: $text;
+    text-style: none;
+    background-tint: transparent;
+}
+
+Button.settings-action:hover,
+Button.settings-action:focus,
+Button.settings-action.-active {
+    background: $surface-lighten-2;
+    border: tall $surface-lighten-2;
+    background-tint: transparent;
+    tint: transparent;
+}
+
+Button.settings-action.-primary {
+    background: transparent;
+    border: tall $primary;
+    color: $primary;
+}
+
+Button.settings-action.-primary:hover,
+Button.settings-action.-primary:focus,
+Button.settings-action.-primary.-active {
+    background: $surface-lighten-2;
+    border: tall $primary;
+    color: $primary;
+}
+
+Button.settings-action.-warning {
+    background: transparent;
+    border: tall $warning;
+    color: $warning;
+}
+
+Button.settings-action.-warning:hover,
+Button.settings-action.-warning:focus,
+Button.settings-action.-warning.-active {
+    background: $surface-lighten-2;
+    border: tall $warning;
+    color: $warning;
+}
+
+Button.settings-action.-error {
+    background: transparent;
+    border: tall $error;
+    color: $error;
+}
+
+Button.settings-action.-error:hover,
+Button.settings-action.-error:focus,
+Button.settings-action.-error.-active {
+    background: $surface-lighten-2;
+    border: tall $error;
+    color: $error;
+}
+
+Button.settings-action:disabled {
+    background: transparent;
+    border: tall $surface;
+    color: $text-muted;
+    text-opacity: 0.6;
+}
+
 SettingsScreen Label,
 SettingsScreen Button {
     margin-top: 1;
@@ -356,7 +442,8 @@ SettingsScreen #settings_screen_actions {
 }
 
 SettingsScreen #settings_screen_actions Button {
-    width: 20;
+    width: auto;
+    min-width: 12;
     margin-left: 1;
 }
 
@@ -396,7 +483,8 @@ ConfirmSettingsActionScreen {
 }
 
 #settings_discard_actions Button {
-    width: 18;
+    width: auto;
+    min-width: 12;
     margin-left: 1;
 }
 
@@ -425,7 +513,8 @@ ConfirmSettingsActionScreen {
 }
 
 #settings_action_buttons Button {
-    width: 18;
+    width: auto;
+    min-width: 12;
     margin-left: 1;
 }
 

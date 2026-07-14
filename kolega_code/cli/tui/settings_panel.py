@@ -1367,7 +1367,7 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
                 ]
             )
         )
-        launch.label = "Open Settings" if self.config is not None else "Continue Setup"
+        launch.label = "Open Settings →" if self.config is not None else "Continue Setup →"
 
     def _update_settings_status(self) -> None:
         if not (self.settings.active_provider and self.settings.active_model):

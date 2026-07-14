@@ -58,8 +58,18 @@ class ConfirmDiscardSettingsScreen(ModalScreen[bool]):
                 id="settings_discard_copy",
             )
             with Horizontal(id="settings_discard_actions"):
-                yield Button("Keep Editing", variant="primary", id="settings_keep_editing")
-                yield Button("Discard", variant="error", id="settings_confirm_discard")
+                yield Button(
+                    "Keep Editing",
+                    variant="primary",
+                    id="settings_keep_editing",
+                    classes="settings-action",
+                )
+                yield Button(
+                    "Discard",
+                    variant="error",
+                    id="settings_confirm_discard",
+                    classes="settings-action",
+                )
 
     def action_keep_editing(self) -> None:
         self.dismiss(False)
@@ -90,11 +100,17 @@ class ConfirmSettingsActionScreen(ModalScreen[bool]):
             yield Static(self.action_title, id="settings_action_title")
             yield Static(self.action_copy, id="settings_action_copy")
             with Horizontal(id="settings_action_buttons"):
-                yield Button("Cancel", variant="primary", id="settings_action_cancel")
+                yield Button(
+                    "Cancel",
+                    variant="primary",
+                    id="settings_action_cancel",
+                    classes="settings-action",
+                )
                 yield Button(
                     self.action_confirm_label,
                     variant="error" if self.danger else "warning",
                     id="settings_action_confirm",
+                    classes="settings-action",
                 )
 
     def action_cancel(self) -> None:
@@ -143,8 +159,13 @@ class SettingsScreen(ModalScreen[None]):
         with Vertical(id="settings_screen_footer"):
             yield Static("", id="settings_status")
             with Horizontal(id="settings_screen_actions"):
-                yield Button("Close", id="close_settings")
-                yield Button("Apply Changes", variant="primary", id="save_settings")
+                yield Button("Close", id="close_settings", classes="settings-action")
+                yield Button(
+                    "Apply Changes",
+                    variant="primary",
+                    id="save_settings",
+                    classes="settings-action",
+                )
 
     def _compose_model_page(self) -> ComposeResult:
         with VerticalScroll(id="settings_page_model", classes="settings-page"):
@@ -156,6 +177,7 @@ class SettingsScreen(ModalScreen[None]):
                     id="provider_select",
                     allow_blank=False,
                     value=UI_DEFAULT_PROVIDER,
+                    classes="settings-select-medium",
                 )
                 yield Label("Model")
                 yield Select(
@@ -163,6 +185,7 @@ class SettingsScreen(ModalScreen[None]):
                     id="model_select",
                     allow_blank=False,
                     value=UI_DEFAULT_MODEL,
+                    classes="settings-select-wide",
                 )
                 yield Label("Thinking effort")
                 yield Select(
@@ -170,14 +193,31 @@ class SettingsScreen(ModalScreen[None]):
                     id="thinking_effort_select",
                     allow_blank=True,
                     value=default_ui_thinking_effort(UI_DEFAULT_PROVIDER, UI_DEFAULT_MODEL),
+                    classes="settings-select-small",
                 )
                 yield Label("API key", id="settings_api_key_label")
                 yield Input(password=True, id="api_key_input")
-                yield Button("Remove Stored Key", id="settings_remove_api_key")
+                yield Button(
+                    "Remove Stored Key",
+                    id="settings_remove_api_key",
+                    classes="settings-action",
+                )
                 with Horizontal(classes="settings-button-row compact"):
-                    yield Button("Sign in with ChatGPT", id="settings_chatgpt_login")
-                    yield Button("Sign out", id="settings_chatgpt_logout")
-                yield Button("Test Connection", id="settings_test_connection")
+                    yield Button(
+                        "Sign in with ChatGPT",
+                        id="settings_chatgpt_login",
+                        classes="settings-action",
+                    )
+                    yield Button(
+                        "Sign out",
+                        id="settings_chatgpt_logout",
+                        classes="settings-action",
+                    )
+                yield Button(
+                    "Test Connection",
+                    id="settings_test_connection",
+                    classes="settings-action",
+                )
                 yield Static(
                     "Connection testing sends a tiny, potentially billable model request.",
                     classes="settings-hint",
@@ -193,7 +233,13 @@ class SettingsScreen(ModalScreen[None]):
                     classes="settings-hint",
                 )
                 yield Label("Agent role")
-                yield Select(agent_role_options(), id="agent_role_select", allow_blank=False, value="planning")
+                yield Select(
+                    agent_role_options(),
+                    id="agent_role_select",
+                    allow_blank=False,
+                    value="planning",
+                    classes="settings-select-medium",
+                )
                 for role_label, role_value in agent_role_options():
                     with Vertical(classes="agent-model-group", id=f"agent_model_group_{role_value}"):
                         yield Static(role_label, classes="agent-model-role")
@@ -204,13 +250,26 @@ class SettingsScreen(ModalScreen[None]):
                                 id=f"am_provider_{role_value}",
                                 allow_blank=False,
                                 value=INHERIT_SENTINEL,
+                                classes="settings-select-medium",
                             )
                         with Horizontal(classes="agent-model-field"):
                             yield Label("Model", classes="agent-model-field-label")
-                            yield Select([], id=f"am_model_{role_value}", allow_blank=True, prompt="—")
+                            yield Select(
+                                [],
+                                id=f"am_model_{role_value}",
+                                allow_blank=True,
+                                prompt="—",
+                                classes="settings-select-wide",
+                            )
                         with Horizontal(classes="agent-model-field"):
                             yield Label("Effort", classes="agent-model-field-label")
-                            yield Select([], id=f"am_effort_{role_value}", allow_blank=True, prompt="—")
+                            yield Select(
+                                [],
+                                id=f"am_effort_{role_value}",
+                                allow_blank=True,
+                                prompt="—",
+                                classes="settings-select-small",
+                            )
                         if role_value == "browser":
                             yield Static("", id="am_status_browser", classes="settings-hint")
 
@@ -228,6 +287,7 @@ class SettingsScreen(ModalScreen[None]):
                     id="web_search_backend_select",
                     allow_blank=False,
                     value=DEFAULT_WEB_SEARCH_BACKEND,
+                    classes="settings-select-medium",
                 )
                 yield Label("API key", id="web_search_api_key_label")
                 yield Input(password=True, id="web_search_api_key_input")
@@ -246,6 +306,7 @@ class SettingsScreen(ModalScreen[None]):
                     id="lsp_enabled_select",
                     allow_blank=False,
                     value="true",
+                    classes="settings-select-small",
                 )
 
     def _compose_mcp_page(self) -> ComposeResult:
@@ -260,11 +321,16 @@ class SettingsScreen(ModalScreen[None]):
                     id="mcp_server_select",
                     allow_blank=False,
                     value=settings_panel.MCP_NEW_SERVER_VALUE,
+                    classes="settings-select-wide",
                 )
                 yield Static("", id="mcp_source_hint", classes="settings-hint")
                 with Horizontal(classes="settings-button-row"):
-                    yield Button("Reload", id="mcp_refresh")
-                    yield Button("Trust Project MCP", id="mcp_trust_project")
+                    yield Button("Reload", id="mcp_refresh", classes="settings-action")
+                    yield Button(
+                        "Trust Project MCP",
+                        id="mcp_trust_project",
+                        classes="settings-action",
+                    )
                 yield Label("Display name")
                 yield Input(id="mcp_name_input", placeholder="GitHub MCP")
                 yield Label("Transport")
@@ -273,6 +339,7 @@ class SettingsScreen(ModalScreen[None]):
                     id="mcp_transport_select",
                     allow_blank=False,
                     value="streamable_http",
+                    classes="settings-select-medium",
                 )
                 yield Label("Enabled")
                 yield Select(
@@ -280,6 +347,7 @@ class SettingsScreen(ModalScreen[None]):
                     id="mcp_enabled_select",
                     allow_blank=False,
                     value="true",
+                    classes="settings-select-small",
                 )
                 yield Label("HTTP URL", id="mcp_url_label")
                 yield Input(id="mcp_url_input", placeholder="https://example.com/mcp")
@@ -291,6 +359,7 @@ class SettingsScreen(ModalScreen[None]):
                     id="mcp_oauth_select",
                     allow_blank=False,
                     value="false",
+                    classes="settings-select-small",
                 )
                 yield Label("Command", id="mcp_command_label")
                 yield Input(id="mcp_command_input", placeholder="npx")
@@ -301,14 +370,21 @@ class SettingsScreen(ModalScreen[None]):
                 yield Label("Working directory", id="mcp_cwd_label")
                 yield Input(id="mcp_cwd_input", placeholder="optional project-relative path")
                 with Horizontal(classes="settings-button-row"):
-                    yield Button("Save Server", variant="primary", id="mcp_save_server")
-                    yield Button("Verify", id="mcp_verify_server")
+                    yield Button(
+                        "Save Server",
+                        variant="primary",
+                        id="mcp_save_server",
+                        classes="settings-action",
+                    )
+                    yield Button("Verify", id="mcp_verify_server", classes="settings-action")
                 with Horizontal(classes="settings-button-row"):
-                    yield Button("Delete", variant="error", id="mcp_delete_server")
-                    yield Button("Clear OAuth", id="mcp_clear_tokens")
-                with Horizontal(classes="settings-button-row"):
-                    yield Button("Enable", id="mcp_enable_server")
-                    yield Button("Disable", id="mcp_disable_server")
+                    yield Button(
+                        "Delete",
+                        variant="error",
+                        id="mcp_delete_server",
+                        classes="settings-action",
+                    )
+                    yield Button("Clear OAuth", id="mcp_clear_tokens", classes="settings-action")
 
     def _compose_appearance_page(self) -> ComposeResult:
         with VerticalScroll(id="settings_page_appearance", classes="settings-page"):
@@ -321,6 +397,7 @@ class SettingsScreen(ModalScreen[None]):
                     id="theme_select",
                     allow_blank=False,
                     value=theme.DEFAULT_THEME_NAME,
+                    classes="settings-select-medium",
                 )
 
     def on_mount(self) -> None:

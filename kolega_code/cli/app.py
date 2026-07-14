@@ -346,7 +346,11 @@ class KolegaCodeApp(
                             with Vertical(classes="settings-section", id="settings_summary_section") as summary_section:
                                 summary_section.border_title = "Settings"
                                 yield Static("", id="settings_summary")
-                                yield Button("Open Settings", variant="primary", id="open_settings")
+                                yield Button(
+                                    "Open Settings →",
+                                    id="open_settings",
+                                    classes="settings-action",
+                                )
                                 yield Static("", id="settings_summary_status")
                         with VerticalScroll(id="settings_form"):
                             with Vertical(classes="settings-section", id="settings_model") as model_section:
