@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 
 from kolega_code.agent import AgentConfig, AgentEvent, CoderAgent, PlanningAgent, PromptExtension, ToolExtension
+from kolega_code.agent.baseagent import QueuedUserInput
 from kolega_code.agent.prompt_provider import AgentMode
 from kolega_code.agent.custom_agents import discover_custom_agents, validate_custom_agent_models
 from kolega_code.agent.prompts import build_current_plan_artifact_prompt
@@ -404,6 +405,38 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         )
         return True
 
+    async def _provide_queued_user_inputs(self) -> list[QueuedUserInput]:
+        """Agent-driven mid-turn drain: the running turn pulls queued messages
+        at a tool boundary instead of waiting for the turn to finish.
+
+        Runs on the TUI event loop inside the turn worker, so mutating the
+        queue here is race-free with the composer.
+        """
+        if not self._queued_messages:
+            return []
+        # Render tool events already emitted so tool output stays above the
+        # interjected user entries in the transcript.
+        await self._drain_pending_events()
+        # Snapshot after the await: an Esc during the drain restores whatever
+        # is still in the list, so anything taken here is genuinely delivered.
+        taken = list(self._queued_messages)
+        if not taken:
+            return []
+        self._queued_messages.clear()
+        inputs: list[QueuedUserInput] = []
+        for queued in taken:
+            queued.entry.kind = "user"
+            queued.entry.tone = None
+            if queued.entry not in self.conversation_entries:
+                self._add_conversation_entry(queued.entry)
+            else:
+                self._invalidate_conversation(queued.entry)
+            inputs.append(QueuedUserInput(text=queued.text, attachments=queued.attachments))
+        self._refresh_queued_messages_panel()
+        self._clear_composer_hint()
+        self._log_status(messages.QUEUE_DELIVERED_MID_TURN.format(count=len(inputs)), "info")
+        return inputs
+
     async def _consume_events(self) -> None:
         while True:
             event = await self.connection_manager.next_event()
@@ -734,6 +767,9 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             custom_agent_catalog=self.custom_agent_catalog,
         )
         assert self.agent is not None
+        # Mid-turn queue delivery: the running turn drains composer messages
+        # queued while it works (main agent only; sub-agents never get this).
+        self.agent.set_queued_input_provider(self._provide_queued_user_inputs)
         # Initialize LSP (language detection + server resolution)
         agent = self.agent
         assert agent.tool_collection is not None

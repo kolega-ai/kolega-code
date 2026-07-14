@@ -43,16 +43,24 @@ class FakeLLM:
       counts a chars/4 proxy of the messages, which lets a test prove that the
       effective token count drops after compaction.
     - ``generate`` returns a scripted summary message.
-    - ``stream`` returns a ``FakeStream`` that ends the agent loop after one pass.
+    - ``stream`` returns one scripted message per call when ``message_script`` is
+      supplied, then falls back to the existing final-message behavior.
     """
 
     def __init__(
-        self, token_script=None, *, summary_text="SUMMARY: condensed older turns.", proxy=False, final_message=None
+        self,
+        token_script=None,
+        *,
+        summary_text="SUMMARY: condensed older turns.",
+        proxy=False,
+        final_message=None,
+        message_script: list[Message] | None = None,
     ):
         self._token_script = list(token_script) if token_script else None
         self._summary_text = summary_text
         self._proxy = proxy
         self._final_message = final_message
+        self._message_script = list(message_script) if message_script else None
         # Mirror the LLMClient surface: a provider object exposing base_url, which
         # the diagnostics layer reads (agent.llm.provider.base_url).
         self.provider = MagicMock(base_url="https://api.test.example/v1")
@@ -78,9 +86,12 @@ class FakeLLM:
     async def _stream(self, *args, **kwargs):
         # The summary is produced by streaming (compaction) and the turn loop also
         # streams; a single end_turn message carrying the summary text serves both.
-        final = self._final_message or Message(
-            role="assistant", content=[TextBlock(text=self._summary_text)], stop_reason="end_turn"
-        )
+        if self._message_script:
+            final = self._message_script.pop(0)
+        else:
+            final = self._final_message or Message(
+                role="assistant", content=[TextBlock(text=self._summary_text)], stop_reason="end_turn"
+            )
         return FakeStream(final)
 
 

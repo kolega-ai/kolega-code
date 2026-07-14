@@ -50,11 +50,12 @@ STOPPED_WITH_ERROR = "Stopped due to an error: {error}"
 CANCEL_REQUESTED = "Cancellation requested."
 WAITING_FOR_ANSWER = "Waiting for your answer…"
 WAITING_FOR_PERMISSION = "Waiting for permission…"
-QUEUED_MESSAGE = "Queued. It will be sent when the current turn finishes."
+QUEUED_MESSAGE = "Queued. It will be delivered to the agent at the next tool boundary, or when this turn finishes."
 QUEUE_PLACEHOLDER = "Queue a follow-up…"
 QUEUE_EMPTY = "No queued messages."
 QUEUE_CLEARED = "Cleared {count} queued message(s)."
 QUEUE_LIST_TITLE = "Queued messages:"
+QUEUE_DELIVERED_MID_TURN = "Delivered {count} queued message(s) to the current turn."
 
 # Turn status strip finals
 DONE_IN = "Done in {duration}"
