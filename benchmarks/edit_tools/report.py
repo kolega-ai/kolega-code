@@ -46,6 +46,15 @@ def aggregate(records: Iterable[TrialRecord]) -> list[dict[str, Any]]:
         edit_names = set(get_protocol(protocol).tool_names)
         edit_attempts = [attempt for item in scored for attempt in item.tool_attempts if attempt.name in edit_names]
         latency = [item.elapsed_ms for item in scored]
+        family_groups: dict[str, list[TrialRecord]] = defaultdict(list)
+        for item in scored:
+            family_groups[item.family or "unknown"].append(item)
+        macro_family_success = (
+            sum(sum(child.task_success for child in family) / len(family) for family in family_groups.values())
+            / len(family_groups)
+            if family_groups
+            else None
+        )
         rows.append(
             {
                 "provider": provider,
@@ -56,6 +65,22 @@ def aggregate(records: Iterable[TrialRecord]) -> list[dict[str, Any]]:
                 "scored": len(scored),
                 "passed": successes,
                 "success_rate": successes / len(scored) if scored else None,
+                "macro_family_success_rate": macro_family_success,
+                "functional_success_rate": (
+                    sum(item.functional_success for item in scored) / len(scored) if scored else None
+                ),
+                "instruction_success_rate": (
+                    sum(item.instruction_success for item in scored) / len(scored) if scored else None
+                ),
+                "exact_match_rate": sum(item.exact_match for item in scored) / len(scored) if scored else None,
+                "collateral_success_rate": (
+                    sum(item.collateral_success for item in scored) / len(scored) if scored else None
+                ),
+                "operation_success_rate": (
+                    sum(item.completed_operations for item in scored) / sum(item.total_operations for item in scored)
+                    if sum(item.total_operations for item in scored)
+                    else None
+                ),
                 "success_ci_low": low if scored else None,
                 "success_ci_high": high if scored else None,
                 "first_attempt_rate": (
@@ -76,6 +101,22 @@ def aggregate(records: Iterable[TrialRecord]) -> list[dict[str, Any]]:
                 "collateral_rate": (
                     sum(bool(item.collateral_paths) for item in scored) / len(scored) if scored else None
                 ),
+                "avg_edit_attempts": len(edit_attempts) / len(scored) if scored else None,
+                "recovery_rate": (
+                    sum(
+                        any(not attempt.apply_ok for attempt in item.tool_attempts if attempt.name in edit_names)
+                        and any(attempt.apply_ok for attempt in item.tool_attempts if attempt.name in edit_names)
+                        for item in scored
+                    )
+                    / len(scored)
+                    if scored
+                    else None
+                ),
+                "iteration_exhaustion_rate": (
+                    sum(bool(item.metadata.get("iteration_exhausted")) for item in scored) / len(scored)
+                    if scored
+                    else None
+                ),
                 "median_latency_ms": statistics.median(latency) if latency else None,
                 "p95_latency_ms": _percentile(latency, 0.95) if latency else None,
                 "avg_input_tokens": (sum(item.usage.input_tokens for item in scored) / len(scored) if scored else None),
@@ -86,6 +127,37 @@ def aggregate(records: Iterable[TrialRecord]) -> list[dict[str, Any]]:
                 "harness_errors": sum(item.status == "harness_error" for item in items),
                 "not_run": sum(item.status == "not_run" for item in items),
                 "unsupported": sum(item.status == "unsupported" for item in items),
+            }
+        )
+    return rows
+
+
+def breakdown(records: Iterable[TrialRecord], dimension: str) -> list[dict[str, Any]]:
+    groups: dict[tuple[str, str, str, str, str], list[TrialRecord]] = defaultdict(list)
+    for record in records:
+        value = str(getattr(record, dimension, None) or "unknown")
+        groups[(record.provider, record.model, record.protocol, record.lane, value)].append(record)
+    rows: list[dict[str, Any]] = []
+    for (provider, model, protocol, lane, value), items in sorted(groups.items()):
+        scored = [item for item in items if item.scored]
+        rows.append(
+            {
+                "provider": provider,
+                "model": model,
+                "protocol": protocol,
+                "lane": lane,
+                dimension: value,
+                "scored": len(scored),
+                "success_rate": sum(item.task_success for item in scored) / len(scored) if scored else None,
+                "functional_success_rate": (
+                    sum(item.functional_success for item in scored) / len(scored) if scored else None
+                ),
+                "exact_match_rate": sum(item.exact_match for item in scored) / len(scored) if scored else None,
+                "operation_success_rate": (
+                    sum(item.completed_operations for item in scored) / sum(item.total_operations for item in scored)
+                    if sum(item.total_operations for item in scored)
+                    else None
+                ),
             }
         )
     return rows
@@ -160,14 +232,18 @@ def _format_rate(value: Any) -> str:
     return "—" if value is None else f"{100 * float(value):.1f}%"
 
 
-def markdown_report(rows: list[dict[str, Any]], comparisons: list[dict[str, Any]]) -> str:
+def markdown_report(
+    rows: list[dict[str, Any]],
+    comparisons: list[dict[str, Any]],
+    breakdowns: dict[str, list[dict[str, Any]]],
+) -> str:
     lines = [
         "# Edit-tool benchmark report",
         "",
         "Provider and harness failures are not included in scored success-rate denominators.",
         "",
-        "| Provider/model | Lane | Protocol | Scored | Success | 95% CI | First edit | Apply | Infra/not run |",
-        "| --- | --- | --- | ---: | ---: | --- | ---: | ---: | ---: |",
+        "| Provider/model | Lane | Protocol | Scored | Exact success | Operations | Family macro | 95% CI | First edit | Apply | Infra/not run |",
+        "| --- | --- | --- | ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: |",
     ]
     for row in rows:
         ci = (
@@ -178,9 +254,26 @@ def markdown_report(rows: list[dict[str, Any]], comparisons: list[dict[str, Any]
         infra = row["provider_errors"] + row["harness_errors"] + row["not_run"]
         lines.append(
             f"| {row['provider']}/{row['model']} | {row['lane']} | {row['protocol']} | {row['scored']} | "
-            f"{_format_rate(row['success_rate'])} | {ci} | {_format_rate(row['first_attempt_rate'])} | "
+            f"{_format_rate(row['success_rate'])} | {_format_rate(row['operation_success_rate'])} | "
+            f"{_format_rate(row['macro_family_success_rate'])} | {ci} | {_format_rate(row['first_attempt_rate'])} | "
             f"{_format_rate(row['apply_success_rate'])} | {infra} |"
         )
+    for dimension in ("language", "family", "target_length", "payload_size", "target_file_count"):
+        lines.extend(
+            [
+                "",
+                f"## By {dimension}",
+                "",
+                f"| Provider/model | Lane | Protocol | {dimension.replace('_', ' ').title()} | Scored | Exact success | Operations |",
+                "| --- | --- | --- | --- | ---: | ---: | ---: |",
+            ]
+        )
+        for item in breakdowns[dimension]:
+            lines.append(
+                f"| {item['provider']}/{item['model']} | {item['lane']} | {item['protocol']} | "
+                f"{item[dimension]} | {item['scored']} | {_format_rate(item['success_rate'])} | "
+                f"{_format_rate(item['operation_success_rate'])} |"
+            )
     lines.extend(
         [
             "",
@@ -205,9 +298,18 @@ def markdown_report(rows: list[dict[str, Any]], comparisons: list[dict[str, Any]
 def write_report(run_dir: Path, records: list[TrialRecord]) -> dict[str, Any]:
     rows = aggregate(records)
     comparisons = paired_comparisons(records)
-    summary = {"schema_version": 1, "groups": rows, "paired_comparisons": comparisons}
+    breakdowns = {
+        dimension: breakdown(records, dimension)
+        for dimension in ("language", "family", "target_length", "payload_size", "target_file_count")
+    }
+    summary = {
+        "schema_version": 1,
+        "groups": rows,
+        "breakdowns": breakdowns,
+        "paired_comparisons": comparisons,
+    }
     write_json(run_dir / "summary.json", summary)
-    atomic_write_text(run_dir / "summary.md", markdown_report(rows, comparisons))
+    atomic_write_text(run_dir / "summary.md", markdown_report(rows, comparisons, breakdowns))
     output = StringIO()
     if rows:
         writer = csv.DictWriter(output, fieldnames=list(rows[0]))

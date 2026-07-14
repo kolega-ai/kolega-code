@@ -1,0 +1,30 @@
+schema_version: 1
+id: edit-tool-validity-slice
+lanes: [controlled]
+repetitions: 1
+concurrency: 4
+trial_timeout_seconds: 600
+max_iterations: 30
+models:
+  - provider: anthropic
+    model: claude-opus-4-8
+    protocols: [claude_code]
+    thinking_effort: low
+    max_output_tokens: 16384
+  - provider: openai
+    model: gpt-5.6-sol
+    protocols: [codex_apply_patch]
+    thinking_effort: high
+    max_output_tokens: 16384
+  - provider: deepseek
+    model: deepseek-v4-pro
+    protocols: [search_replace, codex_apply_patch, claude_code]
+    temperature: 1.0
+    thinking_effort: high
+    max_output_tokens: 16384
+  - provider: deepseek
+    model: deepseek-v4-flash
+    protocols: [search_replace, codex_apply_patch, claude_code]
+    temperature: 1.0
+    thinking_effort: high
+    max_output_tokens: 16384

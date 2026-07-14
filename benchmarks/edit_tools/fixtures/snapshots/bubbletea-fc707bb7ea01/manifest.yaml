@@ -1,0 +1,59 @@
+schema_version: 1
+id: bubbletea-fc707bb7ea01
+language: go
+repository: https://github.com/charmbracelet/bubbletea.git
+commit: fc707bb7ea0161405bb6c653ec93f6a9c6a72fe1
+license: MIT
+license_files:
+- licenses/LICENSE
+files:
+  cursed_renderer.go:
+    sha256: 902812594251a2896b1e5041521cc39aec358f05885083c9aac50d267b679b51
+    bytes: 26354
+    lines: 860
+    git_blob: f45fee3205ce08be9b354f5e2e0d6a1974b5bfe2
+  exec_test.go:
+    sha256: aa29268d01380652304338b77effd48d3889213ec1325a2f2dd730f6a35b9d6e
+    bytes: 2413
+    lines: 137
+    git_blob: ba76f919735688b666e825442579c68c5db9555a
+  go.mod:
+    sha256: 751049c026efd6817be643df2a8bfc4dd459048ead81a6db9f9748e520bfd595
+    bytes: 1006
+    lines: 28
+    git_blob: 5560b3cda3a1bb79f77bb30423626b49a6959d3e
+  key.go:
+    sha256: 43ba104b747188ae22e687a7bc6c4d21f167e839a6a8394c6d6d83b7643b87c2
+    bytes: 10262
+    lines: 371
+    git_blob: b16e53c2f14a095009ca358a819de32d2fdd2aed
+  logging.go:
+    sha256: af7eaaf5b8ae2a4edc631a8750e93644459dae91bcb25e3c3de94a3b9e6593ad
+    bytes: 1389
+    lines: 53
+    git_blob: 349758cbcea36229556d740138db429b9594fd74
+  options.go:
+    sha256: da8fefe4332a1ca935693dec99cc915d2ec693bd3f024068ec22854658056f90
+    bytes: 5285
+    lines: 168
+    git_blob: dfd8cda4f85de1d1ad0c7c40a9493a105e510e47
+  options_test.go:
+    sha256: 8f02c911056a89cbaf51d51c4565be7e2a2395dc8c3e8b69aca76824c970ee97
+    bytes: 2551
+    lines: 106
+    git_blob: 423dc4c2f94fd5e95efb8cfdf57862ef64e0ba2c
+  tea.go:
+    sha256: 013060126f31e115184a6b9cba1cf5f31345d3048a98e432e450f011adb78ac9
+    bytes: 40651
+    lines: 1439
+    git_blob: e249d71bbaf904e385811335c4d57b98078e64b0
+  tea_test.go:
+    sha256: b1a26e666792d4a7a4ea72fecfb541a8506aa0609fd9e04408ed48a991e26a4a
+    bytes: 11701
+    lines: 671
+    git_blob: 8d81c77b08c98412c9b755373e325d42b8c365fc
+  tty.go:
+    sha256: 4a6664e86cf526a06bdfa614cb29fe53c6649da888373b99785fae3c51a73e57
+    bytes: 3125
+    lines: 136
+    git_blob: 12b86493b3417b41de8e32dac942067e5ce5f4eb

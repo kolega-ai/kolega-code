@@ -1,0 +1,1524 @@
+- id: mechanical-python-01
+  snapshot_id: click-b67832c2167e
+  language: python
+  family: coordinated-multi-file
+  primary_target: src/click/globals.py
+  target_length: short
+  target_files:
+  - src/click/globals.py
+  - src/click/_winconsole.py
+  - src/click/__init__.py
+  workspace_files:
+  - src/click/globals.py
+  - src/click/_winconsole.py
+  - src/click/__init__.py
+  requested_target_files: 3
+  requested_operations: 4
+  seed: 20260714
+- id: mechanical-python-02
+  snapshot_id: click-b67832c2167e
+  language: python
+  family: coordinated-multi-file
+  primary_target: src/click/_winconsole.py
+  target_length: normal
+  target_files:
+  - src/click/_winconsole.py
+  - src/click/__init__.py
+  workspace_files:
+  - src/click/_winconsole.py
+  - src/click/__init__.py
+  requested_target_files: 2
+  requested_operations: 5
+  seed: 20260715
+- id: mechanical-python-03
+  snapshot_id: click-b67832c2167e
+  language: python
+  family: ambiguous-context
+  primary_target: src/click/__init__.py
+  target_length: normal
+  target_files:
+  - src/click/__init__.py
+  workspace_files:
+  - src/click/__init__.py
+  requested_target_files: 1
+  requested_operations: 3
+  seed: 20260716
+- id: mechanical-python-04
+  snapshot_id: click-b67832c2167e
+  language: python
+  family: same-file-multi-hunk
+  primary_target: src/click/utils.py
+  target_length: medium
+  target_files:
+  - src/click/utils.py
+  workspace_files:
+  - src/click/utils.py
+  requested_target_files: 1
+  requested_operations: 3
+  seed: 20260717
+- id: mechanical-python-05
+  snapshot_id: click-b67832c2167e
+  language: python
+  family: nested-file-creation
+  primary_target: src/click/exceptions.py
+  target_length: medium
+  target_files:
+  - src/click/exceptions.py
+  - src/click/termui.py
+  workspace_files:
+  - src/click/exceptions.py
+  - src/click/termui.py
+  requested_target_files: 3
+  requested_operations: 3
+  seed: 20260718
+- id: mechanical-python-06
+  snapshot_id: click-b67832c2167e
+  language: python
+  family: block-insertion
+  primary_target: src/click/termui.py
+  target_length: long
+  target_files:
+  - src/click/termui.py
+  workspace_files:
+  - src/click/termui.py
+  requested_target_files: 1
+  requested_operations: 1
+  seed: 20260719
+- id: mechanical-python-07
+  snapshot_id: click-b67832c2167e
+  language: python
+  family: localized-replacement
+  primary_target: src/click/types.py
+  target_length: long
+  target_files:
+  - src/click/types.py
+  workspace_files:
+  - src/click/types.py
+  requested_target_files: 1
+  requested_operations: 1
+  seed: 20260720
+- id: mechanical-python-08
+  snapshot_id: click-b67832c2167e
+  language: python
+  family: structured-data
+  primary_target: src/click/_termui_impl.py
+  target_length: long
+  target_files:
+  - src/click/_termui_impl.py
+  - src/click/core.py
+  - src/click/globals.py
+  - pyproject.toml
+  workspace_files:
+  - src/click/_termui_impl.py
+  - src/click/core.py
+  - src/click/globals.py
+  - pyproject.toml
+  requested_target_files: 4
+  requested_operations: 4
+  seed: 20260721
+- id: mechanical-python-09
+  snapshot_id: click-b67832c2167e
+  language: python
+  family: targeted-removal
+  primary_target: src/click/core.py
+  target_length: oversized
+  target_files:
+  - src/click/core.py
+  workspace_files:
+  - src/click/core.py
+  requested_target_files: 1
+  requested_operations: 1
+  seed: 20260722
+- id: mechanical-typescript-01
+  snapshot_id: zod-912f0f51b0ce
+  language: typescript
+  family: ambiguous-context
+  primary_target: packages/zod/src/v4/core/regexes.ts
+  target_length: normal
+  target_files:
+  - packages/zod/src/v4/core/regexes.ts
+  workspace_files:
+  - packages/zod/src/v4/core/regexes.ts
+  requested_target_files: 1
+  requested_operations: 2
+  seed: 20260723
+- id: mechanical-typescript-02
+  snapshot_id: zod-912f0f51b0ce
+  language: typescript
+  family: coordinated-multi-file
+  primary_target: packages/zod/src/v4/core/json-schema-processors.ts
+  target_length: medium
+  target_files:
+  - packages/zod/src/v4/core/json-schema-processors.ts
+  - packages/zod/src/v4/core/errors.ts
+  - packages/zod/src/v4/mini/schemas.ts
+  workspace_files:
+  - packages/zod/src/v4/core/json-schema-processors.ts
+  - packages/zod/src/v4/core/errors.ts
+  - packages/zod/src/v4/mini/schemas.ts
+  requested_target_files: 3
+  requested_operations: 6
+  seed: 20260724
+- id: mechanical-typescript-03
+  snapshot_id: zod-912f0f51b0ce
+  language: typescript
+  family: block-insertion
+  primary_target: packages/zod/src/v4/core/errors.ts
+  target_length: medium
+  target_files:
+  - packages/zod/src/v4/core/errors.ts
+  workspace_files:
+  - packages/zod/src/v4/core/errors.ts
+  requested_target_files: 1
+  requested_operations: 1
+  seed: 20260725
+- id: mechanical-typescript-04
+  snapshot_id: zod-912f0f51b0ce
+  language: typescript
+  family: targeted-removal
+  primary_target: packages/zod/src/v4/mini/schemas.ts
+  target_length: long
+  target_files:
+  - packages/zod/src/v4/mini/schemas.ts
+  workspace_files:
+  - packages/zod/src/v4/mini/schemas.ts
+  requested_target_files: 1
+  requested_operations: 1
+  seed: 20260726
+- id: mechanical-typescript-05
+  snapshot_id: zod-912f0f51b0ce
+  language: typescript
+  family: ambiguous-context
+  primary_target: packages/zod/src/v4/core/checks.ts
+  target_length: long
+  target_files:
+  - packages/zod/src/v4/core/checks.ts
+  workspace_files:
+  - packages/zod/src/v4/core/checks.ts
+  requested_target_files: 1
+  requested_operations: 3
+  seed: 20260727
+- id: mechanical-typescript-06
+  snapshot_id: zod-912f0f51b0ce
+  language: typescript
+  family: coordinated-multi-file
+  primary_target: packages/zod/src/v4/core/util.ts
+  target_length: long
+  target_files:
+  - packages/zod/src/v4/core/util.ts
+  - packages/zod/src/v3/types.ts
+  workspace_files:
+  - packages/zod/src/v4/core/util.ts
+  - packages/zod/src/v3/types.ts
+  requested_target_files: 2
+  requested_operations: 7
+  seed: 20260728
+- id: mechanical-typescript-07
+  snapshot_id: zod-912f0f51b0ce
+  language: typescript
+  family: signature-callsite
+  primary_target: packages/zod/src/v3/types.ts
+  target_length: oversized
+  target_files:
+  - packages/zod/src/v3/types.ts
+  - packages/zod/src/v4/classic/schemas.ts
+  - packages/zod/src/v4/core/schemas.ts
+  workspace_files:
+  - packages/zod/src/v3/types.ts
+  - packages/zod/src/v4/classic/schemas.ts
+  - packages/zod/src/v4/core/schemas.ts
+  requested_target_files: 3
+  requested_operations: 4
+  seed: 20260729
+- id: mechanical-typescript-08
+  snapshot_id: zod-912f0f51b0ce
+  language: typescript
+  family: localized-replacement
+  primary_target: packages/zod/src/v4/classic/schemas.ts
+  target_length: oversized
+  target_files:
+  - packages/zod/src/v4/classic/schemas.ts
+  workspace_files:
+  - packages/zod/src/v4/classic/schemas.ts
+  requested_target_files: 1
+  requested_operations: 1
+  seed: 20260730
+- id: mechanical-typescript-09
+  snapshot_id: zod-912f0f51b0ce
+  language: typescript
+  family: targeted-removal
+  primary_target: packages/zod/src/v4/core/schemas.ts
+  target_length: oversized
+  target_files:
+  - packages/zod/src/v4/core/schemas.ts
+  workspace_files:
+  - packages/zod/src/v4/core/schemas.ts
+  requested_target_files: 1
+  requested_operations: 1
+  seed: 20260731
+- id: mechanical-javascript-01
+  snapshot_id: express-ae6dd37680e3
+  language: javascript
+  family: block-insertion
+  primary_target: test/acceptance/resource.js
+  target_length: short
+  target_files:
+  - test/acceptance/resource.js
+  workspace_files:
+  - test/acceptance/resource.js
+  requested_target_files: 1
+  requested_operations: 1
+  seed: 20260732
+- id: mechanical-javascript-02
+  snapshot_id: express-ae6dd37680e3
+  language: javascript
+  family: ambiguous-context
+  primary_target: test/app.options.js
+  target_length: normal
+  target_files:
+  - test/app.options.js
+  workspace_files:
+  - test/app.options.js
+  requested_target_files: 1
+  requested_operations: 2
+  seed: 20260733
+- id: mechanical-javascript-03
+  snapshot_id: express-ae6dd37680e3
+  language: javascript
+  family: signature-callsite
+  primary_target: test/Router.js
+  target_length: medium
+  target_files:
+  - test/Router.js
+  - test/express.static.js
+  workspace_files:
+  - test/Router.js
+  - test/express.static.js
+  requested_target_files: 2
+  requested_operations: 5
+  seed: 20260734
+- id: mechanical-javascript-04
+  snapshot_id: express-ae6dd37680e3
+  language: javascript
+  family: signature-callsite
+  primary_target: test/express.static.js
+  target_length: medium
+  target_files:
+  - test/express.static.js
+  - lib/request.js
+  - test/express.text.js
+  workspace_files:
+  - test/express.static.js
+  - lib/request.js
+  - test/express.text.js
+  requested_target_files: 3
+  requested_operations: 6
+  seed: 20260735
+- id: mechanical-javascript-05
+  snapshot_id: express-ae6dd37680e3
+  language: javascript
+  family: same-file-multi-hunk
+  primary_target: lib/request.js
+  target_length: medium
+  target_files:
+  - lib/request.js
+  workspace_files:
+  - lib/request.js
+  requested_target_files: 1
+  requested_operations: 2
+  seed: 20260736
+- id: mechanical-javascript-06
+  snapshot_id: express-ae6dd37680e3
+  language: javascript
+  family: targeted-removal
+  primary_target: test/express.text.js
+  target_length: medium
+  target_files:
+  - test/express.text.js
+  workspace_files:
+  - test/express.text.js
+  requested_target_files: 1
+  requested_operations: 1
+  seed: 20260737
+- id: mechanical-javascript-07
+  snapshot_id: express-ae6dd37680e3
+  language: javascript
+  family: nested-file-creation
+  primary_target: test/app.render.js
+  target_length: medium
+  target_files:
+  - test/app.render.js
+  workspace_files:
+  - test/app.render.js
+  requested_target_files: 2
+  requested_operations: 2
+  seed: 20260738
+- id: mechanical-javascript-08
+  snapshot_id: express-ae6dd37680e3
+  language: javascript
+  family: localized-replacement
+  primary_target: test/app.router.js
+  target_length: long
+  target_files:
+  - test/app.router.js
+  workspace_files:
+  - test/app.router.js
+  requested_target_files: 1
+  requested_operations: 1
+  seed: 20260739
+- id: mechanical-go-01
+  snapshot_id: bubbletea-fc707bb7ea01
+  language: go
+  family: same-file-multi-hunk
+  primary_target: logging.go
+  target_length: short
+  target_files:
+  - logging.go
+  workspace_files:
+  - logging.go
+  requested_target_files: 1
+  requested_operations: 3
+  seed: 20260740
+- id: mechanical-go-02
+  snapshot_id: bubbletea-fc707bb7ea01
+  language: go
+  family: ambiguous-context
+  primary_target: options_test.go
+  target_length: normal
+  target_files:
+  - options_test.go
+  workspace_files:
+  - options_test.go
+  requested_target_files: 1
+  requested_operations: 3
+  seed: 20260741
+- id: mechanical-go-03
+  snapshot_id: bubbletea-fc707bb7ea01
+  language: go
+  family: block-insertion
+  primary_target: tty.go
+  target_length: normal
+  target_files:
+  - tty.go
+  workspace_files:
+  - tty.go
+  requested_target_files: 1
+  requested_operations: 1
+  seed: 20260742
+- id: mechanical-go-04
+  snapshot_id: bubbletea-fc707bb7ea01
+  language: go
+  family: ambiguous-context
+  primary_target: exec_test.go
+  target_length: normal
+  target_files:
+  - exec_test.go
+  workspace_files:
+  - exec_test.go
+  requested_target_files: 1
+  requested_operations: 2
+  seed: 20260743
+- id: mechanical-go-05
+  snapshot_id: bubbletea-fc707bb7ea01
+  language: go
+  family: block-insertion
+  primary_target: options.go
+  target_length: normal
+  target_files:
+  - options.go
+  workspace_files:
+  - options.go
+  requested_target_files: 1
+  requested_operations: 1
+  seed: 20260744
+- id: mechanical-go-06
+  snapshot_id: bubbletea-fc707bb7ea01
+  language: go
+  family: same-file-multi-hunk
+  primary_target: cursed_renderer.go
+  target_length: medium
+  target_files:
+  - cursed_renderer.go
+  workspace_files:
+  - cursed_renderer.go
+  requested_target_files: 1
+  requested_operations: 2
+  seed: 20260745
+- id: mechanical-go-07
+  snapshot_id: bubbletea-fc707bb7ea01
+  language: go
+  family: localized-replacement
+  primary_target: key.go
+  target_length: medium
+  target_files:
+  - key.go
+  workspace_files:
+  - key.go
+  requested_target_files: 1
+  requested_operations: 1
+  seed: 20260746
+- id: mechanical-go-08
+  snapshot_id: bubbletea-fc707bb7ea01
+  language: go
+  family: block-insertion
+  primary_target: tea_test.go
+  target_length: medium
+  target_files:
+  - tea_test.go
+  workspace_files:
+  - tea_test.go
+  requested_target_files: 1
+  requested_operations: 1
+  seed: 20260747
+- id: mechanical-go-09
+  snapshot_id: bubbletea-fc707bb7ea01
+  language: go
+  family: block-insertion
+  primary_target: tea.go
+  target_length: long
+  target_files:
+  - tea.go
+  workspace_files:
+  - tea.go
+  requested_target_files: 1
+  requested_operations: 1
+  seed: 20260748
+- id: mechanical-rust-01
+  snapshot_id: clap-4a35e3bcabf7
+  language: rust
+  family: targeted-removal
+  primary_target: clap_builder/src/error/context.rs
+  target_length: normal
+  target_files:
+  - clap_builder/src/error/context.rs
+  workspace_files:
+  - clap_builder/src/error/context.rs
+  requested_target_files: 1
+  requested_operations: 1
+  seed: 20260749
+- id: mechanical-rust-02
+  snapshot_id: clap-4a35e3bcabf7
+  language: rust
+  family: localized-replacement
+  primary_target: clap_builder/src/builder/arg_group.rs
+  target_length: medium
+  target_files:
+  - clap_builder/src/builder/arg_group.rs
+  workspace_files:
+  - clap_builder/src/builder/arg_group.rs
+  requested_target_files: 1
+  requested_operations: 1
+  seed: 20260750
+- id: mechanical-rust-03
+  snapshot_id: clap-4a35e3bcabf7
+  language: rust
+  family: structured-data
+  primary_target: clap_builder/src/derive.rs
+  target_length: medium
+  target_files:
+  - clap_builder/src/derive.rs
+  - clap_builder/src/output/help_template.rs
+  - clap_builder/src/parser/parser.rs
+  - clap_builder/Cargo.toml
+  workspace_files:
+  - clap_builder/src/derive.rs
+  - clap_builder/src/output/help_template.rs
+  - clap_builder/src/parser/parser.rs
+  - clap_builder/Cargo.toml
+  requested_target_files: 4
+  requested_operations: 5
+  seed: 20260751
+- id: mechanical-rust-04
+  snapshot_id: clap-4a35e3bcabf7
+  language: rust
+  family: block-insertion
+  primary_target: clap_builder/src/output/help_template.rs
+  target_length: long
+  target_files:
+  - clap_builder/src/output/help_template.rs
+  workspace_files:
+  - clap_builder/src/output/help_template.rs
+  requested_target_files: 1
+  requested_operations: 1
+  seed: 20260752
+- id: mechanical-rust-05
+  snapshot_id: clap-4a35e3bcabf7
+  language: rust
+  family: coordinated-multi-file
+  primary_target: clap_builder/src/parser/parser.rs
+  target_length: long
+  target_files:
+  - clap_builder/src/parser/parser.rs
+  - clap_builder/src/error/mod.rs
+  - clap_builder/src/parser/matches/arg_matches.rs
+  workspace_files:
+  - clap_builder/src/parser/parser.rs
+  - clap_builder/src/error/mod.rs
+  - clap_builder/src/parser/matches/arg_matches.rs
+  requested_target_files: 3
+  requested_operations: 8
+  seed: 20260753
+- id: mechanical-rust-06
+  snapshot_id: clap-4a35e3bcabf7
+  language: rust
+  family: localized-replacement
+  primary_target: clap_builder/src/error/mod.rs
+  target_length: long
+  target_files:
+  - clap_builder/src/error/mod.rs
+  workspace_files:
+  - clap_builder/src/error/mod.rs
+  requested_target_files: 1
+  requested_operations: 1
+  seed: 20260754
+- id: mechanical-rust-07
+  snapshot_id: clap-4a35e3bcabf7
+  language: rust
+  family: coordinated-multi-file
+  primary_target: clap_builder/src/parser/matches/arg_matches.rs
+  target_length: oversized
+  target_files:
+  - clap_builder/src/parser/matches/arg_matches.rs
+  - clap_builder/src/builder/arg.rs
+  workspace_files:
+  - clap_builder/src/parser/matches/arg_matches.rs
+  - clap_builder/src/builder/arg.rs
+  requested_target_files: 2
+  requested_operations: 4
+  seed: 20260755
+- id: mechanical-rust-08
+  snapshot_id: clap-4a35e3bcabf7
+  language: rust
+  family: same-file-multi-hunk
+  primary_target: clap_builder/src/builder/arg.rs
+  target_length: oversized
+  target_files:
+  - clap_builder/src/builder/arg.rs
+  workspace_files:
+  - clap_builder/src/builder/arg.rs
+  requested_target_files: 1
+  requested_operations: 3
+  seed: 20260756
+- id: mechanical-rust-09
+  snapshot_id: clap-4a35e3bcabf7
+  language: rust
+  family: targeted-removal
+  primary_target: clap_builder/src/builder/value_parser.rs
+  target_length: oversized
+  target_files:
+  - clap_builder/src/builder/value_parser.rs
+  workspace_files:
+  - clap_builder/src/builder/value_parser.rs
+  requested_target_files: 1
+  requested_operations: 1
+  seed: 20260757
+- id: mechanical-java-01
+  snapshot_id: gson-c9f3fd55854a
+  language: java
+  family: signature-callsite
+  primary_target: gson/src/main/java/module-info.java
+  target_length: short
+  target_files:
+  - gson/src/main/java/module-info.java
+  - gson/src/main/java/com/google/gson/FormattingStyle.java
+  workspace_files:
+  - gson/src/main/java/module-info.java
+  - gson/src/main/java/com/google/gson/FormattingStyle.java
+  requested_target_files: 2
+  requested_operations: 7
+  seed: 20260758
+- id: mechanical-java-02
+  snapshot_id: gson-c9f3fd55854a
+  language: java
+  family: localized-replacement
+  primary_target: gson/src/main/java/com/google/gson/FormattingStyle.java
+  target_length: normal
+  target_files:
+  - gson/src/main/java/com/google/gson/FormattingStyle.java
+  workspace_files:
+  - gson/src/main/java/com/google/gson/FormattingStyle.java
+  requested_target_files: 1
+  requested_operations: 1
+  seed: 20260759
+- id: mechanical-java-03
+  snapshot_id: gson-c9f3fd55854a
+  language: java
+  family: same-file-multi-hunk
+  primary_target: gson/src/main/java/com/google/gson/internal/ReflectionAccessFilterHelper.java
+  target_length: normal
+  target_files:
+  - gson/src/main/java/com/google/gson/internal/ReflectionAccessFilterHelper.java
+  workspace_files:
+  - gson/src/main/java/com/google/gson/internal/ReflectionAccessFilterHelper.java
+  requested_target_files: 1
+  requested_operations: 2
+  seed: 20260760
+- id: mechanical-java-04
+  snapshot_id: gson-c9f3fd55854a
+  language: java
+  family: signature-callsite
+  primary_target: gson/src/main/java/com/google/gson/internal/bind/util/ISO8601Utils.java
+  target_length: medium
+  target_files:
+  - gson/src/main/java/com/google/gson/internal/bind/util/ISO8601Utils.java
+  - gson/src/main/java/com/google/gson/JsonElement.java
+  - gson/src/main/java/com/google/gson/GsonBuilder.java
+  workspace_files:
+  - gson/src/main/java/com/google/gson/internal/bind/util/ISO8601Utils.java
+  - gson/src/main/java/com/google/gson/JsonElement.java
+  - gson/src/main/java/com/google/gson/GsonBuilder.java
+  requested_target_files: 3
+  requested_operations: 8
+  seed: 20260761
+- id: mechanical-java-05
+  snapshot_id: gson-c9f3fd55854a
+  language: java
+  family: structured-data
+  primary_target: gson/src/main/java/com/google/gson/JsonElement.java
+  target_length: medium
+  target_files:
+  - gson/src/main/java/com/google/gson/JsonElement.java
+  - gson/src/main/java/com/google/gson/GsonBuilder.java
+  - gson/src/main/java/com/google/gson/Gson.java
+  - gson/src/main/java/com/google/gson/internal/bind/TypeAdapters.java
+  - gson/pom.xml
+  workspace_files:
+  - gson/src/main/java/com/google/gson/JsonElement.java
+  - gson/src/main/java/com/google/gson/GsonBuilder.java
+  - gson/src/main/java/com/google/gson/Gson.java
+  - gson/src/main/java/com/google/gson/internal/bind/TypeAdapters.java
+  - gson/pom.xml
+  requested_target_files: 5
+  requested_operations: 6
+  seed: 20260762
+- id: mechanical-java-06
+  snapshot_id: gson-c9f3fd55854a
+  language: java
+  family: structured-data
+  primary_target: gson/src/main/java/com/google/gson/GsonBuilder.java
+  target_length: long
+  target_files:
+  - gson/src/main/java/com/google/gson/GsonBuilder.java
+  - gson/src/main/java/com/google/gson/Gson.java
+  - gson/src/main/java/com/google/gson/internal/bind/TypeAdapters.java
+  - gson/src/main/java/module-info.java
+  - gson/pom.xml
+  workspace_files:
+  - gson/src/main/java/com/google/gson/GsonBuilder.java
+  - gson/src/main/java/com/google/gson/Gson.java
+  - gson/src/main/java/com/google/gson/internal/bind/TypeAdapters.java
+  - gson/src/main/java/module-info.java
+  - gson/pom.xml
+  requested_target_files: 5
+  requested_operations: 7
+  seed: 20260763
+- id: mechanical-java-07
+  snapshot_id: gson-c9f3fd55854a
+  language: java
+  family: signature-callsite
+  primary_target: gson/src/main/java/com/google/gson/Gson.java
+  target_length: long
+  target_files:
+  - gson/src/main/java/com/google/gson/Gson.java
+  - gson/src/main/java/com/google/gson/internal/bind/TypeAdapters.java
+  workspace_files:
+  - gson/src/main/java/com/google/gson/Gson.java
+  - gson/src/main/java/com/google/gson/internal/bind/TypeAdapters.java
+  requested_target_files: 2
+  requested_operations: 4
+  seed: 20260764
+- id: mechanical-java-08
+  snapshot_id: gson-c9f3fd55854a
+  language: java
+  family: same-file-multi-hunk
+  primary_target: gson/src/main/java/com/google/gson/internal/bind/TypeAdapters.java
+  target_length: long
+  target_files:
+  - gson/src/main/java/com/google/gson/internal/bind/TypeAdapters.java
+  workspace_files:
+  - gson/src/main/java/com/google/gson/internal/bind/TypeAdapters.java
+  requested_target_files: 1
+  requested_operations: 3
+  seed: 20260765
+- id: mechanical-cpp-01
+  snapshot_id: fmt-a79df4504cd4
+  language: cpp
+  family: signature-callsite
+  primary_target: src/fmt.cc
+  target_length: normal
+  target_files:
+  - src/fmt.cc
+  - include/fmt/std.h
+  - include/fmt/ranges.h
+  workspace_files:
+  - src/fmt.cc
+  - include/fmt/std.h
+  - include/fmt/ranges.h
+  requested_target_files: 3
+  requested_operations: 5
+  seed: 20260766
+- id: mechanical-cpp-02
+  snapshot_id: fmt-a79df4504cd4
+  language: cpp
+  family: same-file-multi-hunk
+  primary_target: include/fmt/std.h
+  target_length: medium
+  target_files:
+  - include/fmt/std.h
+  workspace_files:
+  - include/fmt/std.h
+  requested_target_files: 1
+  requested_operations: 2
+  seed: 20260767
+- id: mechanical-cpp-03
+  snapshot_id: fmt-a79df4504cd4
+  language: cpp
+  family: coordinated-multi-file
+  primary_target: include/fmt/ranges.h
+  target_length: medium
+  target_files:
+  - include/fmt/ranges.h
+  - include/fmt/os.h
+  - include/fmt/format-inl.h
+  workspace_files:
+  - include/fmt/ranges.h
+  - include/fmt/os.h
+  - include/fmt/format-inl.h
+  requested_target_files: 3
+  requested_operations: 5
+  seed: 20260768
+- id: mechanical-cpp-04
+  snapshot_id: fmt-a79df4504cd4
+  language: cpp
+  family: signature-callsite
+  primary_target: include/fmt/os.h
+  target_length: medium
+  target_files:
+  - include/fmt/os.h
+  - include/fmt/format-inl.h
+  workspace_files:
+  - include/fmt/os.h
+  - include/fmt/format-inl.h
+  requested_target_files: 2
+  requested_operations: 6
+  seed: 20260769
+- id: mechanical-cpp-05
+  snapshot_id: fmt-a79df4504cd4
+  language: cpp
+  family: coordinated-multi-file
+  primary_target: include/fmt/format-inl.h
+  target_length: long
+  target_files:
+  - include/fmt/format-inl.h
+  - include/fmt/chrono.h
+  workspace_files:
+  - include/fmt/format-inl.h
+  - include/fmt/chrono.h
+  requested_target_files: 2
+  requested_operations: 6
+  seed: 20260770
+- id: mechanical-cpp-06
+  snapshot_id: fmt-a79df4504cd4
+  language: cpp
+  family: coordinated-multi-file
+  primary_target: include/fmt/chrono.h
+  target_length: oversized
+  target_files:
+  - include/fmt/chrono.h
+  - include/fmt/base.h
+  - include/fmt/format.h
+  workspace_files:
+  - include/fmt/chrono.h
+  - include/fmt/base.h
+  - include/fmt/format.h
+  requested_target_files: 3
+  requested_operations: 7
+  seed: 20260771
+- id: mechanical-cpp-07
+  snapshot_id: fmt-a79df4504cd4
+  language: cpp
+  family: coordinated-multi-file
+  primary_target: include/fmt/base.h
+  target_length: oversized
+  target_files:
+  - include/fmt/base.h
+  - include/fmt/format.h
+  - src/fmt.cc
+  - include/fmt/std.h
+  workspace_files:
+  - include/fmt/base.h
+  - include/fmt/format.h
+  - src/fmt.cc
+  - include/fmt/std.h
+  requested_target_files: 4
+  requested_operations: 8
+  seed: 20260772
+- id: mechanical-cpp-08
+  snapshot_id: fmt-a79df4504cd4
+  language: cpp
+  family: signature-callsite
+  primary_target: include/fmt/format.h
+  target_length: oversized
+  target_files:
+  - include/fmt/format.h
+  - src/fmt.cc
+  - include/fmt/std.h
+  workspace_files:
+  - include/fmt/format.h
+  - src/fmt.cc
+  - include/fmt/std.h
+  requested_target_files: 3
+  requested_operations: 7
+  seed: 20260773
+- id: mechanical-csharp-01
+  snapshot_id: spectre-console-3ba102309539
+  language: csharp
+  family: ambiguous-context
+  primary_target: src/Spectre.Console.Ansi/Utilities/StringBuffer.cs
+  target_length: short
+  target_files:
+  - src/Spectre.Console.Ansi/Utilities/StringBuffer.cs
+  workspace_files:
+  - src/Spectre.Console.Ansi/Utilities/StringBuffer.cs
+  requested_target_files: 1
+  requested_operations: 3
+  seed: 20260774
+- id: mechanical-csharp-02
+  snapshot_id: spectre-console-3ba102309539
+  language: csharp
+  family: signature-callsite
+  primary_target: src/Spectre.Console/Widgets/Table/TableColumn.cs
+  target_length: normal
+  target_files:
+  - src/Spectre.Console/Widgets/Table/TableColumn.cs
+  - src/Spectre.Console/Live/LiveDisplay.cs
+  workspace_files:
+  - src/Spectre.Console/Widgets/Table/TableColumn.cs
+  - src/Spectre.Console/Live/LiveDisplay.cs
+  requested_target_files: 2
+  requested_operations: 8
+  seed: 20260775
+- id: mechanical-csharp-03
+  snapshot_id: spectre-console-3ba102309539
+  language: csharp
+  family: block-insertion
+  primary_target: src/Spectre.Console/Live/LiveDisplay.cs
+  target_length: normal
+  target_files:
+  - src/Spectre.Console/Live/LiveDisplay.cs
+  workspace_files:
+  - src/Spectre.Console/Live/LiveDisplay.cs
+  requested_target_files: 1
+  requested_operations: 3
+  seed: 20260776
+- id: mechanical-csharp-04
+  snapshot_id: spectre-console-3ba102309539
+  language: csharp
+  family: same-file-multi-hunk
+  primary_target: src/Spectre.Console/Widgets/Markup.cs
+  target_length: normal
+  target_files:
+  - src/Spectre.Console/Widgets/Markup.cs
+  workspace_files:
+  - src/Spectre.Console/Widgets/Markup.cs
+  requested_target_files: 1
+  requested_operations: 3
+  seed: 20260777
+- id: mechanical-csharp-05
+  snapshot_id: spectre-console-3ba102309539
+  language: csharp
+  family: structured-data
+  primary_target: src/Spectre.Console/Widgets/Table/Table.cs
+  target_length: medium
+  target_files:
+  - src/Spectre.Console/Widgets/Table/Table.cs
+  - src/Spectre.Console.Ansi/AnsiMarkup.cs
+  - src/Spectre.Console/Widgets/Layout/Layout.cs
+  - src/Spectre.Console.Ansi/AnsiWriter.cs
+  - src/Spectre.Console.Ansi/Utilities/StringBuffer.cs
+  - src/Spectre.Console/Spectre.Console.csproj
+  workspace_files:
+  - src/Spectre.Console/Widgets/Table/Table.cs
+  - src/Spectre.Console.Ansi/AnsiMarkup.cs
+  - src/Spectre.Console/Widgets/Layout/Layout.cs
+  - src/Spectre.Console.Ansi/AnsiWriter.cs
+  - src/Spectre.Console.Ansi/Utilities/StringBuffer.cs
+  - src/Spectre.Console/Spectre.Console.csproj
+  requested_target_files: 6
+  requested_operations: 8
+  seed: 20260778
+- id: mechanical-csharp-06
+  snapshot_id: spectre-console-3ba102309539
+  language: csharp
+  family: signature-callsite
+  primary_target: src/Spectre.Console.Ansi/AnsiMarkup.cs
+  target_length: medium
+  target_files:
+  - src/Spectre.Console.Ansi/AnsiMarkup.cs
+  - src/Spectre.Console/Widgets/Layout/Layout.cs
+  - src/Spectre.Console.Ansi/AnsiWriter.cs
+  workspace_files:
+  - src/Spectre.Console.Ansi/AnsiMarkup.cs
+  - src/Spectre.Console/Widgets/Layout/Layout.cs
+  - src/Spectre.Console.Ansi/AnsiWriter.cs
+  requested_target_files: 3
+  requested_operations: 9
+  seed: 20260779
+- id: mechanical-csharp-07
+  snapshot_id: spectre-console-3ba102309539
+  language: csharp
+  family: block-insertion
+  primary_target: src/Spectre.Console/Widgets/Layout/Layout.cs
+  target_length: medium
+  target_files:
+  - src/Spectre.Console/Widgets/Layout/Layout.cs
+  workspace_files:
+  - src/Spectre.Console/Widgets/Layout/Layout.cs
+  requested_target_files: 1
+  requested_operations: 2
+  seed: 20260780
+- id: mechanical-csharp-08
+  snapshot_id: spectre-console-3ba102309539
+  language: csharp
+  family: targeted-removal
+  primary_target: src/Spectre.Console.Ansi/AnsiWriter.cs
+  target_length: long
+  target_files:
+  - src/Spectre.Console.Ansi/AnsiWriter.cs
+  workspace_files:
+  - src/Spectre.Console.Ansi/AnsiWriter.cs
+  requested_target_files: 1
+  requested_operations: 1
+  seed: 20260781
+- id: mechanical-ruby-01
+  snapshot_id: rake-162f9f80cad8
+  language: ruby
+  family: targeted-removal
+  primary_target: lib/rake/loaders/makefile.rb
+  target_length: short
+  target_files:
+  - lib/rake/loaders/makefile.rb
+  workspace_files:
+  - lib/rake/loaders/makefile.rb
+  requested_target_files: 1
+  requested_operations: 2
+  seed: 20260782
+- id: mechanical-ruby-02
+  snapshot_id: rake-162f9f80cad8
+  language: ruby
+  family: block-insertion
+  primary_target: lib/rake/rake_test_loader.rb
+  target_length: short
+  target_files:
+  - lib/rake/rake_test_loader.rb
+  - lib/rake/file_utils.rb
+  workspace_files:
+  - lib/rake/rake_test_loader.rb
+  - lib/rake/file_utils.rb
+  requested_target_files: 2
+  requested_operations: 3
+  seed: 20260783
+- id: mechanical-ruby-03
+  snapshot_id: rake-162f9f80cad8
+  language: ruby
+  family: nested-file-creation
+  primary_target: lib/rake/file_utils.rb
+  target_length: normal
+  target_files:
+  - lib/rake/file_utils.rb
+  - lib/rake/file_utils_ext.rb
+  workspace_files:
+  - lib/rake/file_utils.rb
+  - lib/rake/file_utils_ext.rb
+  requested_target_files: 3
+  requested_operations: 3
+  seed: 20260784
+- id: mechanical-ruby-04
+  snapshot_id: rake-162f9f80cad8
+  language: ruby
+  family: structured-data
+  primary_target: lib/rake/file_utils_ext.rb
+  target_length: normal
+  target_files:
+  - lib/rake/file_utils_ext.rb
+  - lib/rake/task_manager.rb
+  - lib/rake/task.rb
+  - lib/rake/application.rb
+  - lib/rake/file_list.rb
+  - rake.gemspec
+  workspace_files:
+  - lib/rake/file_utils_ext.rb
+  - lib/rake/task_manager.rb
+  - lib/rake/task.rb
+  - lib/rake/application.rb
+  - lib/rake/file_list.rb
+  - rake.gemspec
+  requested_target_files: 6
+  requested_operations: 8
+  seed: 20260785
+- id: mechanical-ruby-05
+  snapshot_id: rake-162f9f80cad8
+  language: ruby
+  family: localized-replacement
+  primary_target: lib/rake/task_manager.rb
+  target_length: normal
+  target_files:
+  - lib/rake/task_manager.rb
+  workspace_files:
+  - lib/rake/task_manager.rb
+  requested_target_files: 1
+  requested_operations: 1
+  seed: 20260786
+- id: mechanical-ruby-06
+  snapshot_id: rake-162f9f80cad8
+  language: ruby
+  family: ambiguous-context
+  primary_target: lib/rake/task.rb
+  target_length: medium
+  target_files:
+  - lib/rake/task.rb
+  workspace_files:
+  - lib/rake/task.rb
+  requested_target_files: 1
+  requested_operations: 2
+  seed: 20260787
+- id: mechanical-ruby-07
+  snapshot_id: rake-162f9f80cad8
+  language: ruby
+  family: structured-data
+  primary_target: lib/rake/application.rb
+  target_length: medium
+  target_files:
+  - lib/rake/application.rb
+  - lib/rake/file_list.rb
+  - lib/rake/loaders/makefile.rb
+  - lib/rake/rake_test_loader.rb
+  - lib/rake/file_utils.rb
+  - lib/rake/file_utils_ext.rb
+  - rake.gemspec
+  workspace_files:
+  - lib/rake/application.rb
+  - lib/rake/file_list.rb
+  - lib/rake/loaders/makefile.rb
+  - lib/rake/rake_test_loader.rb
+  - lib/rake/file_utils.rb
+  - lib/rake/file_utils_ext.rb
+  - rake.gemspec
+  requested_target_files: 7
+  requested_operations: 13
+  seed: 20260788
+- id: mechanical-ruby-08
+  snapshot_id: rake-162f9f80cad8
+  language: ruby
+  family: coordinated-multi-file
+  primary_target: lib/rake/file_list.rb
+  target_length: medium
+  target_files:
+  - lib/rake/file_list.rb
+  - lib/rake/loaders/makefile.rb
+  - lib/rake/rake_test_loader.rb
+  - lib/rake/file_utils.rb
+  - lib/rake/file_utils_ext.rb
+  workspace_files:
+  - lib/rake/file_list.rb
+  - lib/rake/loaders/makefile.rb
+  - lib/rake/rake_test_loader.rb
+  - lib/rake/file_utils.rb
+  - lib/rake/file_utils_ext.rb
+  requested_target_files: 5
+  requested_operations: 4
+  seed: 20260789
+- id: mechanical-php-01
+  snapshot_id: symfony-console-9df1ce79867b
+  language: php
+  family: nested-file-creation
+  primary_target: Interaction/Interaction.php
+  target_length: short
+  target_files:
+  - Interaction/Interaction.php
+  workspace_files:
+  - Interaction/Interaction.php
+  requested_target_files: 2
+  requested_operations: 2
+  seed: 20260790
+- id: mechanical-php-02
+  snapshot_id: symfony-console-9df1ce79867b
+  language: php
+  family: same-file-multi-hunk
+  primary_target: Helper/SymfonyQuestionHelper.php
+  target_length: normal
+  target_files:
+  - Helper/SymfonyQuestionHelper.php
+  workspace_files:
+  - Helper/SymfonyQuestionHelper.php
+  requested_target_files: 1
+  requested_operations: 2
+  seed: 20260791
+- id: mechanical-php-03
+  snapshot_id: symfony-console-9df1ce79867b
+  language: php
+  family: same-file-multi-hunk
+  primary_target: Descriptor/JsonDescriptor.php
+  target_length: normal
+  target_files:
+  - Descriptor/JsonDescriptor.php
+  workspace_files:
+  - Descriptor/JsonDescriptor.php
+  requested_target_files: 1
+  requested_operations: 4
+  seed: 20260792
+- id: mechanical-php-04
+  snapshot_id: symfony-console-9df1ce79867b
+  language: php
+  family: structured-data
+  primary_target: Style/SymfonyStyle.php
+  target_length: medium
+  target_files:
+  - Style/SymfonyStyle.php
+  - Helper/ProgressBar.php
+  - Helper/TableStyle.php
+  - Helper/Table.php
+  - Application.php
+  - Interaction/Interaction.php
+  - Helper/SymfonyQuestionHelper.php
+  - composer.json
+  workspace_files:
+  - Style/SymfonyStyle.php
+  - Helper/ProgressBar.php
+  - Helper/TableStyle.php
+  - Helper/Table.php
+  - Application.php
+  - Interaction/Interaction.php
+  - Helper/SymfonyQuestionHelper.php
+  - composer.json
+  requested_target_files: 8
+  requested_operations: 14
+  seed: 20260793
+- id: mechanical-php-05
+  snapshot_id: symfony-console-9df1ce79867b
+  language: php
+  family: nested-file-creation
+  primary_target: Helper/ProgressBar.php
+  target_length: medium
+  target_files:
+  - Helper/ProgressBar.php
+  - Helper/TableStyle.php
+  workspace_files:
+  - Helper/ProgressBar.php
+  - Helper/TableStyle.php
+  requested_target_files: 3
+  requested_operations: 3
+  seed: 20260794
+- id: mechanical-php-06
+  snapshot_id: symfony-console-9df1ce79867b
+  language: php
+  family: coordinated-multi-file
+  primary_target: Helper/TableStyle.php
+  target_length: medium
+  target_files:
+  - Helper/TableStyle.php
+  - Helper/Table.php
+  - Application.php
+  - Interaction/Interaction.php
+  - Helper/SymfonyQuestionHelper.php
+  - Descriptor/JsonDescriptor.php
+  workspace_files:
+  - Helper/TableStyle.php
+  - Helper/Table.php
+  - Application.php
+  - Interaction/Interaction.php
+  - Helper/SymfonyQuestionHelper.php
+  - Descriptor/JsonDescriptor.php
+  requested_target_files: 6
+  requested_operations: 5
+  seed: 20260795
+- id: mechanical-php-07
+  snapshot_id: symfony-console-9df1ce79867b
+  language: php
+  family: nested-file-creation
+  primary_target: Helper/Table.php
+  target_length: long
+  target_files:
+  - Helper/Table.php
+  workspace_files:
+  - Helper/Table.php
+  requested_target_files: 2
+  requested_operations: 2
+  seed: 20260796
+- id: mechanical-php-08
+  snapshot_id: symfony-console-9df1ce79867b
+  language: php
+  family: coordinated-multi-file
+  primary_target: Application.php
+  target_length: long
+  target_files:
+  - Application.php
+  - Interaction/Interaction.php
+  - Helper/SymfonyQuestionHelper.php
+  - Descriptor/JsonDescriptor.php
+  - Style/SymfonyStyle.php
+  - Helper/ProgressBar.php
+  - Helper/TableStyle.php
+  workspace_files:
+  - Application.php
+  - Interaction/Interaction.php
+  - Helper/SymfonyQuestionHelper.php
+  - Descriptor/JsonDescriptor.php
+  - Style/SymfonyStyle.php
+  - Helper/ProgressBar.php
+  - Helper/TableStyle.php
+  requested_target_files: 7
+  requested_operations: 9
+  seed: 20260797
+- id: mechanical-swift-01
+  snapshot_id: swift-argument-parser-e579882f9557
+  language: swift
+  family: targeted-removal
+  primary_target: Sources/ArgumentParser/Parsing/ParserError.swift
+  target_length: short
+  target_files:
+  - Sources/ArgumentParser/Parsing/ParserError.swift
+  - Sources/ArgumentParser/Utilities/SequenceExtensions.swift
+  workspace_files:
+  - Sources/ArgumentParser/Parsing/ParserError.swift
+  - Sources/ArgumentParser/Utilities/SequenceExtensions.swift
+  requested_target_files: 2
+  requested_operations: 3
+  seed: 20260798
+- id: mechanical-swift-02
+  snapshot_id: swift-argument-parser-e579882f9557
+  language: swift
+  family: ambiguous-context
+  primary_target: Sources/ArgumentParser/Utilities/SequenceExtensions.swift
+  target_length: short
+  target_files:
+  - Sources/ArgumentParser/Utilities/SequenceExtensions.swift
+  workspace_files:
+  - Sources/ArgumentParser/Utilities/SequenceExtensions.swift
+  requested_target_files: 1
+  requested_operations: 3
+  seed: 20260799
+- id: mechanical-swift-03
+  snapshot_id: swift-argument-parser-e579882f9557
+  language: swift
+  family: localized-replacement
+  primary_target: Sources/ArgumentParser/Usage/DumpHelpGenerator.swift
+  target_length: normal
+  target_files:
+  - Sources/ArgumentParser/Usage/DumpHelpGenerator.swift
+  workspace_files:
+  - Sources/ArgumentParser/Usage/DumpHelpGenerator.swift
+  requested_target_files: 1
+  requested_operations: 1
+  seed: 20260800
+- id: mechanical-swift-04
+  snapshot_id: swift-argument-parser-e579882f9557
+  language: swift
+  family: signature-callsite
+  primary_target: Sources/ArgumentParser/Completions/ZshCompletionsGenerator.swift
+  target_length: normal
+  target_files:
+  - Sources/ArgumentParser/Completions/ZshCompletionsGenerator.swift
+  - Sources/ArgumentParser/Parsable Properties/Flag.swift
+  workspace_files:
+  - Sources/ArgumentParser/Completions/ZshCompletionsGenerator.swift
+  - Sources/ArgumentParser/Parsable Properties/Flag.swift
+  requested_target_files: 2
+  requested_operations: 10
+  seed: 20260801
+- id: mechanical-swift-05
+  snapshot_id: swift-argument-parser-e579882f9557
+  language: swift
+  family: block-insertion
+  primary_target: Sources/ArgumentParser/Parsable Properties/Flag.swift
+  target_length: medium
+  target_files:
+  - Sources/ArgumentParser/Parsable Properties/Flag.swift
+  - Sources/ArgumentParser/Parsing/ArgumentDefinition.swift
+  workspace_files:
+  - Sources/ArgumentParser/Parsable Properties/Flag.swift
+  - Sources/ArgumentParser/Parsing/ArgumentDefinition.swift
+  requested_target_files: 2
+  requested_operations: 2
+  seed: 20260802
+- id: mechanical-swift-06
+  snapshot_id: swift-argument-parser-e579882f9557
+  language: swift
+  family: signature-callsite
+  primary_target: Sources/ArgumentParser/Parsing/ArgumentDefinition.swift
+  target_length: medium
+  target_files:
+  - Sources/ArgumentParser/Parsing/ArgumentDefinition.swift
+  - Sources/ArgumentParser/Completions/BashCompletionsGenerator.swift
+  - Sources/ArgumentParser/Parsing/ArgumentSet.swift
+  workspace_files:
+  - Sources/ArgumentParser/Parsing/ArgumentDefinition.swift
+  - Sources/ArgumentParser/Completions/BashCompletionsGenerator.swift
+  - Sources/ArgumentParser/Parsing/ArgumentSet.swift
+  requested_target_files: 3
+  requested_operations: 11
+  seed: 20260803
+- id: mechanical-swift-07
+  snapshot_id: swift-argument-parser-e579882f9557
+  language: swift
+  family: same-file-multi-hunk
+  primary_target: Sources/ArgumentParser/Completions/BashCompletionsGenerator.swift
+  target_length: medium
+  target_files:
+  - Sources/ArgumentParser/Completions/BashCompletionsGenerator.swift
+  workspace_files:
+  - Sources/ArgumentParser/Completions/BashCompletionsGenerator.swift
+  requested_target_files: 1
+  requested_operations: 5
+  seed: 20260804
+- id: mechanical-swift-08
+  snapshot_id: swift-argument-parser-e579882f9557
+  language: swift
+  family: targeted-removal
+  primary_target: Sources/ArgumentParser/Parsing/ArgumentSet.swift
+  target_length: medium
+  target_files:
+  - Sources/ArgumentParser/Parsing/ArgumentSet.swift
+  - Sources/ArgumentParser/Parsing/ParserError.swift
+  workspace_files:
+  - Sources/ArgumentParser/Parsing/ArgumentSet.swift
+  - Sources/ArgumentParser/Parsing/ParserError.swift
+  requested_target_files: 2
+  requested_operations: 2
+  seed: 20260805
+- id: mechanical-kotlin-01
+  snapshot_id: okhttp-6a237f781144
+  language: kotlin
+  family: coordinated-multi-file
+  primary_target: okhttp/src/commonJvmAndroid/kotlin/okhttp3/internal/http2/Settings.kt
+  target_length: normal
+  target_files:
+  - okhttp/src/commonJvmAndroid/kotlin/okhttp3/internal/http2/Settings.kt
+  - okhttp/src/jvmMain/kotlin/okhttp3/internal/platform/Jdk8WithJettyBootPlatform.kt
+  - okhttp/src/commonJvmAndroid/kotlin/okhttp3/MultipartReader.kt
+  - okhttp/src/commonJvmAndroid/kotlin/okhttp3/Headers.kt
+  - okhttp/src/commonJvmAndroid/kotlin/okhttp3/MultipartBody.kt
+  - okhttp/src/commonJvmAndroid/kotlin/okhttp3/CipherSuite.kt
+  - okhttp/src/commonJvmAndroid/kotlin/okhttp3/OkHttpClient.kt
+  - okhttp/src/commonJvmAndroid/kotlin/okhttp3/internal/http2/Http2Connection.kt
+  workspace_files:
+  - okhttp/src/commonJvmAndroid/kotlin/okhttp3/internal/http2/Settings.kt
+  - okhttp/src/jvmMain/kotlin/okhttp3/internal/platform/Jdk8WithJettyBootPlatform.kt
+  - okhttp/src/commonJvmAndroid/kotlin/okhttp3/MultipartReader.kt
+  - okhttp/src/commonJvmAndroid/kotlin/okhttp3/Headers.kt
+  - okhttp/src/commonJvmAndroid/kotlin/okhttp3/MultipartBody.kt
+  - okhttp/src/commonJvmAndroid/kotlin/okhttp3/CipherSuite.kt
+  - okhttp/src/commonJvmAndroid/kotlin/okhttp3/OkHttpClient.kt
+  - okhttp/src/commonJvmAndroid/kotlin/okhttp3/internal/http2/Http2Connection.kt
+  requested_target_files: 8
+  requested_operations: 10
+  seed: 20260806
+- id: mechanical-kotlin-02
+  snapshot_id: okhttp-6a237f781144
+  language: kotlin
+  family: ambiguous-context
+  primary_target: okhttp/src/jvmMain/kotlin/okhttp3/internal/platform/Jdk8WithJettyBootPlatform.kt
+  target_length: normal
+  target_files:
+  - okhttp/src/jvmMain/kotlin/okhttp3/internal/platform/Jdk8WithJettyBootPlatform.kt
+  workspace_files:
+  - okhttp/src/jvmMain/kotlin/okhttp3/internal/platform/Jdk8WithJettyBootPlatform.kt
+  requested_target_files: 1
+  requested_operations: 2
+  seed: 20260807
+- id: mechanical-kotlin-03
+  snapshot_id: okhttp-6a237f781144
+  language: kotlin
+  family: signature-callsite
+  primary_target: okhttp/src/commonJvmAndroid/kotlin/okhttp3/MultipartReader.kt
+  target_length: normal
+  target_files:
+  - okhttp/src/commonJvmAndroid/kotlin/okhttp3/MultipartReader.kt
+  - okhttp/src/commonJvmAndroid/kotlin/okhttp3/Headers.kt
+  workspace_files:
+  - okhttp/src/commonJvmAndroid/kotlin/okhttp3/MultipartReader.kt
+  - okhttp/src/commonJvmAndroid/kotlin/okhttp3/Headers.kt
+  requested_target_files: 2
+  requested_operations: 12
+  seed: 20260808
+- id: mechanical-kotlin-04
+  snapshot_id: okhttp-6a237f781144
+  language: kotlin
+  family: localized-replacement
+  primary_target: okhttp/src/commonJvmAndroid/kotlin/okhttp3/Headers.kt
+  target_length: medium
+  target_files:
+  - okhttp/src/commonJvmAndroid/kotlin/okhttp3/Headers.kt
+  workspace_files:
+  - okhttp/src/commonJvmAndroid/kotlin/okhttp3/Headers.kt
+  requested_target_files: 1
+  requested_operations: 1
+  seed: 20260809
+- id: mechanical-kotlin-05
+  snapshot_id: okhttp-6a237f781144
+  language: kotlin
+  family: coordinated-multi-file
+  primary_target: okhttp/src/commonJvmAndroid/kotlin/okhttp3/MultipartBody.kt
+  target_length: medium
+  target_files:
+  - okhttp/src/commonJvmAndroid/kotlin/okhttp3/MultipartBody.kt
+  - okhttp/src/commonJvmAndroid/kotlin/okhttp3/CipherSuite.kt
+  - okhttp/src/commonJvmAndroid/kotlin/okhttp3/OkHttpClient.kt
+  - okhttp/src/commonJvmAndroid/kotlin/okhttp3/internal/http2/Http2Connection.kt
+  workspace_files:
+  - okhttp/src/commonJvmAndroid/kotlin/okhttp3/MultipartBody.kt
+  - okhttp/src/commonJvmAndroid/kotlin/okhttp3/CipherSuite.kt
+  - okhttp/src/commonJvmAndroid/kotlin/okhttp3/OkHttpClient.kt
+  - okhttp/src/commonJvmAndroid/kotlin/okhttp3/internal/http2/Http2Connection.kt
+  requested_target_files: 4
+  requested_operations: 11
+  seed: 20260810
+- id: mechanical-kotlin-06
+  snapshot_id: okhttp-6a237f781144
+  language: kotlin
+  family: coordinated-multi-file
+  primary_target: okhttp/src/commonJvmAndroid/kotlin/okhttp3/CipherSuite.kt
+  target_length: medium
+  target_files:
+  - okhttp/src/commonJvmAndroid/kotlin/okhttp3/CipherSuite.kt
+  - okhttp/src/commonJvmAndroid/kotlin/okhttp3/OkHttpClient.kt
+  - okhttp/src/commonJvmAndroid/kotlin/okhttp3/internal/http2/Http2Connection.kt
+  - okhttp/src/commonJvmAndroid/kotlin/okhttp3/internal/http2/Settings.kt
+  - okhttp/src/jvmMain/kotlin/okhttp3/internal/platform/Jdk8WithJettyBootPlatform.kt
+  workspace_files:
+  - okhttp/src/commonJvmAndroid/kotlin/okhttp3/CipherSuite.kt
+  - okhttp/src/commonJvmAndroid/kotlin/okhttp3/OkHttpClient.kt
+  - okhttp/src/commonJvmAndroid/kotlin/okhttp3/internal/http2/Http2Connection.kt
+  - okhttp/src/commonJvmAndroid/kotlin/okhttp3/internal/http2/Settings.kt
+  - okhttp/src/jvmMain/kotlin/okhttp3/internal/platform/Jdk8WithJettyBootPlatform.kt
+  requested_target_files: 5
+  requested_operations: 12
+  seed: 20260811
+- id: mechanical-kotlin-07
+  snapshot_id: okhttp-6a237f781144
+  language: kotlin
+  family: nested-file-creation
+  primary_target: okhttp/src/commonJvmAndroid/kotlin/okhttp3/OkHttpClient.kt
+  target_length: long
+  target_files:
+  - okhttp/src/commonJvmAndroid/kotlin/okhttp3/OkHttpClient.kt
+  - okhttp/src/commonJvmAndroid/kotlin/okhttp3/internal/http2/Http2Connection.kt
+  workspace_files:
+  - okhttp/src/commonJvmAndroid/kotlin/okhttp3/OkHttpClient.kt
+  - okhttp/src/commonJvmAndroid/kotlin/okhttp3/internal/http2/Http2Connection.kt
+  requested_target_files: 3
+  requested_operations: 3
+  seed: 20260812
+- id: mechanical-kotlin-08
+  snapshot_id: okhttp-6a237f781144
+  language: kotlin
+  family: nested-file-creation
+  primary_target: okhttp/src/commonJvmAndroid/kotlin/okhttp3/internal/http2/Http2Connection.kt
+  target_length: long
+  target_files:
+  - okhttp/src/commonJvmAndroid/kotlin/okhttp3/internal/http2/Http2Connection.kt
+  workspace_files:
+  - okhttp/src/commonJvmAndroid/kotlin/okhttp3/internal/http2/Http2Connection.kt
+  requested_target_files: 2
+  requested_operations: 2
+  seed: 20260813

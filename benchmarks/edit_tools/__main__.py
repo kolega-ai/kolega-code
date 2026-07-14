@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from collections import Counter
 from pathlib import Path
 import sys
+import tempfile
+import webbrowser
 
 import yaml
 
@@ -15,17 +18,21 @@ from kolega_code.agent.edit_protocols import production_edit_protocols
 from kolega_code.llm.specs import MODEL_SPECS
 
 from .artifacts import load_trial_records, write_json, write_materialized_cases
+from .authoring import FAMILY_COUNTS, author_corpus, import_sources
+from .browser import build_corpus_browser
 from .corpus import load_suite
 from .models import FileContent, MatrixSpec, ModelRunSpec, SuiteSpec, TaskSpec
 from .protocols import PROTOCOLS
 from .report import write_report
 from .runner import plan_trials, run_benchmark
+from .workspace import materialize_task, materialize_tree, verify_task
 
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
 REPO_ROOT = PACKAGE_ROOT.parents[1]
 DEFAULT_OUTPUT = REPO_ROOT / ".benchmark-runs"
 DEFAULT_SUITE = PACKAGE_ROOT / "suites" / "core.yaml"
+DEFAULT_BROWSER_OUTPUT = REPO_ROOT / ".corpus-builds" / "browser"
 
 
 def _load_matrix(path: Path) -> MatrixSpec:
@@ -61,10 +68,20 @@ def _parser() -> argparse.ArgumentParser:
     validate = commands.add_parser("validate", help="Validate suites, matrices, protocols, and generated cases.")
     validate.add_argument("--suite", type=Path, default=DEFAULT_SUITE)
     validate.add_argument("--matrix", type=Path)
+    validate.add_argument(
+        "--verify-oracles",
+        action="store_true",
+        help="Execute every before/expected oracle; container commands require the pinned verifier image.",
+    )
 
     generate = commands.add_parser("generate", help="Materialize a suite without making model calls.")
     generate.add_argument("--suite", type=Path, default=DEFAULT_SUITE)
     generate.add_argument("--output", type=Path, required=True)
+
+    browse = commands.add_parser("browse", help="Build and open a static browser for the benchmark corpus.")
+    browse.add_argument("--suite", type=Path, default=DEFAULT_SUITE)
+    browse.add_argument("--output", type=Path, default=DEFAULT_BROWSER_OUTPUT)
+    browse.add_argument("--no-open", action="store_true", help="Build the site without opening a browser.")
 
     run = commands.add_parser("run", help="Run or resume a benchmark matrix.")
     run.add_argument("--suite", type=Path, default=DEFAULT_SUITE)
@@ -86,18 +103,155 @@ def _parser() -> argparse.ArgumentParser:
     smoke.add_argument("--require-complete", action="store_true")
     smoke.add_argument("--resume", type=Path)
     smoke.add_argument("--rerun-infrastructure-failures", action="store_true")
+
+    corpus_import = commands.add_parser(
+        "corpus-import", help="Import pinned public source files and create the 100 mechanical authoring slots."
+    )
+    corpus_import.add_argument("--config", type=Path, default=PACKAGE_ROOT / "fixtures" / "sources.yaml")
+    corpus_import.add_argument("--checkout-root", type=Path, required=True)
+
+    corpus_author = commands.add_parser(
+        "corpus-author", help="Author exact mechanical edit recipes with Opus-first validated fallback."
+    )
+    corpus_author.add_argument("--slots", type=Path, default=PACKAGE_ROOT / "fixtures" / "authoring-slots.yaml")
+    corpus_author.add_argument("--output", type=Path, default=PACKAGE_ROOT / "suites" / "corpora" / "edit-core.yaml")
+    corpus_author.add_argument("--artifact-root", type=Path, default=REPO_ROOT / ".corpus-builds" / "mechanical-v1")
+    corpus_author.add_argument("--concurrency", type=int, default=2)
+    corpus_author.add_argument("--task", action="append", help="Author only these task ids; repeat or comma-separate.")
+    corpus_author.add_argument("--max-tasks", type=int)
+    corpus_author.add_argument("--confirm-live", action="store_true")
     return parser
+
+
+async def _validate_oracles(tasks: list[TaskSpec]) -> None:
+    failures: list[str] = []
+    for task in tasks:
+        with tempfile.TemporaryDirectory(prefix=f"kolega-corpus-{task.id}-") as temporary:
+            root = Path(temporary)
+            before = root / "before"
+            expected = root / "expected"
+            materialize_task(before, task)
+            materialize_tree(expected, task.expected_files)
+            before_result = await verify_task(before, task)
+            expected_result = await verify_task(expected, task)
+            if before_result.infrastructure_error:
+                failures.append(f"{task.id}: {before_result.infrastructure_error}")
+            elif before_result.success:
+                failures.append(f"{task.id}: before workspace unexpectedly passes")
+            if expected_result.infrastructure_error:
+                failures.append(f"{task.id}: {expected_result.infrastructure_error}")
+            elif not expected_result.success:
+                failures.append(f"{task.id}: expected workspace fails")
+    if failures:
+        raise ValueError("corpus oracle validation failed:\n" + "\n".join(failures))
 
 
 def _validate(args: argparse.Namespace) -> int:
     suite, tasks = load_suite(args.suite)
     matrix = _load_matrix(args.matrix) if args.matrix else None
     print(f"suite={suite.id} curated={len(suite.curated_tasks)} total={len(tasks)} digest-ready=yes")
+    print(
+        "coverage="
+        f"languages:{len({task.language for task in tasks})},"
+        f"mechanical:{sum(task.shape == 'mechanical' for task in tasks)},"
+        f"snapshots:{len({task.snapshot_id for task in tasks if task.snapshot_id})},"
+        f"recipes:{sum(task.recipe is not None for task in tasks)}"
+    )
+    if any(task.id.startswith("synthetic-") for task in tasks):
+        missing = [task.id for task in tasks if None in (task.language, task.family, task.difficulty, task.shape)]
+        if missing:
+            raise ValueError(f"tasks missing benchmark classification: {', '.join(missing)}")
+    if suite.id == "edit-core":
+        language_counts = Counter(task.language for task in tasks)
+        expected_languages = {
+            "python": 9,
+            "typescript": 9,
+            "javascript": 8,
+            "go": 9,
+            "rust": 9,
+            "java": 8,
+            "cpp": 8,
+            "csharp": 8,
+            "ruby": 8,
+            "php": 8,
+            "swift": 8,
+            "kotlin": 8,
+        }
+        length_counts = Counter(task.target_length for task in tasks)
+        expected_lengths = {"short": 10, "normal": 25, "medium": 35, "long": 20, "oversized": 10}
+        family_counts = Counter(task.family for task in tasks)
+        operation_counts = Counter(_count_group(len(task.recipe.operations) if task.recipe else 0) for task in tasks)
+        file_counts = Counter(
+            _file_count_group(len({operation.path for operation in task.recipe.operations}) if task.recipe else 0)
+            for task in tasks
+        )
+        errors: list[str] = []
+        if len(tasks) != 100:
+            errors.append(f"total={len(tasks)} expected=100")
+        for name, actual, expected in (
+            ("languages", language_counts, expected_languages),
+            ("target lengths", length_counts, expected_lengths),
+            ("families", family_counts, FAMILY_COUNTS),
+            ("operation scopes", operation_counts, {"one": 25, "few": 35, "several": 30, "many": 10}),
+            ("file scopes", file_counts, {"one": 50, "few": 35, "many": 15}),
+        ):
+            if actual != expected:
+                errors.append(f"{name}={actual} expected={expected}")
+        if len({(task.snapshot_id, task.primary_target) for task in tasks}) != 100:
+            errors.append("primary source targets are not unique")
+        incomplete = [
+            task.id
+            for task in tasks
+            if task.shape != "mechanical"
+            or not task.snapshot_id
+            or task.recipe is None
+            or not task.authoring
+            or not task.prompt
+        ]
+        if incomplete:
+            errors.append(f"tasks missing mechanical metadata: {', '.join(incomplete)}")
+        invalid_families: list[str] = []
+        for task in tasks:
+            assert task.recipe is not None
+            kinds = Counter(operation.kind for operation in task.recipe.operations)
+            if task.family == "localized-replacement" and kinds != {"replace": 1}:
+                invalid_families.append(f"{task.id}: expected one replacement")
+            elif task.family == "block-insertion" and not kinds["insert"]:
+                invalid_families.append(f"{task.id}: missing insertion")
+            elif task.family == "targeted-removal" and not kinds["delete"]:
+                invalid_families.append(f"{task.id}: missing deletion")
+            elif task.family == "nested-file-creation" and kinds["create"] != 1:
+                invalid_families.append(f"{task.id}: expected one created file")
+        if invalid_families:
+            errors.append("family/operation mismatches: " + ", ".join(invalid_families))
+        if errors:
+            raise ValueError("edit-core coverage mismatch:\n" + "\n".join(errors))
     print(f"protocols={','.join(sorted(PROTOCOLS))}")
     if matrix is not None:
         trials = plan_trials(suite, tasks, matrix)
         print(f"matrix={matrix.id} models={sum(item.enabled for item in matrix.models)} trials={len(trials)}")
+    if args.verify_oracles:
+        asyncio.run(_validate_oracles(tasks))
+        print(f"oracles=verified:{len(tasks)}")
     return 0
+
+
+def _count_group(value: int) -> str:
+    if value == 1:
+        return "one"
+    if value <= 3:
+        return "few"
+    if value <= 8:
+        return "several"
+    return "many"
+
+
+def _file_count_group(value: int) -> str:
+    if value == 1:
+        return "one"
+    if value <= 3:
+        return "few"
+    return "many"
 
 
 def _generate(args: argparse.Namespace) -> int:
@@ -106,6 +260,47 @@ def _generate(args: argparse.Namespace) -> int:
     write_json(args.output / "suite.json", suite.model_dump(mode="json"))
     write_materialized_cases(args.output, tasks)
     print(f"Materialized {len(tasks)} tasks in {args.output}")
+    return 0
+
+
+def _browse(args: argparse.Namespace) -> int:
+    suite, tasks = load_suite(args.suite)
+    output = args.output / suite.id
+    index = build_corpus_browser(output, suite, tasks, package_root=PACKAGE_ROOT)
+    print(f"Corpus browser: {index}")
+    if not args.no_open:
+        webbrowser.open(index.resolve().as_uri())
+    return 0
+
+
+def _corpus_import(args: argparse.Namespace) -> int:
+    slots, selected = import_sources(args.config, args.checkout_root, PACKAGE_ROOT)
+    print(
+        f"Imported {len(selected)} real source targets into {len({item.snapshot_id for item in selected})} snapshots."
+    )
+    print(f"Created {len(slots)} deterministic mechanical authoring slots.")
+    return 0
+
+
+def _corpus_author(args: argparse.Namespace) -> int:
+    if not args.confirm_live:
+        print("Refusing live corpus authoring without --confirm-live.", file=sys.stderr)
+        return 2
+    if args.concurrency < 1 or args.concurrency > 8:
+        raise ValueError("corpus authoring concurrency must be between 1 and 8")
+    tasks = asyncio.run(
+        author_corpus(
+            slots_path=args.slots,
+            output_path=args.output,
+            package_root=PACKAGE_ROOT,
+            repo_root=REPO_ROOT,
+            artifact_root=args.artifact_root,
+            concurrency=args.concurrency,
+            task_ids=_csv_set(args.task),
+            max_tasks=args.max_tasks,
+        )
+    )
+    print(f"Mechanical corpus now contains {len(tasks)} authored task(s).")
     return 0
 
 
@@ -235,6 +430,12 @@ def main(argv: list[str] | None = None) -> int:
         return _validate(args)
     if args.command == "generate":
         return _generate(args)
+    if args.command == "browse":
+        return _browse(args)
+    if args.command == "corpus-import":
+        return _corpus_import(args)
+    if args.command == "corpus-author":
+        return _corpus_author(args)
     if args.command == "run":
         return asyncio.run(_run(args))
     if args.command == "report":

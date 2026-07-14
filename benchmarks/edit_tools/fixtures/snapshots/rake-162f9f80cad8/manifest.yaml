@@ -1,0 +1,54 @@
+schema_version: 1
+id: rake-162f9f80cad8
+language: ruby
+repository: https://github.com/ruby/rake.git
+commit: 162f9f80cad8121c6427d3031a2a85e62e2d570d
+license: MIT
+license_files:
+- licenses/MIT-LICENSE
+files:
+  lib/rake/application.rb:
+    sha256: b8e7309918563f1772cf888667db13107c7a39639c23ddc410521fd11df45a05
+    bytes: 26070
+    lines: 847
+    git_blob: 39ee5e1913f6671f140174eb04277b238630eafc
+  lib/rake/file_list.rb:
+    sha256: 44a9e3c169897447e975ea7c12295f02d36cd62a19bb30e68173f920f4af287c
+    bytes: 12764
+    lines: 435
+    git_blob: 76078d269cac2dd82b7b549d2e8293eb4a3119ba
+  lib/rake/file_utils.rb:
+    sha256: 0a071e2afa5197509912bc1a4317d6ebeba6d134c794c59ce5dc4fd1edbb9277
+    bytes: 3984
+    lines: 137
+    git_blob: c52091715ebb05093a91620e2fbad865a5aa10dd
+  lib/rake/file_utils_ext.rb:
+    sha256: 3de3ab9b413111dc6fb183717d40bd77fbed7e81b8f3b0a9f39d3a8b82495a62
+    bytes: 3935
+    lines: 135
+    git_blob: 58d1c2113205446e0add5d4aaa12a3f218e8c7f8
+  lib/rake/loaders/makefile.rb:
+    sha256: 42e0c4868e6807827d1af2a5fdc17e8f977b1941be8dd43ee1a81557a16842d2
+    bytes: 1378
+    lines: 54
+    git_blob: 46f4beaad529e8a90e06df7bdc580740c85d932a
+  lib/rake/rake_test_loader.rb:
+    sha256: b40f6aabf393f513ccfc173f3c87e345b19eecac9169a2da26265a590bfd60ac
+    bytes: 481
+    lines: 27
+    git_blob: 05d89fc45a9fd9362c832950a1ac2e9c6c40bfc8
+  lib/rake/task.rb:
+    sha256: cf250f70792e6b8b4c6ac67e45b49e46510469f35699810d987d493bfc113132
+    bytes: 13053
+    lines: 434
+    git_blob: e61ccb641715b837e8506f61c05e2db2c32b915e
+  lib/rake/task_manager.rb:
+    sha256: ddfc274bb1694abfd659d97e67ad32c110b906a377b047aae9840879057170d4
+    bytes: 10309
+    lines: 333
+    git_blob: 90bc0d0d18e223dafd1e47efb07ab7ed410f70c9
+  rake.gemspec:
+    sha256: 192edf252053a29426bcb70d05213b76d6587549cd6c26ab14d7a2fdb89a2651
+    bytes: 3325
+    lines: 102
+    git_blob: dbc1794c8b0db18219b58f5b814660bb11ea1b30

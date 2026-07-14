@@ -1,9 +1,5 @@
 schema_version: 1
 id: edit-core
-description: Balanced curated and deterministic synthetic shared-capability edit suite.
-curated_sources: [curated.yaml]
-synthetic:
-  count: 36
-  seed: 20260713
-  generators: [replace_literal, insert_block, remove_block, create_file, same_file_multi, multi_file]
-default_repetitions: 3
+description: Exact mechanical edits over 100 pinned real-world source files in twelve languages.
+curated_sources: [corpora/edit-core.yaml]
+default_repetitions: 1

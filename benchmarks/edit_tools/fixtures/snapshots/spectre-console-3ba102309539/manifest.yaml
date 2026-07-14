@@ -1,0 +1,54 @@
+schema_version: 1
+id: spectre-console-3ba102309539
+language: csharp
+repository: https://github.com/spectreconsole/spectre.console.git
+commit: 3ba1023095399bb6a50d4f9f2f194d3d4d28187e
+license: MIT
+license_files:
+- licenses/LICENSE.md
+files:
+  src/Spectre.Console.Ansi/AnsiMarkup.cs:
+    sha256: c334750cab1959fb49636f046cb0cd6f9faa6330ac61ad8d56a4d2011ddffbaa
+    bytes: 12937
+    lines: 435
+    git_blob: b3e08864dc18daff93ae5039be584fc1e992ea5e
+  src/Spectre.Console.Ansi/AnsiWriter.cs:
+    sha256: 9ad5821eef448885bad22608412d5946ec2cf79940788b10281cbef85e332885
+    bytes: 34611
+    lines: 1047
+    git_blob: 3d39073c41e10aeb786b5bf1093aa63c55ea6153
+  src/Spectre.Console.Ansi/Utilities/StringBuffer.cs:
+    sha256: bb2ad892e95c9681c258c4b353ef6115d294ce6d75217ce0b85368e56217d4f3
+    bytes: 784
+    lines: 46
+    git_blob: f601f435f13e95dfed473be9c465b9cc8312d828
+  src/Spectre.Console/Live/LiveDisplay.cs:
+    sha256: d121b7383052582071ef2b29a98854436176afb1e23b77e3e1ae5ed4a3e5b6b0
+    bytes: 5370
+    lines: 167
+    git_blob: 85fa6b07725bad5ad9e58a7c9508cf58f1664fd1
+  src/Spectre.Console/Spectre.Console.csproj:
+    sha256: e094b1af6283a0d9f35c4d141ebeb64e123d9f5cc2e8cc93cc361cbc7854add8
+    bytes: 2205
+    lines: 54
+    git_blob: 2cee3c8f3426ae5d4407e1d7305dda59ba5933f5
+  src/Spectre.Console/Widgets/Layout/Layout.cs:
+    sha256: 6ab81dd11e7e68ff4af5d79fd6c1868d35145dfb12bc92d068328bcd53f9a75d
+    bytes: 10688
+    lines: 359
+    git_blob: f43342bcf53373b8c8bdb1f72bf6ec2fc837d175
+  src/Spectre.Console/Widgets/Markup.cs:
+    sha256: 16593f0286681380d1362fd560d9af7fef721d5385a11e9f8321c3c9a38d2162
+    bytes: 3952
+    lines: 121
+    git_blob: d0fbdb3635e0cd05c52350620c49c8ebfa366f63
+  src/Spectre.Console/Widgets/Table/Table.cs:
+    sha256: bada1062ab1e68deceb5a4ee7b726ac132ad2b2a3dcc66d2691713010605e478
+    bytes: 17652
+    lines: 535
+    git_blob: 6905ca6f6aaf8e44888ae868b11a722e9f68f1b8
+  src/Spectre.Console/Widgets/Table/TableColumn.cs:
+    sha256: 91e3d46f496995f271a1f6b768d0b864d0703dace6333aee8ad454343d52c763
+    bytes: 4810
+    lines: 155
+    git_blob: fc9cc58c47299054b6de2078119850d80d355187

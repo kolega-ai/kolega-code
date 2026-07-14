@@ -1,0 +1,119 @@
+schema_version: 1
+seed: 20260713
+sources:
+  - id: click-b67832c2167e
+    language: python
+    repository: https://github.com/pallets/click.git
+    commit: b67832c2167e5b0ff6764a8c04a0a9087e697b5a
+    license: BSD-3-Clause
+    license_files: [LICENSE.txt]
+    context_file: pyproject.toml
+    include: [src/click/**/*.py]
+    quotas: {short: 1, normal: 2, medium: 2, long: 3, oversized: 1}
+  - id: zod-912f0f51b0ce
+    language: typescript
+    repository: https://github.com/colinhacks/zod.git
+    commit: 912f0f51b0ced654d0069741e7160834dca742ee
+    license: MIT
+    license_files: [LICENSE]
+    context_file: packages/zod/package.json
+    include: [packages/zod/src/**/*.ts]
+    exclude: [tests, locales]
+    quotas: {short: 0, normal: 1, medium: 2, long: 3, oversized: 3}
+  - id: express-ae6dd37680e3
+    language: javascript
+    repository: https://github.com/expressjs/express.git
+    commit: ae6dd37680e3a00618d6c8a3e522f0ee4eeba1a4
+    license: MIT
+    license_files: [LICENSE]
+    context_file: package.json
+    include: [lib/**/*.js, test/**/*.js]
+    exclude: [fixtures, node_modules]
+    quotas: {short: 1, normal: 1, medium: 5, long: 1, oversized: 0}
+  - id: bubbletea-fc707bb7ea01
+    language: go
+    repository: https://github.com/charmbracelet/bubbletea.git
+    commit: fc707bb7ea0161405bb6c653ec93f6a9c6a72fe1
+    license: MIT
+    license_files: [LICENSE]
+    context_file: go.mod
+    include: ["**/*.go"]
+    exclude: [examples, tutorials, vendor]
+    quotas: {short: 1, normal: 4, medium: 3, long: 1, oversized: 0}
+  - id: clap-4a35e3bcabf7
+    language: rust
+    repository: https://github.com/clap-rs/clap.git
+    commit: 4a35e3bcabf7b6326e646f88ef9cf312ac0fa2da
+    license: MIT OR Apache-2.0
+    license_files: [LICENSE-MIT, LICENSE-APACHE]
+    context_file: clap_builder/Cargo.toml
+    include: [clap_builder/src/**/*.rs]
+    quotas: {short: 0, normal: 1, medium: 2, long: 3, oversized: 3}
+  - id: gson-c9f3fd55854a
+    language: java
+    repository: https://github.com/google/gson.git
+    commit: c9f3fd55854a743b66f857ace3c7b268ea3e2ef7
+    license: Apache-2.0
+    license_files: [LICENSE]
+    context_file: gson/pom.xml
+    include: [gson/src/main/java/**/*.java]
+    exclude: [package-info.java]
+    quotas: {short: 1, normal: 2, medium: 2, long: 3, oversized: 0}
+  - id: fmt-a79df4504cd4
+    language: cpp
+    repository: https://github.com/fmtlib/fmt.git
+    commit: a79df4504cd4e42ed004b1113fb82171e62ed822
+    license: MIT
+    license_files: [LICENSE]
+    context_file: CMakeLists.txt
+    include: [src/**/*.cc, include/**/*.h]
+    quotas: {short: 0, normal: 1, medium: 3, long: 1, oversized: 3}
+  - id: spectre-console-3ba102309539
+    language: csharp
+    repository: https://github.com/spectreconsole/spectre.console.git
+    commit: 3ba1023095399bb6a50d4f9f2f194d3d4d28187e
+    license: MIT
+    license_files: [LICENSE.md]
+    context_file: src/Spectre.Console/Spectre.Console.csproj
+    include: [src/Spectre.Console/**/*.cs, src/Spectre.Console.Ansi/**/*.cs]
+    exclude: [Generated, .Generated., .g.cs, obj]
+    quotas: {short: 1, normal: 3, medium: 3, long: 1, oversized: 0}
+  - id: rake-162f9f80cad8
+    language: ruby
+    repository: https://github.com/ruby/rake.git
+    commit: 162f9f80cad8121c6427d3031a2a85e62e2d570d
+    license: MIT
+    license_files: [MIT-LICENSE]
+    context_file: rake.gemspec
+    include: [lib/**/*.rb]
+    quotas: {short: 2, normal: 3, medium: 3, long: 0, oversized: 0}
+  - id: symfony-console-9df1ce79867b
+    language: php
+    repository: https://github.com/symfony/console.git
+    commit: 9df1ce79867b238f61acf009787b970180c1c0c2
+    license: MIT
+    license_files: [LICENSE]
+    context_file: composer.json
+    include: ["**/*.php"]
+    exclude: [Tests, vendor]
+    quotas: {short: 1, normal: 2, medium: 3, long: 2, oversized: 0}
+  - id: swift-argument-parser-e579882f9557
+    language: swift
+    repository: https://github.com/apple/swift-argument-parser.git
+    commit: e579882f95579e7d7eb8c8068a5925c65d361e91
+    license: Apache-2.0
+    license_files: [LICENSE.txt]
+    context_file: Package.swift
+    include: [Sources/**/*.swift]
+    exclude: [TestHelpers]
+    quotas: {short: 2, normal: 2, medium: 4, long: 0, oversized: 0}
+  - id: okhttp-6a237f781144
+    language: kotlin
+    repository: https://github.com/square/okhttp.git
+    commit: 6a237f781144a7d388c734ab86de7aa52127035b
+    license: Apache-2.0
+    license_files: [LICENSE.txt]
+    context_file: build.gradle.kts
+    include: [okhttp/src/commonJvmAndroid/**/*.kt, okhttp/src/jvmMain/**/*.kt]
+    exclude: [kotlinTemplates, Generated]
+    quotas: {short: 0, normal: 3, medium: 3, long: 2, oversized: 0}

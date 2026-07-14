@@ -1,0 +1,54 @@
+schema_version: 1
+id: fmt-a79df4504cd4
+language: cpp
+repository: https://github.com/fmtlib/fmt.git
+commit: a79df4504cd4e42ed004b1113fb82171e62ed822
+license: MIT
+license_files:
+- licenses/LICENSE
+files:
+  CMakeLists.txt:
+    sha256: a5f0dc122b68a7092bba46c206152c26344eca12dd510f1df8b2f31a496fecd7
+    bytes: 20184
+    lines: 608
+    git_blob: 8426ab85682fb5d19313d25c6908a1cfd0572d58
+  include/fmt/base.h:
+    sha256: 330da65025541dd88569ee32ef1501a4fcc566f15dbfbcb36b6447fc41762f53
+    bytes: 102579
+    lines: 2954
+    git_blob: f213fa098af5378a74789d35b7cd59d9c015a7bc
+  include/fmt/chrono.h:
+    sha256: 33354a88eb3a487de2d4605d0be9d8c65eb5a15a752244917e141950879581af
+    bytes: 77372
+    lines: 2244
+    git_blob: 46590074b8231db27f365a6813839cce7d36333b
+  include/fmt/format-inl.h:
+    sha256: 42df999426d7dc2b2760840528699d73322fc2fd6626697f46e491cf7a321aec
+    bytes: 83081
+    lines: 1980
+    git_blob: ecd3ffec41e3b0674462e4fc7a55af20559a06fc
+  include/fmt/format.h:
+    sha256: 1400b95ab98c959c96f80b11d047f266e2067813185c2afe426f9c38875a6a2a
+    bytes: 163135
+    lines: 4415
+    git_blob: b13bc4cfc3192a47f98c2fad8c807eaa1eb66a22
+  include/fmt/os.h:
+    sha256: b43e2f2e3683bcc930d8011199b811ecb6c4480d876ad453e15f6a58ec7ccc80
+    bytes: 12612
+    lines: 419
+    git_blob: a3ee58f3403212e13b550805d0508d75fb8951df
+  include/fmt/ranges.h:
+    sha256: 0a9297b2feb4443413807ff5bc03e82b4671c150fdfadc869b009ff90b6015a1
+    bytes: 28782
+    lines: 869
+    git_blob: 99bef84173aaa5a82842b7fa4812b42031218a99
+  include/fmt/std.h:
+    sha256: 5a97150d80fff99394aded0e6011ab7ad809ab3c323c724012b6c2806f83f1e9
+    bytes: 27435
+    lines: 847
+    git_blob: 18b12abc475133886295a61a61e2a0a422e845b8
+  src/fmt.cc:
+    sha256: a6bf5f7169375a4157be72e38db938429935ff057b121d1fdfb75bec61f18d1d
+    bytes: 3430
+    lines: 157
+    git_blob: f319ce94731d30204cca55283eb5f339fb0bd959

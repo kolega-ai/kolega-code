@@ -1,0 +1,54 @@
+schema_version: 1
+id: symfony-console-9df1ce79867b
+language: php
+repository: https://github.com/symfony/console.git
+commit: 9df1ce79867b238f61acf009787b970180c1c0c2
+license: MIT
+license_files:
+- licenses/LICENSE
+files:
+  Application.php:
+    sha256: d4eb004674fa671f4d397d67012f6f7d804f60fd816c2fa1841dadabe353a36d
+    bytes: 51882
+    lines: 1421
+    git_blob: 72f6862c920312c150eed5bcea6ec7ac661e5449
+  Descriptor/JsonDescriptor.php:
+    sha256: 00a846cd54a8d9837eb10ec42d838130d1419cdfe613a2c10889e6782b4cb64b
+    bytes: 5745
+    lines: 166
+    git_blob: 9a8e696cd41357f299294452e31247546d687468
+  Helper/ProgressBar.php:
+    sha256: c2ee27407bd84cf493dac13ab63e4f875638f9e7731bcdf445e52921d1b52888
+    bytes: 24280
+    lines: 768
+    git_blob: e9cfc0659bd8245381c58dc32ecf0d1e9e6ec8d4
+  Helper/SymfonyQuestionHelper.php:
+    sha256: 6319aff7bf02b1cf25d2f52294520e9e1ebca6bea974ddba4a96db4fcc4b95a6
+    bytes: 3231
+    lines: 103
+    git_blob: cf6a6ddd6ed8fea66ba2dadc4794aa354b4d751f
+  Helper/Table.php:
+    sha256: 5b5b6ecf93f2d21668238377e9d64c661b4738dcda6071974fd1d723dbbd7495
+    bytes: 35293
+    lines: 985
+    git_blob: 73f1edee5acabaffea6f4738e6fa2d2f6acf4257
+  Helper/TableStyle.php:
+    sha256: dd4974d3b1f5f5d28aa6672a832ab056ca2285c01a17df22d134be42fd19058b
+    bytes: 13085
+    lines: 375
+    git_blob: bc941efc2954840474e0fff456a9d702a5db39e9
+  Interaction/Interaction.php:
+    sha256: 2ec9c457034ef49ed757727e1697148230dd1b8a0b75bdc48052aae66706bade
+    bytes: 1761
+    lines: 53
+    git_blob: 8ad48441b59a77dd0ac436f56c1c35cbaca7f697
+  Style/SymfonyStyle.php:
+    sha256: 6dc55ba2045191b74d0fcda6ae0e64fe8bd1100b176d8a15ff5350bee693751f
+    bytes: 20568
+    lines: 606
+    git_blob: 5a25bcf455778ede90ac52480fd66d57aa6118b3
+  composer.json:
+    sha256: 95e2bc5c4903b38068a1fe2ec59621baa286a52bb5f4d4b4375418c2aca41b2b
+    bytes: 1813
+    lines: 57
+    git_blob: 474bd3a7f84e843e1ecc0d44f08ec2fa47096b55

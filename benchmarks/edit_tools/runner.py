@@ -139,6 +139,7 @@ def plan_trials(
         if not model.enabled or (providers and model.provider not in providers):
             continue
         model_parameters = _model_parameters(model)
+        model_parameters["max_iterations"] = matrix.max_iterations
         for protocol_id in model.protocols:
             if protocols and protocol_id not in protocols:
                 continue
@@ -241,7 +242,7 @@ async def _controlled_execution(
     terminal_stop = False
     exhausted = False
     try:
-        for iteration in range(1, 7):
+        for iteration in range(1, int(trial.model_parameters["max_iterations"]) + 1):
             response = await client.generate(
                 messages=history,
                 system=CONTROLLED_SYSTEM_PROMPT,
@@ -331,7 +332,7 @@ async def _coder_agent_execution(
         config=config,
         agent_mode=AgentMode.CLI,
         permission_mode=PermissionMode.AUTO,
-        max_iterations=12,
+        max_iterations=int(trial.model_parameters["max_iterations"]),
     )
     assert agent.tool_collection is not None
     agent.tool_collection.tool_config.allowed_tools = [*READ_TOOL_NAMES, *adapter.tool_names]
@@ -396,6 +397,15 @@ def _base_record(
         "suite_id": updates.pop("suite_id"),
         "task_id": trial.task.id,
         "task_digest": trial.task.digest,
+        "language": trial.task.language,
+        "family": trial.task.family,
+        "difficulty": trial.task.difficulty,
+        "shape": trial.task.shape,
+        "target_length": trial.task.target_length,
+        "payload_size": trial.task.payload_size,
+        "target_file_count": len({operation.path for operation in trial.task.recipe.operations})
+        if trial.task.recipe
+        else 0,
         "lane": trial.lane,
         "provider": trial.model.provider,
         "model": trial.model.model,
@@ -409,6 +419,7 @@ def _base_record(
         "elapsed_ms": round((time.monotonic() - started) * 1000),
         "artifact_dir": artifact_dir.as_posix(),
         "metadata": {"model_parameters": trial.model_parameters},
+        "total_operations": len(trial.task.recipe.operations) if trial.task.recipe else 0,
     }
     values.update(updates)
     return TrialRecord.model_validate(values)
@@ -496,6 +507,13 @@ async def run_trial(
                 status="provider_error" if provider_error else "harness_error",
                 task_success=oracle.success,
                 oracle_success=oracle.success,
+                functional_success=oracle.functional_success,
+                instruction_success=oracle.instruction_success,
+                exact_match=oracle.exact_match,
+                collateral_success=oracle.collateral_success,
+                completed_operations=oracle.completed_operations,
+                total_operations=oracle.total_operations,
+                operation_success_rate=oracle.operation_success_rate,
                 failure_stage="timeout"
                 if isinstance(execution_error, TimeoutError)
                 else ("provider" if provider_error else "harness"),
@@ -503,6 +521,30 @@ async def run_trial(
             )
 
         assert execution is not None
+        if oracle.infrastructure_error is not None:
+            return _base_record(
+                trial,
+                run_id,
+                artifact_dir,
+                started_at,
+                started,
+                suite_id=suite.id,
+                status="harness_error",
+                task_success=False,
+                oracle_success=False,
+                functional_success=oracle.functional_success,
+                instruction_success=oracle.instruction_success,
+                exact_match=oracle.exact_match,
+                collateral_success=oracle.collateral_success,
+                completed_operations=oracle.completed_operations,
+                total_operations=oracle.total_operations,
+                operation_success_rate=oracle.operation_success_rate,
+                failure_stage="verifier_infrastructure",
+                error=oracle.infrastructure_error,
+                terminal_stop=execution.terminal_stop,
+                usage=execution.usage,
+                tool_attempts=execution.attempts,
+            )
         edit_attempts = [attempt for attempt in execution.attempts if attempt.name in adapter.tool_names]
         first_attempt_success = bool(edit_attempts and edit_attempts[0].apply_ok)
         status = "passed" if oracle.success else "failed"
@@ -513,7 +555,12 @@ async def run_trial(
             elif not any(attempt.parse_ok for attempt in edit_attempts):
                 failure_stage = "parse"
             elif not any(attempt.apply_ok for attempt in edit_attempts):
-                failure_stage = "apply"
+                format_error = any(
+                    attempt.error
+                    and ("Patch must" in attempt.error or "Invalid patch operation marker" in attempt.error)
+                    for attempt in edit_attempts
+                )
+                failure_stage = "edit_format_parse" if format_error else "apply"
             else:
                 failure_stage = "oracle"
         collateral = collateral_paths(trial.task, workspace)
@@ -528,6 +575,13 @@ async def run_trial(
             task_success=oracle.success,
             first_attempt_success=first_attempt_success,
             oracle_success=oracle.success,
+            functional_success=oracle.functional_success,
+            instruction_success=oracle.instruction_success,
+            exact_match=oracle.exact_match,
+            collateral_success=oracle.collateral_success,
+            completed_operations=oracle.completed_operations,
+            total_operations=oracle.total_operations,
+            operation_success_rate=oracle.operation_success_rate,
             terminal_stop=execution.terminal_stop,
             failure_stage=failure_stage,
             usage=execution.usage,

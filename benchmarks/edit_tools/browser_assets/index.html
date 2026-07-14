@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <meta name="description" content="Browse the edit-tool benchmark corpus, prompts, source files, and expected diffs.">
+    <title>Edit Tool Corpus Browser</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#task-detail">Skip to task details</a>
+    <header class="masthead">
+      <div class="brand-lockup">
+        <h1>Edit corpus <span class="version">v1</span></h1>
+      </div>
+      <p class="suite-description" id="suite-description"></p>
+      <div class="summary-strip" id="summary-strip" aria-label="Corpus summary"></div>
+    </header>
+
+    <main class="workspace">
+      <aside class="catalog" aria-label="Benchmark task catalog">
+        <div class="catalog-head">
+          <div>
+            <p class="eyebrow">Test cases</p>
+            <p class="result-count" id="result-count" aria-live="polite"></p>
+          </div>
+          <button class="quiet-button" id="clear-filters" type="button">Reset</button>
+        </div>
+
+        <label class="search-control">
+          <span class="visually-hidden">Search test cases</span>
+          <span class="search-glyph" aria-hidden="true">⌕</span>
+          <input id="task-search" type="search" placeholder="Search tasks, paths, prompts…" autocomplete="off">
+          <kbd>/</kbd>
+        </label>
+
+        <div class="filter-grid">
+          <label>
+            <span>Language</span>
+            <select id="language-filter"><option value="">All languages</option></select>
+          </label>
+          <label>
+            <span>Family</span>
+            <select id="family-filter"><option value="">All families</option></select>
+          </label>
+          <label>
+            <span>Difficulty</span>
+            <select id="difficulty-filter"><option value="">All levels</option></select>
+          </label>
+          <label>
+            <span>File length</span>
+            <select id="length-filter"><option value="">All lengths</option></select>
+          </label>
+        </div>
+
+        <div class="task-list" id="task-list" role="listbox" aria-label="Filtered benchmark tasks"></div>
+        <div class="catalog-shortcuts" aria-hidden="true">
+          <span><kbd>J</kbd><kbd>K</kbd> navigate</span>
+          <span><kbd>/</kbd> search</span>
+        </div>
+      </aside>
+
+      <section class="task-detail" id="task-detail" tabindex="-1" aria-live="polite"></section>
+    </main>
+
+    <template id="empty-state-template">
+      <div class="empty-state">
+        <span class="empty-symbol" aria-hidden="true">∅</span>
+        <h2>No matching test cases</h2>
+        <p>Try removing a filter or searching for a file path, language, or edit family.</p>
+      </div>
+    </template>
+
+    <script src="data.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>

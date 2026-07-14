@@ -105,7 +105,13 @@ exclude-newer = "1 week"
 
 [tool.pyright]
 include = ["kolega_code", "benchmarks", "tests"]
+exclude = ["benchmarks/edit_tools/fixtures/snapshots"]
 typeCheckingMode = "basic"
 pythonVersion = "3.11"
 venvPath = "."
 venv = ".venv"
+
+[dependency-groups]
+dev = [
+    "tree-sitter-language-pack==1.6.0",
+]

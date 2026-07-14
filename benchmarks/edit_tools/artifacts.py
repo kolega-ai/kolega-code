@@ -183,6 +183,16 @@ def write_materialized_cases(run_dir: Path, tasks: Iterable[TaskSpec]) -> None:
     case_root = run_dir / "cases"
     for task in tasks:
         case_dir = case_root / task.id
+        if task.snapshot_id:
+            payload = task.model_dump(
+                mode="json",
+                exclude={"before_files", "expected_files", "verifier_files"},
+            )
+            payload["before_tree_digest"] = stable_digest(task.before_files)
+            payload["expected_tree_digest"] = stable_digest(task.expected_files)
+            payload["verifier_digest"] = stable_digest(task.verifier_files) if task.verifier_files else None
+            write_json(case_dir / "task.json", payload)
+            continue
         write_json(case_dir / "task.json", task.model_dump(mode="json"))
         for tree_name, files in (("before", task.before_files), ("expected", task.expected_files)):
             for relative, content in files.items():

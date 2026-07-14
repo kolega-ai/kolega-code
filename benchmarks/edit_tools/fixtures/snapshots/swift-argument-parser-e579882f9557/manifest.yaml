@@ -1,0 +1,54 @@
+schema_version: 1
+id: swift-argument-parser-e579882f9557
+language: swift
+repository: https://github.com/apple/swift-argument-parser.git
+commit: e579882f95579e7d7eb8c8068a5925c65d361e91
+license: Apache-2.0
+license_files:
+- licenses/LICENSE.txt
+files:
+  Package.swift:
+    sha256: 4eae0e28d24671d6ab75c2c7a0dd0326e6d48f8785510a3e403886fe8cf17d88
+    bytes: 4396
+    lines: 144
+    git_blob: bc835353a2e24de227c387209f7e1c83c31e002e
+  Sources/ArgumentParser/Completions/BashCompletionsGenerator.swift:
+    sha256: b75be23ef032771d6b9e64aecfb411fb54abeabec0b67d9de8fa2043ff0aa3bf
+    bytes: 14256
+    lines: 411
+    git_blob: 9709b62224666d4516b0f56d9040d62e9caa5dce
+  Sources/ArgumentParser/Completions/ZshCompletionsGenerator.swift:
+    sha256: 90f765c9c65aa12bc94256f1f54217fd9ed8ca01da0ada05e6256228765de445
+    bytes: 9230
+    lines: 290
+    git_blob: 29329f958130d5122d91ca0803ed719b1857db65
+  Sources/ArgumentParser/Parsable Properties/Flag.swift:
+    sha256: 788e9bdddd3e59256c36a494408f4ba206e1ca85f90515ff2b560e4d15fa951e
+    bytes: 23387
+    lines: 677
+    git_blob: 4a2353da853a415d1ca60187edbacf861eb49dd7
+  Sources/ArgumentParser/Parsing/ArgumentDefinition.swift:
+    sha256: 896a08b61fa0556ac2000e7f9261e7a6dd6fa4c9b6b826e097c08481d022270a
+    bytes: 13942
+    lines: 474
+    git_blob: 68422a3c8232a03819a175afe8e07473abb31eba
+  Sources/ArgumentParser/Parsing/ArgumentSet.swift:
+    sha256: 3efebca89627ffe628a0e839661e25342601e57ef0531bf4284e86abfc43a348
+    bytes: 26737
+    lines: 730
+    git_blob: c1ebb4e5c596e2636b40e9ba825a01e02dfce131
+  Sources/ArgumentParser/Parsing/ParserError.swift:
+    sha256: 6bbaba1e1f98621e3f04b1628dd8e621155e70b1fb99d95390b9563285fcbb4a
+    bytes: 2143
+    lines: 52
+    git_blob: dd0c0e1b22307386416cc69d94eae5255d622ac6
+  Sources/ArgumentParser/Usage/DumpHelpGenerator.swift:
+    sha256: 58cf01a02b40287691878c0b336213f72015bb1b1289f0fa5d7df3788396b1c3
+    bytes: 6466
+    lines: 211
+    git_blob: 002d564f5f237c6f7c4004fe3e30f665e122e79c
+  Sources/ArgumentParser/Utilities/SequenceExtensions.swift:
+    sha256: 3e6ba5670d31516affab4edba4e5a562ac8a3b7b10c945d6f3b4750a3e89a3b0
+    bytes: 1274
+    lines: 38
+    git_blob: 259f4946685a6b0306399273129583993b6f3d7b

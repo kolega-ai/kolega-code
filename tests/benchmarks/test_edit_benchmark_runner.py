@@ -63,12 +63,15 @@ def matrix(protocol: str = "search_replace") -> MatrixSpec:
 
 def test_plan_uses_catalog_defaults_and_stable_trial_ids() -> None:
     suite = SuiteSpec(id="test", curated_tasks=[task()])
-    first = plan_trials(suite, [task()], matrix())
-    second = plan_trials(suite, [task()], matrix())
+    benchmark_matrix = matrix()
+    benchmark_matrix.max_iterations = 17
+    first = plan_trials(suite, [task()], benchmark_matrix)
+    second = plan_trials(suite, [task()], benchmark_matrix)
 
     assert first[0].model_parameters["thinking_effort"] == default_thinking_effort(
         "anthropic", "claude-haiku-4-5-20251001"
     )
+    assert first[0].model_parameters["max_iterations"] == 17
     assert first[0].trial_id == second[0].trial_id
 
 

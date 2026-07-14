@@ -1,0 +1,59 @@
+schema_version: 1
+id: zod-912f0f51b0ce
+language: typescript
+repository: https://github.com/colinhacks/zod.git
+commit: 912f0f51b0ced654d0069741e7160834dca742ee
+license: MIT
+license_files:
+- licenses/LICENSE
+files:
+  packages/zod/package.json:
+    sha256: c630bd10b52dcf71c112a2bf78dbf2734b9db58d62de663b8d86c2ec2c8cda2e
+    bytes: 3796
+    lines: 135
+    git_blob: 8a0c194e0958637d8e6c9d8a6c2ee66701582c35
+  packages/zod/src/v3/types.ts:
+    sha256: 1cfe15702dbccfc592bb46679bb6979c6b1b44b9790114a01447436849f0900d
+    bytes: 160328
+    lines: 5138
+    git_blob: f4028549beccff4a2f8f72434c947ce96c4d280a
+  packages/zod/src/v4/classic/schemas.ts:
+    sha256: aadb69bdd0eee0c3ad8533c27c27cd386bff1f2219cf23a43cb9af40d93781c0
+    bytes: 97229
+    lines: 2737
+    git_blob: eb57e017e07e767bd1d8459e2cfd01103707913d
+  packages/zod/src/v4/core/checks.ts:
+    sha256: e5dd4c62f0672a609e5d68d2147329c509f5384b4090ced612e049bc0cfce427
+    bytes: 37708
+    lines: 1293
+    git_blob: e640775056bf6e3764a97ffec0e459377e56b805
+  packages/zod/src/v4/core/errors.ts:
+    sha256: 77ae18dda4bcf14d2dbe9c82ef5db3d2ec59fd7c60c3e331dbcb3c15658b3017
+    bytes: 14334
+    lines: 455
+    git_blob: 27f7c5a733f1b6c1c1bfc905ed301258dd2ee579
+  packages/zod/src/v4/core/json-schema-processors.ts:
+    sha256: f73b65afdfd9f016523b9091f82258e6fecbf3bf79fe58f046083cf3e7563e99
+    bytes: 22736
+    lines: 669
+    git_blob: 0680fc7c65c3c1c8205b5b3137b49e124352add9
+  packages/zod/src/v4/core/regexes.ts:
+    sha256: da0efe9a6612fc6cdc0b5ac9606b5b5375e3a011bcdccecf7bb605600f844455
+    bytes: 10120
+    lines: 190
+    git_blob: 79684706597616e492a51f2e9c8699987fedb120
+  packages/zod/src/v4/core/schemas.ts:
+    sha256: 934bc0ff4312a3e86645ea5dccfdb59aa316345035e8394f72d938d98dd6728a
+    bytes: 148594
+    lines: 4730
+    git_blob: 4f85fbf0ceb0905697b0e90f2f5b314f78d678b7
+  packages/zod/src/v4/core/util.ts:
+    sha256: f87ed4b568ea38ce1557f965521e999e239c2c82dc6cc9de32da5b3eb802ba4d
+    bytes: 29681
+    lines: 983
+    git_blob: 8738df4ed090c9c700376f2f2e4e1fd92ec73560
+  packages/zod/src/v4/mini/schemas.ts:
+    sha256: 70a344c2764565a55a9ac042e9c2d82ed672d950c48d0b9da305005d290141a1
+    bytes: 61288
+    lines: 1947
+    git_blob: 38978a03d5aaa21b2dd79904c7cbe8da03874a35
