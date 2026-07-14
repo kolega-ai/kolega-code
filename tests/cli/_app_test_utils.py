@@ -200,6 +200,7 @@ def _sub_agent_event(
     task="inspect sessions",
     parent_tool_call_id="tc-1",
     uuid=None,
+    is_streaming=False,
     **content,
 ):
     kwargs = {"uuid": uuid} if uuid is not None else {}
@@ -207,6 +208,7 @@ def _sub_agent_event(
         event_type="chat_message",
         sender=agent_name,
         content=content,
+        is_streaming=is_streaming,
         sub_agent_info={
             "agent_id": agent_id,
             "agent_name": agent_name,

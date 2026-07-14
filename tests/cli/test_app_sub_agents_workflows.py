@@ -596,6 +596,44 @@ async def test_sub_agent_stream_without_uuid_merges_by_kind(tmp_path: Path, monk
 
 
 @pytest.mark.asyncio
+async def test_sub_agent_empty_final_response_creates_no_step(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The agent flushes an empty complete response after every tool-call round; those
+    chunks must not become trajectory steps (each rendered as an orphan glyph line)."""
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        app._render_event(
+            _sub_agent_event(
+                message_type="tool_call", text="Reading app.py", tool_description="read_file", tool_call_id="t1"
+            )
+        )
+        app._render_event(
+            _sub_agent_event(
+                message_type="tool_result", text="file contents", tool_description="read_file", tool_call_id="t1"
+            )
+        )
+        # End-of-round flushes: complete, fresh uuids, no text.
+        app._render_event(_sub_agent_event(uuid="r1", text=""))
+        app._render_event(_sub_agent_event(uuid="th1", message_type="thinking", text=""))
+
+        activity = next(iter(app._sub_agent_activities.values()))
+        kinds = [step.kind for step in activity.steps]
+        assert "assistant" not in kinds
+        assert "thinking" not in kinds
+        assert "r1" not in activity.stream_steps
+        assert "th1" not in activity.stream_steps
+
+        # An empty complete flush must still finalize a step that streamed text.
+        app._render_event(_sub_agent_event(uuid="r2", text="partial", is_streaming=True))
+        app._render_event(_sub_agent_event(uuid="r2", text=""))
+
+        assistants = [step for step in activity.steps if step.kind == "assistant"]
+        assert len(assistants) == 1
+        assert assistants[0].content == "partial"
+        assert assistants[0].complete is True
+
+
+@pytest.mark.asyncio
 async def test_sub_agent_inspector_shows_empty_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from textual.widgets import Static
 
