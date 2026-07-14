@@ -334,12 +334,23 @@ async def test_conversation_selection_spans_multiple_messages(tmp_path: Path, mo
 
         first, second = list(app.query(ConversationEntryWidget))[-2:]
 
-        # Each entry's message is its first line now ("❯ first message" / "● second message").
-        await pilot.mouse_down(first, offset=(0, 0))
-        await pilot._post_mouse_events([events.MouseMove], second, offset=(20, 0), button=1)
-        await pilot.mouse_up(second, offset=(20, 0))
+        # Let the transcript's scroll-to-bottom settle: if it lands mid-drag the
+        # mouse_down can hit a blank padding row, where the screen records no
+        # selection start (select_offset is None) and the drag selects nothing.
+        app._conversation.scroll_end(animate=False)
+        await pilot.pause()
 
-        selected_text = app.screen.get_selected_text()
+        # Each entry's message is its first line now ("❯ first message" / "● second message").
+        selected_text = None
+        for _ in range(5):
+            await pilot.mouse_down(first, offset=(0, 0))
+            await pilot._post_mouse_events([events.MouseMove], second, offset=(20, 0), button=1)
+            await pilot.mouse_up(second, offset=(20, 0))
+            selected_text = app.screen.get_selected_text()
+            if selected_text is not None:
+                break
+            await pilot.pause()
+
         assert selected_text is not None
         assert "first message" in selected_text
         assert "second message" in selected_text
