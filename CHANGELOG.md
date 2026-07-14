@@ -6,11 +6,40 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.18.0 - 2026-07-14
+
 ### Added
 
+- Added custom Markdown subagents with project and user discovery, YAML
+  frontmatter configuration, safe tool and mode restrictions, and CLI/TUI
+  commands for listing and validating definitions.
 - Added GPT-5.6 Sol, Terra, and Luna to the OpenAI API-key and ChatGPT-subscription
-  model catalogs, with vision and `none` through `max` reasoning effort. GPT-5.6
-  Sol is now the default for both OpenAI providers.
+  model catalogs, with vision and `none` through `max` reasoning effort.
+- Added model-specific editing surfaces, including Codex-style `apply_patch`,
+  Claude-style editing, and a reproducible multi-language benchmark corpus.
+- Replaced mutable session snapshots with an append-only event journal that
+  preserves more context across crashes, repairs incomplete tails, and lazily
+  migrates existing saved sessions.
+- Added guided first-run onboarding and a full-screen settings editor with
+  staged validation, connection testing, and safe apply/discard controls.
+- Queued messages can now steer an active agent turn at the next tool boundary
+  instead of always waiting to start a separate turn.
+
+### Changed
+
+- GPT-5.6 Sol is now the default for the OpenAI API-key and
+  ChatGPT-subscription providers.
+- OpenAI and ChatGPT models now prefer `apply_patch`, while direct DeepSeek
+  models prefer Claude-style edits; explicit edit-protocol choices remain
+  respected.
+- Corrected the reasoning-effort choices exposed for GPT-5.4 Mini.
+- Refreshed the TUI settings, onboarding, and transcript presentation with
+  clearer summaries, compact controls, and inline role glyphs.
+
+### Fixed
+
+- Prevented empty completed responses from creating blank subagent trajectory
+  steps rendered as orphan role glyphs.
 
 ## 0.17.0 - 2026-07-10
 
