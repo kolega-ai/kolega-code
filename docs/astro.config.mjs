@@ -98,6 +98,10 @@ export default defineConfig({
           ],
         },
         {
+          label: "Custom Agents",
+          items: [{ label: "Creating Custom Agents", slug: "custom-agents" }],
+        },
+        {
           label: "Skills",
           items: [{ label: "Agent Skills", slug: "skills" }],
         },

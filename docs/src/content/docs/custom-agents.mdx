@@ -1,0 +1,249 @@
+---
+title: Custom Agents
+description: Create reusable Markdown-defined sub-agents with focused prompts, tools, models, and mode access.
+---
+
+import { Aside, FileTree, Steps } from '@astrojs/starlight/components';
+
+Custom agents are named sub-agents defined in Markdown. Use them when you want
+Kolega Code to delegate a repeatable kind of work—such as code review, test
+analysis, or migration planning—to a specialist with its own instructions and
+optional tool, model, and iteration limits.
+
+The active Build or Plan agent sees each available custom agent's name and
+description. It chooses one through `dispatch_custom_agent`, gives it a
+self-contained task, and incorporates the specialist's final report into the
+main conversation.
+
+## Quick start
+
+<Steps>
+
+1. **Create a project agent.**
+
+   Add `.kolega/agents/code-reviewer.md` to your project:
+
+   ```markdown title=".kolega/agents/code-reviewer.md"
+   ---
+   name: code-reviewer
+   description: Reviews changes for correctness, regressions, and missing tests.
+   mode: all
+   tools:
+     - read_entire_file
+     - read_file_section
+     - search_codebase
+     - find_files_by_pattern
+   max_iterations: 20
+   ---
+
+   You are a rigorous code reviewer. Report findings in severity order, cite the
+   relevant files and lines, and identify missing test coverage. Do not edit files.
+   ```
+
+   This example is available in both Build and Plan mode, but its explicit tool
+   list keeps it read-only.
+
+2. **Validate the definition.**
+
+   From the project root, run:
+
+   ```bash
+   kolega-code agents validate --project .
+   kolega-code agents list --project .
+   ```
+
+   In an open TUI session, `/agents validate` rescans the same user and project
+   definitions and reports any errors.
+
+3. **Ask Kolega Code to use it.**
+
+   In the TUI, make the delegation explicit:
+
+   ```text
+   Use the code-reviewer custom agent to review the current changes.
+   ```
+
+   The same agent is available to one-shot [`ask`](./cli/ask/) requests:
+
+   ```bash
+   kolega-code ask \
+     "Use the code-reviewer custom agent to review the current changes." \
+     --project .
+   ```
+
+</Steps>
+
+Each dispatch starts with a fresh context. The custom agent completes its task and
+returns one report to the parent; it does not replace the primary session agent.
+
+## Where definitions live
+
+Kolega Code scans two locations recursively for Markdown files:
+
+| Scope | Location |
+| --- | --- |
+| **Project** | `<project>/.kolega/agents/**/*.md` |
+| **User** | `<state-dir>/agents/**/*.md` |
+
+For example:
+
+<FileTree>
+- .kolega/
+  - agents/
+    - code-reviewer.md
+    - testing/
+      - regression-tester.md
+</FileTree>
+
+The user location follows `KOLEGA_CODE_STATE_DIR` or `--state-dir`; otherwise it
+uses Kolega Code's normal platform-specific state directory. See
+[Settings & API Keys](./configuration/settings-and-api-keys/#where-settings-live)
+for the default paths.
+
+Project definitions override user definitions with the same `name`. Other
+duplicate names are ignored after the first definition, with a warning. Invalid
+files are skipped with diagnostics instead of preventing Kolega Code from
+starting.
+
+## Definition format
+
+Every definition is a UTF-8 Markdown file with YAML frontmatter and a non-empty
+prompt body:
+
+```markdown
+---
+name: example-agent
+description: Explains when the parent should delegate to this agent.
+# Optional fields go here.
+---
+
+These are the specialist's operating instructions.
+```
+
+The supported fields are:
+
+| Field | Required | Meaning |
+| --- | --- | --- |
+| `name` | Yes | Lowercase kebab-case identifier, up to 64 characters. It cannot use a reserved built-in agent name. |
+| `description` | Yes | Non-empty routing guidance, up to 1,024 characters, telling the parent when to delegate. |
+| `mode` | No | `build`, `plan`, or `all`; defaults to `build`. |
+| `tools` | No | Exact, duplicate-free tool allowlist. Omit it to inherit eligible caller tools; use `[]` for no tools. |
+| `model` | No | Supported model in `<provider>/<model-id>` form. Omit it to inherit the General-agent model. |
+| `thinking_effort` | No | Reasoning effort supported by the effective model. |
+| `max_iterations` | No | Positive limit for the custom agent's tool loop. |
+
+The filename should match `name`; a mismatch produces a warning but does not
+disable the definition. The reserved names are `coder`, `planning-agent`,
+`general-agent`, `investigation-agent`, and `browser-agent`. Unknown frontmatter
+fields, duplicate tool names, an empty prompt body, or a file larger than 128 KiB
+make the definition invalid.
+
+### Mode access
+
+`mode` controls which primary agent can see and dispatch the definition:
+
+| Value | Available from |
+| --- | --- |
+| `build` | Build mode only; this is the default |
+| `plan` | Plan mode only |
+| `all` | Both Build and Plan mode |
+
+Opting into Plan mode does not grant editing authority. A Plan custom agent still
+receives only tools available to the read-only parent. See
+[Build & Plan Modes](./tui/modes/) for the mode boundary.
+
+### Tools and permissions
+
+The `tools` field can narrow—but never expand—the invoking agent's capabilities:
+
+- Omit `tools` to inherit all eligible caller tools.
+- List exact [tool names](./concepts/tools/) to grant only that subset.
+- Set `tools: []` to create an agent with no tools.
+
+Agent-dispatch and Gigacode orchestration tools are always removed, so a custom
+agent cannot recursively launch agents or workflows. If a definition requests a
+tool the parent does not have, dispatch fails with an unavailable-tool diagnostic.
+
+Custom agents inherit the session's permission mode and approval callback. For
+example, shell commands and edits still require approval in `ask` permission mode,
+and a Plan parent cannot pass editing tools to a custom agent.
+
+<Aside type="caution" title="Review project definitions">
+Project custom agents contain instructions that can use the tools you allow. Review
+`.kolega/agents/` in an untrusted repository just as you would review scripts,
+hooks, `AGENTS.md`, or prompt overrides. A custom agent cannot elevate its authority,
+but it can exercise the authority inherited from the current session.
+</Aside>
+
+### Models and thinking effort
+
+If `model` is omitted, the definition inherits the configured General-agent model.
+If both `model` and `thinking_effort` are omitted, it inherits the General agent's
+effort too. An explicit model without an effort uses that model's default effort;
+an effort-only override applies to the inherited model.
+
+Explicit model IDs and effort values must be supported, and credentials for the
+selected provider must be available to the session. See
+[Providers & Models](./configuration/providers-and-models/) for model identifiers,
+configuration, and valid effort values.
+
+## Prompt and runtime context
+
+The Markdown body becomes the custom agent's base system prompt. Kolega Code then
+appends the same dynamic project context used by built-in agents, including:
+
+- `AGENTS.md` (or legacy `KOLEGA.md`) project guidance.
+- Agent and workspace memories.
+- Propagatable Agent Skills and host tool extensions.
+
+This differs from two related customization mechanisms:
+
+| Mechanism | What it changes |
+| --- | --- |
+| **Custom agent** | Runs a named specialist in a fresh sub-agent context with optional tool and model limits. |
+| [**Agent Skill**](./skills/) | Loads a reusable procedure into the current conversation. |
+| [**Prompt override**](./configuration/prompt-overrides/) | Replaces the base prompt for one of Kolega Code's built-in agent types. |
+
+## List, validate, and reload
+
+Use the terminal commands when authoring or checking definitions:
+
+```bash
+kolega-code agents list --project .
+kolega-code agents validate --project .
+```
+
+Both commands accept `--state-dir <path>` when you need to inspect a non-default
+user-agent directory. `list` prints the effective registry and all discovery
+diagnostics. `validate` prints the same information and exits `1` if any definition
+has an error; warnings do not fail validation.
+
+Inside the TUI:
+
+- `/agents` and `/agents list` show all effective definitions, including agents
+  assigned to the other interaction mode.
+- `/agents validate` rescans the files and reports invalid definitions.
+
+File changes made while the TUI is running become dispatchable after the active
+agent is rebuilt—for example, by switching modes—or after restarting the TUI. A
+new `ask` invocation discovers definitions when it starts.
+
+## Troubleshooting
+
+- **The agent is not listed:** confirm the file is below a scanned `agents/`
+  directory, has a `.md` extension, and contains valid frontmatter plus a prompt
+  body. Run `agents validate` for the exact diagnostic.
+- **The agent is listed but unavailable:** check its `mode`. A definition defaults
+  to Build and must explicitly use `plan` or `all` for Plan mode.
+- **Dispatch reports an unavailable tool:** remove the tool from the allowlist or
+  invoke the agent from a parent mode that legitimately exposes it.
+- **Edits are not reflected in the TUI:** rebuild the active agent by switching
+  modes, or restart the session.
+- **The model cannot start:** verify the `<provider>/<model-id>`, thinking effort,
+  and provider credentials.
+
+## Current limitations
+
+Custom agents cannot dispatch other agents or Gigacode workflows. Per-agent hooks,
+per-agent MCP configuration, structured output, and using a custom definition as
+the primary session agent are not supported in this version.
