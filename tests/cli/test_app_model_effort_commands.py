@@ -90,6 +90,9 @@ async def test_textual_app_model_slash_command_shows_and_switches_model(
     state_dir = tmp_path / "state"
     store = SessionStore(state_dir)
     settings_store = SettingsStore(state_dir)
+    settings = CliSettings(active_provider=UI_DEFAULT_PROVIDER, active_model=UI_DEFAULT_MODEL)
+    settings.set_api_key(UI_DEFAULT_PROVIDER, "moonshot-key")
+    settings_store.save(settings)
     session = store.create(project, "code", {})
     app = KolegaCodeApp(
         project_path=project,
@@ -100,12 +103,8 @@ async def test_textual_app_model_slash_command_shows_and_switches_model(
     )
 
     async with app.run_test():
-        from textual.widgets import Input
-
         from kolega_code.cli.tui.widgets import ActionList
 
-        app.query_one("#api_key_input", Input).value = "moonshot-key"
-        await app._save_settings_from_ui()
         assert isinstance(app.agent, FakeCoderAgent)
 
         composer = app.query_one("#composer", ChatComposer)

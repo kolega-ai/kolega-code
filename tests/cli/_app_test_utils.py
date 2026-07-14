@@ -134,6 +134,22 @@ def build_test_config(project: Path):
     )
 
 
+async def open_settings_screen(app, pilot, category: str = "model"):
+    """Open the full-screen settings editor, skipping auto-onboarding if it is up."""
+    from kolega_code.cli.tui.onboarding_screen import OnboardingScreen
+    from kolega_code.cli.tui.settings_screen import SettingsScreen
+
+    await pilot.pause()
+    if isinstance(app.screen, OnboardingScreen):
+        app.screen.action_skip()
+        await pilot.pause()
+    app.action_open_settings(category)
+    await pilot.pause()
+    screen = app.screen
+    assert isinstance(screen, SettingsScreen)
+    return screen
+
+
 def _build_sub_agent_test_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, **app_kwargs):
     pytest.importorskip("textual")
 

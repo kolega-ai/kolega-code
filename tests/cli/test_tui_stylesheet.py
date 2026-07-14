@@ -216,7 +216,7 @@ def test_tui_stylesheet_keeps_sidebar_tabs_consistent_and_restores_card_contrast
     )[1].split("}", 1)[0]
     assert "text-style: bold" in active_tab_style_block
 
-    sidebar_form_block = css.split("#status_form, #settings_form, #planning_form", 1)[1].split("}", 1)[0]
+    sidebar_form_block = css.split("#status_form, #planning_form", 1)[1].split("}", 1)[0]
     assert "height: 1fr" in sidebar_form_block
     assert "background: $background" in sidebar_form_block
     assert "background: $surface" not in sidebar_form_block
@@ -248,21 +248,21 @@ def test_tui_stylesheet_keeps_sidebar_tabs_consistent_and_restores_card_contrast
     assert "border: none" not in section_block
     assert "#planning_form Collapsible" not in css
 
-    settings_select_current_block = css.split("#settings_form Select > SelectCurrent", 1)[1].split("}", 1)[0]
-    assert "background: $panel" in settings_select_current_block
-    assert "border: round $surface-lighten-2" in settings_select_current_block
-    assert "color: $text" in settings_select_current_block
-    assert "background: $surface" not in settings_select_current_block
+    # Select internals keep the $panel fill (the sanctioned exception to the
+    # "$surface for chrome" rule) on both full-screen editors.
+    settings_select_block = css.split("SettingsScreen Select > SelectCurrent,", 1)[1].split("}", 1)[0]
+    assert "background: $panel" in settings_select_block
+    assert "color: $text" in settings_select_block
+    assert "background: $surface" not in settings_select_block
 
-    settings_select_focus_block = css.split("#settings_form Select:focus > SelectCurrent", 1)[1].split("}", 1)[0]
+    settings_select_focus_block = css.split("SettingsScreen Select:focus > SelectCurrent", 1)[1].split("}", 1)[0]
     assert "background: $panel" in settings_select_focus_block
-    assert "border: round $surface-lighten-2" in settings_select_focus_block
     assert "background-tint: transparent" in settings_select_focus_block
 
-    settings_select_overlay_block = css.split("#settings_form Select > SelectOverlay", 1)[1].split("}", 1)[0]
-    assert "background: $panel" in settings_select_overlay_block
-    assert "border: round $surface-lighten-2" in settings_select_overlay_block
-    assert "color: $text" in settings_select_overlay_block
+    onboarding_select_block = css.split("OnboardingScreen Select > SelectCurrent,", 1)[1].split("}", 1)[0]
+    assert "background: $panel" in onboarding_select_block
+    assert "color: $text" in onboarding_select_block
+    assert "background: $surface" not in onboarding_select_block
 
     sidebar_output_block = css.split("#logs, #terminal", 1)[1].split("}", 1)[0]
     assert "height: 1fr" in sidebar_output_block
@@ -332,12 +332,7 @@ async def test_sidebar_tab_and_settings_planning_computed_styles_keep_contrast(
         task_list_markdown = app.query_one("#status_task_list_markdown")
         assert task_list_markdown.styles.padding.bottom == 1
 
-        settings_background = app.query_one("#settings_form").styles.background
-        select_current_widgets = list(app.query("#settings_form SelectCurrent"))
-        assert select_current_widgets
-        for current in select_current_widgets:
-            assert current.styles.background != settings_background
-            assert str(current.styles.border) != "Edges()"
+        settings_background = app.query_one("#settings_summary_panel").styles.background
 
         for section in app.query(".status-section"):
             assert section.styles.background == app.query_one("#status_form").styles.background

@@ -29,7 +29,6 @@ from kolega_code.mcp.config import (
     global_mcp_config_path,
     load_mcp_config,
     remove_server_config,
-    set_server_enabled,
     upsert_server_config,
 )
 from kolega_code.mcp.service import MCPService
@@ -223,7 +222,7 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
     def _settings_query_one(
         self, selector: str, expect_type: type[SettingsWidget] | None = None
     ) -> SettingsWidget | Widget:
-        """Query controls on the open Settings screen, falling back for legacy tests."""
+        """Query controls on the open Settings screen, falling back to the app pre-attach."""
         screen = getattr(self, "_settings_screen", None)
         host = screen if screen is not None and getattr(screen, "is_attached", False) else self
         if expect_type is None:
@@ -314,6 +313,11 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
                 self._apply_theme(name)
 
     def _populate_settings_controls(self) -> None:
+        screen = getattr(self, "_settings_screen", None)
+        if screen is None or not getattr(screen, "is_attached", False):
+            # No settings editor mounted: only the sidebar summary needs refreshing.
+            self._update_settings_status()
+            return
         provider_values = {value for _, value in ui_provider_options()}
         provider = (
             self.settings.active_provider if self.settings.active_provider in provider_values else UI_DEFAULT_PROVIDER
@@ -829,9 +833,6 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
         if button_id == "mcp_clear_tokens":
             self._clear_mcp_tokens_from_ui()
             return True
-        if button_id in {"mcp_enable_server", "mcp_disable_server"}:
-            await self._set_mcp_enabled_from_ui(enabled=button_id == "mcp_enable_server")
-            return True
         return False
 
     def _selected_mcp_server_id(self) -> str:
@@ -893,32 +894,6 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
         self._populate_mcp_controls()
         await self._ensure_agent_from_settings(rebuild=True)
         self._notify_user(f"Deleted MCP server '{selected}'.")
-
-    async def _set_mcp_enabled_from_ui(self, *, enabled: bool) -> None:
-        selected = self._selected_mcp_server_id()
-        if selected == MCP_NEW_SERVER_VALUE:
-            self._set_mcp_status("Select a user MCP server first.", "warning")
-            return
-        try:
-            config = self._load_mcp_config_for_ui()
-            existing = config.servers.get(selected)
-            if existing is not None and existing.source == "project":
-                self._set_mcp_status(
-                    "Project MCP servers are read-only in the TUI; edit .kolega/mcp_servers.json.", "warning"
-                )
-                return
-            changed = set_server_enabled(
-                global_mcp_config_path(self.settings_store.root), selected, enabled, source="global"
-            )
-        except MCPConfigError as exc:
-            self._set_mcp_status(str(exc), "error")
-            return
-        if not changed:
-            self._set_mcp_status(f"No user MCP server named '{selected}' was found.", "warning")
-            return
-        self._populate_mcp_controls()
-        await self._ensure_agent_from_settings(rebuild=True)
-        self._notify_user(f"{'Enabled' if enabled else 'Disabled'} MCP server '{selected}'.")
 
     async def _verify_mcp_server_from_ui(self) -> None:
         selected = self._selected_mcp_server_id()
