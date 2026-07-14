@@ -6,14 +6,15 @@ description: Invocation forms, global options, and the command surface of kolega
 The `kolega-code` command has two shapes:
 
 - **No subcommand** → launches the interactive [Terminal UI](../../tui/interface/).
-- **A subcommand** (`ask`, `sessions`, `doctor`, `update`) → runs a specific non-interactive
-  task.
+- **A subcommand** (`ask`, `sessions`, `doctor`, `agents`, `update`) → runs a
+  specific non-interactive task.
 
 ```bash
 kolega-code [PROJECT_PATH] [options]      # interactive TUI
 kolega-code ask "<prompt>" [options]       # one-shot prompt
 kolega-code sessions <list|delete|export> [options]
 kolega-code doctor [options]
+kolega-code agents <list|validate> [options]
 kolega-code update
 ```
 
@@ -25,6 +26,7 @@ kolega-code update
 | [`ask`](../ask/) | Run a single prompt and print the answer |
 | [`sessions`](../sessions/) | List, delete, or export saved sessions |
 | [`doctor`](../doctor/) | Check local configuration and API-key status |
+| [`agents`](../../custom-agents/#list-validate-and-reload) | List or validate user and project custom-agent definitions |
 | `update` | Update Kolega Code to the latest released version |
 
 ## Launching the TUI

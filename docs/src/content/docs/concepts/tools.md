@@ -73,7 +73,8 @@ OCR/conversion outside this tool.
 
 The agent can spawn focused sub-agents — see [Agents](../agents/) for
 `dispatch_investigation_agent`, `dispatch_browser_agent`, `dispatch_coding_agent`,
-and `dispatch_general_agent`.
+and `dispatch_general_agent`. Named [custom agents](../../custom-agents/) are
+available through `dispatch_custom_agent` when matching definitions are discovered.
 
 ## Read-only vs. full access
 

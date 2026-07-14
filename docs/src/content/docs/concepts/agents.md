@@ -40,77 +40,13 @@ surfaces as events (on stderr in plain mode, or as `event` objects with `--json`
 
 ## Custom agents
 
-Custom agents are named sub-agents defined in Markdown. Put project definitions
-under `.kolega/agents/`, or user definitions under the `agents/` directory in
-Kolega Code's state directory. The latter follows `KOLEGA_CODE_STATE_DIR` and
-`--state-dir`; otherwise Kolega uses its normal platform-specific state location.
-Subdirectories are scanned recursively.
+You can also define reusable, named specialists as Markdown files. A custom agent
+runs in a fresh sub-agent context with its own prompt and optional mode, tool,
+model, effort, and iteration limits, while remaining inside the invoking agent's
+permission boundary.
 
-For example, `.kolega/agents/code-reviewer.md`:
-
-```markdown
----
-name: code-reviewer
-description: Reviews changes for correctness, regressions, and missing tests.
-mode: build
-tools:
-  - read_entire_file
-  - read_file_section
-  - search_codebase
-  - find_files_by_pattern
-  - exec_command
-model: anthropic/claude-opus-4-8
-thinking_effort: high
-max_iterations: 20
----
-
-You are a rigorous code reviewer. Report findings in severity order, cite the
-relevant files and lines, and identify missing test coverage. Do not edit files.
-```
-
-The YAML frontmatter supports:
-
-| Field | Required | Meaning |
-| --- | --- | --- |
-| `name` | Yes | Lowercase kebab-case identifier, up to 64 characters. |
-| `description` | Yes | Routing guidance that tells the parent when to delegate. |
-| `mode` | No | `build`, `plan`, or `all`; defaults to `build`. |
-| `tools` | No | Exact tool allowlist. Omit it to inherit the caller's eligible tools; use `[]` for no tools. |
-| `model` | No | Main model in `<provider>/<model-id>` form. Omit it to inherit the General-agent model. |
-| `thinking_effort` | No | Reasoning effort supported by the effective model. |
-| `max_iterations` | No | Positive limit for the custom agent's tool loop. |
-
-The Markdown body is the agent's base system prompt. Kolega appends the same
-dynamic project context used by its built-in agents, including `AGENTS.md`, agent
-memory, workspace memories, and propagatable Agent Skills or host extensions.
-
-Project definitions override user definitions with the same `name`. Invalid
-files are skipped with diagnostics rather than preventing Kolega from starting.
-Inspect the effective registry with:
-
-```sh
-kolega-code agents list --project .
-kolega-code agents validate --project .
-```
-
-Inside the TUI, use `/agents` (or `/agents list`) to inspect all effective
-definitions and `/agents validate` to rescan and report invalid files. Definitions
-changed while the TUI is running become dispatchable after the active agent is
-rebuilt, such as when switching modes, or after restarting the TUI.
-
-The Build or Plan agent sees the names and descriptions enabled for its mode and
-can select one through `dispatch_custom_agent`. Build is the safe default; an
-agent must explicitly declare `mode: plan` or `mode: all` before Plan can use it.
-You can request a particular agent in plain
-language, for example: “Use the code-reviewer custom agent to review this change.”
-Each call receives a fresh context and reports its result back to the parent.
-
-Custom agents cannot elevate authority. Their tools are always a subset of the
-invoking agent's effective tools, they inherit the session's permission mode and
-approval callback, and they cannot dispatch other agents or gigacode workflows.
-Consequently, even an agent explicitly enabled for Plan mode cannot acquire editing tools.
-Per-agent hooks, MCP configuration, structured output, and primary-session custom
-agents are not supported in this version.
+See [Custom Agents](../../custom-agents/) to create, validate, and invoke project
+or user definitions.
 
 ## Modes vs. agents
 
