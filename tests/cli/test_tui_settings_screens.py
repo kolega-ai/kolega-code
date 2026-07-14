@@ -9,7 +9,7 @@ from kolega_code.cli.provider_registry import UI_DEFAULT_MODEL, UI_DEFAULT_PROVI
 from kolega_code.cli.session_store import SessionStore
 from kolega_code.cli.settings import CliSettings, SettingsStore
 
-from ._app_test_utils import install_fake_agents
+from ._app_test_utils import install_fake_agents, wait_for_onboarding_screen
 
 
 def _configured_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -183,7 +183,6 @@ async def test_first_run_onboarding_finishes_without_writing_partial_drafts(
     from textual.widgets import Input
 
     from kolega_code.cli.app import KolegaCodeApp
-    from kolega_code.cli.tui.onboarding_screen import OnboardingScreen
 
     install_fake_agents(monkeypatch)
     project = tmp_path / "project"
@@ -202,9 +201,7 @@ async def test_first_run_onboarding_finishes_without_writing_partial_drafts(
     )
 
     async with app.run_test(size=(80, 24)) as pilot:
-        await pilot.pause()
-        screen = app.screen
-        assert isinstance(screen, OnboardingScreen)
+        screen = await wait_for_onboarding_screen(app, pilot)
         assert screen.step_index == 0
         next_button = screen.query_one("#onboarding_next")
         assert next_button.region.y + next_button.region.height <= 24
@@ -241,7 +238,6 @@ async def test_first_run_onboarding_skip_is_session_only(
     pytest.importorskip("textual")
 
     from kolega_code.cli.app import KolegaCodeApp
-    from kolega_code.cli.tui.onboarding_screen import OnboardingScreen
 
     install_fake_agents(monkeypatch)
     project = tmp_path / "project"
@@ -259,9 +255,7 @@ async def test_first_run_onboarding_skip_is_session_only(
     )
 
     async with app.run_test() as pilot:
-        await pilot.pause()
-        screen = app.screen
-        assert isinstance(screen, OnboardingScreen)
+        screen = await wait_for_onboarding_screen(app, pilot)
         screen.action_skip()
         await pilot.pause()
         assert app._onboarding_skipped is True
@@ -281,7 +275,6 @@ async def test_onboarding_actions_stay_on_screen_at_small_sizes(
     from textual.widgets import Button
 
     from kolega_code.cli.app import KolegaCodeApp
-    from kolega_code.cli.tui.onboarding_screen import OnboardingScreen
 
     install_fake_agents(monkeypatch)
     project = tmp_path / "project"
@@ -300,9 +293,7 @@ async def test_onboarding_actions_stay_on_screen_at_small_sizes(
     )
 
     async with app.run_test(size=(80, 24)) as pilot:
-        await pilot.pause()
-        screen = app.screen
-        assert isinstance(screen, OnboardingScreen)
+        screen = await wait_for_onboarding_screen(app, pilot)
         next_button = screen.query_one("#onboarding_next", Button)
         assert next_button.has_class("solid-primary")
         assert screen.query_one("#onboarding_skip", Button).has_class("quiet")
