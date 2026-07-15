@@ -313,7 +313,6 @@ class MemoryScreen(ModalScreen[None]):
             entry = await asyncio.to_thread(
                 self._manager.read_entry,
                 reference,
-                redact=True,
                 allow_disabled=True,
             )
         except Exception as error:
@@ -347,8 +346,7 @@ class MemoryScreen(ModalScreen[None]):
             style="dim",
         )
         if backend is not None:
-            startup_state = " · startup withheld" if backend.startup_withheld else ""
-            startup_state += " · startup truncated" if backend.startup_truncated else ""
+            startup_state = " · startup truncated" if backend.startup_truncated else ""
             line.append(
                 f"\nstartup {backend.startup_lines} lines / {backend.startup_bytes:,} bytes{startup_state}",
                 style="dim",
@@ -422,11 +420,8 @@ class MemoryScreen(ModalScreen[None]):
             stamp = datetime.fromtimestamp(modified.modified_ns / 1_000_000_000)
             metadata += f" · modified {stamp:%Y-%m-%d %H:%M}"
         self.query_one("#memory_metadata", Static).update(metadata)
-        content = entry.content if entry.content is not None else "[Content withheld: probable secret detected.]"
-        self.query_one("#memory_preview", Markdown).update(content or "[Empty entry]")
+        self.query_one("#memory_preview", Markdown).update(entry.content or "[Empty entry]")
         notice = " · ".join(entry.warnings)
-        if notice:
-            notice += ". Editing is disabled for redacted content."
         self.query_one("#memory_notice", Static).update(notice)
         self._refresh_controls()
 
@@ -458,7 +453,6 @@ class MemoryScreen(ModalScreen[None]):
         available = bool(status is not None and status.available)
         turn_active = self._owner._turn_active or self._owner.agent_worker is not None
         selected = self._loaded_entry is not None and self._loaded_entry.present
-        secret = bool(self._loaded_entry and self._loaded_entry.warnings)
         mutating_blocked = self._busy or turn_active or not available
 
         self._set_button_disabled("memory_refresh", self._busy or self._editing)
@@ -470,7 +464,7 @@ class MemoryScreen(ModalScreen[None]):
         )
         self._set_button_disabled(
             "memory_edit",
-            mutating_blocked or not selected or secret or not self._supports(MemoryCapability.REPLACE),
+            mutating_blocked or not selected or not self._supports(MemoryCapability.REPLACE),
         )
         self._set_button_disabled(
             "memory_delete",
@@ -631,7 +625,7 @@ class MemoryScreen(ModalScreen[None]):
 
     def action_edit(self) -> None:
         entry = self._loaded_entry
-        if entry is None or entry.warnings or self._owner._memory_mutation_blocked():
+        if entry is None or self._owner._memory_mutation_blocked():
             return
         self._stale_conflict = False
         self.query_one("#memory_reference", Input).value = entry.reference
@@ -734,7 +728,6 @@ class MemoryScreen(ModalScreen[None]):
             entry = await asyncio.to_thread(
                 self._manager.read_entry,
                 reference,
-                redact=True,
                 allow_disabled=True,
             )
         except Exception as error:
@@ -744,11 +737,6 @@ class MemoryScreen(ModalScreen[None]):
         self._set_busy(False)
         if not entry.present:
             self.query_one("#memory_notice", Static).update("The entry is now missing. Your editor was preserved.")
-            return
-        if entry.warnings:
-            self._loaded_entry = entry
-            self._set_edit_mode(False)
-            self._render_entry(entry)
             return
         self._loaded_entry = entry
         self._creating = False

@@ -76,3 +76,13 @@ class TestBaseAgent:
 
         assert context.agent_memory_file == "AGENT_MEMORY.md"
         assert context.agent_memory == "Remember this detail"
+
+    def test_build_prompt_context_still_withholds_secrets_from_legacy_agent_memory(self, base_agent, tmp_path):
+        secret = "API_KEY=supersecretvalue123"
+        (tmp_path / "AGENT_MEMORY.md").write_text(secret, encoding="utf-8")
+
+        context = base_agent.build_prompt_context()
+
+        assert context.agent_memory_file == "AGENT_MEMORY.md"
+        assert secret not in context.agent_memory
+        assert "withheld" in context.agent_memory

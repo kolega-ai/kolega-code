@@ -215,13 +215,12 @@ class ProjectMemoryManager:
         elif not self.access_scope.can_mutate:
             policy += "This agent has read-only access to project memory; do not attempt to author or delete it.\n"
         return MemoryPromptContext(
-            policy + context.text,
-            context.byte_count,
-            context.line_count,
-            context.truncated,
-            context.withheld,
-            context.warnings,
-            context.authoring_guidance,
+            text=policy + context.text,
+            byte_count=context.byte_count,
+            line_count=context.line_count,
+            truncated=context.truncated,
+            warnings=context.warnings,
+            authoring_guidance=context.authoring_guidance,
         )
 
     def tool_bindings(self) -> tuple[MemoryToolBinding, ...]:
@@ -256,14 +255,13 @@ class ProjectMemoryManager:
         self,
         reference: str,
         *,
-        redact: bool = False,
         allow_disabled: bool = False,
     ) -> MemoryEntry:
         with self._lifecycle_lock:
             return self._backend_with_capability(
                 MemoryCapability.READ,
                 allow_disabled=allow_disabled,
-            ).read_entry(reference, redact=redact)
+            ).read_entry(reference)
 
     def append_entry(
         self,

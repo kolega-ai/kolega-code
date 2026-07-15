@@ -76,15 +76,15 @@ bank. Lightweight subcommands are also available:
 
 | Command | Description |
 | --- | --- |
-| `/memory status` | Show enabled/backend/identity state, startup warnings, sizes, and a redacted index preview |
+| `/memory status` | Show enabled/backend/identity state, startup warnings, sizes, and a bounded index preview |
 | `/memory on` / `/memory off` | Enable agent access or disable it without deleting data |
 | `/memory files` | List entries and sizes |
-| `/memory show [path]` | Show bounded, secret-redacted content; defaults to `MEMORY.md` |
+| `/memory show [path]` | Show bounded content; defaults to `MEMORY.md` |
 | `/memory path` | Show the private local backend directory |
 | `/memory clear` | Confirm, then clear only the active backend |
 
 See [Project Memory](../project-memory/) for project identity, limits,
-concurrency, privacy, and secret-handling details.
+concurrency, privacy, and model-exposure details.
 
 Run `/effort` to open a selectable list of supported effort values for the
 active model. You can also switch directly with `/effort <level>`.

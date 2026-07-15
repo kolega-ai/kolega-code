@@ -1,4 +1,5 @@
 # ruff: noqa: F401,F811,E402
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -139,9 +140,10 @@ async def test_memory_slash_status_files_show_and_disable_preserves_bank(
     from kolega_code.cli.tui.widgets import ChatComposer
 
     app = _build_mention_test_app(tmp_path, monkeypatch)
+    secret_like_content = "API_KEY=supersecretvalue123"
     created = app.memory_manager.replace_entry(
         "MEMORY.md",
-        "# Durable facts\n\nUse `uv run pytest`.\n",
+        f"# Durable facts\n\nUse `uv run pytest`.\n\n{secret_like_content}\n",
         MISSING_REVISION,
     )
     assert created.ok
@@ -156,8 +158,11 @@ async def test_memory_slash_status_files_show_and_disable_preserves_bank(
         contents = [entry.content for entry in app.conversation_entries[-3:]]
         assert "Project memory is on" in contents[0]
         assert "Private storage:" in contents[0]
+        assert secret_like_content in contents[0]
+        assert "Redacted MEMORY.md preview" not in contents[0]
         assert "MEMORY.md" in contents[1]
         assert "Use `uv run pytest`." in contents[2]
+        assert secret_like_content in contents[2]
 
         composer.load_text("/memory off")
         await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
@@ -180,14 +185,16 @@ async def test_memory_screen_preserves_editor_on_stale_cas(
 ) -> None:
     pytest.importorskip("textual")
 
-    from textual.widgets import Button, Static, TextArea
+    from textual.widgets import Button, Markdown, Static, TextArea
 
     from kolega_code.cli.tui.memory_screen import MemoryScreen
 
     app = _build_mention_test_app(tmp_path, monkeypatch)
+    secret_like_content = "API_KEY=supersecretvalue123"
+    original_content = f"# Original\n\n{secret_like_content}\n"
     created = app.memory_manager.replace_entry(
         "MEMORY.md",
-        "# Original\n",
+        original_content,
         MISSING_REVISION,
     )
     assert created.ok
@@ -201,7 +208,16 @@ async def test_memory_screen_preserves_editor_on_stale_cas(
 
         original = screen._loaded_entry
         assert original is not None
+        assert original.content == original_content
+        assert secret_like_content in screen.query_one("#memory_preview", Markdown).source
+        assert "withheld" not in str(screen.query_one("#memory_status", Static).render()).casefold()
+        assert screen.query_one("#memory_edit", Button).disabled is False
+        warned_entry = replace(original, warnings=("generic backend notice",))
+        screen._loaded_entry = warned_entry
+        screen._render_entry(warned_entry)
+        assert "generic backend notice" in str(screen.query_one("#memory_notice", Static).render())
         screen.action_edit()
+        assert screen._editing is True
         editor = screen.query_one("#memory_editor", TextArea)
         editor.text = "# My unsaved edit\n"
 

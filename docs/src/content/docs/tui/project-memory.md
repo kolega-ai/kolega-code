@@ -31,7 +31,9 @@ Kolega Code does not:
 
 Memory content returned by tools is part of the normal private session history
 sent to the selected model, just like other tool results. Keep credentials and
-other secrets out of it.
+other secrets out of it. This is an authoring precaution, not an enforced
+policy: project memory is not scanned, rejected, withheld, or redacted based on
+secret-like content.
 
 ### Which directories share a bank?
 
@@ -106,25 +108,23 @@ refreshed. Failed or stale writes do not refresh it.
 | Command | Action |
 | --- | --- |
 | `/memory` | Open the Project Memory screen |
-| `/memory status` | Show state, backend, identity, startup warnings, sizes, and a redacted index preview |
+| `/memory status` | Show state, backend, identity, startup warnings, sizes, and a bounded index preview |
 | `/memory on` | Enable project memory without changing its files |
 | `/memory off` | Disable agent access while preserving its files |
 | `/memory files` | List logical entries and sizes |
-| `/memory show [path]` | Show bounded, secret-redacted content; defaults to `MEMORY.md` |
+| `/memory show [path]` | Show bounded content; defaults to `MEMORY.md` |
 | `/memory path` | Show the active backend's private local directory |
 | `/memory clear` | Confirm, then clear only the active backend |
 
-## Secrets and untrusted content
+## Sensitive and untrusted content
 
-Kolega Code rejects an entire agent or UI append/save if it detects a probable
-private key, known token format, credential-bearing URL, or credential-like
-assignment. Record only the secret's name, location, or retrieval procedure.
-
-This also protects against manual edits outside the TUI. A secret-bearing private
-index is withheld entirely from the model, a secret-bearing topic cannot be read
-through `read_memory`, and user previews redact detected values. The in-app
-editor will not open such a file because saving redaction placeholders could
-destroy data; use the displayed private path for deliberate remediation.
+Private project memory is trusted as owner-controlled application state. Kolega
+Code does not scan it for probable secrets: credential-like content is stored,
+shown in the TUI and slash-command previews, returned by `read_memory`, and
+included in bounded startup context without rejection, withholding, or
+redaction. Because those model-facing paths can send memory to the selected
+provider and retain it in private session history, do not use project memory as
+a credential store.
 
 Memory is treated as untrusted project observations, not instructions. Current
 system and user instructions, repository guidance, and fresh tool output take
@@ -137,8 +137,8 @@ Project memory is distinct from:
 - `AGENTS.md`, `KOLEGA.md`, and prompt overrides: repository-controlled project
   instructions;
 - `AGENT_MEMORY.md`: deprecated repository-controlled context that remains
-  read-only; Kolega Code never imports, updates, deletes, or automatically
-  migrates it;
+  read-only and separately withholds probable-secret content; Kolega Code never
+  imports, updates, deletes, or automatically migrates it;
 - host-provided `workspace_memories`: a separately labelled host context;
 - session history: the messages and tool results used to resume a conversation;
   and

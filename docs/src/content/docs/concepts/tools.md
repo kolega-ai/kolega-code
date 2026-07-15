@@ -79,9 +79,10 @@ OCR/conversion outside this tool.
 These are the model tools supplied by the built-in `markdown` project-memory
 backend. They write to owner-private Kolega Code state, never the repository.
 Read before replacing or deleting: compare-and-swap conflicts reject stale
-changes instead of overwriting them. Paths and content are bounded, and probable
-secrets are rejected or withheld. See [Project Memory](../../tui/project-memory/)
-for storage identity, limits, and the `/memory` browser.
+changes instead of overwriting them. Paths and content are bounded, but content
+is not secret-scanned or redacted. See
+[Project Memory](../../tui/project-memory/) for storage identity, limits, model
+exposure, and the `/memory` browser.
 
 Memory tool registration is capability- and provider-driven. Enabled top-level
 coder, general, and planning agents can read and explicitly curate memory;

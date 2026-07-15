@@ -58,7 +58,6 @@ class MemoryEntry:
     byte_count: int
     revision: str
     present: bool = True
-    withheld: bool = False
     warnings: tuple[str, ...] = ()
 
 
@@ -78,7 +77,6 @@ class MemoryPromptContext:
     byte_count: int = 0
     line_count: int = 0
     truncated: bool = False
-    withheld: bool = False
     warnings: tuple[str, ...] = ()
     authoring_guidance: str = ""
 
@@ -92,7 +90,6 @@ class MemoryBackendStatus:
     startup_bytes: int = 0
     startup_lines: int = 0
     startup_truncated: bool = False
-    startup_withheld: bool = False
     warnings: tuple[str, ...] = ()
     private_path: str | None = None
 

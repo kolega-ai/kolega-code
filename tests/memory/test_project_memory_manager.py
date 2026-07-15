@@ -314,7 +314,7 @@ class FakeBackend:
     def list_entries(self, query=None):
         raise AssertionError("unsupported capability called")
 
-    def read_entry(self, reference, *, redact=False):
+    def read_entry(self, reference):
         raise AssertionError("unsupported capability called")
 
     def append_entry(self, reference, content):

@@ -49,19 +49,17 @@ def test_rejects_unsafe_paths(tmp_path: Path, reference: str) -> None:
         backend(tmp_path).append_entry(reference, "safe")
 
 
-def test_rejects_symlinks_and_secrets_without_partial_write(tmp_path: Path) -> None:
+def test_rejects_symlinks_without_partial_write(tmp_path: Path) -> None:
     store = backend(tmp_path)
     store.append_entry("MEMORY.md", "safe")
     before = store.read_entry("MEMORY.md")
-    with pytest.raises(MemorySafetyError):
-        store.append_entry("MEMORY.md", "\nAPI_KEY=supersecretvalue123")
-    assert store.read_entry("MEMORY.md").revision == before.revision
 
     outside = tmp_path / "outside.md"
     outside.write_text("outside")
     (store.root / "link.md").symlink_to(outside)
     with pytest.raises(MemorySafetyError):
         store.read_entry("link.md")
+    assert store.read_entry("MEMORY.md").revision == before.revision
 
 
 def test_rejects_nested_directory_symlink_for_reads_writes_and_listing(tmp_path: Path) -> None:
@@ -83,15 +81,34 @@ def test_rejects_nested_directory_symlink_for_reads_writes_and_listing(tmp_path:
     assert (outside / "topic.md").read_text() == "outside"
 
 
-def test_manual_secret_is_withheld_and_user_preview_redacted(tmp_path: Path) -> None:
+def test_credential_like_content_round_trips_through_backend_and_prompt(tmp_path: Path) -> None:
     store = backend(tmp_path)
+    content = "API_KEY=supersecretvalue123"
+    appended = store.append_entry("MEMORY.md", content)
+    assert appended.ok
+    assert store.read_entry("MEMORY.md").content == content
+
+    replacement = f"{content}\npassword=anothersecretvalue456"
+    replaced = store.replace_entry("MEMORY.md", replacement, appended.revision or "")
+    assert replaced.ok
+    entry = store.read_entry("MEMORY.md")
+    assert entry.content == replacement
+    assert entry.warnings == ()
+
+    prompt = store.prepare_prompt_context()
+    assert replacement in prompt.text
+    assert prompt.warnings == ()
+    assert store.status().warnings == ()
+
+
+def test_directly_stored_credential_like_content_is_returned_verbatim(tmp_path: Path) -> None:
+    store = backend(tmp_path)
+    content = "password=supersecretvalue123"
     store.root.mkdir(parents=True)
-    (store.root / "MEMORY.md").write_text("password=supersecretvalue123")
-    model = store.read_entry("MEMORY.md")
-    assert model.withheld and model.content is None
-    preview = store.read_entry("MEMORY.md", redact=True)
-    assert "supersecretvalue123" not in (preview.content or "")
-    assert store.prepare_prompt_context().withheld
+    (store.root / "MEMORY.md").write_text(content)
+
+    assert store.read_entry("MEMORY.md").content == content
+    assert content in store.prepare_prompt_context().text
 
 
 def test_limits_and_prompt_bounds(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

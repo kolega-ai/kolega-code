@@ -18,7 +18,6 @@ from kolega_code.local_state import (
     ensure_private_dir,
     write_private_bytes,
 )
-from kolega_code.security import has_probable_secret, redact_secrets
 
 from .models import (
     MEMORY_CONTRACT_VERSION,
@@ -96,16 +95,15 @@ class MarkdownMemoryBackend:
             entries = self.list_entries()
             prompt = self.prepare_prompt_context()
             return MemoryBackendStatus(
-                True,
-                True,
-                len(entries),
-                sum(item.byte_count for item in entries),
-                prompt.byte_count,
-                prompt.line_count,
-                prompt.truncated,
-                prompt.withheld,
-                prompt.warnings,
-                str(self.root),
+                available=True,
+                initialized=True,
+                entry_count=len(entries),
+                total_bytes=sum(item.byte_count for item in entries),
+                startup_bytes=prompt.byte_count,
+                startup_lines=prompt.line_count,
+                startup_truncated=prompt.truncated,
+                warnings=prompt.warnings,
+                private_path=str(self.root),
             )
         except (OSError, MemorySafetyError) as error:
             return MemoryBackendStatus(False, True, warnings=(str(error),), private_path=str(self.root))
@@ -126,14 +124,6 @@ class MarkdownMemoryBackend:
         if not entry.present:
             return MemoryPromptContext(
                 "\nMEMORY.md is currently absent or empty.",
-                authoring_guidance=guidance,
-            )
-        if entry.withheld:
-            return MemoryPromptContext(
-                "\nMEMORY.md was withheld because it contains a probable secret.",
-                byte_count=entry.byte_count,
-                withheld=True,
-                warnings=("MEMORY.md contains a probable secret and was withheld.",),
                 authoring_guidance=guidance,
             )
         content = entry.content or ""
@@ -172,7 +162,7 @@ class MarkdownMemoryBackend:
             )
         return sorted(entries, key=lambda item: (item.reference != INDEX_REFERENCE, item.reference.casefold()))
 
-    def read_entry(self, reference: str, *, redact: bool = False) -> MemoryEntry:
+    def read_entry(self, reference: str) -> MemoryEntry:
         parts, normalized = self._reference(reference)
         opened = self._read_path(parts)
         if opened is None:
@@ -180,24 +170,6 @@ class MarkdownMemoryBackend:
         data, _ = opened
         content = _decode_utf8(data)
         revision = _sha(data)
-        if has_probable_secret(content):
-            if redact:
-                return MemoryEntry(
-                    normalized,
-                    redact_secrets(content),
-                    len(data),
-                    revision,
-                    withheld=False,
-                    warnings=("probable secrets were redacted",),
-                )
-            return MemoryEntry(
-                normalized,
-                None,
-                len(data),
-                revision,
-                withheld=True,
-                warnings=("content contains a probable secret and was withheld",),
-            )
         return MemoryEntry(normalized, content, len(data), revision)
 
     def append_entry(self, reference: str, content: str) -> MemoryWriteResult:
@@ -332,9 +304,7 @@ class MarkdownMemoryBackend:
         *,
         existed: bool,
     ) -> MemoryWriteResult:
-        candidate_text = _decode_utf8(candidate)
-        if has_probable_secret(candidate_text):
-            raise MemorySafetyError("probable secret detected; record only its name, location, or retrieval procedure")
+        _decode_utf8(candidate)
         if len(candidate) > MAX_FILE_BYTES:
             return MemoryWriteResult(False, reference, error="memory file exceeds 128 KiB")
         files = self._scan_markdown_files()
@@ -543,8 +513,6 @@ class MarkdownMemoryBackend:
 def _encode_candidate(content: Any) -> bytes:
     if not isinstance(content, str):
         raise TypeError("memory content must be text")
-    if has_probable_secret(content):
-        raise MemorySafetyError("probable secret detected; record only its name, location, or retrieval procedure")
     return content.encode("utf-8")
 
 

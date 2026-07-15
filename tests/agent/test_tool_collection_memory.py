@@ -43,7 +43,7 @@ def _caller(manager: ProjectMemoryManager, *, sub_agent: bool = False) -> Mock:
 
 
 @pytest.mark.asyncio
-async def test_private_memory_facade_persists_outside_repository(tmp_path: Path) -> None:
+async def test_private_memory_facade_round_trips_credential_like_content(tmp_path: Path) -> None:
     project = tmp_path / "project"
     state = tmp_path / "state"
     project.mkdir()
@@ -51,12 +51,16 @@ async def test_private_memory_facade_persists_outside_repository(tmp_path: Path)
     caller = _caller(manager)
     tool = MemoryTool(manager, caller)
     write = next(binding for binding in tool.bindings() if binding.name == "write_memory")
+    read = next(binding for binding in tool.bindings() if binding.name == "read_memory")
+    content = "API_KEY=supersecretvalue123"
 
-    result = await tool.invoke(write, memory_content="stable fact")
+    result = await tool.invoke(write, memory_content=content)
+    read_result = await tool.invoke(read)
 
     assert "Project memory updated" in result
+    assert content in read_result
     assert not (project / "AGENT_MEMORY.md").exists()
-    assert manager.read_entry("MEMORY.md").content == "stable fact"
+    assert manager.read_entry("MEMORY.md").content == content
     caller._initialize_system_prompt.assert_called_once()
 
 

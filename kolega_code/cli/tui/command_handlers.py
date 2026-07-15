@@ -491,8 +491,6 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
                 text += f"\nStartup context: {backend.startup_lines} lines, {backend.startup_bytes:,} bytes"
                 if backend.startup_truncated:
                     text += " (truncated)"
-                if backend.startup_withheld:
-                    text += " (withheld: probable secret)"
                 if backend.warnings:
                     text += "\nWarnings: " + "; ".join(backend.warnings)
             if status.diagnostic:
@@ -502,12 +500,11 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
                     index = await asyncio.to_thread(
                         manager.read_entry,
                         "MEMORY.md",
-                        redact=True,
                         allow_disabled=True,
                     )
                     if index.present and index.content:
                         preview = self._bound_memory_display(index.content)
-                        text += f"\n\nRedacted MEMORY.md preview:\n{preview}"
+                        text += f"\n\nMEMORY.md preview:\n{preview}"
                 except Exception as error:
                     text += f"\nIndex preview unavailable: {error}"
             self._add_memory_message(
@@ -552,7 +549,6 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
                 entry = await asyncio.to_thread(
                     manager.read_entry,
                     reference,
-                    redact=True,
                     allow_disabled=True,
                 )
             except Exception as error:

@@ -71,8 +71,6 @@ class MemoryTool:
             ) from exc
 
         if isinstance(result, MemoryEntry):
-            if result.withheld:
-                raise ToolError("Memory content was withheld because it contains a probable secret.")
             if not result.present:
                 return (
                     f"Memory `{result.reference}` is missing (revision: {result.revision}, bytes: {result.byte_count})."
