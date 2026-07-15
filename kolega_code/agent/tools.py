@@ -1816,7 +1816,7 @@ class ToolCollection(LogMixin):
         mode: str = "append",
         expected_sha256: str | None = None,
     ) -> str:
-        """Append or compare-and-swap replace a private project-memory entry."""
+        """Append to or replace a private project-memory entry using its current revision."""
         return await self.memory_tool.write_memory(
             memory_content,
             path,
@@ -1825,7 +1825,7 @@ class ToolCollection(LogMixin):
         )
 
     async def delete_memory(self, path: str, expected_sha256: str) -> str:
-        """Compare-and-swap delete a private project-memory entry."""
+        """Delete a private project-memory entry after reading its current revision."""
         return await self.memory_tool.delete_memory(path, expected_sha256)
 
     async def search_codebase(

@@ -121,6 +121,14 @@ def test_limits_and_prompt_bounds(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     prompt = store.prepare_prompt_context()
     assert prompt.truncated and prompt.line_count == 200
     assert "line 200" not in prompt.text
+    assert "not already authoritative in code or documentation" in prompt.authoring_guidance
+    assert "non-obvious build or tooling quirks" in prompt.authoring_guidance
+    assert "architectural constraints" in prompt.authoring_guidance
+    assert "recurring failure causes" in prompt.authoring_guidance
+    assert "user-confirmed conventions" in prompt.authoring_guidance
+    assert "Before finishing a substantive task" in prompt.authoring_guidance
+    assert "use its current revision" in prompt.authoring_guidance
+    assert "compare-and-swap" not in prompt.authoring_guidance
 
 
 def test_count_and_total_limits_leave_existing_content(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

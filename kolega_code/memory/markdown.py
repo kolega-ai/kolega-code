@@ -116,10 +116,15 @@ class MarkdownMemoryBackend:
     def prepare_prompt_context(self) -> MemoryPromptContext:
         entry = self.read_entry(INDEX_REFERENCE)
         guidance = (
-            "Record only stable reusable facts explicitly during work. Keep MEMORY.md concise and "
-            "link topic files; use read_memory before compare-and-swap replacement/deletion. Correct "
-            "stale facts. Never store secrets, guesses, transient progress, plans, transcript "
-            "summaries, or duplicate user instructions.\n"
+            "Record stable, reusable facts that will help future work and are not already "
+            "authoritative in code or documentation. Good candidates include non-obvious build "
+            "or tooling quirks, architectural constraints, recurring failure causes, and "
+            "user-confirmed conventions. Before finishing a substantive task, deliberately review "
+            "whether any stable, reusable, non-authoritative facts you learned warrant a memory "
+            "update. Keep MEMORY.md concise and link topic files; read the relevant memory before "
+            "replacing or deleting it, then use its current revision. Correct stale facts. Never "
+            "store secrets, guesses, transient progress, plans, transcript summaries, or duplicate "
+            "user instructions.\n"
         )
         if not entry.present:
             return MemoryPromptContext(
@@ -241,14 +246,22 @@ class MarkdownMemoryBackend:
             "write_memory",
             {
                 "name": "write_memory",
-                "description": "Append or compare-and-swap replace private project memory.",
+                "description": (
+                    "Append to or replace private project memory. Read the target first and pass "
+                    "its current revision when replacing it."
+                ),
                 "input_schema": {
                     "type": "object",
                     "properties": {
                         "memory_content": {"type": "string"},
                         "path": {"type": "string", "default": INDEX_REFERENCE},
                         "mode": {"enum": ["append", "replace"], "default": "append"},
-                        "expected_sha256": {"type": ["string", "null"]},
+                        "expected_sha256": {
+                            "type": ["string", "null"],
+                            "description": (
+                                "Current revision returned by read_memory; required for replace and null for append."
+                            ),
+                        },
                     },
                     "required": ["memory_content"],
                 },
@@ -260,12 +273,15 @@ class MarkdownMemoryBackend:
             "delete_memory",
             {
                 "name": "delete_memory",
-                "description": "Delete private memory using its current revision.",
+                "description": ("Delete private memory. Read the target first, then pass its current revision."),
                 "input_schema": {
                     "type": "object",
                     "properties": {
                         "path": {"type": "string"},
-                        "expected_sha256": {"type": "string"},
+                        "expected_sha256": {
+                            "type": "string",
+                            "description": "Current revision returned by read_memory.",
+                        },
                     },
                     "required": ["path", "expected_sha256"],
                 },

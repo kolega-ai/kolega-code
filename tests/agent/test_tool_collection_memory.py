@@ -141,6 +141,20 @@ def test_dynamic_bindings_and_subagent_access(tmp_path: Path) -> None:
     assert {"read_memory", "write_memory", "delete_memory"} <= set(top_tools.registry().names())
     assert top_tools.registry().get("read_memory").parallel_safe
     assert not top_tools.registry().get("write_memory").parallel_safe
+    write_definition = top_tools.registry().get("write_memory").definition
+    delete_definition = top_tools.registry().get("delete_memory").definition
+    assert "Read the target first" in write_definition.description
+    assert "current revision" in write_definition.description
+    assert "Read the target first" in delete_definition.description
+    assert "current revision" in delete_definition.description
+    assert "compare-and-swap" not in write_definition.description
+    assert "compare-and-swap" not in delete_definition.description
+    assert write_definition.input_schema is not None
+    assert delete_definition.input_schema is not None
+    write_revision = write_definition.input_schema["properties"]["expected_sha256"]
+    delete_revision = delete_definition.input_schema["properties"]["expected_sha256"]
+    assert "Current revision returned by read_memory" in write_revision["description"]
+    assert "Current revision returned by read_memory" in delete_revision["description"]
 
     scoped = manager.with_scope(MemoryAccessScope.SUBAGENT)
     sub = _caller(scoped, sub_agent=True)

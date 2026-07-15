@@ -36,7 +36,7 @@ class MemoryTool:
         mode: str = "append",
         expected_sha256: str | None = None,
     ) -> str:
-        """Append or compare-and-swap replace private project memory."""
+        """Append to or replace private project memory using its current revision."""
         return await self._invoke_named(
             "write_memory",
             memory_content=memory_content,
@@ -46,7 +46,7 @@ class MemoryTool:
         )
 
     async def delete_memory(self, path: str, expected_sha256: str) -> str:
-        """Compare-and-swap delete a private project-memory entry."""
+        """Delete a private project-memory entry after reading its current revision."""
         return await self._invoke_named(
             "delete_memory",
             path=path,
