@@ -121,6 +121,54 @@ async def test_textual_app_merges_streamed_thinking_chunks(tmp_path: Path, monke
 
 
 @pytest.mark.asyncio
+async def test_textual_app_renders_clean_summary_parts_as_one_italic_entry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.app import KolegaCodeApp
+
+    lines = [
+        "Identifying LSP snapshot handling issue",
+        "Classifying active target implementation status",
+        "Confirming rank1 and rank2 completeness",
+    ]
+    chunks = [
+        {"type": "thinking", "content": lines[0], "complete": False, "uuid": "thinking-1"},
+        {"type": "thinking", "content": f"\n{lines[1]}", "complete": False, "uuid": "thinking-1"},
+        {"type": "thinking", "content": f"\n{lines[2]}", "complete": False, "uuid": "thinking-1"},
+        {"type": "thinking", "content": "", "complete": True, "uuid": "thinking-1"},
+        {"type": "response", "content": "done", "complete": True, "uuid": "response-1"},
+    ]
+
+    class SummaryChunkCoderAgent(FakeCoderAgent):
+        async def process_message_stream(self, message, attachments=None):
+            for chunk in chunks:
+                yield chunk
+
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", SummaryChunkCoderAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test():
+        await app._process_message("hi")
+
+        thinking_entries = [entry for entry in app.conversation_entries if entry.kind == "thinking"]
+        assert len(thinking_entries) == 1
+        assert thinking_entries[0].content == "\n".join(lines)
+
+        formatted = app._format_conversation_entry(thinking_entries[0])
+        assert renderable_text(formatted).splitlines() == [f"  {line}" for line in lines]
+        assert "**" not in renderable_text(formatted)
+        assert any("italic" in style and "dim" in style for style in first_text_styles(formatted))
+
+
+@pytest.mark.asyncio
 async def test_textual_app_formats_thinking_as_italic_chat_entry(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
