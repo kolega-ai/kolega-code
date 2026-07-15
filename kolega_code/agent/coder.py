@@ -52,6 +52,7 @@ class CoderAgent(BaseAgent, LogMixin):
         hook_dispatcher: Optional[Any] = None,
         max_iterations: Optional[int] = None,
         custom_agent_catalog: Optional[Any] = None,
+        memory_manager: Optional[Any] = None,
     ) -> None:
         """
         Initialize a new CoderAgent instance.
@@ -114,12 +115,11 @@ class CoderAgent(BaseAgent, LogMixin):
             hook_dispatcher=hook_dispatcher,
             max_iterations=max_iterations,
             custom_agent_catalog=custom_agent_catalog,
+            memory_manager=memory_manager,
         )
 
         # Configure tool collection with custom coder agent tools
         tool_exclusions = [
-            "read_memory",
-            "write_memory",
             "execute_terminal_command",
             "get_tool_list",
             "log_error",
@@ -137,6 +137,7 @@ class CoderAgent(BaseAgent, LogMixin):
         tool_config = ToolCollectionConfig(
             custom_tool_groups=["coder_agent_tools"],
             tool_exclusions=tool_exclusions,
+            include_memory_tools=True,
         )
 
         self.tool_collection = ToolCollection(

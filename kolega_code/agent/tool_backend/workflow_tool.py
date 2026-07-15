@@ -97,6 +97,7 @@ class WorkflowTool(BaseTool):
             terminal_manager=self.terminal_manager,
             browser_manager=self.browser_manager,
             langfuse_client=langfuse_client,
+            memory_manager=getattr(self.caller, "memory_manager", None),
         )
 
     # ------------------------------------------------------------------ tool

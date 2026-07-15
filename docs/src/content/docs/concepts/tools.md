@@ -67,7 +67,28 @@ OCR/conversion outside this tool.
 
 - `think_hard` — an extended-reasoning step that uses the
   [thinking model](../../configuration/providers-and-models/) and its token budget.
-- `read_memory`, `write_memory` — read and write workspace memories.
+- `read_memory(path="MEMORY.md")` — read a private project-memory index or topic,
+  including its logical path, SHA-256 revision, byte count, and bounded content.
+- `write_memory(memory_content, path="MEMORY.md", mode="append",
+  expected_sha256=None)` — append an exact Markdown fragment, or replace a whole
+  entry using its current revision. Creation by replacement uses
+  `expected_sha256="missing"`.
+- `delete_memory(path, expected_sha256)` — delete an entry only if its current
+  revision matches.
+
+These are the model tools supplied by the built-in `markdown` project-memory
+backend. They write to owner-private Kolega Code state, never the repository.
+Read before replacing or deleting: compare-and-swap conflicts reject stale
+changes instead of overwriting them. Paths and content are bounded, and probable
+secrets are rejected or withheld. See [Project Memory](../../tui/project-memory/)
+for storage identity, limits, and the `/memory` browser.
+
+Memory tool registration is capability- and provider-driven. Enabled top-level
+coder, general, and planning agents can read and explicitly curate memory;
+private memory mutation is an intentional exception to Plan mode's ban on
+repository edits. Built-in sub-agents get read-only access. Exact custom-agent
+tool allowlists remain the final gate. When memory is disabled or its configured
+backend is unavailable, no memory tools or context are exposed.
 
 ### Sub-agent dispatch
 
@@ -87,8 +108,9 @@ Build mode's full toolset.
 
 This separation is what keeps Plan mode safe to run against any codebase: the
 planning agent can look and run investigative commands, but it has no file-edit
-tools. Shell commands are further gated by the active permission mode — in `ask`
-they prompt before running.
+tools. Explicit writes to private project memory are the one exception; they
+never change repository files. Shell commands are further gated by the active
+permission mode — in `ask` they prompt before running.
 
 In the Textual TUI, Build mode defaults to `ask` permission mode. Shell commands
 and file edits must be approved before they run unless you switch to `auto` or

@@ -79,3 +79,10 @@ Kolega Code runs against your real environment:
 Sessions, settings, permissions, and credentials are persisted locally. That local
 state is what lets Kolega Code operate on a real development workspace while preserving
 resumable sessions and project-specific controls.
+
+Private [Project Memory](../../tui/project-memory/) is another local state
+service, but it is not session history: an agent or user must explicitly curate
+it, and linked Git worktrees share it through their common Git identity. Its
+provider interface keeps the built-in Markdown backend separate from possible
+future structured backends; switching providers never migrates data
+automatically.

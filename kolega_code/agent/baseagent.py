@@ -53,7 +53,7 @@ from kolega_code.permissions import (
 from .prompt_provider import PromptProvider, AgentMode, AgentType, PromptContext, PromptExtension
 from .prompt_overrides import ProjectPromptOverrides, format_prompt_override_error, render_prompt_override_source
 from kolega_code.services.base import TerminalManager, BrowserManager
-from kolega_code.services.file_system import FileSystem
+from kolega_code.services.file_system import FileSystem, LocalFileSystem
 from .tools import ToolCollection  # noqa: F401 - kept for tests and downstream monkeypatch compatibility
 from kolega_code.tools import ToolError
 from .utils.commands import CommandProcessor
@@ -149,6 +149,7 @@ class BaseAgent(LogMixin):
         context: Optional[AgentContext] = None,
         max_iterations: Optional[int] = None,
         custom_agent_catalog: Optional[Any] = None,
+        memory_manager: Optional[Any] = None,
     ) -> None:
         """
         Initialize a new BaseAgent instance.
@@ -205,6 +206,7 @@ class BaseAgent(LogMixin):
                 filesystem=filesystem or defaults.filesystem,
                 terminal_manager=terminal_manager or defaults.terminal_manager,
                 browser_manager=browser_manager or defaults.browser_manager,
+                memory_manager=memory_manager,
             )
 
             context = AgentContext(
@@ -226,8 +228,11 @@ class BaseAgent(LogMixin):
                 permission_mode=normalize_permission_mode(permission_mode, default=PermissionMode.AUTO),
                 permission_callback=permission_callback or auto_allow_permission_callback,
             )
-        elif prompt_provider is not None:
-            context.prompt_provider = prompt_provider
+        else:
+            if memory_manager is not None:
+                context.services.memory_manager = memory_manager
+            if prompt_provider is not None:
+                context.prompt_provider = prompt_provider
             if permission_mode is not None:
                 context.permission_mode = normalize_permission_mode(permission_mode, default=context.permission_mode)
             if permission_callback is not None:
@@ -277,6 +282,20 @@ class BaseAgent(LogMixin):
         self.sub_agent_recorder = context.telemetry.sub_agent_recorder
         self.session_recorder = None if sub_agent else session_recorder
         self.custom_agent_catalog = custom_agent_catalog
+        self.memory_manager = context.services.memory_manager
+        self._owns_memory_manager = False
+        if self.memory_manager is not None and sub_agent:
+            from kolega_code.memory import MemoryAccessScope
+
+            self.memory_manager = self.memory_manager.with_scope(MemoryAccessScope.SUBAGENT)
+        if self.memory_manager is None and not sub_agent and isinstance(self.filesystem, LocalFileSystem):
+            # Keep non-local/sandbox hosts unchanged unless they inject a manager.
+            from kolega_code.cli.session_store import default_state_dir
+            from kolega_code.memory import ProjectMemoryManager
+
+            self.memory_manager = ProjectMemoryManager(self.project_path, default_state_dir())
+            self.context.services.memory_manager = self.memory_manager
+            self._owns_memory_manager = True
 
         # gigacode (workflow orchestration) opt-in. Off by default; the host toggles
         # it via apply_gigacode(). The run_workflow tool gate reads this live, so
@@ -548,11 +567,16 @@ class BaseAgent(LogMixin):
         return "", ""
 
     def _load_agent_memory(self) -> tuple[str, str]:
-        """Return agent memory content when AGENT_MEMORY.md exists."""
+        """Return deprecated repository memory, withholding probable secrets."""
         if not self.filesystem.exists(AGENT_MEMORY_FILE):
             return "", ""
         try:
-            return AGENT_MEMORY_FILE, self.filesystem.read_text(AGENT_MEMORY_FILE)
+            content = self.filesystem.read_text(AGENT_MEMORY_FILE)
+            from kolega_code.security import has_probable_secret
+
+            if has_probable_secret(content):
+                content = "[Content withheld because this deprecated repository memory contains a probable secret.]"
+            return AGENT_MEMORY_FILE, content
         except Exception:
             return AGENT_MEMORY_FILE, ""
 
@@ -565,6 +589,13 @@ class BaseAgent(LogMixin):
 
         project_guidance_file, project_guidance = self._load_project_guidance()
         agent_memory_file, agent_memory = self._load_agent_memory()
+        private_memory = ""
+        if self.memory_manager is not None:
+            try:
+                private_memory = self.memory_manager.prompt_context().text
+            except Exception:
+                # Disabled/unavailable memory is intentionally invisible to the model.
+                private_memory = ""
 
         return PromptContext(
             system_name=os.getenv("KOLEGA_CODE_SYSTEM_NAME", "Kolega Code"),
@@ -582,6 +613,7 @@ class BaseAgent(LogMixin):
             workspace_id=self.workspace_id,
             workspace_environment_variables=self.workspace_env_var_descriptions,
             memories=self.workspace_memories,
+            private_memory=private_memory,
         )
 
     def _prompt_override_error_message(self, path: str, detail: object) -> str:
@@ -1019,9 +1051,6 @@ class BaseAgent(LogMixin):
             chat_message_content = output
             if isinstance(output, list):
                 chat_message_content = "\n\n".join(item.to_markdown() for item in output)
-
-            if tool_name == "write_memory":
-                self._initialize_system_prompt()
 
             # Send tool_result message for successful execution
             await self.send_chat_message(
@@ -1561,6 +1590,13 @@ class BaseAgent(LogMixin):
             return
         await asyncio.to_thread(recorder.finish_turn, status, error=error)
 
+    def refresh_memory_context(self) -> None:
+        """Refresh private memory and rebuild the system prompt without a full agent rebuild."""
+        if self.memory_manager is None:
+            return
+        self.memory_manager.refresh()
+        self._initialize_system_prompt()
+
     async def _process_message_stream_impl(
         self, message: str, attachments: Optional[List[Dict[str, Any]]] = None
     ) -> AsyncGenerator[Dict[str, Any], None]:
@@ -1570,6 +1606,13 @@ class BaseAgent(LogMixin):
         Yields dicts of the form
         ``{"type": "response"|"thinking", "content": str, "complete": bool, "uuid": str}``.
         """
+        if not self.sub_agent:
+            try:
+                self.refresh_memory_context()
+            except Exception:
+                # Keep the last valid prompt if memory or prompt refresh fails.
+                pass
+
         unsupported_attachment_message = self._unsupported_attachment_message(attachments)
         if unsupported_attachment_message:
             yield {
@@ -1834,9 +1877,13 @@ class BaseAgent(LogMixin):
         Clean up all agent resources.
         This should be called when the agent is being destroyed.
         """
-        # Clean up tool collection resources
-        if self.tool_collection is not None:
-            await self.tool_collection.cleanup()
+        try:
+            if self.tool_collection is not None:
+                await self.tool_collection.cleanup()
+        finally:
+            if self._owns_memory_manager and self.memory_manager is not None:
+                self.memory_manager.close()
+                self.memory_manager = None
 
         # Log cleanup
         await self.log_info("Agent cleanup completed", sender=self.agent_name)

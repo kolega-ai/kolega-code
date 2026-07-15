@@ -115,6 +115,37 @@ class TestBaseAgent:
         assert base_agent.history[-1].stop_reason == "end_turn"
 
     @pytest.mark.asyncio
+    async def test_memory_refresh_failure_keeps_last_prompt_and_continues_turn(self, base_agent):
+        base_agent.system_prompt = Message(role="system", content=[TextBlock(text="sys")])
+        base_agent.tool_collection = MagicMock()
+        base_agent.tool_collection.get_tool_list = MagicMock(return_value=[])
+        base_agent.llm = FakeLLM(
+            token_script=[100],
+            final_message=Message(role="assistant", content=[TextBlock(text="done")], stop_reason="end_turn"),
+        )
+        base_agent.refresh_memory_context = MagicMock(side_effect=RuntimeError("refresh failed"))
+        base_agent.log_info = AsyncMock()
+
+        chunks = [chunk async for chunk in base_agent.process_message_stream("finish")]
+
+        assert chunks[-1]["complete"] is True
+        assert base_agent.history[-1].stop_reason == "end_turn"
+
+    @pytest.mark.asyncio
+    async def test_cleanup_closes_owned_memory_when_tool_cleanup_fails(self, base_agent):
+        base_agent.tool_collection = MagicMock()
+        base_agent.tool_collection.cleanup = AsyncMock(side_effect=RuntimeError("tool cleanup failed"))
+        manager = MagicMock()
+        base_agent.memory_manager = manager
+        base_agent._owns_memory_manager = True
+
+        with pytest.raises(RuntimeError, match="tool cleanup failed"):
+            await base_agent.cleanup()
+
+        manager.close.assert_called_once_with()
+        assert base_agent.memory_manager is None
+
+    @pytest.mark.asyncio
     async def test_turn_persists_semantic_boundaries_incrementally(self, base_agent, tmp_path):
         project = tmp_path / "project"
         project.mkdir()

@@ -47,6 +47,7 @@ class InvestigationAgent(BaseAgent):
         sub_agent_recorder: Optional[Any] = None,
         hook_dispatcher: Optional[Any] = None,
         max_iterations: Optional[int] = None,
+        memory_manager: Optional[Any] = None,
     ) -> None:
         """
         Initialize a new InvestigationAgent instance.
@@ -101,6 +102,7 @@ class InvestigationAgent(BaseAgent):
             sub_agent_recorder=sub_agent_recorder,
             hook_dispatcher=hook_dispatcher,
             max_iterations=max_iterations,
+            memory_manager=memory_manager,
         )
 
         self.tool_collection = ToolCollection(
@@ -110,7 +112,9 @@ class InvestigationAgent(BaseAgent):
             self.connection_manager,
             self.config,
             caller=self,
-            tool_config=ToolCollectionConfig(read_only=True, custom_tool_groups=["command_tools"]),
+            tool_config=ToolCollectionConfig(
+                read_only=True, custom_tool_groups=["command_tools"], include_memory_tools=True
+            ),
             filesystem=self.filesystem,
             terminal_manager=self.terminal_manager,
             browser_manager=self.browser_manager,

@@ -1,192 +1,177 @@
-# ruff: noqa: F401,F811,E402
 from pathlib import Path
-from unittest.mock import AsyncMock, Mock
-import uuid
+from unittest.mock import Mock
 
 import pytest
 
-from kolega_code.agent.baseagent import BaseAgent
-from kolega_code.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
-from kolega_code.events import AgentConnectionManager
 from kolega_code.agent.tool_backend.memory_tool import MemoryTool
-from kolega_code.agent.tools import ToolCollection, ToolDefinition, ToolCollectionConfig
+from kolega_code.agent.tools import ToolCollection, ToolCollectionConfig
+from kolega_code.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
+from kolega_code.memory import (
+    MemoryAccessScope,
+    MemoryToolBinding,
+    ProjectMemoryManager,
+)
+from kolega_code.tools import ToolError
 
 
-@pytest.fixture
-def mock_connection_manager() -> AsyncMock:
-    return AsyncMock()
-
-
-@pytest.fixture
-def project_path(tmp_path: Path) -> Path:
-    return tmp_path
-
-
-@pytest.fixture
-def agent_config() -> AgentConfig:
+def _config() -> AgentConfig:
+    model = ModelConfig(
+        provider=ModelProvider.ANTHROPIC,
+        model="test-model",
+        rate_limits=RateLimitConfig(),
+    )
     return AgentConfig(
-        anthropic_api_key="test_key",
-        openai_api_key="test-key",
-        long_context_config=ModelConfig(
-            provider=ModelProvider.ANTHROPIC, model="test-model", rate_limits=RateLimitConfig()
-        ),
-        fast_config=ModelConfig(provider=ModelProvider.ANTHROPIC, model="test-model", rate_limits=RateLimitConfig()),
-        thinking_config=ModelConfig(
-            provider=ModelProvider.ANTHROPIC,
-            model="test-model",
-            rate_limits=RateLimitConfig(),
-            thinking_effort="medium",
-        ),
+        anthropic_api_key="test-key",
+        long_context_config=model,
+        fast_config=model,
+        thinking_config=model,
     )
 
 
-@pytest.fixture
-def mock_base_agent() -> Mock:
-    mock = Mock()
-    mock.agent_name = "test_agent"
-    # Default: non-vision mock so the read_image tool gate excludes it.
-    mock.supports_vision = False
-    return mock
-
-
-@pytest.fixture
-def tool_collection(
-    project_path: Path,
-    mock_connection_manager: AgentConnectionManager,
-    agent_config: AgentConfig,
-    mock_base_agent: BaseAgent,
-) -> ToolCollection:
-    # Create a ToolCollection with mocked tools
-    collection = ToolCollection(
-        project_path, "test_workspace", str(uuid.uuid4()), mock_connection_manager, agent_config, mock_base_agent
-    )
-
-    # Mock all tool methods
-    collection.think_hard_tool.think_hard = AsyncMock()
-    collection.edit_tool.edit = AsyncMock()
-    collection.edit_tool.multi_edit = AsyncMock()
-    collection.edit_tool.write = AsyncMock()
-    collection.list_directory_tool.list_directory = AsyncMock()
-    collection.terminal_tool.execute_terminal_command = AsyncMock()
-    collection.read_file_tool.read_entire_file = AsyncMock()
-    collection.read_file_tool.read_file_section = AsyncMock()
-    collection.memory_tool.read_memory = AsyncMock()
-    collection.memory_tool.write_memory = AsyncMock()
-    collection.search_codebase_tool.search_codebase = AsyncMock()
-    collection.glob_tool.find_files_by_pattern = AsyncMock()
-    collection.web_fetch_tool.web_fetch = AsyncMock()
-    collection.terminal_tool.write_stdin = AsyncMock()
-
-    return collection
+def _caller(manager: ProjectMemoryManager, *, sub_agent: bool = False) -> Mock:
+    caller = Mock()
+    caller.agent_name = "coder"
+    caller.sub_agent = sub_agent
+    caller.memory_manager = manager
+    caller.supports_vision = False
+    caller.edit_protocol = None
+    caller.primary_model_config = _config().long_context_config
+    caller.session_id = None
+    caller.custom_agent_catalog = None
+    caller._initialize_system_prompt = Mock()
+    return caller
 
 
 @pytest.mark.asyncio
-class TestToolCollection:
-    async def test_read_memory(self, tool_collection: AsyncMock) -> None:
-        expected_response = "Memory content"
-        tool_collection.memory_tool.read_memory.return_value = expected_response
+async def test_private_memory_facade_persists_outside_repository(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    state = tmp_path / "state"
+    project.mkdir()
+    manager = ProjectMemoryManager(project, state)
+    caller = _caller(manager)
+    tool = MemoryTool(manager, caller)
+    write = next(binding for binding in tool.bindings() if binding.name == "write_memory")
 
-        result = await tool_collection.read_memory()
-        assert result == expected_response
-        tool_collection.memory_tool.read_memory.assert_called_once()
+    result = await tool.invoke(write, memory_content="stable fact")
 
-    async def test_write_memory(self, tool_collection: AsyncMock) -> None:
-        memory_content = "New memory"
-        expected_response = "Success"
-        tool_collection.memory_tool.write_memory.return_value = expected_response
+    assert "Project memory updated" in result
+    assert not (project / "AGENT_MEMORY.md").exists()
+    assert manager.read_entry("MEMORY.md").content == "stable fact"
+    caller._initialize_system_prompt.assert_called_once()
 
-        result = await tool_collection.write_memory(memory_content)
-        assert result == expected_response
-        tool_collection.memory_tool.write_memory.assert_called_once_with(memory_content)
 
-    async def test_memory_tool_reads_agent_memory_file(
-        self,
-        project_path: Path,
-        mock_connection_manager: AgentConnectionManager,
-        agent_config: AgentConfig,
-        mock_base_agent: BaseAgent,
-    ) -> None:
-        (project_path / "AGENT_MEMORY.md").write_text("Memory content", encoding="utf-8")
-        memory_tool = MemoryTool(
-            project_path,
-            "test_workspace",
-            str(uuid.uuid4()),
-            mock_connection_manager,
-            agent_config,
-            mock_base_agent,
-        )
-        memory_tool.log_info = AsyncMock()
+@pytest.mark.asyncio
+async def test_failed_mutation_does_not_refresh_prompt(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    manager = ProjectMemoryManager(project, tmp_path / "state")
+    caller = _caller(manager)
+    tool = MemoryTool(manager, caller)
+    write = next(binding for binding in tool.bindings() if binding.name == "write_memory")
 
-        result = await memory_tool.read_memory()
+    with pytest.raises(Exception, match="replace requires expected_sha256"):
+        await tool.invoke(write, memory_content="replacement", mode="replace")
 
-        assert result == "Memory content"
-        memory_tool.log_info.assert_called_once_with(
-            "Successfully read memory file AGENT_MEMORY.md", sender="test_agent"
-        )
+    caller._initialize_system_prompt.assert_not_called()
 
-    async def test_memory_tool_write_creates_agent_memory_file(
-        self,
-        project_path: Path,
-        mock_connection_manager: AgentConnectionManager,
-        agent_config: AgentConfig,
-        mock_base_agent: BaseAgent,
-    ) -> None:
-        memory_tool = MemoryTool(
-            project_path,
-            "test_workspace",
-            str(uuid.uuid4()),
-            mock_connection_manager,
-            agent_config,
-            mock_base_agent,
-        )
-        memory_tool.log_info = AsyncMock()
 
-        result = await memory_tool.write_memory("New memory")
+@pytest.mark.asyncio
+async def test_committed_mutation_is_not_reported_as_failed_when_prompt_refresh_fails(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    manager = ProjectMemoryManager(project, tmp_path / "state")
+    caller = _caller(manager)
+    caller._initialize_system_prompt.side_effect = RuntimeError("refresh failed")
+    tool = MemoryTool(manager, caller)
+    write = next(binding for binding in tool.bindings() if binding.name == "write_memory")
 
-        assert result == "Created memory file AGENT_MEMORY.md and added new memory"
-        assert (project_path / "AGENT_MEMORY.md").read_text(encoding="utf-8") == "# Agent Memory\n\n- New memory\n"
+    result = await tool.invoke(write, memory_content="stable fact")
 
-    async def test_memory_tool_write_appends_to_agent_memory_file(
-        self,
-        project_path: Path,
-        mock_connection_manager: AgentConnectionManager,
-        agent_config: AgentConfig,
-        mock_base_agent: BaseAgent,
-    ) -> None:
-        (project_path / "AGENT_MEMORY.md").write_text("# Agent Memory\n\n- Existing memory\n", encoding="utf-8")
-        memory_tool = MemoryTool(
-            project_path,
-            "test_workspace",
-            str(uuid.uuid4()),
-            mock_connection_manager,
-            agent_config,
-            mock_base_agent,
-        )
-        memory_tool.log_info = AsyncMock()
+    assert "Project memory updated" in result
+    assert "mutation was committed" in result
+    assert manager.read_entry("MEMORY.md").content == "stable fact"
 
-        result = await memory_tool.write_memory("New memory")
 
-        assert result == "Successfully added new memory to AGENT_MEMORY.md"
-        assert (project_path / "AGENT_MEMORY.md").read_text(
-            encoding="utf-8"
-        ) == "# Agent Memory\n\n- Existing memory\n- New memory\n"
+@pytest.mark.asyncio
+async def test_unexpected_backend_errors_do_not_expose_private_paths(
+    tmp_path: Path,
+) -> None:
+    private_path = tmp_path / "private" / "MEMORY.md"
 
-    async def test_memory_tool_read_missing_agent_memory_file(
-        self,
-        project_path: Path,
-        mock_connection_manager: AgentConnectionManager,
-        agent_config: AgentConfig,
-        mock_base_agent: BaseAgent,
-    ) -> None:
-        memory_tool = MemoryTool(
-            project_path,
-            "test_workspace",
-            str(uuid.uuid4()),
-            mock_connection_manager,
-            agent_config,
-            mock_base_agent,
-        )
-        memory_tool.log_error = AsyncMock()
+    def fail(path: str = "MEMORY.md") -> None:
+        del path
+        raise OSError(f"permission denied: {private_path}")
 
-        with pytest.raises(FileNotFoundError, match="AGENT_MEMORY.md"):
-            await memory_tool.read_memory()
+    manager = Mock()
+    manager.tool_bindings.return_value = (
+        MemoryToolBinding(
+            "read_memory",
+            {"name": "read_memory", "input_schema": {"type": "object"}},
+            fail,
+        ),
+    )
+    tool = MemoryTool(manager, Mock())
+
+    with pytest.raises(ToolError) as caught:
+        await tool.read_memory()
+    assert str(private_path) not in str(caught.value)
+    assert "without exposing private storage details" in str(caught.value)
+
+
+def test_dynamic_bindings_and_subagent_access(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    manager = ProjectMemoryManager(project, tmp_path / "state")
+    top = _caller(manager)
+    top_tools = ToolCollection(
+        project,
+        "workspace",
+        "thread",
+        Mock(),
+        _config(),
+        top,
+        tool_config=ToolCollectionConfig(include_memory_tools=True),
+    )
+    assert {"read_memory", "write_memory", "delete_memory"} <= set(top_tools.registry().names())
+    assert top_tools.registry().get("read_memory").parallel_safe
+    assert not top_tools.registry().get("write_memory").parallel_safe
+
+    scoped = manager.with_scope(MemoryAccessScope.SUBAGENT)
+    sub = _caller(scoped, sub_agent=True)
+    sub_tools = ToolCollection(
+        project,
+        "workspace",
+        "thread",
+        Mock(),
+        _config(),
+        sub,
+        tool_config=ToolCollectionConfig(include_memory_tools=True),
+    )
+    assert "read_memory" in sub_tools.registry()
+    assert "write_memory" not in sub_tools.registry()
+    assert "delete_memory" not in sub_tools.registry()
+
+
+def test_exact_allowlist_and_disabled_manager_are_final(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    manager = ProjectMemoryManager(project, tmp_path / "state")
+    caller = _caller(manager)
+    tools = ToolCollection(
+        project,
+        "workspace",
+        "thread",
+        Mock(),
+        _config(),
+        caller,
+        tool_config=ToolCollectionConfig(
+            include_memory_tools=True,
+            allowed_tools=["read_memory"],
+        ),
+    )
+    assert tools.registry().names() == ["read_memory"]
+
+    manager.set_enabled(False)
+    assert "read_memory" not in tools.registry()

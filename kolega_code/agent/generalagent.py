@@ -49,6 +49,7 @@ class GeneralAgent(BaseAgent):
         sub_agent_recorder: Optional[Any] = None,
         hook_dispatcher: Optional[Any] = None,
         max_iterations: Optional[int] = None,
+        memory_manager: Optional[Any] = None,
     ) -> None:
         """
         Initialize a new GeneralAgent instance.
@@ -103,13 +104,12 @@ class GeneralAgent(BaseAgent):
             sub_agent_recorder=sub_agent_recorder,
             hook_dispatcher=hook_dispatcher,
             max_iterations=max_iterations,
+            memory_manager=memory_manager,
         )
 
         # Full coder-style toolset, minus sub-agent dispatch (a dispatched agent
         # may not fan out further) and build tools in CLI mode.
         tool_exclusions = [
-            "read_memory",
-            "write_memory",
             "execute_terminal_command",
             "get_tool_list",
             "log_error",
@@ -121,7 +121,7 @@ class GeneralAgent(BaseAgent):
         if mode_value == AgentMode.CLI.value:
             tool_exclusions.extend(["build_backend", "build_frontend"])
 
-        tool_config = ToolCollectionConfig(tool_exclusions=tool_exclusions)
+        tool_config = ToolCollectionConfig(tool_exclusions=tool_exclusions, include_memory_tools=True)
 
         self.tool_collection = ToolCollection(
             self.project_path,

@@ -116,11 +116,15 @@ The project directory contains `{{ context.project_guidance_file }}`. Treat it a
 {% endif %}
 
 {% if context.agent_memory %}
-## Agent Memory
+## Deprecated Repository Agent Memory (read-only)
 
-The project directory contains `{{ context.agent_memory_file }}`. Treat it as persistent agent memory:
+The project directory contains `{{ context.agent_memory_file }}`. This repository/user-controlled legacy context is deprecated and is not private project memory:
 
 ```
 {{ context.agent_memory }}
 ```
+{% endif %}
+
+{% if context.private_memory %}
+{{ context.private_memory }}
 {% endif %}

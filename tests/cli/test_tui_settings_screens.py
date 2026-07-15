@@ -59,7 +59,7 @@ async def test_settings_screen_is_categorized_and_stages_credentials_atomically(
         assert isinstance(screen, SettingsScreen)
         await pilot.pause()
         assert screen.dirty is False
-        assert screen.query_one("#settings_categories", OptionList).option_count == 5
+        assert screen.query_one("#settings_categories", OptionList).option_count == 6
         assert screen.query_one("#settings_page_model").display is True
         assert screen.query_one("#settings_page_tools").display is False
         apply_button = screen.query_one("#save_settings", Button)

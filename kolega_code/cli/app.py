@@ -41,6 +41,7 @@ from kolega_code.agent.prompts import (
 )
 from kolega_code.hooks import HookDispatcher, HookEvent
 from kolega_code.llm.models import MessageHistory
+from kolega_code.memory import ProjectMemoryManager
 from kolega_code.mcp.config import load_mcp_config, mcp_secret_values
 from kolega_code.mcp.state import MCPOAuthTokenStore
 from kolega_code.permissions import (
@@ -74,6 +75,7 @@ from .tui import constants as tui_constants
 from .tui import agent_runtime as tui_agent_runtime
 from .tui import changes_screen as tui_changes
 from .tui import command_handlers as tui_command_handlers
+from .tui import memory_screen as tui_memory
 from .tui import prompt_flows as tui_prompt_flows
 from .tui import onboarding_screen as tui_onboarding
 from .tui import settings_panel as tui_settings_panel
@@ -159,6 +161,10 @@ class KolegaCodeApp(
         )
         self.session.permission_mode = self.permission_mode.value
         self.settings_store = settings_store or SettingsStore(store.root)
+        self.memory_manager = ProjectMemoryManager(
+            self.project_path,
+            state_root=self.settings_store.root,
+        )
         self.overrides = overrides or CliConfigOverrides()
         self.settings: CliSettings = CliSettings()
         self.skill_catalog: SkillCatalog = discover_skills(self.project_path)
@@ -216,6 +222,7 @@ class KolegaCodeApp(
         # session. Reset in _switch_model so a new model gets a fresh warning.
         self._vision_warning_shown = False
         self._settings_screen: Optional[tui_settings_screen.SettingsScreen] = None
+        self._memory_screen: Optional[tui_memory.MemoryScreen] = None
         self._onboarding_screen: Optional[tui_onboarding.OnboardingScreen] = None
         self._onboarding_skipped = False
         self._permission_lock = asyncio.Lock()
@@ -1038,6 +1045,45 @@ class KolegaCodeApp(
         self._settings_screen = screen
         self.push_screen(screen)
 
+    def action_open_memory(self, *, inspect_disabled: bool = False) -> None:
+        """Open the backend-neutral project-memory browser and editor."""
+        if self._memory_screen is not None or self._onboarding_screen is not None:
+            return
+        if self._pending_approval is not None or self._pending_question is not None or self._plan_decision_active:
+            self._notify_user("Resolve the active prompt before opening Memory.", severity="warning")
+            return
+        screen = tui_memory.MemoryScreen(self, inspect_disabled=inspect_disabled)
+        self._memory_screen = screen
+        self.push_screen(screen)
+
+    def _memory_mutation_blocked(self) -> bool:
+        if not self._turn_active and self.agent_worker is None:
+            return False
+        self._notify_user(
+            "Wait for the active agent turn to finish, or cancel it, before changing memory.",
+            severity="warning",
+        )
+        return True
+
+    async def _refresh_agent_memory(self) -> None:
+        """Best-effort prompt refresh after an already committed memory mutation."""
+        try:
+            agent = self.agent
+            refresh_agent = getattr(agent, "refresh_memory_context", None)
+            if callable(refresh_agent):
+                await asyncio.to_thread(refresh_agent)
+            else:
+                await asyncio.to_thread(self.memory_manager.refresh)
+        except Exception:
+            self._notify_user(
+                "Memory was updated, but the active prompt could not be refreshed. "
+                "It will be reloaded before the next top-level turn.",
+                severity="warning",
+            )
+
+    def _close_memory_manager(self) -> None:
+        self.memory_manager.close()
+
     def action_open_onboarding(self) -> None:
         """Open the independent connection wizard."""
         if self.config is not None or self._onboarding_screen is not None or self._settings_screen is not None:
@@ -1188,6 +1234,7 @@ class KolegaCodeApp(
         # Stop the watchdog thread on shutdown (also keeps test apps from leaking threads).
         if self._watchdog is not None:
             self._watchdog.stop()
+        self._close_memory_manager()
 
     def on_worker_state_changed(self, event) -> None:
         # Capture worker (e.g. agent-turn) crashes that Textual otherwise only logs to stderr.
@@ -1206,18 +1253,21 @@ class KolegaCodeApp(
             pass
 
     async def action_quit(self) -> None:
-        if self._watchdog is not None:
-            self._watchdog.stop()
-        if self.agent is not None:
-            fire = getattr(self.agent, "fire_hook", None)
-            if fire is not None:
-                try:
-                    await fire(HookEvent.SESSION_END, {"reason": "quit"})
-                except Exception:
-                    pass
-            await self._save_session_history_async()
-            await self.agent.cleanup()
-        self.exit()
+        try:
+            if self._watchdog is not None:
+                self._watchdog.stop()
+            if self.agent is not None:
+                fire = getattr(self.agent, "fire_hook", None)
+                if fire is not None:
+                    try:
+                        await fire(HookEvent.SESSION_END, {"reason": "quit"})
+                    except Exception:
+                        pass
+                await self._save_session_history_async()
+                await self.agent.cleanup()
+        finally:
+            self._close_memory_manager()
+            self.exit()
 
     def _set_sidebar_visible(self, visible: bool) -> None:
         self.sidebar_visible = visible

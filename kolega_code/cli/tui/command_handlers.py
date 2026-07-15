@@ -44,6 +44,7 @@ from . import app_base as tui_app_base
 from . import constants as tui_constants
 from . import state as tui_state
 from . import widgets as tui_widgets
+from .settings_screen import ConfirmSettingsActionScreen
 
 
 class CommandHandlersMixin(tui_app_base.KolegaAppBase):
@@ -57,6 +58,7 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
             "/build": self._command_build,
             "/sidebar": self._command_sidebar,
             "/settings": self._command_settings,
+            "/memory": self._command_memory,
             "/permissions": self._command_permissions,
             "/model": self._command_model,
             "/effort": self._command_effort,
@@ -438,6 +440,205 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
 
     async def _command_settings(self, args: str) -> None:
         self.action_open_settings()
+
+    async def _command_memory(self, args: str) -> None:
+        """Browse or manage the app-owned private project-memory service."""
+        manager = self.memory_manager
+        if manager is None:
+            self._add_memory_message("Project memory is unavailable.", tone="error")
+            return
+
+        parts = args.split(maxsplit=1)
+        command = parts[0].lower() if parts else ""
+        if command in {"", "browse"}:
+            if len(parts) > 1:
+                self._add_memory_message(
+                    "Usage: /memory [status|on|off|files|show [path]|path|clear]",
+                    tone="warning",
+                )
+                return
+            self.action_open_memory()
+            return
+        if command not in {"status", "on", "off", "files", "show", "clear", "path"} or (
+            len(parts) > 1 and command != "show"
+        ):
+            self._add_memory_message(
+                "Usage: /memory [status|on|off|files|show [path]|path|clear]",
+                tone="warning",
+            )
+            return
+
+        if command == "status":
+            try:
+                status = await asyncio.to_thread(manager.status)
+            except Exception as error:
+                self._add_memory_message(f"Could not inspect memory: {error}", tone="error")
+                return
+            backend = status.backend
+            detail = (
+                f"{backend.entry_count} entries, {backend.total_bytes:,} bytes"
+                if backend is not None
+                else "backend unavailable"
+            )
+            availability = "available" if status.available else "unavailable"
+            text = (
+                f"Project memory is {'on' if status.enabled else 'off'} · "
+                f"{status.backend_id} ({availability}) · {detail}"
+            )
+            text += f"\nProject identity: {status.identity_kind} · {status.display_path}"
+            if backend is not None and backend.private_path:
+                text += f"\nPrivate storage: {backend.private_path}"
+                text += f"\nStartup context: {backend.startup_lines} lines, {backend.startup_bytes:,} bytes"
+                if backend.startup_truncated:
+                    text += " (truncated)"
+                if backend.startup_withheld:
+                    text += " (withheld: probable secret)"
+                if backend.warnings:
+                    text += "\nWarnings: " + "; ".join(backend.warnings)
+            if status.diagnostic:
+                text += f"\n{status.diagnostic}"
+            if status.available:
+                try:
+                    index = await asyncio.to_thread(
+                        manager.read_entry,
+                        "MEMORY.md",
+                        redact=True,
+                        allow_disabled=True,
+                    )
+                    if index.present and index.content:
+                        preview = self._bound_memory_display(index.content)
+                        text += f"\n\nRedacted MEMORY.md preview:\n{preview}"
+                except Exception as error:
+                    text += f"\nIndex preview unavailable: {error}"
+            self._add_memory_message(
+                text,
+                tone="info" if status.available else "warning",
+            )
+            return
+
+        if command == "path":
+            try:
+                status = await asyncio.to_thread(manager.status)
+            except Exception as error:
+                self._add_memory_message(f"Could not inspect memory: {error}", tone="error")
+                return
+            private_path = status.backend.private_path if status.backend else None
+            self._add_memory_message(
+                f"Private memory storage: {private_path or manager.memory_dir}",
+                tone="info",
+            )
+            return
+
+        if command == "files":
+            try:
+                entries = await asyncio.to_thread(
+                    manager.list_entries,
+                    None,
+                    allow_disabled=True,
+                )
+            except Exception as error:
+                self._add_memory_message(f"Could not list memory: {error}", tone="error")
+                return
+            lines = ["Private project-memory entries:"]
+            lines.extend(f"- {entry.reference} ({entry.byte_count:,} bytes)" for entry in entries)
+            if not entries:
+                lines.append("- No entries")
+            self._add_memory_message("\n".join(lines), tone="info")
+            return
+
+        if command == "show":
+            reference = parts[1].strip() if len(parts) > 1 else "MEMORY.md"
+            try:
+                entry = await asyncio.to_thread(
+                    manager.read_entry,
+                    reference,
+                    redact=True,
+                    allow_disabled=True,
+                )
+            except Exception as error:
+                self._add_memory_message(f"Could not read memory: {error}", tone="error")
+                return
+            if not entry.present:
+                self._add_memory_message(
+                    f"Memory entry does not exist: {entry.reference}",
+                    tone="warning",
+                )
+                return
+            content = self._bound_memory_display(entry.content or "")
+            warning = f"\n\nWarnings: {'; '.join(entry.warnings)}" if entry.warnings else ""
+            self._add_memory_message(
+                f"{entry.reference} · {entry.byte_count:,} bytes · {entry.revision}\n\n"
+                f"{content or '[Empty entry]'}{warning}",
+                tone="warning" if entry.warnings else "info",
+            )
+            return
+
+        if self._memory_mutation_blocked():
+            return
+
+        if command in {"on", "off"}:
+            enabled = command == "on"
+            try:
+                await asyncio.to_thread(manager.set_enabled, enabled)
+                await self._refresh_agent_memory()
+            except Exception as error:
+                self._add_memory_message(f"Could not update memory: {error}", tone="error")
+                return
+            self._add_memory_message(
+                f"Project memory is now {'on' if enabled else 'off'}.",
+                tone="success",
+            )
+            return
+
+        def clear_after_confirmation(confirmed: bool | None) -> None:
+            if not confirmed:
+                return
+            self.run_worker(
+                self._clear_project_memory(),
+                name="Clear project memory",
+                group="memory-command",
+                exclusive=True,
+            )
+
+        self.push_screen(
+            ConfirmSettingsActionScreen(
+                "Clear project memory",
+                ("Delete every entry in this project's private memory bank? This cannot be undone."),
+                "Clear memory",
+            ),
+            clear_after_confirmation,
+        )
+
+    async def _clear_project_memory(self) -> None:
+        manager = self.memory_manager
+        if manager is None or self._memory_mutation_blocked():
+            return
+        try:
+            deleted = await asyncio.to_thread(manager.clear, allow_disabled=True)
+            await self._refresh_agent_memory()
+        except Exception as error:
+            self._add_memory_message(f"Could not clear memory: {error}", tone="error")
+            return
+        self._add_memory_message(
+            f"Cleared project memory ({deleted} entr{'y' if deleted == 1 else 'ies'}).",
+            tone="success",
+        )
+
+    def _add_memory_message(self, content: str, *, tone: str) -> None:
+        self._add_conversation_entry(tui_state.ConversationEntry(kind="system", content=content, tone=tone))
+        self.notify(content.splitlines()[0])
+
+    @staticmethod
+    def _bound_memory_display(content: str) -> str:
+        lines = content.splitlines()[:200]
+        bounded = "\n".join(lines)
+        encoded = bounded.encode("utf-8")
+        truncated = len(content.splitlines()) > 200 or len(encoded) > 25 * 1024
+        if len(encoded) > 25 * 1024:
+            bounded = encoded[: 25 * 1024].decode("utf-8", errors="ignore")
+        if truncated:
+            bounded += "\n\n[Preview truncated]"
+        return bounded
 
     async def _command_init(self, args: str) -> None:
         if self._pending_question is not None:

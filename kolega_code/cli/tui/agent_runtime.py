@@ -760,6 +760,7 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             agent_mode=AgentMode(self.mode),
             prompt_extensions=prompt_extensions,
             tool_extensions=tool_extensions,
+            memory_manager=self.memory_manager,
             permission_mode=self.permission_mode,
             permission_callback=self._permission_callback,
             session_recorder=self._session_recorder,
