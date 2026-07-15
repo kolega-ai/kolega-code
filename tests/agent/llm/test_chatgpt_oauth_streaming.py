@@ -139,6 +139,160 @@ async def test_responses_stream_wrapper_uses_deltas_when_completed_output_empty(
 
 
 @pytest.mark.asyncio
+async def test_responses_stream_wrapper_separates_and_cleans_summary_parts():
+    completed = _ns(output=[], usage=None, status="completed", incomplete_details=None)
+    summaries = [
+        "**Identifying LSP snapshot handling issue**",
+        "**Classifying active target implementation status**",
+        "**Confirming rank1 and rank2 completeness**",
+    ]
+    events = []
+    for index, summary in enumerate(summaries):
+        events.append(
+            _ns(
+                type="response.reasoning_summary_part.added",
+                item_id="rs_1",
+                summary_index=index,
+                part=_ns(type="summary_text", text=""),
+            )
+        )
+        # Split both opening and closing delimiters across transport events to
+        # prove cleanup follows logical lines, not individual delta boundaries.
+        for delta in (summary[:1], summary[1:-1], summary[-1:]):
+            events.append(
+                _ns(
+                    type="response.reasoning_summary_text.delta",
+                    item_id="rs_1",
+                    summary_index=index,
+                    delta=delta,
+                )
+            )
+        events.extend(
+            [
+                _ns(
+                    type="response.reasoning_summary_text.done",
+                    item_id="rs_1",
+                    summary_index=index,
+                    text=summary,
+                ),
+                _ns(
+                    type="response.reasoning_summary_part.done",
+                    item_id="rs_1",
+                    summary_index=index,
+                    part=_ns(type="summary_text", text=summary),
+                ),
+            ]
+        )
+    events.extend(
+        [
+            _ns(
+                type="response.output_item.done",
+                item=_ns(
+                    type="reasoning",
+                    id="rs_1",
+                    encrypted_content="ENC",
+                    summary=[_ns(type="summary_text", text=summary) for summary in summaries],
+                ),
+            ),
+            _ns(type="response.completed", response=completed),
+        ]
+    )
+
+    wrapper = ResponsesStreamWrapper(_FakeStream(events))
+    thinking_chunks = []
+    async with wrapper as stream:
+        async for chunk in stream:
+            if chunk.type == "thinking" and chunk.thinking:
+                thinking_chunks.append(chunk.thinking)
+
+    assert "".join(thinking_chunks) == "\n".join(summary[2:-2] for summary in summaries)
+    assert "**" not in "".join(thinking_chunks)
+
+    # Display cleanup must not alter the authoritative summary preserved for
+    # encrypted reasoning replay.
+    message = await wrapper.get_final_message()
+    reasoning = [block for block in message.content if isinstance(block, ResponsesReasoningBlock)]
+    assert reasoning and reasoning[0].summary == summaries
+
+
+@pytest.mark.asyncio
+async def test_responses_stream_wrapper_only_strips_whole_line_summary_bold():
+    completed = _ns(output=[], usage=None, status="completed", incomplete_details=None)
+    summary = "**Whole title**\nplain 2 ** 3\n**first** and **second**"
+    events = [
+        _ns(
+            type="response.reasoning_summary_text.delta",
+            item_id="rs_1",
+            summary_index=0,
+            delta=summary,
+        ),
+        _ns(
+            type="response.reasoning_summary_text.done",
+            item_id="rs_1",
+            summary_index=0,
+            text=summary,
+        ),
+        _ns(type="response.completed", response=completed),
+    ]
+
+    wrapper = ResponsesStreamWrapper(_FakeStream(events))
+    thinking_chunks = []
+    async with wrapper as stream:
+        async for chunk in stream:
+            if chunk.type == "thinking" and chunk.thinking:
+                thinking_chunks.append(chunk.thinking)
+
+    assert "".join(thinking_chunks) == "Whole title\nplain 2 ** 3\n**first** and **second**"
+
+
+@pytest.mark.asyncio
+async def test_responses_stream_wrapper_uses_delta_keys_and_stream_end_as_summary_boundaries():
+    # Compatible Responses backends may omit part-added/done events. Changes in
+    # (item_id, summary_index) and stream exhaustion must still flush clean lines.
+    events = [
+        _ns(
+            type="response.reasoning_summary_text.delta",
+            item_id="rs_1",
+            summary_index=0,
+            delta="**First part**",
+        ),
+        _ns(
+            type="response.reasoning_summary_text.delta",
+            item_id="rs_1",
+            summary_index=1,
+            delta="",  # an empty part must not introduce a blank line
+        ),
+        _ns(
+            type="response.reasoning_summary_text.delta",
+            item_id="rs_2",
+            summary_index=0,
+            delta="**Second item**",
+        ),
+    ]
+    wrapper = ResponsesStreamWrapper(_FakeStream(events))
+
+    thinking_chunks = []
+    async with wrapper as stream:
+        async for chunk in stream:
+            if chunk.type == "thinking" and chunk.thinking:
+                thinking_chunks.append(chunk.thinking)
+
+    assert "".join(thinking_chunks) == "First part\nSecond item"
+
+
+@pytest.mark.asyncio
+async def test_responses_stream_wrapper_leaves_raw_reasoning_text_unchanged():
+    wrapper = ResponsesStreamWrapper(
+        _FakeStream([_ns(type="response.reasoning_text.delta", delta="raw **reasoning**")])
+    )
+
+    async with wrapper as stream:
+        chunks = [chunk async for chunk in stream]
+
+    assert [(chunk.type, chunk.thinking) for chunk in chunks] == [("thinking", "raw **reasoning**")]
+
+
+@pytest.mark.asyncio
 async def test_responses_stream_wrapper_tool_call_from_output_item_done():
     # Tool calls must survive even when args arrive only via output_item.done
     # (and the completed output is empty, as on the ChatGPT backend).

@@ -307,6 +307,19 @@ class ResponsesStreamWrapper:
         self._closed = False
         self._text = ""
         self._reasoning = ""
+        # Responses reasoning summaries are a list of independently streamed
+        # ``summary_text`` parts. Keep their display state separate from the raw
+        # accumulator so the TUI can preserve part boundaries and discard redundant
+        # whole-line Markdown bold markers without changing the provider payload we
+        # retain for reasoning continuity.
+        self._summary_part_key: Optional[tuple[str, int]] = None
+        self._summary_part_has_output = False
+        self._summary_display_started = False
+        self._summary_display_ends_newline = False
+        self._summary_line_mode: Optional[bool] = None  # None=undecided, True=bold candidate, False=plain
+        self._summary_line_buffer: List[str] = []
+        self._summary_seen_delta_parts: set[tuple[str, int]] = set()
+        self._summary_finished_parts: set[tuple[str, int]] = set()
         # Completed reasoning items (with encrypted_content), in stream order, so
         # they can be resent next turn for chain-of-thought continuity.
         self._reasoning_items: List[Dict[str, Any]] = []
@@ -338,8 +351,159 @@ class ResponsesStreamWrapper:
         if iterator is None:
             iterator = self._stream.__aiter__()
             self._iterator = iterator
-        event = await iterator.__anext__()  # propagates StopAsyncIteration
+        try:
+            event = await iterator.__anext__()
+        except StopAsyncIteration:
+            # Defensive fallback for Responses-compatible backends that omit the
+            # summary ``done`` lifecycle events.
+            trailing = self._finish_active_summary_part()
+            if trailing:
+                return MessageChunk(type="thinking", thinking=trailing)
+            raise
         return self._handle_event(event)
+
+    @staticmethod
+    def _summary_key(event: Any) -> tuple[str, int]:
+        item_id = str(getattr(event, "item_id", "") or "")
+        raw_index = getattr(event, "summary_index", 0)
+        try:
+            summary_index = int(raw_index)
+        except (TypeError, ValueError):
+            summary_index = 0
+        return item_id, summary_index
+
+    @staticmethod
+    def _plain_summary_line(line: str) -> str:
+        """Remove one redundant whole-line ``**...**`` wrapper.
+
+        Inline emphasis, multiple bold spans, triple-star emphasis, and code-like
+        uses of ``**`` remain literal. Thinking already has a uniform dim-italic
+        transcript style, so a whole-line bold wrapper adds only visible markup.
+        """
+        stripped = line.strip()
+        if (
+            len(stripped) > 4
+            and stripped.startswith("**")
+            and stripped.endswith("**")
+            and not stripped.startswith("***")
+            and not stripped.endswith("***")
+            and stripped.count("**") == 2
+        ):
+            start = line.find(stripped)
+            return line[:start] + stripped[2:-2] + line[start + len(stripped) :]
+        return line
+
+    def _finish_summary_line(self) -> str:
+        """Flush the only line type we buffer: a possible ``**...**`` title."""
+        if self._summary_line_mode is False:
+            self._summary_line_mode = None
+            return ""
+        line = "".join(self._summary_line_buffer)
+        self._summary_line_buffer.clear()
+        was_bold_candidate = self._summary_line_mode is True
+        self._summary_line_mode = None
+        return self._plain_summary_line(line) if was_bold_candidate else line
+
+    def _normalize_summary_delta(self, delta: str) -> str:
+        """Normalize summary titles incrementally without delaying ordinary prose.
+
+        At the start of each line, at most two significant characters are held to
+        decide whether the line begins with ``**``. Plain lines then pass through
+        immediately; only a possible bold title waits for its line/part boundary so
+        delimiters split across transport chunks are handled correctly.
+        """
+        output: List[str] = []
+        for char in delta:
+            if self._summary_line_mode is False:
+                output.append(char)
+                if char == "\n":
+                    self._summary_line_mode = None
+                continue
+
+            if char == "\n":
+                output.append(self._finish_summary_line())
+                output.append("\n")
+                continue
+
+            self._summary_line_buffer.append(char)
+            if self._summary_line_mode is not None:
+                continue
+
+            prefix = "".join(self._summary_line_buffer).lstrip(" \t")
+            if not prefix or prefix == "*":
+                continue
+            if prefix.startswith("**"):
+                self._summary_line_mode = True
+                continue
+
+            output.extend(self._summary_line_buffer)
+            self._summary_line_buffer.clear()
+            self._summary_line_mode = False
+
+        return "".join(output)
+
+    def _emit_summary_text(self, text: str) -> str:
+        if not text:
+            return ""
+        prefix = ""
+        if (
+            not self._summary_part_has_output
+            and self._summary_display_started
+            and not self._summary_display_ends_newline
+            and not text.startswith("\n")
+        ):
+            prefix = "\n"
+        self._summary_part_has_output = True
+        rendered = prefix + text
+        self._summary_display_started = True
+        self._summary_display_ends_newline = rendered.endswith("\n")
+        return rendered
+
+    def _finish_active_summary_part(self) -> str:
+        return self._emit_summary_text(self._finish_summary_line())
+
+    def _switch_summary_part(self, key: tuple[str, int]) -> str:
+        if key == self._summary_part_key:
+            return ""
+        trailing = self._finish_active_summary_part()
+        self._summary_part_key = key
+        self._summary_part_has_output = False
+        return trailing
+
+    @staticmethod
+    def _thinking_chunk(text: str) -> MessageChunk:
+        if text:
+            return MessageChunk(type="thinking", thinking=text)
+        return MessageChunk(type="ignore", text="")
+
+    def _handle_summary_delta(self, event: Any) -> MessageChunk:
+        key = self._summary_key(event)
+        display = self._switch_summary_part(key)
+        delta = getattr(event, "delta", "") or ""
+        self._reasoning += delta
+        self._summary_seen_delta_parts.add(key)
+        display += self._emit_summary_text(self._normalize_summary_delta(delta))
+        return self._thinking_chunk(display)
+
+    def _handle_summary_done(self, event: Any) -> MessageChunk:
+        key = self._summary_key(event)
+        display = self._switch_summary_part(key)
+        if key in self._summary_finished_parts:
+            return self._thinking_chunk(display)
+
+        # Official streams send deltas before the done event. If a compatible
+        # backend sends only the completed text, still surface it once.
+        if key not in self._summary_seen_delta_parts:
+            text = getattr(event, "text", None)
+            if text is None:
+                text = getattr(getattr(event, "part", None), "text", "")
+            text = text or ""
+            self._reasoning += text
+            display += self._emit_summary_text(self._normalize_summary_delta(text))
+
+        display += self._finish_active_summary_part()
+        self._summary_finished_parts.add(key)
+        return self._thinking_chunk(display)
 
     def _handle_event(self, event: Any) -> MessageChunk:
         event_type = getattr(event, "type", "")
@@ -347,7 +511,13 @@ class ResponsesStreamWrapper:
             delta = getattr(event, "delta", "") or ""
             self._text += delta
             return MessageChunk(type="text", text=delta)
-        if event_type in ("response.reasoning_summary_text.delta", "response.reasoning_text.delta"):
+        if event_type == "response.reasoning_summary_text.delta":
+            return self._handle_summary_delta(event)
+        if event_type in ("response.reasoning_summary_text.done", "response.reasoning_summary_part.done"):
+            return self._handle_summary_done(event)
+        if event_type == "response.reasoning_summary_part.added":
+            return self._thinking_chunk(self._switch_summary_part(self._summary_key(event)))
+        if event_type == "response.reasoning_text.delta":
             delta = getattr(event, "delta", "") or ""
             self._reasoning += delta
             return MessageChunk(type="thinking", thinking=delta)
@@ -438,6 +608,7 @@ class ResponsesStreamWrapper:
                     record["arguments"] = arguments
         elif event_type == "response.completed":
             self._final_response = getattr(event, "response", None)
+            return self._thinking_chunk(self._finish_active_summary_part())
         elif event_type in ("response.failed", "error"):
             message = getattr(event, "message", None) or "Responses stream failed."
             raise RuntimeError(message)
