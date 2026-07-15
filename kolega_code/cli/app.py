@@ -9,6 +9,7 @@ import subprocess
 import sys
 import time
 import traceback
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Optional
 
@@ -18,6 +19,7 @@ from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.filter import LineFilter
 from textual.timer import Timer
 from textual.worker import WorkerState
 from textual.widgets import (
@@ -141,6 +143,7 @@ class KolegaCodeApp(
         startup_config_error: Optional[str] = None,
     ) -> None:
         super().__init__()
+        self._terminal_control_filter = tui_terminal_display.TerminalControlFilter()
         self.project_path = project_path
         self.config = config
         self.mode = CLI_AGENT_MODE
@@ -250,6 +253,10 @@ class KolegaCodeApp(
         self._terminal_display_normalizer = tui_terminal_display.TerminalDisplayNormalizer()
         self._log_output_buffer: list[Any] = []
         self._log_flush_timer: Optional[Timer] = None
+
+    def get_line_filters(self) -> Sequence[LineFilter]:
+        """Apply the terminal-control boundary after Textual's style filters."""
+        return (*super().get_line_filters(), self._terminal_control_filter)
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="body"):
