@@ -1,11 +1,8 @@
 # ruff: noqa: F401,F811,E402
-from dataclasses import replace
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
-from kolega_code.memory import MISSING_REVISION
 
 from ._app_test_utils import (
     FakeCoderAgent,
@@ -132,7 +129,7 @@ async def test_app_memory_prompt_refresh_failure_is_best_effort(
 
 
 @pytest.mark.asyncio
-async def test_memory_slash_status_files_show_and_disable_preserves_bank(
+async def test_memory_browser_status_path_files_show_and_disable_preserves_bank(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -142,29 +139,31 @@ async def test_memory_slash_status_files_show_and_disable_preserves_bank(
 
     app = _build_mention_test_app(tmp_path, monkeypatch)
     secret_like_content = "API_KEY=supersecretvalue123"
-    created = app.memory_manager.replace_entry(
+    created = app.memory_manager.write_entry(
         "MEMORY.md",
         f"# Durable facts\n\nUse `uv run pytest`.\n\n{secret_like_content}\n",
-        MISSING_REVISION,
     )
     assert created.ok
 
     async with app.run_test() as pilot:
         composer = app.query_one("#composer", ChatComposer)
+        refresh_prompt = AsyncMock()
+        monkeypatch.setattr(app, "_refresh_agent_memory", refresh_prompt)
 
-        for command in ("/memory status", "/memory files", "/memory show"):
+        for command in ("/memory status", "/memory path", "/memory files", "/memory show"):
             composer.load_text(command)
             await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
 
-        contents = [entry.content for entry in app.conversation_entries[-3:]]
+        contents = [entry.content for entry in app.conversation_entries[-4:]]
         assert "Project memory is on" in contents[0]
         assert "Private storage:" in contents[0]
         assert "Agent startup context" in contents[0]
         assert secret_like_content in contents[0]
         assert "Redacted MEMORY.md preview" not in contents[0]
-        assert "MEMORY.md" in contents[1]
-        assert "Use `uv run pytest`." in contents[2]
-        assert secret_like_content in contents[2]
+        assert "Private memory storage:" in contents[1]
+        assert "MEMORY.md" in contents[2]
+        assert "Use `uv run pytest`." in contents[3]
+        assert secret_like_content in contents[3]
 
         composer.load_text("/memory bogus")
         await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
@@ -181,27 +180,34 @@ async def test_memory_slash_status_files_show_and_disable_preserves_bank(
         composer.load_text("/memory on")
         await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
         assert app.memory_manager.enabled is True
+        assert refresh_prompt.await_count == 2
         await pilot.pause()
+
+        composer.load_text("/memory browse")
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+        from kolega_code.cli.tui.memory_screen import MemoryScreen
+
+        await pilot.pause()
+        assert isinstance(app.screen, MemoryScreen)
 
 
 @pytest.mark.asyncio
-async def test_memory_screen_preserves_editor_on_stale_cas(
+async def test_memory_screen_saves_complete_content_with_last_write_wins(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     pytest.importorskip("textual")
 
-    from textual.widgets import Button, Markdown, Static, TextArea
+    from textual.widgets import Markdown, Static, TextArea
 
     from kolega_code.cli.tui.memory_screen import MemoryScreen
 
     app = _build_mention_test_app(tmp_path, monkeypatch)
     secret_like_content = "API_KEY=supersecretvalue123"
     original_content = f"# Original\n\n{secret_like_content}\n"
-    created = app.memory_manager.replace_entry(
+    created = app.memory_manager.write_entry(
         "MEMORY.md",
         original_content,
-        MISSING_REVISION,
     )
     assert created.ok
 
@@ -217,41 +223,92 @@ async def test_memory_screen_preserves_editor_on_stale_cas(
         assert original.content == original_content
         assert secret_like_content in screen.query_one("#memory_preview", Markdown).source
         assert "withheld" not in str(screen.query_one("#memory_status", Static).render()).casefold()
-        assert screen.query_one("#memory_edit", Button).disabled is False
-        warned_entry = replace(original, warnings=("generic backend notice",))
-        screen._loaded_entry = warned_entry
-        screen._render_entry(warned_entry)
-        assert "generic backend notice" in str(screen.query_one("#memory_notice", Static).render())
         screen.action_edit()
         assert screen._editing is True
         editor = screen.query_one("#memory_editor", TextArea)
         editor.text = "# My unsaved edit\n"
 
-        concurrent = app.memory_manager.replace_entry(
+        concurrent = app.memory_manager.write_entry(
             "MEMORY.md",
             "# Concurrent edit\n",
-            original.revision,
         )
         assert concurrent.ok
 
         screen.action_save()
         for _ in range(40):
             await pilot.pause(0.025)
-            notice = str(screen.query_one("#memory_notice", Static).render())
-            if "current revision" in notice:
+            saved = app.memory_manager.read_entry("MEMORY.md")
+            if saved.content == "# My unsaved edit\n" and not screen._editing:
                 break
 
-        assert screen._editing is True
-        assert editor.text == "# My unsaved edit\n"
-        assert "current revision" in str(screen.query_one("#memory_notice", Static).render())
-        assert screen.query_one("#memory_reload", Button).display
-
-        await screen._reload_latest("MEMORY.md")
-        assert screen._editing is True
-        assert screen._stale_conflict is False
-        assert editor.text == "# Concurrent edit\n"
+        assert screen._editing is False
         assert screen._loaded_entry is not None
-        assert screen._loaded_entry.revision == concurrent.revision
+        assert screen._loaded_entry.content == "# My unsaved edit\n"
+        assert app.memory_manager.read_entry("MEMORY.md").content == "# My unsaved edit\n"
+
+
+@pytest.mark.asyncio
+async def test_memory_screen_create_and_path_delete_refresh_prompt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pytest.importorskip("textual")
+
+    from textual.widgets import Input, TextArea
+
+    from kolega_code.cli.tui.memory_screen import MemoryScreen
+    from kolega_code.cli.tui.settings_screen import ConfirmSettingsActionScreen
+
+    app = _build_mention_test_app(tmp_path, monkeypatch)
+    refresh_prompt = AsyncMock()
+    monkeypatch.setattr(app, "_refresh_agent_memory", refresh_prompt)
+
+    async with app.run_test() as pilot:
+        app.action_open_memory()
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, MemoryScreen)
+
+        screen.action_create()
+        screen.query_one("#memory_reference", Input).value = "topics/testing.md"
+        complete_content = "# Testing\n\nRun the complete focused suite.\n"
+        screen.query_one("#memory_editor", TextArea).text = complete_content
+        screen.action_save()
+        await _wait_for_entry(screen, pilot, "topics/testing.md")
+
+        assert app.memory_manager.read_entry("topics/testing.md").content == complete_content
+        assert refresh_prompt.await_count == 1
+
+        captured: list[tuple[ConfirmSettingsActionScreen, object]] = []
+
+        def capture_confirmation(screen_obj, callback=None, **_kwargs):
+            assert isinstance(screen_obj, ConfirmSettingsActionScreen)
+            captured.append((screen_obj, callback))
+
+        deleted_references: list[tuple[str, bool]] = []
+        original_delete = app.memory_manager.delete_entry
+
+        def delete_entry(reference: str, *, allow_disabled: bool = False):
+            deleted_references.append((reference, allow_disabled))
+            return original_delete(reference, allow_disabled=allow_disabled)
+
+        monkeypatch.setattr(app, "push_screen", capture_confirmation)
+        monkeypatch.setattr(app.memory_manager, "delete_entry", delete_entry)
+
+        screen.action_delete()
+        confirm, callback = captured[0]
+        assert confirm.action_copy == "Delete topics/testing.md from private project memory?"
+        assert callable(callback)
+        callback(True)
+
+        for _ in range(40):
+            await pilot.pause(0.025)
+            if not app.memory_manager.read_entry("topics/testing.md").present:
+                break
+
+        assert deleted_references == [("topics/testing.md", True)]
+        assert not app.memory_manager.read_entry("topics/testing.md").present
+        assert refresh_prompt.await_count == 2
 
 
 @pytest.mark.asyncio
@@ -266,8 +323,8 @@ async def test_memory_screen_edit_mode_blocks_roster_and_filter(
     from kolega_code.cli.tui.memory_screen import MemoryScreen
 
     app = _build_mention_test_app(tmp_path, monkeypatch)
-    assert app.memory_manager.replace_entry("MEMORY.md", "# Index\n", MISSING_REVISION).ok
-    assert app.memory_manager.replace_entry("topics/build.md", "# Build\n", MISSING_REVISION).ok
+    assert app.memory_manager.write_entry("MEMORY.md", "# Index\n").ok
+    assert app.memory_manager.write_entry("topics/build.md", "# Build\n").ok
 
     async with app.run_test() as pilot:
         app.action_open_memory()
@@ -298,6 +355,66 @@ async def test_memory_screen_edit_mode_blocks_roster_and_filter(
 
 
 @pytest.mark.asyncio
+async def test_memory_screen_blocks_mutation_and_preserves_editor_on_limits_and_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pytest.importorskip("textual")
+
+    from textual.widgets import Static, TextArea
+
+    from kolega_code.cli.tui.memory_screen import MemoryScreen
+
+    app = _build_mention_test_app(tmp_path, monkeypatch)
+    assert app.memory_manager.write_entry("MEMORY.md", "# Index\n").ok
+
+    async with app.run_test() as pilot:
+        app.action_open_memory()
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, MemoryScreen)
+        await _wait_for_entry(screen, pilot, "MEMORY.md")
+
+        monkeypatch.setattr(app, "_memory_mutation_blocked", lambda: True)
+        screen.action_create()
+        screen.action_edit()
+        screen.action_delete()
+        assert screen._editing is False
+        assert app.memory_manager.read_entry("MEMORY.md").present
+
+        monkeypatch.setattr(app, "_memory_mutation_blocked", lambda: False)
+        screen.action_edit()
+        editor = screen.query_one("#memory_editor", TextArea)
+        oversized = "x" * (128 * 1024 + 1)
+        editor.text = oversized
+        screen.action_save()
+        for _ in range(40):
+            await pilot.pause(0.025)
+            if not screen._busy:
+                break
+
+        assert screen._editing is True
+        assert editor.text == oversized
+        assert "128 KiB" in str(screen.query_one("#memory_notice", Static).render())
+        assert app.memory_manager.read_entry("MEMORY.md").content == "# Index\n"
+
+        def fail_write(*_args, **_kwargs):
+            raise OSError("private storage unavailable")
+
+        monkeypatch.setattr(app.memory_manager, "write_entry", fail_write)
+        editor.text = "# Still unsaved\n"
+        screen.action_save()
+        for _ in range(40):
+            await pilot.pause(0.025)
+            if not screen._busy:
+                break
+
+        assert screen._editing is True
+        assert editor.text == "# Still unsaved\n"
+        assert "private storage unavailable" in str(screen.query_one("#memory_notice", Static).render())
+
+
+@pytest.mark.asyncio
 async def test_memory_screen_filter_is_client_side_and_preserves_selection(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -314,7 +431,7 @@ async def test_memory_screen_filter_is_client_side_and_preserves_selection(
         ("topics/build.md", "# Build\n"),
         ("topics/design.md", "# Design\n"),
     ):
-        assert app.memory_manager.replace_entry(reference, content, MISSING_REVISION).ok
+        assert app.memory_manager.write_entry(reference, content).ok
 
     async with app.run_test() as pilot:
         app.action_open_memory()
@@ -362,10 +479,9 @@ async def test_memory_screen_agent_view_matches_prompt_context(
     from kolega_code.cli.tui.memory_screen import MemoryScreen
 
     app = _build_mention_test_app(tmp_path, monkeypatch)
-    assert app.memory_manager.replace_entry(
+    assert app.memory_manager.write_entry(
         "MEMORY.md",
         "# Index\n\nA distinctive durable fact.\n",
-        MISSING_REVISION,
     ).ok
 
     async with app.run_test() as pilot:
@@ -414,7 +530,7 @@ async def test_memory_screen_destructive_confirmations_use_danger(
     from kolega_code.cli.tui.settings_screen import ConfirmSettingsActionScreen
 
     app = _build_mention_test_app(tmp_path, monkeypatch)
-    assert app.memory_manager.replace_entry("MEMORY.md", "# Index\n", MISSING_REVISION).ok
+    assert app.memory_manager.write_entry("MEMORY.md", "# Index\n").ok
 
     async with app.run_test() as pilot:
         app.action_open_memory()
@@ -432,47 +548,10 @@ async def test_memory_screen_destructive_confirmations_use_danger(
         monkeypatch.setattr(app, "push_screen", capture_screen)
 
         screen.action_delete()
-        screen.action_clear()
         screen.action_edit()
         screen.action_close()
 
-        assert [confirm.danger for confirm in captured] == [True, True, True]
-
-
-@pytest.mark.asyncio
-async def test_confirm_memory_clear_helper_clears_and_reports(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    pytest.importorskip("textual")
-
-    from kolega_code.cli.tui.settings_screen import ConfirmSettingsActionScreen
-
-    app = _build_mention_test_app(tmp_path, monkeypatch)
-    assert app.memory_manager.replace_entry("MEMORY.md", "# Index\n", MISSING_REVISION).ok
-
-    async with app.run_test() as pilot:
-
-        def confirm_immediately(screen_obj, callback=None, **kwargs):
-            assert isinstance(screen_obj, ConfirmSettingsActionScreen)
-            assert screen_obj.danger is True
-            assert callback is not None
-            callback(True)
-
-        notifications: list[str] = []
-        monkeypatch.setattr(app, "push_screen", confirm_immediately)
-        monkeypatch.setattr(app, "notify", lambda message, **kwargs: notifications.append(message))
-
-        cleared: list[int] = []
-        app.confirm_memory_clear(on_done=cleared.append)
-        for _ in range(40):
-            await pilot.pause(0.025)
-            if cleared:
-                break
-
-        assert cleared == [1]
-        assert app.memory_manager.list_entries(None, allow_disabled=True) == []
-        assert any("Cleared 1 private memory entries" in message for message in notifications)
+        assert [confirm.danger for confirm in captured] == [True, True]
 
 
 @pytest.mark.asyncio
@@ -485,7 +564,7 @@ async def test_settings_memory_page_stages_and_applies(
     from textual.widgets import Select, Static
 
     app = _build_mention_test_app(tmp_path, monkeypatch)
-    assert app.memory_manager.replace_entry("MEMORY.md", "# Index\n", MISSING_REVISION).ok
+    assert app.memory_manager.write_entry("MEMORY.md", "# Index\n").ok
 
     async with app.run_test(size=(100, 40)) as pilot:
         screen = await open_settings_screen(app, pilot, "memory")
@@ -547,37 +626,6 @@ async def test_settings_memory_apply_failure_preserves_draft(
 
 
 @pytest.mark.asyncio
-async def test_settings_clear_refresh_preserves_memory_draft(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    pytest.importorskip("textual")
-
-    from textual.widgets import Select, Static
-
-    app = _build_mention_test_app(tmp_path, monkeypatch)
-    assert app.memory_manager.replace_entry("MEMORY.md", "# Index\n", MISSING_REVISION).ok
-
-    async with app.run_test(size=(100, 40)) as pilot:
-        screen = await open_settings_screen(app, pilot, "memory")
-        for _ in range(40):
-            await pilot.pause(0.025)
-            if "markdown" in str(screen.query_one("#memory_settings_status", Static).render()):
-                break
-        await pilot.pause()
-
-        screen.query_one("#memory_enabled_select", Select).value = "false"
-        await pilot.pause()
-        assert screen.dirty is True
-
-        screen._after_memory_clear(1)
-        await pilot.pause(0.1)
-
-        assert screen.query_one("#memory_enabled_select", Select).value == "false"
-        assert screen.dirty is True
-
-
-@pytest.mark.asyncio
 async def test_settings_save_does_not_report_success_when_memory_apply_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -625,10 +673,9 @@ async def test_memory_screen_requires_explicit_inspection_when_disabled(
     from kolega_code.cli.tui.memory_screen import MemoryScreen
 
     app = _build_mention_test_app(tmp_path, monkeypatch)
-    assert app.memory_manager.replace_entry(
+    assert app.memory_manager.write_entry(
         "MEMORY.md",
         "# Preserved\n",
-        MISSING_REVISION,
     ).ok
     app.memory_manager.set_enabled(False)
 

@@ -2,26 +2,20 @@
 
 from __future__ import annotations
 
-import hashlib
 import os
 import stat
 from collections.abc import Mapping
-from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Any, Generator
-
-from filelock import FileLock
+from typing import Any
 
 from kolega_code.local_state import (
-    PRIVATE_FILE_MODE,
     ensure_private_dir,
     write_private_bytes,
 )
 
 from .models import (
     MEMORY_CONTRACT_VERSION,
-    MISSING_REVISION,
     MemoryAccessScope,
     MemoryBackendMetadata,
     MemoryBackendStatus,
@@ -42,7 +36,6 @@ MAX_DIRECTORY_DEPTH = 32
 PROMPT_MAX_LINES = 200
 PROMPT_MAX_BYTES = 25 * 1024
 INDEX_REFERENCE = "MEMORY.md"
-LOCK_NAME = ".memory.lock"
 
 
 class MemorySafetyError(ValueError):
@@ -72,14 +65,10 @@ class MarkdownMemoryBackend:
         capabilities=frozenset(
             {
                 MemoryCapability.PROMPT_CONTEXT,
-                # list_memory is the agent surface for BROWSE and SEARCH.
-                MemoryCapability.BROWSE,
+                MemoryCapability.LIST,
                 MemoryCapability.READ,
-                MemoryCapability.APPEND,
-                MemoryCapability.REPLACE,
+                MemoryCapability.WRITE,
                 MemoryCapability.DELETE,
-                MemoryCapability.CLEAR,
-                MemoryCapability.SEARCH,
             }
         ),
     )
@@ -87,7 +76,6 @@ class MarkdownMemoryBackend:
     def __init__(self, storage_dir: Path, settings: Mapping[str, Any] | None = None) -> None:
         self.root = Path(storage_dir)
         self.settings = dict(settings or {})
-        self._lock_path = self.root / LOCK_NAME
 
     def status(self) -> MemoryBackendStatus:
         try:
@@ -111,8 +99,7 @@ class MarkdownMemoryBackend:
 
     def initialize(self) -> None:
         """Explicitly initialize private storage; normal mutations do this lazily."""
-        with self._mutation_lock():
-            pass
+        self._ensure_root(create=True)
 
     def prepare_prompt_context(self) -> MemoryPromptContext:
         entry = self.read_entry(INDEX_REFERENCE)
@@ -122,12 +109,17 @@ class MarkdownMemoryBackend:
             "or tooling quirks, architectural constraints, recurring failure causes, and "
             "user-confirmed conventions. Before finishing a substantive task, deliberately review "
             "whether any stable, reusable, non-authoritative facts you learned warrant a memory "
-            "update. Keep one topic per file with a one-line link in MEMORY.md, and keep the index "
-            "well under its 200-line prompt budget. Before appending, check for an existing entry "
-            "on the topic and correct or extend it instead of duplicating it; read the relevant "
-            "memory before replacing or deleting it, then use its current revision. Correct stale "
-            "facts. Never store secrets, guesses, transient progress, plans, transcript summaries, "
-            "or duplicate user instructions.\n"
+            "update. Inspect the already-loaded MEMORY.md first and follow any semantically relevant "
+            "topic link with read_memory. If no link is promising, use a targeted list_memory query "
+            "before creating a topic. If the fact is already covered, do nothing; rewording is not "
+            "a reason to write. Update an existing memory only for materially new, corrected, or "
+            "stale information. Keep a short, self-contained fact directly in MEMORY.md; use a flat "
+            "topic file only when the memory needs multiple rules, caveats, rationale, or examples. "
+            "For a new detailed memory, write the topic first and then add a concise, descriptive "
+            "one-line link to MEMORY.md. When deleting a topic, remove its index link before deleting "
+            "the topic file. Read existing topic files before overwriting or editing them. Keep "
+            "MEMORY.md well under its 200-line prompt budget. Never store secrets, guesses, transient "
+            "progress, plans, transcript summaries, or duplicate user instructions.\n"
         )
         if not entry.present:
             return MemoryPromptContext(
@@ -175,11 +167,10 @@ class MarkdownMemoryBackend:
                     break
             entries.append(
                 MemoryEntrySummary(
-                    item.reference,
-                    len(item.data),
-                    item.stat_result.st_mtime_ns,
-                    _sha(item.data),
-                    display_name,
+                    reference=item.reference,
+                    byte_count=len(item.data),
+                    modified_ns=item.stat_result.st_mtime_ns,
+                    display_name=display_name,
                 )
             )
         return sorted(entries, key=lambda item: (item.reference != INDEX_REFERENCE, item.reference.casefold()))
@@ -188,61 +179,25 @@ class MarkdownMemoryBackend:
         parts, normalized = self._reference(reference)
         opened = self._read_path(parts)
         if opened is None:
-            return MemoryEntry(normalized, None, 0, MISSING_REVISION, present=False)
+            return MemoryEntry(normalized, None, 0, present=False)
         data, _ = opened
         content = _decode_utf8(data)
-        revision = _sha(data)
-        return MemoryEntry(normalized, content, len(data), revision)
+        return MemoryEntry(normalized, content, len(data))
 
-    def append_entry(self, reference: str, content: str) -> MemoryWriteResult:
-        fragment = _encode_candidate(content)
-        parts, normalized = self._reference(reference)
-        with self._mutation_lock():
-            opened = self._read_path(parts)
-            previous = opened[0] if opened else b""
-            return self._commit(parts, normalized, previous + fragment, existed=opened is not None)
-
-    def replace_entry(self, reference: str, content: str, expected_revision: str) -> MemoryWriteResult:
+    def write_entry(self, reference: str, content: str) -> MemoryWriteResult:
         candidate = _encode_candidate(content)
         parts, normalized = self._reference(reference)
-        with self._mutation_lock():
-            opened = self._read_path(parts)
-            current = opened[0] if opened else b""
-            current_revision = _sha(current) if opened else MISSING_REVISION
-            if expected_revision != current_revision:
-                return MemoryWriteResult(
-                    False,
-                    normalized,
-                    error="stale revision",
-                    current_revision=current_revision,
-                    byte_count=len(current) if opened else 0,
-                )
-            return self._commit(parts, normalized, candidate, existed=opened is not None)
+        return self._commit(parts, normalized, candidate)
 
-    def delete_entry(self, reference: str, expected_revision: str) -> MemoryWriteResult:
+    def delete_entry(self, reference: str) -> MemoryWriteResult:
         parts, normalized = self._reference(reference)
-        with self._mutation_lock():
-            opened = self._read_path(parts)
-            current_revision = _sha(opened[0]) if opened else MISSING_REVISION
-            if current_revision != expected_revision:
-                return MemoryWriteResult(False, normalized, error="stale revision", current_revision=current_revision)
-            if opened is None:
-                return MemoryWriteResult(False, normalized, error="entry is missing")
-            try:
-                self.root.joinpath(*parts).unlink()
-            except OSError as error:
-                raise MemorySafetyError("unable to delete memory entry safely") from error
-            return MemoryWriteResult(True, normalized, revision=MISSING_REVISION, byte_count=0)
-
-    def clear(self) -> int:
-        with self._mutation_lock():
-            files = self._scan_markdown_files(enforce_count=False)
-            try:
-                for item in files:
-                    self.root.joinpath(*PurePosixPath(item.reference).parts).unlink()
-            except OSError as error:
-                raise MemorySafetyError("unable to clear memory entry safely") from error
-            return len(files)
+        if self._read_path(parts) is None:
+            return MemoryWriteResult(False, normalized, error="entry is missing")
+        try:
+            self.root.joinpath(*parts).unlink()
+        except OSError as error:
+            raise MemorySafetyError("unable to delete memory entry safely") from error
+        return MemoryWriteResult(True, normalized, byte_count=0)
 
     def tool_bindings(self, scope: MemoryAccessScope) -> tuple[MemoryToolBinding, ...]:
         read = MemoryToolBinding(
@@ -251,8 +206,8 @@ class MarkdownMemoryBackend:
                 "name": "read_memory",
                 "description": (
                     "Read a private project-memory file. Use it when the MEMORY.md index in the "
-                    "system prompt links a topic relevant to the current task, and before replacing "
-                    "or deleting any memory: the result includes the sha256 revision those calls require."
+                    "system prompt links a topic relevant to the current task, and before overwriting, "
+                    "editing, or deleting an existing topic."
                 ),
                 "input_schema": {
                     "type": "object",
@@ -301,19 +256,18 @@ class MarkdownMemoryBackend:
             {
                 "name": "write_memory",
                 "description": (
-                    "Append to or replace private project memory. Read the target first and pass "
-                    "its current revision when replacing it. Prefer one topic per file with a "
-                    "one-line link in the MEMORY.md index; correct or extend an existing entry "
-                    "instead of appending a duplicate."
+                    "Create or overwrite one complete private project-memory file. Before creating "
+                    "a topic, inspect MEMORY.md and use a targeted list_memory query if needed; do "
+                    "nothing when the fact is already covered. Read an existing topic before "
+                    "overwriting it. For a new detailed memory, write the topic before adding its "
+                    "descriptive one-line link to MEMORY.md."
                 ),
                 "input_schema": {
                     "type": "object",
                     "properties": {
-                        "memory_content": {
+                        "content": {
                             "type": "string",
-                            "description": (
-                                "Markdown text to append, or the full replacement content when mode is 'replace'."
-                            ),
+                            "description": "Complete Markdown content for the memory file.",
                         },
                         "path": {
                             "type": "string",
@@ -322,25 +276,46 @@ class MarkdownMemoryBackend:
                                 "Memory file path to write, e.g. 'topics/build.md'. Defaults to the MEMORY.md index."
                             ),
                         },
-                        "mode": {
-                            "enum": ["append", "replace"],
-                            "default": "append",
-                            "description": (
-                                "'append' adds to the end of the file; 'replace' overwrites it and "
-                                "requires expected_sha256."
-                            ),
+                    },
+                    "required": ["content"],
+                },
+            },
+            lambda content, path=INDEX_REFERENCE: self.write_entry(path, content),
+            True,
+        )
+        edit = MemoryToolBinding(
+            "edit_memory",
+            {
+                "name": "edit_memory",
+                "description": (
+                    "Replace one exact, unique text occurrence in a private project-memory file. "
+                    "The edit fails without writing if old_string is empty, missing, or appears "
+                    "more than once. MEMORY.md is already loaded in the prompt; read topic files "
+                    "before editing them."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "old_string": {
+                            "type": "string",
+                            "description": "Exact text to replace; it must occur exactly once.",
                         },
-                        "expected_sha256": {
-                            "type": ["string", "null"],
+                        "new_string": {
+                            "type": "string",
+                            "description": "Replacement text.",
+                        },
+                        "path": {
+                            "type": "string",
+                            "default": INDEX_REFERENCE,
                             "description": (
-                                "Current revision returned by read_memory; required for replace and null for append."
+                                "Memory file path to edit, e.g. 'topics/build.md'. Defaults to the MEMORY.md index."
                             ),
                         },
                     },
-                    "required": ["memory_content"],
+                    "required": ["old_string", "new_string"],
                 },
             },
-            self._write_tool,
+            self._edit_tool,
             True,
         )
         delete = MemoryToolBinding(
@@ -348,9 +323,8 @@ class MarkdownMemoryBackend:
             {
                 "name": "delete_memory",
                 "description": (
-                    "Delete private memory. Read the target first, then pass its current revision. "
-                    "Delete topic files whose facts are stale or now authoritative in code or docs, "
-                    "and remove their index lines from MEMORY.md."
+                    "Delete one private project-memory file by path. Read the topic first. When "
+                    "deleting a topic, remove its link from MEMORY.md before deleting the topic file."
                 ),
                 "input_schema": {
                     "type": "object",
@@ -359,18 +333,14 @@ class MarkdownMemoryBackend:
                             "type": "string",
                             "description": "Memory file path to delete.",
                         },
-                        "expected_sha256": {
-                            "type": "string",
-                            "description": "Current revision returned by read_memory.",
-                        },
                     },
-                    "required": ["path", "expected_sha256"],
+                    "required": ["path"],
                 },
             },
-            lambda path, expected_sha256: self.delete_entry(path, expected_sha256),
+            lambda path: self.delete_entry(path),
             True,
         )
-        return read, list_binding, write, delete
+        return read, list_binding, write, edit, delete
 
     def refresh(self) -> None:
         pass
@@ -378,37 +348,43 @@ class MarkdownMemoryBackend:
     def close(self) -> None:
         pass
 
-    def _write_tool(
+    def _edit_tool(
         self,
-        memory_content: str,
+        old_string: str,
+        new_string: str,
         path: str = INDEX_REFERENCE,
-        mode: str = "append",
-        expected_sha256: str | None = None,
     ) -> MemoryWriteResult:
-        if mode == "append":
-            return self.append_entry(path, memory_content)
-        if mode == "replace":
-            if expected_sha256 is None:
-                return MemoryWriteResult(False, path, error="replace requires expected_sha256")
-            return self.replace_entry(path, memory_content, expected_sha256)
-        return MemoryWriteResult(False, path, error="mode must be append or replace")
+        entry = self.read_entry(path)
+        if not old_string:
+            return MemoryWriteResult(False, entry.reference, error="old_string must not be empty")
+        content = entry.content or ""
+        occurrences = _count_occurrences(content, old_string)
+        if occurrences == 0:
+            return MemoryWriteResult(False, entry.reference, error="old_string was not found")
+        if occurrences > 1:
+            return MemoryWriteResult(
+                False,
+                entry.reference,
+                error=f"old_string appears {occurrences} times; provide more context",
+            )
+        return self.write_entry(entry.reference, content.replace(old_string, new_string, 1))
 
     def _commit(
         self,
         parts: tuple[str, ...],
         reference: str,
         candidate: bytes,
-        *,
-        existed: bool,
     ) -> MemoryWriteResult:
         decoded = _decode_utf8(candidate)
         if len(candidate) > MAX_FILE_BYTES:
             return MemoryWriteResult(False, reference, error="memory file exceeds 128 KiB")
         files = self._scan_markdown_files()
+        opened = self._read_path(parts)
+        existed = opened is not None
         if not existed and len(files) >= MAX_FILES:
             return MemoryWriteResult(False, reference, error="memory file count limit reached")
         target = self.root.joinpath(*parts)
-        old_size = len(next((item.data for item in files if item.reference == reference), b""))
+        old_size = len(opened[0]) if opened is not None else 0
         total = sum(len(item.data) for item in files) - old_size + len(candidate)
         if total > MAX_TOTAL_BYTES:
             return MemoryWriteResult(False, reference, error="memory total size exceeds 1 MiB")
@@ -426,19 +402,7 @@ class MarkdownMemoryBackend:
                 f"{PROMPT_MAX_LINES} lines / {PROMPT_MAX_BYTES // 1024} KiB are injected into prompts. "
                 "Move details into topic files and keep the index short.",
             )
-        return MemoryWriteResult(True, reference, _sha(candidate), len(candidate), warnings=warnings)
-
-    @contextmanager
-    def _mutation_lock(self) -> Generator[None, None, None]:
-        self._ensure_root(create=True)
-        self._reject_symlink_or_unsafe_target(self._lock_path, allow_missing=True)
-        lock = FileLock(str(self._lock_path), mode=PRIVATE_FILE_MODE)
-        try:
-            with lock:
-                os.chmod(self._lock_path, PRIVATE_FILE_MODE)
-                yield
-        except OSError as error:
-            raise MemorySafetyError("unable to acquire memory lock safely") from error
+        return MemoryWriteResult(True, reference, len(candidate), warnings=warnings)
 
     def _reference(self, reference: str) -> tuple[tuple[str, ...], str]:
         if not isinstance(reference, str) or not reference or "\0" in reference:
@@ -451,7 +415,7 @@ class MarkdownMemoryBackend:
         normalized = pure.as_posix()
         if normalized != reference or pure.suffix.casefold() != ".md":
             raise MemorySafetyError("memory path must be normalized and end in .md")
-        if any(part.casefold() in {LOCK_NAME.casefold(), "manifest.json"} for part in pure.parts):
+        if any(part.casefold() == "manifest.json" for part in pure.parts):
             raise MemorySafetyError("reserved memory path")
         return tuple(pure.parts), normalized
 
@@ -628,8 +592,14 @@ def _decode_utf8(content: bytes) -> str:
         raise MemorySafetyError("memory file is not valid UTF-8") from error
 
 
-def _sha(content: bytes) -> str:
-    return hashlib.sha256(content).hexdigest()
+def _count_occurrences(content: str, old_string: str) -> int:
+    """Count exact matches, including matches that overlap."""
+    count = 0
+    start = 0
+    while (match := content.find(old_string, start)) != -1:
+        count += 1
+        start = match + 1
+    return count
 
 
 def _bound_prompt(content: str) -> tuple[str, int, bool]:

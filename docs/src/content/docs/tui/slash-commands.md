@@ -81,7 +81,6 @@ project's private memory bank. Lightweight subcommands are also available:
 | `/memory files` | List entries and sizes |
 | `/memory show [path]` | Show bounded content; defaults to `MEMORY.md` |
 | `/memory path` | Show the private local backend directory |
-| `/memory clear` | Confirm, then clear only the active backend |
 
 See [Project Memory](../project-memory/) for project identity, limits,
 concurrency, privacy, and model-exposure details.

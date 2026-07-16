@@ -6,19 +6,15 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Callable, Mapping
 
-MEMORY_CONTRACT_VERSION = 1
-MISSING_REVISION = "missing"
+MEMORY_CONTRACT_VERSION = 2
 
 
 class MemoryCapability(StrEnum):
     PROMPT_CONTEXT = "prompt_context"
-    BROWSE = "browse"
+    LIST = "list"
     READ = "read"
-    APPEND = "append"
-    REPLACE = "replace"
+    WRITE = "write"
     DELETE = "delete"
-    CLEAR = "clear"
-    SEARCH = "search"
     RICH_RECALL = "rich_recall"
     AUTOMATIC_RETENTION = "automatic_retention"
 
@@ -46,7 +42,6 @@ class MemoryEntrySummary:
     reference: str
     byte_count: int
     modified_ns: int | None = None
-    revision: str | None = None
     display_name: str | None = None
     warnings: tuple[str, ...] = ()
 
@@ -56,7 +51,6 @@ class MemoryEntry:
     reference: str
     content: str | None
     byte_count: int
-    revision: str
     present: bool = True
     warnings: tuple[str, ...] = ()
 
@@ -65,10 +59,8 @@ class MemoryEntry:
 class MemoryWriteResult:
     ok: bool
     reference: str
-    revision: str | None = None
     byte_count: int | None = None
     error: str | None = None
-    current_revision: str | None = None
     warnings: tuple[str, ...] = ()
 
 

@@ -453,17 +453,15 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
         if command in {"", "browse"}:
             if len(parts) > 1:
                 self._add_memory_message(
-                    "Usage: /memory [browse|status|on|off|files|show [path]|path|clear]",
+                    "Usage: /memory [browse|status|on|off|files|show [path]|path]",
                     tone="warning",
                 )
                 return
             self.action_open_memory()
             return
-        if command not in {"status", "on", "off", "files", "show", "clear", "path"} or (
-            len(parts) > 1 and command != "show"
-        ):
+        if command not in {"status", "on", "off", "files", "show", "path"} or (len(parts) > 1 and command != "show"):
             self._add_memory_message(
-                "Usage: /memory [browse|status|on|off|files|show [path]|path|clear]",
+                "Usage: /memory [browse|status|on|off|files|show [path]|path]",
                 tone="warning",
             )
             return
@@ -562,8 +560,7 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
             content = self._bound_memory_display(entry.content or "")
             warning = f"\n\nWarnings: {'; '.join(entry.warnings)}" if entry.warnings else ""
             self._add_memory_message(
-                f"{entry.reference} · {entry.byte_count:,} bytes · {entry.revision}\n\n"
-                f"{content or '[Empty entry]'}{warning}",
+                f"{entry.reference} · {entry.byte_count:,} bytes\n\n{content or '[Empty entry]'}{warning}",
                 tone="warning" if entry.warnings else "info",
             )
             return
@@ -583,17 +580,6 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
                 tone="success",
             )
             return
-
-        self.confirm_memory_clear(on_done=self._memory_clear_transcript_note)
-
-    def _memory_clear_transcript_note(self, deleted: int) -> None:
-        self._add_conversation_entry(
-            tui_state.ConversationEntry(
-                kind="system",
-                content=f"Cleared project memory ({deleted} entr{'y' if deleted == 1 else 'ies'}).",
-                tone="success",
-            )
-        )
 
     def _add_memory_message(self, content: str, *, tone: str) -> None:
         self._add_conversation_entry(tui_state.ConversationEntry(kind="system", content=content, tone=tone))

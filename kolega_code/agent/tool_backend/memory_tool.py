@@ -7,7 +7,6 @@ from datetime import UTC, datetime
 from typing import Any
 
 from kolega_code.memory import (
-    MISSING_REVISION,
     MemoryAccessError,
     MemoryEntry,
     MemoryEntrySummary,
@@ -37,27 +36,33 @@ class MemoryTool:
 
     async def write_memory(
         self,
-        memory_content: str,
+        content: str,
         path: str = "MEMORY.md",
-        mode: str = "append",
-        expected_sha256: str | None = None,
     ) -> str:
-        """Append to or replace private project memory using its current revision."""
+        """Create or overwrite a complete private project-memory file."""
         return await self._invoke_named(
             "write_memory",
-            memory_content=memory_content,
+            content=content,
             path=path,
-            mode=mode,
-            expected_sha256=expected_sha256,
         )
 
-    async def delete_memory(self, path: str, expected_sha256: str) -> str:
-        """Delete a private project-memory entry after reading its current revision."""
+    async def edit_memory(
+        self,
+        old_string: str,
+        new_string: str,
+        path: str = "MEMORY.md",
+    ) -> str:
+        """Replace one exact, unique occurrence in private project memory."""
         return await self._invoke_named(
-            "delete_memory",
+            "edit_memory",
+            old_string=old_string,
+            new_string=new_string,
             path=path,
-            expected_sha256=expected_sha256,
         )
+
+    async def delete_memory(self, path: str) -> str:
+        """Delete a private project-memory entry by path."""
+        return await self._invoke_named("delete_memory", path=path)
 
     async def _invoke_named(self, name: str, **inputs: Any) -> str:
         binding = next((item for item in self.bindings() if item.name == name), None)
@@ -82,13 +87,8 @@ class MemoryTool:
 
         if isinstance(result, MemoryEntry):
             if not result.present:
-                return (
-                    f"Memory `{result.reference}` is missing (revision: {result.revision}, bytes: {result.byte_count})."
-                )
-            return (
-                f"Memory `{result.reference}` (sha256: {result.revision}, "
-                f"bytes: {result.byte_count}):\n\n{result.content or ''}"
-            )
+                return f"Memory `{result.reference}` is missing (bytes: {result.byte_count})."
+            return f"Memory `{result.reference}` ({result.byte_count} bytes):\n\n{result.content or ''}"
 
         if isinstance(result, list) and all(isinstance(item, MemoryEntrySummary) for item in result):
             query = inputs.get("query")
@@ -109,14 +109,9 @@ class MemoryTool:
         if isinstance(result, MemoryWriteResult):
             if not result.ok:
                 detail = result.error or "mutation failed"
-                if result.current_revision:
-                    detail += f"; current revision: {result.current_revision}"
                 raise ToolError(f"Project memory mutation failed for `{result.reference}`: {detail}.")
-            action = "updated" if result.revision != MISSING_REVISION else "deleted"
-            output = (
-                f"Project memory {action}: `{result.reference}` "
-                f"(revision: {result.revision}, bytes: {result.byte_count or 0})."
-            )
+            action = "deleted" if binding.name == "delete_memory" else "updated"
+            output = f"Project memory {action}: `{result.reference}` ({result.byte_count or 0} bytes)."
             for warning in result.warnings:
                 output += f"\nWarning: {warning}"
         else:

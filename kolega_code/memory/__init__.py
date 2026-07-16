@@ -10,7 +10,6 @@ from .manager import (
 from .markdown import MarkdownMemoryBackend, MemorySafetyError
 from .models import (
     MEMORY_CONTRACT_VERSION,
-    MISSING_REVISION,
     MemoryAccessScope,
     MemoryBackendMetadata,
     MemoryBackendStatus,
@@ -27,7 +26,6 @@ from .registry import MemoryBackendFactory, MemoryBackendRegistry
 
 __all__ = [
     "MEMORY_CONTRACT_VERSION",
-    "MISSING_REVISION",
     "MarkdownMemoryBackend",
     "MemoryAccessError",
     "MemoryAccessScope",

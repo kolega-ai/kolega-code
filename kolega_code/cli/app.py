@@ -9,7 +9,7 @@ import subprocess
 import sys
 import time
 import traceback
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Optional
 
@@ -1085,42 +1085,6 @@ class KolegaCodeApp(
         """Commit the enabled flag, then refresh the idle agent prompt."""
         await asyncio.to_thread(self.memory_manager.set_enabled, enabled)
         await self._refresh_agent_memory()
-
-    def confirm_memory_clear(self, *, on_done: Callable[[int], None] | None = None) -> None:
-        """Confirm, then clear the active project-memory bank and refresh the agent prompt."""
-        if self._memory_mutation_blocked():
-            return
-
-        def clear_after_confirmation(confirmed: bool | None) -> None:
-            if not confirmed:
-                return
-            self.run_worker(
-                self._run_memory_clear(on_done),
-                name="Clear project memory",
-                group="memory-clear",
-                exclusive=True,
-            )
-
-        self.push_screen(
-            tui_settings_screen.ConfirmSettingsActionScreen(
-                "Clear project memory",
-                "Delete every entry in this project's private memory bank? This cannot be undone.",
-                "Clear memory",
-                danger=True,
-            ),
-            clear_after_confirmation,
-        )
-
-    async def _run_memory_clear(self, on_done: Callable[[int], None] | None) -> None:
-        try:
-            deleted = await asyncio.to_thread(self.memory_manager.clear, allow_disabled=True)
-            await self._refresh_agent_memory()
-        except Exception as error:
-            self._notify_user(f"Could not clear project memory: {error}", severity="error")
-            return
-        self.notify(f"Cleared {deleted} private memory entries.")
-        if on_done is not None:
-            on_done(deleted)
 
     def _close_memory_manager(self) -> None:
         self.memory_manager.close()

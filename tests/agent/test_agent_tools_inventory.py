@@ -345,7 +345,7 @@ def test_planning_agent_exposes_read_only_and_planning_tools(project_path, mock_
     assert tool_names - expected_planning_tools <= (
         set(agent.tool_collection.read_only_tools)
         | set(agent.tool_collection.command_tools)
-        | {"write_memory", "delete_memory"}
+        | {"write_memory", "edit_memory", "delete_memory"}
     )
 
 

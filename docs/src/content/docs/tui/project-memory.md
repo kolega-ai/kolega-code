@@ -54,6 +54,34 @@ Use it as a concise index and link to topic files; topic content is loaded on
 demand with `read_memory`, and the agent can enumerate or search entries with
 `list_memory`.
 
+The model-facing file API is:
+
+- `read_memory(path="MEMORY.md")`
+- `list_memory(query=None)`
+- `write_memory(content, path="MEMORY.md")`
+- `edit_memory(old_string, new_string, path="MEMORY.md")`
+- `delete_memory(path)`
+
+`write_memory` creates or overwrites one complete file. `edit_memory` replaces
+one exact, unique occurrence. It rejects an empty `old_string`; if the old text
+occurs zero times or more than once, the operation fails without writing.
+
+The agent follows a no-op-first retrieval policy. It inspects the already-loaded
+`MEMORY.md` first and follows any semantically relevant link. If no link looks
+promising, it uses a targeted `list_memory` query to find unindexed or nested
+entries. When a durable fact is already covered, it does nothing—rewording the
+same fact is not a reason to mutate memory. It reads an existing topic before
+overwriting or editing it and updates memory only for materially new, corrected,
+or stale information.
+
+Memory uses a hybrid structure. Keep a short, self-contained fact directly in
+`MEMORY.md`. Use a flat topic file plus a concise, descriptive one-line index
+link when the information needs multiple rules, caveats, rationale, or examples.
+Existing nested topics remain valid. Create a detailed memory topic-first and
+index-second; delete one index-first and topic-second. These orderings make
+interrupted operations recoverable, but they are not transactions and do not
+provide automatic index maintenance.
+
 Backend-wide safety limits are:
 
 - normalized relative `.md` paths only;
@@ -62,12 +90,13 @@ Backend-wide safety limits are:
 - at most 1 MiB of Markdown content per project.
 
 Absolute paths, traversal, symlinks, reserved paths, and writes that exceed a
-limit are rejected. Mutations are serialized across Kolega Code processes.
-Writes use a temporary file followed by an atomic same-directory replacement so
-an interrupted write does not leave partial Markdown. Whole-file replacement
-and deletion use compare-and-swap revisions (a SHA-256 for this backend), so a
-revision that became stale before the mutation is rejected instead of
-overwriting newer content.
+limit are rejected. A write uses a temporary file followed by an atomic
+same-directory replacement, so an interrupted write does not leave a partial
+Markdown file. This guarantee applies to one file only. Content mutation has an
+explicit single-writer, last-write-wins concurrency model: overlapping writers
+can overwrite one another, and the read-exact-replace-write sequence used by
+`edit_memory` does not preserve independent concurrent changes. There is no
+cross-file atomicity.
 
 The private state directory is treated as owner-controlled application state,
 not as a sandbox against other processes running as the same operating-system
@@ -82,33 +111,28 @@ state.
 The screen shows whether memory is enabled, the active backend, project identity
 kind, startup-context size and warnings, file count and total size, and the
 private local path. Filter the entry list on the left and select an entry to see
-its rendered preview, logical path, size, and revision on the right.
+its rendered preview, logical path, and size on the right.
 
 Available controls depend on backend capabilities. With `markdown`, you can:
 
-- create a topic, edit an entry, and save it;
-- reload after a stale-write conflict without losing the editor text;
+- create a topic, edit an entry, and save its complete content;
 - delete an entry with confirmation;
 - refresh changes made by another process (`r`);
 - preview the exact bounded startup context the agent receives (**Agent view**);
-- turn agent memory access on or off; and
-- clear the active backend after confirmation.
+- turn agent memory access on or off.
 
 While an entry is being edited, the entry list and filter are inactive; only
-Save, Cancel, Reload latest, and closing the screen are available. The footer
-buttons swap between browse actions (New, Delete, Clear all, Edit) and edit
-actions (Cancel, Reload latest, Save).
+Save, Cancel, and closing the screen are available. The footer buttons swap
+between browse actions (New, Delete, Edit) and edit actions (Cancel, Save).
 
 Turning memory off preserves its files but removes its context and memory tools
 from the agent. The screen can still inspect an existing disabled bank after an
 explicit action. Creating the first entry in a new disabled bank asks you to
-confirm enablement first. **Clear** removes only the active Markdown
-backend's `.md` files; it does not reset the enabled setting, backend selection,
-or data belonging to another backend.
+confirm enablement first.
 
 Configuration changes are unavailable or deferred while an agent turn is
 running. After a successful edit or enablement change, the idle agent prompt is
-refreshed. Failed or stale writes do not refresh it.
+refreshed. Failed writes do not refresh it.
 
 ## Slash commands
 
@@ -121,7 +145,6 @@ refreshed. Failed or stale writes do not refresh it.
 | `/memory files` | List logical entries and sizes |
 | `/memory show [path]` | Show bounded content; defaults to `MEMORY.md` |
 | `/memory path` | Show the active backend's private local directory |
-| `/memory clear` | Confirm, then clear only the active backend |
 
 ## Sensitive and untrusted content
 

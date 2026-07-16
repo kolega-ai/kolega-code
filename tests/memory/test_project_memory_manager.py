@@ -32,7 +32,7 @@ def test_lazy_private_persistence_and_project_isolation(tmp_path: Path) -> None:
     manager = ProjectMemoryManager(project, state)
     assert manager.enabled and not state.exists()
     assert not manager.status().manifest_exists
-    result = manager.append_entry("MEMORY.md", "stable fact")
+    result = manager.write_entry("MEMORY.md", "stable fact")
     assert result.ok
     assert manager.manifest_path.exists()
     assert not (project / "MEMORY.md").exists()
@@ -43,11 +43,44 @@ def test_lazy_private_persistence_and_project_isolation(tmp_path: Path) -> None:
     assert not ProjectMemoryManager(other, state).read_entry("MEMORY.md").present
 
 
+def test_complete_writes_and_path_only_deletes_are_revision_free(tmp_path: Path) -> None:
+    project = tmp_path / "repo"
+    project.mkdir()
+    manager = ProjectMemoryManager(project, tmp_path / "state")
+
+    created = manager.write_entry("topics/build.md", "first complete file")
+    overwritten = manager.write_entry("topics/build.md", "replacement complete file")
+    entry = manager.read_entry("topics/build.md")
+    deleted = manager.delete_entry("topics/build.md")
+
+    assert created.ok and overwritten.ok and deleted.ok
+    assert entry.content == "replacement complete file"
+    assert not manager.read_entry("topics/build.md").present
+    assert not hasattr(entry, "revision")
+    assert not hasattr(overwritten, "revision")
+
+
+def test_disabled_memory_allows_explicit_file_maintenance(tmp_path: Path) -> None:
+    project = tmp_path / "repo"
+    project.mkdir()
+    manager = ProjectMemoryManager(project, tmp_path / "state")
+    manager.set_enabled(False)
+
+    with pytest.raises(MemoryUnavailableError, match="disabled"):
+        manager.write_entry("MEMORY.md", "hidden")
+    assert manager.write_entry("MEMORY.md", "hidden", allow_disabled=True).ok
+    assert manager.read_entry("MEMORY.md", allow_disabled=True).content == "hidden"
+    with pytest.raises(MemoryUnavailableError, match="disabled"):
+        manager.delete_entry("MEMORY.md")
+    assert manager.delete_entry("MEMORY.md", allow_disabled=True).ok
+    assert not manager.read_entry("MEMORY.md", allow_disabled=True).present
+
+
 def test_disable_scope_and_unknown_backend_are_safe(tmp_path: Path) -> None:
     project = tmp_path / "p"
     project.mkdir()
     manager = ProjectMemoryManager(project, tmp_path / "state")
-    manager.append_entry("MEMORY.md", "kept")
+    manager.write_entry("MEMORY.md", "kept")
     child = manager.with_scope(MemoryAccessScope.SUBAGENT)
     manager.set_enabled(False)
     assert not child.enabled
@@ -60,7 +93,9 @@ def test_disable_scope_and_unknown_backend_are_safe(tmp_path: Path) -> None:
     assert child.with_scope(MemoryAccessScope.SUBAGENT) is child
     assert [binding.name for binding in child.tool_bindings()] == ["read_memory", "list_memory"]
     with pytest.raises(MemoryAccessError):
-        child.append_entry("MEMORY.md", "no")
+        child.write_entry("MEMORY.md", "no")
+    with pytest.raises(MemoryAccessError):
+        child.delete_entry("MEMORY.md")
     with pytest.raises(MemoryAccessError, match="cannot derive writable access"):
         child.with_scope(MemoryAccessScope.TOP_LEVEL)
     manager.select_backend("not-installed")
@@ -126,30 +161,30 @@ def test_disable_is_serialized_against_in_flight_mutation(
     disabler = ProjectMemoryManager(project, state)
     backend = writer.backend
     assert backend is not None
-    append_started = threading.Event()
-    release_append = threading.Event()
+    write_started = threading.Event()
+    release_write = threading.Event()
     disable_started = threading.Event()
     disable_finished = threading.Event()
-    original_append = backend.append_entry
+    original_write = backend.write_entry
 
-    def blocking_append(reference: str, content: str):
-        append_started.set()
-        assert release_append.wait(timeout=5)
-        return original_append(reference, content)
+    def blocking_write(reference: str, content: str):
+        write_started.set()
+        assert release_write.wait(timeout=5)
+        return original_write(reference, content)
 
     def disable() -> None:
         disable_started.set()
         disabler.set_enabled(False)
         disable_finished.set()
 
-    monkeypatch.setattr(backend, "append_entry", blocking_append)
+    monkeypatch.setattr(backend, "write_entry", blocking_write)
     with ThreadPoolExecutor(max_workers=2) as executor:
-        write_future = executor.submit(writer.append_entry, "MEMORY.md", "committed")
-        assert append_started.wait(timeout=5)
+        write_future = executor.submit(writer.write_entry, "MEMORY.md", "committed")
+        assert write_started.wait(timeout=5)
         disable_future = executor.submit(disable)
         assert disable_started.wait(timeout=5)
         assert not disable_finished.wait(timeout=0.05)
-        release_append.set()
+        release_write.set()
         assert write_future.result(timeout=5).ok
         disable_future.result(timeout=5)
 
@@ -173,7 +208,7 @@ def test_backend_refresh_is_explicit_and_best_effort(
 
     monkeypatch.setattr(backend, "refresh", fail_refresh)
 
-    result = manager.append_entry("MEMORY.md", "stable fact")
+    result = manager.write_entry("MEMORY.md", "stable fact")
 
     assert result.ok
     assert manager.read_entry("MEMORY.md").content == "stable fact"
@@ -198,7 +233,7 @@ def test_symlink_below_private_state_root_is_rejected(tmp_path: Path) -> None:
     assert not status.available
     assert status.diagnostic and "symlink" in status.diagnostic
     with pytest.raises(MemoryUnavailableError, match="symlink"):
-        manager.append_entry("MEMORY.md", "must not escape")
+        manager.write_entry("MEMORY.md", "must not escape")
     assert not list(outside.iterdir())
 
 
@@ -212,7 +247,7 @@ def test_state_root_inside_project_is_rejected_without_repository_writes(
 
     assert not manager.status().available
     with pytest.raises(MemoryUnavailableError, match="inside the project"):
-        manager.append_entry("MEMORY.md", "must stay outside")
+        manager.write_entry("MEMORY.md", "must stay outside")
     assert not state.exists()
 
 
@@ -228,7 +263,7 @@ def test_state_root_inside_containing_repository_is_rejected_from_subdirectory(
 
     assert not manager.status().available
     with pytest.raises(MemoryUnavailableError, match="Git repository"):
-        manager.append_entry("MEMORY.md", "must stay outside")
+        manager.write_entry("MEMORY.md", "must stay outside")
     assert not state.exists()
 
 
@@ -247,7 +282,7 @@ def test_manifest_artifact_symlinks_are_rejected_without_touching_target(
 
     assert not manager.status().available
     with pytest.raises(MemoryUnavailableError, match="symlink"):
-        manager.append_entry("MEMORY.md", "must not commit")
+        manager.write_entry("MEMORY.md", "must not commit")
     assert outside.read_text() == "unchanged"
 
 
@@ -288,7 +323,7 @@ def test_first_mutation_persists_manifest_before_backend_write(
 
     monkeypatch.setattr("kolega_code.memory.manager.save_manifest", fail_manifest)
     with pytest.raises(OSError, match="simulated manifest failure"):
-        manager.append_entry("MEMORY.md", "must not commit")
+        manager.write_entry("MEMORY.md", "must not commit")
     assert manager.backend is not None
     assert not manager.backend.read_entry("MEMORY.md").present
 
@@ -297,7 +332,7 @@ class FakeBackend:
     metadata = MemoryBackendMetadata(
         "fake",
         "Fake",
-        1,
+        2,
         7,
         frozenset({MemoryCapability.PROMPT_CONTEXT}),
     )
@@ -317,16 +352,10 @@ class FakeBackend:
     def read_entry(self, reference):
         raise AssertionError("unsupported capability called")
 
-    def append_entry(self, reference, content):
+    def write_entry(self, reference, content):
         raise AssertionError("unsupported capability called")
 
-    def replace_entry(self, reference, content, expected_revision):
-        raise AssertionError("unsupported capability called")
-
-    def delete_entry(self, reference, expected_revision):
-        raise AssertionError("unsupported capability called")
-
-    def clear(self):
+    def delete_entry(self, reference):
         raise AssertionError("unsupported capability called")
 
     def tool_bindings(self, scope: MemoryAccessScope) -> tuple[MemoryToolBinding, ...]:
@@ -340,6 +369,65 @@ class FakeBackend:
         pass
 
 
+@pytest.mark.parametrize(
+    ("capability", "operation"),
+    [
+        (MemoryCapability.LIST, lambda manager: manager.list_entries()),
+        (MemoryCapability.READ, lambda manager: manager.read_entry("MEMORY.md")),
+        (MemoryCapability.WRITE, lambda manager: manager.write_entry("MEMORY.md", "content")),
+        (MemoryCapability.DELETE, lambda manager: manager.delete_entry("MEMORY.md")),
+    ],
+)
+def test_manager_rejects_unsupported_backend_capabilities(
+    tmp_path: Path,
+    capability: MemoryCapability,
+    operation,
+) -> None:
+    registry = MemoryBackendRegistry()
+    registry.register("fake", lambda _path, _settings: FakeBackend())
+    project = tmp_path / "project"
+    project.mkdir()
+    manager = ProjectMemoryManager(project, tmp_path / "state", registry=registry)
+    manager.select_backend("fake")
+
+    with pytest.raises(MemoryUnavailableError, match=f"does not support {capability.value}"):
+        operation(manager)
+
+
+def test_subagent_filters_mutating_backend_tools_even_if_backend_exposes_them(
+    tmp_path: Path,
+) -> None:
+    def definition(name: str) -> dict[str, object]:
+        return {
+            "name": name,
+            "description": name,
+            "input_schema": {"type": "object", "properties": {}},
+        }
+
+    class OverexposingBackend(FakeBackend):
+        def tool_bindings(self, scope: MemoryAccessScope) -> tuple[MemoryToolBinding, ...]:
+            del scope
+            return (
+                MemoryToolBinding("read_fake", definition("read_fake"), lambda: None),
+                MemoryToolBinding("write_fake", definition("write_fake"), lambda: None, True),
+            )
+
+    registry = MemoryBackendRegistry()
+    registry.register("fake", lambda _path, _settings: OverexposingBackend())
+    project = tmp_path / "project"
+    project.mkdir()
+    manager = ProjectMemoryManager(project, tmp_path / "state", registry=registry)
+    manager.select_backend("fake")
+    child = manager.with_scope(MemoryAccessScope.SUBAGENT)
+
+    assert [binding.name for binding in manager.tool_bindings()] == ["read_fake", "write_fake"]
+    assert [binding.name for binding in child.tool_bindings()] == ["read_fake"]
+    with pytest.raises(MemoryAccessError):
+        child.write_entry("MEMORY.md", "no")
+    with pytest.raises(MemoryAccessError):
+        child.delete_entry("MEMORY.md")
+
+
 def test_same_backend_settings_change_replaces_stale_backend(tmp_path: Path) -> None:
     created_settings: list[dict[str, object]] = []
 
@@ -347,22 +435,17 @@ def test_same_backend_settings_change_replaces_stale_backend(tmp_path: Path) -> 
         metadata = MemoryBackendMetadata(
             "fake",
             "Fake",
+            2,
             1,
-            1,
-            frozenset({MemoryCapability.APPEND}),
+            frozenset({MemoryCapability.WRITE}),
         )
 
         def __init__(self, settings: dict[str, object]) -> None:
             self.settings = settings
 
-        def append_entry(self, reference: str, content: str) -> MemoryWriteResult:
+        def write_entry(self, reference: str, content: str) -> MemoryWriteResult:
             del content
-            return MemoryWriteResult(
-                True,
-                reference,
-                revision="committed",
-                byte_count=1,
-            )
+            return MemoryWriteResult(True, reference, byte_count=1)
 
     def factory(
         _path: Path,
@@ -380,10 +463,10 @@ def test_same_backend_settings_change_replaces_stale_backend(tmp_path: Path) -> 
     first = ProjectMemoryManager(project, state, registry=registry)
     second = ProjectMemoryManager(project, state, registry=registry)
     first.select_backend("fake", {"generation": 1})
-    assert first.append_entry("MEMORY.md", "first").ok
+    assert first.write_entry("MEMORY.md", "first").ok
     second.select_backend("fake", {"generation": 2})
 
-    assert first.append_entry("MEMORY.md", "second").ok
+    assert first.write_entry("MEMORY.md", "second").ok
 
     assert created_settings == [{"generation": 1}, {"generation": 2}]
 
@@ -514,7 +597,7 @@ def test_recall_guidance_reaches_subagent_scope(tmp_path: Path) -> None:
     project = tmp_path / "project"
     project.mkdir()
     manager = ProjectMemoryManager(project, tmp_path / "state")
-    assert manager.append_entry("MEMORY.md", "- [Build](topics/build.md)").ok
+    assert manager.write_entry("MEMORY.md", "- [Build](topics/build.md)").ok
 
     context = manager.with_scope(MemoryAccessScope.SUBAGENT).prompt_context().text
 
@@ -531,11 +614,21 @@ def test_recall_guidance_reaches_subagent_scope(tmp_path: Path) -> None:
             MemoryBackendMetadata(
                 "different-id",
                 "Fake",
-                1,
+                2,
                 1,
                 frozenset({MemoryCapability.PROMPT_CONTEXT}),
             ),
             "declared a different backend ID",
+        ),
+        (
+            MemoryBackendMetadata(
+                "fake",
+                "Fake",
+                1,
+                1,
+                frozenset({MemoryCapability.PROMPT_CONTEXT}),
+            ),
+            "unsupported contract version",
         ),
         (
             MemoryBackendMetadata(
@@ -611,5 +704,5 @@ def test_identity_paths_symlinks_and_git_worktrees(tmp_path: Path) -> None:
     state = tmp_path / "state"
     primary_manager = ProjectMemoryManager(repo, state)
     linked_manager = ProjectMemoryManager(worktree, state)
-    assert primary_manager.append_entry("MEMORY.md", "shared fact").ok
+    assert primary_manager.write_entry("MEMORY.md", "shared fact").ok
     assert linked_manager.read_entry("MEMORY.md").content == "shared fact"

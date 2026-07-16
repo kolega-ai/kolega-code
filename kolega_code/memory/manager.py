@@ -249,7 +249,7 @@ class ProjectMemoryManager:
     ) -> list[MemoryEntrySummary]:
         with self._lifecycle_lock:
             return self._backend_with_capability(
-                MemoryCapability.BROWSE,
+                MemoryCapability.LIST,
                 allow_disabled=allow_disabled,
             ).list_entries(query)
 
@@ -265,7 +265,7 @@ class ProjectMemoryManager:
                 allow_disabled=allow_disabled,
             ).read_entry(reference)
 
-    def append_entry(
+    def write_entry(
         self,
         reference: str,
         content: str,
@@ -275,31 +275,14 @@ class ProjectMemoryManager:
         self._require_top_level()
         with self._prepared_mutation():
             result = self._backend_with_capability(
-                MemoryCapability.APPEND,
+                MemoryCapability.WRITE,
                 allow_disabled=allow_disabled,
-            ).append_entry(reference, content)
-        return result
-
-    def replace_entry(
-        self,
-        reference: str,
-        content: str,
-        expected_revision: str,
-        *,
-        allow_disabled: bool = False,
-    ) -> MemoryWriteResult:
-        self._require_top_level()
-        with self._prepared_mutation():
-            result = self._backend_with_capability(
-                MemoryCapability.REPLACE,
-                allow_disabled=allow_disabled,
-            ).replace_entry(reference, content, expected_revision)
+            ).write_entry(reference, content)
         return result
 
     def delete_entry(
         self,
         reference: str,
-        expected_revision: str,
         *,
         allow_disabled: bool = False,
     ) -> MemoryWriteResult:
@@ -308,17 +291,8 @@ class ProjectMemoryManager:
             result = self._backend_with_capability(
                 MemoryCapability.DELETE,
                 allow_disabled=allow_disabled,
-            ).delete_entry(reference, expected_revision)
+            ).delete_entry(reference)
         return result
-
-    def clear(self, *, allow_disabled: bool = False) -> int:
-        self._require_top_level()
-        with self._prepared_mutation():
-            backend = self._backend_with_capability(
-                MemoryCapability.CLEAR,
-                allow_disabled=allow_disabled,
-            )
-            return backend.clear()
 
     def refresh(self) -> None:
         """Reload common config and notify the owned backend (top-level lifecycle only)."""

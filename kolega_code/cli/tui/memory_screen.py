@@ -15,7 +15,6 @@ from textual.widgets import Button, Input, Markdown, OptionList, Static, TextAre
 from textual.widgets.option_list import Option
 
 from kolega_code.memory import (
-    MISSING_REVISION,
     MemoryCapability,
     MemoryEntry,
     MemoryEntrySummary,
@@ -58,7 +57,6 @@ class MemoryScreen(ModalScreen[None]):
         self._loaded_entry: MemoryEntry | None = None
         self._editing = False
         self._creating = False
-        self._stale_conflict = False
         self._inspect_disabled = inspect_disabled
         self._agent_view = False
         self._busy = False
@@ -100,10 +98,8 @@ class MemoryScreen(ModalScreen[None]):
             with Horizontal(id="memory_footer"):
                 yield Button("New", id="memory_new", classes="quiet")
                 yield Button("Delete", id="memory_delete", classes="quiet danger")
-                yield Button("Clear all", id="memory_clear", classes="quiet danger")
                 yield Button("Edit", id="memory_edit", classes="solid-primary")
                 yield Button("Cancel", id="memory_cancel", classes="quiet")
-                yield Button("Reload latest", id="memory_reload", classes="quiet")
                 yield Button("Save", id="memory_save", classes="solid-primary")
 
     def on_mount(self) -> None:
@@ -140,7 +136,7 @@ class MemoryScreen(ModalScreen[None]):
             if (
                 status.available
                 and (status.enabled or self._inspect_disabled)
-                and self._supports(MemoryCapability.BROWSE)
+                and self._supports(MemoryCapability.LIST)
             ):
                 entries = await asyncio.to_thread(
                     self._manager.list_entries,
@@ -250,7 +246,7 @@ class MemoryScreen(ModalScreen[None]):
                 "Choose “Inspect bank” to browse or edit it without enabling agent access."
             )
             return
-        if not self._supports(MemoryCapability.BROWSE):
+        if not self._supports(MemoryCapability.LIST):
             self._selected_reference = None
             self._loaded_entry = None
             self._render_empty(
@@ -301,7 +297,7 @@ class MemoryScreen(ModalScreen[None]):
     def _render_entry(self, entry: MemoryEntry) -> None:
         self._selected_reference = entry.reference
         modified = self._summary_for(entry.reference)
-        metadata = f"{entry.reference}\n{entry.byte_count:,} bytes · sha256 {entry.revision}"
+        metadata = f"{entry.reference}\n{entry.byte_count:,} bytes"
         if modified is not None and modified.modified_ns is not None:
             stamp = datetime.fromtimestamp(modified.modified_ns / 1_000_000_000)
             metadata += f" · modified {stamp:%Y-%m-%d %H:%M}"
@@ -346,35 +342,21 @@ class MemoryScreen(ModalScreen[None]):
         self._set_button_disabled("memory_toggle", self._busy or self._editing or not available)
         self._set_button_disabled(
             "memory_new",
-            mutating_blocked
-            or self._editing
-            or not (self._supports(MemoryCapability.REPLACE) or self._supports(MemoryCapability.APPEND)),
+            mutating_blocked or self._editing or not self._supports(MemoryCapability.WRITE),
         )
         self._set_button_disabled(
             "memory_edit",
-            mutating_blocked or self._editing or not selected or not self._supports(MemoryCapability.REPLACE),
+            mutating_blocked or self._editing or not selected or not self._supports(MemoryCapability.WRITE),
         )
         self._set_button_disabled(
             "memory_delete",
             mutating_blocked or self._editing or not selected or not self._supports(MemoryCapability.DELETE),
         )
-        self._set_button_disabled(
-            "memory_clear",
-            mutating_blocked
-            or self._editing
-            or not bool(self._all_entries)
-            or not self._supports(MemoryCapability.CLEAR),
-        )
         self._set_button_disabled("memory_save", mutating_blocked or not self._editing)
-        self._set_button_disabled(
-            "memory_reload",
-            self._busy or not self._editing or not self._stale_conflict,
-        )
-        for widget_id in ("memory_new", "memory_delete", "memory_clear", "memory_edit"):
+        for widget_id in ("memory_new", "memory_delete", "memory_edit"):
             self.query_one(f"#{widget_id}", Button).display = not self._editing
         self.query_one("#memory_cancel", Button).display = self._editing
         self.query_one("#memory_save", Button).display = self._editing
-        self.query_one("#memory_reload", Button).display = self._editing and self._stale_conflict
 
     def _set_button_disabled(self, widget_id: str, disabled: bool) -> None:
         self.query_one(f"#{widget_id}", Button).disabled = disabled
@@ -382,8 +364,6 @@ class MemoryScreen(ModalScreen[None]):
     def _set_edit_mode(self, editing: bool, *, creating: bool = False) -> None:
         self._editing = editing
         self._creating = creating if editing else False
-        if not editing:
-            self._stale_conflict = False
         self.query_one("#memory_filter", Input).disabled = editing
         self.query_one("#memory_entries", OptionList).disabled = editing
         self.query_one("#memory_preview_scroll").display = not editing
@@ -423,9 +403,7 @@ class MemoryScreen(ModalScreen[None]):
             "memory_new": self.action_create,
             "memory_edit": self.action_edit,
             "memory_delete": self.action_delete,
-            "memory_clear": self.action_clear,
             "memory_save": self.action_save,
-            "memory_reload": self.action_reload_latest,
             "memory_cancel": self.action_cancel_edit,
         }
         action = actions.get(event.button.id or "")
@@ -553,7 +531,6 @@ class MemoryScreen(ModalScreen[None]):
 
     def _begin_create(self) -> None:
         self._loaded_entry = None
-        self._stale_conflict = False
         self.query_one("#memory_reference", Input).value = "topics/new.md"
         self.query_one("#memory_editor", TextArea).text = ""
         self.query_one("#memory_metadata", Static).update("Create a private Markdown entry. Use a relative .md path.")
@@ -565,7 +542,6 @@ class MemoryScreen(ModalScreen[None]):
         if self._busy or self._editing or entry is None or self._owner._memory_mutation_blocked():
             return
         self._exit_agent_view()
-        self._stale_conflict = False
         self.query_one("#memory_reference", Input).value = entry.reference
         self.query_one("#memory_editor", TextArea).text = entry.content or ""
         self._set_edit_mode(True)
@@ -580,55 +556,32 @@ class MemoryScreen(ModalScreen[None]):
             return
         reference = self.query_one("#memory_reference", Input).value.strip()
         content = self.query_one("#memory_editor", TextArea).text
-        expected = (
-            MISSING_REVISION
-            if self._creating
-            else (self._loaded_entry.revision if self._loaded_entry is not None else MISSING_REVISION)
-        )
         if not reference:
             self.query_one("#memory_notice", Static).update("Enter an entry path before saving.")
             return
         self._set_busy(True)
         self.run_worker(
-            self._save(reference, content, expected),
+            self._save(reference, content),
             name="Save project memory entry",
             group="memory-screen-mutation",
             exclusive=True,
         )
 
-    async def _save(self, reference: str, content: str, expected: str) -> None:
+    async def _save(self, reference: str, content: str) -> None:
         try:
-            if self._creating and not self._supports(MemoryCapability.REPLACE):
-                result = await asyncio.to_thread(
-                    self._manager.append_entry,
-                    reference,
-                    content,
-                    allow_disabled=True,
-                )
-            else:
-                result = await asyncio.to_thread(
-                    self._manager.replace_entry,
-                    reference,
-                    content,
-                    expected,
-                    allow_disabled=True,
-                )
+            result = await asyncio.to_thread(
+                self._manager.write_entry,
+                reference,
+                content,
+                allow_disabled=True,
+            )
         except Exception as error:
             self._set_busy(False)
             self.query_one("#memory_notice", Static).update(str(error))
             return
         if not result.ok:
             self._set_busy(False)
-            self._stale_conflict = result.error == "stale revision"
-            if result.current_revision:
-                message = (
-                    f"{result.error or 'Save failed'}; current revision is "
-                    f"{result.current_revision}. Your editor was preserved; "
-                    "choose Reload latest to load the current file."
-                )
-            else:
-                message = result.error or "Save failed. Your editor was preserved."
-            self.query_one("#memory_notice", Static).update(message)
+            self.query_one("#memory_notice", Static).update(result.error or "Save failed. Your editor was preserved.")
             self._refresh_controls()
             return
         await self._owner._refresh_agent_memory()
@@ -636,69 +589,18 @@ class MemoryScreen(ModalScreen[None]):
         self._owner.notify(f"Saved private memory entry {result.reference}.")
         self._start_refresh(select_reference=result.reference)
 
-    def action_reload_latest(self) -> None:
-        if not self._editing or not self._stale_conflict or self._busy:
-            return
-        reference = self.query_one("#memory_reference", Input).value.strip()
-
-        def reload_after_confirmation(confirmed: bool | None) -> None:
-            if not confirmed:
-                return
-            self._set_busy(True)
-            self.run_worker(
-                self._reload_latest(reference),
-                name="Reload latest project memory entry",
-                group="memory-screen-read",
-                exclusive=True,
-            )
-
-        self._owner.push_screen(
-            ConfirmSettingsActionScreen(
-                "Reload latest memory entry",
-                "Discard the preserved editor text and load the latest private memory revision?",
-                "Reload latest",
-            ),
-            reload_after_confirmation,
-        )
-
-    async def _reload_latest(self, reference: str) -> None:
-        try:
-            entry = await asyncio.to_thread(
-                self._manager.read_entry,
-                reference,
-                allow_disabled=True,
-            )
-        except Exception as error:
-            self._set_busy(False)
-            self.query_one("#memory_notice", Static).update(str(error))
-            return
-        self._set_busy(False)
-        if not entry.present:
-            self.query_one("#memory_notice", Static).update("The entry is now missing. Your editor was preserved.")
-            return
-        self._loaded_entry = entry
-        self._creating = False
-        self._stale_conflict = False
-        self.query_one("#memory_reference", Input).value = entry.reference
-        self.query_one("#memory_reference", Input).disabled = True
-        self.query_one("#memory_editor", TextArea).text = entry.content or ""
-        self._render_entry(entry)
-        self.query_one("#memory_notice", Static).update("Loaded the latest revision. Review it before saving.")
-        self._refresh_controls()
-
     def action_delete(self) -> None:
         entry = self._loaded_entry
         if entry is None or self._owner._memory_mutation_blocked():
             return
         reference = entry.reference
-        revision = entry.revision
 
         def delete_after_confirmation(confirmed: bool | None) -> None:
             if not confirmed:
                 return
             self._set_busy(True)
             self.run_worker(
-                self._delete(reference, revision),
+                self._delete(reference),
                 name="Delete project memory entry",
                 group="memory-screen-mutation",
                 exclusive=True,
@@ -714,12 +616,11 @@ class MemoryScreen(ModalScreen[None]):
             delete_after_confirmation,
         )
 
-    async def _delete(self, reference: str, revision: str) -> None:
+    async def _delete(self, reference: str) -> None:
         try:
             result = await asyncio.to_thread(
                 self._manager.delete_entry,
                 reference,
-                revision,
                 allow_disabled=True,
             )
         except Exception as error:
@@ -734,15 +635,6 @@ class MemoryScreen(ModalScreen[None]):
         await self._owner._refresh_agent_memory()
         self._loaded_entry = None
         self._owner.notify(f"Deleted private memory entry {reference}.")
-        self._start_refresh()
-
-    def action_clear(self) -> None:
-        if self._busy or self._editing:
-            return
-        self._owner.confirm_memory_clear(on_done=self._after_clear)
-
-    def _after_clear(self, _deleted: int) -> None:
-        self._loaded_entry = None
         self._start_refresh()
 
     def action_close(self) -> None:

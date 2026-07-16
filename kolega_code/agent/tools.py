@@ -454,6 +454,7 @@ class ToolCollection(LogMixin):
         "read_memory",
         "list_memory",
         "write_memory",
+        "edit_memory",
         "delete_memory",
     ]
 
@@ -588,6 +589,7 @@ class ToolCollection(LogMixin):
             "read_memory",
             "list_memory",
             "write_memory",
+            "edit_memory",
             "delete_memory",
         }
         self.tool_exclusions.extend(tool_config.tool_exclusions)
@@ -1822,22 +1824,24 @@ class ToolCollection(LogMixin):
 
     async def write_memory(
         self,
-        memory_content: str,
+        content: str,
         path: str = "MEMORY.md",
-        mode: str = "append",
-        expected_sha256: str | None = None,
     ) -> str:
-        """Append to or replace a private project-memory entry using its current revision."""
-        return await self.memory_tool.write_memory(
-            memory_content,
-            path,
-            mode,
-            expected_sha256,
-        )
+        """Create or overwrite a complete private project-memory entry."""
+        return await self.memory_tool.write_memory(content, path)
 
-    async def delete_memory(self, path: str, expected_sha256: str) -> str:
-        """Delete a private project-memory entry after reading its current revision."""
-        return await self.memory_tool.delete_memory(path, expected_sha256)
+    async def edit_memory(
+        self,
+        old_string: str,
+        new_string: str,
+        path: str = "MEMORY.md",
+    ) -> str:
+        """Replace one exact, unique occurrence in a private project-memory entry."""
+        return await self.memory_tool.edit_memory(old_string, new_string, path)
+
+    async def delete_memory(self, path: str) -> str:
+        """Delete a private project-memory entry by path."""
+        return await self.memory_tool.delete_memory(path)
 
     async def search_codebase(
         self, pattern: str, file_pattern: str = "*", case_sensitive: bool = False, literal: bool = False

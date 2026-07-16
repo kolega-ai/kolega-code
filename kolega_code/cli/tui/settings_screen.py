@@ -414,11 +414,6 @@ class SettingsScreen(ModalScreen[None]):
                         id="memory_settings_inspect",
                         classes="quiet",
                     )
-                yield Button(
-                    "Clear Memory",
-                    id="memory_settings_clear",
-                    classes="quiet danger",
-                )
 
     def on_mount(self) -> None:
         self.owner._settings_screen = self
@@ -552,9 +547,6 @@ class SettingsScreen(ModalScreen[None]):
         elif event.button.id == "memory_settings_inspect":
             event.stop()
             self.owner.action_open_memory(inspect_disabled=True)
-        elif event.button.id == "memory_settings_clear":
-            event.stop()
-            self.owner.confirm_memory_clear(on_done=self._after_memory_clear)
         elif event.button.id in {"mcp_delete_server", "mcp_clear_tokens", "mcp_trust_project"}:
             if self._confirm_immediate_action(event.button.id):
                 event.stop()
@@ -583,7 +575,6 @@ class SettingsScreen(ModalScreen[None]):
             (backend.private_path if backend is not None else None) or str(self.owner.memory_manager.memory_dir)
         )
         self.query_one("#memory_settings_inspect", Button).disabled = status.enabled
-        self.query_one("#memory_settings_clear", Button).disabled = not bool(backend and backend.entry_count)
         if update_draft:
             self.call_after_refresh(self._rebaseline_memory_controls)
 
@@ -643,14 +634,6 @@ class SettingsScreen(ModalScreen[None]):
             return False
         await self._refresh_memory_controls()
         return True
-
-    def _after_memory_clear(self, _deleted: int) -> None:
-        self.run_worker(
-            self._refresh_memory_controls(update_draft=False),
-            name="settings-memory-status",
-            group="settings-memory",
-            exclusive=True,
-        )
 
     def _confirm_immediate_action(self, button_id: str) -> bool:
         if button_id == "mcp_trust_project":
