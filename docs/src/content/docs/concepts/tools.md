@@ -67,7 +67,49 @@ OCR/conversion outside this tool.
 
 - `think_hard` — an extended-reasoning step that uses the
   [thinking model](../../configuration/providers-and-models/) and its token budget.
-- `read_memory`, `write_memory` — read and write workspace memories.
+- `read_memory(path="MEMORY.md")` — read a private project-memory index or topic,
+  including its logical path, byte count, and bounded content. The startup copy
+  of `MEMORY.md` counts as already read.
+- `list_memory(query=None)` — list private project-memory files with sizes and titles.
+  The optional `query` is a case-insensitive substring filter over paths and
+  content; custom agents with an explicit `allowed_tools` list must name
+  `list_memory` to receive it.
+- `write_memory(content, path="MEMORY.md")` — create or overwrite one complete
+  memory file.
+- `edit_memory(old_string, new_string, path="MEMORY.md")` — replace one exact,
+  unique occurrence in a memory file. An empty `old_string` is rejected. If the
+  text occurs zero times or more than once, the edit fails and the file is left
+  unchanged.
+- `delete_memory(path)` — delete one memory file.
+
+These are the model tools supplied by the built-in `markdown` project-memory
+backend. They write to owner-private Kolega Code state, never the repository.
+Before writing, the agent first inspects the already-loaded `MEMORY.md`, follows
+any semantically relevant link, and otherwise makes a targeted `list_memory`
+search. If the durable fact is already covered, it makes no mutation; a
+different wording alone is not a reason to write. Existing topic files are read
+before they are overwritten or edited.
+
+A short, self-contained fact belongs directly in `MEMORY.md`. Detail that needs
+multiple rules, caveats, rationale, or examples belongs in a flat topic file
+with a concise descriptive link from `MEMORY.md`. For a new detailed memory, the
+agent writes the topic first and then edits the index. To forget one, it removes
+the index link first and then deletes the topic. These are recoverable ordering
+conventions, not a cross-file transaction.
+
+Each private write atomically replaces one file, but content mutation follows a
+single-writer, last-write-wins model. There is no cross-file atomicity, and an
+exact edit does not preserve independent concurrent changes. Paths and content
+are bounded, but content is not secret-scanned or redacted. See
+[Project Memory](../../tui/project-memory/) for storage identity, limits, model
+exposure, and the `/memory` browser.
+
+Memory tool registration is capability- and provider-driven. Enabled top-level
+coder, general, and planning agents can read and explicitly curate memory;
+private memory mutation is an intentional exception to Plan mode's ban on
+repository edits. Built-in sub-agents get read-only access. Exact custom-agent
+tool allowlists remain the final gate. When memory is disabled or its configured
+backend is unavailable, no memory tools or context are exposed.
 
 ### Sub-agent dispatch
 
@@ -87,8 +129,9 @@ Build mode's full toolset.
 
 This separation is what keeps Plan mode safe to run against any codebase: the
 planning agent can look and run investigative commands, but it has no file-edit
-tools. Shell commands are further gated by the active permission mode — in `ask`
-they prompt before running.
+tools. Explicit writes to private project memory are the one exception; they
+never change repository files. Shell commands are further gated by the active
+permission mode — in `ask` they prompt before running.
 
 In the Textual TUI, Build mode defaults to `ask` permission mode. Shell commands
 and file edits must be approved before they run unless you switch to `auto` or

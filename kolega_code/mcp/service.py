@@ -43,6 +43,8 @@ MCP_FAILURE_MESSAGE_CONNECTION = (
 )
 MCP_FAILURE_MESSAGE_COMMAND = "Could not start the MCP server command. Check the configured command and arguments."
 MCP_FAILURE_MESSAGE_PERMISSION = "Permission denied while starting or contacting the MCP server."
+MCP_TOOL_FAILURE_MESSAGE_GENERIC = "MCP tool call failed."
+MCP_TOOL_FAILURE_MESSAGE_TIMEOUT = "MCP tool call timed out. Check the server URL and network connectivity."
 
 _SAFE_FAILED_STATUS_MESSAGES = (
     MCP_FAILURE_MESSAGE_GENERIC,
@@ -147,6 +149,20 @@ def _mcp_failure_message(server: MCPServerConfig, exc: BaseException) -> str:
     return _safe_mcp_failure_message(server, _exception_text_for_matching(exc))
 
 
+def _mcp_tool_failure_message(server: MCPServerConfig, exc: BaseException) -> str:
+    """Return a credential-safe tool error without exposing exception messages."""
+    safe_message = _safe_mcp_failure_message(server, _exception_text_for_matching(exc))
+    if safe_message == MCP_FAILURE_MESSAGE_TIMEOUT:
+        return MCP_TOOL_FAILURE_MESSAGE_TIMEOUT
+    if safe_message != MCP_FAILURE_MESSAGE_GENERIC:
+        return safe_message
+
+    exception_types = _dedupe_messages(_leaf_exception_type_names(exc))[:3]
+    if not exception_types:
+        return MCP_TOOL_FAILURE_MESSAGE_GENERIC
+    return f"{MCP_TOOL_FAILURE_MESSAGE_GENERIC[:-1]} ({', '.join(exception_types)})."
+
+
 def _exception_text_for_matching(exc: BaseException) -> str:
     messages = _dedupe_messages(_leaf_exception_messages(exc))
     if not messages:
@@ -213,6 +229,27 @@ def _leaf_exception_messages(exc: BaseException, seen: Optional[set[int]] = None
     if cause is not None:
         messages.extend(_leaf_exception_messages(cause, seen))
     return messages
+
+
+def _leaf_exception_type_names(exc: BaseException, seen: Optional[set[int]] = None) -> list[str]:
+    seen = seen or set()
+    if id(exc) in seen:
+        return []
+    seen.add(id(exc))
+
+    if isinstance(exc, BaseExceptionGroup):
+        names: list[str] = []
+        for child in exc.exceptions:
+            names.extend(_leaf_exception_type_names(child, seen))
+        if names:
+            return names
+
+    name = "".join(character for character in exc.__class__.__name__ if character.isalnum() or character in "._")
+    names = [name[:64] or "Exception"]
+    cause = exc.__cause__ or (None if exc.__suppress_context__ else exc.__context__)
+    if cause is not None:
+        names.extend(_leaf_exception_type_names(cause, seen))
+    return names
 
 
 def _single_exception_message(exc: BaseException) -> str:
@@ -381,13 +418,16 @@ class MCPService:
             raise ToolError(f"MCP server '{server_id}' is disabled")
         if not self.is_verified(server):
             raise ToolError(f"MCP server '{server_id}' is not verified for its current configuration")
-        with _suppress_mcp_sdk_terminal_logs():
-            async with open_mcp_session(
-                server, project_path=self.project_path, token_store=self.oauth_store
-            ) as session:
-                result = await session.call_tool(tool_id, arguments or {})
+        try:
+            with _suppress_mcp_sdk_terminal_logs():
+                async with open_mcp_session(
+                    server, project_path=self.project_path, token_store=self.oauth_store
+                ) as session:
+                    result = await session.call_tool(tool_id, arguments or {})
+        except Exception as exc:  # noqa: BLE001 - MCP failures are returned as safe tool errors
+            raise ToolError(_mcp_tool_failure_message(server, exc)) from exc
         output = _tool_result_to_agent_output(result)
-        if bool(getattr(result, "is_error", False)):
+        if bool(getattr(result, "isError", getattr(result, "is_error", False))):
             if isinstance(output, list):
                 text = "\n\n".join(block.to_markdown() for block in output)
             else:
@@ -445,7 +485,9 @@ def _tool_result_to_agent_output(result: Any) -> Any:
         block = _content_item_to_block(item)
         if block is not None:
             blocks.append(block)
-    structured = getattr(result, "structured_content", None)
+    structured = getattr(result, "structuredContent", None)
+    if structured is None:
+        structured = getattr(result, "structured_content", None)
     if structured is not None:
         blocks.append(TextBlock(text="Structured content:\n" + json.dumps(structured, indent=2, default=str)))
 

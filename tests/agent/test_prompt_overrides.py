@@ -88,7 +88,6 @@ def test_coder_override_replaces_base_prompt_and_keeps_dynamic_sections(tmp_path
     prompt_dir.mkdir(parents=True)
     (prompt_dir / "CODER.md").write_text("# Custom coder prompt", encoding="utf-8")
     (tmp_path / "AGENTS.md").write_text("Project guidance", encoding="utf-8")
-    (tmp_path / "AGENT_MEMORY.md").write_text("Remember release steps", encoding="utf-8")
 
     agent = CoderAgent(
         project_path=tmp_path,
@@ -121,7 +120,6 @@ def test_coder_override_replaces_base_prompt_and_keeps_dynamic_sections(tmp_path
     assert "Extra matching context." in prompt
     assert "Browser Only" not in prompt
     assert "Project guidance" in prompt
-    assert "Remember release steps" in prompt
     assert "Workspace fact" in prompt
 
 

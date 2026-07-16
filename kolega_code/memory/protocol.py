@@ -1,0 +1,35 @@
+"""Backend contract for project memory."""
+
+from __future__ import annotations
+
+from typing import Any, Protocol, runtime_checkable
+
+from .models import (
+    MemoryAccessScope,
+    MemoryBackendMetadata,
+    MemoryBackendStatus,
+    MemoryEntry,
+    MemoryEntrySummary,
+    MemoryPromptContext,
+    MemoryToolBinding,
+    MemoryWriteResult,
+)
+
+
+@runtime_checkable
+class MemoryBackend(Protocol):
+    metadata: MemoryBackendMetadata
+
+    def status(self) -> MemoryBackendStatus: ...
+    def initialize(self) -> None: ...
+    def prepare_prompt_context(self) -> MemoryPromptContext: ...
+    def list_entries(self, query: str | None = None) -> list[MemoryEntrySummary]: ...
+    def read_entry(self, reference: str) -> MemoryEntry: ...
+    def write_entry(self, reference: str, content: str) -> MemoryWriteResult: ...
+    def delete_entry(self, reference: str) -> MemoryWriteResult: ...
+    def tool_bindings(self, scope: MemoryAccessScope) -> tuple[MemoryToolBinding, ...]: ...
+    def refresh(self) -> None: ...
+    def close(self) -> None: ...
+
+
+MemoryBackendFactory = Any  # Callable[[Path, Mapping[str, Any]], MemoryBackend], kept import-light.

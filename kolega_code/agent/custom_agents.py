@@ -388,6 +388,7 @@ class CustomAgent(BaseAgent):
         sub_agent_recorder: Optional[Any] = None,
         hook_dispatcher: Optional[Any] = None,
         max_iterations: Optional[int] = None,
+        memory_manager: Optional[Any] = None,
     ) -> None:
         self.definition = definition
         self.agent_name = definition.name
@@ -421,6 +422,7 @@ class CustomAgent(BaseAgent):
             sub_agent_recorder=sub_agent_recorder,
             hook_dispatcher=hook_dispatcher,
             max_iterations=definition.max_iterations if definition.max_iterations is not None else max_iterations,
+            memory_manager=memory_manager,
         )
 
         self.tool_collection = ToolCollection(
@@ -432,6 +434,8 @@ class CustomAgent(BaseAgent):
             caller=self,
             tool_config=ToolCollectionConfig(
                 allowed_tools=list(allowed_tools),
+                include_memory_tools=True,
+                memory_write_access=True,
                 tool_exclusions=[*ToolCollection.agent_dispatch_tools, *ToolCollection.orchestration_tools],
             ),
             filesystem=self.filesystem,

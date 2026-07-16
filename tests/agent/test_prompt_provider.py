@@ -54,24 +54,6 @@ class TestPromptProvider:
         assert "AGENTS.md" in prompt
         assert len(prompt) > 0
 
-    def test_prompt_includes_agent_memory(self, prompt_provider):
-        """Agent memory should render as a separate prompt section."""
-        context = PromptContext(
-            project_guidance="Project guidance",
-            project_guidance_file="AGENTS.md",
-            agent_memory="Remember the release checklist",
-            agent_memory_file="AGENT_MEMORY.md",
-        )
-
-        prompt = prompt_provider.get_system_prompt(agent_type=AgentType.CODER, mode=AgentMode.CLI, context=context)
-
-        assert "Project Instructions" in prompt
-        assert "AGENTS.md" in prompt
-        assert "Project guidance" in prompt
-        assert "Agent Memory" in prompt
-        assert "AGENT_MEMORY.md" in prompt
-        assert "Remember the release checklist" in prompt
-
     @pytest.mark.parametrize("mode", [AgentMode.CODE, AgentMode.VIBE, AgentMode.FIX])
     def test_hosted_coder_modes_require_host_template(self, prompt_provider, prompt_context, mode):
         """Hosted coder modes are private and require host-owned prompt templates."""

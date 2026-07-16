@@ -33,6 +33,7 @@ class AgentTool(BaseTool):
         terminal_manager=None,
         browser_manager=None,
         langfuse_client=None,
+        memory_manager=None,
     ):
         super().__init__(
             project_path,
@@ -47,6 +48,7 @@ class AgentTool(BaseTool):
         )
         self.agents = {}
         self.langfuse_client = langfuse_client
+        self.memory_manager = memory_manager
         self.sub_agent_recorder = getattr(caller, "sub_agent_recorder", None) if caller else None
         # No need to store these separately since they're already in the parent class
         # self.terminal_manager = terminal_manager
@@ -260,6 +262,7 @@ class AgentTool(BaseTool):
                 sub_agent_recorder=getattr(self.caller, "sub_agent_recorder", None) if self.caller else None,
                 hook_dispatcher=getattr(self.caller, "hook_dispatcher", None) if self.caller else None,
                 max_iterations=getattr(self.caller, "max_iterations", None),
+                memory_manager=self.memory_manager,
                 **(agent_kwargs or {}),
             )
 

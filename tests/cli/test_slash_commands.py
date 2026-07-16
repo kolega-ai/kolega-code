@@ -35,6 +35,7 @@ def test_agent_command_names_match_command_processor():
     assert "/agents" in TUI_COMMAND_NAMES
     assert "/init" in TUI_COMMAND_NAMES
     assert "/sidebar" in TUI_COMMAND_NAMES
+    assert "/memory" in TUI_COMMAND_NAMES
     assert "/prompts" in TUI_COMMAND_NAMES
     assert "/queue-clear" in TUI_COMMAND_NAMES
     assert "/queue" not in TUI_COMMAND_NAMES
@@ -58,6 +59,7 @@ def test_all_command_entries_include_each_scope():
     assert by_name["plan"].scope is CommandScope.TUI
     assert by_name["effort"].scope is CommandScope.TUI
     assert by_name["sidebar"].scope is CommandScope.TUI
+    assert by_name["memory"].scope is CommandScope.TUI
     assert by_name["prompts"].scope is CommandScope.TUI
     assert by_name["queue-clear"].scope is CommandScope.TUI
     assert "queue" not in by_name

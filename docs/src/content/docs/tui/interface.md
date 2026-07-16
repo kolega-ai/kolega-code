@@ -23,6 +23,10 @@ you submit follow-ups while the agent is working, a small queued-messages panel
 appears above the composer until those prompts are sent. See
 [Chat Composer](../composer/) for everything it can do.
 
+Run `/memory` to open the full-screen [Project Memory](../project-memory/)
+browser/editor. It manages private durable project knowledge separately from the
+conversation and the Planning tab's task list.
+
 ## Side-panel tabs
 
 | Tab | What it shows |

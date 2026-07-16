@@ -94,6 +94,7 @@ export default defineConfig({
             { label: "Build & Plan Modes", slug: "tui/modes" },
             { label: "Chat Composer", slug: "tui/composer" },
             { label: "Slash Commands", slug: "tui/slash-commands" },
+            { label: "Project Memory", slug: "tui/project-memory" },
             { label: "Sessions & Resuming", slug: "tui/sessions-and-resume" },
           ],
         },

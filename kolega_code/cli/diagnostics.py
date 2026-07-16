@@ -16,7 +16,6 @@ from __future__ import annotations
 import faulthandler
 import json
 import os
-import re
 import signal
 import sys
 import threading
@@ -28,38 +27,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterable, Optional
 
 from kolega_code.local_state import ensure_private_dir, ensure_private_file
+from kolega_code.security import SECRET_PLACEHOLDER as SECRET_PLACEHOLDER, redact_secrets
 
 if TYPE_CHECKING:
     from .session_store import SessionBugExport
 
 DIAGNOSTICS_DISABLED_ENV = "KOLEGA_CODE_NO_DIAGNOSTICS"
-SECRET_PLACEHOLDER = "‹secret›"  # ‹secret›
-
-# Whole-token credential shapes (replaced entirely).
-_TOKEN_PATTERNS = (
-    re.compile(r"\bsk-ant-[A-Za-z0-9_-]{8,}"),
-    re.compile(r"\bsk-[A-Za-z0-9_-]{8,}"),
-    re.compile(r"\bxai-[A-Za-z0-9_-]{8,}"),
-    re.compile(r"\bAIza[A-Za-z0-9_-]{10,}"),  # Google API keys
-)
-# Prefix=value shapes (keep the label, replace the value).
-_PREFIX_PATTERNS = (
-    re.compile(r"(?i)(authorization\s*:\s*bearer\s+)\S+"),
-    re.compile(r"(?i)(x-api-key\s*[:=]\s*)\S+"),
-    re.compile(r"(?im)^([A-Za-z0-9_]*(?:API_KEY|TOKEN|SECRET|PASSWORD)[A-Za-z0-9_]*\s*[=:]\s*)\S+"),
-)
-
-
-def _env_secret_values() -> list[str]:
-    """Exact secret values from the environment, to redact verbatim wherever they appear."""
-    values: list[str] = []
-    for name, val in os.environ.items():
-        if not val or len(val) < 8:
-            continue
-        upper = name.upper()
-        if any(tok in upper for tok in ("API_KEY", "TOKEN", "SECRET", "PASSWORD")):
-            values.append(val)
-    return values
 
 
 def scrub_secrets(text: str, extra_values: Optional[Iterable[str]] = None) -> str:
@@ -69,16 +42,7 @@ def scrub_secrets(text: str, extra_values: Optional[Iterable[str]] = None) -> st
     from secret-ish env vars, and (2) common credential patterns (Authorization bearer,
     x-api-key, ``*_API_KEY=``, and ``sk-``/``xai-``/``AIza`` token shapes).
     """
-    if not text:
-        return text
-    for value in list(extra_values or []) + _env_secret_values():
-        if value and len(value) >= 8:
-            text = text.replace(value, SECRET_PLACEHOLDER)
-    for pattern in _PREFIX_PATTERNS:
-        text = pattern.sub(lambda m: m.group(1) + SECRET_PLACEHOLDER, text)
-    for pattern in _TOKEN_PATTERNS:
-        text = pattern.sub(SECRET_PLACEHOLDER, text)
-    return text
+    return redact_secrets(text, extra_values, include_environment=True)
 
 
 def _now_iso() -> str:

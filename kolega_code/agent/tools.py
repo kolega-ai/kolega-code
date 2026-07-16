@@ -7,6 +7,7 @@ from typing import Any, Callable, List, Optional, Union
 from .common import LogMixin
 from kolega_code.config import AgentConfig, EditProtocol
 from kolega_code.llm.models import ImageBlock, ToolDefinition
+from kolega_code.memory import ProjectMemoryManager
 from kolega_code.tools import Tool, ToolRegistry, tool_definition_from_callable
 from kolega_code.services.file_system import FileSystem, LocalFileSystem
 from kolega_code.services.base import TerminalManager, BrowserManager
@@ -345,6 +346,7 @@ class ToolCollectionConfig:
         enabled_tool_groups: Optional[List[str]] = None,
         restrict_to_tool_groups: bool = False,
         allowed_tools: Optional[List[str]] = None,
+        memory_write_access: bool = False,
     ):
         """
         Initialize tool collection configuration.
@@ -354,6 +356,8 @@ class ToolCollectionConfig:
             browser_only: Whether to only include browser tools
             include_agent_dispatch_tools: Whether to include agent dispatch tools (investigation, browser, coding)
             include_memory_tools: Whether to include memory management tools
+            memory_write_access: Whether mutating memory tools (write/delete) may be exposed to this agent;
+                subagent scope still strips them regardless.
             tool_exclusions: List of method names to exclude from tool list
             custom_tool_groups: Additional custom tool groups to include
             enabled_tool_groups: Additional custom tool groups to include
@@ -365,6 +369,7 @@ class ToolCollectionConfig:
         self.browser_only = browser_only
         self.include_agent_dispatch_tools = include_agent_dispatch_tools
         self.include_memory_tools = include_memory_tools
+        self.memory_write_access = memory_write_access
         self.tool_exclusions = tool_exclusions or []
         self.custom_tool_groups = list(dict.fromkeys((custom_tool_groups or []) + (enabled_tool_groups or [])))
         self.restrict_to_tool_groups = restrict_to_tool_groups
@@ -383,6 +388,7 @@ class ToolCollection(LogMixin):
         "read_entire_file",
         "read_file_section",
         "read_memory",
+        "list_memory",
         "search_codebase",
         "find_files_by_pattern",
         "think_hard",
@@ -446,7 +452,10 @@ class ToolCollection(LogMixin):
     # Memory tools group
     memory_tools = [
         "read_memory",
+        "list_memory",
         "write_memory",
+        "edit_memory",
+        "delete_memory",
     ]
 
     # gigacode workflow orchestration. Gated in _should_include_tool: only the
@@ -563,8 +572,6 @@ class ToolCollection(LogMixin):
         # Build tool exclusions list from config. These are internal
         # management/logging APIs, not model-facing tools.
         self.tool_exclusions = [
-            "read_memory",
-            "write_memory",
             "execute_terminal_command",
             "get_tool_list",
             "registry",
@@ -576,6 +583,15 @@ class ToolCollection(LogMixin):
             "log_warning",
             "log_info",
         ]
+        # Backend bindings, not these compatibility methods, own model-facing
+        # memory schemas and capability registration.
+        self._memory_compatibility_methods = {
+            "read_memory",
+            "list_memory",
+            "write_memory",
+            "edit_memory",
+            "delete_memory",
+        }
         self.tool_exclusions.extend(tool_config.tool_exclusions)
 
         # Initialize tool backends
@@ -675,15 +691,10 @@ class ToolCollection(LogMixin):
             self.filesystem,
             terminal_manager=self.terminal_manager,
         )
-        self.memory_tool = MemoryTool(
-            self.project_path,
-            self.workspace_id,
-            self.thread_id,
-            self.connection_manager,
-            self.config,
-            self.caller,
-            self.filesystem,
-        )
+        memory_manager = getattr(self.caller, "memory_manager", None)
+        if not isinstance(memory_manager, ProjectMemoryManager):
+            memory_manager = None
+        self.memory_tool = MemoryTool(memory_manager, self.caller)
         self.search_codebase_tool = SearchCodebaseTool(
             self.project_path,
             self.workspace_id,
@@ -749,6 +760,7 @@ class ToolCollection(LogMixin):
             terminal_manager=self.terminal_manager,
             browser_manager=self.browser_manager,
             langfuse_client=self.langfuse_client,
+            memory_manager=memory_manager,
         )
         self.workflow_tool = WorkflowTool(
             self.project_path,
@@ -1802,35 +1814,34 @@ class ToolCollection(LogMixin):
         """
         return await self.snapshot_tool.resolve(action_id=action_id, decision=decision, force=force)
 
-    async def read_memory(self) -> str:
-        """
-        Read the contents of the AGENT_MEMORY.md file which serves as the agent's memory.
+    async def read_memory(self, path: str = "MEMORY.md") -> str:
+        """Read a private project-memory Markdown entry."""
+        return await self.memory_tool.read_memory(path)
 
-        Returns:
-            The contents of the AGENT_MEMORY.md file as a string
+    async def list_memory(self, query: str | None = None) -> str:
+        """List private project-memory entries, optionally filtering by path or content."""
+        return await self.memory_tool.list_memory(query)
 
-        Raises:
-            FileNotFoundError: If the AGENT_MEMORY.md file doesn't exist
-        """
-        return await self.memory_tool.read_memory()
+    async def write_memory(
+        self,
+        content: str,
+        path: str = "MEMORY.md",
+    ) -> str:
+        """Create or overwrite a complete private project-memory entry."""
+        return await self.memory_tool.write_memory(content, path)
 
-    async def write_memory(self, memory_content: str) -> str:
-        """
-        Write a new memory to the AGENT_MEMORY.md file which serves as the agent's memory.
+    async def edit_memory(
+        self,
+        old_string: str,
+        new_string: str,
+        path: str = "MEMORY.md",
+    ) -> str:
+        """Replace one exact, unique occurrence in a private project-memory entry."""
+        return await self.memory_tool.edit_memory(old_string, new_string, path)
 
-        The memory is added as a markdown bullet point to the file.
-
-        Args:
-            memory_content: The memory content to add to the file
-
-        Returns:
-            A confirmation message indicating success
-
-        Raises:
-            PermissionError: If the file cannot be written to
-            Exception: If any other error occurs during writing
-        """
-        return await self.memory_tool.write_memory(memory_content)
+    async def delete_memory(self, path: str) -> str:
+        """Delete a private project-memory entry by path."""
+        return await self.memory_tool.delete_memory(path)
 
     async def search_codebase(
         self, pattern: str, file_pattern: str = "*", case_sensitive: bool = False, literal: bool = False
@@ -2137,7 +2148,11 @@ class ToolCollection(LogMixin):
         registry = ToolRegistry()
 
         for method_name, method in inspect.getmembers(self, predicate=inspect.ismethod):
-            if method_name.startswith("_") or method_name in self.tool_exclusions:
+            if (
+                method_name.startswith("_")
+                or method_name in self.tool_exclusions
+                or method_name in self._memory_compatibility_methods
+            ):
                 continue
             if method_name in EDIT_HANDLER_NAMES:
                 continue
@@ -2157,7 +2172,44 @@ class ToolCollection(LogMixin):
                 continue
             registry.add(self._build_tool(method_name, method))
 
+        for binding in self.memory_tool.bindings():
+            if binding.name in registry or not self._should_include_memory_binding(
+                binding.name, mutating=binding.mutating
+            ):
+                continue
+            definition_data = binding.definition
+            definition = ToolDefinition(
+                name=binding.name,
+                description=str(definition_data.get("description", "")),
+                parameters=[],
+                input_schema=dict(definition_data.get("input_schema", {"type": "object"})),
+            )
+
+            async def handler(_binding=binding, **inputs):
+                return await self.memory_tool.invoke(_binding, **inputs)
+
+            registry.add(
+                Tool(
+                    name=binding.name,
+                    definition=definition,
+                    handler=handler,
+                    groups=frozenset({"memory_tools"}),
+                    parallel_safe=not binding.mutating,
+                )
+            )
+
         return registry
+
+    def _should_include_memory_binding(self, name: str, *, mutating: bool) -> bool:
+        """Memory capability is backend-driven; exact host policy remains final."""
+        if not self.tool_config.include_memory_tools:
+            return False
+        if name in self.tool_exclusions:
+            return False
+        if mutating and (getattr(self.caller, "sub_agent", False) or not self.tool_config.memory_write_access):
+            return False
+        allowed = self.tool_config.allowed_tools
+        return allowed is None or name in allowed
 
     def _build_tool(self, method_name: str, method: Callable[..., Any]) -> Tool:
         definition = self._tool_definition_from_callable(method_name, method)

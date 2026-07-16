@@ -57,8 +57,7 @@ class PromptContext:
     available_ports: str = "9001-9999"
     project_guidance: str = ""
     project_guidance_file: str = ""
-    agent_memory: str = ""
-    agent_memory_file: str = ""
+    private_memory: str = ""
     kolega_md: str = ""
     workspace_id: str = ""
     workspace_environment_variables: Dict[str, str] = field(default_factory=dict)
@@ -76,8 +75,6 @@ class PromptContext:
             self.project_guidance = self.kolega_md
             if not self.project_guidance_file:
                 self.project_guidance_file = "KOLEGA.md"
-        if self.agent_memory and not self.agent_memory_file:
-            self.agent_memory_file = "AGENT_MEMORY.md"
 
 
 class PromptProvider:
@@ -217,15 +214,8 @@ class PromptProvider:
                 "```"
             )
 
-        if context.agent_memory:
-            sections.append(
-                "## Agent Memory\n\n"
-                f"The project directory contains `{context.agent_memory_file}`. "
-                "Treat it as persistent agent memory:\n\n"
-                "```markdown\n"
-                f"{context.agent_memory}\n"
-                "```"
-            )
+        if context.private_memory:
+            sections.append(context.private_memory)
 
         return "\n\n".join(section.strip() for section in sections if section.strip())
 

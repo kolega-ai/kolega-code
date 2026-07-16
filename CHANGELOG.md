@@ -6,6 +6,17 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+### Changed
+
+- Pinned the MCP SDK to stable `1.28.1` and stopped globally enabling
+  prerelease dependency resolution.
+
+### Fixed
+
+- Fixed MCP 1.x stream, timeout, and camelCase result compatibility, and now
+  report nested transport failures as credential-safe tool errors instead of
+  opaque `TaskGroup` messages.
+
 ## 0.18.0 - 2026-07-14
 
 ### Added

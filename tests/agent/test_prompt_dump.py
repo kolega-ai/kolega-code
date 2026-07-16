@@ -64,12 +64,10 @@ def test_prompt_dump_contents_use_placeholders_for_agent_environment(tmp_path):
 
 def test_prompt_dump_contents_do_not_include_dynamic_project_files(tmp_path):
     (tmp_path / "AGENTS.md").write_text("Do not bake into dump", encoding="utf-8")
-    (tmp_path / "AGENT_MEMORY.md").write_text("Do not bake memory", encoding="utf-8")
 
     contents = prompt_dump_contents(tmp_path)
 
     assert all("Do not bake into dump" not in text for text in contents.values())
-    assert all("Do not bake memory" not in text for text in contents.values())
 
 
 def test_list_prompt_overrides_reports_existing_and_missing(tmp_path):
@@ -135,9 +133,8 @@ def test_validate_prompt_overrides_reports_valid_existing_overrides(tmp_path):
     prompt_dir = tmp_path / PROMPT_OVERRIDE_DIR
     prompt_dir.mkdir(parents=True)
     (tmp_path / "AGENTS.md").write_text("Project guidance", encoding="utf-8")
-    (tmp_path / "AGENT_MEMORY.md").write_text("Persistent memory", encoding="utf-8")
     (prompt_dir / "CODER.md").write_text(
-        "{{ context.project_guidance }}\n{{ context.agent_memory }}\n{{ context.project_path }}",
+        "{{ context.project_guidance }}\n{{ context.project_path }}",
         encoding="utf-8",
     )
 
@@ -146,6 +143,18 @@ def test_validate_prompt_overrides_reports_valid_existing_overrides(tmp_path):
     assert result.ok is True
     assert [item.path.name for item in result.checked] == ["CODER.md"]
     assert "All existing prompt overrides are valid" in format_prompt_validation_result(result)
+
+
+def test_validate_prompt_overrides_flags_removed_agent_memory_field(tmp_path):
+    """Overrides referencing the removed legacy field are reported by name."""
+    prompt_dir = tmp_path / PROMPT_OVERRIDE_DIR
+    prompt_dir.mkdir(parents=True)
+    (prompt_dir / "CODER.md").write_text("{{ context.agent_memory }}", encoding="utf-8")
+
+    result = validate_prompt_overrides(tmp_path)
+
+    assert result.ok is False
+    assert any("agent_memory" in diagnostic.message for diagnostic in result.diagnostics)
 
 
 def test_validate_prompt_overrides_reports_startup_style_errors(tmp_path):

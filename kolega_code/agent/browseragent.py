@@ -7,7 +7,7 @@ from kolega_code.events import AgentConnectionManager
 from kolega_code.llm.models import Message, TextBlock
 from kolega_code.llm.specs import supports_vision as model_supports_vision
 from .prompt_provider import AgentMode, AgentType, PromptExtension, PromptProvider
-from .tools import ToolCollection
+from .tools import ToolCollection, ToolCollectionConfig
 
 
 class BrowserAgent(BaseAgent):
@@ -61,6 +61,7 @@ class BrowserAgent(BaseAgent):
         sub_agent_recorder: Optional[Any] = None,
         hook_dispatcher: Optional[Any] = None,
         max_iterations: Optional[int] = None,
+        memory_manager: Optional[Any] = None,
     ) -> None:
         """
         Initialize a new BrowserAgent instance.
@@ -116,6 +117,7 @@ class BrowserAgent(BaseAgent):
             sub_agent_recorder=sub_agent_recorder,
             hook_dispatcher=hook_dispatcher,
             max_iterations=max_iterations,
+            memory_manager=memory_manager,
         )
 
         self.tool_collection = ToolCollection(
@@ -125,7 +127,7 @@ class BrowserAgent(BaseAgent):
             self.connection_manager,
             self.config,
             caller=self,
-            browser_only=True,
+            tool_config=ToolCollectionConfig(browser_only=True, include_memory_tools=True),
             filesystem=self.filesystem,
             terminal_manager=self.terminal_manager,
             browser_manager=self.browser_manager,

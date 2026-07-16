@@ -47,6 +47,7 @@ class PlanningAgent(BaseAgent):
         hook_dispatcher: Optional[Any] = None,
         max_iterations: Optional[int] = None,
         custom_agent_catalog: Optional[Any] = None,
+        memory_manager: Optional[Any] = None,
     ) -> None:
         if custom_agent_catalog is not None:
             custom_agent_catalog = custom_agent_catalog.for_mode("plan")
@@ -80,6 +81,7 @@ class PlanningAgent(BaseAgent):
             hook_dispatcher=hook_dispatcher,
             max_iterations=max_iterations,
             custom_agent_catalog=custom_agent_catalog,
+            memory_manager=memory_manager,
         )
 
         self._completed_plan: Optional[str] = None
@@ -104,6 +106,8 @@ class PlanningAgent(BaseAgent):
             caller=self,
             tool_config=ToolCollectionConfig(
                 read_only=True,
+                include_memory_tools=True,
+                memory_write_access=True,
                 custom_tool_groups=["planning_tools", "command_tools", "custom_agent_tools"],
             ),
             filesystem=self.filesystem,

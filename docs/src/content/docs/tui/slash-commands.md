@@ -41,6 +41,7 @@ These control the app and your session.
 | `/build` | Switch to [Build mode](../modes/) |
 | `/sidebar` | Show or hide the side panel |
 | `/settings` | Open the full-screen Settings editor |
+| `/memory` | Open [Project Memory](../project-memory/) or run a memory subcommand |
 | `/permissions` | Show or switch the shell/edit permission mode |
 | `/model` | Choose the active model |
 | `/effort` | Choose the active model's thinking effort |
@@ -69,6 +70,20 @@ provider. You can also switch directly with `/model <name>`.
 
 Run `/settings` to open the categorized Settings editor without navigating to the
 sidebar tab. Unsaved changes remain a draft until you select **Apply Changes**.
+
+Run `/memory` with no arguments (alias: `/memory browse`) to browse and edit the
+project's private memory bank. Lightweight subcommands are also available:
+
+| Command | Description |
+| --- | --- |
+| `/memory status` | Show enabled/backend/identity state, sizes, and the exact bounded startup context the agent receives |
+| `/memory on` / `/memory off` | Enable agent access or disable it without deleting data |
+| `/memory files` | List entries and sizes |
+| `/memory show [path]` | Show bounded content; defaults to `MEMORY.md` |
+| `/memory path` | Show the private local backend directory |
+
+See [Project Memory](../project-memory/) for project identity, limits,
+concurrency, privacy, and model-exposure details.
 
 Run `/effort` to open a selectable list of supported effort values for the
 active model. You can also switch directly with `/effort <level>`.

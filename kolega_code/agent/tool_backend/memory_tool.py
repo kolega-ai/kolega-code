@@ -1,81 +1,130 @@
-from .base_tool import BaseTool
+"""Model-safe façade over private project memory."""
 
-MEMORY_FILE = "AGENT_MEMORY.md"
+from __future__ import annotations
+
+import asyncio
+from datetime import UTC, datetime
+from typing import Any
+
+from kolega_code.memory import (
+    MemoryAccessError,
+    MemoryEntry,
+    MemoryEntrySummary,
+    MemorySafetyError,
+    MemoryToolBinding,
+    MemoryUnavailableError,
+    MemoryWriteResult,
+)
+from kolega_code.tools import ToolError
 
 
-class MemoryTool(BaseTool):
-    async def read_memory(self) -> str:
-        """
-        Read the contents of the AGENT_MEMORY.md file which serves as the agent's memory.
+class MemoryTool:
+    def __init__(self, manager: Any, caller: Any) -> None:
+        self.manager = manager
+        self.caller = caller
 
-        Returns:
-            The contents of the AGENT_MEMORY.md file as a string
+    def bindings(self) -> tuple[MemoryToolBinding, ...]:
+        return self.manager.tool_bindings() if self.manager is not None else ()
 
-        Raises:
-            FileNotFoundError: If the AGENT_MEMORY.md file doesn't exist
-        """
-        memory_file = MEMORY_FILE
+    async def read_memory(self, path: str = "MEMORY.md") -> str:
+        """Read private project memory through the active backend."""
+        return await self._invoke_named("read_memory", path=path)
 
-        if not self.filesystem.exists(memory_file):
-            error_msg = f"Memory file {memory_file} not found in project root"
-            await self.log_error(error_msg, sender=self.caller.agent_name)
-            raise FileNotFoundError(error_msg)
+    async def list_memory(self, query: str | None = None) -> str:
+        """List private project-memory entries through the active backend."""
+        return await self._invoke_named("list_memory", query=query)
 
+    async def write_memory(
+        self,
+        content: str,
+        path: str = "MEMORY.md",
+    ) -> str:
+        """Create or overwrite a complete private project-memory file."""
+        return await self._invoke_named(
+            "write_memory",
+            content=content,
+            path=path,
+        )
+
+    async def edit_memory(
+        self,
+        old_string: str,
+        new_string: str,
+        path: str = "MEMORY.md",
+    ) -> str:
+        """Replace one exact, unique occurrence in private project memory."""
+        return await self._invoke_named(
+            "edit_memory",
+            old_string=old_string,
+            new_string=new_string,
+            path=path,
+        )
+
+    async def delete_memory(self, path: str) -> str:
+        """Delete a private project-memory entry by path."""
+        return await self._invoke_named("delete_memory", path=path)
+
+    async def _invoke_named(self, name: str, **inputs: Any) -> str:
+        binding = next((item for item in self.bindings() if item.name == name), None)
+        if binding is None:
+            raise ToolError(f"Project memory tool `{name}` is disabled or unavailable.")
+        return await self.invoke(binding, **inputs)
+
+    async def invoke(self, binding: MemoryToolBinding, **inputs: Any) -> str:
+        if binding.name == "list_memory":
+            query = inputs.get("query")
+            if isinstance(query, str):
+                inputs["query"] = query.strip() or None
         try:
-            memory_content = self.filesystem.read_text(memory_file)
+            result = await asyncio.to_thread(binding.handler, **inputs)
+        except (MemoryAccessError, MemorySafetyError, MemoryUnavailableError) as exc:
+            raise ToolError(f"Project memory error: {exc}") from exc
+        except Exception as exc:
+            raise ToolError(
+                "Project memory operation failed without exposing private storage details. "
+                "Use `/memory status` to inspect the local diagnostic."
+            ) from exc
 
-            await self.log_info(f"Successfully read memory file {memory_file}", sender=self.caller.agent_name)
-            return memory_content
-        except PermissionError:
-            error_msg = f"Permission denied when reading memory file {memory_file}"
-            await self.log_error(error_msg, sender=self.caller.agent_name)
-            raise
-        except Exception as e:
-            error_msg = f"Failed to read memory file {memory_file}: {str(e)}"
-            await self.log_error(error_msg, sender=self.caller.agent_name)
-            raise
+        if isinstance(result, MemoryEntry):
+            if not result.present:
+                return f"Memory `{result.reference}` is missing (bytes: {result.byte_count})."
+            return f"Memory `{result.reference}` ({result.byte_count} bytes):\n\n{result.content or ''}"
 
-    async def write_memory(self, memory_content: str) -> str:
-        """
-        Write a new memory to the AGENT_MEMORY.md file which serves as the agent's memory.
+        if isinstance(result, list) and all(isinstance(item, MemoryEntrySummary) for item in result):
+            query = inputs.get("query")
+            match = f" matching '{query}'" if query is not None else ""
+            if not result:
+                return f"No memory entries found{match}."
+            lines = [f"{len(result)} memory entries{match}:"]
+            for item in result:
+                modified = (
+                    datetime.fromtimestamp(item.modified_ns / 1_000_000_000, tz=UTC).strftime("%Y-%m-%d")
+                    if item.modified_ns is not None
+                    else "unknown"
+                )
+                title = f" — {item.display_name}" if item.display_name and item.display_name != item.reference else ""
+                lines.append(f"- {item.reference}{title} ({item.byte_count:,} bytes, modified {modified})")
+            return "\n".join(lines)
 
-        The memory is added as a markdown bullet point to the file.
+        if isinstance(result, MemoryWriteResult):
+            if not result.ok:
+                detail = result.error or "mutation failed"
+                raise ToolError(f"Project memory mutation failed for `{result.reference}`: {detail}.")
+            action = "deleted" if binding.name == "delete_memory" else "updated"
+            output = f"Project memory {action}: `{result.reference}` ({result.byte_count or 0} bytes)."
+            for warning in result.warnings:
+                output += f"\nWarning: {warning}"
+        else:
+            output = str(result)
 
-        Args:
-            memory_content: The memory content to add to the file
-
-        Returns:
-            A confirmation message indicating success
-
-        Raises:
-            PermissionError: If the file cannot be written to
-            Exception: If any other error occurs during writing
-        """
-        memory_file = MEMORY_FILE
-
-        try:
-            # Create the file if it doesn't exist
-            if not self.filesystem.exists(memory_file):
-                self.filesystem.write_text(memory_file, f"# Agent Memory\n\n- {memory_content}\n")
-                success_msg = f"Created memory file {memory_file} and added new memory"
-            else:
-                # Read existing content and append the new memory
-                existing_content = self.filesystem.read_text(memory_file)
-
-                # Add the new memory as a bullet point
-                updated_content = f"{existing_content.rstrip()}\n- {memory_content}\n"
-
-                # Write the updated content back to the file
-                self.filesystem.write_text(memory_file, updated_content)
-                success_msg = f"Successfully added new memory to {memory_file}"
-
-            await self.log_info(success_msg, sender=self.caller.agent_name)
-            return success_msg
-        except PermissionError:
-            error_msg = f"Permission denied when writing to memory file {memory_file}"
-            await self.log_error(error_msg, sender=self.caller.agent_name)
-            raise
-        except Exception as e:
-            error_msg = f"Failed to write to memory file {memory_file}: {str(e)}"
-            await self.log_error(error_msg, sender=self.caller.agent_name)
-            raise
+        if binding.mutating:
+            initialize = getattr(self.caller, "_initialize_system_prompt", None)
+            if callable(initialize):
+                try:
+                    initialize()
+                except Exception:
+                    output += (
+                        "\n\nWarning: the memory mutation was committed, but the active prompt "
+                        "could not be refreshed. Memory will be reloaded before the next top-level turn."
+                    )
+        return output

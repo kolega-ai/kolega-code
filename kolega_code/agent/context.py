@@ -52,6 +52,7 @@ class AgentServices:
     filesystem: FileSystem
     terminal_manager: TerminalManager
     browser_manager: BrowserManager
+    memory_manager: Optional[Any] = None
 
     @classmethod
     def local(cls, workspace: WorkspaceInfo, connection_manager: AgentConnectionManager) -> "AgentServices":

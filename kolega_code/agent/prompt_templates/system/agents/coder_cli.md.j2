@@ -126,14 +126,8 @@ The project directory contains `{{ context.project_guidance_file }}`. Treat it a
 ```
 {% endif %}
 
-{% if context.agent_memory %}
-## Agent Memory
-
-The project directory contains `{{ context.agent_memory_file }}`. Treat it as persistent agent memory:
-
-```markdown
-{{ context.agent_memory }}
-```
+{% if context.private_memory %}
+{{ context.private_memory }}
 {% endif %}
 
 ## Security Guardrails
