@@ -51,7 +51,8 @@ not moved or merged automatically.
 Only `MEMORY.md` is added automatically to the agent's startup context. It is
 limited to the first **200 lines or 25 KiB**, with a visible truncation marker.
 Use it as a concise index and link to topic files; topic content is loaded on
-demand with `read_memory`.
+demand with `read_memory`, and the agent can enumerate or search entries with
+`list_memory`.
 
 Backend-wide safety limits are:
 
@@ -88,14 +89,20 @@ Available controls depend on backend capabilities. With `markdown`, you can:
 - create a topic, edit an entry, and save it;
 - reload after a stale-write conflict without losing the editor text;
 - delete an entry with confirmation;
-- refresh changes made by another process;
+- refresh changes made by another process (`r`);
+- preview the exact bounded startup context the agent receives (**Agent view**);
 - turn agent memory access on or off; and
 - clear the active backend after confirmation.
 
+While an entry is being edited, the entry list and filter are inactive; only
+Save, Cancel, Reload latest, and closing the screen are available. The footer
+buttons swap between browse actions (New, Delete, Clear all, Edit) and edit
+actions (Cancel, Reload latest, Save).
+
 Turning memory off preserves its files but removes its context and memory tools
 from the agent. The screen can still inspect an existing disabled bank after an
-explicit action. Creating the first entry in a new disabled bank enables memory
-or asks you to confirm enablement. **Clear** removes only the active Markdown
+explicit action. Creating the first entry in a new disabled bank asks you to
+confirm enablement first. **Clear** removes only the active Markdown
 backend's `.md` files; it does not reset the enabled setting, backend selection,
 or data belonging to another backend.
 
@@ -107,8 +114,8 @@ refreshed. Failed or stale writes do not refresh it.
 
 | Command | Action |
 | --- | --- |
-| `/memory` | Open the Project Memory screen |
-| `/memory status` | Show state, backend, identity, startup warnings, sizes, and a bounded index preview |
+| `/memory` | Open the Project Memory screen (alias: `/memory browse`) |
+| `/memory status` | Show state, backend, identity, sizes, and the exact bounded startup context the agent receives |
 | `/memory on` | Enable project memory without changing its files |
 | `/memory off` | Disable agent access while preserving its files |
 | `/memory files` | List logical entries and sizes |

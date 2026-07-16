@@ -72,6 +72,7 @@ class MarkdownMemoryBackend:
         capabilities=frozenset(
             {
                 MemoryCapability.PROMPT_CONTEXT,
+                # list_memory is the agent surface for BROWSE and SEARCH.
                 MemoryCapability.BROWSE,
                 MemoryCapability.READ,
                 MemoryCapability.APPEND,
@@ -121,10 +122,12 @@ class MarkdownMemoryBackend:
             "or tooling quirks, architectural constraints, recurring failure causes, and "
             "user-confirmed conventions. Before finishing a substantive task, deliberately review "
             "whether any stable, reusable, non-authoritative facts you learned warrant a memory "
-            "update. Keep MEMORY.md concise and link topic files; read the relevant memory before "
-            "replacing or deleting it, then use its current revision. Correct stale facts. Never "
-            "store secrets, guesses, transient progress, plans, transcript summaries, or duplicate "
-            "user instructions.\n"
+            "update. Keep one topic per file with a one-line link in MEMORY.md, and keep the index "
+            "well under its 200-line prompt budget. Before appending, check for an existing entry "
+            "on the topic and correct or extend it instead of duplicating it; read the relevant "
+            "memory before replacing or deleting it, then use its current revision. Correct stale "
+            "facts. Never store secrets, guesses, transient progress, plans, transcript summaries, "
+            "or duplicate user instructions.\n"
         )
         if not entry.present:
             return MemoryPromptContext(
@@ -133,10 +136,16 @@ class MarkdownMemoryBackend:
             )
         content = entry.content or ""
         bounded, lines, truncated = _bound_prompt(content)
-        warning = ("Memory index truncated; use read_memory for linked topics.",) if truncated else ()
+        total_lines = len(content.splitlines())
+        note = (
+            f"Memory index truncated: showing the first {lines} of {total_lines} lines "
+            f"(bounds: {PROMPT_MAX_LINES} lines / {PROMPT_MAX_BYTES // 1024} KiB). "
+            "Restructure MEMORY.md into one-line topic links and move details into topic files."
+        )
+        warning = (note,) if truncated else ()
         body = f"\n### MEMORY.md\n{bounded}"
         if truncated:
-            body += "\n\n[Memory index truncated; use read_memory for linked topics.]"
+            body += f"\n\n[{note}]"
         return MemoryPromptContext(
             body,
             len(bounded.encode()),
@@ -144,25 +153,33 @@ class MarkdownMemoryBackend:
             truncated=truncated,
             warnings=warning,
             authoring_guidance=guidance,
+            recall_guidance=(
+                "The MEMORY.md index below is a table of contents, not the full memory. Read any "
+                "linked topic relevant to the current task with read_memory before acting on it; "
+                "use list_memory to search memory the index does not surface.\n"
+            ),
         )
 
     def list_entries(self, query: str | None = None) -> list[MemoryEntrySummary]:
         entries: list[MemoryEntrySummary] = []
         lowered = query.casefold() if query else None
         for item in self._scan_markdown_files():
-            if (
-                lowered
-                and lowered not in item.reference.casefold()
-                and lowered not in item.data.decode("utf-8").casefold()
-            ):
+            text = item.data.decode("utf-8", errors="ignore")
+            if lowered and lowered not in item.reference.casefold() and lowered not in text.casefold():
                 continue
+            display_name = item.reference
+            for line in text.splitlines()[:5]:
+                stripped = line.lstrip()
+                if stripped.startswith("#"):
+                    display_name = stripped.lstrip("#").strip()[:80] or item.reference
+                    break
             entries.append(
                 MemoryEntrySummary(
                     item.reference,
                     len(item.data),
                     item.stat_result.st_mtime_ns,
                     _sha(item.data),
-                    item.reference,
+                    display_name,
                 )
             )
         return sorted(entries, key=lambda item: (item.reference != INDEX_REFERENCE, item.reference.casefold()))
@@ -232,30 +249,87 @@ class MarkdownMemoryBackend:
             "read_memory",
             {
                 "name": "read_memory",
-                "description": "Read private project memory.",
+                "description": (
+                    "Read a private project-memory file. Use it when the MEMORY.md index in the "
+                    "system prompt links a topic relevant to the current task, and before replacing "
+                    "or deleting any memory: the result includes the sha256 revision those calls require."
+                ),
                 "input_schema": {
                     "type": "object",
-                    "properties": {"path": {"type": "string", "default": INDEX_REFERENCE}},
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "default": INDEX_REFERENCE,
+                            "description": (
+                                "Memory file path as shown in MEMORY.md or list_memory, e.g. "
+                                "'topics/build.md'. Defaults to the MEMORY.md index."
+                            ),
+                        }
+                    },
                 },
             },
             lambda path=INDEX_REFERENCE: self.read_entry(path),
         )
+        list_binding = MemoryToolBinding(
+            "list_memory",
+            {
+                "name": "list_memory",
+                "description": (
+                    "List private project-memory files with sizes and titles. Pass query to filter "
+                    "by a case-insensitive substring of path or content. Use it to find relevant "
+                    "memory that the MEMORY.md index does not surface, and to review memory before "
+                    "reorganizing it."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": (
+                                "Optional case-insensitive substring matched against each file's path and content."
+                            ),
+                        }
+                    },
+                },
+            },
+            lambda query=None: self.list_entries(query),
+        )
         if not scope.can_mutate:
-            return (read,)
+            return read, list_binding
         write = MemoryToolBinding(
             "write_memory",
             {
                 "name": "write_memory",
                 "description": (
                     "Append to or replace private project memory. Read the target first and pass "
-                    "its current revision when replacing it."
+                    "its current revision when replacing it. Prefer one topic per file with a "
+                    "one-line link in the MEMORY.md index; correct or extend an existing entry "
+                    "instead of appending a duplicate."
                 ),
                 "input_schema": {
                     "type": "object",
                     "properties": {
-                        "memory_content": {"type": "string"},
-                        "path": {"type": "string", "default": INDEX_REFERENCE},
-                        "mode": {"enum": ["append", "replace"], "default": "append"},
+                        "memory_content": {
+                            "type": "string",
+                            "description": (
+                                "Markdown text to append, or the full replacement content when mode is 'replace'."
+                            ),
+                        },
+                        "path": {
+                            "type": "string",
+                            "default": INDEX_REFERENCE,
+                            "description": (
+                                "Memory file path to write, e.g. 'topics/build.md'. Defaults to the MEMORY.md index."
+                            ),
+                        },
+                        "mode": {
+                            "enum": ["append", "replace"],
+                            "default": "append",
+                            "description": (
+                                "'append' adds to the end of the file; 'replace' overwrites it and "
+                                "requires expected_sha256."
+                            ),
+                        },
                         "expected_sha256": {
                             "type": ["string", "null"],
                             "description": (
@@ -273,11 +347,18 @@ class MarkdownMemoryBackend:
             "delete_memory",
             {
                 "name": "delete_memory",
-                "description": ("Delete private memory. Read the target first, then pass its current revision."),
+                "description": (
+                    "Delete private memory. Read the target first, then pass its current revision. "
+                    "Delete topic files whose facts are stale or now authoritative in code or docs, "
+                    "and remove their index lines from MEMORY.md."
+                ),
                 "input_schema": {
                     "type": "object",
                     "properties": {
-                        "path": {"type": "string"},
+                        "path": {
+                            "type": "string",
+                            "description": "Memory file path to delete.",
+                        },
                         "expected_sha256": {
                             "type": "string",
                             "description": "Current revision returned by read_memory.",
@@ -289,7 +370,7 @@ class MarkdownMemoryBackend:
             lambda path, expected_sha256: self.delete_entry(path, expected_sha256),
             True,
         )
-        return read, write, delete
+        return read, list_binding, write, delete
 
     def refresh(self) -> None:
         pass
@@ -320,7 +401,7 @@ class MarkdownMemoryBackend:
         *,
         existed: bool,
     ) -> MemoryWriteResult:
-        _decode_utf8(candidate)
+        decoded = _decode_utf8(candidate)
         if len(candidate) > MAX_FILE_BYTES:
             return MemoryWriteResult(False, reference, error="memory file exceeds 128 KiB")
         files = self._scan_markdown_files()
@@ -337,7 +418,15 @@ class MarkdownMemoryBackend:
             write_private_bytes(target, candidate)
         except OSError as error:
             raise MemorySafetyError("unable to persist memory entry safely") from error
-        return MemoryWriteResult(True, reference, _sha(candidate), len(candidate))
+        line_count = len(decoded.splitlines())
+        warnings: tuple[str, ...] = ()
+        if reference == INDEX_REFERENCE and (line_count > PROMPT_MAX_LINES or len(candidate) > PROMPT_MAX_BYTES):
+            warnings = (
+                f"MEMORY.md is now {line_count} lines / {len(candidate):,} bytes; only the first "
+                f"{PROMPT_MAX_LINES} lines / {PROMPT_MAX_BYTES // 1024} KiB are injected into prompts. "
+                "Move details into topic files and keep the index short.",
+            )
+        return MemoryWriteResult(True, reference, _sha(candidate), len(candidate), warnings=warnings)
 
     @contextmanager
     def _mutation_lock(self) -> Generator[None, None, None]:
@@ -555,7 +644,9 @@ def _bound_prompt(content: str) -> tuple[str, int, bool]:
         encoded = line.encode()
         remaining = PROMPT_MAX_BYTES - used
         if len(encoded) > remaining:
-            chunks.append(encoded[:remaining].decode("utf-8", errors="ignore"))
+            partial = encoded[:remaining].decode("utf-8", errors="ignore")
+            if partial:
+                chunks.append(partial)
             truncated = True
             break
         chunks.append(line)
@@ -563,4 +654,4 @@ def _bound_prompt(content: str) -> tuple[str, int, bool]:
     if len(source_lines) > len(chunks):
         truncated = True
     bounded = "".join(chunks)
-    return bounded, min(len(source_lines), PROMPT_MAX_LINES), truncated
+    return bounded, len(chunks), truncated

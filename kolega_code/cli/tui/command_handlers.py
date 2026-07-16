@@ -20,6 +20,7 @@ from kolega_code.agent.prompts import build_init_agents_prompt
 from kolega_code.auth import constants as chatgpt_constants
 from kolega_code.auth.chatgpt_oauth import run_login_flow
 from kolega_code.llm.models import Message, TextBlock
+from kolega_code.memory import MemoryUnavailableError
 from kolega_code.permissions import normalize_permission_mode
 
 from .. import messages, theme
@@ -44,7 +45,6 @@ from . import app_base as tui_app_base
 from . import constants as tui_constants
 from . import state as tui_state
 from . import widgets as tui_widgets
-from .settings_screen import ConfirmSettingsActionScreen
 
 
 class CommandHandlersMixin(tui_app_base.KolegaAppBase):
@@ -453,7 +453,7 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
         if command in {"", "browse"}:
             if len(parts) > 1:
                 self._add_memory_message(
-                    "Usage: /memory [status|on|off|files|show [path]|path|clear]",
+                    "Usage: /memory [browse|status|on|off|files|show [path]|path|clear]",
                     tone="warning",
                 )
                 return
@@ -463,7 +463,7 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
             len(parts) > 1 and command != "show"
         ):
             self._add_memory_message(
-                "Usage: /memory [status|on|off|files|show [path]|path|clear]",
+                "Usage: /memory [browse|status|on|off|files|show [path]|path|clear]",
                 tone="warning",
             )
             return
@@ -497,16 +497,15 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
                 text += f"\n{status.diagnostic}"
             if status.available:
                 try:
-                    index = await asyncio.to_thread(
-                        manager.read_entry,
-                        "MEMORY.md",
-                        allow_disabled=True,
+                    context = await asyncio.to_thread(manager.prompt_context)
+                    text += (
+                        f"\n\nAgent startup context ({context.line_count} lines, {context.byte_count:,} bytes"
+                        f"{', truncated' if context.truncated else ''}):\n{context.text}"
                     )
-                    if index.present and index.content:
-                        preview = self._bound_memory_display(index.content)
-                        text += f"\n\nMEMORY.md preview:\n{preview}"
+                except MemoryUnavailableError:
+                    text += "\n\nAgent startup context: none (memory is off)."
                 except Exception as error:
-                    text += f"\nIndex preview unavailable: {error}"
+                    text += f"\nStartup context unavailable: {error}"
             self._add_memory_message(
                 text,
                 tone="info" if status.available else "warning",
@@ -575,8 +574,7 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
         if command in {"on", "off"}:
             enabled = command == "on"
             try:
-                await asyncio.to_thread(manager.set_enabled, enabled)
-                await self._refresh_agent_memory()
+                await self._apply_memory_enabled(enabled)
             except Exception as error:
                 self._add_memory_message(f"Could not update memory: {error}", tone="error")
                 return
@@ -586,38 +584,15 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
             )
             return
 
-        def clear_after_confirmation(confirmed: bool | None) -> None:
-            if not confirmed:
-                return
-            self.run_worker(
-                self._clear_project_memory(),
-                name="Clear project memory",
-                group="memory-command",
-                exclusive=True,
+        self.confirm_memory_clear(on_done=self._memory_clear_transcript_note)
+
+    def _memory_clear_transcript_note(self, deleted: int) -> None:
+        self._add_conversation_entry(
+            tui_state.ConversationEntry(
+                kind="system",
+                content=f"Cleared project memory ({deleted} entr{'y' if deleted == 1 else 'ies'}).",
+                tone="success",
             )
-
-        self.push_screen(
-            ConfirmSettingsActionScreen(
-                "Clear project memory",
-                ("Delete every entry in this project's private memory bank? This cannot be undone."),
-                "Clear memory",
-            ),
-            clear_after_confirmation,
-        )
-
-    async def _clear_project_memory(self) -> None:
-        manager = self.memory_manager
-        if manager is None or self._memory_mutation_blocked():
-            return
-        try:
-            deleted = await asyncio.to_thread(manager.clear, allow_disabled=True)
-            await self._refresh_agent_memory()
-        except Exception as error:
-            self._add_memory_message(f"Could not clear memory: {error}", tone="error")
-            return
-        self._add_memory_message(
-            f"Cleared project memory ({deleted} entr{'y' if deleted == 1 else 'ies'}).",
-            tone="success",
         )
 
     def _add_memory_message(self, content: str, *, tone: str) -> None:
@@ -626,6 +601,7 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
 
     @staticmethod
     def _bound_memory_display(content: str) -> str:
+        """Bound transcript output for /memory show; the prompt bound lives in the backend."""
         lines = content.splitlines()[:200]
         bounded = "\n".join(lines)
         encoded = bounded.encode("utf-8")

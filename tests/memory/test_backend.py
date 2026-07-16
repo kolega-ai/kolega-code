@@ -127,8 +127,103 @@ def test_limits_and_prompt_bounds(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     assert "recurring failure causes" in prompt.authoring_guidance
     assert "user-confirmed conventions" in prompt.authoring_guidance
     assert "Before finishing a substantive task" in prompt.authoring_guidance
+    assert "one topic per file" in prompt.authoring_guidance
+    assert "200-line prompt budget" in prompt.authoring_guidance
     assert "use its current revision" in prompt.authoring_guidance
     assert "compare-and-swap" not in prompt.authoring_guidance
+    assert "first 200 of 250 lines" in prompt.text
+    assert prompt.warnings and "first 200 of 250 lines" in prompt.warnings[0]
+    assert "list_memory" in prompt.recall_guidance
+
+
+def test_prompt_byte_bound_does_not_count_an_empty_partial_line(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = backend(tmp_path)
+    monkeypatch.setattr("kolega_code.memory.markdown.PROMPT_MAX_BYTES", 5)
+    assert store.append_entry("MEMORY.md", "1234\nnext\n").ok
+
+    prompt = store.prepare_prompt_context()
+
+    assert prompt.truncated is True
+    assert prompt.line_count == 1
+    assert "first 1 of 2 lines" in prompt.warnings[0]
+
+
+def test_prompt_byte_bound_counts_a_nonempty_partial_line(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = backend(tmp_path)
+    monkeypatch.setattr("kolega_code.memory.markdown.PROMPT_MAX_BYTES", 5)
+    assert store.append_entry("MEMORY.md", "ééé\nnext\n").ok
+
+    prompt = store.prepare_prompt_context()
+
+    assert prompt.truncated is True
+    assert prompt.line_count == 1
+    assert "éé" in prompt.text
+    assert "first 1 of 2 lines" in prompt.warnings[0]
+
+
+def test_list_entries_query_and_display_titles(tmp_path: Path) -> None:
+    store = backend(tmp_path)
+    assert store.append_entry("MEMORY.md", "# Project Memory\nBuild overview").ok
+    assert store.append_entry(
+        "topics/build.md",
+        "Introduction\n## Build Notes\nDeployment sentinel",
+    ).ok
+    assert store.append_entry(
+        "topics/plain.md",
+        "one\ntwo\nthree\nfour\nfive\n# Too Late\nDeployment details",
+    ).ok
+
+    entries = store.list_entries()
+    assert [entry.reference for entry in entries] == [
+        "MEMORY.md",
+        "topics/build.md",
+        "topics/plain.md",
+    ]
+    assert [entry.display_name for entry in entries] == [
+        "Project Memory",
+        "Build Notes",
+        "topics/plain.md",
+    ]
+    assert [entry.reference for entry in store.list_entries("bUiLd")] == [
+        "MEMORY.md",
+        "topics/build.md",
+    ]
+    assert [entry.reference for entry in store.list_entries("dEpLoYmEnT sEnTiNeL")] == ["topics/build.md"]
+    assert [entry.reference for entry in store.list_entries("PLAIN.MD")] == ["topics/plain.md"]
+
+
+def test_index_write_over_prompt_budget_warns(tmp_path: Path) -> None:
+    store = backend(tmp_path)
+    content = "".join(f"line {index}\n" for index in range(201))
+
+    index_result = store.append_entry("MEMORY.md", content)
+    topic_result = store.append_entry("topics/large.md", content)
+
+    assert index_result.warnings
+    assert "201 lines" in index_result.warnings[0]
+    assert f"{len(content.encode()):,} bytes" in index_result.warnings[0]
+    assert topic_result.warnings == ()
+
+
+def test_recall_guidance_only_when_index_present(tmp_path: Path) -> None:
+    store = backend(tmp_path)
+    assert store.prepare_prompt_context().recall_guidance == ""
+    assert store.append_entry("topics/build.md", "# Build").ok
+    assert store.prepare_prompt_context().recall_guidance == ""
+
+    assert store.append_entry("MEMORY.md", "- [Build](topics/build.md)").ok
+
+    assert store.prepare_prompt_context().recall_guidance == (
+        "The MEMORY.md index below is a table of contents, not the full memory. Read any linked "
+        "topic relevant to the current task with read_memory before acting on it; use list_memory "
+        "to search memory the index does not surface.\n"
+    )
 
 
 def test_count_and_total_limits_leave_existing_content(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

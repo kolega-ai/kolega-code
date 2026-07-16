@@ -346,6 +346,7 @@ class ToolCollectionConfig:
         enabled_tool_groups: Optional[List[str]] = None,
         restrict_to_tool_groups: bool = False,
         allowed_tools: Optional[List[str]] = None,
+        memory_write_access: bool = False,
     ):
         """
         Initialize tool collection configuration.
@@ -355,6 +356,8 @@ class ToolCollectionConfig:
             browser_only: Whether to only include browser tools
             include_agent_dispatch_tools: Whether to include agent dispatch tools (investigation, browser, coding)
             include_memory_tools: Whether to include memory management tools
+            memory_write_access: Whether mutating memory tools (write/delete) may be exposed to this agent;
+                subagent scope still strips them regardless.
             tool_exclusions: List of method names to exclude from tool list
             custom_tool_groups: Additional custom tool groups to include
             enabled_tool_groups: Additional custom tool groups to include
@@ -366,6 +369,7 @@ class ToolCollectionConfig:
         self.browser_only = browser_only
         self.include_agent_dispatch_tools = include_agent_dispatch_tools
         self.include_memory_tools = include_memory_tools
+        self.memory_write_access = memory_write_access
         self.tool_exclusions = tool_exclusions or []
         self.custom_tool_groups = list(dict.fromkeys((custom_tool_groups or []) + (enabled_tool_groups or [])))
         self.restrict_to_tool_groups = restrict_to_tool_groups
@@ -384,6 +388,7 @@ class ToolCollection(LogMixin):
         "read_entire_file",
         "read_file_section",
         "read_memory",
+        "list_memory",
         "search_codebase",
         "find_files_by_pattern",
         "think_hard",
@@ -447,6 +452,7 @@ class ToolCollection(LogMixin):
     # Memory tools group
     memory_tools = [
         "read_memory",
+        "list_memory",
         "write_memory",
         "delete_memory",
     ]
@@ -580,6 +586,7 @@ class ToolCollection(LogMixin):
         # memory schemas and capability registration.
         self._memory_compatibility_methods = {
             "read_memory",
+            "list_memory",
             "write_memory",
             "delete_memory",
         }
@@ -1809,6 +1816,10 @@ class ToolCollection(LogMixin):
         """Read a private project-memory Markdown entry."""
         return await self.memory_tool.read_memory(path)
 
+    async def list_memory(self, query: str | None = None) -> str:
+        """List private project-memory entries, optionally filtering by path or content."""
+        return await self.memory_tool.list_memory(query)
+
     async def write_memory(
         self,
         memory_content: str,
@@ -2191,10 +2202,7 @@ class ToolCollection(LogMixin):
             return False
         if name in self.tool_exclusions:
             return False
-        if mutating and (
-            getattr(self.caller, "sub_agent", False)
-            or getattr(self.caller, "agent_name", "") not in {"coder", "general-agent", "planning-agent"}
-        ):
+        if mutating and (getattr(self.caller, "sub_agent", False) or not self.tool_config.memory_write_access):
             return False
         allowed = self.tool_config.allowed_tools
         return allowed is None or name in allowed

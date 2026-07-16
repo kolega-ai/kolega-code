@@ -1124,8 +1124,15 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             pass
         screen = getattr(self, "_settings_screen", None)
         if screen is not None:
-            screen.mark_clean()
+            memory_applied = await screen.apply_memory_draft()
+            screen.mark_clean(preserve_memory_draft=not memory_applied)
             self._update_model_auth_controls(provider)
+            if not memory_applied:
+                self._set_settings_status(
+                    "Other settings were saved, but project memory changes failed. Review and retry them.",
+                    "warning",
+                )
+                return
         if self.config is not None:
             override_message = active_model_override_message(
                 self.config,

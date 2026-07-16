@@ -107,6 +107,7 @@ class PlanningAgent(BaseAgent):
             tool_config=ToolCollectionConfig(
                 read_only=True,
                 include_memory_tools=True,
+                memory_write_access=True,
                 custom_tool_groups=["planning_tools", "command_tools", "custom_agent_tools"],
             ),
             filesystem=self.filesystem,

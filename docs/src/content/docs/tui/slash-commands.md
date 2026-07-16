@@ -71,12 +71,12 @@ provider. You can also switch directly with `/model <name>`.
 Run `/settings` to open the categorized Settings editor without navigating to the
 sidebar tab. Unsaved changes remain a draft until you select **Apply Changes**.
 
-Run `/memory` with no arguments to browse and edit the project's private memory
-bank. Lightweight subcommands are also available:
+Run `/memory` with no arguments (alias: `/memory browse`) to browse and edit the
+project's private memory bank. Lightweight subcommands are also available:
 
 | Command | Description |
 | --- | --- |
-| `/memory status` | Show enabled/backend/identity state, startup warnings, sizes, and a bounded index preview |
+| `/memory status` | Show enabled/backend/identity state, sizes, and the exact bounded startup context the agent receives |
 | `/memory on` / `/memory off` | Enable agent access or disable it without deleting data |
 | `/memory files` | List entries and sizes |
 | `/memory show [path]` | Show bounded content; defaults to `MEMORY.md` |

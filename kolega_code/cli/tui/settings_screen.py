@@ -56,7 +56,7 @@ class ConfirmDiscardSettingsScreen(ModalScreen[bool]):
         with Vertical(id="settings_discard_dialog", classes="modal-dialog"):
             yield Static("Discard unsaved settings?", id="settings_discard_title")
             yield Static(
-                "Provider, model, tool, credential, and theme edits will be lost. "
+                "Provider, model, tool, credential, memory, and theme edits will be lost. "
                 "MCP actions that were already saved are not reverted.",
                 id="settings_discard_copy",
             )
@@ -144,7 +144,6 @@ class SettingsScreen(ModalScreen[None]):
         self.pending_oauth_tokens = deepcopy(owner.settings.oauth_tokens)
         self._oauth_baseline = deepcopy(self.pending_oauth_tokens)
         self.pending_api_key_removals: set[str] = set()
-        self._updating_memory_controls = True
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="settings_screen_header"):
@@ -387,7 +386,8 @@ class SettingsScreen(ModalScreen[None]):
             with Vertical(classes="settings-section", id="settings_memory") as section:
                 section.border_title = "Private Project Memory"
                 yield Static(
-                    "Memory is private local state shared by linked worktrees. These controls apply immediately.",
+                    "Memory is private local state shared by linked worktrees. "
+                    "Enabled and backend changes take effect with Apply Changes.",
                     classes="settings-hint",
                 )
                 yield Static("Loading project memory…", id="memory_settings_status")
@@ -471,11 +471,6 @@ class SettingsScreen(ModalScreen[None]):
         self._show_category(option_id.removeprefix("settings_category_"))
 
     def on_select_changed(self, event: Select.Changed) -> None:
-        if event.select.id in {"memory_enabled_select", "memory_backend_select"}:
-            if not self._updating_memory_controls and event.value is not Select.NULL:
-                event.stop()
-                self._apply_memory_select(event.select.id, str(event.value))
-            return
         if event.select.id == "agent_role_select":
             self._show_agent_role(str(event.value))
         if event.select.id == "provider_select" and not self._initializing:
@@ -509,7 +504,7 @@ class SettingsScreen(ModalScreen[None]):
             if not isinstance(widget, (Select, Input)):
                 continue
             widget_id = widget.id or ""
-            if not widget_id or widget_id.startswith(("mcp_", "memory_")) or widget_id == "agent_role_select":
+            if not widget_id or widget_id.startswith("mcp_") or widget_id == "agent_role_select":
                 continue
             value = widget.value
             if value is Select.NULL:
@@ -525,9 +520,14 @@ class SettingsScreen(ModalScreen[None]):
             or bool(self.pending_api_key_removals)
         )
 
-    def mark_clean(self) -> None:
+    def mark_clean(self, *, preserve_memory_draft: bool = False) -> None:
         self.pending_api_key_removals.clear()
-        self._baseline = self._snapshot()
+        baseline = dict(self._snapshot())
+        if preserve_memory_draft:
+            previous = dict(self._baseline)
+            for widget_id in ("memory_enabled_select", "memory_backend_select"):
+                baseline[widget_id] = previous.get(widget_id)
+        self._baseline = tuple(sorted(baseline.items()))
         self._oauth_baseline = deepcopy(self.pending_oauth_tokens)
         self._original_theme = self.owner.settings.active_theme or theme.DEFAULT_THEME_NAME
         self._refresh_apply_label()
@@ -554,22 +554,22 @@ class SettingsScreen(ModalScreen[None]):
             self.owner.action_open_memory(inspect_disabled=True)
         elif event.button.id == "memory_settings_clear":
             event.stop()
-            self._confirm_memory_clear()
+            self.owner.confirm_memory_clear(on_done=self._after_memory_clear)
         elif event.button.id in {"mcp_delete_server", "mcp_clear_tokens", "mcp_trust_project"}:
             if self._confirm_immediate_action(event.button.id):
                 event.stop()
 
-    async def _refresh_memory_controls(self) -> None:
+    async def _refresh_memory_controls(self, *, update_draft: bool = True) -> None:
         try:
             status = await asyncio.to_thread(self.owner.memory_manager.status)
         except Exception as error:
             self.query_one("#memory_settings_status", Static).update(f"Memory unavailable: {error}")
             return
-        self._updating_memory_controls = True
-        self.query_one("#memory_enabled_select", Select).value = "true" if status.enabled else "false"
-        backend_select = self.query_one("#memory_backend_select", Select)
-        if status.backend_id in self.owner.memory_manager.registry.backend_ids:
-            backend_select.value = status.backend_id
+        if update_draft:
+            self.query_one("#memory_enabled_select", Select).value = "true" if status.enabled else "false"
+            backend_select = self.query_one("#memory_backend_select", Select)
+            if status.backend_id in self.owner.memory_manager.registry.backend_ids:
+                backend_select.value = status.backend_id
         backend = status.backend
         detail = (
             f"{backend.entry_count} entries · {backend.total_bytes:,} bytes"
@@ -584,78 +584,73 @@ class SettingsScreen(ModalScreen[None]):
         )
         self.query_one("#memory_settings_inspect", Button).disabled = status.enabled
         self.query_one("#memory_settings_clear", Button).disabled = not bool(backend and backend.entry_count)
-        self.call_after_refresh(self._finish_memory_control_update)
+        if update_draft:
+            self.call_after_refresh(self._rebaseline_memory_controls)
 
-    def _finish_memory_control_update(self) -> None:
-        self._updating_memory_controls = False
-
-    def _apply_memory_select(self, select_id: str, value: str) -> None:
-        if self.owner._memory_mutation_blocked():
-            self.run_worker(
-                self._refresh_memory_controls(),
-                name="settings-memory-revert",
-                group="settings-memory",
-                exclusive=True,
-            )
+    def _rebaseline_memory_controls(self) -> None:
+        """Committed manifest state is the draft baseline for the memory selects."""
+        if self._initializing:
             return
+        entries = dict(self._baseline)
+        for widget_id in ("memory_enabled_select", "memory_backend_select"):
+            value = self.query_one(f"#{widget_id}", Select).value
+            entries[widget_id] = None if value is Select.NULL else value
+        self._baseline = tuple(sorted(entries.items()))
+        self._refresh_apply_label()
+
+    async def apply_memory_draft(self) -> bool:
+        """Commit staged memory settings as part of Apply Changes."""
+        manager = self.owner.memory_manager
+        enabled_value = self.query_one("#memory_enabled_select", Select).value
+        backend_value = self.query_one("#memory_backend_select", Select).value
+        try:
+            status = await asyncio.to_thread(manager.status)
+        except Exception as error:
+            self.owner.notify(f"Could not update project memory: {error}", severity="error")
+            return False
+        desired_enabled = enabled_value == "true"
+        desired_backend = None if backend_value is Select.NULL else str(backend_value)
+        backend_changed = desired_backend is not None and desired_backend != status.backend_id
+        enabled_changed = desired_enabled != status.enabled
+        if not backend_changed and not enabled_changed:
+            return True
+        try:
+            if desired_backend is not None and backend_changed:
+                await asyncio.to_thread(manager.select_backend, desired_backend)
+            if enabled_changed:
+                await asyncio.to_thread(manager.set_enabled, desired_enabled)
+            await self.owner._refresh_agent_memory()
+        except Exception as error:
+            rollback_errors: list[str] = []
+            if enabled_changed:
+                try:
+                    await asyncio.to_thread(manager.set_enabled, status.enabled)
+                except Exception as rollback_error:
+                    rollback_errors.append(str(rollback_error))
+            if backend_changed:
+                try:
+                    await asyncio.to_thread(manager.select_backend, status.backend_id)
+                except Exception as rollback_error:
+                    rollback_errors.append(str(rollback_error))
+            try:
+                await self.owner._refresh_agent_memory()
+            except Exception as rollback_error:
+                rollback_errors.append(str(rollback_error))
+            detail = f"Could not update project memory: {error}"
+            if rollback_errors:
+                detail += " Previous memory settings could not be fully restored."
+            self.owner.notify(detail, severity="error")
+            return False
+        await self._refresh_memory_controls()
+        return True
+
+    def _after_memory_clear(self, _deleted: int) -> None:
         self.run_worker(
-            self._apply_memory_setting(select_id, value),
-            name="settings-memory-update",
+            self._refresh_memory_controls(update_draft=False),
+            name="settings-memory-status",
             group="settings-memory",
             exclusive=True,
         )
-
-    async def _apply_memory_setting(self, select_id: str, value: str) -> None:
-        try:
-            if select_id == "memory_enabled_select":
-                await asyncio.to_thread(
-                    self.owner.memory_manager.set_enabled,
-                    value == "true",
-                )
-            else:
-                await asyncio.to_thread(
-                    self.owner.memory_manager.select_backend,
-                    value,
-                )
-            await self.owner._refresh_agent_memory()
-            await self._refresh_memory_controls()
-        except Exception as error:
-            self.owner.notify(f"Could not update project memory: {error}", severity="error")
-            await self._refresh_memory_controls()
-
-    def _confirm_memory_clear(self) -> None:
-        if self.owner._memory_mutation_blocked():
-            return
-        self.app.push_screen(
-            ConfirmSettingsActionScreen(
-                "Clear project memory?",
-                "Every entry in this project's private memory bank will be deleted.",
-                "Clear Memory",
-                danger=True,
-            ),
-            callback=self._on_memory_clear_decision,
-        )
-
-    def _on_memory_clear_decision(self, confirmed: bool | None) -> None:
-        if confirmed:
-            self.run_worker(
-                self._clear_memory(),
-                name="settings-memory-clear",
-                group="settings-memory",
-                exclusive=True,
-            )
-
-    async def _clear_memory(self) -> None:
-        try:
-            deleted = await asyncio.to_thread(
-                self.owner.memory_manager.clear,
-                allow_disabled=True,
-            )
-            await self.owner._refresh_agent_memory()
-            self.owner.notify(f"Cleared {deleted} private memory entries.")
-        except Exception as error:
-            self.owner.notify(f"Could not clear project memory: {error}", severity="error")
-        await self._refresh_memory_controls()
 
     def _confirm_immediate_action(self, button_id: str) -> bool:
         if button_id == "mcp_trust_project":

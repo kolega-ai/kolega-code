@@ -69,6 +69,7 @@ class MemoryWriteResult:
     byte_count: int | None = None
     error: str | None = None
     current_revision: str | None = None
+    warnings: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,6 +80,7 @@ class MemoryPromptContext:
     truncated: bool = False
     warnings: tuple[str, ...] = ()
     authoring_guidance: str = ""
+    recall_guidance: str = ""
 
 
 @dataclass(frozen=True, slots=True)

@@ -69,6 +69,10 @@ OCR/conversion outside this tool.
   [thinking model](../../configuration/providers-and-models/) and its token budget.
 - `read_memory(path="MEMORY.md")` — read a private project-memory index or topic,
   including its logical path, SHA-256 revision, byte count, and bounded content.
+- `list_memory(query=None)` — list private project-memory files with sizes and titles.
+  The optional `query` is a case-insensitive substring filter over paths and
+  content; custom agents with an explicit `allowed_tools` list must name
+  `list_memory` to receive it.
 - `write_memory(memory_content, path="MEMORY.md", mode="append",
   expected_sha256=None)` — append an exact Markdown fragment, or replace a whole
   entry using its current revision. Creation by replacement uses

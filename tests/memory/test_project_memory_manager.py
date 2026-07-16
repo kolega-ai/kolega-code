@@ -58,7 +58,7 @@ def test_disable_scope_and_unknown_backend_are_safe(tmp_path: Path) -> None:
     manager.set_enabled(True)
     assert child.enabled
     assert child.with_scope(MemoryAccessScope.SUBAGENT) is child
-    assert [binding.name for binding in child.tool_bindings()] == ["read_memory"]
+    assert [binding.name for binding in child.tool_bindings()] == ["read_memory", "list_memory"]
     with pytest.raises(MemoryAccessError):
         child.append_entry("MEMORY.md", "no")
     with pytest.raises(MemoryAccessError, match="cannot derive writable access"):
@@ -502,11 +502,26 @@ def test_registry_fake_backend_has_no_markdown_assumptions(tmp_path: Path) -> No
     assert "opaque fake context" in top_context
     assert "MEMORY.md" not in top_context
     assert "read_memory" not in top_context
+    assert "list_memory" not in top_context
     child_context = manager.with_scope(MemoryAccessScope.SUBAGENT).prompt_context().text
     assert "read-only access" in child_context
     assert "Record only stable" not in child_context
     with pytest.raises(MemoryUnavailableError):
         manager.list_entries()
+
+
+def test_recall_guidance_reaches_subagent_scope(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    manager = ProjectMemoryManager(project, tmp_path / "state")
+    assert manager.append_entry("MEMORY.md", "- [Build](topics/build.md)").ok
+
+    context = manager.with_scope(MemoryAccessScope.SUBAGENT).prompt_context().text
+
+    assert "The MEMORY.md index below is a table of contents" in context
+    assert "use list_memory to search memory" in context
+    assert "read-only access to project memory" in context
+    assert "Record stable, reusable facts" not in context
 
 
 @pytest.mark.parametrize(

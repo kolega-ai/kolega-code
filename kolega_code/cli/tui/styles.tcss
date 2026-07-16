@@ -955,3 +955,130 @@ ChangesInspectorScreen #changes_footer {
     background: $surface;
     color: $text-muted;
 }
+
+MemoryScreen {
+    align: center middle;
+    background: $background 92%;
+}
+
+MemoryScreen #memory_shell {
+    width: 96%;
+    height: 94%;
+    background: $surface;
+    border: round $surface-lighten-2;
+}
+
+MemoryScreen #memory_header {
+    height: 3;
+    padding: 0 1;
+    background: $surface;
+    border-bottom: solid $surface-lighten-2;
+}
+
+MemoryScreen #memory_title {
+    width: 1fr;
+    height: 3;
+    content-align: left middle;
+    text-style: bold;
+}
+
+MemoryScreen #memory_header_hint {
+    width: auto;
+    height: 3;
+    content-align: right middle;
+    color: $text-muted;
+}
+
+MemoryScreen #memory_toolbar {
+    height: auto;
+    min-height: 3;
+    padding: 0 1;
+    border-bottom: solid $surface-lighten-2;
+}
+
+MemoryScreen #memory_status {
+    width: 1fr;
+    height: auto;
+    min-height: 3;
+    content-align: left middle;
+}
+
+MemoryScreen #memory_toolbar_buttons {
+    width: auto;
+    height: 3;
+    align: right middle;
+}
+
+MemoryScreen #memory_body {
+    height: 1fr;
+}
+
+MemoryScreen #memory_roster {
+    width: 34%;
+    min-width: 28;
+    height: 100%;
+    padding: 1;
+    border-right: solid $surface-lighten-2;
+}
+
+MemoryScreen #memory_filter {
+    margin-bottom: 1;
+}
+
+MemoryScreen #memory_entries {
+    height: 1fr;
+    border: round $surface-lighten-2;
+}
+
+MemoryScreen #memory_detail {
+    width: 1fr;
+    height: 100%;
+    padding: 1 2;
+}
+
+MemoryScreen #memory_metadata {
+    height: auto;
+    min-height: 3;
+    margin-bottom: 1;
+}
+
+MemoryScreen #memory_reference {
+    display: none;
+    margin-bottom: 1;
+}
+
+MemoryScreen #memory_preview_scroll,
+MemoryScreen #memory_editor {
+    height: 1fr;
+    border: round $surface-lighten-2;
+    background: $background;
+}
+
+MemoryScreen #memory_preview {
+    padding: 1 2;
+    width: 100%;
+    height: auto;
+}
+
+MemoryScreen #memory_editor {
+    display: none;
+}
+
+MemoryScreen #memory_notice {
+    height: auto;
+    min-height: 2;
+    padding: 1 0 0 0;
+    color: $warning;
+}
+
+MemoryScreen #memory_footer {
+    height: 4;
+    padding: 0 1;
+    border-top: solid $surface-lighten-2;
+    align: right middle;
+}
+
+MemoryScreen #memory_toolbar_buttons Button,
+MemoryScreen #memory_footer Button {
+    margin-left: 1;
+}

@@ -138,6 +138,7 @@ class CoderAgent(BaseAgent, LogMixin):
             custom_tool_groups=["coder_agent_tools"],
             tool_exclusions=tool_exclusions,
             include_memory_tools=True,
+            memory_write_access=True,
         )
 
         self.tool_collection = ToolCollection(

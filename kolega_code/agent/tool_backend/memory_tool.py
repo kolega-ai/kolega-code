@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 from typing import Any
 
 from kolega_code.memory import (
     MISSING_REVISION,
     MemoryAccessError,
     MemoryEntry,
+    MemoryEntrySummary,
     MemorySafetyError,
     MemoryToolBinding,
     MemoryUnavailableError,
@@ -28,6 +30,10 @@ class MemoryTool:
     async def read_memory(self, path: str = "MEMORY.md") -> str:
         """Read private project memory through the active backend."""
         return await self._invoke_named("read_memory", path=path)
+
+    async def list_memory(self, query: str | None = None) -> str:
+        """List private project-memory entries through the active backend."""
+        return await self._invoke_named("list_memory", query=query)
 
     async def write_memory(
         self,
@@ -80,6 +86,22 @@ class MemoryTool:
                 f"bytes: {result.byte_count}):\n\n{result.content or ''}"
             )
 
+        if isinstance(result, list) and all(isinstance(item, MemoryEntrySummary) for item in result):
+            query = inputs.get("query")
+            match = f" matching '{query}'" if query is not None else ""
+            if not result:
+                return f"No memory entries found{match}."
+            lines = [f"{len(result)} memory entries{match}:"]
+            for item in result:
+                modified = (
+                    datetime.fromtimestamp(item.modified_ns / 1_000_000_000, tz=UTC).strftime("%Y-%m-%d")
+                    if item.modified_ns is not None
+                    else "unknown"
+                )
+                title = f" — {item.display_name}" if item.display_name and item.display_name != item.reference else ""
+                lines.append(f"- {item.reference}{title} ({item.byte_count:,} bytes, modified {modified})")
+            return "\n".join(lines)
+
         if isinstance(result, MemoryWriteResult):
             if not result.ok:
                 detail = result.error or "mutation failed"
@@ -91,6 +113,8 @@ class MemoryTool:
                 f"Project memory {action}: `{result.reference}` "
                 f"(revision: {result.revision}, bytes: {result.byte_count or 0})."
             )
+            for warning in result.warnings:
+                output += f"\nWarning: {warning}"
         else:
             output = str(result)
 

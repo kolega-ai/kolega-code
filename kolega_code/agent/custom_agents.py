@@ -435,6 +435,7 @@ class CustomAgent(BaseAgent):
             tool_config=ToolCollectionConfig(
                 allowed_tools=list(allowed_tools),
                 include_memory_tools=True,
+                memory_write_access=True,
                 tool_exclusions=[*ToolCollection.agent_dispatch_tools, *ToolCollection.orchestration_tools],
             ),
             filesystem=self.filesystem,

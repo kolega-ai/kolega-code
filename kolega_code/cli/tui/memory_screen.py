@@ -11,7 +11,6 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
-from textual.timer import Timer
 from textual.widgets import Button, Input, Markdown, OptionList, Static, TextArea
 from textual.widgets.option_list import Option
 
@@ -20,6 +19,7 @@ from kolega_code.memory import (
     MemoryCapability,
     MemoryEntry,
     MemoryEntrySummary,
+    MemoryUnavailableError,
     ProjectMemoryManager,
     ProjectMemoryStatus,
 )
@@ -40,142 +40,8 @@ class MemoryScreen(ModalScreen[None]):
         Binding("ctrl+s", "save", "Save", show=True, priority=True),
         Binding("n", "create", "New", show=True),
         Binding("e", "edit", "Edit", show=True),
-        Binding("r", "refresh", "Refresh", show=False),
-        Binding("d", "delete", "Delete", show=False),
+        Binding("r", "refresh", "Refresh", show=True),
     ]
-
-    DEFAULT_CSS = """
-    MemoryScreen {
-        align: center middle;
-        background: $background 92%;
-    }
-
-    #memory_shell {
-        width: 96%;
-        height: 94%;
-        background: $surface;
-        border: round $primary;
-    }
-
-    #memory_header {
-        height: 3;
-        padding: 0 1;
-        background: $panel;
-        border-bottom: solid $primary-background;
-    }
-
-    #memory_title {
-        width: 1fr;
-        height: 3;
-        content-align: left middle;
-        text-style: bold;
-    }
-
-    #memory_header_hint {
-        width: auto;
-        height: 3;
-        content-align: right middle;
-        color: $text-muted;
-    }
-
-    #memory_toolbar {
-        height: auto;
-        min-height: 3;
-        padding: 0 1;
-        border-bottom: solid $primary-background;
-    }
-
-    #memory_status {
-        width: 1fr;
-        height: auto;
-        min-height: 3;
-        content-align: left middle;
-    }
-
-    #memory_toolbar_buttons {
-        width: auto;
-        height: 3;
-        align: right middle;
-    }
-
-    #memory_body {
-        height: 1fr;
-    }
-
-    #memory_roster {
-        width: 34%;
-        min-width: 28;
-        height: 100%;
-        padding: 1;
-        border-right: solid $primary-background;
-    }
-
-    #memory_filter {
-        margin-bottom: 1;
-    }
-
-    #memory_entries {
-        height: 1fr;
-        border: round $primary-background;
-    }
-
-    #memory_roster_actions {
-        height: auto;
-        margin-top: 1;
-    }
-
-    #memory_detail {
-        width: 1fr;
-        height: 100%;
-        padding: 1 2;
-    }
-
-    #memory_metadata {
-        height: auto;
-        min-height: 3;
-        margin-bottom: 1;
-    }
-
-    #memory_reference {
-        display: none;
-        margin-bottom: 1;
-    }
-
-    #memory_preview_scroll, #memory_editor {
-        height: 1fr;
-        border: round $primary-background;
-        background: $background;
-    }
-
-    #memory_preview {
-        padding: 1 2;
-        width: 100%;
-        height: auto;
-    }
-
-    #memory_editor {
-        display: none;
-    }
-
-    #memory_notice {
-        height: auto;
-        min-height: 2;
-        padding-top: 1;
-        color: $warning;
-    }
-
-    #memory_footer {
-        height: 4;
-        padding: 0 1;
-        border-top: solid $primary-background;
-        align: right middle;
-    }
-
-    MemoryScreen Button {
-        min-width: 10;
-        margin-left: 1;
-    }
-    """
 
     def __init__(
         self,
@@ -186,6 +52,7 @@ class MemoryScreen(ModalScreen[None]):
         super().__init__()
         self._owner = owner
         self._status: ProjectMemoryStatus | None = None
+        self._all_entries: list[MemoryEntrySummary] = []
         self._entries: list[MemoryEntrySummary] = []
         self._selected_reference: str | None = None
         self._loaded_entry: MemoryEntry | None = None
@@ -193,9 +60,9 @@ class MemoryScreen(ModalScreen[None]):
         self._creating = False
         self._stale_conflict = False
         self._inspect_disabled = inspect_disabled
+        self._agent_view = False
         self._busy = False
         self._work_generation = 0
-        self._filter_timer: Timer | None = None
 
     @property
     def _manager(self) -> ProjectMemoryManager:
@@ -209,21 +76,17 @@ class MemoryScreen(ModalScreen[None]):
                     id="memory_title",
                     markup=False,
                 )
-                yield Static("private local state  ·  esc close", id="memory_header_hint")
+                yield Static("private local state  ·  esc close  ·  r refresh", id="memory_header_hint")
             with Horizontal(id="memory_toolbar"):
                 yield Static("Loading private memory…", id="memory_status", markup=False)
                 with Horizontal(id="memory_toolbar_buttons"):
-                    yield Button("Refresh", id="memory_refresh", classes="quiet")
+                    yield Button("Agent view", id="memory_agent_view", classes="quiet")
                     yield Button("Inspect bank", id="memory_inspect", classes="quiet")
                     yield Button("Turn off", id="memory_toggle", classes="quiet")
             with Horizontal(id="memory_body"):
                 with Vertical(id="memory_roster"):
-                    yield Input(placeholder="Filter paths and content…", id="memory_filter")
+                    yield Input(placeholder="Filter entries by path…", id="memory_filter")
                     yield OptionList(id="memory_entries")
-                    with Horizontal(id="memory_roster_actions"):
-                        yield Button("New", id="memory_new")
-                        yield Button("Delete", id="memory_delete", classes="quiet")
-                        yield Button("Clear all", id="memory_clear", classes="quiet")
                 with Vertical(id="memory_detail"):
                     yield Static("Select an entry to inspect.", id="memory_metadata", markup=False)
                     yield Input(placeholder="topics/example.md", id="memory_reference")
@@ -235,7 +98,10 @@ class MemoryScreen(ModalScreen[None]):
                     yield TextArea("", id="memory_editor")
                     yield Static("", id="memory_notice", markup=False)
             with Horizontal(id="memory_footer"):
-                yield Button("Edit", id="memory_edit", classes="quiet")
+                yield Button("New", id="memory_new", classes="quiet")
+                yield Button("Delete", id="memory_delete", classes="quiet danger")
+                yield Button("Clear all", id="memory_clear", classes="quiet danger")
+                yield Button("Edit", id="memory_edit", classes="solid-primary")
                 yield Button("Cancel", id="memory_cancel", classes="quiet")
                 yield Button("Reload latest", id="memory_reload", classes="quiet")
                 yield Button("Save", id="memory_save", classes="solid-primary")
@@ -246,27 +112,29 @@ class MemoryScreen(ModalScreen[None]):
         self._start_refresh()
 
     def on_unmount(self) -> None:
-        if self._filter_timer is not None:
-            self._filter_timer.stop()
         if self._owner._memory_screen is self:
             self._owner._memory_screen = None
 
     # ---- loading -------------------------------------------------------------
 
-    def _start_refresh(self, *, select_reference: str | None = None) -> None:
+    def _start_refresh(self, *, select_reference: str | None = None, from_disk: bool = False) -> None:
+        if self._editing:
+            return
+        self._exit_agent_view()
         self._work_generation += 1
         generation = self._work_generation
         self._set_busy(True)
         self.run_worker(
-            self._refresh(generation, select_reference),
+            self._refresh(generation, select_reference, from_disk=from_disk),
             name="Refresh project memory",
             group="memory-screen-refresh",
             exclusive=True,
         )
 
-    async def _refresh(self, generation: int, select_reference: str | None) -> None:
-        query = self.query_one("#memory_filter", Input).value.strip() or None
+    async def _refresh(self, generation: int, select_reference: str | None, *, from_disk: bool = False) -> None:
         try:
+            if from_disk:
+                await asyncio.to_thread(self._manager.refresh)
             status = await asyncio.to_thread(self._manager.status)
             entries: list[MemoryEntrySummary] = []
             if (
@@ -276,12 +144,13 @@ class MemoryScreen(ModalScreen[None]):
             ):
                 entries = await asyncio.to_thread(
                     self._manager.list_entries,
-                    query,
+                    None,
                     allow_disabled=True,
                 )
         except Exception as error:
             if generation == self._work_generation:
                 self._status = None
+                self._all_entries = []
                 self._entries = []
                 self._render_error(str(error))
             return
@@ -292,11 +161,15 @@ class MemoryScreen(ModalScreen[None]):
         if generation != self._work_generation:
             return
         self._status = status
-        self._entries = entries
+        self._all_entries = entries
+        self._entries = self._filtered(entries)
         self._render_status()
         self._render_roster(select_reference=select_reference)
 
     def _start_load(self, reference: str) -> None:
+        if self._editing:
+            return
+        self._exit_agent_view()
         self._work_generation += 1
         generation = self._work_generation
         self._selected_reference = reference
@@ -404,7 +277,20 @@ class MemoryScreen(ModalScreen[None]):
         target = select_reference or self._selected_reference
         index = references.index(target) if target in references else 0
         roster.highlighted = index
-        self._start_load(references[index])
+        reference = references[index]
+        if select_reference is None and self._loaded_entry is not None and self._loaded_entry.reference == reference:
+            return
+        self._start_load(reference)
+
+    def _filtered(self, entries: list[MemoryEntrySummary]) -> list[MemoryEntrySummary]:
+        query = self.query_one("#memory_filter", Input).value.strip().casefold()
+        if not query:
+            return list(entries)
+        return [
+            entry
+            for entry in entries
+            if query in entry.reference.casefold() or query in (entry.display_name or "").casefold()
+        ]
 
     def _entry_label(self, summary: MemoryEntrySummary) -> Text:
         line = Text()
@@ -455,46 +341,51 @@ class MemoryScreen(ModalScreen[None]):
         selected = self._loaded_entry is not None and self._loaded_entry.present
         mutating_blocked = self._busy or turn_active or not available
 
-        self._set_button_disabled("memory_refresh", self._busy or self._editing)
-        self._set_button_disabled("memory_toggle", self._busy or not available)
+        self._set_button_disabled("memory_agent_view", self._busy or self._editing or not available)
+        self._set_button_disabled("memory_inspect", self._busy or self._editing)
+        self._set_button_disabled("memory_toggle", self._busy or self._editing or not available)
         self._set_button_disabled(
             "memory_new",
             mutating_blocked
+            or self._editing
             or not (self._supports(MemoryCapability.REPLACE) or self._supports(MemoryCapability.APPEND)),
         )
         self._set_button_disabled(
             "memory_edit",
-            mutating_blocked or not selected or not self._supports(MemoryCapability.REPLACE),
+            mutating_blocked or self._editing or not selected or not self._supports(MemoryCapability.REPLACE),
         )
         self._set_button_disabled(
             "memory_delete",
-            mutating_blocked or not selected or not self._supports(MemoryCapability.DELETE),
+            mutating_blocked or self._editing or not selected or not self._supports(MemoryCapability.DELETE),
         )
         self._set_button_disabled(
             "memory_clear",
-            mutating_blocked or not bool(self._entries) or not self._supports(MemoryCapability.CLEAR),
+            mutating_blocked
+            or self._editing
+            or not bool(self._all_entries)
+            or not self._supports(MemoryCapability.CLEAR),
         )
         self._set_button_disabled("memory_save", mutating_blocked or not self._editing)
         self._set_button_disabled(
             "memory_reload",
             self._busy or not self._editing or not self._stale_conflict,
         )
+        for widget_id in ("memory_new", "memory_delete", "memory_clear", "memory_edit"):
+            self.query_one(f"#{widget_id}", Button).display = not self._editing
         self.query_one("#memory_cancel", Button).display = self._editing
         self.query_one("#memory_save", Button).display = self._editing
         self.query_one("#memory_reload", Button).display = self._editing and self._stale_conflict
-        self.query_one("#memory_edit", Button).display = not self._editing
 
     def _set_button_disabled(self, widget_id: str, disabled: bool) -> None:
-        try:
-            self.query_one(f"#{widget_id}", Button).disabled = disabled
-        except Exception:
-            pass
+        self.query_one(f"#{widget_id}", Button).disabled = disabled
 
     def _set_edit_mode(self, editing: bool, *, creating: bool = False) -> None:
         self._editing = editing
         self._creating = creating if editing else False
         if not editing:
             self._stale_conflict = False
+        self.query_one("#memory_filter", Input).disabled = editing
+        self.query_one("#memory_entries", OptionList).disabled = editing
         self.query_one("#memory_preview_scroll").display = not editing
         self.query_one("#memory_editor", TextArea).display = editing
         self.query_one("#memory_reference", Input).display = editing
@@ -509,6 +400,8 @@ class MemoryScreen(ModalScreen[None]):
         if event.option_list.id != "memory_entries" or event.option_id is None:
             return
         event.stop()
+        if self._editing:
+            return
         try:
             index = int(event.option_id.removeprefix("memory_entry_"))
             reference = self._entries[index].reference
@@ -517,15 +410,14 @@ class MemoryScreen(ModalScreen[None]):
         self._start_load(reference)
 
     def on_input_changed(self, event: Input.Changed) -> None:
-        if event.input.id != "memory_filter":
+        if event.input.id != "memory_filter" or self._editing:
             return
-        if self._filter_timer is not None:
-            self._filter_timer.stop()
-        self._filter_timer = self.set_timer(0.2, self._start_refresh)
+        self._entries = self._filtered(self._all_entries)
+        self._render_roster()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         actions = {
-            "memory_refresh": self.action_refresh,
+            "memory_agent_view": self.action_agent_view,
             "memory_inspect": self.action_inspect_disabled,
             "memory_toggle": self.action_toggle_enabled,
             "memory_new": self.action_create,
@@ -548,22 +440,68 @@ class MemoryScreen(ModalScreen[None]):
     def action_refresh(self) -> None:
         if self._busy or self._editing:
             return
-        selected = self._selected_reference
+        self._start_refresh(select_reference=self._selected_reference, from_disk=True)
+
+    def action_agent_view(self) -> None:
+        if self._busy or self._editing:
+            return
+        if self._agent_view:
+            self._exit_agent_view()
+            if self._loaded_entry is not None:
+                self._render_entry(self._loaded_entry)
+            else:
+                self._start_refresh()
+            return
+        self._work_generation += 1
+        generation = self._work_generation
         self._set_busy(True)
         self.run_worker(
-            self._refresh_from_disk(selected),
-            name="Refresh project memory from disk",
-            group="memory-screen-refresh",
+            self._load_agent_view(generation),
+            name="Preview agent memory context",
+            group="memory-screen-read",
             exclusive=True,
         )
 
-    async def _refresh_from_disk(self, selected: str | None) -> None:
+    async def _load_agent_view(self, generation: int) -> None:
         try:
-            await asyncio.to_thread(self._manager.refresh)
-        except Exception as error:
-            self._render_error(str(error))
+            context = await asyncio.to_thread(self._manager.prompt_context)
+        except MemoryUnavailableError as error:
+            if generation != self._work_generation:
+                return
+            self._set_busy(False)
+            self._enter_agent_view(
+                "Agent startup context · none",
+                f"The agent receives no memory context: {error}",
+                "",
+            )
             return
-        self._start_refresh(select_reference=selected)
+        except Exception as error:
+            if generation == self._work_generation:
+                self._set_busy(False)
+                self.query_one("#memory_notice", Static).update(str(error))
+            return
+        if generation != self._work_generation:
+            return
+        self._set_busy(False)
+        truncated = " · truncated" if context.truncated else ""
+        self._enter_agent_view(
+            f"Agent startup context · {context.line_count} lines · {context.byte_count:,} bytes{truncated}",
+            context.text,
+            " · ".join(context.warnings),
+        )
+
+    def _enter_agent_view(self, metadata: str, preview: str, notice: str) -> None:
+        self._agent_view = True
+        self.query_one("#memory_agent_view", Button).label = "Entries"
+        self.query_one("#memory_metadata", Static).update(metadata)
+        self.query_one("#memory_preview", Markdown).update(preview)
+        self.query_one("#memory_notice", Static).update(notice)
+
+    def _exit_agent_view(self) -> None:
+        if not self._agent_view:
+            return
+        self._agent_view = False
+        self.query_one("#memory_agent_view", Button).label = "Agent view"
 
     def action_toggle_enabled(self) -> None:
         status = self._status
@@ -582,8 +520,7 @@ class MemoryScreen(ModalScreen[None]):
 
     async def _set_enabled(self, enabled: bool, *, create_after: bool) -> None:
         try:
-            await asyncio.to_thread(self._manager.set_enabled, enabled)
-            await self._owner._refresh_agent_memory()
+            await self._owner._apply_memory_enabled(enabled)
         except Exception as error:
             self._render_error(str(error))
             return
@@ -595,7 +532,7 @@ class MemoryScreen(ModalScreen[None]):
             self._start_refresh()
 
     def action_create(self) -> None:
-        if self._owner._memory_mutation_blocked():
+        if self._busy or self._editing or self._owner._memory_mutation_blocked():
             return
         if self._status is not None and not self._status.enabled:
 
@@ -625,8 +562,9 @@ class MemoryScreen(ModalScreen[None]):
 
     def action_edit(self) -> None:
         entry = self._loaded_entry
-        if entry is None or self._owner._memory_mutation_blocked():
+        if self._busy or self._editing or entry is None or self._owner._memory_mutation_blocked():
             return
+        self._exit_agent_view()
         self._stale_conflict = False
         self.query_one("#memory_reference", Input).value = entry.reference
         self.query_one("#memory_editor", TextArea).text = entry.content or ""
@@ -771,6 +709,7 @@ class MemoryScreen(ModalScreen[None]):
                 "Delete memory entry",
                 f"Delete {reference} from private project memory?",
                 "Delete entry",
+                danger=True,
             ),
             delete_after_confirmation,
         )
@@ -798,38 +737,12 @@ class MemoryScreen(ModalScreen[None]):
         self._start_refresh()
 
     def action_clear(self) -> None:
-        if self._owner._memory_mutation_blocked():
+        if self._busy or self._editing:
             return
+        self._owner.confirm_memory_clear(on_done=self._after_clear)
 
-        def clear_after_confirmation(confirmed: bool | None) -> None:
-            if not confirmed:
-                return
-            self._set_busy(True)
-            self.run_worker(
-                self._clear(),
-                name="Clear project memory",
-                group="memory-screen-mutation",
-                exclusive=True,
-            )
-
-        self._owner.push_screen(
-            ConfirmSettingsActionScreen(
-                "Clear project memory",
-                "Delete every entry in this private memory bank? This cannot be undone.",
-                "Clear memory",
-            ),
-            clear_after_confirmation,
-        )
-
-    async def _clear(self) -> None:
-        try:
-            deleted = await asyncio.to_thread(self._manager.clear, allow_disabled=True)
-            await self._owner._refresh_agent_memory()
-        except Exception as error:
-            self._render_error(str(error))
-            return
+    def _after_clear(self, _deleted: int) -> None:
         self._loaded_entry = None
-        self._owner.notify(f"Cleared {deleted} private memory entries.")
         self._start_refresh()
 
     def action_close(self) -> None:
@@ -846,6 +759,7 @@ class MemoryScreen(ModalScreen[None]):
                 "Discard unsaved memory changes",
                 "Close Project Memory and discard the current editor contents?",
                 "Discard changes",
+                danger=True,
             ),
             close_after_confirmation,
         )

@@ -121,7 +121,11 @@ class GeneralAgent(BaseAgent):
         if mode_value == AgentMode.CLI.value:
             tool_exclusions.extend(["build_backend", "build_frontend"])
 
-        tool_config = ToolCollectionConfig(tool_exclusions=tool_exclusions, include_memory_tools=True)
+        tool_config = ToolCollectionConfig(
+            tool_exclusions=tool_exclusions,
+            include_memory_tools=True,
+            memory_write_access=True,
+        )
 
         self.tool_collection = ToolCollection(
             self.project_path,
