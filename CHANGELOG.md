@@ -6,16 +6,37 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.19.0 - 2026-07-16
+
+### Added
+
+- Added private, project-scoped memory outside repositories, with bounded
+  Markdown storage, model tools, startup context, linked-worktree sharing,
+  `/memory` commands, settings controls, and a TUI browser and editor.
+
 ### Changed
 
 - Pinned the MCP SDK to stable `1.28.1` and stopped globally enabling
   prerelease dependency resolution.
+- Added the stable-lock `filelock` dependency required by project memory.
+
+### Removed
+
+- Stopped loading or modifying legacy repository `AGENT_MEMORY.md` files.
+  Existing files are not automatically migrated to private project memory.
 
 ### Fixed
 
+- Preserved separate OpenAI and ChatGPT Responses reasoning-summary parts so
+  thinking summaries render as clean, separated lines.
 - Fixed MCP 1.x stream, timeout, and camelCase result compatibility, and now
   report nested transport failures as credential-safe tool errors instead of
   opaque `TaskGroup` messages.
+
+### Security
+
+- Sanitized terminal-rendered control sequences and unsafe hyperlink metadata
+  while preserving raw model, tool, and session content internally.
 
 ## 0.18.0 - 2026-07-14
 
