@@ -108,6 +108,10 @@ class MemoryScreen(ModalScreen[None]):
         self._start_refresh()
 
     def on_unmount(self) -> None:
+        # Invalidate in-flight workers before Textual detaches our child widgets.
+        # Thread-backed work may finish after cancellation and must not render into
+        # an unmounted screen.
+        self._work_generation += 1
         if self._owner._memory_screen is self:
             self._owner._memory_screen = None
 

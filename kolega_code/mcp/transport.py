@@ -5,8 +5,9 @@ from __future__ import annotations
 import contextlib
 import inspect
 import os
+from datetime import timedelta
 from pathlib import Path
-from typing import Optional, TextIO
+from typing import Any, Optional, TextIO
 
 import httpx
 
@@ -57,9 +58,11 @@ async def open_mcp_session(
         errlog_context = contextlib.nullcontext(stdio_errlog) if stdio_errlog is not None else open(os.devnull, "w")
         with errlog_context as errlog:
             async with stdio_client(params, errlog=errlog) as streams:
-                read_stream, write_stream = streams
+                read_stream, write_stream = streams[:2]
                 async with ClientSession(
-                    read_stream, write_stream, read_timeout_seconds=server.timeout_seconds
+                    read_stream,
+                    write_stream,
+                    read_timeout_seconds=timedelta(seconds=server.timeout_seconds),
                 ) as session:
                     await session.initialize()
                     yield session
@@ -76,16 +79,24 @@ async def open_mcp_session(
             sse_read_timeout=server.sse_read_timeout_seconds,
             auth=auth,
         ) as streams:
-            read_stream, write_stream = streams
-            async with ClientSession(read_stream, write_stream, read_timeout_seconds=server.timeout_seconds) as session:
+            read_stream, write_stream = streams[:2]
+            async with ClientSession(
+                read_stream,
+                write_stream,
+                read_timeout_seconds=timedelta(seconds=server.timeout_seconds),
+            ) as session:
                 await session.initialize()
                 yield session
         return
 
     if server.transport == "streamable_http":
         async with _streamable_http_client(server, auth=auth) as streams:
-            read_stream, write_stream = streams
-            async with ClientSession(read_stream, write_stream, read_timeout_seconds=server.timeout_seconds) as session:
+            read_stream, write_stream = streams[:2]
+            async with ClientSession(
+                read_stream,
+                write_stream,
+                read_timeout_seconds=timedelta(seconds=server.timeout_seconds),
+            ) as session:
                 await session.initialize()
                 yield session
         return
@@ -101,14 +112,15 @@ async def _streamable_http_client(server: MCPServerConfig, *, auth=None):
     except ImportError:  # pragma: no cover - older SDK compatibility
         from mcp.client.streamable_http import create_mcp_http_client, streamablehttp_client as streamable_http_client  # pyright: ignore[reportPrivateImportUsage, reportAttributeAccessIssue]
 
-    signature = inspect.signature(streamable_http_client)
+    client_context_factory: Any = streamable_http_client
+    signature = inspect.signature(client_context_factory)
     params = signature.parameters
     timeout = httpx.Timeout(server.timeout_seconds)
 
     if "http_client" in params:
         client = create_mcp_http_client(headers=server.headers or None, timeout=timeout, auth=auth)
         async with client:
-            async with streamable_http_client(server.url or "", http_client=client) as streams:
+            async with client_context_factory(server.url or "", http_client=client) as streams:
                 yield streams
         return
 
@@ -119,5 +131,5 @@ async def _streamable_http_client(server: MCPServerConfig, *, auth=None):
         kwargs["timeout"] = server.timeout_seconds
     if "auth" in params:
         kwargs["auth"] = auth
-    async with streamable_http_client(server.url or "", **kwargs) as streams:  # pragma: no cover - older SDK
+    async with client_context_factory(server.url or "", **kwargs) as streams:  # pragma: no cover - older SDK
         yield streams

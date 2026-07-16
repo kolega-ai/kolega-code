@@ -39,7 +39,7 @@ dependencies = [
     "lxml-html-clean==0.4.5",
     "markdownify==1.2.3",
     "markitdown[docx,pdf,pptx,xls,xlsx]==0.1.6",
-    "mcp>=1.21.2",
+    "mcp==1.28.1",
     "nest-asyncio==1.6.0",
     "openai==1.109.1",
     "packaging==25.0",
@@ -102,7 +102,6 @@ line-length = 120
 target-version = "py311"
 
 [tool.uv]
-prerelease = "allow"
 exclude-newer = "1 week"
 
 [tool.pyright]

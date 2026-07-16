@@ -238,7 +238,13 @@ async def test_memory_screen_saves_complete_content_with_last_write_wins(
         for _ in range(40):
             await pilot.pause(0.025)
             saved = app.memory_manager.read_entry("MEMORY.md")
-            if saved.content == "# My unsaved edit\n" and not screen._editing:
+            loaded = screen._loaded_entry
+            if (
+                saved.content == "# My unsaved edit\n"
+                and not screen._editing
+                and loaded is not None
+                and loaded.content == "# My unsaved edit\n"
+            ):
                 break
 
         assert screen._editing is False
@@ -651,6 +657,11 @@ async def test_settings_save_does_not_report_success_when_memory_apply_fails(
             return False
 
         notices: list[str] = []
+        monkeypatch.setattr(
+            app,
+            "_apply_settings_candidate",
+            AsyncMock(return_value=(True, "")),
+        )
         monkeypatch.setattr(screen, "apply_memory_draft", fail_memory_apply)
         monkeypatch.setattr(app, "_notify_user", lambda message, **_kwargs: notices.append(message))
 
