@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 
 from kolega_code.agent.baseagent import BaseAgent
 from kolega_code.agent.errors import MaxAgentIterationsExceeded
+from kolega_code.agent.prompt_provider import AgentMode, AgentType
 from kolega_code.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
 from kolega_code.events import AgentConnectionManager
 from kolega_code.llm.exceptions import (
@@ -69,20 +70,12 @@ class TestBaseAgent:
         assert context.project_guidance_file == ""
         assert context.project_guidance == ""
 
-    def test_build_prompt_context_loads_agent_memory(self, base_agent, tmp_path):
-        (tmp_path / "AGENT_MEMORY.md").write_text("Remember this detail", encoding="utf-8")
+    def test_build_prompt_context_ignores_removed_agent_memory_file(self, base_agent, tmp_path):
+        legacy_content = "Legacy repository memory must not reach the model."
+        (tmp_path / "AGENT_MEMORY.md").write_text(legacy_content, encoding="utf-8")
 
         context = base_agent.build_prompt_context()
+        prompt = base_agent.build_agent_system_prompt(AgentType.CODER, AgentMode.CLI)
 
-        assert context.agent_memory_file == "AGENT_MEMORY.md"
-        assert context.agent_memory == "Remember this detail"
-
-    def test_build_prompt_context_still_withholds_secrets_from_legacy_agent_memory(self, base_agent, tmp_path):
-        secret = "API_KEY=supersecretvalue123"
-        (tmp_path / "AGENT_MEMORY.md").write_text(secret, encoding="utf-8")
-
-        context = base_agent.build_prompt_context()
-
-        assert context.agent_memory_file == "AGENT_MEMORY.md"
-        assert secret not in context.agent_memory
-        assert "withheld" in context.agent_memory
+        assert not hasattr(context, "agent_memory")
+        assert legacy_content not in prompt

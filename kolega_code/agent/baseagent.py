@@ -67,7 +67,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 PROJECT_GUIDANCE_FILES = ("AGENTS.md", "KOLEGA.md")
-AGENT_MEMORY_FILE = "AGENT_MEMORY.md"
 
 # System prompt for `prompt`/`agent` lifecycle hooks: the model's only job is a
 # yes/no decision returned as a compact JSON object.
@@ -566,20 +565,6 @@ class BaseAgent(LogMixin):
                 return guidance_file, ""
         return "", ""
 
-    def _load_agent_memory(self) -> tuple[str, str]:
-        """Return deprecated repository memory, withholding probable secrets."""
-        if not self.filesystem.exists(AGENT_MEMORY_FILE):
-            return "", ""
-        try:
-            content = self.filesystem.read_text(AGENT_MEMORY_FILE)
-            from kolega_code.security import has_probable_secret
-
-            if has_probable_secret(content):
-                content = "[Content withheld because this deprecated repository memory contains a probable secret.]"
-            return AGENT_MEMORY_FILE, content
-        except Exception:
-            return AGENT_MEMORY_FILE, ""
-
     def build_prompt_context(self) -> PromptContext:
         """Build PromptContext from agent state."""
         import platform
@@ -588,7 +573,6 @@ class BaseAgent(LogMixin):
         is_git_repo = self.filesystem.exists(".git") and self.filesystem.is_dir(".git")
 
         project_guidance_file, project_guidance = self._load_project_guidance()
-        agent_memory_file, agent_memory = self._load_agent_memory()
         private_memory = ""
         if self.memory_manager is not None:
             try:
@@ -607,8 +591,6 @@ class BaseAgent(LogMixin):
             available_ports=self.available_ports,
             project_guidance=project_guidance,
             project_guidance_file=project_guidance_file,
-            agent_memory=agent_memory,
-            agent_memory_file=agent_memory_file,
             kolega_md=project_guidance,
             workspace_id=self.workspace_id,
             workspace_environment_variables=self.workspace_env_var_descriptions,

@@ -100,10 +100,6 @@ def detect_secrets(
     return tuple(result)
 
 
-def has_probable_secret(text: str) -> bool:
-    return bool(detect_secrets(text))
-
-
 def redact_secrets(
     text: str,
     extra_values: Iterable[str] | None = None,

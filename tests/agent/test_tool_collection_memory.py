@@ -65,7 +65,6 @@ async def test_private_memory_facade_round_trips_credential_like_content(tmp_pat
 
     assert "Project memory updated" in result
     assert content in read_result
-    assert not (project / "AGENT_MEMORY.md").exists()
     assert manager.read_entry("MEMORY.md").content == content
     caller._initialize_system_prompt.assert_called_once()
 

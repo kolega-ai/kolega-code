@@ -143,16 +143,10 @@ Project memory is distinct from:
 
 - `AGENTS.md`, `KOLEGA.md`, and prompt overrides: repository-controlled project
   instructions;
-- `AGENT_MEMORY.md`: deprecated repository-controlled context that remains
-  read-only and separately withholds probable-secret content; Kolega Code never
-  imports, updates, deletes, or automatically migrates it;
 - host-provided `workspace_memories`: a separately labelled host context;
 - session history: the messages and tool results used to resume a conversation;
   and
 - the Planning tab's task list: current work state, not durable knowledge.
-
-If useful, manually copy selected non-secret facts from `AGENT_MEMORY.md`; there
-is no automatic or reverse migration.
 
 ## Pluggable backends
 

@@ -57,8 +57,6 @@ class PromptContext:
     available_ports: str = "9001-9999"
     project_guidance: str = ""
     project_guidance_file: str = ""
-    agent_memory: str = ""
-    agent_memory_file: str = ""
     private_memory: str = ""
     kolega_md: str = ""
     workspace_id: str = ""
@@ -77,8 +75,6 @@ class PromptContext:
             self.project_guidance = self.kolega_md
             if not self.project_guidance_file:
                 self.project_guidance_file = "KOLEGA.md"
-        if self.agent_memory and not self.agent_memory_file:
-            self.agent_memory_file = "AGENT_MEMORY.md"
 
 
 class PromptProvider:
@@ -215,16 +211,6 @@ class PromptProvider:
                 "Treat it as local project guidance:\n\n"
                 "```markdown\n"
                 f"{context.project_guidance}\n"
-                "```"
-            )
-
-        if context.agent_memory:
-            sections.append(
-                "## Deprecated Repository Agent Memory (read-only)\n\n"
-                f"The project directory contains `{context.agent_memory_file}`. "
-                "This repository/user-controlled legacy context is deprecated and is not private project memory:\n\n"
-                "```markdown\n"
-                f"{context.agent_memory}\n"
                 "```"
             )
 

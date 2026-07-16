@@ -149,8 +149,6 @@ def placeholder_dump_context(project_path: str | Path, base_context: Optional[Pr
         workspace_environment_variables={},
         project_guidance="",
         project_guidance_file="",
-        agent_memory="",
-        agent_memory_file="",
         memories=[],
     )
 
@@ -312,7 +310,6 @@ def standalone_validation_context(project_path: str | Path) -> PromptContext:
     """Build offline prompt context for prompt validation commands."""
     project = Path(project_path).expanduser().resolve()
     project_guidance_file, project_guidance = _read_first_existing_project_file(project, ("AGENTS.md", "KOLEGA.md"))
-    agent_memory_file, agent_memory = _read_first_existing_project_file(project, ("AGENT_MEMORY.md",))
     return PromptContext(
         system_name="Kolega Code",
         project_path=str(project),
@@ -323,8 +320,6 @@ def standalone_validation_context(project_path: str | Path) -> PromptContext:
         available_ports="9001-9999",
         project_guidance=project_guidance,
         project_guidance_file=project_guidance_file,
-        agent_memory=agent_memory,
-        agent_memory_file=agent_memory_file,
         kolega_md=project_guidance,
         workspace_id="",
         workspace_environment_variables={},
