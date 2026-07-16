@@ -66,6 +66,10 @@ class MemoryTool:
         return await self.invoke(binding, **inputs)
 
     async def invoke(self, binding: MemoryToolBinding, **inputs: Any) -> str:
+        if binding.name == "list_memory":
+            query = inputs.get("query")
+            if isinstance(query, str):
+                inputs["query"] = query.strip() or None
         try:
             result = await asyncio.to_thread(binding.handler, **inputs)
         except (MemoryAccessError, MemorySafetyError, MemoryUnavailableError) as exc:

@@ -211,6 +211,8 @@ async def test_list_memory_output_formats_entries(tmp_path: Path) -> None:
     tool = MemoryTool(manager, _caller(manager))
 
     assert await tool.list_memory() == "No memory entries found."
+    assert await tool.list_memory("") == "No memory entries found."
+    assert await tool.list_memory(" \t ") == "No memory entries found."
     assert await tool.list_memory("missing") == "No memory entries found matching 'missing'."
 
     index_content = "# Project Index\nBuild links"
@@ -236,7 +238,7 @@ async def test_list_memory_output_formats_entries(tmp_path: Path) -> None:
             (f"- topics/plain.md ({len(plain_content.encode()):,} bytes, modified {dates['topics/plain.md']})"),
         ]
     )
-    assert await tool.list_memory("bUiLd") == "\n".join(
+    assert await tool.list_memory(" bUiLd ") == "\n".join(
         [
             "2 memory entries matching 'bUiLd':",
             f"- MEMORY.md — Project Index ({len(index_content.encode()):,} bytes, modified {dates['MEMORY.md']})",
