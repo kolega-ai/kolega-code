@@ -69,6 +69,7 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
             "/goal": self._command_goal,
             "/prompts": self._command_prompts,
             "/queue-clear": self._command_queue_clear,
+            "/rewind": self._command_rewind,
             "/theme": self._command_theme,
             "/copy": self._command_copy,
             "/diagnostics": self._command_diagnostics,
@@ -331,7 +332,10 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
         # Kick off the first work turn; _process_message runs the goal loop after it.
         prompt = build_goal_task_prompt(condition_text)
         self.agent_worker = self.run_worker(
-            self._process_message(prompt), name="kolega-turn", group="turns", exclusive=True
+            self._process_message(prompt, turn_label=f"Goal: {condition_text}"),
+            name="kolega-turn",
+            group="turns",
+            exclusive=True,
         )
 
     async def _command_prompts(self, args: str) -> None:
@@ -634,7 +638,7 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
         transcript = "/init" if not args else f"/init {args}"
         self._add_conversation_entry(tui_state.ConversationEntry(kind="user", content=transcript))
         self.agent_worker = self.run_worker(
-            self._process_message(prompt), name="kolega-turn", group="turns", exclusive=True
+            self._process_message(prompt, turn_label=transcript), name="kolega-turn", group="turns", exclusive=True
         )
 
     async def _command_permissions(self, args: str) -> None:
@@ -1180,6 +1184,26 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
         message = messages.QUEUE_CLEARED.format(count=count)
         self._add_conversation_entry(tui_state.ConversationEntry(kind="system", content=message))
         self._notify_user(message)
+
+    async def _command_rewind(self, args: str) -> None:
+        if not self._changes_available():
+            self._notify_user(messages.REWIND_UNAVAILABLE, severity="warning")
+            return
+        ladder = self._changes_baseline_ladder()
+        if len(ladder) < 2:
+            self._notify_user(messages.REWIND_NO_CHECKPOINTS)
+            return
+        turns_back = 1
+        if args.strip():
+            try:
+                turns_back = max(1, int(args.strip()))
+            except ValueError:
+                self._add_conversation_entry(tui_state.ConversationEntry(kind="system", content=messages.REWIND_USAGE))
+                return
+        # Clamp: asking for more turns back than exist lands on Turn 1, never
+        # silently on the session-start baseline.
+        baseline = ladder[max(1, len(ladder) - turns_back)]
+        self.action_open_changes(baseline_id=baseline)
 
     async def _command_quit(self, args: str) -> None:
         await self.action_quit()

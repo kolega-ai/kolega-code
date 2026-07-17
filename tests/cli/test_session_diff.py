@@ -152,7 +152,7 @@ def test_second_refresh_reuses_cached_diff_without_file_work(tmp_path: Path, mon
     tracker.capture_baseline()
     (project / "a.py").write_text("new content\n", encoding="utf-8")
 
-    head_calls = _count_method_calls(monkeypatch, tracker, "_head_baseline")
+    head_calls = _count_method_calls(monkeypatch, tracker, "_commit_baseline")
     snapshot_calls = _count_method_calls(monkeypatch, tracker, "_snapshot_repo_path")
     first = tracker.refresh()
     assert first
@@ -190,7 +190,7 @@ def test_refresh_recomputes_when_file_stat_signature_changes(tmp_path: Path, mon
     assert any(row[1] == "+second content" for row in change.preview["lines"])
 
 
-def test_committing_mid_session_invalidates_head_backed_cached_diff(tmp_path: Path) -> None:
+def test_committing_mid_session_keeps_changes_visible(tmp_path: Path) -> None:
     project = tmp_path / "repo"
     project.mkdir()
     _init_repo(project)
@@ -205,7 +205,13 @@ def test_committing_mid_session_invalidates_head_backed_cached_diff(tmp_path: Pa
 
     _commit_all(project, "commit modified file")
 
-    assert tracker.refresh(["a.py"]) == []
+    # The checkpoint pins the session-start HEAD, so committing does not hide
+    # the change; it stays visible (and restorable) via the committed-paths scan.
+    change = _by_path(tracker.refresh(["a.py"]))["a.py"]
+    assert change.status == "modified"
+    assert change.preview is not None
+    lines = [row[1] for row in change.preview["lines"] if row[0] in {"add", "del"}]
+    assert lines == ["-old", "+new content"]
 
 
 def test_deleted_file_second_refresh_uses_cached_diff(tmp_path: Path, monkeypatch) -> None:
@@ -220,7 +226,7 @@ def test_deleted_file_second_refresh_uses_cached_diff(tmp_path: Path, monkeypatc
     tracker.capture_baseline()
     (project / "a.py").unlink()
 
-    head_calls = _count_method_calls(monkeypatch, tracker, "_head_baseline")
+    head_calls = _count_method_calls(monkeypatch, tracker, "_commit_baseline")
     first = _by_path(tracker.refresh())["a.py"]
     assert first.status == "deleted"
 
@@ -243,7 +249,7 @@ def test_added_binary_file_second_refresh_uses_cached_diff(tmp_path: Path, monke
     tracker.capture_baseline()
     (project / "bin.dat").write_bytes(b"abc\x00def")
 
-    head_calls = _count_method_calls(monkeypatch, tracker, "_head_baseline")
+    head_calls = _count_method_calls(monkeypatch, tracker, "_commit_baseline")
     first = _by_path(tracker.refresh())["bin.dat"]
     assert first.status == "added"
     assert first.preview is None
@@ -287,7 +293,7 @@ def test_clean_event_paths_second_refresh_skips_head_baseline_calls(tmp_path: Pa
     assert tracker is not None
     tracker.capture_baseline()
 
-    head_calls = _count_method_calls(monkeypatch, tracker, "_head_baseline")
+    head_calls = _count_method_calls(monkeypatch, tracker, "_commit_baseline")
     assert tracker.refresh(event_paths) == []
     assert head_calls["count"] == len(event_paths)
 

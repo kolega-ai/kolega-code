@@ -9,7 +9,7 @@ import json
 import os
 import threading
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Optional, cast
@@ -102,6 +102,63 @@ class SessionEvent:
             payload=data["payload"],
             artifacts=artifacts,
         )
+
+
+@dataclass(frozen=True)
+class TurnSummary:
+    """One recorded turn in the current context epoch."""
+
+    turn_id: str
+    boundary_seq: int  # seq of the turn.started event; the rewind truncation key
+    started_at: str
+    status: str  # completed | failed | cancelled | open
+    user_text: str
+
+
+@dataclass(frozen=True)
+class RewindOutcome:
+    target_turn_id: str
+    boundary_seq: int
+    rewound_turn_ids: list[str]
+    user_message_text: str
+
+
+def collect_epoch_turns(events: Iterable[SessionEvent], epoch_id: str) -> list[TurnSummary]:
+    """Fold turn events within an epoch, applying prior rewinds."""
+    turns: list[TurnSummary] = []
+    for event in events:
+        if event.epoch_id != epoch_id:
+            continue
+        if event.event_type == "turn.started":
+            turns.append(
+                TurnSummary(
+                    turn_id=event.turn_id or "",
+                    boundary_seq=event.seq,
+                    started_at=event.timestamp,
+                    status="open",
+                    user_text=_turn_user_text(event.payload.get("message")),
+                )
+            )
+        elif event.event_type in TERMINAL_TURN_EVENTS:
+            for index in range(len(turns) - 1, -1, -1):
+                if turns[index].turn_id == event.turn_id:
+                    turns[index] = replace(turns[index], status=event.event_type.split(".", 1)[1])
+                    break
+        elif event.event_type == "context.rewound":
+            boundary = event.payload.get("boundary_seq")
+            if isinstance(boundary, int):
+                turns = [turn for turn in turns if turn.boundary_seq < boundary]
+    return turns
+
+
+def _turn_user_text(message: Any) -> str:
+    if not isinstance(message, dict):
+        return ""
+    content = message.get("content")
+    if isinstance(content, str):
+        return content
+    parts = [str(block.get("text") or "") for block in _message_blocks(message) if block.get("type") == "text"]
+    return "\n".join(part for part in parts if part)
 
 
 class SessionJournal:
@@ -524,6 +581,38 @@ class SessionRecorder:
             if self.current_turn_id is not None:
                 raise SessionJournalError("Cannot reset context while a session turn is open")
             return self.journal.start_epoch(reason)
+
+    def list_rewindable_turns(self) -> list[TurnSummary]:
+        with self._lock:
+            events = self.journal.read_events(repair_tail=True)
+            return collect_epoch_turns(events, self.journal.epoch_id)
+
+    def record_rewind(self, target_turn_id: str) -> RewindOutcome:
+        """Append the rewind event truncating the target turn and everything after it."""
+        with self._lock:
+            if self.current_turn_id is not None:
+                raise SessionJournalError("Cannot rewind while a session turn is open")
+            events = self.journal.read_events(repair_tail=True)
+            turns = collect_epoch_turns(events, self.journal.epoch_id)
+            target = next((turn for turn in turns if turn.turn_id == target_turn_id), None)
+            if target is None:
+                raise SessionJournalError(f"Turn {target_turn_id} is not rewindable in the current context epoch")
+            rewound = [turn.turn_id for turn in turns if turn.boundary_seq >= target.boundary_seq]
+            self.journal.append(
+                "context.rewound",
+                actor="user",
+                payload={
+                    "target_turn_id": target.turn_id,
+                    "boundary_seq": target.boundary_seq,
+                    "rewound_turn_ids": rewound,
+                },
+            )
+            return RewindOutcome(
+                target_turn_id=target.turn_id,
+                boundary_seq=target.boundary_seq,
+                rewound_turn_ids=rewound,
+                user_message_text=target.user_text,
+            )
 
     def recover_interrupted_turn(self) -> bool:
         """Close one interrupted turn without re-running tools or continuing it."""

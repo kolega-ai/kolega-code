@@ -347,6 +347,10 @@ class SnapshotService:
             raise SnapshotError(f"Snapshot not found: {snapshot_id}")
         return SnapshotRecord.from_dict(json.loads(path.read_text(encoding="utf-8")))
 
+    def read_blob(self, state: FileState) -> bytes:
+        """Return the stored bytes for a captured file state."""
+        return self._read_blob(state)
+
     def create_pending_workspace_edit(
         self,
         *,
