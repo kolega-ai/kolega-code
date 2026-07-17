@@ -13,6 +13,8 @@ def test_model_specs_expose_provider_specific_thinking_efforts() -> None:
     assert default_thinking_effort("anthropic", "claude-fable-5") == "medium"
     assert thinking_effort_options("anthropic", "claude-sonnet-5") == ("low", "medium", "high", "xhigh", "max")
     assert default_thinking_effort("anthropic", "claude-sonnet-5") == "medium"
+    assert thinking_effort_options("moonshot", "kimi-k3") == ("max",)
+    assert default_thinking_effort("moonshot", "kimi-k3") == "max"
     assert thinking_effort_options("moonshot", "kimi-k2.7-code") == ("auto",)
     assert default_thinking_effort("moonshot", "kimi-k2.7-code") == "auto"
     assert thinking_effort_options("moonshot", "kimi-k2.6") == ("auto", "none")
@@ -27,6 +29,10 @@ def test_model_specs_expose_provider_specific_thinking_efforts() -> None:
     assert default_thinking_effort("zai", "glm-5.1") == "auto"
     assert thinking_effort_options("kimi_coding", "kimi-for-coding") == ("auto", "none")
     assert default_thinking_effort("kimi_coding", "kimi-for-coding") == "auto"
+    assert thinking_effort_options("kimi_coding", "k3") == ("max",)
+    assert default_thinking_effort("kimi_coding", "k3") == "max"
+    assert thinking_effort_options("kimi_coding", "k3[1m]") == ("max",)
+    assert default_thinking_effort("kimi_coding", "k3[1m]") == "max"
     assert thinking_effort_options("fireworks", "accounts/fireworks/models/glm-5p2") == (
         "none",
         "low",
@@ -126,6 +132,26 @@ def test_moonshot_kimi_thinking_toggle_serialization() -> None:
     assert disabled_params == {"model": "kimi-k2.6", "thinking": {"type": "disabled"}}
 
 
+def test_moonshot_kimi_k3_reasoning_effort_serialization() -> None:
+    provider = AnthropicProvider(api_key="test-key", provider_name="moonshot")
+
+    params = {"model": "kimi-k3"}
+    provider._apply_thinking_params(params, GenerationParams(thinking="max"))
+
+    assert params == {
+        "model": "kimi-k3",
+        "extra_body": {"reasoning_effort": "max"},
+    }
+
+
+def test_moonshot_kimi_k3_omits_fixed_temperature() -> None:
+    provider = AnthropicProvider(api_key="test-key", provider_name="moonshot")
+    params = provider._prepare_generation_params(GenerationParams(temperature=1.0))
+    params["model"] = "kimi-k3"
+
+    assert "temperature" not in provider._sanitize_generation_params(params)
+
+
 def test_kimi_coding_thinking_toggle_serialization() -> None:
     provider = AnthropicProvider(api_key="test-key", provider_name="kimi_coding")
 
@@ -136,6 +162,19 @@ def test_kimi_coding_thinking_toggle_serialization() -> None:
     disabled = {"model": "kimi-for-coding"}
     provider._apply_thinking_params(disabled, GenerationParams(thinking="none"))
     assert disabled == {"model": "kimi-for-coding", "thinking": {"type": "disabled"}}
+
+
+@pytest.mark.parametrize("model", ["k3", "k3[1m]"])
+def test_kimi_coding_k3_reasoning_effort_serialization(model: str) -> None:
+    provider = AnthropicProvider(api_key="test-key", provider_name="kimi_coding")
+
+    params = {"model": model}
+    provider._apply_thinking_params(params, GenerationParams(thinking="max"))
+
+    assert params == {
+        "model": model,
+        "output_config": {"effort": "max"},
+    }
 
 
 def test_fireworks_openai_reasoning_effort_serialization() -> None:
@@ -202,3 +241,10 @@ def test_kimi_k27_rejects_disabled_thinking_effort() -> None:
 
     with pytest.raises(ValueError, match="Unsupported thinking effort"):
         client._prepare_thinking_param("none", model="kimi-k2.7-code")
+
+
+def test_kimi_k3_rejects_unsupported_thinking_effort() -> None:
+    client = LLMClient(provider="moonshot", api_key="test-key")
+
+    with pytest.raises(ValueError, match="Unsupported thinking effort"):
+        client._prepare_thinking_param("high", model="kimi-k3")

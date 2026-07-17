@@ -301,8 +301,8 @@ def test_build_agent_config_uses_stored_kimi_for_model_slots(tmp_path: Path) -> 
     assert config.fast_config.model == UI_DEFAULT_MODEL
     assert config.thinking_config.provider == ModelProvider.MOONSHOT
     assert config.thinking_config.model == UI_DEFAULT_MODEL
-    assert config.long_context_config.thinking_effort == "auto"
-    assert config.thinking_config.thinking_effort == "auto"
+    assert config.long_context_config.thinking_effort == "max"
+    assert config.thinking_config.thinking_effort == "max"
     assert config.moonshot_api_key == "moonshot-key"
 
 

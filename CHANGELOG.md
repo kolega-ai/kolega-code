@@ -6,6 +6,12 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+### Added
+
+- Added Kimi K3 as the default Moonshot model, with native vision, a 1M-token
+  context window, fixed sampling parameters, and `max` reasoning effort.
+- Added Kimi Coding Plan's tier-specific `k3` and `k3[1m]` model IDs.
+
 ## 0.19.0 - 2026-07-16
 
 ### Added

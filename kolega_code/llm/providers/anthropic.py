@@ -169,9 +169,9 @@ class AnthropicProvider(BaseLLMProvider):
         )
 
     def _sanitize_generation_params(self, generation_params: Dict[str, Any]) -> Dict[str, Any]:
-        """Remove parameters unsupported by the selected Anthropic model."""
+        """Remove parameters unsupported by the selected model."""
         model = generation_params.get("model")
-        if self.provider_name != "anthropic" or not isinstance(model, str):
+        if not isinstance(model, str):
             return generation_params
 
         try:
@@ -488,6 +488,11 @@ class AnthropicProvider(BaseLLMProvider):
         response = await self.async_client.messages.create(
             messages=messages.to_anthropic(),
             system=cast(Any, [c.to_anthropic() for c in cast(List[ContentBlock], system.content)]),
+            # Passing the configured timeout explicitly bypasses the Anthropic
+            # SDK's Claude-specific max_tokens heuristic, which otherwise
+            # rejects compatible models such as Kimi K3 before sending the
+            # request when their documented output allowance exceeds ~21K.
+            timeout=self.async_client.timeout,
             **generation_params,
         )
         message = Message.from_anthropic(response)

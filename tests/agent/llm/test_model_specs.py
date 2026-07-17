@@ -48,6 +48,19 @@ def test_grok_45_model_specs():
     assert specs["thinking_effort"].mode == "openai_reasoning_effort"
 
 
+def test_kimi_k3_model_specs():
+    specs = get_model_specs("moonshot", "kimi-k3")
+
+    assert specs["context_length"] == 1048576
+    assert specs["max_completion_tokens"] == 131072
+    assert specs["default_temperature"] == 1.0
+    assert specs["supports_temperature"] is False
+    assert specs["supports_vision"] is True
+    assert specs["thinking_effort"].options == ("max",)
+    assert specs["thinking_effort"].default == "max"
+    assert specs["thinking_effort"].mode == "moonshot_reasoning_effort"
+
+
 def test_kimi_k27_code_model_specs():
     specs = get_model_specs("moonshot", "kimi-k2.7-code")
 
@@ -66,6 +79,26 @@ def test_kimi_k26_model_specs():
     assert specs["default_temperature"] == 1.0
     assert specs["thinking_effort"].options == ("auto", "none")
     assert specs["thinking_effort"].default == "auto"
+
+
+@pytest.mark.parametrize(
+    "model,context_length",
+    [
+        ("k3", 262144),
+        ("k3[1m]", 1048576),
+    ],
+)
+def test_kimi_coding_k3_model_specs(model, context_length):
+    specs = get_model_specs("kimi_coding", model)
+
+    assert specs["context_length"] == context_length
+    assert specs["max_completion_tokens"] == 131072
+    assert specs["default_temperature"] == 1.0
+    assert specs["supports_temperature"] is False
+    assert specs["supports_vision"] is True
+    assert specs["thinking_effort"].options == ("max",)
+    assert specs["thinking_effort"].default == "max"
+    assert specs["thinking_effort"].mode == "kimi_coding_effort"
 
 
 def test_deepseek_v4_pro_model_specs():

@@ -41,10 +41,13 @@ PROVIDER_LABELS: dict[ModelProvider, str] = {
 # model ID, so newly added models stay visible with zero extra maintenance.
 MODEL_LABELS: dict[str, str] = {
     # Moonshot
+    "kimi-k3": "Kimi K3",
     "kimi-k2.7-code": "Kimi K2.7 Code",
     "kimi-k2.7-code-highspeed": "Kimi K2.7 Code (High-Speed)",
     "kimi-k2.6": "Kimi K2.6",
     # Kimi Coding Plan
+    "k3": "Kimi K3 (256K)",
+    "k3[1m]": "Kimi K3 (1M)",
     "kimi-for-coding": "Kimi for Coding",
     # DeepSeek
     "deepseek-v4-pro": "DeepSeek V4 Pro",
@@ -125,7 +128,7 @@ MODEL_LABELS: dict[str, str] = {
 # Per-provider default model used when only a provider is selected. Covers the
 # "available set is everything, default pick is curated" split.
 PROVIDER_DEFAULT_MODEL: dict[ModelProvider, str] = {
-    ModelProvider.MOONSHOT: "kimi-k2.7-code",
+    ModelProvider.MOONSHOT: "kimi-k3",
     ModelProvider.DEEPSEEK: "deepseek-v4-pro",
     ModelProvider.ZAI: "glm-5.2",
     ModelProvider.KIMI_CODING: "kimi-for-coding",
@@ -141,7 +144,7 @@ PROVIDER_DEFAULT_MODEL: dict[ModelProvider, str] = {
 }
 
 UI_DEFAULT_PROVIDER = ModelProvider.MOONSHOT.value
-UI_DEFAULT_MODEL = "kimi-k2.7-code"
+UI_DEFAULT_MODEL = "kimi-k3"
 MOONSHOT_K26_MODEL = "kimi-k2.6"
 DEEPSEEK_DEFAULT_MODEL = "deepseek-v4-pro"
 

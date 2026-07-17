@@ -411,7 +411,7 @@ async def test_textual_app_mounts_with_stored_kimi_settings(
         assert isinstance(app.agent, FakeCoderAgent)
         assert app.agent.kwargs["config"].long_context_config.provider == ModelProvider.MOONSHOT
         assert app.agent.kwargs["config"].long_context_config.model == UI_DEFAULT_MODEL
-        assert app.agent.kwargs["config"].long_context_config.thinking_effort == "auto"
+        assert app.agent.kwargs["config"].long_context_config.thinking_effort == "max"
         composer = app.query_one("#composer", ChatComposer)
         assert composer.disabled is False
         assert composer.placeholder == "Ask Kolega Code..."
@@ -541,12 +541,12 @@ async def test_textual_app_saves_settings_and_builds_agent(
         assert app.agent.kwargs["config"].long_context_config.provider == ModelProvider.MOONSHOT
         assert app.agent.kwargs["config"].openai_api_key is None
         assert settings_store.load().get_api_key(UI_DEFAULT_PROVIDER) == "moonshot-key"
-        assert settings_store.load().active_thinking_effort == "auto"
+        assert settings_store.load().active_thinking_effort == "max"
         assert app.query_one("#composer", ChatComposer).disabled is False
         assert [entry.kind for entry in app.conversation_entries].count("startup") == 1
         startup = app.conversation_entries[0].content
         assert f"Model: {UI_DEFAULT_PROVIDER}/{UI_DEFAULT_MODEL}" in startup
-        assert "Thinking effort: auto" in startup
+        assert "Thinking effort: max" in startup
         assert "API key: present in local settings" in startup
 
 
@@ -590,9 +590,10 @@ async def test_textual_app_saves_deepseek_settings_and_builds_agent(
         assert isinstance(app.agent, FakeCoderAgent)
         assert app.agent.kwargs["config"].long_context_config.provider == ModelProvider.DEEPSEEK
         assert app.agent.kwargs["config"].long_context_config.model == DEEPSEEK_DEFAULT_MODEL
-        assert app.agent.kwargs["config"].long_context_config.thinking_effort == "high"
+        # K3's `max` remains selected because it is also valid for DeepSeek.
+        assert app.agent.kwargs["config"].long_context_config.thinking_effort == "max"
         assert settings_store.load().get_api_key(ModelProvider.DEEPSEEK.value) == "deepseek-key"
-        assert settings_store.load().active_thinking_effort == "high"
+        assert settings_store.load().active_thinking_effort == "max"
         assert app.query_one("#composer", ChatComposer).disabled is False
 
 
