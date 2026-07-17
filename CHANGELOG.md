@@ -6,6 +6,21 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.21.0 - 2026-07-17
+
+### Added
+
+- Added `/rewind [turns-back]` to restore workspace files and conversation to
+  their state before an earlier turn, with a pre-rewind snapshot captured for
+  recovery.
+
+### Fixed
+
+- Replaced the leftover lime text-selection color in the docs with a
+  theme-aware cyan.
+- Hardened diagnostics file writes to avoid a CodeQL clear-text-storage false
+  positive, creating log and sidecar files owner-only from the outset.
+
 ## 0.20.0 - 2026-07-17
 
 ### Added
