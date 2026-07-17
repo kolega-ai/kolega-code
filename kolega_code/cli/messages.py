@@ -75,8 +75,40 @@ SUB_AGENT_INSPECTOR_NO_SELECTION = "No sub-agent selected."
 SUB_AGENT_INSPECTOR_NO_STEPS = "No trajectory captured yet…"
 SUB_AGENT_TRAJECTORY_COPIED = "Copied the sub-agent trajectory to the clipboard."
 CHANGES_INSPECTOR_EMPTY = "No file changes since this session started."
+CHANGES_INSPECTOR_EMPTY_VS = "No file changes since {label}."
 CHANGES_INSPECTOR_NO_SELECTION = "No file selected."
 CHANGES_COPIED = "Copied file changes to the clipboard."
+CHANGES_BASELINE_SESSION_START = "Session start"
+
+# Rewind
+REWIND_BLOCKED_TURN = "Stop the current turn (Esc) before rewinding."
+REWIND_NOTHING = "Nothing to rewind — no file changes since {label}."
+REWIND_NO_CHECKPOINTS = "No turns to rewind yet."
+REWIND_UNAVAILABLE = "Rewind is unavailable until the agent connects."
+REWIND_USAGE = "Usage: /rewind [turns-back], e.g. /rewind or /rewind 2"
+REWIND_CONFIRM_TITLE = "Rewind session?"
+REWIND_CONFIRM_COPY = (
+    "Restore {count} file(s) to their state at {label}, discarding +{adds} -{dels}. "
+    "Files created since then are deleted; deleted files are restored. Git commits are kept."
+)
+REWIND_CONFIRM_CONVERSATION = (
+    " The conversation also rewinds to that point, and the rewound request is loaded into the composer."
+)
+REWIND_CONFIRM_FILES_ONLY = " The conversation is not changed."
+REWIND_FILE_CONFIRM_TITLE = "Restore file?"
+REWIND_FILE_CONFIRM_COPY = (
+    "Restore {path} to its state at {label}, discarding +{adds} -{dels}. The conversation is not changed."
+)
+REWIND_CONFIRM_LABEL = "Rewind"
+REWIND_FILE_CONFIRM_LABEL = "Restore File"
+REWIND_DONE = "Rewound {count} file(s) to before {label}."
+REWIND_DONE_CONVERSATION = "Rewound the conversation and {count} file(s) to before {label}."
+REWIND_DRIFT = "Files changed while confirming. The diff was refreshed — review it and rewind again."
+REWIND_PARTIAL = "Rewind stopped after file errors; the conversation was not changed: {detail}"
+REWIND_SKIPPED_NOTE = " Skipped: {detail}."
+REWIND_SAFETY_NOTE = " Undo with the snapshot tool (id {snapshot_id})."
+REWOUND_MARKER = "⤺ Rewound to before: {excerpt}"
+REWIND_GOAL_PAUSED = "Goal paused by rewind. Send a message to resume it."
 
 # Confirmations
 SWITCHED_MODE = "Switched to {mode} mode."

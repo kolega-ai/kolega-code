@@ -10,6 +10,7 @@ import sys
 import time
 import traceback
 from collections.abc import Sequence
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
@@ -57,6 +58,7 @@ from .diagnostics import DiagnosticsLog, ResponsivenessWatchdog
 from .file_index import WorkspaceFileIndex
 from .mentions import build_file_attachments
 from .provider_registry import default_ui_thinking_effort
+from .session_journal import RewindOutcome, TurnSummary
 from .session_store import SessionRecord, SessionStore
 from .settings import CliSettings, SettingsStore
 from kolega_code.agent.custom_agents import CustomAgentCatalog, discover_custom_agents
@@ -195,11 +197,13 @@ class KolegaCodeApp(
         self._sub_agent_by_tool_call: dict[str, str] = {}
         self._sub_agent_seq = 0
         self._session_file_changes: list[tui_state.SessionFileChange] = []
-        self._session_diff_tracker: Optional[tui_session_diff.GitSessionDiffTracker] = None
+        self._session_diff_tracker: Optional[tui_session_diff.SessionDiffTrackerBase] = None
         self._session_diff_files: list[tui_session_diff.SessionDiffFile] = []
         self._session_diff_dirty = False
         self._session_diff_refresh_running = False
         self._session_diff_timer: Optional[Timer] = None
+        self._session_diff_baseline_id: Optional[int] = None
+        self._rewind_running = False
         self._workflow_activities: dict[str, tui_state.WorkflowActivity] = {}
         self._render_pending = False
         self._conversation_anchor_pending = False
@@ -1112,9 +1116,13 @@ class KolegaCodeApp(
         self._sub_agent_inspector = screen
         self.push_screen(screen)
 
-    def action_open_changes(self, path: Optional[str] = None) -> None:
-        """Open the full-screen git session changes inspector."""
-        if not self._changes_available() or self._changes_inspector is not None:
+    def action_open_changes(self, path: Optional[str] = None, *, baseline_id: Optional[int] = None) -> None:
+        """Open the full-screen session changes inspector."""
+        if not self._changes_available():
+            return
+        if baseline_id is not None:
+            self._set_changes_baseline(baseline_id)
+        if self._changes_inspector is not None:
             return
         paths = {change.path for change in self._session_diff_files}
         if path is None or path not in paths:
@@ -1136,8 +1144,208 @@ class KolegaCodeApp(
             self._session_diff_tracker = None
             self._session_diff_files = []
 
+    def _initialize_ledger_diff_tracker(self) -> None:
+        """Non-git fallback: track agent-recorded edits once the snapshot service exists."""
+        if self._session_diff_tracker is not None or self.agent is None or self.agent.tool_collection is None:
+            return
+        service = getattr(self.agent.tool_collection, "snapshot_service", None)
+        if service is None:
+            return
+        tracker = tui_session_diff.SnapshotLedgerDiffTracker(self.project_path, service)
+        try:
+            tracker.capture_baseline()
+        except Exception:
+            return
+        self._session_diff_tracker = tracker
+
     def _changes_available(self) -> bool:
         return self._session_diff_tracker is not None
+
+    # ---- rewind --------------------------------------------------------------
+
+    def _changes_baseline_ladder(self) -> list[int]:
+        tracker = self._session_diff_tracker
+        if tracker is None:
+            return []
+        return [checkpoint.checkpoint_id for checkpoint in tracker.checkpoints()]
+
+    def _changes_baseline_checkpoint(self) -> Optional[tui_session_diff.TurnCheckpoint]:
+        tracker = self._session_diff_tracker
+        if tracker is None:
+            return None
+        if self._session_diff_baseline_id is None:
+            checkpoints = tracker.checkpoints()
+            return checkpoints[0] if checkpoints else None
+        return tracker.checkpoint_for_id(self._session_diff_baseline_id)
+
+    def _changes_baseline_label(self) -> str:
+        checkpoint = self._changes_baseline_checkpoint()
+        if checkpoint is None or checkpoint.checkpoint_id == 0:
+            return messages.CHANGES_BASELINE_SESSION_START
+        sep = theme.g(Glyph.BULLET_SEP)
+        stamp = time.strftime("%H:%M", time.localtime(checkpoint.created_at))
+        label = f"Turn {checkpoint.checkpoint_id}"
+        if checkpoint.label:
+            label += f' {sep} "{checkpoint.label}"'
+        return f"{label} {sep} {stamp}"
+
+    def _set_changes_baseline(self, baseline_id: Optional[int]) -> None:
+        ladder = self._changes_baseline_ladder()
+        if not ladder or (baseline_id is not None and baseline_id not in ladder):
+            return
+        normalized = None if baseline_id == ladder[0] else baseline_id
+        if normalized == self._session_diff_baseline_id:
+            return
+        self._session_diff_baseline_id = normalized
+        self._session_diff_dirty = True
+        self._invalidate_changes_detail()
+        self._start_session_diff_refresh()
+
+    def _shift_changes_baseline(self, delta: int) -> None:
+        ladder = self._changes_baseline_ladder()
+        if not ladder:
+            return
+        current = self._session_diff_baseline_id
+        index = ladder.index(current) if current in ladder else 0
+        self._set_changes_baseline(ladder[max(0, min(len(ladder) - 1, index + delta))])
+
+    def _reset_changes_baseline(self) -> None:
+        if self._session_diff_baseline_id is None:
+            return
+        self._session_diff_baseline_id = None
+        self._session_diff_dirty = True
+        self._start_session_diff_refresh()
+
+    def _rewind_target_turn(self, baseline_id: Optional[int]) -> Optional[TurnSummary]:
+        """The first journal turn at/after the checkpoint: the conversation boundary.
+
+        Checkpoint capture strictly precedes the turn.started event in serial
+        code, so the timestamp comparison is an exact join, not a heuristic.
+        """
+        tracker = self._session_diff_tracker
+        if tracker is None:
+            return None
+        checkpoints = tracker.checkpoints()
+        checkpoint = (
+            (checkpoints[0] if baseline_id is None else tracker.checkpoint_for_id(baseline_id)) if checkpoints else None
+        )
+        if checkpoint is None:
+            return None
+        for turn in self._session_recorder.list_rewindable_turns():
+            try:
+                started = datetime.fromisoformat(turn.started_at).timestamp()
+            except ValueError:
+                continue
+            if started >= checkpoint.created_at:
+                return turn
+        return None
+
+    async def _rewind_worker(self, baseline_id: Optional[int], label: str, paths: Optional[set[str]] = None) -> None:
+        """Restore files to the checkpoint and (whole-turn only) rewind the conversation."""
+        if self._turn_active or self.agent_worker is not None:
+            self._notify_user(messages.REWIND_BLOCKED_TURN, severity="warning")
+            return
+        tracker = self._session_diff_tracker
+        agent = self.agent
+        if tracker is None or agent is None:
+            return
+        self._rewind_running = True
+        try:
+            while self._session_diff_refresh_running:
+                await asyncio.sleep(0.05)
+            event_paths = [change.path for change in self._session_file_changes]
+            try:
+                plan = await asyncio.to_thread(
+                    lambda: tracker.build_restore_plan(checkpoint_id=baseline_id, event_paths=event_paths, paths=paths)
+                )
+            except ValueError:
+                self._set_changes_baseline(None)  # the checkpoint was evicted; reset the scope
+                return
+
+            snapshot_id = ""
+            service = getattr(agent.tool_collection, "snapshot_service", None) if agent.tool_collection else None
+            if service is not None and plan:
+                try:
+                    snapshot = await asyncio.to_thread(
+                        lambda: service.create_manual_snapshot(
+                            paths=[item.display_path for item in plan],
+                            reason=f"pre-rewind to {label}",
+                        )
+                    )
+                    snapshot_id = snapshot.snapshot_id
+                except Exception:
+                    snapshot_id = ""
+
+            try:
+                result = await asyncio.to_thread(tracker.apply_restore_plan, plan)
+            except tui_session_diff.RewindDriftError:
+                self._notify_user(messages.REWIND_DRIFT, severity="warning")
+                return
+            if result.errors:
+                detail = "; ".join(f"{path}: {reason}" for path, reason in result.errors[:3])
+                self._notify_user(messages.REWIND_PARTIAL.format(detail=detail), severity="error")
+                return
+
+            conversation_rewound = False
+            if paths is None:
+                target = await asyncio.to_thread(self._rewind_target_turn, baseline_id)
+                if target is not None:
+                    outcome = await asyncio.to_thread(self._session_recorder.record_rewind, target.turn_id)
+                    await self._apply_conversation_rewind(outcome)
+                    conversation_rewound = True
+
+            count = len(result.restored) + len(result.deleted)
+            note = (
+                messages.REWIND_DONE_CONVERSATION.format(count=count, label=label)
+                if conversation_rewound
+                else messages.REWIND_DONE.format(count=count, label=label)
+            )
+            if result.skipped:
+                detail = "; ".join(f"{path} ({reason})" for path, reason in result.skipped[:3])
+                note += messages.REWIND_SKIPPED_NOTE.format(detail=detail)
+            if snapshot_id:
+                note += messages.REWIND_SAFETY_NOTE.format(snapshot_id=snapshot_id)
+            self._add_conversation_entry(tui_state.ConversationEntry(kind="system", content=note))
+            self._notify_user(note, severity="warning" if result.skipped else "information")
+            if conversation_rewound:
+                self._close_changes_inspector()
+                self._schedule_primary_focus_restore()
+        finally:
+            self._rewind_running = False
+            self._session_diff_dirty = True
+            self._start_session_diff_refresh()
+
+    async def _apply_conversation_rewind(self, outcome: RewindOutcome) -> None:
+        """Rebuild agent and transcript state through the resume path."""
+        agent = self.agent
+        assert agent is not None
+        record = await asyncio.to_thread(self.store.load, self.session.session_id)
+        agent.restore_message_history(record.history)
+        agent.restore_compaction_state(record.compaction)
+        self.session.history = record.history
+        self.session.compaction = record.compaction
+        self._clear_queued_messages()
+        self._restore_conversation_history(record.history)
+        self._add_conversation_entry(
+            tui_state.ConversationEntry(
+                kind="system",
+                content=messages.REWOUND_MARKER.format(
+                    excerpt=tui_agent_runtime.checkpoint_excerpt(outcome.user_message_text)
+                ),
+            )
+        )
+        if self._goal is not None and self._goal.is_active:
+            await self._pause_goal(messages.REWIND_GOAL_PAUSED)
+        try:
+            composer = self.query_one("#composer", tui_widgets.ChatComposer)
+            composer.load_text(outcome.user_message_text)
+        except Exception:
+            pass
+        try:
+            await agent.count_current_context()
+        except Exception:
+            pass
+        await self._save_session_async()
 
     def _mark_session_diff_dirty(self) -> None:
         self._session_diff_dirty = True
@@ -1165,7 +1373,7 @@ class KolegaCodeApp(
 
     def _start_session_diff_refresh(self) -> None:
         tracker = self._session_diff_tracker
-        if tracker is None or self._session_diff_refresh_running:
+        if tracker is None or self._session_diff_refresh_running or self._rewind_running:
             return
         try:
             self._session_diff_refresh_running = True
@@ -1178,11 +1386,15 @@ class KolegaCodeApp(
             self._session_diff_dirty = False
             tracker = self._session_diff_tracker
             event_paths = [change.path for change in self._session_file_changes]
+            baseline_id = self._session_diff_baseline_id
+            if baseline_id is not None and tracker is not None and tracker.checkpoint_for_id(baseline_id) is None:
+                baseline_id = None
+                self._session_diff_baseline_id = None  # the selected checkpoint was evicted
             if tracker is None:
                 diffs = []
             else:
                 try:
-                    diffs = await asyncio.to_thread(tracker.refresh, event_paths)
+                    diffs = await asyncio.to_thread(lambda: tracker.refresh(event_paths, checkpoint_id=baseline_id))
                 except Exception:
                     diffs = []
             self._session_diff_files = diffs
@@ -1386,7 +1598,10 @@ class KolegaCodeApp(
         )
         self._add_conversation_entry(tui_state.ConversationEntry(kind="user", content="Implement the approved plan."))
         self.agent_worker = self.run_worker(
-            self._process_message(prompt), name="kolega-turn", group="turns", exclusive=True
+            self._process_message(prompt, turn_label="Implement the approved plan."),
+            name="kolega-turn",
+            group="turns",
+            exclusive=True,
         )
 
     async def _discuss_pending_plan(self) -> None:

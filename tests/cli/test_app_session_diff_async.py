@@ -36,7 +36,7 @@ async def test_session_diff_dirty_marks_do_no_git_work_when_inspector_closed(
         assert tracker is not None
         calls = 0
 
-        def refresh(event_paths=()):
+        def refresh(event_paths=(), *, checkpoint_id=None):
             nonlocal calls
             calls += 1
             return []
@@ -67,9 +67,9 @@ async def test_open_changes_runs_one_background_refresh_and_populates_diff(
         original_refresh = tracker.refresh
         calls = []
 
-        def refresh(event_paths=()):
+        def refresh(event_paths=(), *, checkpoint_id=None):
             calls.append(tuple(event_paths))
-            return original_refresh(event_paths)
+            return original_refresh(event_paths, checkpoint_id=checkpoint_id)
 
         monkeypatch.setattr(tracker, "refresh", refresh)
 
@@ -98,13 +98,13 @@ async def test_dirty_mark_during_in_flight_refresh_schedules_trailing_refresh(
         release = threading.Event()
         calls = []
 
-        def refresh(event_paths=()):
+        def refresh(event_paths=(), *, checkpoint_id=None):
             calls.append(tuple(event_paths))
             if len(calls) == 1:
                 started.set()
                 if not release.wait(timeout=5.0):
                     raise AssertionError("Timed out waiting to release refresh")
-            return original_refresh(event_paths)
+            return original_refresh(event_paths, checkpoint_id=checkpoint_id)
 
         monkeypatch.setattr(tracker, "refresh", refresh)
 
@@ -133,9 +133,9 @@ async def test_session_diff_debounce_coalesces_rapid_dirty_marks(
         original_refresh = tracker.refresh
         calls = []
 
-        def refresh(event_paths=()):
+        def refresh(event_paths=(), *, checkpoint_id=None):
             calls.append(tuple(event_paths))
-            return original_refresh(event_paths)
+            return original_refresh(event_paths, checkpoint_id=checkpoint_id)
 
         monkeypatch.setattr(tracker, "refresh", refresh)
 
@@ -164,12 +164,12 @@ async def test_session_diff_refresh_exception_resets_running_and_can_retry(
         original_refresh = tracker.refresh
         calls = 0
 
-        def refresh(event_paths=()):
+        def refresh(event_paths=(), *, checkpoint_id=None):
             nonlocal calls
             calls += 1
             if calls == 1:
                 raise RuntimeError("refresh failed")
-            return original_refresh(event_paths)
+            return original_refresh(event_paths, checkpoint_id=checkpoint_id)
 
         monkeypatch.setattr(tracker, "refresh", refresh)
 
@@ -202,9 +202,9 @@ async def test_start_session_diff_refresh_runs_with_inspector_closed(
         original_refresh = tracker.refresh
         calls = []
 
-        def refresh(event_paths=()):
+        def refresh(event_paths=(), *, checkpoint_id=None):
             calls.append(tuple(event_paths))
-            return original_refresh(event_paths)
+            return original_refresh(event_paths, checkpoint_id=checkpoint_id)
 
         monkeypatch.setattr(tracker, "refresh", refresh)
 

@@ -19,6 +19,7 @@ from textual.widgets import Static
 from .. import messages, theme
 from ..theme import Color, Glyph
 from .session_diff import SessionDiffFile
+from .settings_screen import ConfirmSettingsActionScreen
 from .state import SessionFileChange
 
 if TYPE_CHECKING:
@@ -53,8 +54,12 @@ class ChangesInspectorScreen(ModalScreen):
         Binding("q", "close", "Close", show=False, priority=True),
         Binding("down", "next_file", "Next file", show=True, priority=True),
         Binding("up", "prev_file", "Prev file", show=False, priority=True),
+        Binding("left_square_bracket", "baseline_older", "Older baseline", show=False, key_display="[", priority=True),
+        Binding("right_square_bracket", "baseline_newer", "Newer baseline", show=False, key_display="]", priority=True),
         Binding("o", "toggle_follow", "Follow", show=True, priority=True),
         Binding("y", "copy_changes", "Copy", show=True, priority=True),
+        Binding("r", "rewind", "Rewind", show=True, priority=True),
+        Binding("x", "restore_file", "Restore file", show=False, priority=True),
     ]
 
     def __init__(self, owner: "KolegaCodeApp", selected_path: str) -> None:
@@ -69,6 +74,7 @@ class ChangesInspectorScreen(ModalScreen):
         self._flush_pending = False
 
     def compose(self) -> ComposeResult:
+        yield Static("", id="changes_scope", markup=False)
         with Horizontal(id="changes_body"):
             yield VerticalScroll(id="changes_roster")
             with Vertical(id="changes_main"):
@@ -78,6 +84,7 @@ class ChangesInspectorScreen(ModalScreen):
 
     def on_mount(self) -> None:
         self.border_title = f"{theme.g(Glyph.TOOL)} Changes"
+        self._refresh_scope()
         self._sync_roster()
         self._refresh_header()
         self._sync_previews()
@@ -86,6 +93,7 @@ class ChangesInspectorScreen(ModalScreen):
     def on_unmount(self) -> None:
         if self._owner._changes_inspector is self:
             self._owner._changes_inspector = None
+        self._owner._reset_changes_baseline()
 
     # ---- live updates ---------------------------------------------------------
 
@@ -108,9 +116,11 @@ class ChangesInspectorScreen(ModalScreen):
 
     def _flush(self) -> None:
         self._flush_pending = False
+        self._refresh_scope()
         self._sync_roster()
         self._refresh_header()
         self._sync_previews()
+        self._refresh_footer()
 
     # ---- data helpers ---------------------------------------------------------
 
@@ -207,7 +217,7 @@ class ChangesInspectorScreen(ModalScreen):
             return
         change = self._diff_for_path(self._selected_path)
         if change is None:
-            header.update(messages.CHANGES_INSPECTOR_EMPTY)
+            header.update(self._empty_message())
             return
         sep = theme.g(Glyph.BULLET_SEP)
         line = Text.from_markup(theme.role_header(Glyph.TOOL, escape(change.path), Color.ACCENT, state=change.status))
@@ -235,7 +245,7 @@ class ChangesInspectorScreen(ModalScreen):
             if not self._empty_shown:
                 view.remove_children()
                 self._preview_widgets = {}
-                view.mount(Static(messages.CHANGES_INSPECTOR_EMPTY, classes="changes-empty"))
+                view.mount(Static(self._empty_message(), classes="changes-empty"))
                 self._empty_shown = True
             return
 
@@ -294,6 +304,20 @@ class ChangesInspectorScreen(ModalScreen):
         except Exception:
             _do()
 
+    def _empty_message(self) -> str:
+        label = self._owner._changes_baseline_label()
+        if label == messages.CHANGES_BASELINE_SESSION_START:
+            return messages.CHANGES_INSPECTOR_EMPTY
+        return messages.CHANGES_INSPECTOR_EMPTY_VS.format(label=label)
+
+    def _refresh_scope(self) -> None:
+        try:
+            scope = self.query_one("#changes_scope", Static)
+        except Exception:
+            return
+        sep = theme.g(Glyph.BULLET_SEP)
+        scope.update(f"Baseline: {self._owner._changes_baseline_label()}  {sep}  [ older  ] newer")
+
     def _refresh_footer(self) -> None:
         try:
             footer = self.query_one("#changes_footer", Static)
@@ -301,7 +325,10 @@ class ChangesInspectorScreen(ModalScreen):
             return
         sep = theme.g(Glyph.BULLET_SEP)
         follow = "on" if self._follow else "off"
-        footer.update(f"Esc close  {sep}  Up/Down switch file  {sep}  o follow:{follow}  {sep}  y copy")
+        hints = f"Esc close  {sep}  Up/Down switch file  {sep}  o follow:{follow}  {sep}  y copy"
+        if self._ordered_diffs():
+            hints += f"  {sep}  r rewind  {sep}  x restore file"
+        footer.update(hints)
 
     # ---- actions --------------------------------------------------------------
 
@@ -309,6 +336,84 @@ class ChangesInspectorScreen(ModalScreen):
         self._owner._changes_inspector = None
         self.dismiss()
         self._owner._schedule_primary_focus_restore()
+
+    def action_baseline_older(self) -> None:
+        self._owner._shift_changes_baseline(-1)
+        self._refresh_scope()
+
+    def action_baseline_newer(self) -> None:
+        self._owner._shift_changes_baseline(+1)
+        self._refresh_scope()
+
+    def action_rewind(self) -> None:
+        owner = self._owner
+        if owner._turn_active or owner.agent_worker is not None:
+            owner._notify_user(messages.REWIND_BLOCKED_TURN, severity="warning")
+            return
+        diffs = self._ordered_diffs()
+        label = owner._changes_baseline_label()
+        if not diffs:
+            owner._notify_user(messages.REWIND_NOTHING.format(label=label))
+            return
+        copy = messages.REWIND_CONFIRM_COPY.format(
+            count=len(diffs),
+            label=label,
+            adds=sum(change.adds for change in diffs),
+            dels=sum(change.dels for change in diffs),
+        )
+        # A conversation boundary exists once any turn checkpoint has been
+        # captured; with only checkpoint 0, the rewind is files-only.
+        if len(owner._changes_baseline_ladder()) > 1:
+            copy += messages.REWIND_CONFIRM_CONVERSATION
+        else:
+            copy += messages.REWIND_CONFIRM_FILES_ONLY
+        self.app.push_screen(
+            ConfirmSettingsActionScreen(
+                messages.REWIND_CONFIRM_TITLE, copy, messages.REWIND_CONFIRM_LABEL, danger=True
+            ),
+            callback=self._on_rewind_decision,
+        )
+
+    def _on_rewind_decision(self, confirmed: bool | None) -> None:
+        if not confirmed:
+            return
+        owner = self._owner
+        owner.run_worker(
+            owner._rewind_worker(owner._session_diff_baseline_id, owner._changes_baseline_label()),
+            name="kolega-rewind",
+            group="rewind",
+            exclusive=True,
+        )
+
+    def action_restore_file(self) -> None:
+        owner = self._owner
+        if owner._turn_active or owner.agent_worker is not None:
+            owner._notify_user(messages.REWIND_BLOCKED_TURN, severity="warning")
+            return
+        change = self._diff_for_path(self._selected_path)
+        if change is None:
+            return
+        label = owner._changes_baseline_label()
+        copy = messages.REWIND_FILE_CONFIRM_COPY.format(
+            path=change.path, label=label, adds=change.adds, dels=change.dels
+        )
+        self.app.push_screen(
+            ConfirmSettingsActionScreen(
+                messages.REWIND_FILE_CONFIRM_TITLE, copy, messages.REWIND_FILE_CONFIRM_LABEL, danger=True
+            ),
+            callback=lambda confirmed: self._on_restore_file_decision(change.path, confirmed),
+        )
+
+    def _on_restore_file_decision(self, path: str, confirmed: bool | None) -> None:
+        if not confirmed:
+            return
+        owner = self._owner
+        owner.run_worker(
+            owner._rewind_worker(owner._session_diff_baseline_id, owner._changes_baseline_label(), paths={path}),
+            name="kolega-rewind",
+            group="rewind",
+            exclusive=True,
+        )
 
     def action_toggle_follow(self) -> None:
         self._follow = not self._follow

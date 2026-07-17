@@ -37,6 +37,21 @@ from . import widgets as tui_widgets
 
 
 class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
+    async def _record_turn_checkpoint(self, label: str) -> None:
+        """Capture the rewind boundary for the turn about to start.
+
+        Runs before the agent stream begins, so the checkpoint strictly
+        precedes the journal's turn.started event. A checkpoint is an
+        enhancement; it must never block or fail a turn.
+        """
+        tracker = self._session_diff_tracker
+        if tracker is None:
+            return
+        try:
+            await asyncio.to_thread(tracker.capture_checkpoint, checkpoint_excerpt(label))
+        except Exception:
+            pass
+
     def _agent_turn_stream(self, message: str, attachments: list[dict] | None = None):
         assert self.agent is not None
         if attachments:
@@ -124,10 +139,13 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
                 self._schedule_primary_focus_restore()
         return cancelled_by_user
 
-    async def _process_message(self, message: str, attachments: list[dict] | None = None) -> None:
+    async def _process_message(
+        self, message: str, attachments: list[dict] | None = None, *, turn_label: str | None = None
+    ) -> None:
         try:
             if self.agent is None:
                 return
+            await self._record_turn_checkpoint(turn_label or message)
             cancelled_by_user = await self._run_turn_stream(lambda: self._agent_turn_stream(message, attachments))
             if cancelled_by_user:
                 self._schedule_maybe_start_queued_message()
@@ -776,6 +794,7 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         assert agent.tool_collection is not None
         await agent.tool_collection.initialize()
         agent.gigacode_enabled = gigacode_active
+        self._initialize_ledger_diff_tracker()
         if history:
             self.agent.restore_message_history(history)
             self.agent.restore_compaction_state(compaction)
@@ -908,3 +927,10 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
                 )
             )
             self._refresh_status_dashboard()
+
+
+def checkpoint_excerpt(label: str) -> str:
+    collapsed = " ".join(label.split())
+    if len(collapsed) > 60:
+        collapsed = collapsed[:59] + "…"
+    return collapsed

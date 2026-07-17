@@ -541,3 +541,135 @@ def test_session_store_ignores_corrupt_legacy_files_when_listing(tmp_path: Path)
     (store.sessions_dir / "bad.json").write_text("{not json", encoding="utf-8")
 
     assert store.list() == []
+
+
+# ---- conversation rewind -----------------------------------------------------
+
+
+def _run_turn(recorder: SessionRecorder, user_text: str, assistant_text: str) -> str:
+    turn_id = recorder.start_turn(Message(role="user", content=[TextBlock(user_text)]))
+    recorder.record_assistant(Message(role="assistant", content=[TextBlock(assistant_text)], stop_reason="end_turn"))
+    recorder.finish_turn("completed")
+    return turn_id
+
+
+def test_rewind_truncates_history_and_composes(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    store = SessionStore(tmp_path / "state")
+    record = store.create(project, "code", {})
+    recorder = store.recorder(record.session_id)
+
+    _run_turn(recorder, "turn one", "answer one")
+    second = _run_turn(recorder, "turn two", "answer two")
+    _run_turn(recorder, "turn three", "answer three")
+
+    turns = recorder.list_rewindable_turns()
+    assert [turn.user_text for turn in turns] == ["turn one", "turn two", "turn three"]
+    assert {turn.status for turn in turns} == {"completed"}
+
+    outcome = recorder.record_rewind(second)
+    assert outcome.user_message_text == "turn two"
+    assert outcome.rewound_turn_ids == [turn.turn_id for turn in turns[1:]]
+
+    loaded = store.load(record.session_id)
+    assert [message["content"][0]["text"] for message in loaded.history] == ["turn one", "answer one"]
+    assert [turn.user_text for turn in recorder.list_rewindable_turns()] == ["turn one"]
+
+    fourth = _run_turn(recorder, "turn four", "answer four")
+    loaded = store.load(record.session_id)
+    assert [message["content"][0]["text"] for message in loaded.history] == [
+        "turn one",
+        "answer one",
+        "turn four",
+        "answer four",
+    ]
+
+    recorder.record_rewind(fourth)
+    loaded = store.load(record.session_id)
+    assert [message["content"][0]["text"] for message in loaded.history] == ["turn one", "answer one"]
+
+
+def test_rewind_rejects_open_turn_and_unknown_target(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    store = SessionStore(tmp_path / "state")
+    record = store.create(project, "code", {})
+    recorder = store.recorder(record.session_id)
+
+    first = _run_turn(recorder, "turn one", "answer one")
+    recorder.start_turn(Message(role="user", content=[TextBlock("turn two")]))
+    with pytest.raises(SessionJournalError, match="while a session turn is open"):
+        recorder.record_rewind(first)
+    recorder.finish_turn("cancelled")
+
+    with pytest.raises(SessionJournalError, match="not rewindable"):
+        recorder.record_rewind("no-such-turn")
+
+
+def test_rewind_targets_only_current_epoch(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    store = SessionStore(tmp_path / "state")
+    record = store.create(project, "code", {})
+    recorder = store.recorder(record.session_id)
+
+    old_turn = _run_turn(recorder, "before reset", "old answer")
+    recorder.start_epoch("thread_reset")
+    _run_turn(recorder, "after reset", "new answer")
+
+    assert [turn.user_text for turn in recorder.list_rewindable_turns()] == ["after reset"]
+    with pytest.raises(SessionJournalError, match="not rewindable"):
+        recorder.record_rewind(old_turn)
+
+
+def test_rewind_past_compaction_restores_previous_snapshot(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    store = SessionStore(tmp_path / "state")
+    record = store.create(project, "code", {})
+    recorder = store.recorder(record.session_id)
+
+    _run_turn(recorder, "turn one", "answer one")
+    recorder.record_compaction({"summary": "first", "compacted_through": 1})
+    second = _run_turn(recorder, "turn two", "answer two")
+    recorder.record_compaction({"summary": "second", "compacted_through": 3})
+
+    recorder.record_rewind(second)
+    loaded = store.load(record.session_id)
+    assert loaded.compaction == {"summary": "first", "compacted_through": 1}
+    assert [message["content"][0]["text"] for message in loaded.history] == ["turn one", "answer one"]
+
+
+def test_replay_rejects_invalid_rewind_boundary(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    store = SessionStore(tmp_path / "state")
+    record = store.create(project, "code", {})
+    recorder = store.recorder(record.session_id)
+    _run_turn(recorder, "turn one", "answer one")
+
+    recorder.journal.append("context.rewound", actor="user", payload={"boundary_seq": 1})
+    with pytest.raises(SessionStoreError, match="invalid boundary"):
+        store.load(record.session_id)
+
+
+def test_rewind_of_recovered_crashed_turn(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    store = SessionStore(tmp_path / "state")
+    record = store.create(project, "code", {})
+
+    interrupted = store.recorder(record.session_id)
+    _run_turn(interrupted, "turn one", "answer one")
+    interrupted.start_turn(Message(role="user", content=[TextBlock("doomed turn")]))
+
+    # A fresh recorder over the same journal is what a process restart builds;
+    # its recover_interrupted_turn pass closes the crashed turn.
+    recovered = SessionRecorder(store.journal(record.session_id), recover=True)
+    turns = recovered.list_rewindable_turns()
+    assert [turn.status for turn in turns] == ["completed", "failed"]
+
+    recovered.record_rewind(turns[1].turn_id)
+    loaded = store.load(record.session_id)
+    assert [message["content"][0]["text"] for message in loaded.history] == ["turn one", "answer one"]

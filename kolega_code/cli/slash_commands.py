@@ -67,6 +67,7 @@ TUI_COMMAND_ENTRIES: tuple[SlashCommandEntry, ...] = (
     SlashCommandEntry("gigacode", "Toggle gigacode workflow orchestration on or off", CommandScope.TUI),
     SlashCommandEntry("prompts", "Dump, list, or validate project prompt override files", CommandScope.TUI),
     SlashCommandEntry("queue-clear", "Clear queued follow-up messages", CommandScope.TUI),
+    SlashCommandEntry("rewind", "Rewind files and conversation to before an earlier turn", CommandScope.TUI),
     SlashCommandEntry("theme", "Show or switch the color theme", CommandScope.TUI),
     SlashCommandEntry("copy", "Copy the last response to the clipboard", CommandScope.TUI),
     SlashCommandEntry("diagnostics", "Show version, model/endpoint, and the diagnostics log path", CommandScope.TUI),

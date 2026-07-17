@@ -949,6 +949,13 @@ ChangesInspectorScreen .change-preview {
     padding-bottom: 1;
 }
 
+ChangesInspectorScreen #changes_scope {
+    height: 1;
+    padding: 0 1;
+    background: $surface;
+    color: $text-muted;
+}
+
 ChangesInspectorScreen #changes_footer {
     height: 1;
     padding: 0 1;

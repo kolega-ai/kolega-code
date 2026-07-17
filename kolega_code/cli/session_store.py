@@ -458,15 +458,19 @@ class SessionStore:
         *,
         hydrate_artifacts: bool = True,
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-        history: list[dict[str, Any]] = []
-        compaction: dict[str, Any] = {}
+        # Messages and compaction snapshots carry their source seq so a
+        # context.rewound event can drop everything at/after its boundary.
+        messages: list[tuple[int, dict[str, Any]]] = []
+        compactions: list[tuple[int, dict[str, Any]]] = []
         current_epoch: Optional[str] = None
+        epoch_start_seq = 0
         message_events = {"turn.started", "assistant.message", "tool.results", "context.message"}
         for event in events:
             if event.event_type == "context.epoch_started":
                 current_epoch = event.epoch_id
-                history = []
-                compaction = {}
+                epoch_start_seq = event.seq
+                messages = []
+                compactions = []
                 continue
             if current_epoch is None or event.epoch_id != current_epoch:
                 continue
@@ -476,16 +480,24 @@ class SessionStore:
                     raise SessionStoreError(f"Session event {event.seq} is missing a message")
                 if hydrate_artifacts:
                     try:
-                        history.append(journal.hydrate_message(message))
+                        messages.append((event.seq, journal.hydrate_message(message)))
                     except SessionJournalError as exc:
                         raise SessionStoreError(str(exc)) from exc
                 else:
-                    history.append(copy.deepcopy(message))
+                    messages.append((event.seq, copy.deepcopy(message)))
             elif event.event_type == "context.compacted":
                 value = event.payload.get("compaction")
                 if not isinstance(value, dict):
                     raise SessionStoreError(f"Session compaction event {event.seq} is invalid")
-                compaction = copy.deepcopy(value)
+                compactions.append((event.seq, copy.deepcopy(value)))
+            elif event.event_type == "context.rewound":
+                boundary = event.payload.get("boundary_seq")
+                if not isinstance(boundary, int) or boundary <= epoch_start_seq:
+                    raise SessionStoreError(f"Session rewind event {event.seq} has an invalid boundary")
+                messages = [(seq, message) for seq, message in messages if seq < boundary]
+                compactions = [(seq, value) for seq, value in compactions if seq < boundary]
+        history = [message for _, message in messages]
+        compaction = compactions[-1][1] if compactions else {}
         return history, compaction
 
     def _ensure_migrated(self, session_id: str) -> None:
