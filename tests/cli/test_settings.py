@@ -30,7 +30,7 @@ def test_settings_store_round_trip_and_file_permissions(tmp_path: Path) -> None:
     settings = CliSettings(
         active_provider=UI_DEFAULT_PROVIDER,
         active_model=UI_DEFAULT_MODEL,
-        active_thinking_effort="auto",
+        active_thinking_effort="max",
         permission_mode="auto",
     )
     settings.set_api_key(UI_DEFAULT_PROVIDER, "secret-key")
@@ -40,7 +40,7 @@ def test_settings_store_round_trip_and_file_permissions(tmp_path: Path) -> None:
     loaded = store.load()
     assert loaded.active_provider == UI_DEFAULT_PROVIDER
     assert loaded.active_model == UI_DEFAULT_MODEL
-    assert loaded.active_thinking_effort == "auto"
+    assert loaded.active_thinking_effort == "max"
     assert loaded.permission_mode == "auto"
     assert loaded.get_api_key(UI_DEFAULT_PROVIDER) == "secret-key"
 
@@ -147,11 +147,12 @@ def test_ui_provider_registry_is_derived_from_model_specs() -> None:
     # The Moonshot default and its models are present with friendly labels.
     assert ("Moonshot AI", UI_DEFAULT_PROVIDER) in ui_provider_options()
     moonshot_models = dict(ui_model_options(UI_DEFAULT_PROVIDER))
-    assert moonshot_models["Kimi K2.7 Code"] == UI_DEFAULT_MODEL
+    assert moonshot_models["Kimi K3"] == UI_DEFAULT_MODEL
+    assert moonshot_models["Kimi K2.7 Code"] == "kimi-k2.7-code"
     assert moonshot_models["Kimi K2.6"] == MOONSHOT_K26_MODEL
 
     # Thinking-effort options still come through from the specs unchanged.
-    assert ui_thinking_effort_options(UI_DEFAULT_PROVIDER, UI_DEFAULT_MODEL) == [("Auto", "auto")]
+    assert ui_thinking_effort_options(UI_DEFAULT_PROVIDER, UI_DEFAULT_MODEL) == [("Max", "max")]
     assert ui_thinking_effort_options(UI_DEFAULT_PROVIDER, MOONSHOT_K26_MODEL) == [
         ("Auto", "auto"),
         ("None", "none"),
@@ -165,7 +166,7 @@ def test_ui_provider_registry_is_derived_from_model_specs() -> None:
     default = get_ui_model(UI_DEFAULT_PROVIDER, UI_DEFAULT_MODEL)
     assert default is not None
     assert default.api_key_env == "MOONSHOT_API_KEY"
-    assert default.default_thinking_effort == "auto"
+    assert default.default_thinking_effort == "max"
 
     deepseek_model = get_ui_model("deepseek", DEEPSEEK_DEFAULT_MODEL)
     assert deepseek_model is not None

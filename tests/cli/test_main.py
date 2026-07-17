@@ -488,7 +488,7 @@ def test_doctor_uses_stored_kimi_settings(
     output = capsys.readouterr().out
     assert f"Update: Kolega Code is up to date ({__version__})." in output
     assert f"Stored active model: {UI_DEFAULT_PROVIDER}/{UI_DEFAULT_MODEL}" in output
-    assert "Thinking effort: auto" in output
+    assert "Thinking effort: max" in output
     assert "Stored API key" not in output
     assert "moonshot-key" not in output
 

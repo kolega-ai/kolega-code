@@ -238,6 +238,79 @@ async def test_moonshot_generate_maps_provider_response_usage(capsys):
 
 
 @pytest.mark.asyncio
+async def test_moonshot_kimi_k3_generate_uses_supported_request_parameters():
+    client = LLMClient("moonshot", "test-key")
+    assert isinstance(client.provider, AnthropicProvider)
+
+    class TextContent:
+        type = "text"
+        text = "ok"
+
+    class AnthropicMessage:
+        role = "assistant"
+        content = [TextContent()]
+        stop_reason = "end_turn"
+        usage = None
+
+    create = AsyncMock(return_value=AnthropicMessage())
+    with patch.object(client.provider.async_client.messages, "create", create):
+        await client.generate(
+            messages=TEST_MESSAGES,
+            system=TEST_SYSTEM,
+            model="kimi-k3",
+            temperature=1.0,
+            max_completion_tokens=131072,
+            thinking="max",
+        )
+
+    assert create.await_args is not None
+    request = create.await_args.kwargs
+    assert request["model"] == "kimi-k3"
+    assert request["max_tokens"] == 131072
+    assert request["extra_body"] == {"reasoning_effort": "max"}
+    assert request["timeout"] == client.provider.async_client.timeout
+    assert "temperature" not in request
+    assert "thinking" not in request
+
+
+@pytest.mark.asyncio
+async def test_kimi_coding_k3_generate_uses_supported_request_parameters():
+    client = LLMClient("kimi_coding", "test-key")
+    assert isinstance(client.provider, AnthropicProvider)
+
+    class TextContent:
+        type = "text"
+        text = "ok"
+
+    class AnthropicMessage:
+        role = "assistant"
+        content = [TextContent()]
+        stop_reason = "end_turn"
+        usage = None
+
+    create = AsyncMock(return_value=AnthropicMessage())
+    with patch.object(client.provider.async_client.messages, "create", create):
+        await client.generate(
+            messages=TEST_MESSAGES,
+            system=TEST_SYSTEM,
+            model="k3",
+            temperature=1.0,
+            max_completion_tokens=131072,
+            thinking="max",
+        )
+
+    assert create.await_args is not None
+    request = create.await_args.kwargs
+    assert request["model"] == "k3"
+    assert request["max_tokens"] == 131072
+    assert request["output_config"] == {"effort": "max"}
+    assert request["timeout"] == client.provider.async_client.timeout
+    assert "temperature" not in request
+    assert "thinking" not in request
+    assert "extra_body" not in request
+
+
+@pytest.mark.asyncio
 async def test_anthropic_opus_47_generate_omits_deprecated_temperature():
     client = LLMClient("anthropic", "test-key")
     assert isinstance(client.provider, AnthropicProvider)

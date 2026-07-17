@@ -7,6 +7,22 @@ from kolega_code.config import ModelProvider
 from kolega_code.llm.specs import get_model_specs
 
 
+def test_kimi_k3_is_first_and_default_for_moonshot():
+    assert ui_model_options(ModelProvider.MOONSHOT.value)[0] == ("Kimi K3", "kimi-k3")
+    assert default_model_for_provider(ModelProvider.MOONSHOT) == "kimi-k3"
+    assert ui_thinking_effort_options("moonshot", "kimi-k3") == [("Max", "max")]
+
+
+def test_kimi_coding_exposes_plan_specific_k3_models():
+    assert ui_model_options(ModelProvider.KIMI_CODING.value) == [
+        ("Kimi K3 (256K)", "k3"),
+        ("Kimi K3 (1M)", "k3[1m]"),
+        ("Kimi for Coding", "kimi-for-coding"),
+    ]
+    assert default_model_for_provider(ModelProvider.KIMI_CODING) == "kimi-for-coding"
+    assert ui_thinking_effort_options("kimi_coding", "k3") == [("Max", "max")]
+
+
 def test_gpt56_models_are_first_and_sol_is_default_for_openai_providers():
     expected = [
         ("GPT-5.6 Sol", "gpt-5.6-sol"),

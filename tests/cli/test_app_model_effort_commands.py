@@ -69,16 +69,16 @@ async def test_textual_app_model_slash_command_shows_and_switches_model(
 
     def fake_model_options(provider):
         return [
-            ("Kimi K2.7 Code", UI_DEFAULT_MODEL),
+            ("Kimi K2.7 Code", "kimi-k2.7-code"),
             ("Kimi K2.6", "kimi-k2.6"),
-            ("Kimi K3", "kimi-k3"),
+            ("Kimi K4", "kimi-k4"),
         ]
 
     def fake_effort_options(provider, model):
-        return [("High", "high")] if model == "kimi-k3" else [("Auto", "auto")]
+        return [("High", "high")] if model == "kimi-k4" else [("Auto", "auto")]
 
     def fake_default_effort(provider, model):
-        return "high" if model == "kimi-k3" else "auto"
+        return "high" if model == "kimi-k4" else "auto"
 
     for module in (settings_panel_module, command_handlers_module):
         monkeypatch.setattr(module, "ui_model_options", fake_model_options)
@@ -90,7 +90,7 @@ async def test_textual_app_model_slash_command_shows_and_switches_model(
     state_dir = tmp_path / "state"
     store = SessionStore(state_dir)
     settings_store = SettingsStore(state_dir)
-    settings = CliSettings(active_provider=UI_DEFAULT_PROVIDER, active_model=UI_DEFAULT_MODEL)
+    settings = CliSettings(active_provider=UI_DEFAULT_PROVIDER, active_model="kimi-k2.7-code")
     settings.set_api_key(UI_DEFAULT_PROVIDER, "moonshot-key")
     settings_store.save(settings)
     session = store.create(project, "code", {})
@@ -133,7 +133,7 @@ async def test_textual_app_model_slash_command_shows_and_switches_model(
         await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
         entry = app.conversation_entries[-1]
         assert entry.kind == "system"
-        assert UI_DEFAULT_MODEL in entry.content and "kimi-k2.6" in entry.content and "kimi-k3" in entry.content
+        assert "kimi-k2.7-code" in entry.content and "kimi-k2.6" in entry.content and "kimi-k4" in entry.content
         assert "Thinking effort: auto" in entry.content
         model_actions = app.query_one("#model_actions", ActionList)
         assert model_actions.display is True
@@ -141,16 +141,16 @@ async def test_textual_app_model_slash_command_shows_and_switches_model(
         assert model_actions.option_count == 3
         model_prompt = model_actions.get_option("model_option_0").prompt
         assert isinstance(model_prompt, str)
-        assert model_prompt.startswith(f"1. Kimi K2.7 Code ({UI_DEFAULT_MODEL})")
+        assert model_prompt.startswith("1. Kimi K2.7 Code (kimi-k2.7-code)")
 
-        # kimi-k3 is a fake model the real config builder rejects, so stub it for the rebuild step.
+        # kimi-k4 is a fake model the real config builder rejects, so stub it for the rebuild step.
         saved_config = app.config
         monkeypatch.setattr(agent_runtime_module, "build_agent_config", lambda *args, **kwargs: saved_config)
 
-        composer.load_text("/model kimi-k3")
+        composer.load_text("/model kimi-k4")
         await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
         switched_settings = settings_store.load()
-        assert switched_settings.active_model == "kimi-k3"
+        assert switched_settings.active_model == "kimi-k4"
         assert switched_settings.active_thinking_effort == "high"
         assert model_actions.display is False
         assert isinstance(app.agent, FakeCoderAgent)
@@ -158,7 +158,7 @@ async def test_textual_app_model_slash_command_shows_and_switches_model(
 
         composer.load_text("/model does-not-exist")
         await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
-        assert settings_store.load().active_model == "kimi-k3"
+        assert settings_store.load().active_model == "kimi-k4"
 
 
 @pytest.mark.asyncio
@@ -180,7 +180,7 @@ async def test_textual_app_model_slash_command_selects_from_action_list(
     settings = CliSettings(
         active_provider=ModelProvider.MOONSHOT.value,
         active_model=UI_DEFAULT_MODEL,
-        active_thinking_effort="auto",
+        active_thinking_effort="max",
     )
     settings.set_api_key(ModelProvider.MOONSHOT.value, "moonshot-key")
     settings_store.save(settings)
@@ -201,9 +201,9 @@ async def test_textual_app_model_slash_command_selects_from_action_list(
         model_actions = app.query_one("#model_actions", ActionList)
         assert model_actions.display is True
         assert app.focused is model_actions
-        assert model_actions.option_count == 3
+        assert model_actions.option_count == 4
 
-        await pilot.press("down", "enter")
+        await pilot.press("down", "down", "enter")
         await pilot.pause()
         assert settings_store.load().active_model == MOONSHOT_K26_MODEL
         assert model_actions.display is False
@@ -237,7 +237,7 @@ async def test_textual_app_model_slash_command_accepts_typed_selection_and_rejec
     settings = CliSettings(
         active_provider=ModelProvider.MOONSHOT.value,
         active_model=UI_DEFAULT_MODEL,
-        active_thinking_effort="auto",
+        active_thinking_effort="max",
     )
     settings.set_api_key(ModelProvider.MOONSHOT.value, "moonshot-key")
     settings_store.save(settings)
@@ -293,7 +293,7 @@ async def test_textual_app_model_slash_command_blocks_selector_during_active_tur
     settings = CliSettings(
         active_provider=ModelProvider.MOONSHOT.value,
         active_model=UI_DEFAULT_MODEL,
-        active_thinking_effort="auto",
+        active_thinking_effort="max",
     )
     settings.set_api_key(ModelProvider.MOONSHOT.value, "moonshot-key")
     settings_store.save(settings)

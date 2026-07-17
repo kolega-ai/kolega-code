@@ -77,6 +77,18 @@ def build_thinking_request_params(provider: str, model_name: str, effort: Option
             return {"thinking": {"type": "disabled"}}
         return {"thinking": {"type": "enabled"}}
 
+    if spec.mode == "moonshot_reasoning_effort":
+        # Moonshot's standard API expects this as a top-level request field.
+        # Kolega currently reaches Moonshot through its Anthropic-compatible
+        # endpoint, so use the Anthropic SDK's passthrough body for the field.
+        return {"extra_body": {"reasoning_effort": normalized}}
+
+    if spec.mode == "kimi_coding_effort":
+        # Kimi Coding Plan exposes K3 through its Anthropic-compatible endpoint
+        # and accepts Claude's output_config effort shape. Deep thinking is
+        # always enabled for K3, so no separate thinking toggle is needed.
+        return {"output_config": {"effort": normalized}}
+
     if spec.mode == "google_thinking_budget":
         return {"thinking_config": {"thinking_budget": spec.budgets[normalized]}}
 

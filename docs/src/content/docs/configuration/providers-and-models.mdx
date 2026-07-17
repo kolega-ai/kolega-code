@@ -44,10 +44,13 @@ documents as `ANTHROPIC_AUTH_TOKEN`).
 <Aside type="tip">
 **Kimi Coding Plan.** The `kimi_coding` provider targets Kimi's Anthropic-compatible
 coding endpoint (`https://api.kimi.com/coding/`), which is separate from the standard
-Moonshot API used by the `moonshot` provider. It exposes a single stable model ID,
-**`kimi-for-coding`**, that the backend auto-routes to the latest underlying model:
-with thinking effort `auto` (enabled) requests route to **K2.7 Code**, and with `none`
-(disabled) they route to **K2.6**. Set `KIMI_CODING_API_KEY` to your Kimi Coding Plan key.
+Moonshot API used by the `moonshot` provider. It exposes **`k3`** with a 256K context
+on Moderato and higher plans, and **`k3[1m]`** with a 1M context on Allegretto and
+higher plans. Both K3 IDs use deep thinking with fixed `max` effort. The
+**`kimi-for-coding`** ID remains the default because it is available on every plan;
+with thinking effort `auto` (enabled) it routes to **K2.7 Code**, and with `none`
+(disabled) it routes to **K2.6**. Set `KIMI_CODING_API_KEY` to your Kimi Coding Plan
+key.
 </Aside>
 
 <Aside type="tip">
@@ -185,8 +188,11 @@ models in the TUI.
 | Anthropic `claude-sonnet-5` | `low`, `medium`, `high`, `xhigh`, `max` | `medium` |
 | Anthropic `claude-opus-4-7` | `low`, `medium`, `high`, `xhigh`, `max` | `medium` |
 | DeepSeek `deepseek-v4-pro` | `none`, `high`, `max` | `high` |
+| Moonshot `kimi-k3` | `max` | `max` |
 | Moonshot `kimi-k2.7-code` | `auto` | `auto` |
 | Moonshot `kimi-k2.6` | `auto`, `none` | `auto` |
+| Kimi Coding Plan `k3`, `k3[1m]` | `max` | `max` |
+| Kimi Coding Plan `kimi-for-coding` | `auto`, `none` | `auto` |
 | Z.AI `glm-5.2` | `high`, `max` | `max` |
 | Z.AI `glm-5.1` | `auto`, `none` | `auto` |
 | Fireworks serverless reasoning models | `none`, `low`, `medium`, `high`, `max` | `medium` |
