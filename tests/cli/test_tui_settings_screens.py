@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -12,7 +13,14 @@ from kolega_code.cli.settings import CliSettings, SettingsStore
 from ._app_test_utils import install_fake_agents, wait_for_onboarding_screen
 
 
-def _configured_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def _configured_app(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    provider: str = UI_DEFAULT_PROVIDER,
+    model: str = UI_DEFAULT_MODEL,
+    effort: str | None = None,
+):
     from kolega_code.cli.app import KolegaCodeApp
 
     install_fake_agents(monkeypatch)
@@ -20,8 +28,8 @@ def _configured_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     project.mkdir()
     state_dir = tmp_path / "state"
     settings_store = SettingsStore(state_dir)
-    settings = CliSettings(active_provider=UI_DEFAULT_PROVIDER, active_model=UI_DEFAULT_MODEL)
-    settings.set_api_key(UI_DEFAULT_PROVIDER, "stored-key")
+    settings = CliSettings(active_provider=provider, active_model=model, active_thinking_effort=effort)
+    settings.set_api_key(provider, "stored-key")
     settings_store.save(settings)
     config = build_agent_config(project, env={}, settings=settings, settings_store=settings_store)
     store = SessionStore(state_dir)
@@ -96,6 +104,73 @@ async def test_settings_screen_is_categorized_and_stages_credentials_atomically(
         screen.query_one("#provider_select", Select).value = "deepseek"
         await pilot.pause()
         assert screen.query_one("#api_key_input", Input).value == ""
+
+
+async def _wait_for_select_values(pilot, screen, expected: dict[str, str], *, attempts: int = 50) -> None:
+    """Poll until the given Select widgets hold the expected values (or give up).
+
+    The provider→model→effort cascade settles over several message passes, so a
+    single ``pilot.pause()`` can race on loaded runners.
+    """
+    from textual.widgets import Select
+
+    for _ in range(attempts):
+        await pilot.pause()
+        await asyncio.sleep(0.01)
+        if all(str(screen.query_one(f"#{widget_id}", Select).value) == value for widget_id, value in expected.items()):
+            return
+
+
+@pytest.mark.asyncio
+async def test_settings_screen_retains_active_model_and_effort(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    isolated_cli_env: None,
+) -> None:
+    """Regression: stale mount-time Select.Changed events must not clobber the draft."""
+    pytest.importorskip("textual")
+    from textual.widgets import Select
+
+    from kolega_code.cli.tui.settings_screen import SettingsScreen
+
+    app, _ = _configured_app(
+        tmp_path,
+        monkeypatch,
+        provider="ollama_cloud",
+        model="gemma4:31b",
+        effort="high",
+    )
+
+    async with app.run_test(size=(140, 40)) as pilot:
+        app.action_open_settings()
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+        await _wait_for_select_values(
+            pilot,
+            screen,
+            {
+                "provider_select": "ollama_cloud",
+                "model_select": "gemma4:31b",
+                "thinking_effort_select": "high",
+            },
+        )
+        provider = screen.query_one("#provider_select", Select)
+        model = screen.query_one("#model_select", Select)
+        effort = screen.query_one("#thinking_effort_select", Select)
+        assert str(provider.value) == "ollama_cloud"
+        assert str(model.value) == "gemma4:31b"
+        assert str(effort.value) == "high"
+        assert screen.dirty is False
+
+        # A genuine provider change still cascades: model falls back to the new
+        # provider's first model, then a manual model pick is retained.
+        provider.value = "deepseek"
+        await _wait_for_select_values(pilot, screen, {"model_select": "deepseek-v4-pro"})
+        assert str(model.value) == "deepseek-v4-pro"
+
+        model.value = "deepseek-v4-flash"
+        await _wait_for_select_values(pilot, screen, {"model_select": "deepseek-v4-flash"})
+        assert str(model.value) == "deepseek-v4-flash"
 
 
 @pytest.mark.asyncio

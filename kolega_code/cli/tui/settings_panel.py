@@ -238,6 +238,11 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
 
         if select_id == "provider_select":
             provider = str(event.value)
+            if str(event.select.value) != provider:
+                # Stale event: the select already holds a newer value (e.g. a
+                # mount-time Changed posted with the compose-time default, delivered
+                # after _populate_settings_controls restored the real provider).
+                return
             self._repopulate_model_select(provider, "model_select", "thinking_effort_select")
             self._update_browser_model_hint()
             try:
@@ -251,6 +256,9 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             return
 
         if select_id == "model_select":
+            if str(event.select.value) != str(event.value):
+                # Stale event: a newer model was set after this event was posted.
+                return
             try:
                 provider = str(self._settings_query_one("#provider_select", Select).value)
             except NoMatches:
