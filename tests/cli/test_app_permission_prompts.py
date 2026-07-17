@@ -60,6 +60,22 @@ def _build_permission_test_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     return KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
 
 
+async def _wait_for_layout(pilot, predicate, *, timeout: float = 6.0) -> None:
+    """Poll until ``predicate()`` is truthy or time out.
+
+    Showing a prompt panel takes two layout passes: the first sizes the header's
+    scroll container, and only the second gives its scrollbar a region.
+    ``pilot.pause()``'s idle heuristic can return before that second pass on a
+    busy CI runner, so geometry assertions must wait for the region to materialize.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        await pilot.pause(0.02)
+        if predicate():
+            return
+    raise AssertionError(f"layout did not settle within {timeout}s")
+
+
 @pytest.mark.asyncio
 async def test_textual_app_permission_approval_actions_show_rule_labels_without_descriptions(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -163,6 +179,12 @@ async def test_textual_app_long_permission_command_keeps_approval_actions_visibl
         approval_actions = app.query_one("#approval_actions", ActionList)
         conversation = app.query_one("#conversation")
         composer = app.query_one("#composer", ChatComposer)
+        await _wait_for_layout(
+            pilot,
+            lambda: (
+                approval_header.vertical_scrollbar.region.width > 0 and conversation.vertical_scrollbar.region.width > 0
+            ),
+        )
         assert approval_prompt.display is True
         assert approval_actions.display is True
         assert approval_actions.option_count == 5
@@ -241,6 +263,12 @@ async def test_textual_app_long_question_keeps_actions_visible_and_selectable(
         question_actions = app.query_one("#question_actions", ActionList)
         conversation = app.query_one("#conversation")
         composer = app.query_one("#composer", ChatComposer)
+        await _wait_for_layout(
+            pilot,
+            lambda: (
+                question_header.vertical_scrollbar.region.width > 0 and conversation.vertical_scrollbar.region.width > 0
+            ),
+        )
         assert question_prompt.display is True
         assert question_actions.display is True
         assert question_actions.option_count == 3
