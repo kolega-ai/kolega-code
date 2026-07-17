@@ -6,6 +6,8 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.20.0 - 2026-07-17
+
 ### Added
 
 - Added Kimi K3 as the default Moonshot model, with native vision, a 1M-token
