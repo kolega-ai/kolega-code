@@ -3,7 +3,7 @@
  * GitHub-dark terminal aesthetic matching the Kolega Code reskin.
  *   - Primary accent: cyan #39C5CF (links, active states, headings)
  *   - Secondary: purple #9B7DD4 (branding)
- *   - Tertiary: lime #ADDD30 (CTAs, selection, status indicators)
+ *   - Tertiary: lime #ADDD30 (CTAs, status indicators)
  *   - Surfaces: #0D1117 page, #161B22 cards, #010409 nav, #0A0D12 code
  *   - Hairlines: #21262D, visible borders: #30363D
  *   - JetBrains Mono for code/mono, IBM Plex Sans for prose
@@ -137,9 +137,17 @@ html {
   scroll-behavior: smooth;
 }
 
+/* Text selection — cyan accent, themed (was lime #addd30 from the old theme).
+ * Translucent so selected text stays readable; bg differs per theme for contrast.
+ * --sl-color-white is Starlight's foreground-text token in both themes. */
 ::selection {
-  background: #addd30;
-  color: #0d1117;
+  color: var(--sl-color-white);
+}
+:root[data-theme="dark"] ::selection {
+  background: rgba(57, 197, 207, 0.3); /* #39c5cf, the dark accent */
+}
+:root[data-theme="light"] ::selection {
+  background: rgba(26, 122, 133, 0.22); /* #1a7a85, the light accent */
 }
 
 /* ==========================================================================
