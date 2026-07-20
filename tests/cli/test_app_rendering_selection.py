@@ -282,6 +282,23 @@ async def test_conversation_selection_can_start_in_blank_separator(
         await pilot.pause()
 
         first, second = list(app.query(ConversationEntryWidget))[-2:]
+
+        def selection_targets_are_ready() -> bool:
+            if app._conversation_anchor_pending:
+                return False
+            separator_y = first.region.height - 1
+            for widget, (x, y) in ((first, (0, separator_y)), (second, (20, 1))):
+                hit_widget, select_offset = app.screen.get_widget_and_offset_at(
+                    widget.region.x + x, widget.region.y + y
+                )
+                if hit_widget is not widget or select_offset is None:
+                    return False
+            return True
+
+        # The widgets can be queryable before the compositor's hit map reflects
+        # their post-anchor regions. Mouse selection requires both to agree.
+        await _wait_for_layout(pilot, selection_targets_are_ready)
+
         separator_y = first.region.height - 1
 
         await pilot.mouse_down(first, offset=(0, separator_y))
