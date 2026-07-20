@@ -6,6 +6,18 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.21.1 - 2026-07-20
+
+### Changed
+
+- Kept the terminal UI responsive in large sessions by bounding mounted
+  transcript and subagent rows while preserving scrollback and navigation.
+
+### Fixed
+
+- Preserved the active model and reasoning effort when opening settings instead
+  of allowing stale selector events to reset them.
+
 ## 0.21.0 - 2026-07-17
 
 ### Added
