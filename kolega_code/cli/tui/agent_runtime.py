@@ -157,6 +157,7 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
                 )
                 if guard_result.get("revert_command"):
                     import subprocess
+
                     subprocess.run(guard_result["revert_command"], shell=True, capture_output=True)
                 await self._save_session_history_async()
                 return
