@@ -5,7 +5,7 @@ import tempfile
 import pytest
 from pathlib import Path
 
-# Patch local_state
+# Patch local_state before other imports since WorkLog depends on it
 import kolega_code.local_state as _ls
 
 
@@ -15,10 +15,10 @@ class _FakeLocalState:
         return Path(tempfile.gettempdir()) / "kolega-test-state"
 
 
-_ls.get_state_dir = _FakeLocalState.get_state_dir
+_ls.get_state_dir = _FakeLocalState.get_state_dir  # noqa: E402
 
-from kolega_code.loop.state import WorkLog, LoopLimitExceeded
-from kolega_code.loop.tools import LoopStateTools
+from kolega_code.loop.state import WorkLog, LoopLimitExceeded  # noqa: E402
+from kolega_code.loop.tools import LoopStateTools  # noqa: E402
 
 
 # ============================================================
@@ -192,12 +192,14 @@ class TestGuard:
     def test_no_active_loop_returns_none(self):
         from kolega_code.loop.guard import check_loop_limit
         import asyncio
+
         result = asyncio.run(check_loop_limit("/fake/project"))
         assert result is None
 
     def test_exceeded_limit_returns_block(self, tmp_path):
         from kolega_code.loop.guard import check_loop_limit
         import asyncio
+
         # Create a work-log with exceeded attempts
         wl = WorkLog.load(str(tmp_path / "work-log.json"))
         wl._data["attempts_made"] = 3
@@ -205,6 +207,7 @@ class TestGuard:
         wl.save()
         # Mock WorkLog.for_task to return this work-log
         import kolega_code.loop.guard as guard_mod
+
         original = guard_mod.WorkLog.for_task
         guard_mod.WorkLog.for_task = lambda p, t: wl
         try:

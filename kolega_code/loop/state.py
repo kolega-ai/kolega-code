@@ -92,7 +92,7 @@ class WorkLog:
                 import sys
 
                 print(
-                    f"[loop-state] WARNING: work-log.json corrupted. Reinitializing.",
+                    "[loop-state] WARNING: work-log.json corrupted. Reinitializing.",
                     file=sys.stderr,
                 )
                 wl._data = copy.deepcopy(DEFAULT_TEMPLATE)

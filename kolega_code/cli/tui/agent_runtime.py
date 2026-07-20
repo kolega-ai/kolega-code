@@ -811,8 +811,12 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             return tools_instance.loop_state_log(task_id, status, summary, phase)
 
         async def loop_state_anti_pattern(
-            task_id: str, pattern: str, root_cause: str,
-            file: str, line: int, prevention_rule: str,
+            task_id: str,
+            pattern: str,
+            root_cause: str,
+            file: str,
+            line: int,
+            prevention_rule: str,
         ) -> dict:
             """Record an anti-pattern for future loops."""
             return tools_instance.loop_state_anti_pattern(task_id, pattern, root_cause, file, line, prevention_rule)
