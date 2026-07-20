@@ -31,6 +31,7 @@ from ..skills import (
     discover_skills,
 )
 from kolega_code.agent.prompts import BUG_FIX_LOOP_PROMPT
+from kolega_code.loop.tools import LoopStateTools
 from . import app_base as tui_app_base
 from . import constants as tui_constants
 from . import state as tui_state
@@ -708,6 +709,67 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             propagate_to_sub_agents=False,
         )
 
+    def _loop_state_tool_extension(self) -> ToolExtension:
+        """Return loop state tools for deterministic bug-fix loop enforcement.
+
+        Exposes loop_state_init, loop_state_attempt, loop_state_revert,
+        loop_state_log, loop_state_anti_pattern, loop_state_check_anti_patterns,
+        loop_state_status, and loop_state_backup as agent-callable tools.
+        """
+        tools_instance = LoopStateTools(self.project_path)
+
+        async def loop_state_init(task_id: str, loop_type: str, max_attempts: int = 2) -> dict:
+            """Initialize loop state for a new bug-fix task."""
+            return tools_instance.loop_state_init(task_id, loop_type, max_attempts)
+
+        async def loop_state_attempt(task_id: str) -> dict:
+            """Increment attempt counter. Returns {"exceeded": true} if limit hit."""
+            return tools_instance.loop_state_attempt(task_id)
+
+        async def loop_state_revert(task_id: str) -> dict:
+            """Return shell command to revert to last known-good state."""
+            return tools_instance.loop_state_revert(task_id)
+
+        async def loop_state_log(task_id: str, status: str, summary: str, phase: str = "") -> dict:
+            """Record an attempt in loop history."""
+            return tools_instance.loop_state_log(task_id, status, summary, phase)
+
+        async def loop_state_anti_pattern(
+            task_id: str, pattern: str, root_cause: str,
+            file: str, line: int, prevention_rule: str,
+        ) -> dict:
+            """Record an anti-pattern for future loops."""
+            return tools_instance.loop_state_anti_pattern(task_id, pattern, root_cause, file, line, prevention_rule)
+
+        async def loop_state_check_anti_patterns(task_id: str, module: str = "") -> dict:
+            """Query past anti-patterns for a module."""
+            return tools_instance.loop_state_check_anti_patterns(task_id, module)
+
+        async def loop_state_status(task_id: str) -> dict:
+            """Return full loop work-log state."""
+            return tools_instance.loop_state_status(task_id)
+
+        async def loop_state_backup(task_id: str) -> dict:
+            """Snapshot current working tree as revert point."""
+            return tools_instance.loop_state_backup(task_id)
+
+        return ToolExtension(
+            name="loop-state",
+            tools={
+                "loop_state_init": loop_state_init,
+                "loop_state_attempt": loop_state_attempt,
+                "loop_state_revert": loop_state_revert,
+                "loop_state_log": loop_state_log,
+                "loop_state_anti_pattern": loop_state_anti_pattern,
+                "loop_state_check_anti_patterns": loop_state_check_anti_patterns,
+                "loop_state_status": loop_state_status,
+                "loop_state_backup": loop_state_backup,
+            },
+            # These tools manage loop-specific state; they should not be
+            # inherited by sub-agents to avoid confusion.
+            propagate_to_sub_agents=False,
+        )
+
     async def _build_agent(
         self,
         config: AgentConfig,
@@ -766,6 +828,12 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         bug_fix_extension = self._bug_fix_loop_prompt_extension()
         if bug_fix_extension is not None:
             prompt_extensions.append(bug_fix_extension)
+
+        # Loop state tools — deterministic attempt tracking, anti-pattern memory,
+        # revert points, and work-log persistence for the bug-fix loop.
+        loop_tools_ext = self._loop_state_tool_extension()
+        if loop_tools_ext is not None:
+            tool_extensions.append(loop_tools_ext)
 
         if self.interaction_mode == tui_constants.PLAN_INTERACTION_MODE:
             prompt_extensions.append(self._planning_question_prompt_extension())
