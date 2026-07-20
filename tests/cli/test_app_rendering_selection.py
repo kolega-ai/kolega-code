@@ -44,6 +44,16 @@ from ._app_test_utils import (
 )
 
 
+async def _wait_for_layout(pilot, predicate, *, timeout: float = 6.0) -> None:
+    """Poll until ``predicate()`` is truthy or the layout deadline expires."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        await pilot.pause(0.02)
+        if predicate():
+            return
+    raise AssertionError(f"layout did not settle within {timeout}s")
+
+
 @pytest.mark.asyncio
 async def test_textual_app_keeps_command_c_for_screen_copy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("textual")
@@ -303,6 +313,21 @@ async def test_conversation_selection_can_start_after_line_end(tmp_path: Path, m
         await pilot.pause()
 
         first, second = list(app.query(ConversationEntryWidget))[-2:]
+
+        def selection_targets_are_ready() -> bool:
+            if app._conversation_anchor_pending:
+                return False
+            for widget, (x, y) in ((first, (30, 1)), (second, (20, 1))):
+                hit_widget, select_offset = app.screen.get_widget_and_offset_at(
+                    widget.region.x + x, widget.region.y + y
+                )
+                if hit_widget is not widget or select_offset is None:
+                    return False
+            return True
+
+        # The widgets can be queryable before the compositor's hit map reflects
+        # their post-anchor regions. Mouse selection requires both to agree.
+        await _wait_for_layout(pilot, selection_targets_are_ready)
 
         await pilot.mouse_down(first, offset=(30, 1))
         await pilot._post_mouse_events([events.MouseMove], second, offset=(20, 1), button=1)

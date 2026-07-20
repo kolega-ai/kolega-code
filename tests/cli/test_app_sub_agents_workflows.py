@@ -44,6 +44,16 @@ from ._app_test_utils import (
 )
 
 
+async def _wait_for_layout(pilot, predicate, *, timeout: float = 6.0) -> None:
+    """Poll until ``predicate()`` is truthy or the layout deadline expires."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        await pilot.pause(0.02)
+        if predicate():
+            return
+    raise AssertionError(f"layout did not settle within {timeout}s")
+
+
 @pytest.mark.asyncio
 async def test_sub_agent_context_update_does_not_stomp_main_dashboard(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -647,9 +657,12 @@ async def test_sub_agent_inspector_shows_empty_state(tmp_path: Path, monkeypatch
         app._render_event(_sub_agent_event(task="", status="GENERATING", message="Starting"))
 
         app.action_open_sub_agent()
-        await pilot.pause()
         screen = app._sub_agent_inspector
         assert screen is not None
+        await _wait_for_layout(
+            pilot,
+            lambda: screen._rendered_key == screen._selected_key and screen._empty_shown,
+        )
         assert screen._empty_shown is True
         assert not screen._step_widgets
         view = screen.query_one("#inspector_trajectory")
@@ -659,7 +672,10 @@ async def test_sub_agent_inspector_shows_empty_state(tmp_path: Path, monkeypatch
         # Once a real step arrives, the placeholder is replaced by step widgets.
         app._render_event(_sub_agent_event(uuid="r1", text="now working"))
         screen._flush()
-        await pilot.pause()
+        await _wait_for_layout(
+            pilot,
+            lambda: not screen._empty_shown and len(screen._step_widgets) == 1,
+        )
         assert screen._empty_shown is False
         assert len(screen._step_widgets) == 1
 
