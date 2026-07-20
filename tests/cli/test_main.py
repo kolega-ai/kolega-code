@@ -15,7 +15,7 @@ from kolega_code.cli.main import (
     parse_args,
 )
 from kolega_code.cli.provider_registry import DEEPSEEK_DEFAULT_MODEL, UI_DEFAULT_MODEL, UI_DEFAULT_PROVIDER
-from kolega_code.cli.session_store import SessionStore, SessionStoreError
+from kolega_code.cli.session_store import SessionRecord, SessionStore, SessionStoreError
 from kolega_code.cli.settings import CliSettings, SettingsStore
 from kolega_code.cli.updater import UpdateCheckResult, UpdateRunResult
 from kolega_code.agent.prompt_overrides import PROMPT_OVERRIDE_DIR
@@ -78,6 +78,8 @@ def test_explicit_tui_help_shows_tui_arguments(capsys) -> None:
     assert "usage: kolega-code tui" in output
     assert "project_path" in output
     assert "--resume" in output
+    assert "SESSION_ID" in output
+    assert "legacy thread IDs are also accepted" in output
     assert "--permission-mode" in output
 
 
@@ -175,6 +177,78 @@ def test_parse_sessions_list_subcommand() -> None:
     assert args.command == "sessions"
     assert args.sessions_command == "list"
     assert args.project == Path("/tmp/project")
+
+
+def test_sessions_list_shows_resume_ids_oldest_to_newest(
+    tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from kolega_code.cli import main as main_module
+
+    project = tmp_path / "project"
+    project.mkdir()
+    records = [
+        SessionRecord(
+            session_id="newest-session",
+            thread_id="newest-thread",
+            workspace_id="newest-workspace",
+            project_path=str(project),
+            mode="code",
+            title="Newest work",
+            created_at="2026-07-20T12:00:00+00:00",
+            updated_at="2026-07-20T13:00:00+00:00",
+        ),
+        SessionRecord(
+            session_id="oldest-session",
+            thread_id="oldest-thread",
+            workspace_id="oldest-workspace",
+            project_path=str(project),
+            mode="code",
+            title="Older work",
+            created_at="2026-07-19T09:00:00+00:00",
+            updated_at="2026-07-19T10:00:00+00:00",
+        ),
+    ]
+    projects: list[Path | None] = []
+
+    class FakeStore:
+        def list(self, project_path: Path | None = None) -> list[SessionRecord]:
+            projects.append(project_path)
+            return records
+
+    monkeypatch.setattr(main_module, "_store_from_args", lambda args: FakeStore())
+
+    exit_code = main_module.main(["sessions", "list", "--project", str(project)])
+
+    assert exit_code == 0
+    assert projects == [project.resolve()]
+    output = capsys.readouterr().out
+    assert "Resume ID: oldest-session" in output
+    assert "Resume ID: newest-session" in output
+    assert "oldest-thread" not in output
+    assert "newest-thread" not in output
+    assert "Older work" in output
+    assert "Newest work" in output
+    assert str(project) in output
+    assert "Mode:      code" in output
+    assert "2026-07-19T10:00:00+00:00" in output
+    assert "2026-07-20T13:00:00+00:00" in output
+    assert output.index("oldest-session") < output.index("newest-session")
+    assert output.rstrip().endswith("Resume ID: newest-session")
+
+
+def test_sessions_list_prints_empty_state(capsys, monkeypatch: pytest.MonkeyPatch) -> None:
+    from kolega_code.cli import main as main_module
+
+    class EmptyStore:
+        def list(self, project_path: Path | None = None) -> list[SessionRecord]:
+            return []
+
+    monkeypatch.setattr(main_module, "_store_from_args", lambda args: EmptyStore())
+
+    exit_code = main_module.main(["sessions", "list"])
+
+    assert exit_code == 0
+    assert capsys.readouterr().out == "No saved sessions.\n"
 
 
 def test_parse_update_subcommand() -> None:
