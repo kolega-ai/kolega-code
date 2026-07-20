@@ -30,6 +30,7 @@ from .state import (
     tool_state_presentation,
 )
 from . import app_base as tui_app_base
+from . import widgets as tui_widgets
 from .sub_agent_screen import SubAgentEntryWidget
 from .widgets import ConversationEntryWidget, JumpToBottomBar, ToolEntryWidget
 
@@ -1208,10 +1209,45 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
             return theme.RENDER_COALESCE_INTERVAL_MEDIUM
         return theme.RENDER_COALESCE_INTERVAL
 
+    def _get_transcript_window(self) -> tui_widgets.ScrollbackWindow:
+        """The lazily-created scrollback window bounding mounted transcript widgets."""
+        window = self._transcript_window
+        if window is None:
+            window = tui_widgets.ScrollbackWindow(
+                self._conversation,
+                self._make_entry_widget,
+                max_mounted=theme.TRANSCRIPT_WINDOW_MAX,
+                trim_chunk=theme.TRANSCRIPT_WINDOW_TRIM_CHUNK,
+                expand_chunk=theme.TRANSCRIPT_WINDOW_EXPAND_CHUNK,
+            )
+            self._transcript_window = window
+        return window
+
+    @property
+    def _entry_widgets(self) -> dict[str, tui_widgets.ConversationEntryWidget | tui_widgets.ToolEntryWidget]:
+        """Mounted entry widgets (the trailing window of the transcript)."""
+        return self._get_transcript_window().widgets
+
+    def _maybe_expand_transcript_window(self) -> None:
+        """Mount older transcript entries when the user scrolls near the top."""
+        if self._modal_cover_active:
+            return
+        window = self._transcript_window
+        if window is None:
+            return
+        window.expand_up(self.conversation_entries)
+
     def _flush_conversation_render(self) -> None:
         if not self._render_pending:
             return
         self._render_pending = False
+        if self._modal_cover_active:
+            # A full-screen modal (sub-agent inspector, settings, ...) covers the
+            # transcript: skip all widget work — reflowing the hidden screen is
+            # pure burn. One windowed rebuild catches up when the modal closes.
+            self._transcript_sync_pending = True
+            self._dirty_entry_ids.clear()
+            return
         try:
             view = self._conversation
         except Exception:
@@ -1225,54 +1261,36 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
             return
 
         should_follow = bool(getattr(view, "auto_follow_bottom", False)) or view.is_at_bottom()
+        window = self._get_transcript_window()
 
         # Fast path for the common streaming case: the transcript shape is unchanged
         # and only already-mounted entries need their renderables refreshed.
         if (
             self._dirty_entry_ids
-            and len(self._entry_widgets) == len(self.conversation_entries)
-            and all(entry_id in self._entry_widgets for entry_id in self._dirty_entry_ids)
+            and len(self.conversation_entries) == self._rendered_entry_count
+            and all(entry_id in window.widgets for entry_id in self._dirty_entry_ids)
         ):
-            self._refresh_dirty_entry_widgets()
+            window.refresh_dirty(self._dirty_entry_ids)
             if should_follow:
                 self._schedule_conversation_bottom_anchor()
             else:
                 self._update_jump_button()
             return
 
-        rendered_ids = list(self._entry_widgets)
-        current_ids = [entry.entry_id for entry in self.conversation_entries]
-        if current_ids[: len(rendered_ids)] != rendered_ids:
-            # Entries were removed, replaced, or inserted before the end; rebuild.
-            self._render_conversation()
-            return
-
-        self._refresh_dirty_entry_widgets()
-
-        new_entries = self.conversation_entries[len(rendered_ids) :]
-        if new_entries:
-            widgets = []
-            for entry in new_entries:
-                widget = self._make_entry_widget(entry)
-                self._entry_widgets[entry.entry_id] = widget
-                widgets.append(widget)
-            view.mount(*widgets)
+        window.sync(self.conversation_entries, self._dirty_entry_ids, follow_bottom=should_follow)
+        self._rendered_entry_count = len(self.conversation_entries)
         if should_follow:
             self._schedule_conversation_bottom_anchor()
         else:
             self._update_jump_button()
 
-    def _refresh_dirty_entry_widgets(self) -> None:
-        for entry_id in self._dirty_entry_ids:
-            widget = self._entry_widgets.get(entry_id)
-            if widget is not None:
-                widget.refresh_content()
-        self._dirty_entry_ids.clear()
-
     def _render_conversation(self) -> None:
         """Full rebuild of the conversation view (restore, reset, startup changes)."""
         self._render_pending = False
         self._dirty_entry_ids.clear()
+        if self._modal_cover_active:
+            self._transcript_sync_pending = True
+            return
         try:
             view = self._conversation
         except Exception:
@@ -1283,15 +1301,8 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
         should_follow = (
             not had_rendered_entries or bool(getattr(view, "auto_follow_bottom", False)) or view.is_at_bottom()
         )
-        view.remove_children()
-        self._entry_widgets = {}
-        widgets = []
-        for entry in self.conversation_entries:
-            widget = self._make_entry_widget(entry)
-            self._entry_widgets[entry.entry_id] = widget
-            widgets.append(widget)
-        if widgets:
-            view.mount(*widgets)
+        self._get_transcript_window().rebuild(self.conversation_entries)
+        self._rendered_entry_count = len(self.conversation_entries)
         if should_follow:
             self._schedule_conversation_bottom_anchor()
         else:

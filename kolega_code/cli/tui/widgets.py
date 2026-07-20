@@ -345,6 +345,177 @@ class ToolEntryWidget(Vertical):
                     self._preview.refresh(layout=True)
 
 
+class ScrollbackWindow:
+    """Maintains a mounted trailing window over an append-mostly entry list.
+
+    Textual reflows cost O(mounted widgets): a session that mounts every
+    transcript entry forever gets slower the longer it runs. This helper mounts
+    only the newest ``max_mounted`` entries, mounts older chunks on demand when
+    the user scrolls near the top, and trims the oldest entries while the view
+    follows the bottom — keeping per-flush layout cost bounded no matter how
+    long the session grows.
+
+    Invariant after :meth:`sync`/:meth:`rebuild`: ``list(self.widgets)`` equals
+    ``[e.entry_id for e in entries[mounted_start:]]``. Live entry lists are
+    append-only; any mid-list insertion or removal breaks the mounted-span
+    alignment and is handled by a full (re)windowing in :meth:`rebuild`.
+    """
+
+    def __init__(
+        self,
+        view: VerticalScroll,
+        make_widget: Callable[[ConversationEntry], ConversationEntryWidget | ToolEntryWidget],
+        *,
+        max_mounted: int,
+        trim_chunk: int,
+        expand_chunk: int,
+    ) -> None:
+        self._view = view
+        self._make_widget = make_widget
+        self.max_mounted = max_mounted
+        self.trim_chunk = trim_chunk
+        self.expand_chunk = expand_chunk
+        self.widgets: dict[str, ConversationEntryWidget | ToolEntryWidget] = {}
+        self.mounted_start = 0
+        self._expand_pending = False
+
+    # ---- incremental maintenance --------------------------------------------
+
+    def sync(self, entries: list[ConversationEntry], dirty_ids: set[str], *, follow_bottom: bool) -> None:
+        """Refresh dirty widgets, mount appended entries, trim while following.
+
+        Consumes ``dirty_ids`` (clears the caller's set). Falls back to a full
+        rebuild when the mounted span no longer aligns with the entries list or
+        when the unmounted tail grew implausibly large (defensive burst guard).
+        """
+        if not self._view.is_attached:
+            dirty_ids.clear()
+            return
+        unmounted_tail = len(entries) - (self.mounted_start + len(self.widgets))
+        if not self._mounted_span_matches(entries) or unmounted_tail > self.max_mounted:
+            self.rebuild(entries)
+            dirty_ids.clear()
+            return
+        self.refresh_dirty(dirty_ids)
+        if unmounted_tail > 0:
+            self._mount_entries(entries[len(entries) - unmounted_tail :])
+        if follow_bottom:
+            self._trim_above()
+
+    def rebuild(self, entries: list[ConversationEntry]) -> None:
+        """Re-mount only the trailing window of ``entries`` (restore, reset, structural edits)."""
+        if not self._view.is_attached:
+            return
+        self._view.remove_children()
+        self.widgets = {}
+        self.mounted_start = max(0, len(entries) - self.max_mounted)
+        self._mount_entries(entries[self.mounted_start :])
+
+    def refresh_dirty(self, dirty_ids: set[str]) -> None:
+        """Re-render mounted widgets for ``dirty_ids`` (skipping unmounted) and consume the set."""
+        for entry_id in dirty_ids:
+            widget = self.widgets.get(entry_id)
+            if widget is not None:
+                widget.refresh_content()
+        dirty_ids.clear()
+
+    def refresh_all(self) -> None:
+        """Re-render every mounted widget (cheap: unchanged widgets early-return on a snapshot)."""
+        for widget in self.widgets.values():
+            widget.refresh_content()
+
+    # ---- history expansion ---------------------------------------------------
+
+    def expand_up(self, entries: list[ConversationEntry]) -> bool:
+        """Mount the previous ``expand_chunk`` entries above the window, keeping position.
+
+        Records the content height before mounting, then compensates ``scroll_y``
+        by the measured delta after layout so the viewport shows the same entries.
+        Returns False when already fully expanded or an expansion is in flight.
+        """
+        if self._expand_pending or self.mounted_start <= 0 or not self.widgets:
+            return False
+        if not self._view.is_attached:
+            return False
+        new_start = max(0, self.mounted_start - self.expand_chunk)
+        chunk = entries[new_start : self.mounted_start]
+        if not chunk:
+            return False
+        first_widget = next(iter(self.widgets.values()))
+        new_widgets: dict[str, ConversationEntryWidget | ToolEntryWidget] = {}
+        for entry in chunk:
+            new_widgets[entry.entry_id] = self._make_widget(entry)
+        view = self._view
+        old_virtual_height = view.virtual_size.height
+        old_widgets = self.widgets
+        old_start = self.mounted_start
+        self._expand_pending = True
+        self.mounted_start = new_start
+        self.widgets = {**new_widgets, **old_widgets}
+        try:
+            with view.app.batch_update():
+                view.mount(*new_widgets.values(), before=first_widget)
+        except Exception:
+            # Mount failed (e.g. view mid-teardown): roll back to the pre-expand
+            # state so a later attempt can retry cleanly.
+            self.widgets = old_widgets
+            self.mounted_start = old_start
+            self._expand_pending = False
+            return False
+        self._schedule_expand_compensation(old_virtual_height)
+        return True
+
+    def _schedule_expand_compensation(self, old_virtual_height: int) -> None:
+        view = self._view
+
+        def compensate() -> None:
+            self._expand_pending = False
+            try:
+                if not view.is_attached:
+                    return
+                added = view.virtual_size.height - old_virtual_height
+                if added > 0:
+                    view.scroll_to(y=view.scroll_y + added, animate=False)
+            except Exception:
+                pass
+
+        try:
+            view.call_after_refresh(compensate)
+        except Exception:
+            self._expand_pending = False
+
+    # ---- internals -------------------------------------------------------------
+
+    def _mounted_span_matches(self, entries: list[ConversationEntry]) -> bool:
+        """Mounted ids still align with ``entries[mounted_start : mounted_start + len(widgets)]``."""
+        end = self.mounted_start + len(self.widgets)
+        if end > len(entries):
+            return False
+        return all(
+            entry.entry_id == widget_id for entry, widget_id in zip(entries[self.mounted_start : end], self.widgets)
+        )
+
+    def _mount_entries(self, new_entries: list[ConversationEntry]) -> None:
+        if not new_entries:
+            return
+        widgets = []
+        for entry in new_entries:
+            widget = self._make_widget(entry)
+            self.widgets[entry.entry_id] = widget
+            widgets.append(widget)
+        self._view.mount(*widgets)
+
+    def _trim_above(self) -> None:
+        """Remove the oldest entries once the window reaches max + trim_chunk (back to max)."""
+        excess = len(self.widgets) - self.max_mounted
+        if excess < self.trim_chunk:
+            return
+        oldest_ids = list(self.widgets)[:excess]
+        oldest_widgets = [self.widgets.pop(entry_id) for entry_id in oldest_ids]
+        self.mounted_start += excess
+        self._view.remove_children(oldest_widgets)
+
+
 class ConversationView(VerticalScroll):
     """Scrollable list of per-entry widgets, anchored to the bottom while streaming."""
 
@@ -367,10 +538,30 @@ class ConversationView(VerticalScroll):
         self.auto_follow_bottom = self.is_at_bottom()
         try:
             update = getattr(self.app, "_update_jump_button", None)
+            expand = getattr(self.app, "_maybe_expand_transcript_window", None)
         except Exception:
             return
         if update is not None:
             update()
+        # Near the top of the mounted window: pull older history into view.
+        if expand is not None and new_value <= max(1.0, float(self.outer_size.height)):
+            expand()
+
+
+class TrajectoryScrollView(VerticalScroll):
+    """VerticalScroll that reports when the user scrolls near the top.
+
+    Used by the sub-agent inspector to expand its mounted step window upward.
+    """
+
+    def __init__(self, *args, on_near_top: Optional[Callable[[], None]] = None, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._on_near_top = on_near_top
+
+    def watch_scroll_y(self, old_value: float, new_value: float) -> None:
+        super().watch_scroll_y(old_value, new_value)
+        if self._on_near_top is not None and new_value <= max(1.0, float(self.outer_size.height)):
+            self._on_near_top()
 
 
 class StickyRichLog(RichLog):

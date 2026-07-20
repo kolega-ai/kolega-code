@@ -15,15 +15,18 @@ Textual behavior identical.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeVar
 
 from textual.app import App
+
+ScreenResultT = TypeVar("ScreenResultT")
 
 if TYPE_CHECKING:
     import asyncio
 
     from pathlib import Path
 
+    from textual.screen import Screen
     from textual.timer import Timer
     from textual.worker import Worker
 
@@ -114,7 +117,9 @@ class KolegaAppBase(App):
         _workflow_activities: dict[str, tui_state.WorkflowActivity]
         _render_pending: bool
         _conversation_anchor_pending: bool
-        _entry_widgets: dict[str, tui_widgets.ConversationEntryWidget | tui_widgets.ToolEntryWidget]
+        _transcript_window: tui_widgets.ScrollbackWindow | None
+        _transcript_sync_pending: bool
+        _rendered_entry_count: int
         _dirty_entry_ids: set[str]
         _active_progress_entry: tui_state.ConversationEntry | None
         _turn_active: bool
@@ -144,6 +149,7 @@ class KolegaAppBase(App):
         _turn_status_text: str
         _turn_final_text: str
         _turn_final_state: tui_state.TurnState
+        _last_turn_status_content: str | None
         _spinner_frame: int
         _last_sub_agent_tick: float
         _sub_agent_inspector: SubAgentInspectorScreen | None
@@ -168,6 +174,12 @@ class KolegaAppBase(App):
         @property
         def _terminal(self) -> tui_widgets.TerminalOutputLog: ...
 
+        @property
+        def _entry_widgets(self) -> dict[str, tui_widgets.ConversationEntryWidget | tui_widgets.ToolEntryWidget]: ...
+
+        @property
+        def _modal_cover_active(self) -> bool: ...
+
         # ------------------------------------------------------------------
         # Cross-mixin methods — app.py
         # ------------------------------------------------------------------
@@ -182,6 +194,9 @@ class KolegaAppBase(App):
         def _focus_active_prompt(self) -> None: ...
         def _log_status(self, text: str, level: str = "info") -> None: ...
         def _mark_session_diff_dirty(self) -> None: ...
+        def _maybe_expand_transcript_window(self) -> None: ...
+        def _on_fullscreen_modal_dismissed(self, _result: object = None) -> None: ...
+        def _push_fullscreen_modal(self, screen: Screen[ScreenResultT]) -> None: ...
         def _changes_available(self) -> bool: ...
         def _changes_baseline_ladder(self) -> list[int]: ...
         def _changes_baseline_checkpoint(self) -> TurnCheckpoint | None: ...
@@ -298,6 +313,7 @@ class KolegaAppBase(App):
             self, content: str, state: tui_state.TurnState = tui_state.TurnState.IDLE
         ) -> None: ...
         def _flush_conversation_render(self) -> None: ...
+        def _get_transcript_window(self) -> tui_widgets.ScrollbackWindow: ...
         def _handle_workflow_end(self, content: dict) -> None: ...
         def _handle_workflow_log(self, content: dict) -> None: ...
         def _handle_workflow_phase(self, content: dict) -> None: ...
