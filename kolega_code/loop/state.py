@@ -5,6 +5,7 @@ git-based revert (with rsync fallback), and anti-pattern recording.
 """
 
 import copy
+import hashlib
 import json
 import os
 import shutil
@@ -67,8 +68,6 @@ class WorkLog:
     @classmethod
     def for_task(cls, project_path: str, task_id: str) -> "WorkLog":
         """Create a WorkLog stored in kolega-code's state directory."""
-        import hashlib
-
         project_hash = hashlib.sha256(project_path.encode()).hexdigest()[:16]
         state_root = get_state_dir()
         path = state_root / "projects" / project_hash / "loops" / task_id / "work-log.json"
