@@ -30,6 +30,7 @@ from ..skills import (
     context_window_tokens_for_skill_budget,
     discover_skills,
 )
+from kolega_code.agent.prompts import BUG_FIX_LOOP_PROMPT
 from . import app_base as tui_app_base
 from . import constants as tui_constants
 from . import state as tui_state
@@ -688,6 +689,25 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             propagate_to_sub_agents=True,
         )
 
+    def _bug_fix_loop_prompt_extension(self) -> PromptExtension:
+        """Return the built-in bug-fix loop methodology as a prompt extension.
+
+        This is always-on for coder agents in CLI mode. It teaches the agent
+        a structured five-phase methodology to avoid target fixation when
+        fixing bugs: Reproduce → Investigate → Act → Check → Adapt → Report.
+        """
+        from kolega_code.agent.prompt_provider import AgentType
+
+        return PromptExtension(
+            id="bug-fix-loop",
+            title="Bug Fix Loop — Structured Bug-Fixing Methodology",
+            markdown=BUG_FIX_LOOP_PROMPT,
+            agent_types=[AgentType.CODER],
+            modes=[AgentMode.CLI],
+            # Sub-agents should not try to orchestrate their own bug-fix loops.
+            propagate_to_sub_agents=False,
+        )
+
     async def _build_agent(
         self,
         config: AgentConfig,
@@ -739,6 +759,14 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             prompt_extensions.append(skill_prompt_extension)
         if skill_tool_extension is not None:
             tool_extensions.append(skill_tool_extension)
+
+        # Built-in bug-fix loop methodology — always available to coder agents.
+        # Teaches the agent to investigate broadly before fixing, generate multiple
+        # fix hypotheses, and automatically escalate scope on retry.
+        bug_fix_extension = self._bug_fix_loop_prompt_extension()
+        if bug_fix_extension is not None:
+            prompt_extensions.append(bug_fix_extension)
+
         if self.interaction_mode == tui_constants.PLAN_INTERACTION_MODE:
             prompt_extensions.append(self._planning_question_prompt_extension())
             tool_extensions.append(self._planning_question_tool_extension())
