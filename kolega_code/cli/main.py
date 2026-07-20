@@ -206,8 +206,8 @@ def _add_tui_args(parser: argparse.ArgumentParser) -> None:
         "--resume",
         nargs="?",
         const=RESUME_LATEST,
-        metavar="THREAD_ID",
-        help="Resume the latest saved thread, or resume the given thread/session ID.",
+        metavar="SESSION_ID",
+        help="Resume the latest saved session, or resume the given session ID (legacy thread IDs are also accepted).",
     )
     parser.add_argument("--browser-visible", action="store_true", help="Launch visible Playwright browser windows.")
     parser.add_argument("--show-logs", action="store_true", help="Show the diagnostic Logs sidebar tab.")
@@ -231,7 +231,7 @@ def _add_tui_args(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Trust and enable this project's .kolega/lsp.json (persisted for future runs).",
     )
-    _add_session_args(parser, session_help="Legacy alias for --resume THREAD_ID.")
+    _add_session_args(parser, session_help="Legacy alias for --resume SESSION_ID.")
     _add_common_model_args(parser)
 
 
@@ -1107,11 +1107,23 @@ def _run_sessions(args: argparse.Namespace) -> int:
     if args.sessions_command == "list":
         project = args.project.expanduser().resolve() if args.project else None
         records = store.list(project_path=project)
-        for record in records:
-            print(
-                f"{record.session_id}\t{record.thread_id}\t{record.updated_at}\t"
-                f"{record.mode}\t{record.project_path}\t{record.title}"
+        if not records:
+            print("No saved sessions.")
+            return 0
+        entries = []
+        for record in reversed(records):
+            entries.append(
+                "\n".join(
+                    (
+                        f"Updated:   {record.updated_at}",
+                        f"Title:     {record.title}",
+                        f"Mode:      {record.mode}",
+                        f"Project:   {record.project_path}",
+                        f"Resume ID: {record.session_id}",
+                    )
+                )
             )
+        print("\n\n".join(entries))
         return 0
     if args.sessions_command == "delete":
         store.delete(args.session_id)

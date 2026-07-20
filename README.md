@@ -108,7 +108,7 @@ Resume a previous conversation:
 
 ```bash
 kolega-code . --resume            # latest session
-kolega-code . --resume <id>       # a specific thread or session
+kolega-code . --resume <id>       # a specific Resume ID from `sessions list`
 ```
 
 ## Two ways to use it

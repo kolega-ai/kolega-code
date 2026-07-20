@@ -39,11 +39,11 @@ kolega-code [PROJECT_PATH]
 | --- | --- |
 | `PROJECT_PATH` | Project directory to work in (default `.`) |
 | `--new` | Start a new session (this is the default) |
-| `--resume [THREAD_ID]` | Resume the latest saved thread, or a specific thread/session ID |
+| `--resume [SESSION_ID]` | Resume the latest saved session, or a specific Resume ID from `sessions list`. Legacy thread IDs are also accepted |
 | `--browser-visible` | Launch visible Playwright browser windows instead of headless |
 | `--show-logs` | Show the optional diagnostic Logs side-panel tab. Hidden by default to avoid unnecessary log rendering work |
 | `--permission-mode <auto\|ask>` | Shell/edit permission mode. TUI sessions default to `ask` |
-| `--session <ID>` | Legacy alias for `--resume THREAD_ID` |
+| `--session <ID>` | Legacy alias for `--resume SESSION_ID` |
 
 See [Sessions & Resuming](../../tui/sessions-and-resume/) for the full session
 workflow.

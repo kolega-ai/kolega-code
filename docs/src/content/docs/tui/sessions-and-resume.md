@@ -24,14 +24,16 @@ location and the `KOLEGA_CODE_STATE_DIR` override.
 # Resume the most recent session for this project
 kolega-code . --resume
 
-# Resume a specific thread or session ID
-kolega-code . --resume <thread-or-session-id>
+# Resume a specific session using the Resume ID from `sessions list`
+kolega-code . --resume <session-id>
 ```
 
 A few rules:
 
 - `--resume` with no ID resumes the **latest** session for the project. If there
   are none, the CLI reports that.
+- `sessions list` labels the session ID to copy as **Resume ID**. Previously
+  saved commands that use a thread ID remain supported for compatibility.
 - A session belongs to the project it was created in — resuming it from a
   different project directory is rejected.
 - `--new` forces a fresh session (this is the default behavior).

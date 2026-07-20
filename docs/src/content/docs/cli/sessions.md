@@ -28,11 +28,19 @@ kolega-code sessions list --project .
 | `--project <PATH>` | Only show sessions for this project |
 | `--state-dir <PATH>` | Directory for CLI session state |
 
-Each row is tab-separated:
+Each saved session is shown as a labeled block:
 
 ```text
-<session_id>  <thread_id>  <updated_at>  <mode>  <project_path>  <title>
+Updated:   2026-07-19T10:00:00+00:00
+Title:     Improve session listing
+Mode:      code
+Project:   /path/to/project
+Resume ID: 0123456789abcdef0123456789abcdef
 ```
+
+Sessions are ordered from oldest to newest, so the most recently updated
+session and its Resume ID appear nearest the shell prompt. Pass that Resume ID
+to `--resume`, `sessions delete`, or `sessions export`.
 
 ## `sessions delete`
 
@@ -44,7 +52,7 @@ kolega-code sessions delete <session_id>
 
 | Argument / option | Description |
 | --- | --- |
-| `session_id` | The session to delete (required) |
+| `session_id` | The Resume ID shown by `sessions list` (required) |
 | `--state-dir <PATH>` | Directory for CLI session state |
 
 ## `sessions export`
@@ -58,7 +66,7 @@ kolega-code sessions export <session_id> --output run.json
 
 | Argument / option | Description |
 | --- | --- |
-| `session_id` | The session to export (required) |
+| `session_id` | The Resume ID shown by `sessions list` (required) |
 | `--output <PATH>` | Write JSON to a file instead of stdout |
 | `--state-dir <PATH>` | Directory for CLI session state |
 
