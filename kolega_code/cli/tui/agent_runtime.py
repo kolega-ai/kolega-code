@@ -30,7 +30,7 @@ from ..skills import (
     context_window_tokens_for_skill_budget,
     discover_skills,
 )
-from kolega_code.agent.prompts import BUG_FIX_LOOP_PROMPT
+from kolega_code.agent.prompts import BUG_FIX_LOOP_PROMPT, NEW_CODE_LOOP_PROMPT
 from kolega_code.loop.tools import LoopStateTools
 from . import app_base as tui_app_base
 from . import constants as tui_constants
@@ -709,6 +709,25 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             propagate_to_sub_agents=False,
         )
 
+    def _new_code_loop_prompt_extension(self) -> PromptExtension:
+        """Return the built-in new-code loop methodology as a prompt extension.
+
+        This is always-on for coder agents in CLI mode. It teaches the agent
+        a structured four-phase methodology for feature building with parallel
+        generation and independent verification:
+        Goal → Generate → Verify → Select → Report. Max 3 attempts.
+        """
+        from kolega_code.agent.prompt_provider import AgentType
+
+        return PromptExtension(
+            id="new-code-loop",
+            title="New Code Loop — Structured Feature-Building Methodology",
+            markdown=NEW_CODE_LOOP_PROMPT,
+            agent_types=[AgentType.CODER],
+            modes=[AgentMode.CLI],
+            propagate_to_sub_agents=False,
+        )
+
     def _loop_state_tool_extension(self) -> ToolExtension:
         """Return loop state tools for deterministic bug-fix loop enforcement.
 
@@ -828,6 +847,13 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         bug_fix_extension = self._bug_fix_loop_prompt_extension()
         if bug_fix_extension is not None:
             prompt_extensions.append(bug_fix_extension)
+
+        # Built-in new-code loop methodology — always available to coder agents.
+        # Teaches the agent to use parallel generation + independent verification
+        # for feature building: Goal → Generate → Verify → Select → Report.
+        new_code_extension = self._new_code_loop_prompt_extension()
+        if new_code_extension is not None:
+            prompt_extensions.append(new_code_extension)
 
         # Loop state tools — deterministic attempt tracking, anti-pattern memory,
         # revert points, and work-log persistence for the bug-fix loop.
