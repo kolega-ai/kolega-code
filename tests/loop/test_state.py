@@ -181,3 +181,37 @@ class TestLoopStateTools:
         tools.loop_state_init("bug-5", "bug-fix")
         result = tools.loop_state_revert("bug-5")
         assert "command" in result
+
+
+# ============================================================
+# Guard tests
+# ============================================================
+
+
+class TestGuard:
+    def test_no_active_loop_returns_none(self):
+        from kolega_code.loop.guard import check_loop_limit
+        import asyncio
+        result = asyncio.run(check_loop_limit("/fake/project"))
+        assert result is None
+
+    def test_exceeded_limit_returns_block(self, tmp_path):
+        from kolega_code.loop.guard import check_loop_limit
+        import asyncio
+        # Create a work-log with exceeded attempts
+        wl = WorkLog.load(str(tmp_path / "work-log.json"))
+        wl._data["attempts_made"] = 3
+        wl._data["max_attempts"] = 2
+        wl.save()
+        # Mock WorkLog.for_task to return this work-log
+        import kolega_code.loop.guard as guard_mod
+        original = guard_mod.WorkLog.for_task
+        guard_mod.WorkLog.for_task = lambda p, t: wl
+        try:
+            result = asyncio.run(check_loop_limit("/fake/project", "test-task"))
+            assert result is not None
+            assert result["exceeded"] is True
+            assert result["attempts_made"] == 3
+            assert result["max_attempts"] == 2
+        finally:
+            guard_mod.WorkLog.for_task = original

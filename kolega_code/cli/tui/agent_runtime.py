@@ -147,6 +147,20 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         try:
             if self.agent is None:
                 return
+
+            # Check loop limits before processing — blocks the turn if any
+            # active bug-fix or new-code loop has exceeded its attempt budget.
+            guard_result = await self._check_loop_limits()
+            if guard_result is not None:
+                self._add_conversation_entry(
+                    tui_state.ConversationEntry(kind="system", content=guard_result["message"])
+                )
+                if guard_result.get("revert_command"):
+                    import subprocess
+                    subprocess.run(guard_result["revert_command"], shell=True, capture_output=True)
+                await self._save_session_history_async()
+                return
+
             await self._record_turn_checkpoint(turn_label or message)
             cancelled_by_user = await self._run_turn_stream(lambda: self._agent_turn_stream(message, attachments))
             if cancelled_by_user:
@@ -727,6 +741,49 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             modes=[AgentMode.CLI],
             propagate_to_sub_agents=False,
         )
+
+    async def _check_loop_limits(self) -> dict | None:
+        """Check all active loop work-logs for exceeded attempt limits.
+
+        Called before each agent turn. If any loop has exceeded its budget,
+        returns a blocking dict with the revert command and message.
+        Returns None if all loops are within limits or no loops are active.
+        """
+        try:
+            from kolega_code.loop.state import WorkLog
+            from kolega_code.local_state import get_state_dir
+            import hashlib
+
+            project_hash = hashlib.sha256(self.project_path.encode()).hexdigest()[:16]
+            loops_dir = get_state_dir() / "projects" / project_hash / "loops"
+
+            if not loops_dir.exists():
+                return None
+
+            for task_dir in loops_dir.iterdir():
+                if not task_dir.is_dir():
+                    continue
+                wl_path = task_dir / "work-log.json"
+                if not wl_path.exists():
+                    continue
+                try:
+                    wl = WorkLog.load(str(wl_path))
+                except Exception:
+                    continue
+                if wl.attempts_made > wl.max_attempts:
+                    return {
+                        "exceeded": True,
+                        "attempts_made": wl.attempts_made,
+                        "max_attempts": wl.max_attempts,
+                        "revert_command": wl.revert(),
+                        "message": (
+                            f"⛔ Loop limit exceeded: {wl.attempts_made}/{wl.max_attempts} attempts. "
+                            f"Reverting to last known-good state and handing back to user."
+                        ),
+                    }
+        except Exception:
+            pass
+        return None
 
     def _loop_state_tool_extension(self) -> ToolExtension:
         """Return loop state tools for deterministic bug-fix loop enforcement.
