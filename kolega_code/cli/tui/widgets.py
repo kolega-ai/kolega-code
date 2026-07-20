@@ -506,7 +506,7 @@ class ScrollbackWindow:
         self._view.mount(*widgets)
 
     def _trim_above(self) -> None:
-        """Remove the oldest entries once the window exceeds max + trim_chunk (back to max)."""
+        """Remove the oldest entries once the window reaches max + trim_chunk (back to max)."""
         excess = len(self.widgets) - self.max_mounted
         if excess < self.trim_chunk:
             return

@@ -15,15 +15,18 @@ Textual behavior identical.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeVar
 
 from textual.app import App
+
+ScreenResultT = TypeVar("ScreenResultT")
 
 if TYPE_CHECKING:
     import asyncio
 
     from pathlib import Path
 
+    from textual.screen import Screen
     from textual.timer import Timer
     from textual.worker import Worker
 
@@ -193,7 +196,7 @@ class KolegaAppBase(App):
         def _mark_session_diff_dirty(self) -> None: ...
         def _maybe_expand_transcript_window(self) -> None: ...
         def _on_fullscreen_modal_dismissed(self, _result: object = None) -> None: ...
-        def _push_fullscreen_modal(self, screen) -> None: ...
+        def _push_fullscreen_modal(self, screen: Screen[ScreenResultT]) -> None: ...
         def _changes_available(self) -> bool: ...
         def _changes_baseline_ladder(self) -> list[int]: ...
         def _changes_baseline_checkpoint(self) -> TurnCheckpoint | None: ...

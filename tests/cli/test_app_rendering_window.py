@@ -8,6 +8,7 @@ scroll-up, windowed restores, modal-cover deferral, and the inspector's window.
 """
 
 from pathlib import Path
+import time
 
 import pytest
 from textual.app import ComposeResult
@@ -44,6 +45,16 @@ def _add_entries(app, count: int, *, start: int = 0, kind: str = "user") -> None
 async def _settle(pilot, rounds: int = 3) -> None:
     for _ in range(rounds):
         await pilot.pause()
+
+
+async def _wait_for_layout(pilot, predicate, *, timeout: float = 6.0) -> None:
+    """Poll until ``predicate()`` is truthy or the layout deadline expires."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        await pilot.pause(0.02)
+        if predicate():
+            return
+    raise AssertionError(f"layout did not settle within {timeout}s")
 
 
 @pytest.mark.asyncio
@@ -117,10 +128,7 @@ async def test_transcript_expand_on_scroll_up_preserves_position(tmp_path: Path,
 
         view.scroll_to(y=0, animate=False)
         # Wait for the expansion compensation to adjust the scroll position.
-        for _ in range(10):
-            await pilot.pause()
-            if view.scroll_y > 0:
-                break
+        await _wait_for_layout(pilot, lambda: view.scroll_y > 0)
 
         assert len(app._entry_widgets) == WINDOW_MAX + EXPAND_CHUNK
         assert next(iter(app._entry_widgets)) == entries[451 - WINDOW_MAX - EXPAND_CHUNK].entry_id
@@ -242,14 +250,69 @@ async def test_transcript_sync_defers_while_modal_covers_screen(tmp_path: Path, 
         assert len(app._entry_widgets) == base_count  # hidden screen untouched
         assert app._transcript_sync_pending is True
 
+        window = _window(app)
+        rebuild_count = 0
+        sync_count = 0
+        original_rebuild = window.rebuild
+        original_sync = window.sync
+
+        def count_rebuild(entries) -> None:
+            nonlocal rebuild_count
+            rebuild_count += 1
+            original_rebuild(entries)
+
+        def count_sync(entries, dirty_ids, *, follow_bottom: bool) -> None:
+            nonlocal sync_count
+            sync_count += 1
+            original_sync(entries, dirty_ids, follow_bottom=follow_bottom)
+
+        monkeypatch.setattr(window, "rebuild", count_rebuild)
+        monkeypatch.setattr(window, "sync", count_sync)
+        monkeypatch.setattr(app, "_render_coalesce_interval", lambda _entry: 60.0)
+
+        # Leave a coalesced flush pending when the modal closes. The dismissal
+        # callback must neutralize that timer and use one full rebuild to catch up.
+        app._add_conversation_entry(ConversationEntry(kind="user", content="pending at dismiss"))
+        assert app._render_pending is True
         app.screen.dismiss()
-        for _ in range(10):
-            await pilot.pause()
-            if not app._transcript_sync_pending:
-                break
+        await _wait_for_layout(pilot, lambda: not app._transcript_sync_pending)
 
         assert app._transcript_sync_pending is False
-        assert len(app._entry_widgets) == base_count + 3
+        assert app._render_pending is False
+        assert len(app._entry_widgets) == base_count + 4
+        assert rebuild_count == 1
+        assert sync_count == 0
+
+        # Simulate the stale timer firing after the post-dismiss rebuild.
+        app._flush_conversation_render()
+        assert rebuild_count == 1
+        assert sync_count == 0
+
+
+@pytest.mark.asyncio
+async def test_modal_dismiss_promotes_an_unflushed_render_to_full_sync(tmp_path: Path, monkeypatch) -> None:
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        await _settle(pilot)
+        base_count = len(app._entry_widgets)
+
+        app._push_fullscreen_modal(_BareModal())
+        await _settle(pilot)
+        assert app._modal_cover_active is True
+
+        # Keep the coalesced flush from firing before dismissal, so no earlier
+        # modal-covered flush can set the deferred-sync marker.
+        monkeypatch.setattr(app, "_render_coalesce_interval", lambda _entry: 60.0)
+        app._add_conversation_entry(ConversationEntry(kind="user", content="last-moment update"))
+        assert app._render_pending is True
+        assert app._transcript_sync_pending is False
+
+        app.screen.dismiss()
+        await _wait_for_layout(pilot, lambda: len(app._entry_widgets) == base_count + 1)
+
+        assert app._render_pending is False
+        assert app._transcript_sync_pending is False
 
 
 @pytest.mark.asyncio
@@ -278,10 +341,7 @@ async def test_sub_agent_inspector_defers_base_transcript_then_resyncs(tmp_path:
         screen = app._sub_agent_inspector
         assert screen is not None
         screen.action_close()
-        for _ in range(10):
-            await pilot.pause()
-            if not app._transcript_sync_pending:
-                break
+        await _wait_for_layout(pilot, lambda: not app._transcript_sync_pending)
 
         assert app._transcript_sync_pending is False
         assert len(app._entry_widgets) == base_count + 1

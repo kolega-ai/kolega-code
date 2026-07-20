@@ -12,7 +12,7 @@ import traceback
 from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, TypeVar
 
 from rich.console import Group
 from rich.text import Text
@@ -21,6 +21,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.filter import LineFilter
+from textual.screen import Screen
 from textual.timer import Timer
 from textual.worker import WorkerState
 from textual.widgets import (
@@ -93,6 +94,7 @@ from .tui import widgets as tui_widgets
 CLI_AGENT_MODE = AgentMode.CLI.value
 LOG_MAX_LINES = 2_000
 TERMINAL_MAX_LINES = 2_000
+ScreenResultT = TypeVar("ScreenResultT")
 TERMINAL_FLUSH_INTERVAL = 0.04
 SESSION_DIFF_REFRESH_INTERVAL = 1.0
 TERMINAL_IMMEDIATE_FLUSH_CHARS = 64 * 1024
@@ -1049,7 +1051,7 @@ class KolegaCodeApp(
         except Exception:
             return False
 
-    def _push_fullscreen_modal(self, screen) -> None:
+    def _push_fullscreen_modal(self, screen: Screen[ScreenResultT]) -> None:
         """Push a full-screen modal, re-syncing the deferred transcript when it closes.
 
         While a modal covers the root screen, transcript widget updates are
@@ -1059,6 +1061,12 @@ class KolegaCodeApp(
         self.push_screen(screen, callback=self._on_fullscreen_modal_dismissed)
 
     def _on_fullscreen_modal_dismissed(self, _result: object = None) -> None:
+        # Promote an unflushed invalidation to a deferred full sync before
+        # neutralizing its timer; the rebuild below subsumes that flush.
+        if self._render_pending:
+            self._transcript_sync_pending = True
+        self._render_pending = False
+
         def resync() -> None:
             if self._modal_cover_active or not self._transcript_sync_pending:
                 return
