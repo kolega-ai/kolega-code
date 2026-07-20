@@ -17,7 +17,7 @@ from textual.widgets import Static
 from .. import messages, theme
 from ..theme import Color, Glyph
 from .state import ConversationEntry, SubAgentActivity
-from .widgets import ConversationEntryWidget, ToolEntryWidget
+from .widgets import ConversationEntryWidget, ScrollbackWindow, ToolEntryWidget, TrajectoryScrollView
 
 if TYPE_CHECKING:
     from ..app import KolegaCodeApp
@@ -73,26 +73,37 @@ class SubAgentInspectorScreen(ModalScreen):
         self._selected_key = selected_key
         self._follow = True
         self._rows: dict[str, SubAgentRosterRow] = {}
-        self._step_widgets: dict[str, ConversationEntryWidget | ToolEntryWidget] = {}
+        self._row_rendered: dict[str, Text] = {}
+        self._header_rendered: Optional[tuple[str, str]] = None
+        self._trajectory_window: Optional[ScrollbackWindow] = None
         self._rendered_key: Optional[str] = None
         self._empty_shown = False
         self._spinner_frame = 0
         self._flush_pending = False
+
+    @property
+    def _step_widgets(self) -> dict[str, ConversationEntryWidget | ToolEntryWidget]:
+        """Mounted trajectory step widgets (the trailing window of the selected trajectory)."""
+        window = self._trajectory_window
+        return window.widgets if window is not None else {}
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="inspector_body"):
             yield VerticalScroll(id="inspector_roster")
             with Vertical(id="inspector_main"):
                 yield Static("", id="inspector_header", markup=True)
-                yield VerticalScroll(id="inspector_trajectory")
+                yield TrajectoryScrollView(id="inspector_trajectory", on_near_top=self._maybe_expand_trajectory)
         yield Static("", id="inspector_footer", markup=False)
 
     def on_mount(self) -> None:
         self.border_title = f"{theme.g(Glyph.SUB_AGENT)} Sub-agents"
         self._sync_roster()
         self._refresh_header()
-        self._sync_trajectory()
         self._refresh_footer()
+        # Defer the trajectory mount until after the first paint: mounting the
+        # step window costs real time on long trajectories, and the chrome
+        # (roster, header, footer) is enough to show immediately.
+        self.call_after_refresh(self._sync_trajectory)
         self.set_interval(theme.SPINNER_INTERVAL, self._on_tick)
 
     def on_unmount(self) -> None:
@@ -178,6 +189,7 @@ class SubAgentInspectorScreen(ModalScreen):
         if keys != list(self._rows):
             roster.remove_children()
             self._rows = {}
+            self._row_rendered = {}
             rows = []
             for activity in activities:
                 row = SubAgentRosterRow(activity.agent_id)
@@ -187,8 +199,14 @@ class SubAgentInspectorScreen(ModalScreen):
                 roster.mount(*rows)
         for activity in activities:
             row = self._rows.get(activity.agent_id)
-            if row is not None:
-                row.update(self._roster_row(activity, selected=activity.agent_id == self._selected_key))
+            if row is None:
+                continue
+            rendered = self._roster_row(activity, selected=activity.agent_id == self._selected_key)
+            # Skip the widget update when nothing changed: finished agents render
+            # identically every tick, and each update forces a roster re-layout.
+            if self._row_rendered.get(activity.agent_id) != rendered:
+                row.update(rendered)
+                self._row_rendered[activity.agent_id] = rendered
 
     def _status_glyph(self, activity: SubAgentActivity) -> tuple[str, str]:
         if activity.status == "running":
@@ -234,9 +252,16 @@ class SubAgentInspectorScreen(ModalScreen):
             return
         activity = self._owner._sub_agent_activities.get(self._selected_key)
         if activity is None:
-            header.update(messages.SUB_AGENT_INSPECTOR_NO_SELECTION)
+            if self._header_rendered is not None:
+                self._header_rendered = None
+                header.update(messages.SUB_AGENT_INSPECTOR_NO_SELECTION)
             return
-        header.update(Text.from_markup(self._header_markup(activity)))
+        markup = self._header_markup(activity)
+        rendered = (self._selected_key, markup)
+        if self._header_rendered == rendered:
+            return
+        self._header_rendered = rendered
+        header.update(Text.from_markup(markup))
 
     def _header_markup(self, activity: SubAgentActivity) -> str:
         sep = theme.g(Glyph.BULLET_SEP)
@@ -252,68 +277,74 @@ class SubAgentInspectorScreen(ModalScreen):
             line += "\n" + theme.styled(escape(f"Task: {activity.task}"), "dim")
         return line
 
+    def _get_trajectory_window(self, view: TrajectoryScrollView) -> ScrollbackWindow:
+        window = self._trajectory_window
+        if window is None:
+            window = ScrollbackWindow(
+                view,
+                self._owner._make_entry_widget,
+                max_mounted=theme.INSPECTOR_WINDOW_MAX,
+                trim_chunk=theme.INSPECTOR_WINDOW_EXPAND_CHUNK,
+                expand_chunk=theme.INSPECTOR_WINDOW_EXPAND_CHUNK,
+            )
+            self._trajectory_window = window
+        return window
+
+    def _maybe_expand_trajectory(self) -> None:
+        """Mount older trajectory steps when the user scrolls near the top."""
+        window = self._trajectory_window
+        if window is None:
+            return
+        activity = self._owner._sub_agent_activities.get(self._selected_key)
+        if activity is None:
+            return
+        window.expand_up(activity.steps)
+
     def _sync_trajectory(self) -> None:
         try:
-            view = self.query_one("#inspector_trajectory", VerticalScroll)
+            view = self.query_one("#inspector_trajectory", TrajectoryScrollView)
         except Exception:
             return
         if not view.is_attached:
             return
+        window = self._get_trajectory_window(view)
         activity = self._owner._sub_agent_activities.get(self._selected_key)
         if activity is None:
-            view.remove_children()
-            self._step_widgets = {}
+            window.rebuild([])
             self._rendered_key = None
             self._empty_shown = False
             return
         if self._rendered_key != self._selected_key:
-            view.remove_children()
-            self._step_widgets = {}
-            self._empty_shown = False
+            # Selection change: mount only the trailing window of the new trajectory.
+            window.rebuild(activity.steps)
             self._rendered_key = self._selected_key
+            self._empty_shown = False
+            if not activity.steps:
+                view.mount(Static(messages.SUB_AGENT_INSPECTOR_NO_STEPS, classes="inspector-empty"))
+                self._empty_shown = True
+            if self._follow:
+                # Sticky anchor: the compositor pins the view to the newest step on
+                # every arrange until the user scrolls away — no layout-settle race.
+                view.anchor()
+            return
         if not activity.steps:
             if not self._empty_shown:
-                view.remove_children()
-                self._step_widgets = {}
+                window.rebuild([])
                 view.mount(Static(messages.SUB_AGENT_INSPECTOR_NO_STEPS, classes="inspector-empty"))
                 self._empty_shown = True
             return
         if self._empty_shown:
-            view.remove_children()
-            self._step_widgets = {}
             self._empty_shown = False
-        rendered_ids = list(self._step_widgets)
-        current_ids = [step.entry_id for step in activity.steps]
-        if current_ids[: len(rendered_ids)] != rendered_ids:
-            view.remove_children()
-            self._step_widgets = {}
-            rendered_ids = []
-        for widget in self._step_widgets.values():
-            widget.refresh_content()
-        new_steps = activity.steps[len(rendered_ids) :]
-        if new_steps:
-            widgets = []
-            for step in new_steps:
-                widget = self._owner._make_entry_widget(step)
-                self._step_widgets[step.entry_id] = widget
-                widgets.append(widget)
-            view.mount(*widgets)
-        if self._follow:
-            self._scroll_trajectory_end()
-
-    def _scroll_trajectory_end(self) -> None:
-        """Scroll to the newest step after layout settles (heights are auto)."""
-
-        def _do() -> None:
-            try:
-                self.query_one("#inspector_trajectory", VerticalScroll).scroll_end(animate=False)
-            except Exception:
-                pass
-
-        try:
-            self.call_after_refresh(_do)
-        except Exception:
-            _do()
+            window.rebuild(activity.steps)  # also clears the placeholder static
+            if self._follow:
+                view.anchor()
+            return
+        # Same agent, steps present: refresh changed mounted steps (bounded by the
+        # window), mount newly appended steps, and trim the oldest — but only while
+        # pinned to the newest step, never under a user reading older history.
+        pinned_to_end = view.max_scroll_y <= 0 or view.scroll_y >= view.max_scroll_y - 1
+        window.refresh_all()
+        window.sync(activity.steps, set(), follow_bottom=self._follow and pinned_to_end)
 
     def _refresh_footer(self) -> None:
         try:
@@ -337,8 +368,15 @@ class SubAgentInspectorScreen(ModalScreen):
     def action_toggle_follow(self) -> None:
         self._follow = not self._follow
         self._refresh_footer()
+        try:
+            view = self.query_one("#inspector_trajectory", TrajectoryScrollView)
+        except Exception:
+            return
         if self._follow:
+            view.anchor()
             self._sync_trajectory()
+        else:
+            view.anchor(False)
 
     def action_copy_trajectory(self) -> None:
         activity = self._owner._sub_agent_activities.get(self._selected_key)

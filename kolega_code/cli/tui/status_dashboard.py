@@ -254,7 +254,12 @@ class StatusDashboardMixin(tui_app_base.KolegaAppBase):
         self._spinner_frame += 1
         content = self._turn_status_content()
         strip.display = bool(content)
-        strip.update(content)
+        if content != self._last_turn_status_content:
+            self._last_turn_status_content = content
+            # layout=False: the strip is a fixed one-line band (styles: height 1) and
+            # only its text changes, so a full-screen reflow per spinner frame (4Hz)
+            # is pure waste on large transcripts.
+            strip.update(content, layout=False)
         # Tick elapsed time on running sub-agents at most once per second so the
         # faster spinner cadence only touches this cheap status strip.
         now = self._now()

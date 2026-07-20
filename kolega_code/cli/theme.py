@@ -97,6 +97,16 @@ RENDER_COALESCE_INTERVAL_LARGE = 0.25
 RENDER_COALESCE_MEDIUM_CHARS = 40_000
 RENDER_COALESCE_LARGE_CHARS = 200_000
 
+# Scrollback window bounds (see tui.widgets.ScrollbackWindow). The transcript and the
+# sub-agent inspector mount only a trailing window of their entries so Textual's
+# O(mounted-widgets) reflow stays cheap no matter how long the session runs.
+# Scrolling near the top mounts older chunks; following the bottom trims the oldest.
+TRANSCRIPT_WINDOW_MAX = 300
+TRANSCRIPT_WINDOW_TRIM_CHUNK = 100
+TRANSCRIPT_WINDOW_EXPAND_CHUNK = 100
+INSPECTOR_WINDOW_MAX = 150
+INSPECTOR_WINDOW_EXPAND_CHUNK = 100
+
 
 @lru_cache(maxsize=None)
 def supports_unicode(encoding: Optional[str] = None) -> bool:

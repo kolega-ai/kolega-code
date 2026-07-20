@@ -207,7 +207,9 @@ class KolegaCodeApp(
         self._workflow_activities: dict[str, tui_state.WorkflowActivity] = {}
         self._render_pending = False
         self._conversation_anchor_pending = False
-        self._entry_widgets: dict[str, tui_widgets.ConversationEntryWidget | tui_widgets.ToolEntryWidget] = {}
+        self._transcript_window: Optional[tui_widgets.ScrollbackWindow] = None
+        self._transcript_sync_pending = False
+        self._rendered_entry_count = 0
         self._dirty_entry_ids: set[str] = set()
         self._active_progress_entry: Optional[tui_state.ConversationEntry] = None
         self._turn_active = False
@@ -253,6 +255,7 @@ class KolegaCodeApp(
         self._turn_status_text = ""
         self._turn_final_text = ""
         self._turn_final_state = tui_state.TurnState.IDLE
+        self._last_turn_status_content: Optional[str] = None
         self._spinner_frame = 0
         self._last_sub_agent_tick = 0.0
         self._sub_agent_inspector: Optional[tui_sub_agents.SubAgentInspectorScreen] = None
@@ -1038,6 +1041,37 @@ class KolegaCodeApp(
         message = messages.SIDEBAR_SHOWN if self.sidebar_visible else messages.SIDEBAR_HIDDEN
         self._notify_user(message)
 
+    @property
+    def _modal_cover_active(self) -> bool:
+        """A full-screen modal screen currently covers the root conversation screen."""
+        try:
+            return len(self.screen_stack) > 1
+        except Exception:
+            return False
+
+    def _push_fullscreen_modal(self, screen) -> None:
+        """Push a full-screen modal, re-syncing the deferred transcript when it closes.
+
+        While a modal covers the root screen, transcript widget updates are
+        deferred (see transcript._flush_conversation_render); the dismiss
+        callback fires however the screen closes and triggers the catch-up.
+        """
+        self.push_screen(screen, callback=self._on_fullscreen_modal_dismissed)
+
+    def _on_fullscreen_modal_dismissed(self, _result: object = None) -> None:
+        def resync() -> None:
+            if self._modal_cover_active or not self._transcript_sync_pending:
+                return
+            self._transcript_sync_pending = False
+            self._render_conversation()
+
+        try:
+            # Re-check after the stack pop has fully settled (nested modals keep
+            # the cover active, so their dismissal must not resync early).
+            self.call_after_refresh(resync)
+        except Exception:
+            resync()
+
     def action_open_settings(self, category: str = "model") -> None:
         """Open the full-screen settings editor."""
         if self._settings_screen is not None or self._onboarding_screen is not None:
@@ -1047,7 +1081,7 @@ class KolegaCodeApp(
             return
         screen = tui_settings_screen.SettingsScreen(self, category=category)
         self._settings_screen = screen
-        self.push_screen(screen)
+        self._push_fullscreen_modal(screen)
 
     def action_open_memory(self, *, inspect_disabled: bool = False) -> None:
         """Open the backend-neutral project-memory browser and editor."""
@@ -1058,7 +1092,7 @@ class KolegaCodeApp(
             return
         screen = tui_memory.MemoryScreen(self, inspect_disabled=inspect_disabled)
         self._memory_screen = screen
-        self.push_screen(screen)
+        self._push_fullscreen_modal(screen)
 
     def _memory_mutation_blocked(self) -> bool:
         if not self._turn_active and self.agent_worker is None:
@@ -1099,7 +1133,7 @@ class KolegaCodeApp(
             return
         screen = tui_onboarding.OnboardingScreen(self)
         self._onboarding_screen = screen
-        self.push_screen(screen)
+        self._push_fullscreen_modal(screen)
 
     def action_open_sub_agent(self, key: Optional[str] = None) -> None:
         """Open the full-screen sub-agent inspector (mission control)."""
@@ -1114,7 +1148,7 @@ class KolegaCodeApp(
             return
         screen = tui_sub_agents.SubAgentInspectorScreen(self, key)
         self._sub_agent_inspector = screen
-        self.push_screen(screen)
+        self._push_fullscreen_modal(screen)
 
     def action_open_changes(self, path: Optional[str] = None, *, baseline_id: Optional[int] = None) -> None:
         """Open the full-screen session changes inspector."""
@@ -1129,7 +1163,7 @@ class KolegaCodeApp(
             path = self._default_changes_path() or ""
         screen = tui_changes.ChangesInspectorScreen(self, path)
         self._changes_inspector = screen
-        self.push_screen(screen)
+        self._push_fullscreen_modal(screen)
         self._start_session_diff_refresh()
 
     def _initialize_session_diff_tracker(self) -> None:
