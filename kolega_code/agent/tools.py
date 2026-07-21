@@ -31,6 +31,7 @@ from .tool_backend.terminal_tool import TerminalTool
 from .tool_backend.think_hard_tool import ThinkHardTool
 from .tool_backend.workflow_tool import RUN_WORKFLOW_INPUT_SCHEMA, WorkflowTool
 from .edit_protocols import EDIT_HANDLER_NAMES, edit_protocol_spec
+from .orchestration.context import has_workflow_context_marker, validated_workflow_depth
 
 # Import additional tools for consolidated functionality
 from .tool_backend.build_tool import BuildTool
@@ -572,6 +573,12 @@ class ToolCollection(LogMixin):
         self.extension_callbacks = {}
         self.extension_schemas = {}
         self._extension_group_names = set()
+        self._extension_dispatch_tools: set[str] = set()
+        self._legacy_only_extension_dispatch_tools: set[str] = set()
+        # Extension declarations are per collection. Never mutate the shared
+        # class inventories, and keep the legacy alias as the same list object.
+        self.agent_dispatch_tools = list(type(self).agent_dispatch_tools)
+        self.investigation_agent_tools = self.agent_dispatch_tools
 
         # Set legacy attributes for backward compatibility
         self.read_only = tool_config.read_only
@@ -606,7 +613,7 @@ class ToolCollection(LogMixin):
         self._initialize_tools()
         self._register_tool_extensions()
 
-    def _register_tool_extensions(self):
+    def _register_tool_extensions(self) -> None:
         """Bind host-provided extension callbacks onto this collection."""
         for extension in self.tool_extensions:
             for tool_name, callback in extension.tools.items():
@@ -618,7 +625,30 @@ class ToolCollection(LogMixin):
             for tool_name, schema in extension.tool_schemas.items():
                 self.extension_schemas[tool_name] = schema
 
+        canonical_declarations = {
+            tool_name
+            for extension in self.tool_extensions
+            for tool_name in extension.tool_groups.get("agent_dispatch_tools", [])
+        }
+        legacy_declarations = {
+            tool_name
+            for extension in self.tool_extensions
+            for tool_name in extension.tool_groups.get("investigation_agent_tools", [])
+        }
+        self._legacy_only_extension_dispatch_tools = (
+            legacy_declarations - canonical_declarations
+        ) & self.extension_callbacks.keys()
+
+        for extension in self.tool_extensions:
             for group_name, tool_names in extension.tool_groups.items():
+                if group_name in {"agent_dispatch_tools", "investigation_agent_tools"}:
+                    for tool_name in tool_names:
+                        if tool_name not in self.agent_dispatch_tools:
+                            self.agent_dispatch_tools.append(tool_name)
+                        if tool_name in self.extension_callbacks:
+                            self._extension_dispatch_tools.add(tool_name)
+                    self._extension_group_names.update({"agent_dispatch_tools", "investigation_agent_tools"})
+                    continue
                 existing_group = list(getattr(self, group_name, []))
                 merged_group = list(dict.fromkeys(existing_group + list(tool_names)))
                 setattr(self, group_name, merged_group)
@@ -2228,16 +2258,22 @@ class ToolCollection(LogMixin):
         explicit_schema = self.extension_schemas.get(method_name)
         if explicit_schema is not None:
             definition.input_schema = explicit_schema
+        context = getattr(self.caller, "sub_agent_context", None)
+        workflow_dispatch = method_name in self.agent_dispatch_tools and (
+            validated_workflow_depth(context) is not None or has_workflow_context_marker(context)
+        )
+        ordinary_parallel_dispatch = (
+            method_name in self.agent_dispatch_tools and method_name not in self._legacy_only_extension_dispatch_tools
+        )
         return Tool(
             name=method_name,
             definition=definition,
             handler=method,
             groups=self._groups_for(method_name),
-            # Read-only tools have no side effects and agent dispatches operate
-            # on independent sub-agents, so these may run concurrently.
-            parallel_safe=(
-                method_name in (self.read_only_tools or []) or method_name in (self.agent_dispatch_tools or [])
-            ),
+            # Workflow parents lend their admitted execution-chain slot to one
+            # child at a time. Ordinary delegation remains parallel-safe.
+            parallel_safe=(method_name in (self.read_only_tools or []) or ordinary_parallel_dispatch)
+            and not workflow_dispatch,
         )
 
     def has_tool(self, name: str) -> bool:
@@ -2267,6 +2303,19 @@ class ToolCollection(LogMixin):
         Returns:
             True if the tool should be included, False otherwise
         """
+        # Gigacode delegation depth is scoped through sub_agent_context. It only
+        # narrows a workflow worker's existing dispatch inventory; callers with no
+        # workflow context retain their normal behavior.
+        if method_name in self.agent_dispatch_tools:
+            sub_agent_context = getattr(self.caller, "sub_agent_context", None)
+            workflow_depth = validated_workflow_depth(sub_agent_context)
+            if has_workflow_context_marker(sub_agent_context):
+                if workflow_depth is None:
+                    return False
+                depth, maximum = workflow_depth
+                if method_name in self._extension_dispatch_tools or depth >= maximum:
+                    return False
+
         if method_name == "dispatch_custom_agent":
             catalog = getattr(self.caller, "custom_agent_catalog", None)
             if getattr(self.caller, "sub_agent", False) or catalog is None or not catalog.has_agents():
@@ -2299,7 +2348,11 @@ class ToolCollection(LogMixin):
         # If restrict_to_tool_groups is True, only include tools from explicitly enabled groups
         if self.tool_config.restrict_to_tool_groups:
             # Check if tool belongs to any enabled group
-            if method_name in self.agent_dispatch_tools and self.tool_config.include_agent_dispatch_tools:
+            if (
+                method_name in self.agent_dispatch_tools
+                and method_name not in self._legacy_only_extension_dispatch_tools
+                and self.tool_config.include_agent_dispatch_tools
+            ):
                 return True
             if method_name in self.memory_tools and self.tool_config.include_memory_tools:
                 return method_name not in self.tool_exclusions
@@ -2329,6 +2382,8 @@ class ToolCollection(LogMixin):
 
         # Check investigation agent tools
         if method_name in self.agent_dispatch_tools:
+            if method_name in self._legacy_only_extension_dispatch_tools:
+                return True
             return self.tool_config.include_agent_dispatch_tools
 
         # Check memory tools

@@ -85,6 +85,15 @@ def test_gigacode_guide_includes_workflow_shape_vocabulary() -> None:
     assert "Synthesis gate" in GIGACODE_AUTHORING_GUIDE
 
 
+def test_gigacode_guide_recommends_leaf_workers_by_default() -> None:
+    assert "max_agent_depth" in GIGACODE_AUTHORING_GUIDE
+    assert "defaults to `1`" in GIGACODE_AUTHORING_GUIDE
+    assert "hard maximum" in GIGACODE_AUTHORING_GUIDE
+    assert "is `2`" in GIGACODE_AUTHORING_GUIDE
+    assert "parallel()" in GIGACODE_AUTHORING_GUIDE
+    assert "pipeline()" in GIGACODE_AUTHORING_GUIDE
+
+
 def test_init_agents_prompt_renders_arguments() -> None:
     rendered = prompts.build_init_agents_prompt("focus on Python packaging")
 

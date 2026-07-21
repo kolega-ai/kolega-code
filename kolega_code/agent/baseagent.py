@@ -40,6 +40,7 @@ from kolega_code.llm.exceptions import (
     llm_error_message,
     map_to_llm_error,
 )
+from kolega_code.llm.instrumented_client import get_output_tokens
 from kolega_code.llm.models import ImageBlock, Message, MessageHistory, TextBlock, ToolCall, ToolResult
 from kolega_code.llm.providers.models import TokenCount
 from kolega_code.llm.specs import get_model_specs, supports_vision as model_supports_vision
@@ -62,6 +63,7 @@ if TYPE_CHECKING:
     # Type hints only — langfuse is a heavy optional dependency kept off the
     # startup import path. Agents receive a Langfuse *instance* via the context.
     from langfuse import Langfuse
+    from .orchestration.accounting import AgentReservation, WorkflowRunAccounting
 
 
 logger = logging.getLogger(__name__)
@@ -363,6 +365,11 @@ class BaseAgent(LogMixin):
         self.parent_tool_call_id = None  # Parent tool call ID when running as sub-agent
         self.conversation_id = None  # Sub-agent conversation ID
         self.sub_agent_context = None  # Dispatch metadata (agent_id, task) set by AgentTool
+        # Private workflow lifecycle state. These references never enter
+        # sub_agent_context or any serialized agent metadata.
+        self._workflow_accounting: Optional["WorkflowRunAccounting"] = None
+        self._accounting_reservation: Optional["AgentReservation"] = None
+        self.total_tokens_used: int = 0
         # Set by a blocking PostToolUse hook to end the turn after the current tool batch.
         self._hook_end_turn = False
         self.queued_input_provider: Optional[Callable[[], Awaitable[List[QueuedUserInput]]]] = None
@@ -1761,6 +1768,12 @@ class BaseAgent(LogMixin):
                 assistant_message = await stream.get_final_message()
                 self._normalize_freeform_tool_calls(assistant_message)
                 assistant_message.usage_metadata["edit_protocol"] = self.edit_protocol.value
+                self.total_tokens_used += get_output_tokens(
+                    assistant_message.usage_metadata,
+                    self.primary_model_config.provider.value,
+                )
+                if self._accounting_reservation is not None:
+                    self._accounting_reservation.report_total(self.total_tokens_used)
                 stop_reason = assistant_message.stop_reason
                 await self.emitter.llm_request(
                     "end",

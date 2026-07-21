@@ -9,7 +9,7 @@ from kolega_code.agent.baseagent import BaseAgent
 from kolega_code.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
 from kolega_code.events import AgentConnectionManager
 from kolega_code.agent.tool_backend.memory_tool import MemoryTool
-from kolega_code.agent.tools import ToolCollection, ToolDefinition, ToolCollectionConfig
+from kolega_code.agent.tools import ToolCollection, ToolDefinition, ToolCollectionConfig, ToolExtension
 
 
 INTERNAL_TOOL_NAMES = {
@@ -214,6 +214,43 @@ class TestToolCollection:
         # Should include investigation tools
         assert "dispatch_investigation_agent" in tool_names
         assert "dispatch_browser_agent" in tool_names
+
+    async def test_workflow_depth_gate_cannot_be_bypassed_by_dispatch_extension_group(
+        self,
+        project_path: Path,
+        mock_connection_manager: AgentConnectionManager,
+        agent_config: AgentConfig,
+        mock_base_agent: BaseAgent,
+    ) -> None:
+        async def dispatch_host_agent(task: str) -> str:
+            return task
+
+        extension = ToolExtension(
+            name="host-agent-dispatch",
+            tools={"dispatch_host_agent": dispatch_host_agent},
+            tool_groups={"agent_dispatch_tools": ["dispatch_host_agent"]},
+        )
+        config = ToolCollectionConfig(include_agent_dispatch_tools=True)
+        tool_collection = ToolCollection(
+            project_path,
+            "test_workspace",
+            str(uuid.uuid4()),
+            mock_connection_manager,
+            agent_config,
+            mock_base_agent,
+            tool_config=config,
+            tool_extensions=[extension],
+        )
+
+        assert "dispatch_host_agent" in tool_collection.registry()
+
+        setattr(
+            mock_base_agent,
+            "sub_agent_context",
+            {"workflow_run_id": "run-1", "depth": 1, "max_agent_depth": 1},
+        )
+        names_at_limit = set(tool_collection.registry().names())
+        assert not names_at_limit.intersection(ToolCollection.agent_dispatch_tools)
 
     async def test_backward_compatibility_legacy_parameters(
         self,

@@ -11,6 +11,7 @@ from kolega_code.agent.planningagent import PlanningAgent
 from kolega_code.agent.prompt_provider import AgentMode, PromptExtension
 from kolega_code.agent.tool_backend.agent_tool import AgentTool
 from kolega_code.agent.tools import ToolExtension
+from kolega_code.agent.tools import ToolCollection
 from kolega_code.config import AgentConfig
 from kolega_code.events import AgentConnectionManager
 from kolega_code.permissions import PermissionMode
@@ -83,6 +84,64 @@ def test_sub_agent_never_gets_run_workflow(project_path, mock_connection_manager
     agent = _coder(project_path, mock_connection_manager, agent_config, sub_agent=True)
     agent.gigacode_enabled = True
     names = {tool.name for tool in agent.tool_collection.get_tool_list()}
+    assert "run_workflow" not in names
+
+
+def test_default_workflow_coder_is_a_leaf(
+    project_path: str,
+    mock_connection_manager: AgentConnectionManager,
+    agent_config: AgentConfig,
+) -> None:
+    agent = _coder(project_path, mock_connection_manager, agent_config, sub_agent=True)
+    agent.sub_agent_context = {
+        "workflow_run_id": "run-1",
+        "depth": 1,
+        "max_agent_depth": 1,
+    }
+
+    names = {tool.name for tool in agent.tool_collection.get_tool_list()}
+
+    assert not names.intersection(ToolCollection.agent_dispatch_tools)
+    assert "run_workflow" not in names
+
+
+def test_workflow_coder_at_depth_one_can_use_existing_dispatch_tools_when_max_is_two(
+    project_path: str,
+    mock_connection_manager: AgentConnectionManager,
+    agent_config: AgentConfig,
+) -> None:
+    agent = _coder(project_path, mock_connection_manager, agent_config, sub_agent=True)
+    agent.sub_agent_context = {
+        "workflow_run_id": "run-1",
+        "depth": 1,
+        "max_agent_depth": 2,
+    }
+
+    names = {tool.name for tool in agent.tool_collection.get_tool_list()}
+
+    assert "dispatch_investigation_agent" in names
+    assert "dispatch_browser_agent" in names
+    assert agent.tool_collection.registry().get("dispatch_investigation_agent").parallel_safe is False
+    # The depth policy cannot add capabilities excluded by the CoderAgent itself.
+    assert "dispatch_general_agent" not in names
+    assert "run_workflow" not in names
+
+
+def test_nested_workflow_agent_at_max_depth_is_a_leaf(
+    project_path: str,
+    mock_connection_manager: AgentConnectionManager,
+    agent_config: AgentConfig,
+) -> None:
+    agent = _coder(project_path, mock_connection_manager, agent_config, sub_agent=True)
+    agent.sub_agent_context = {
+        "workflow_run_id": "run-1",
+        "depth": 2,
+        "max_agent_depth": 2,
+    }
+
+    names = {tool.name for tool in agent.tool_collection.get_tool_list()}
+
+    assert not names.intersection(ToolCollection.agent_dispatch_tools)
     assert "run_workflow" not in names
 
 

@@ -4,6 +4,11 @@ These exercise the orchestration package in isolation with a stub ``dispatch``,
 so they need none of the agent/LLM stack.
 """
 
+import asyncio
+from dataclasses import asdict
+from pathlib import Path
+from typing import Any, Optional
+
 import pytest
 
 from kolega_code.agent.orchestration import (
@@ -15,13 +20,25 @@ from kolega_code.agent.orchestration import (
     WorkflowBudgetExceeded,
     WorkflowRuntime,
     WorkflowScriptError,
+    DispatchFn,
     extract_meta,
 )
+from kolega_code.agent.orchestration.accounting import WorkflowRunAccounting
 
 META = 'meta = {"name": "t", "description": "d"}\n'
 
 
-def make_runtime(tmp_path, *, dispatch=None, budget=None, resume_cache=None, concurrency=4, agent_cap=1000):
+def make_runtime(
+    tmp_path: Path,
+    *,
+    dispatch: Optional[DispatchFn] = None,
+    budget: Optional[Budget] = None,
+    accounting: Optional[WorkflowRunAccounting] = None,
+    resume_cache: Optional[dict[int, Any]] = None,
+    concurrency: int = 4,
+    agent_cap: int = 1000,
+    max_agent_depth: int = 1,
+) -> tuple[WorkflowRuntime, list[AgentRunSpec], list[tuple[str, dict[str, Any]]], RunJournal]:
     """Build a runtime backed by a recording stub dispatch."""
     calls = []
 
@@ -33,7 +50,7 @@ def make_runtime(tmp_path, *, dispatch=None, budget=None, resume_cache=None, con
 
     events = []
 
-    async def emit(kind, content):
+    async def emit(kind: str, content: dict[str, Any]) -> None:
         events.append((kind, content))
 
     journal = RunJournal.for_run(tmp_path, "run")
@@ -42,9 +59,11 @@ def make_runtime(tmp_path, *, dispatch=None, budget=None, resume_cache=None, con
         emit=emit,
         journal=journal,
         budget=budget if budget is not None else Budget(),
+        accounting=accounting,
         resume_cache=resume_cache,
         concurrency=concurrency,
         agent_cap=agent_cap,
+        max_agent_depth=max_agent_depth,
     )
     return runtime, calls, events, journal
 
@@ -53,6 +72,20 @@ def make_runtime(tmp_path, *, dispatch=None, budget=None, resume_cache=None, con
 def test_extract_meta_valid():
     meta = extract_meta(META + "return 1")
     assert meta["name"] == "t" and meta["description"] == "d"
+    assert meta["max_agent_depth"] == 1
+
+
+@pytest.mark.parametrize("max_agent_depth", [1, 2])
+def test_extract_meta_accepts_supported_agent_depths(max_agent_depth: int) -> None:
+    source = f'meta = {{"name": "t", "description": "d", "max_agent_depth": {max_agent_depth}}}\nreturn 1'
+    assert extract_meta(source)["max_agent_depth"] == max_agent_depth
+
+
+@pytest.mark.parametrize("max_agent_depth", [0, 3, True, "2", 1.5, None])
+def test_extract_meta_rejects_invalid_agent_depths(max_agent_depth: Any) -> None:
+    source = f'meta = {{"name": "t", "description": "d", "max_agent_depth": {max_agent_depth!r}}}\nreturn 1'
+    with pytest.raises(WorkflowScriptError, match="max_agent_depth"):
+        extract_meta(source)
 
 
 @pytest.mark.parametrize(
@@ -96,6 +129,27 @@ async def test_agent_returns_text_and_structured(tmp_path):
     assert out[0] == "recap:hello"
     assert out[1] == {"prompt": "world", "idx": 1}
     assert len(calls) == 2
+    assert all(call.max_agent_depth == 1 for call in calls)
+
+
+@pytest.mark.asyncio
+async def test_agent_spec_carries_explicit_max_agent_depth(tmp_path: Path) -> None:
+    runtime, calls, _, _ = make_runtime(tmp_path, max_agent_depth=2)
+    await runtime.execute(META + "return await agent('hello')", args=None)
+    assert calls[0].max_agent_depth == 2
+
+
+@pytest.mark.asyncio
+async def test_agent_reservation_is_absent_from_spec_serialization(tmp_path: Path) -> None:
+    serialized_specs: list[dict[str, Any]] = []
+
+    async def dispatch(spec: AgentRunSpec) -> AgentRunResult:
+        serialized_specs.append(asdict(spec))
+        return AgentRunResult(text="ok", tokens=3)
+
+    runtime, _, _, _ = make_runtime(tmp_path, dispatch=dispatch)
+    assert await runtime.execute(META + "return await agent('hello')", args=None) == "ok"
+    assert "reservation" not in serialized_specs[0]
 
 
 @pytest.mark.asyncio
@@ -196,6 +250,62 @@ async def test_agent_cap_raises(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_cached_agent_does_not_reserve_or_spend(tmp_path: Path) -> None:
+    budget = Budget(total=5)
+    accounting = WorkflowRunAccounting(budget, agent_cap=1)
+    cached_spec = AgentRunSpec(prompt="cached")
+    runtime, calls, _, _ = make_runtime(
+        tmp_path,
+        budget=budget,
+        accounting=accounting,
+        resume_cache={0: (cached_spec.cache_key(), "from-cache")},
+    )
+
+    assert await runtime.agent("cached") == "from-cache"
+    assert calls == []
+    assert accounting.agent_count == 0
+    assert budget.spent() == 0
+
+
+@pytest.mark.asyncio
+async def test_queued_cancellation_does_not_reserve_agent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from kolega_code.agent.orchestration import runtime as runtime_module
+
+    monkeypatch.setattr(runtime_module, "START_STAGGER_SECONDS", 0)
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def dispatch(spec: AgentRunSpec) -> AgentRunResult:
+        if spec.prompt == "first":
+            started.set()
+            await release.wait()
+        return AgentRunResult(text=spec.prompt, tokens=1)
+
+    budget = Budget()
+    accounting = WorkflowRunAccounting(budget, agent_cap=2)
+    runtime, _, _, _ = make_runtime(
+        tmp_path,
+        dispatch=dispatch,
+        budget=budget,
+        accounting=accounting,
+        concurrency=1,
+    )
+
+    first = asyncio.create_task(runtime.agent("first"))
+    await started.wait()
+    queued = asyncio.create_task(runtime.agent("queued"))
+    await asyncio.sleep(0)
+    queued.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await queued
+
+    assert accounting.agent_count == 1
+    release.set()
+    assert await first == "first"
+    assert budget.spent() == 1
+
+
+@pytest.mark.asyncio
 async def test_parallel_fanout_cap(tmp_path):
     runtime, _, _, _ = make_runtime(tmp_path)
     script = META + "return await parallel([(lambda: agent('x'))] * 5000)"
@@ -242,3 +352,15 @@ async def test_resume_reruns_after_change(tmp_path):
     runtime2, calls2, _, _ = make_runtime(tmp_path, resume_cache=cache)
     await runtime2.execute(META + "await agent('one')\nawait agent('CHANGED')\nreturn 1", args=None)
     assert [c.prompt for c in calls2] == ["CHANGED"]
+
+
+@pytest.mark.asyncio
+async def test_resume_reruns_when_max_agent_depth_changes(tmp_path: Path) -> None:
+    runtime, _, _, journal = make_runtime(tmp_path, max_agent_depth=1)
+    await runtime.execute(META + "return await agent('one')", args=None)
+
+    runtime2, calls2, _, _ = make_runtime(tmp_path, resume_cache=journal.load_cache(), max_agent_depth=2)
+    await runtime2.execute(META + "return await agent('one')", args=None)
+
+    assert [call.prompt for call in calls2] == ["one"]
+    assert calls2[0].max_agent_depth == 2

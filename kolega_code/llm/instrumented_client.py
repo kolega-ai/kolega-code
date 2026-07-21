@@ -3,6 +3,7 @@ Instrumented LLM client that adds Langfuse tracing to all LLM operations.
 """
 
 import os
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Optional, List, Dict, Union, AsyncContextManager, Coroutine
 from datetime import datetime, timezone
 import logging
@@ -17,6 +18,46 @@ from .models import Message, MessageHistory, ToolDefinition
 from .providers.models import GenerationParams
 
 logger = logging.getLogger(__name__)
+
+_ANTHROPIC_USAGE_PROVIDERS = frozenset({"anthropic", "moonshot", "zai", "kimi_coding"})
+_OPENAI_USAGE_PROVIDERS = frozenset(
+    {
+        "openai",
+        "openai_chatgpt",
+        "together",
+        "groq",
+        "fireworks",
+        "llama",
+        "xai",
+        "dashscope",
+        "deepseek",
+        "ollama_cloud",
+    }
+)
+
+
+def _usage_token_fields(provider: object) -> Optional[tuple[str, str]]:
+    """Return the normalized input/output field names for a known provider."""
+    if not isinstance(provider, str):
+        return None
+    if provider in _ANTHROPIC_USAGE_PROVIDERS:
+        return "input_tokens", "output_tokens"
+    if provider in _OPENAI_USAGE_PROVIDERS:
+        return "prompt_tokens", "completion_tokens"
+    if provider == "google":
+        return "prompt_token_count", "candidates_token_count"
+    return None
+
+
+def get_output_tokens(usage_metadata: Optional[Mapping[str, Any]], provider: Optional[str] = None) -> int:
+    """Extract a provider-shaped, non-negative output-token count."""
+    if not usage_metadata:
+        return 0
+    fields = _usage_token_fields(usage_metadata.get("provider", provider))
+    if fields is None:
+        return 0
+    value = usage_metadata.get(fields[1], 0)
+    return value if type(value) is int and value >= 0 else 0
 
 
 class InstrumentedLLMClient(LLMClient):
@@ -92,34 +133,14 @@ class InstrumentedLLMClient(LLMClient):
 
         provider = usage_metadata.get("provider", self.provider_name)
 
-        if provider in ["anthropic", "moonshot", "kimi_coding"]:
-            input_tokens = usage_metadata.get("input_tokens", 0)
-            output_tokens = usage_metadata.get("output_tokens", 0)
-            cache_read_tokens = usage_metadata.get("cache_read_input_tokens", 0)
-            cache_write_tokens = usage_metadata.get("cache_write_input_tokens", 0)
-        elif provider in [
-            "openai",
-            "openai_chatgpt",
-            "together",
-            "groq",
-            "fireworks",
-            "llama",
-            "xai",
-            "dashscope",
-            "deepseek",
-        ]:
-            input_tokens = usage_metadata.get("prompt_tokens", 0)
-            output_tokens = usage_metadata.get("completion_tokens", 0)
-            cache_read_tokens = usage_metadata.get("cache_read_input_tokens", 0)
-            cache_write_tokens = usage_metadata.get("cache_write_input_tokens", 0)
-        elif provider == "google":
-            input_tokens = usage_metadata.get("prompt_token_count", 0)
-            output_tokens = usage_metadata.get("candidates_token_count", 0)
-            cache_read_tokens = usage_metadata.get("cache_read_input_tokens", 0)
-            cache_write_tokens = usage_metadata.get("cache_write_input_tokens", 0)
-        else:
+        fields = _usage_token_fields(provider)
+        if fields is None:
             logger.warning(f"Unknown provider for usage recording: {provider}")
             return None
+        input_tokens = usage_metadata.get(fields[0], 0)
+        output_tokens = usage_metadata.get(fields[1], 0)
+        cache_read_tokens = usage_metadata.get("cache_read_input_tokens", 0)
+        cache_write_tokens = usage_metadata.get("cache_write_input_tokens", 0)
 
         return {
             "user_id": self.user_id,

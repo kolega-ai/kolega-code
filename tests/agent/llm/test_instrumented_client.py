@@ -4,6 +4,7 @@ Tests for the InstrumentedLLMClient class.
 """
 
 import os
+from typing import Any, Optional
 import pytest
 from unittest.mock import Mock, AsyncMock, patch, MagicMock
 
@@ -11,10 +12,37 @@ from kolega_code.llm.models import Message, MessageHistory, TextBlock
 from kolega_code.llm.instrumented_client import (
     InstrumentedLLMClient,
     MinimalLangfuseStreamWrapper,
+    get_output_tokens,
 )
 
 # Check if running in CI environment
 SKIP_IN_CI = bool(os.getenv("CI")) or bool(os.getenv("GITLAB_CI"))
+
+
+@pytest.mark.parametrize(
+    ("metadata", "provider", "expected"),
+    [
+        ({"provider": "anthropic", "output_tokens": 11}, None, 11),
+        ({"provider": "zai", "output_tokens": 12}, None, 12),
+        ({"provider": "openai", "completion_tokens": 13}, None, 13),
+        ({"provider": "ollama_cloud", "completion_tokens": 14}, None, 14),
+        ({"provider": "google", "candidates_token_count": 15}, None, 15),
+        ({"output_tokens": 16}, "moonshot", 16),
+        ({"provider": "unknown", "output_tokens": 17}, None, 0),
+        ({"provider": "anthropic", "output_tokens": -1}, None, 0),
+        ({"provider": "anthropic", "output_tokens": True}, None, 0),
+        ({"provider": "anthropic", "output_tokens": "18"}, None, 0),
+        ({"provider": [], "output_tokens": 18}, None, 0),
+        ({"provider": {}, "output_tokens": 18}, None, 0),
+        ({}, "anthropic", 0),
+    ],
+)
+def test_get_output_tokens(
+    metadata: dict[str, Any],
+    provider: Optional[str],
+    expected: int,
+) -> None:
+    assert get_output_tokens(metadata, provider) == expected
 
 
 class TestInstrumentedLLMClient:

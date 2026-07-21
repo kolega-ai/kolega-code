@@ -4,6 +4,7 @@ import asyncio
 import os
 import uuid
 from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import AsyncMock
 
 import pytest
@@ -88,6 +89,8 @@ class ConcurrencyTracker:
 class FakeToolCollection:
     """Test stand-in for ToolCollection: builds a registry from get_tool_list + methods."""
 
+    workflow_context = False
+
     def get_tool_list(self) -> list[SimpleNamespace]:
         raise NotImplementedError
 
@@ -104,13 +107,47 @@ class FakeToolCollection:
                     name=spec.name,
                     definition=ToolDefinition(name=spec.name, description="", parameters=[]),
                     handler=getattr(self, spec.name),
-                    parallel_safe=spec.name in parallel,
+                    parallel_safe=spec.name in parallel
+                    and not (self.workflow_context and spec.name in ToolCollection.agent_dispatch_tools),
                 )
             )
         return registry
 
 
 class TestParallelToolCalls:
+    @pytest.mark.asyncio
+    async def test_workflow_dispatch_batches_run_sequentially(self, base_agent: BaseAgent) -> None:
+        tracker = ConcurrencyTracker()
+
+        class Tools(FakeToolCollection):
+            workflow_context = True
+
+            def get_tool_list(self) -> list[SimpleNamespace]:
+                return [
+                    SimpleNamespace(name="dispatch_general_agent"),
+                    SimpleNamespace(name="read_entire_file"),
+                ]
+
+            async def dispatch_general_agent(self, task: str) -> str:
+                await tracker.run()
+                return task
+
+            async def read_entire_file(self, task: str) -> str:
+                await tracker.run()
+                return task
+
+        base_agent.tool_collection = cast(Any, Tools())
+        blocks = [
+            make_tool_call("dispatch_general_agent", 0),
+            make_tool_call("read_entire_file", 1),
+            make_tool_call("dispatch_general_agent", 2),
+        ]
+
+        results = await base_agent.process_tool_calls(blocks)
+
+        assert len(results) == 3
+        assert tracker.max_active == 1
+
     @pytest.mark.asyncio
     async def test_dispatch_tools_run_concurrently(self, base_agent):
         first_started = asyncio.Event()

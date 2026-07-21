@@ -1,12 +1,14 @@
 """Tests for the unified AgentTool dispatch mechanism."""
 
 import pytest
-from typing import ClassVar, Optional
+from typing import Any, ClassVar, Optional
 from unittest.mock import AsyncMock, Mock, MagicMock, patch
 import uuid
 import builtins
 
 from kolega_code.agent.tool_backend.agent_tool import AgentTool
+from kolega_code.agent.orchestration.accounting import WorkflowRunAccounting
+from kolega_code.agent.orchestration.budget import Budget
 from kolega_code.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
 
 
@@ -238,6 +240,118 @@ class TestAgentTool:
         assert MockAgent.last_instance is not None
         assert MockAgent.last_instance.init_kwargs["max_iterations"] == 3
         MockAgent.configure_streaming([])
+
+    async def test_nested_dispatch_inherits_workflow_depth_and_grouping(
+        self,
+        agent_tool: AgentTool,
+        mock_connection_manager: AsyncMock,
+        mock_caller: Mock,
+    ) -> None:
+        original_import = builtins.__import__
+        mock_caller.sub_agent = True
+        mock_caller.sub_agent_context = {
+            "agent_id": "parent-agent",
+            "workflow_run_id": "workflow-run",
+            "phase": "Verify",
+            "depth": 1,
+            "max_agent_depth": 2,
+        }
+        accounting = WorkflowRunAccounting(Budget(), agent_cap=2)
+        parent_reservation = accounting.reserve_agent()
+        mock_caller._workflow_accounting = accounting
+        mock_caller._accounting_reservation = parent_reservation
+
+        with patch.object(builtins, "__import__") as mock_import:
+            mock_module = MagicMock()
+            mock_module.MockAgent = MockAgent
+
+            def mock_import_func(name: str, *args: Any, **kwargs: Any) -> Any:
+                if name == "test.module":
+                    return mock_module
+                return original_import(name, *args, **kwargs)
+
+            mock_import.side_effect = mock_import_func
+            MockAgent.configure_streaming(
+                [{"content": "Done.", "complete": True, "uuid": str(uuid.uuid4()), "type": "response"}]
+            )
+            MockAgent.last_instance = None
+
+            await agent_tool._dispatch_agent(agent_class_import="test.module.MockAgent", task="Nested task")
+
+        assert MockAgent.last_instance is not None
+        context = MockAgent.last_instance.sub_agent_context
+        assert context["workflow_run_id"] == "workflow-run"
+        assert context["phase"] == "Verify"
+        assert context["parent_agent_id"] == "parent-agent"
+        assert context["depth"] == 2
+        assert context["max_agent_depth"] == 2
+        assert MockAgent.last_instance._workflow_accounting is accounting
+        assert MockAgent.last_instance._accounting_reservation is not parent_reservation
+        assert accounting.agent_count == 2
+
+        start_event = next(
+            call.args[0]
+            for call in mock_connection_manager.broadcast_event.call_args_list
+            if call.args[0].content.get("status") == "GENERATING"
+        )
+        assert start_event.sub_agent_info["depth"] == 2
+        assert start_event.sub_agent_info["workflow_run_id"] == "workflow-run"
+        MockAgent.configure_streaming([])
+
+    async def test_nested_dispatch_rejects_cap_before_import_or_events(
+        self,
+        agent_tool: AgentTool,
+        mock_connection_manager: AsyncMock,
+        mock_caller: Mock,
+    ) -> None:
+        accounting = WorkflowRunAccounting(Budget(), agent_cap=1)
+        accounting.reserve_agent()
+        mock_caller.sub_agent = True
+        mock_caller.sub_agent_context = {
+            "workflow_run_id": "workflow-run",
+            "depth": 1,
+            "max_agent_depth": 2,
+        }
+        mock_caller._workflow_accounting = accounting
+
+        with patch.object(builtins, "__import__") as mock_import:
+            with pytest.raises(Exception, match="lifetime agent cap"):
+                await agent_tool._dispatch_agent(agent_class_import="test.module.MockAgent", task="Nested task")
+
+        mock_import.assert_not_called()
+        assert accounting.agent_count == 1
+        assert not any(
+            call.args[0].content.get("status") == "GENERATING"
+            for call in mock_connection_manager.broadcast_event.call_args_list
+        )
+
+    @pytest.mark.parametrize(
+        "context",
+        [
+            {"workflow_run_id": "run", "depth": True, "max_agent_depth": 2},
+            {"workflow_run_id": "run", "depth": 1, "max_agent_depth": "2"},
+            {"workflow_run_id": "run", "depth": 0, "max_agent_depth": 2},
+            {"workflow_run_id": "run", "depth": 1, "max_agent_depth": 3},
+            {"workflow_run_id": "run", "depth": 2, "max_agent_depth": 2},
+        ],
+    )
+    async def test_nested_dispatch_rejects_invalid_or_over_depth_context_before_import(
+        self,
+        context: dict[str, Any],
+        agent_tool: AgentTool,
+        mock_caller: Mock,
+    ) -> None:
+        accounting = WorkflowRunAccounting(Budget(), agent_cap=3)
+        mock_caller.sub_agent = True
+        mock_caller.sub_agent_context = context
+        mock_caller._workflow_accounting = accounting
+
+        with patch.object(builtins, "__import__") as mock_import:
+            with pytest.raises(RuntimeError, match="workflow"):
+                await agent_tool._dispatch_agent(agent_class_import="test.module.MockAgent", task="Nested task")
+
+        mock_import.assert_not_called()
+        assert accounting.agent_count == 0
 
     async def test_dispatch_agent_uses_execution_id_for_sub_agent_conversation(
         self, agent_tool, mock_connection_manager, mock_caller

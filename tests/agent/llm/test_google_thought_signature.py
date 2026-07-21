@@ -6,11 +6,14 @@ on the way in, emitted on the way out, and survives session persistence.
 """
 
 import json
+from collections.abc import AsyncGenerator
 
+import pytest
 from google.genai import types as genai_types
 
 from kolega_code.agent.conversation import Conversation
 from kolega_code.llm.models import Message, ToolCall
+from kolega_code.llm.providers.google import GoogleStreamWrapper
 
 
 def _fake_google_response(signature: bytes) -> genai_types.GenerateContentResponse:
@@ -64,6 +67,23 @@ def test_from_google_captures_signature() -> None:
     assert tool_calls[0].thought_signature == b"GSIG"
     # Also exposed via the dedicated tool_calls field.
     assert msg.tool_calls[0].thought_signature == b"GSIG"
+
+
+@pytest.mark.asyncio
+async def test_google_stream_preserves_final_usage_metadata() -> None:
+    async def stream() -> AsyncGenerator[genai_types.GenerateContentResponse, None]:
+        yield _fake_google_response(b"GSIG")
+
+    async with GoogleStreamWrapper(stream()) as wrapper:
+        await anext(wrapper)
+        message = await wrapper.get_final_message()
+
+    assert message.usage_metadata == {
+        "prompt_token_count": 1,
+        "candidates_token_count": 1,
+        "total_token_count": 2,
+        "provider": "google",
+    }
 
 
 def test_persisted_session_preserves_signature() -> None:

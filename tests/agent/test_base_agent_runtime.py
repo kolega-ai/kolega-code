@@ -2,6 +2,7 @@
 import os
 import uuid
 from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -9,6 +10,8 @@ from dotenv import load_dotenv
 
 from kolega_code.agent.baseagent import BaseAgent
 from kolega_code.agent.errors import MaxAgentIterationsExceeded
+from kolega_code.agent.orchestration.accounting import WorkflowRunAccounting
+from kolega_code.agent.orchestration.budget import Budget
 from kolega_code.cli.session_store import SessionStore
 from kolega_code.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
 from kolega_code.events import AgentConnectionManager
@@ -113,6 +116,42 @@ class TestBaseAgent:
 
         assert chunks[-1]["complete"] is True
         assert base_agent.history[-1].stop_reason == "end_turn"
+
+    @pytest.mark.asyncio
+    async def test_finalized_usage_is_reported_before_tool_dispatch(self, base_agent: BaseAgent) -> None:
+        tool_call = ToolCall(id="tool_1", name="read_file", input={})
+        message = Message(
+            role="assistant",
+            content=[tool_call],
+            stop_reason="tool_use",
+            tool_calls=[tool_call],
+            usage_metadata={"provider": "anthropic", "output_tokens": 7},
+        )
+        budget = Budget()
+        accounting = WorkflowRunAccounting(budget, agent_cap=1)
+        reservation = accounting.reserve_agent()
+        base_agent._workflow_accounting = accounting
+        base_agent._accounting_reservation = reservation
+        base_agent.system_prompt = Message(role="system", content=[TextBlock(text="sys")])
+        base_agent.tool_collection = MagicMock()
+        base_agent.tool_collection.get_tool_list = MagicMock(return_value=[])
+        base_agent.llm = cast(Any, FakeLLM(token_script=[100], final_message=message))
+
+        async def process_tools(tool_use_blocks: list[ToolCall]) -> list[ToolResult]:
+            assert tool_use_blocks == [tool_call]
+            assert budget.spent() == 7
+            assert reservation.reported_tokens == 7
+            return [ToolResult(tool_use_id="tool_1", name="read_file", content="ok", is_error=False)]
+
+        base_agent.process_tool_calls = process_tools
+        base_agent.should_stop_after_tools = MagicMock(return_value=True)
+        base_agent.log_info = AsyncMock()
+
+        _chunks = [chunk async for chunk in base_agent.process_message_stream("run")]
+
+        assert base_agent.total_tokens_used == 7
+        reservation.report_total(base_agent.total_tokens_used)
+        assert budget.spent() == 7
 
     @pytest.mark.asyncio
     async def test_memory_refresh_failure_keeps_last_prompt_and_continues_turn(self, base_agent):

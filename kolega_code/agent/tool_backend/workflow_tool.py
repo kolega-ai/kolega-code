@@ -21,12 +21,16 @@ from ..orchestration import (
     AgentRunResult,
     AgentRunSpec,
     Budget,
+    DEFAULT_AGENT_CAP,
+    DispatchFn,
+    EmitFn,
     RunJournal,
     WorkflowRuntime,
     WorkflowScriptError,
     extract_meta,
     saved_workflows_dir,
 )
+from ..orchestration.accounting import WorkflowRunAccounting, get_current_agent_reservation
 from .agent_tool import AgentTool
 from .base_tool import BaseTool
 
@@ -72,7 +76,7 @@ RUN_WORKFLOW_INPUT_SCHEMA = {
 }
 
 
-def _import_agent_class(import_path: str):
+def _import_agent_class(import_path: str) -> type[Any]:
     module_path, class_name = import_path.rsplit(".", 1)
     module = __import__(module_path, fromlist=[class_name])
     return getattr(module, class_name)
@@ -143,12 +147,14 @@ class WorkflowTool(BaseTool):
             resume_cache = RunJournal.for_run(state_dir, resume_from_run_id).load_cache()
 
         budget = Budget(total=token_budget or None)
+        accounting = WorkflowRunAccounting(budget, DEFAULT_AGENT_CAP)
         started = time.time()
         journal.write_meta(
             {
                 "run_id": run_id,
                 "name": meta.get("name"),
                 "description": meta.get("description"),
+                "max_agent_depth": meta["max_agent_depth"],
                 "status": "running",
                 "args": args,
                 "resumed_from": resume_from_run_id or None,
@@ -165,14 +171,17 @@ class WorkflowTool(BaseTool):
                 "name": meta.get("name"),
                 "description": meta.get("description"),
                 "phases": meta.get("phases") or [],
+                "max_agent_depth": meta["max_agent_depth"],
             },
         )
 
         runtime = WorkflowRuntime(
-            dispatch=self._make_dispatch(run_id, journal),
+            dispatch=self._make_dispatch(run_id, journal, accounting),
             emit=emit,
             journal=journal,
             budget=budget,
+            accounting=accounting,
+            max_agent_depth=meta["max_agent_depth"],
             resume_cache=resume_cache,
             workflow_resolver=self._make_resolver(state_dir),
         )
@@ -214,7 +223,7 @@ class WorkflowTool(BaseTool):
         return self._summarize(meta, run_id, journal, budget, status, error, result)
 
     # -------------------------------------------------------------- internals
-    def _resolve_source(self, script: str, script_path: str, resume_from_run_id: str, state_dir) -> str:
+    def _resolve_source(self, script: str, script_path: str, resume_from_run_id: str, state_dir: Path) -> str:
         if script_path:
             try:
                 return open(script_path, encoding="utf-8").read()
@@ -231,7 +240,12 @@ class WorkflowTool(BaseTool):
                 ) from exc
         raise WorkflowScriptError("run_workflow requires one of: script, script_path, or resume_from_run_id")
 
-    def _make_dispatch(self, run_id: str, journal: RunJournal):
+    def _make_dispatch(
+        self,
+        run_id: str,
+        journal: RunJournal,
+        accounting: WorkflowRunAccounting,
+    ) -> DispatchFn:
         # When the orchestrating agent is itself read-only (e.g. plan mode's
         # PlanningAgent), every workflow sub-agent is forced to a read-only
         # investigation agent so the read-only contract is preserved — the
@@ -241,6 +255,9 @@ class WorkflowTool(BaseTool):
         read_only = bool(getattr(getattr(self.caller, "tool_collection", None), "read_only", False))
 
         async def dispatch(spec: AgentRunSpec) -> AgentRunResult:
+            reservation = get_current_agent_reservation()
+            if reservation is None:
+                raise RuntimeError("workflow dispatch requires an agent reservation")
             if read_only:
                 import_path = _AGENT_TYPE_IMPORTS["investigation"]
             else:
@@ -252,6 +269,8 @@ class WorkflowTool(BaseTool):
                 "phase": spec.phase,
                 "label": spec.label,
                 "call_index": spec.call_index,
+                "depth": 1,
+                "max_agent_depth": spec.max_agent_depth,
             }
             label_for_path = spec.label or spec.agent_type or agent_class.__name__
             artifact_paths = journal.agent_artifact_paths(spec.call_index, label_for_path)
@@ -261,11 +280,14 @@ class WorkflowTool(BaseTool):
                 "phase": spec.phase,
                 "agent_type": spec.agent_type or agent_class.__name__,
                 "agent_name": getattr(agent_class, "agent_name", agent_class.__name__),
+                "max_agent_depth": spec.max_agent_depth,
             }
             try:
                 recap, tokens, structured = await self._agent_tool.dispatch_workflow_agent(
                     agent_class,
                     spec.prompt,
+                    workflow_accounting=accounting,
+                    reservation=reservation,
                     config=config,
                     schema=spec.schema,
                     sub_agent_info_extra=sub_info_extra,
@@ -274,6 +296,7 @@ class WorkflowTool(BaseTool):
                 )
             except Exception as exc:  # noqa: BLE001 - a dead agent becomes a None result, not a crash
                 return AgentRunResult(
+                    tokens=reservation.reported_tokens,
                     status="failed",
                     error=str(exc),
                     transcript_path=str(artifact_paths["jsonl"]),
@@ -290,7 +313,7 @@ class WorkflowTool(BaseTool):
 
         return dispatch
 
-    def _make_emit(self, run_id: str, journal: RunJournal):
+    def _make_emit(self, run_id: str, journal: RunJournal) -> EmitFn:
         sender = getattr(self.caller, "agent_name", None) or "gigacode"
 
         async def emit(kind: str, content: dict) -> None:
@@ -309,6 +332,7 @@ class WorkflowTool(BaseTool):
                     name=content.get("name"),
                     description=content.get("description"),
                     phases=content.get("phases") or [],
+                    max_agent_depth=content.get("max_agent_depth"),
                 )
             elif kind == "workflow_end":
                 payload.update(
@@ -418,6 +442,7 @@ class WorkflowTool(BaseTool):
             f"- Status: {status}",
             f"- Duration: {duration_seconds}s",
             f"- Tokens: {budget.spent()}",
+            f"- Max agent depth: {meta['max_agent_depth']}",
             f"- Script: `{journal.script_path}`",
             f"- Result: `{journal.result_md_path}`",
             "",

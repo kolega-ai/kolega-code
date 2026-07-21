@@ -82,6 +82,89 @@ def tool_collection(
 
 @pytest.mark.asyncio
 class TestToolCollection:
+    async def test_dispatch_extension_aliases_are_normalized_and_hidden_in_workflows(
+        self,
+        project_path: Path,
+        mock_connection_manager: AgentConnectionManager,
+        agent_config: AgentConfig,
+        mock_base_agent: BaseAgent,
+    ) -> None:
+        from kolega_code.agent.tools import ToolExtension
+
+        async def dispatch_host_agent(task: str) -> str:
+            return task
+
+        extension = ToolExtension(
+            name="host-dispatch",
+            tools={"dispatch_host_agent": dispatch_host_agent},
+            tool_groups={
+                "investigation_agent_tools": ["dispatch_host_agent"],
+                "agent_dispatch_tools": ["dispatch_host_agent"],
+            },
+        )
+        config = ToolCollectionConfig(include_agent_dispatch_tools=True)
+        collection = ToolCollection(
+            project_path,
+            "test_workspace",
+            str(uuid.uuid4()),
+            mock_connection_manager,
+            agent_config,
+            mock_base_agent,
+            tool_config=config,
+            tool_extensions=[extension],
+        )
+
+        assert collection.investigation_agent_tools is collection.agent_dispatch_tools
+        assert collection.agent_dispatch_tools.count("dispatch_host_agent") == 1
+        assert "dispatch_host_agent" not in ToolCollection.agent_dispatch_tools
+        ordinary_tool = collection.registry().get("dispatch_host_agent")
+        assert ordinary_tool.groups >= {"agent_dispatch_tools", "investigation_agent_tools"}
+        assert ordinary_tool.parallel_safe is True
+
+        setattr(
+            mock_base_agent,
+            "sub_agent_context",
+            {"workflow_run_id": "run", "depth": 1, "max_agent_depth": 2},
+        )
+        assert "dispatch_host_agent" not in collection.registry()
+
+    async def test_legacy_only_dispatch_extension_keeps_ordinary_policy(
+        self,
+        project_path: Path,
+        mock_connection_manager: AgentConnectionManager,
+        agent_config: AgentConfig,
+        mock_base_agent: BaseAgent,
+    ) -> None:
+        from kolega_code.agent.tools import ToolExtension
+
+        async def dispatch_host_agent(task: str) -> str:
+            return task
+
+        extension = ToolExtension(
+            name="legacy-host-dispatch",
+            tools={"dispatch_host_agent": dispatch_host_agent},
+            tool_groups={"investigation_agent_tools": ["dispatch_host_agent"]},
+        )
+        collection = ToolCollection(
+            project_path,
+            "test_workspace",
+            str(uuid.uuid4()),
+            mock_connection_manager,
+            agent_config,
+            mock_base_agent,
+            tool_extensions=[extension],
+        )
+
+        ordinary_tool = collection.registry().get("dispatch_host_agent")
+        assert ordinary_tool.parallel_safe is False
+
+        setattr(
+            mock_base_agent,
+            "sub_agent_context",
+            {"workflow_run_id": "run", "depth": 1, "max_agent_depth": 2},
+        )
+        assert "dispatch_host_agent" not in collection.registry()
+
     async def test_tool_collection_extension_tools(
         self,
         project_path: Path,
