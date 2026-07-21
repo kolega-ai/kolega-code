@@ -34,6 +34,12 @@ def edit_tool(tmp_path: Path) -> EditTool:
     return EditTool(tmp_path, "workspace", str(uuid.uuid4()), AsyncMock(), config, caller)
 
 
+def nested_edit_tool(tmp_path: Path, template: EditTool) -> EditTool:
+    project = tmp_path / "project"
+    project.mkdir()
+    return EditTool(project, "workspace", str(uuid.uuid4()), AsyncMock(), template.config, template.caller)
+
+
 @pytest.mark.parametrize(
     ("content", "expected"),
     [
@@ -176,7 +182,7 @@ async def test_backend_creates_moves_and_deletes(edit_tool: EditTool, tmp_path: 
 
 
 @pytest.mark.asyncio
-async def test_backend_stale_failure_and_bad_path_write_nothing(edit_tool: EditTool, tmp_path: Path) -> None:
+async def test_backend_stale_failure_writes_nothing(edit_tool: EditTool, tmp_path: Path) -> None:
     target = tmp_path / "file.txt"
     target.write_text("one\ntwo\n")
 
@@ -184,12 +190,33 @@ async def test_backend_stale_failure_and_bad_path_write_nothing(edit_tool: EditT
         await edit_tool.hashline_edit("file.txt", [{"op": "set", "tag": "2#ZZ", "content": ["TWO"]}])
     assert target.read_text() == "one\ntwo\n"
 
-    with pytest.raises(ValueError, match="outside the project"):
-        await edit_tool.hashline_edit("../escape.txt", [{"op": "append", "content": ["bad"]}])
-    assert not (tmp_path.parent / "escape.txt").exists()
 
-    with pytest.raises(ValueError, match="outside the project"):
-        await edit_tool.hashline_write("../escape.txt", "bad")
+@pytest.mark.asyncio
+async def test_backend_external_create_write_update_rename_and_delete(edit_tool: EditTool, tmp_path: Path) -> None:
+    tool = nested_edit_tool(tmp_path, edit_tool)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    absolute = outside / "absolute.txt"
+
+    assert await tool.hashline_write(str(absolute), "one\ntwo") == f"Wrote {absolute}"
+    moved = await tool.hashline_edit(
+        str(absolute),
+        [{"op": "set", "tag": format_line_tag(2, "two"), "content": ["TWO"]}],
+        rename="../outside/moved.txt",
+    )
+    assert moved == f"Updated and moved {absolute} to ../outside/moved.txt"
+    assert not absolute.exists()
+    assert (outside / "moved.txt").read_text() == "one\nTWO"
+
+    created = await tool.hashline_edit(
+        "../outside/created.txt",
+        [{"op": "append", "content": ["created"]}],
+    )
+    assert created == "Created ../outside/created.txt"
+    assert (outside / "created.txt").read_text() == "created"
+
+    assert await tool.hashline_edit("../outside/moved.txt", [], delete=True) == "Deleted ../outside/moved.txt"
+    assert not (outside / "moved.txt").exists()
 
 
 @pytest.mark.asyncio

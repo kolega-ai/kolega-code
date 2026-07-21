@@ -44,6 +44,19 @@ does not advertise or return an edit for an operation, Kolega Code reports that
 the operation is unsupported instead of constructing a manual fallback edit.
 Pass `apply: false` to preview the LSP edit without writing files.
 
+### External paths, permissions, and undo
+
+Local `file:` URIs returned by a language server may target files outside the
+project. Initiating paths can likewise be project-relative, use `../` traversal,
+or be absolute. The existing edit permission gate still applies to the request,
+and the Vibe edit policy checks every touched path before mutation.
+
+A mutation that touches any external path—including a mix of project and
+external files—is not snapshotted and cannot be undone through snapshot restore.
+With `apply: false`, such an external or mixed edit can be previewed but cannot
+create a snapshot-backed, resolvable pending action. To perform it, rerun the
+operation with `apply: true`.
+
 ## Project configuration
 
 Create `<project>/.kolega/lsp.json` to override LSP behavior for a repository.

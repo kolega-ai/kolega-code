@@ -37,6 +37,10 @@ def edit_tool(tmp_path: Path, caller: Mock, config: AgentConfig) -> EditTool:
     return EditTool(tmp_path, "workspace", str(uuid.uuid4()), AsyncMock(), config, caller)
 
 
+def make_edit_tool(project_path: Path, caller: Mock, config: AgentConfig) -> EditTool:
+    return EditTool(project_path, "workspace", str(uuid.uuid4()), AsyncMock(), config, caller)
+
+
 def patch(*lines: str) -> str:
     return "\n".join(("*** Begin Patch", *lines, "*** End Patch")) + "\n"
 
@@ -154,25 +158,76 @@ async def test_apply_patch_validation_failure_writes_nothing(edit_tool: EditTool
 
 
 @pytest.mark.asyncio
-async def test_apply_patch_rejects_escape_and_directories(edit_tool: EditTool, tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match="outside the project"):
-        await edit_tool.apply_patch(patch("*** Add File: ../escape.txt", "+no"))
+async def test_apply_patch_supports_absolute_parent_traversal_and_external_moves(
+    tmp_path: Path, caller: Mock, config: AgentConfig
+) -> None:
+    project = tmp_path / "project"
+    outside = tmp_path / "outside"
+    project.mkdir()
+    outside.mkdir()
+    (project / "entry").mkdir()
+    absolute_update = outside / "absolute-update.txt"
+    absolute_delete = outside / "absolute-delete.txt"
+    absolute_destination = outside / "absolute-moved.txt"
+    absolute_update.write_text("before\n")
+    absolute_delete.write_text("delete me\n")
+    (outside / "move-source.txt").write_text("move me\n")
+    tool = make_edit_tool(project, caller, config)
 
+    result = await tool.apply_patch(
+        patch(
+            "*** Add File: ../outside/created.txt",
+            "+created",
+            "*** Add File: entry/../../outside/repeated-parent.txt",
+            "+repeated",
+            f"*** Update File: {absolute_update}",
+            "@@",
+            "-before",
+            "+after",
+            f"*** Delete File: {absolute_delete}",
+            "*** Update File: ../outside/move-source.txt",
+            f"*** Move to: {absolute_destination}",
+            "@@",
+            "-move me",
+            "+moved",
+        )
+    )
+
+    assert (outside / "created.txt").read_text() == "created\n"
+    assert (outside / "repeated-parent.txt").read_text() == "repeated\n"
+    assert absolute_update.read_text() == "after\n"
+    assert not absolute_delete.exists()
+    assert not (outside / "move-source.txt").exists()
+    assert absolute_destination.read_text() == "moved\n"
+    assert f"M ../outside/move-source.txt -> {absolute_destination}" in result
+
+
+@pytest.mark.asyncio
+async def test_apply_patch_rejects_directories(edit_tool: EditTool, tmp_path: Path) -> None:
     (tmp_path / "folder").mkdir()
     with pytest.raises(IsADirectoryError):
         await edit_tool.apply_patch(patch("*** Add File: folder", "+no"))
 
 
 @pytest.mark.asyncio
-async def test_apply_patch_checks_all_vibe_protected_paths(edit_tool: EditTool, tmp_path: Path, caller: Mock) -> None:
+async def test_apply_patch_checks_external_vibe_protected_path_before_mixed_mutation(
+    tmp_path: Path, caller: Mock, config: AgentConfig
+) -> None:
+    project = tmp_path / "project"
+    outside = tmp_path / "outside"
+    project.mkdir()
+    outside.mkdir()
+    edit_tool = make_edit_tool(project, caller, config)
     caller.agent_mode = AgentMode.VIBE.value
     caller.protected_files = {"package.json"}
 
-    result = await edit_tool.apply_patch(patch("*** Add File: safe.txt", "+safe", "*** Add File: package.json", "+{}"))
+    result = await edit_tool.apply_patch(
+        patch("*** Add File: safe.txt", "+safe", "*** Add File: ../outside/package.json", "+{}")
+    )
 
     assert "not allowed" in result
-    assert not (tmp_path / "safe.txt").exists()
-    assert not (tmp_path / "package.json").exists()
+    assert not (project / "safe.txt").exists()
+    assert not (outside / "package.json").exists()
 
 
 @pytest.mark.asyncio

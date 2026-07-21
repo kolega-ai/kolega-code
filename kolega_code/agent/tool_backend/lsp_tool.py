@@ -917,32 +917,33 @@ class LspEditTool(BaseTool):
             return blocked
 
         if should_apply:
-            if self._snapshot_service is not None:
-                mutation = self._snapshot_service.record_mutation(
-                    tool_name="lsp_edit",
-                    tool_call_id=getattr(self.caller, "current_tool_execution_id", None),
-                    reason=f"lsp_edit {operation}",
-                    paths=preview.touched_paths,
-                    mutate=lambda: applier.apply(edit),
-                )
-                result = mutation.result
-            else:
-                result = applier.apply(edit)
+            result = self._mutate_with_optional_snapshot(
+                tool_name="lsp_edit",
+                reason=f"lsp_edit {operation}",
+                paths=list(preview.touched_paths),
+                mutate=lambda: applier.apply(edit),
+            )
         else:
             result = preview
         await self._send_previews(result, operation)
         lines = [self._format_workspace_edit_result(operation, result)]
         if not should_apply and self._snapshot_service is not None:
-            pending = self._snapshot_service.create_pending_workspace_edit(
-                tool_name="lsp_edit",
-                tool_call_id=getattr(self.caller, "current_tool_execution_id", None),
-                operation=operation,
-                workspace_edit=edit,
-                touched_paths=preview.touched_paths,
-                summaries=preview.summaries,
-                previews=self._preview_payloads(preview),
-            )
-            lines.append(f'Pending action: `{pending.action_id}`. Use resolve(decision="apply") to apply it.')
+            if self._snapshot_service.can_snapshot_paths(preview.touched_paths):
+                pending = self._snapshot_service.create_pending_workspace_edit(
+                    tool_name="lsp_edit",
+                    tool_call_id=getattr(self.caller, "current_tool_execution_id", None),
+                    operation=operation,
+                    workspace_edit=edit,
+                    touched_paths=preview.touched_paths,
+                    summaries=preview.summaries,
+                    previews=self._preview_payloads(preview),
+                )
+                lines.append(f'Pending action: `{pending.action_id}`. Use resolve(decision="apply") to apply it.')
+            else:
+                lines.append(
+                    "Snapshot-backed pending preview is unavailable because this edit includes paths outside "
+                    "the project. No pending action was created; rerun with `apply=True` to apply the edit."
+                )
         if should_apply and include_diagnostics:
             diagnostics = await self._diagnostics_for_paths(result.touched_paths)
             if diagnostics:
@@ -1007,7 +1008,8 @@ class LspEditTool(BaseTool):
 
     def _file_uri(self, path: str) -> str:
         path_obj = Path(path)
-        absolute = path_obj.resolve() if path_obj.is_absolute() else (self.project_path / path_obj).resolve()
+        project_path = self.project_path if self.project_path.is_absolute() else Path.cwd() / self.project_path
+        absolute = path_obj if path_obj.is_absolute() else project_path / path_obj
         return absolute.as_uri()
 
     def _line_end_character(self, path: str, line_1based: int) -> int:

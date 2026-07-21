@@ -1,3 +1,4 @@
+from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -5,6 +6,7 @@ import uuid
 
 from kolega_code.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
 from kolega_code.agent.tool_backend.edit_tool import EditTool
+from kolega_code.sandbox.filesystem import SandboxFileSystem
 from kolega_code.services.file_system import LocalFileSystem
 
 
@@ -250,6 +252,47 @@ class TestEditTool:
         assert "overlaps" in str(exc_info.value)
         assert file_path.read_text() == "alpha beta gamma\n"
 
+    async def test_legacy_edit_multi_edit_and_write_support_external_paths(
+        self,
+        project_path: Path,
+        mock_connection_manager: AsyncMock,
+        agent_config: AgentConfig,
+        mock_base_agent: Mock,
+    ) -> None:
+        project = project_path / "project"
+        outside = project_path / "outside"
+        project.mkdir()
+        outside.mkdir()
+        tool = EditTool(
+            project,
+            "test_workspace",
+            str(uuid.uuid4()),
+            mock_connection_manager,
+            agent_config,
+            mock_base_agent,
+        )
+        absolute_edit = outside / "absolute-edit.txt"
+        relative_multi_edit = outside / "relative-multi-edit.txt"
+        absolute_edit.write_text("before\n")
+        relative_multi_edit.write_text("alpha\nbeta\n")
+
+        assert await tool.edit(str(absolute_edit), block("before", "after")) == f"Edited {absolute_edit}"
+        assert (
+            await tool.multi_edit(
+                "../outside/relative-multi-edit.txt",
+                block("alpha", "ALPHA") + "\n" + block("beta", "BETA"),
+            )
+            == "Edited ../outside/relative-multi-edit.txt with 2 replacements"
+        )
+        assert await tool.write("../outside/relative-write.txt", "relative\n") == "Wrote ../outside/relative-write.txt"
+        absolute_write = outside / "absolute-write.txt"
+        assert await tool.write(str(absolute_write), "absolute\n") == f"Wrote {absolute_write}"
+
+        assert absolute_edit.read_text() == "after\n"
+        assert relative_multi_edit.read_text() == "ALPHA\nBETA\n"
+        assert (outside / "relative-write.txt").read_text() == "relative\n"
+        assert absolute_write.read_text() == "absolute\n"
+
     # --- line-ending handling: parse tolerance (the reported failure) ---
 
     async def test_edit_parses_block_with_crlf_markers(self, edit_tool, project_path):
@@ -448,6 +491,54 @@ class TestWriteTool:
 
         assert "Permission denied" in str(exc_info.value)
         assert not (project_path / "test.txt").exists()
+
+
+@pytest.mark.asyncio
+async def test_apply_patch_external_paths_use_sandbox_root_semantics(
+    project_path: Path,
+    mock_connection_manager: AsyncMock,
+    agent_config: AgentConfig,
+    mock_base_agent: Mock,
+) -> None:
+    sandbox = Mock()
+
+    def run(command: str) -> Mock:
+        result = Mock()
+        result.exit_code = 1 if command.startswith("test -") else 0
+        result.stdout = ""
+        result.stderr = ""
+        return result
+
+    sandbox.commands.run.side_effect = run
+    sandbox.files.write = Mock()
+    filesystem = SandboxFileSystem(sandbox, "/sandbox/project")
+    tool = EditTool(
+        project_path,
+        "test_workspace",
+        str(uuid.uuid4()),
+        mock_connection_manager,
+        agent_config,
+        mock_base_agent,
+        filesystem,
+    )
+    patch_text = (
+        "*** Begin Patch\n"
+        "*** Add File: /external/absolute.txt\n"
+        "+absolute\n"
+        "*** Add File: ../../../outside/repeated-parent.txt\n"
+        "+relative\n"
+        "*** End Patch\n"
+    )
+
+    result = await tool.apply_patch(patch_text)
+
+    assert "A /external/absolute.txt" in result
+    assert "A ../../../outside/repeated-parent.txt" in result
+    sandbox.files.write.assert_any_call("/external/absolute.txt", "absolute\n")
+    sandbox.files.write.assert_any_call(
+        "/sandbox/project/../../../outside/repeated-parent.txt",
+        "relative\n",
+    )
 
 
 def _make_mock_lsp_manager(*, auto_diagnostics_on_edit: bool, diagnostics=None) -> Mock:

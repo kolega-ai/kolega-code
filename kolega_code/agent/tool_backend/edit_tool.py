@@ -124,7 +124,7 @@ class EditTool(BaseTool):
                 self.filesystem.create_directory(parent)
             self.filesystem.write_text(path, updated_content)
 
-        self._record_snapshot_mutation(
+        self._mutate_with_optional_snapshot(
             tool_name="edit",
             reason=f"claude edit {path}",
             paths=self._snapshot_paths_for_write(path),
@@ -174,7 +174,7 @@ class EditTool(BaseTool):
                 self.filesystem.create_directory(parent)
             self.filesystem.write_text(path, content)
 
-        self._record_snapshot_mutation(
+        self._mutate_with_optional_snapshot(
             tool_name="write",
             reason=f"claude write {path}",
             paths=self._snapshot_paths_for_write(path),
@@ -275,7 +275,7 @@ class EditTool(BaseTool):
                     self.filesystem.create_directory(parent_dir)
                 self.filesystem.write_text(path, content)
 
-            self._record_snapshot_mutation(
+            self._mutate_with_optional_snapshot(
                 tool_name="write",
                 reason=f"write {path}",
                 paths=self._snapshot_paths_for_write(path),
@@ -345,7 +345,7 @@ class EditTool(BaseTool):
                 if self.filesystem.exists(source):
                     self.filesystem.remove(source, missing_ok=True)
 
-            self._record_snapshot_mutation(
+            self._mutate_with_optional_snapshot(
                 tool_name="edit",
                 reason=f"hashline delete {source}",
                 paths=[source],
@@ -411,7 +411,7 @@ class EditTool(BaseTool):
             if destination is not None and self.filesystem.exists(source):
                 self.filesystem.remove(source, missing_ok=True)
 
-        self._record_snapshot_mutation(
+        self._mutate_with_optional_snapshot(
             tool_name="edit",
             reason=(f"hashline move {source} -> {destination}" if destination else f"hashline edit {source}"),
             paths=snapshot_paths,
@@ -545,7 +545,7 @@ class EditTool(BaseTool):
                     self.filesystem.create_directory(parent)
                 self.filesystem.write_text(path, working[path] or "")
 
-        self._record_snapshot_mutation(
+        self._mutate_with_optional_snapshot(
             tool_name="apply_patch",
             reason=f"apply_patch ({len(normalized_operations)} operations)",
             paths=snapshot_paths,
@@ -599,36 +599,16 @@ class EditTool(BaseTool):
         )
 
     def _normalize_patch_path(self, path: str) -> str:
-        candidate = Path(path)
-        if candidate.is_absolute():
-            raise ValueError(f"Patch paths must be relative to the project: {path}")
-        try:
-            relative = (self.project_path / candidate).resolve(strict=False).relative_to(self.project_path.resolve())
-        except ValueError as exc:
-            raise ValueError(f"Patch path is outside the project: {path}") from exc
-        normalized = relative.as_posix()
-        if normalized in {"", "."}:
-            raise ValueError("Patch path must not be the project root.")
-        return normalized
+        if not path or not path.strip():
+            raise ValueError("Patch path is required.")
+        return path
 
     def _normalize_claude_path(self, path: str) -> str:
-        """Return a project-relative path and reject workspace escapes."""
+        """Validate a model-provided path without changing its filesystem semantics."""
 
         if not path or not path.strip():
             raise ValueError("file_path is required")
-        root = self.project_path.resolve()
-        candidate = Path(path)
-        resolved = (
-            candidate.resolve(strict=False) if candidate.is_absolute() else (root / candidate).resolve(strict=False)
-        )
-        try:
-            relative = resolved.relative_to(root)
-        except ValueError as exc:
-            raise ValueError(f"File path is outside the project: {path}") from exc
-        normalized = relative.as_posix()
-        if normalized in {"", "."}:
-            raise ValueError("file_path must identify a file inside the project")
-        return normalized
+        return path
 
     @staticmethod
     def _content_digest(content: str) -> str:
@@ -646,7 +626,10 @@ class EditTool(BaseTool):
         while parent and parent != ".":
             if self.filesystem.exists(parent) and not self.filesystem.is_dir(parent):
                 raise NotADirectoryError(f"Patch parent is not a directory: {parent}")
-            parent = self.filesystem.get_parent(parent)
+            next_parent = self.filesystem.get_parent(parent)
+            if next_parent == parent:
+                break
+            parent = next_parent
 
     async def _edit_blocks(self, path: str, blocks: list[SearchReplaceBlock], *, tool_name: str) -> str:
         if not self.filesystem.exists(path):
@@ -678,7 +661,7 @@ class EditTool(BaseTool):
             blocked_msg = self._enforce_vibe_edit_policy(path)
             if blocked_msg:
                 return blocked_msg
-            self._record_snapshot_mutation(
+            self._mutate_with_optional_snapshot(
                 tool_name=tool_name,
                 reason=f"{tool_name} {path}",
                 paths=[path],
@@ -726,31 +709,15 @@ class EditTool(BaseTool):
             )
         return parsed_blocks
 
-    def _record_snapshot_mutation(
-        self,
-        *,
-        tool_name: str,
-        reason: str,
-        paths: list[str],
-        mutate: Callable[[], None],
-    ) -> None:
-        if self._snapshot_service is None or not self._snapshot_service.can_snapshot_paths(paths):
-            mutate()
-            return
-        self._snapshot_service.record_mutation(
-            tool_name=tool_name,
-            tool_call_id=getattr(self.caller, "current_tool_execution_id", None),
-            reason=reason,
-            paths=paths,
-            mutate=mutate,
-        )
-
     def _snapshot_paths_for_write(self, path: str) -> list[str]:
         paths = [path]
         parent = self.filesystem.get_parent(path)
         while parent and parent != "." and not self.filesystem.exists(parent):
             paths.append(parent)
-            parent = self.filesystem.get_parent(parent)
+            next_parent = self.filesystem.get_parent(parent)
+            if next_parent == parent:
+                break
+            parent = next_parent
         return paths
 
     def _resolve_replacement(self, content: str, block: SearchReplaceBlock) -> ResolvedReplacement:
