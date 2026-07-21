@@ -9,6 +9,19 @@ version should also have a GitHub Release for its matching tag.
 Release version bumps must happen in a pull request. Do not tag an unmerged
 release branch.
 
+### Isolate local release commands
+
+The repository's `.venv` may be backing a running Kolega Code TUI. Do not
+synchronize it, replace it, or change its Python interpreter during release
+work. Use the disposable `.venv-release` environment for every local release
+command that can invoke `uv`.
+
+Keep `UV_PROJECT_ENVIRONMENT="$PWD/.venv-release"` on each command as shown
+below instead of relying on an earlier `export`; release steps may run in
+separate shells. Never run bare `uv sync --python ...` or
+`uv run --python ...` commands during a release, and do not add `--active`,
+because those forms can select and recreate the development `.venv`.
+
 1. Create a release branch from the latest `main`:
 
    ```bash
@@ -58,18 +71,46 @@ release branch.
    - Use the release date from the release PR merge.
    - Leave an empty `Unreleased` section above the new release section.
 
-4. Run the fast test suite:
+4. Bootstrap the dedicated release environment, run the fast test suite, and
+   run the same pre-commit checks as CI:
 
    ```bash
-   ./run_tests.sh
+   UV_PROJECT_ENVIRONMENT="$PWD/.venv-release" \
+     uv sync --extra dev --frozen
+   UV_PROJECT_ENVIRONMENT="$PWD/.venv-release" \
+     ./run_tests.sh
+   UV_PROJECT_ENVIRONMENT="$PWD/.venv-release" \
+     uv run pre-commit run --all-files --show-diff-on-failure
    ```
+
+   `UV_PROJECT_ENVIRONMENT` is inherited by pre-commit's local `pyright` hook,
+   including the hook's nested `uv run`.
+
+   To reproduce a version-specific CI failure, target the same disposable
+   environment explicitly:
+
+   ```bash
+   UV_PROJECT_ENVIRONMENT="$PWD/.venv-release" \
+     uv sync --extra dev --python 3.12 --frozen
+   UV_PROJECT_ENVIRONMENT="$PWD/.venv-release" \
+     uv run --python 3.12 pytest -q \
+       tests/cli/test_app_rendering_selection.py::test_conversation_selection_can_start_in_blank_separator
+   ```
+
+   Changing Python versions may recreate `.venv-release`; that is safe because
+   no running Kolega Code process should use it. The development `.venv` must
+   never be the target.
 
 5. Commit the release bump and open a pull request against `main`:
 
    ```bash
-   git commit -m "chore: release v0.3.2"
+   UV_PROJECT_ENVIRONMENT="$PWD/.venv-release" \
+     git commit -m "chore: release v0.3.2"
    git push -u origin chore/release-v0.3.2
    ```
+
+   The environment assignment on `git commit` also covers the tracked
+   `.githooks/pre-commit` launcher, which invokes `uv run`.
 
    The PR must be reviewed, pass CI, and be merged before tagging.
 
