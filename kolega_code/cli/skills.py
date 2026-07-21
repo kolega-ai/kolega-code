@@ -18,6 +18,12 @@ from kolega_code.llm.specs import get_model_specs
 
 PROJECT_SKILLS_DIR = Path(".agents") / "skills"
 USER_SKILLS_DIR = Path(".agents") / "skills"
+BUNDLED_SKILLS_DIR = Path(__file__).resolve().parents[1] / "_bundled_skills" / "skills"
+SKILL_SCOPE_PRECEDENCE = {
+    "bundled": 0,
+    "user": 1,
+    "project": 2,
+}
 MAX_RESOURCE_FILES = 100
 MAX_RESOURCE_READ_CHARS = 100_000
 DEFAULT_SKILL_METADATA_CHAR_BUDGET = 8_000
@@ -417,14 +423,24 @@ def _clamp_max_results(max_results: int) -> int:
     return max(1, min(value, LIST_SKILLS_MAX_RESULTS))
 
 
-def discover_skills(project_path: Path, *, user_home: Optional[Path] = None) -> SkillCatalog:
-    """Discover project and user Agent Skills."""
+def discover_skills(
+    project_path: Path,
+    *,
+    user_home: Optional[Path] = None,
+    bundled_root: Optional[Path] = BUNDLED_SKILLS_DIR,
+) -> SkillCatalog:
+    """Discover bundled, user, and project Agent Skills."""
     user_home = user_home or Path.home()
     catalog = SkillCatalog()
-    scan_roots = [
-        ("user", user_home / USER_SKILLS_DIR),
-        ("project", project_path / PROJECT_SKILLS_DIR),
-    ]
+    scan_roots: list[tuple[str, Path]] = []
+    if bundled_root is not None:
+        scan_roots.append(("bundled", bundled_root))
+    scan_roots.extend(
+        [
+            ("user", user_home / USER_SKILLS_DIR),
+            ("project", project_path / PROJECT_SKILLS_DIR),
+        ]
+    )
 
     for scope, root in scan_roots:
         for skill_file in _iter_skill_files(root):
@@ -438,11 +454,16 @@ def discover_skills(project_path: Path, *, user_home: Optional[Path] = None) -> 
                 catalog.skills[record.name] = record
                 continue
 
-            if existing.scope == "user" and record.scope == "project":
+            existing_precedence = SKILL_SCOPE_PRECEDENCE.get(existing.scope, -1)
+            record_precedence = SKILL_SCOPE_PRECEDENCE.get(record.scope, -1)
+            if record_precedence > existing_precedence:
                 catalog.diagnostics.append(
                     SkillDiagnostic(
                         severity="warning",
-                        message=f"Project skill `{record.name}` overrides user skill at {existing.skill_dir}.",
+                        message=(
+                            f"{record.scope.capitalize()} skill `{record.name}` overrides "
+                            f"{existing.scope} skill at {existing.skill_dir}."
+                        ),
                         path=record.skill_file,
                     )
                 )

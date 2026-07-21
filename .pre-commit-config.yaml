@@ -1,4 +1,4 @@
-exclude: ^benchmarks/edit_tools/fixtures/snapshots/
+exclude: ^(?:benchmarks/edit_tools/fixtures/snapshots/|kolega_code/_bundled_skills/)
 
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit

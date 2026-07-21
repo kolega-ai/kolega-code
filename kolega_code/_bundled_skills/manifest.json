@@ -1,0 +1,178 @@
+{
+  "files": [
+    {
+      "path": "LICENSE",
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+    },
+    {
+      "path": "skills/docx/LICENSE",
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+    },
+    {
+      "path": "skills/docx/SKILL.md",
+      "sha256": "d869b9260fbce004f4d005ed28411c1467bc70a0818094be8137b6bd24aaafca"
+    },
+    {
+      "path": "skills/docx/references/examples.md",
+      "sha256": "ce766f36cb456666e4966ba58201b18d994e589f896e88699bd413bd56b25046"
+    },
+    {
+      "path": "skills/docx/references/limitations.md",
+      "sha256": "54f2571813b4e1ef12bfe76ca688ee2ec27661139d2d7957a932fe862990be98"
+    },
+    {
+      "path": "skills/docx/references/operations.md",
+      "sha256": "7d234d99aa77354e5c3b0cce80b697253452488ba6ae1ad121ad084227170789"
+    },
+    {
+      "path": "skills/docx/requirements.txt",
+      "sha256": "73d47ee7a49833e483956358d9aab8bdb1eb13fcbe43ec58b256dd419a63c418"
+    },
+    {
+      "path": "skills/docx/scripts/docx_tool.py",
+      "sha256": "2797778b2d7434a4a5fde19c441939b6bf3e4f714d028ace67851dfd12a9fe52"
+    },
+    {
+      "path": "skills/docx/scripts/smoke_test.py",
+      "sha256": "af2f7fd09227288a3ccfb09857a8797b68482b294f1fa7f24fc203c63d870862"
+    },
+    {
+      "path": "skills/pdf/LICENSE",
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+    },
+    {
+      "path": "skills/pdf/SKILL.md",
+      "sha256": "e00018920e406805cae3b7ba90dc5eb1bb888a8ac57c99155c3f9a1125f4a035"
+    },
+    {
+      "path": "skills/pdf/references/examples.md",
+      "sha256": "edb2340f20bdfe982c6fe7f85dbf0434ea1ee5343ff618f6e0b4face2bebadf3"
+    },
+    {
+      "path": "skills/pdf/references/limitations.md",
+      "sha256": "6ce0758f30fa34e98723741cc63631f4766d4191acd0c282962a00234f55cac1"
+    },
+    {
+      "path": "skills/pdf/references/ocr.md",
+      "sha256": "1d333f699d45497af9ef51f26223a2d02fc175ac48cdb99d80b5325d5e60ebf2"
+    },
+    {
+      "path": "skills/pdf/references/operations.md",
+      "sha256": "9270383770551240e6b42222283734da6f5b5bfe4093a19c9222365cb0e43ccc"
+    },
+    {
+      "path": "skills/pdf/requirements-ocr-paddle.txt",
+      "sha256": "16408356d75582877e60be769e934a9ab26bf4a59b86d6a7a7b1449f72beac65"
+    },
+    {
+      "path": "skills/pdf/requirements-ocr-surya.txt",
+      "sha256": "5f65ed6d42e5574279198a4f570e4f385e6bd9ed348cd61719a960f0c18dfed9"
+    },
+    {
+      "path": "skills/pdf/requirements.txt",
+      "sha256": "5fee90fe08771e06d0ef90076e81e8fa93844f7d286a0a0f742195bca1ac56ab"
+    },
+    {
+      "path": "skills/pdf/scripts/pdf_tool.py",
+      "sha256": "4aac8648f49313e166f3a5fb2121fffb10ca98da08bda0cffd9677858f5d12d9"
+    },
+    {
+      "path": "skills/pdf/scripts/smoke_test.py",
+      "sha256": "6e7a1447bec885a9c5be4eac907620197d0931f7ba40e11dbf8c466438a4207d"
+    },
+    {
+      "path": "skills/pptx/LICENSE",
+      "sha256": "618b9b0e33e3cd045cb7090986c08a1ec5edfd709652ce1d7c0e4f48526a9848"
+    },
+    {
+      "path": "skills/pptx/SKILL.md",
+      "sha256": "995d83111847f2b4ebcc57183205ae50b78b072380920aa0b06bf66be20402a8"
+    },
+    {
+      "path": "skills/pptx/references/examples.md",
+      "sha256": "363faccd4f9a83485ba6df906cf67a9c247e7e89f6df9b2c385dbcc93acddb30"
+    },
+    {
+      "path": "skills/pptx/references/limitations.md",
+      "sha256": "8e0cd91f36bed3c771336638678c58f6191b9574a31be85f944e6e661e209b4c"
+    },
+    {
+      "path": "skills/pptx/references/operations.md",
+      "sha256": "338f2d72de79bf4eb047fc1be869a5cc485eced4edf5c63ba2f0bac12b8bf66b"
+    },
+    {
+      "path": "skills/pptx/requirements.txt",
+      "sha256": "5e6811b1afb5f35fc1f3b0107daa03ba63d98ce077d5219fe4d6130d4c899240"
+    },
+    {
+      "path": "skills/pptx/scripts/pptx_tool.py",
+      "sha256": "8b6df02f11d437777c5693e31f38dd79cf49c9016a5e73af3eece35d99900ed5"
+    },
+    {
+      "path": "skills/pptx/scripts/smoke_test.py",
+      "sha256": "d9ddeaab515236891a1a7d9215a8502a3ea15226eb6501dab6730cbfdd380164"
+    },
+    {
+      "path": "skills/review/SKILL.md",
+      "sha256": "c1075593eea35e27d744c7180636210fab6092059d6e08b3faa1bf1e45e97a67"
+    },
+    {
+      "path": "skills/review/references/github-publishing.md",
+      "sha256": "c6bf78cb882f8c932229993209a31e5610ce7e612ecf16fb48fa7b5e4b924d11"
+    },
+    {
+      "path": "skills/skill-authoring/SKILL.md",
+      "sha256": "a9ace2b51634318cc9125b1aba1e79b5e7f26872eebbcbfe629e5ce8ffcf539b"
+    },
+    {
+      "path": "skills/skill-authoring/references/review-checklist.md",
+      "sha256": "82d987b05ef3255be391a815a1d3f4d193dfddc7e15410a3fdf2d05810632406"
+    },
+    {
+      "path": "skills/xlsx/LICENSE",
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+    },
+    {
+      "path": "skills/xlsx/SKILL.md",
+      "sha256": "122d8dacb7475ef38cfc3393316d4d47d2f571b464f9fc6fedd0e156374717fb"
+    },
+    {
+      "path": "skills/xlsx/references/examples.md",
+      "sha256": "44597fd8da012e58a0401acd2a57a82abeed17d4fb40b64e2e701f667afc1d31"
+    },
+    {
+      "path": "skills/xlsx/references/limitations.md",
+      "sha256": "76e4adbb53981494e95b37c0dfdda684c301cd012bdc91784fa2cd166df6789c"
+    },
+    {
+      "path": "skills/xlsx/references/operations.md",
+      "sha256": "8d2c8d849099d4ae07bc0732139119b1e1951f140a05a82090532a9be653080e"
+    },
+    {
+      "path": "skills/xlsx/requirements.txt",
+      "sha256": "1780a489cfe05bf97d33ae71acc612daf5b2ed9fcb0cc22962d2b969315fe7c6"
+    },
+    {
+      "path": "skills/xlsx/scripts/smoke_test.py",
+      "sha256": "da8e3c9a70436eda1c49391b8489dbfc8f7836866588bb220c1aa06bbd757eb0"
+    },
+    {
+      "path": "skills/xlsx/scripts/xlsx_tool.py",
+      "sha256": "85e9de7c83b1db52eccf81624148a4f8fa947aba3cb5673d73e88303dc0b33b1"
+    }
+  ],
+  "schema_version": 1,
+  "skills": [
+    "docx",
+    "pdf",
+    "pptx",
+    "review",
+    "skill-authoring",
+    "xlsx"
+  ],
+  "source": {
+    "commit": "e1ce2110fd7e403dde52920798e71dc6e395bca6",
+    "repository": "https://github.com/kolega-ai/kolega-skills",
+    "tag": "v0.1.0"
+  }
+}

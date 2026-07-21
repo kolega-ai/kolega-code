@@ -111,6 +111,31 @@ You can pass additional pytest arguments through the wrapper:
 ./run_tests.sh tests/agent/llm/test_client.py -ra
 ```
 
+## Updating bundled skills
+
+Kolega Code vendors a reviewed, tagged snapshot from
+[`kolega-ai/kolega-skills`](https://github.com/kolega-ai/kolega-skills). It never
+downloads skills while building, installing, or running.
+
+To update the snapshot, create or choose an immutable upstream tag and run:
+
+```bash
+uv run python scripts/sync_bundled_skills.py ../kolega-skills --tag vX.Y.Z
+```
+
+The script exports the tag's Git object rather than the sibling working tree, replaces
+`kolega_code/_bundled_skills/` atomically, and records the tag, commit, file list, and
+SHA-256 hashes in `manifest.json`. Review all generated changes, then verify the
+distributions:
+
+```bash
+uv build
+uv run python scripts/verify_bundled_skill_artifacts.py dist/*
+```
+
+Always pin an explicit tag. Do not vendor a branch, a moving `latest` reference, or
+uncommitted files from the upstream checkout.
+
 ## Documentation
 
 The documentation site lives in `docs/`.

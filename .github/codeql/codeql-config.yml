@@ -1,0 +1,4 @@
+name: "Kolega Code CodeQL configuration"
+
+paths-ignore:
+  - "kolega_code/_bundled_skills"

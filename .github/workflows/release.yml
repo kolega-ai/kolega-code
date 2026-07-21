@@ -83,6 +83,9 @@ jobs:
       - name: Build distributions
         run: uv build
 
+      - name: Verify bundled skill package data
+        run: uv run python scripts/verify_bundled_skill_artifacts.py dist/*
+
       - name: Check distributions
         run: uv run twine check dist/*
 
@@ -142,6 +145,14 @@ jobs:
           /tmp/kolega-code-wheel-smoke/bin/python -m pip install --upgrade pip
           /tmp/kolega-code-wheel-smoke/bin/python -m pip install dist/*.whl
           /tmp/kolega-code-wheel-smoke/bin/kolega-code --version
+          /tmp/kolega-code-wheel-smoke/bin/python - <<'PY'
+          from pathlib import Path
+          from kolega_code.cli.skills import discover_skills
+
+          catalog = discover_skills(Path("/tmp/empty-project"), user_home=Path("/tmp/empty-home"))
+          assert catalog.skills
+          assert {record.scope for record in catalog.skills.values()} == {"bundled"}
+          PY
 
       - name: Smoke-test sdist
         run: |
@@ -149,6 +160,14 @@ jobs:
           /tmp/kolega-code-sdist-smoke/bin/python -m pip install --upgrade pip
           /tmp/kolega-code-sdist-smoke/bin/python -m pip install dist/*.tar.gz
           /tmp/kolega-code-sdist-smoke/bin/kolega-code --version
+          /tmp/kolega-code-sdist-smoke/bin/python - <<'PY'
+          from pathlib import Path
+          from kolega_code.cli.skills import discover_skills
+
+          catalog = discover_skills(Path("/tmp/empty-project"), user_home=Path("/tmp/empty-home"))
+          assert catalog.skills
+          assert {record.scope for record in catalog.skills.values()} == {"bundled"}
+          PY
 
   publish:
     name: Publish to PyPI
