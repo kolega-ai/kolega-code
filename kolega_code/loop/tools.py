@@ -14,6 +14,7 @@ The agent calls these to:
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Optional
 
 from kolega_code.loop.state import WorkLog, LoopLimitExceeded
@@ -26,8 +27,8 @@ class LoopStateTools:
     tools the coder agent can call during a bug-fix loop.
     """
 
-    def __init__(self, project_path: str):
-        self._project_path = project_path
+    def __init__(self, project_path: str | Path):
+        self._project_path = str(project_path)
         self._worklog: Optional[WorkLog] = None
 
     def _get_worklog(self, task_id: str) -> WorkLog:
@@ -49,7 +50,8 @@ class LoopStateTools:
         """Initialize loop state for a new task.
 
         Call this at the start of each bug-fix loop. Creates a new work-log
-        with the given parameters.
+        with the given parameters. Records the current git branch as the
+        original branch for safe revert.
 
         Args:
             task_id: Short identifier for the bug (e.g., 'div-by-zero')
@@ -64,6 +66,7 @@ class LoopStateTools:
         wl._data["loop_type"] = loop_type
         wl._data["max_attempts"] = max_attempts
         wl._data["attempts_made"] = 0
+        wl.record_original_branch()
         wl.save()
         return wl.to_dict()
 
@@ -71,8 +74,7 @@ class LoopStateTools:
         """Increment the attempt counter. Call before each fix attempt.
 
         If the limit is exceeded, returns {"exceeded": true}. You MUST
-        stop the bug-fix loop when exceeded is true. The runtime may also
-        enforce this automatically.
+        stop the bug-fix loop when exceeded is true.
 
         Args:
             task_id: The loop task identifier
@@ -93,6 +95,10 @@ class LoopStateTools:
         Pipe the returned command to bash:
             result = loop_state_revert("my-bug")
             exec_command(result["command"])
+
+        The revert is branch-based: it switches back to the original
+        branch and deletes loop branches. Only loop-created changes
+        are discarded; pre-existing user work is untouched.
 
         Args:
             task_id: The loop task identifier
@@ -186,7 +192,8 @@ class LoopStateTools:
         """Snapshot the current working tree for later revert.
 
         Records the current git HEAD (or a filesystem backup if not a git
-        repo) as the revert point.
+        repo) as the revert point. Operates on the project directory, not
+        the process working directory.
 
         Args:
             task_id: The loop task identifier
@@ -197,3 +204,20 @@ class LoopStateTools:
         wl = self._get_worklog(task_id)
         result = wl.backup_current()
         return {"backup": result}
+
+    def loop_state_record_touched(self, task_id: str, filepath: str) -> dict[str, Any]:
+        """Record a file that the loop has modified.
+
+        This enables safe, targeted revert of only loop-touched files
+        in non-git projects.
+
+        Args:
+            task_id: The loop task identifier
+            filepath: Path to the modified file
+
+        Returns:
+            dict with recorded status
+        """
+        wl = self._get_worklog(task_id)
+        wl.record_touched_file(filepath)
+        return {"recorded": True, "file": filepath}

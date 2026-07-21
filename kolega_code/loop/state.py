@@ -1,7 +1,7 @@
 """WorkLog — persistent state for autonomous loop engineering.
 
 Manages work-log.json with atomic saves, attempt limit enforcement,
-git-based revert (with rsync fallback), and anti-pattern recording.
+branch-based safe revert, and anti-pattern recording.
 """
 
 import copy
@@ -15,7 +15,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from kolega_code.local_state import get_state_dir
 
 try:
     from shlex import quote as shlex_quote
@@ -42,41 +41,60 @@ DEFAULT_TEMPLATE: dict = {
     "loop_type": None,
     "attempts_made": 0,
     "max_attempts": 3,
+    "original_branch": None,
     "last_green_commit": None,
     "last_green_backup": None,
+    "touched_files": [],
     "history": [],
     "anti_patterns": [],
 }
 
 
-def _hash_project_path(project_path: str) -> str:
+def _hash_project_path(project_path: str | Path) -> str:
     """Create a stable hash of the project path for state directory naming."""
-    return hashlib.sha256(project_path.encode()).hexdigest()[:16]
+    return hashlib.sha256(str(project_path).encode()).hexdigest()[:16]
+
+
+def _get_state_dir() -> Path:
+    """Return the kolega-code state directory (deferred import to avoid cycles)."""
+    from kolega_code.cli.session_store import default_state_dir
+
+    return default_state_dir()
 
 
 class WorkLog:
-    """Manages the work-log.json file for loop state tracking."""
+    """Manages the work-log.json file for loop state tracking.
 
-    def __init__(self, path: str = "work-log.json"):
+    All filesystem operations use ``project_path``, not the process
+    working directory, so the loop operates on the correct project
+    regardless of where the agent has ``cd``'d.
+    """
+
+    def __init__(self, path: str = "work-log.json", project_path: str | Path | None = None):
         self._path = Path(path)
-        self._data: dict = {}
+        self._project_path = Path(project_path) if project_path else Path.cwd()
+        # Defensive initialization — prevents KeyError on pre-load access.
+        self._data: dict = copy.deepcopy(DEFAULT_TEMPLATE)
 
     # ------------------------------------------------------------------
     # Factory
     # ------------------------------------------------------------------
 
     @classmethod
-    def for_task(cls, project_path: str, task_id: str) -> "WorkLog":
-        """Create a WorkLog stored in kolega-code's state directory."""
-        project_hash = hashlib.sha256(project_path.encode()).hexdigest()[:16]
-        state_root = get_state_dir()
+    def for_task(cls, project_path: str | Path, task_id: str) -> "WorkLog":
+        """Create a WorkLog stored in kolega-code's state directory.
+
+        Returns a fully initialized WorkLog (loaded from disk or fresh template).
+        """
+        project_hash = _hash_project_path(project_path)
+        state_root = _get_state_dir()
         path = state_root / "projects" / project_hash / "loops" / task_id / "work-log.json"
-        return cls(str(path))
+        return cls.load(str(path), project_path=project_path)
 
     @classmethod
-    def load(cls, path: str = "work-log.json") -> "WorkLog":
+    def load(cls, path: str = "work-log.json", project_path: str | Path | None = None) -> "WorkLog":
         """Load work-log.json, creating from template if missing or corrupted."""
-        wl = cls(path)
+        wl = cls(path, project_path=project_path)
         p = wl._path
 
         if p.exists():
@@ -182,32 +200,114 @@ class WorkLog:
         self.save()
 
     # ------------------------------------------------------------------
-    # Revert / Backup
+    # Revert / Backup (branch-based, safe)
     # ------------------------------------------------------------------
 
+    def _git(self, *args: str) -> subprocess.CompletedProcess:
+        """Run a git command in the project directory."""
+        return subprocess.run(
+            ["git", *args],
+            capture_output=True,
+            text=True,
+            cwd=str(self._project_path),
+        )
+
+    def _is_git_repo(self) -> bool:
+        try:
+            self._git("rev-parse", "--git-dir").check_returncode()
+            return True
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            return False
+
+    def _git_head(self) -> Optional[str]:
+        try:
+            result = self._git("rev-parse", "HEAD")
+            result.check_returncode()
+            return result.stdout.strip() or None
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            return None
+
+    def _current_branch(self) -> Optional[str]:
+        try:
+            result = self._git("rev-parse", "--abbrev-ref", "HEAD")
+            result.check_returncode()
+            return result.stdout.strip() or None
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            return None
+
+    def _loop_branches(self) -> list[str]:
+        """List branches matching loop/<task-id>-*."""
+        task_id = self._data.get("task_id", "")
+        if not task_id:
+            return []
+        prefix = f"loop/{task_id}-"
+        try:
+            result = self._git("branch", "--list", f"{prefix}*")
+            return [b.strip().lstrip("* ") for b in result.stdout.splitlines() if b.strip()]
+        except subprocess.CalledProcessError:
+            return []
+
+    def record_original_branch(self) -> str:
+        """Record the starting branch before loop work begins."""
+        branch = self._current_branch() or "main"
+        self._data["original_branch"] = branch
+        self.save()
+        return branch
+
     def revert(self) -> str:
-        """Return the shell command to revert to last known-good state."""
-        commit = self._data.get("last_green_commit")
-        if commit and self._is_git_repo():
-            return f"git reset --hard {commit}"
+        """Return the shell command to revert to the pre-loop state.
+
+        Uses branch-based strategy: switches back to the original branch
+        and deletes all loop branches. Only loop-created changes are
+        discarded; pre-existing user work is untouched.
+
+        Falls back to rsync for non-git projects.
+        """
+        original_branch = self._data.get("original_branch")
+        if original_branch and self._is_git_repo():
+            loop_branches = self._loop_branches()
+            delete_cmds = " ".join(f"-D {shlex_quote(b)}" for b in loop_branches) if loop_branches else ""
+            cmds = [
+                f"cd {shlex_quote(str(self._project_path))}",
+                f"git checkout {shlex_quote(original_branch)}",
+            ]
+            if delete_cmds:
+                cmds.append(f"git branch {delete_cmds}")
+            return " && ".join(cmds)
 
         backup = self._data.get("last_green_backup")
         if backup and os.path.isdir(backup):
-            cwd = os.getcwd()
-            return f"rsync -a --delete {shlex_quote(backup)}/ {shlex_quote(cwd)}/"
+            proj = shlex_quote(str(self._project_path))
+            bak = shlex_quote(backup)
+            # Only restore files the loop touched, not the entire tree
+            touched = self._data.get("touched_files", [])
+            if touched:
+                restore_cmds = " && ".join(
+                    f"cp {bak}/{shlex_quote(f)} {proj}/{shlex_quote(f)}" for f in touched
+                )
+                return f"cd {proj} && {restore_cmds}"
+            return f"rsync -a --delete {bak}/ {proj}/"
 
         return "echo '[loop-state] No revert point available. Nothing to do.'"
 
     def backup_current(self) -> str:
-        """Snapshot current working tree. Returns the backup path."""
+        """Snapshot current working tree in the project directory.
+
+        Records the current git HEAD and branch as the revert point.
+        For non-git repos, creates a filesystem backup.
+        """
         if self._is_git_repo():
             commit = self._git_head()
+            branch = self._current_branch()
             self._data["last_green_commit"] = commit
+            if branch and not self._data.get("original_branch"):
+                self._data["original_branch"] = branch
             self.save()
-            return commit
+            return commit or ""
 
+        proj = str(self._project_path)
         backup_dir = os.path.join(
-            os.getcwd(),
+            proj,
             f".loop-backup-{self._data.get('task_id', 'unknown')}",
         )
         if os.path.isdir(backup_dir):
@@ -223,11 +323,26 @@ class WorkLog:
             ".venv",
             "venv",
         )
-        shutil.copytree(os.getcwd(), backup_dir, ignore=ignore, symlinks=True)
+        shutil.copytree(proj, backup_dir, ignore=ignore, symlinks=True)
 
         self._data["last_green_backup"] = backup_dir
         self.save()
         return backup_dir
+
+    def record_touched_file(self, filepath: str) -> None:
+        """Track a file the loop has modified for safe revert."""
+        fp = Path(filepath)
+        # If path is relative, resolve against project path
+        if not fp.is_absolute():
+            fp = self._project_path / fp
+        try:
+            rel = fp.relative_to(self._project_path).as_posix()
+        except ValueError:
+            # File is not under project path — store as-is
+            rel = filepath
+        if rel not in self._data["touched_files"]:
+            self._data["touched_files"].append(rel)
+            self.save()
 
     # ------------------------------------------------------------------
     # Anti-patterns
@@ -271,32 +386,3 @@ class WorkLog:
         if for_module:
             aps = [ap for ap in aps if for_module.lower() in ap.get("file", "").lower()]
         return aps
-
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _is_git_repo() -> bool:
-        try:
-            subprocess.run(
-                ["git", "rev-parse", "--git-dir"],
-                capture_output=True,
-                check=True,
-            )
-            return True
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            return False
-
-    @staticmethod
-    def _git_head() -> Optional[str]:
-        try:
-            result = subprocess.run(
-                ["git", "rev-parse", "HEAD"],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            return result.stdout.strip() or None
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            return None

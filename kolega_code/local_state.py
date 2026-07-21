@@ -10,6 +10,17 @@ PRIVATE_DIR_MODE = 0o700
 PRIVATE_FILE_MODE = 0o600
 
 
+def get_state_dir() -> Path:
+    """Return the kolega-code state directory for loop state storage.
+
+    Delegates to the canonical default_state_dir in session_store,
+    using a deferred import to avoid circular dependencies.
+    """
+    from kolega_code.cli.session_store import default_state_dir
+
+    return default_state_dir()
+
+
 def ensure_private_dir(path: Path) -> None:
     """Create a local state directory and make it owner-only when supported."""
     missing: list[Path] = []

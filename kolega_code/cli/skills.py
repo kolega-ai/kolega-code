@@ -18,6 +18,7 @@ from kolega_code.llm.specs import get_model_specs
 
 PROJECT_SKILLS_DIR = Path(".agents") / "skills"
 USER_SKILLS_DIR = Path(".agents") / "skills"
+BUILTIN_SKILLS_DIR = Path(__file__).parent.parent / "agent" / "prompt_templates" / "extensions" / "skills"
 MAX_RESOURCE_FILES = 100
 MAX_RESOURCE_READ_CHARS = 100_000
 DEFAULT_SKILL_METADATA_CHAR_BUDGET = 8_000
@@ -417,16 +418,32 @@ def _clamp_max_results(max_results: int) -> int:
     return max(1, min(value, LIST_SKILLS_MAX_RESULTS))
 
 
-def discover_skills(project_path: Path, *, user_home: Optional[Path] = None) -> SkillCatalog:
-    """Discover project and user Agent Skills."""
+def discover_skills(
+    project_path: Path,
+    *,
+    user_home: Optional[Path] = None,
+    include_builtin: bool = True,
+) -> SkillCatalog:
+    """Discover built-in, project, and user Agent Skills.
+
+    Priority (lowest to highest): builtin < user < project.
+    Built-in skills are shipped with kolega-code and can be overridden.
+
+    Set ``include_builtin=False`` to skip built-in skills (useful in tests).
+    """
     user_home = user_home or Path.home()
     catalog = SkillCatalog()
-    scan_roots = [
+    scan_roots: list[tuple[str, Path]] = []
+    if include_builtin:
+        scan_roots.append(("builtin", BUILTIN_SKILLS_DIR))
+    scan_roots.extend([
         ("user", user_home / USER_SKILLS_DIR),
         ("project", project_path / PROJECT_SKILLS_DIR),
-    ]
+    ])
 
     for scope, root in scan_roots:
+        if not root.exists():
+            continue
         for skill_file in _iter_skill_files(root):
             record, diagnostics = _load_skill(skill_file, scope)
             catalog.diagnostics.extend(diagnostics)
@@ -438,11 +455,13 @@ def discover_skills(project_path: Path, *, user_home: Optional[Path] = None) -> 
                 catalog.skills[record.name] = record
                 continue
 
-            if existing.scope == "user" and record.scope == "project":
+            # Project overrides user, user overrides builtin
+            priority = {"builtin": 0, "user": 1, "project": 2}
+            if priority.get(scope, 0) > priority.get(existing.scope, 0):
                 catalog.diagnostics.append(
                     SkillDiagnostic(
                         severity="warning",
-                        message=f"Project skill `{record.name}` overrides user skill at {existing.skill_dir}.",
+                        message=f"{scope.capitalize()} skill `{record.name}` overrides {existing.scope} skill at {existing.skill_dir}.",
                         path=record.skill_file,
                     )
                 )

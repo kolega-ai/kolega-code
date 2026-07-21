@@ -40,8 +40,6 @@ COMPRESSION_SUMMARY_SYSTEM_PROMPT = render_prompt_template("auxiliary/compressio
 SHELL_SAFETY_SYSTEM_PROMPT = render_prompt_template("auxiliary/terminal/safety.system.md")
 SHELL_COMPRESSION_SYSTEM_PROMPT = render_prompt_template("auxiliary/terminal/output_summary.system.md")
 SHARED_TASK_LIST_PROMPT = render_prompt_template("extensions/cli/shared_task_list.md")
-BUG_FIX_LOOP_PROMPT = render_prompt_template("extensions/bug_fix_loop.md")
-NEW_CODE_LOOP_PROMPT = render_prompt_template("extensions/new_code_loop.md")
 PLANNING_QUESTION_PROMPT = render_prompt_template("extensions/cli/planning_questions.md")
 
 # Compatibility templates for callers/tests that still use ``str.format`` or

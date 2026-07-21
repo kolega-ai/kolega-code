@@ -30,8 +30,8 @@ from ..skills import (
     context_window_tokens_for_skill_budget,
     discover_skills,
 )
-from kolega_code.agent.prompts import BUG_FIX_LOOP_PROMPT, NEW_CODE_LOOP_PROMPT
 from kolega_code.loop.tools import LoopStateTools
+from kolega_code.cli.skills import activated_skill_names
 from . import app_base as tui_app_base
 from . import constants as tui_constants
 from . import state as tui_state
@@ -146,20 +146,6 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
     ) -> None:
         try:
             if self.agent is None:
-                return
-
-            # Check loop limits before processing — blocks the turn if any
-            # active bug-fix or new-code loop has exceeded its attempt budget.
-            guard_result = await self._check_loop_limits()
-            if guard_result is not None:
-                self._add_conversation_entry(
-                    tui_state.ConversationEntry(kind="system", content=guard_result["message"])
-                )
-                if guard_result.get("revert_command"):
-                    import subprocess
-
-                    subprocess.run(guard_result["revert_command"], shell=True, capture_output=True)
-                await self._save_session_history_async()
                 return
 
             await self._record_turn_checkpoint(turn_label or message)
@@ -705,87 +691,6 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             propagate_to_sub_agents=True,
         )
 
-    def _bug_fix_loop_prompt_extension(self) -> PromptExtension:
-        """Return the built-in bug-fix loop methodology as a prompt extension.
-
-        This is always-on for coder agents in CLI mode. It teaches the agent
-        a structured five-phase methodology to avoid target fixation when
-        fixing bugs: Reproduce → Investigate → Act → Check → Adapt → Report.
-        """
-        from kolega_code.agent.prompt_provider import AgentType
-
-        return PromptExtension(
-            id="bug-fix-loop",
-            title="Bug Fix Loop — Structured Bug-Fixing Methodology",
-            markdown=BUG_FIX_LOOP_PROMPT,
-            agent_types=[AgentType.CODER],
-            modes=[AgentMode.CLI],
-            # Sub-agents should not try to orchestrate their own bug-fix loops.
-            propagate_to_sub_agents=False,
-        )
-
-    def _new_code_loop_prompt_extension(self) -> PromptExtension:
-        """Return the built-in new-code loop methodology as a prompt extension.
-
-        This is always-on for coder agents in CLI mode. It teaches the agent
-        a structured four-phase methodology for feature building with parallel
-        generation and independent verification:
-        Goal → Generate → Verify → Select → Report. Max 3 attempts.
-        """
-        from kolega_code.agent.prompt_provider import AgentType
-
-        return PromptExtension(
-            id="new-code-loop",
-            title="New Code Loop — Structured Feature-Building Methodology",
-            markdown=NEW_CODE_LOOP_PROMPT,
-            agent_types=[AgentType.CODER],
-            modes=[AgentMode.CLI],
-            propagate_to_sub_agents=False,
-        )
-
-    async def _check_loop_limits(self) -> dict | None:
-        """Check all active loop work-logs for exceeded attempt limits.
-
-        Called before each agent turn. If any loop has exceeded its budget,
-        returns a blocking dict with the revert command and message.
-        Returns None if all loops are within limits or no loops are active.
-        """
-        try:
-            from kolega_code.loop.state import WorkLog
-            from kolega_code.local_state import get_state_dir
-            import hashlib
-
-            project_hash = hashlib.sha256(self.project_path.encode()).hexdigest()[:16]
-            loops_dir = get_state_dir() / "projects" / project_hash / "loops"
-
-            if not loops_dir.exists():
-                return None
-
-            for task_dir in loops_dir.iterdir():
-                if not task_dir.is_dir():
-                    continue
-                wl_path = task_dir / "work-log.json"
-                if not wl_path.exists():
-                    continue
-                try:
-                    wl = WorkLog.load(str(wl_path))
-                except Exception:
-                    continue
-                if wl.attempts_made > wl.max_attempts:
-                    return {
-                        "exceeded": True,
-                        "attempts_made": wl.attempts_made,
-                        "max_attempts": wl.max_attempts,
-                        "revert_command": wl.revert(),
-                        "message": (
-                            f"⛔ Loop limit exceeded: {wl.attempts_made}/{wl.max_attempts} attempts. "
-                            f"Reverting to last known-good state and handing back to user."
-                        ),
-                    }
-        except Exception:
-            pass
-        return None
-
     def _loop_state_tool_extension(self) -> ToolExtension:
         """Return loop state tools for deterministic bug-fix loop enforcement.
 
@@ -834,6 +739,10 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             """Snapshot current working tree as revert point."""
             return tools_instance.loop_state_backup(task_id)
 
+        async def loop_state_record_touched(task_id: str, filepath: str) -> dict:
+            """Record a file that the loop has modified for safe revert."""
+            return tools_instance.loop_state_record_touched(task_id, filepath)
+
         return ToolExtension(
             name="loop-state",
             tools={
@@ -845,11 +754,25 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
                 "loop_state_check_anti_patterns": loop_state_check_anti_patterns,
                 "loop_state_status": loop_state_status,
                 "loop_state_backup": loop_state_backup,
+                "loop_state_record_touched": loop_state_record_touched,
             },
             # These tools manage loop-specific state; they should not be
             # inherited by sub-agents to avoid confusion.
             propagate_to_sub_agents=False,
         )
+
+    def _loop_skills_are_active(self) -> bool:
+        """Return True if any loop skill has been activated in this conversation.
+
+        Loop skills (bug-fix-loop, new-code-loop, loop) are opt-in via /loop.
+        Loop state tools are only exposed when the user has explicitly chosen
+        a loop workflow.
+        """
+        if self.agent is None:
+            return False
+        active = activated_skill_names(self.agent.history)
+        loop_skills = {"bug-fix-loop", "new-code-loop", "loop"}
+        return bool(active & loop_skills)
 
     async def _build_agent(
         self,
@@ -903,25 +826,14 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         if skill_tool_extension is not None:
             tool_extensions.append(skill_tool_extension)
 
-        # Built-in bug-fix loop methodology — always available to coder agents.
-        # Teaches the agent to investigate broadly before fixing, generate multiple
-        # fix hypotheses, and automatically escalate scope on retry.
-        bug_fix_extension = self._bug_fix_loop_prompt_extension()
-        if bug_fix_extension is not None:
-            prompt_extensions.append(bug_fix_extension)
-
-        # Built-in new-code loop methodology — always available to coder agents.
-        # Teaches the agent to use parallel generation + independent verification
-        # for feature building: Goal → Generate → Verify → Select → Report.
-        new_code_extension = self._new_code_loop_prompt_extension()
-        if new_code_extension is not None:
-            prompt_extensions.append(new_code_extension)
-
-        # Loop state tools — deterministic attempt tracking, anti-pattern memory,
-        # revert points, and work-log persistence for the bug-fix loop.
-        loop_tools_ext = self._loop_state_tool_extension()
-        if loop_tools_ext is not None:
-            tool_extensions.append(loop_tools_ext)
+        # Loop state tools — only exposed when a loop skill is active.
+        # These tools manage attempt tracking, anti-pattern memory, revert
+        # points, and work-log persistence. They are opt-in: the user must
+        # explicitly activate a loop skill via /loop.
+        if self._loop_skills_are_active():
+            loop_tools_ext = self._loop_state_tool_extension()
+            if loop_tools_ext is not None:
+                tool_extensions.append(loop_tools_ext)
 
         if self.interaction_mode == tui_constants.PLAN_INTERACTION_MODE:
             prompt_extensions.append(self._planning_question_prompt_extension())

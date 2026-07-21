@@ -65,6 +65,10 @@ class PromptContext:
     # Workspace memories
     memories: List[str] = field(default_factory=list)
 
+    # Bug investigation context — when set, the investigation agent renders
+    # the two-pass methodology with bug-specific parameters.
+    investigation: Optional[Dict[str, str]] = None
+
     def __post_init__(self) -> None:
         """Keep the legacy KOLEGA.md field usable for older callers."""
         if self.project_guidance and not self.kolega_md:
@@ -113,6 +117,7 @@ class PromptProvider:
             "mode": mode_value,
             "project_template_slug": template_slug,
             "prompt_extensions": prompt_extensions or [],
+            "investigation": context.investigation,
             "system_name": context.system_name,
             "project_path": context.project_path,
             "is_git_repo": context.is_git_repo,

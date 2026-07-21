@@ -36,7 +36,7 @@ def test_discover_skills_loads_user_and_project_spec_paths(tmp_path: Path) -> No
     write_skill(user_skills, "user-skill", "Use this user skill.")
     write_skill(project_skills, "project-skill", "Use this project skill.")
 
-    catalog = discover_skills(project, user_home=user_home)
+    catalog = discover_skills(project, user_home=user_home, include_builtin=False)
 
     assert list(catalog.skills) == ["project-skill", "user-skill"]
     assert catalog.skills["project-skill"].scope == "project"
@@ -49,7 +49,7 @@ def test_discover_skills_does_not_scan_singular_project_agent_path(tmp_path: Pat
     project.mkdir()
     write_skill(project / ".agent" / "skills", "ignored-skill", "Use this ignored skill.")
 
-    catalog = discover_skills(project, user_home=user_home)
+    catalog = discover_skills(project, user_home=user_home, include_builtin=False)
 
     assert "ignored-skill" not in catalog.skills
 
@@ -61,7 +61,7 @@ def test_project_skill_overrides_user_skill_with_same_name(tmp_path: Path) -> No
     write_skill(user_home / ".agents" / "skills", "shared-skill", "Use the user skill.", body="user body")
     write_skill(project / ".agents" / "skills", "shared-skill", "Use the project skill.", body="project body")
 
-    catalog = discover_skills(project, user_home=user_home)
+    catalog = discover_skills(project, user_home=user_home, include_builtin=False)
 
     assert catalog.skills["shared-skill"].scope == "project"
     assert "project body" in catalog.activation_content("shared-skill")
@@ -87,7 +87,7 @@ Follow folded instructions.
         encoding="utf-8",
     )
 
-    catalog = discover_skills(project, user_home=user_home)
+    catalog = discover_skills(project, user_home=user_home, include_builtin=False)
 
     assert catalog.skills["folded-skill"].description == "Use this folded skill when testing YAML descriptions."
 
@@ -98,7 +98,7 @@ def test_prompt_catalog_uses_only_names_and_descriptions(tmp_path: Path) -> None
     project.mkdir()
     write_skill(project / ".agents" / "skills", "plain-skill", "Use this plain skill.")
 
-    catalog = discover_skills(project, user_home=user_home)
+    catalog = discover_skills(project, user_home=user_home, include_builtin=False)
     prompt = catalog.prompt_catalog(budget=SkillCatalogBudget(max_chars=1_000))
 
     assert "- `plain-skill`: Use this plain skill." in prompt
@@ -115,7 +115,7 @@ def test_prompt_catalog_truncates_descriptions_before_omitting_skills(tmp_path: 
     for name in ("alpha-skill", "beta-skill", "gamma-skill"):
         write_skill(skills_root, name, long_description)
 
-    catalog = discover_skills(project, user_home=user_home)
+    catalog = discover_skills(project, user_home=user_home, include_builtin=False)
     render = catalog.render_prompt_catalog(SkillCatalogBudget(max_chars=95))
 
     assert render.report.included_count == 3
@@ -136,7 +136,7 @@ def test_prompt_catalog_omits_overflow_when_names_exceed_budget(tmp_path: Path) 
     for index in range(10):
         write_skill(skills_root, f"skill-{index:02d}", f"Use skill {index}.")
 
-    catalog = discover_skills(project, user_home=user_home)
+    catalog = discover_skills(project, user_home=user_home, include_builtin=False)
     render = catalog.render_prompt_catalog(SkillCatalogBudget(max_chars=30))
 
     assert render.report.included_count == 2
@@ -157,7 +157,7 @@ def test_build_skill_prompt_extension_uses_context_window_budget(tmp_path: Path)
         "Use this skill " + ("when the model needs a long detailed workflow " * 12),
     )
 
-    catalog = discover_skills(project, user_home=user_home)
+    catalog = discover_skills(project, user_home=user_home, include_builtin=False)
     extension = build_skill_prompt_extension(catalog, context_window_tokens=1_000)
 
     assert extension is not None
@@ -181,7 +181,7 @@ def test_large_context_skill_prompt_extension_stays_bounded(tmp_path: Path) -> N
     for index in range(200):
         write_skill(skills_root, f"stress-skill-{index:03d}", long_description)
 
-    catalog = discover_skills(project, user_home=user_home)
+    catalog = discover_skills(project, user_home=user_home, include_builtin=False)
     extension = build_skill_prompt_extension(catalog, context_window_tokens=1_000_000)
 
     assert extension is not None
@@ -200,7 +200,7 @@ async def test_list_skills_tool_is_bounded_and_queryable(tmp_path: Path) -> None
     for index in range(60):
         write_skill(skills_root, f"alpha-{index:02d}", f"Use alpha skill {index}.")
 
-    catalog = discover_skills(project, user_home=user_home)
+    catalog = discover_skills(project, user_home=user_home, include_builtin=False)
     extension = build_skill_tool_extension(catalog, lambda: [])
     assert extension is not None
     list_skills = extension.tools["list_skills"]
@@ -232,7 +232,7 @@ def test_discover_skills_skips_missing_description_and_malformed_yaml(tmp_path: 
         encoding="utf-8",
     )
 
-    catalog = discover_skills(project, user_home=user_home)
+    catalog = discover_skills(project, user_home=user_home, include_builtin=False)
 
     assert catalog.skills == {}
     assert len(catalog.diagnostics) == 2
@@ -248,7 +248,7 @@ def test_activation_content_wraps_body_and_lists_resources(tmp_path: Path) -> No
     (skill_dir / "scripts").mkdir()
     (skill_dir / "scripts" / "run.py").write_text("print('ok')", encoding="utf-8")
 
-    catalog = discover_skills(project, user_home=user_home)
+    catalog = discover_skills(project, user_home=user_home, include_builtin=False)
     content = catalog.activation_content("resource-skill")
 
     assert '<skill_content name="resource-skill">' in content
@@ -265,7 +265,7 @@ def test_read_resource_rejects_path_traversal_and_caps_content(tmp_path: Path) -
     skill_dir = write_skill(project / ".agents" / "skills", "read-skill")
     (skill_dir / "big.txt").write_text("a" * 20, encoding="utf-8")
 
-    catalog = discover_skills(project, user_home=user_home)
+    catalog = discover_skills(project, user_home=user_home, include_builtin=False)
 
     assert catalog.read_resource("read-skill", "big.txt", max_chars=5).startswith("aaaaa\n\n[truncated")
     with pytest.raises(ValueError, match="inside the skill directory"):
