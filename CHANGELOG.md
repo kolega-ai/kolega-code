@@ -10,6 +10,9 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 - Bundled the `docx`, `pdf`, `pptx`, `review`, `skill-authoring`, and `xlsx`
   workflows from `kolega-skills` v0.1.0 so they are available out of the box.
+- Added a top-level TUI `set_goal` tool so explicit user, Agent Skill, or host
+  workflow instructions can enter the existing persistent autonomous goal loop
+  without synthesizing a `/goal` command.
 
 ## 0.21.1 - 2026-07-20
 

@@ -26,6 +26,7 @@ from kolega_code.cli.provider_registry import (
 )
 from kolega_code.cli.session_store import SessionStore
 from kolega_code.cli.settings import CliSettings, SettingsStore
+from kolega_code.tools import tool_definition_from_callable
 
 from ._app_test_utils import (
     FakeCoderAgent,
@@ -88,6 +89,26 @@ async def test_textual_app_passes_shared_task_list_tools_to_build_agent_only(
         assert app.query_one("#status_task_list_markdown", PlanningMarkdown).source == "- [ ] inspect\n- [x] plan"
         assert store.load(session.session_id).task_list_markdown == "- [ ] inspect\n- [x] plan"
 
+        goal_extension = extension_by_name(app.agent.kwargs["tool_extensions"], "cli-goal-control")
+        goal_prompt = extension_by_name(app.agent.kwargs["prompt_extensions"], "cli-goal-control")
+        assert set(goal_extension.tools) == {"set_goal"}
+        assert goal_extension.propagate_to_sub_agents is False
+        assert goal_prompt.propagate_to_sub_agents is False
+        goal_doc = goal_extension.tools["set_goal"].__doc__ or ""
+        goal_policy = goal_prompt.markdown
+        for policy_text in (goal_doc, goal_policy):
+            policy_lower = " ".join(policy_text.lower().split())
+            assert "explicit governing instruction" in policy_lower
+            assert "activated agent skill" in policy_lower
+            assert "host-provided workflow" in policy_lower
+            assert "do not infer goal mode" in policy_lower
+            assert "repository contents" in policy_lower
+            assert "not by itself authorization" in policy_lower
+        goal_definition = tool_definition_from_callable("set_goal", goal_extension.tools["set_goal"])
+        goal_schema = goal_definition.to_anthropic()["input_schema"]
+        assert goal_schema["required"] == ["condition"]
+        assert goal_schema["properties"]["condition"]["type"] == "string"
+
         await pilot.press("shift+tab")
 
         assert isinstance(app.agent, FakePlanningAgent)
@@ -96,6 +117,10 @@ async def test_textual_app_passes_shared_task_list_tools_to_build_agent_only(
         assert "cli-shared-task-list" not in plan_extension_names
         # ...but still gets the planning-question tool.
         assert "cli-planning-questions" in plan_extension_names
+        assert "cli-goal-control" in plan_extension_names
+        plan_goal_extension = extension_by_name(app.agent.kwargs["tool_extensions"], "cli-goal-control")
+        assert set(plan_goal_extension.tools) == {"set_goal"}
+        assert "set_goal" in plan_goal_extension.tool_groups["planning_tools"]
         question_tools = extension_by_name(app.agent.kwargs["tool_extensions"], "cli-planning-questions").tools
         assert {"ask_user_choice"} == set(question_tools)
         prompt_markdown = "\n".join(extension.markdown for extension in app.agent.kwargs["prompt_extensions"])

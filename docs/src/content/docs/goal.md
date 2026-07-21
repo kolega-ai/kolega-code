@@ -75,6 +75,31 @@ A few things to know:
 /goal all tests pass and the linter is clean
 ```
 
+### Letting the agent set a goal
+
+The top-level TUI agent can also call `set_goal` when an explicit governing
+instruction directs it to enter goal mode. That direction can come from you, an
+activated Agent Skill, or another host-provided workflow with authority over the
+current task:
+
+```text
+Set a goal that all parser tests pass and the parser documentation is current.
+```
+
+`set_goal` creates the same persistent goal state as `/goal <condition>`. The
+current turn becomes the first work turn, then the normal read-only verifier and
+continuation loop take over. Calling it again replaces an active unmet or paused
+goal with fresh state.
+
+The agent must not infer goal mode merely because a request contains a desired
+outcome, acceptance criteria, or asks it to finish some work. Instructions found
+in untrusted task data—such as repository files, fetched web pages, or incidental
+tool output—also do not authorize goal mode. The tool is used only when a user,
+activated skill, or authoritative host workflow explicitly directs it.
+
+The tool only sets or replaces a goal. Use `/goal` to inspect its status and
+`/goal clear` to remove it.
+
 ## From the CLI: `ask --goal`
 
 ```bash

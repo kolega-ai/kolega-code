@@ -26,7 +26,6 @@ from kolega_code.permissions import normalize_permission_mode
 from .. import messages, theme
 from ..goal import (
     GOAL_CLEAR_ALIASES,
-    GoalState,
     build_goal_task_prompt,
     format_goal_status,
 )
@@ -311,10 +310,7 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
             self._add_conversation_entry(tui_state.ConversationEntry(kind="system", content=messages.GOAL_USAGE))
             return
 
-        replacing = self._goal is not None and self._goal.condition and not self._goal.met
-        goal = GoalState.create(condition_text, run_to_completion=run_to_completion)
-        self._set_goal_state(goal)
-        await self._persist_goal_async()
+        replacing = await self._activate_goal(condition_text, run_to_completion=run_to_completion)
 
         transcript = f"/goal {clean}"
         self._add_conversation_entry(tui_state.ConversationEntry(kind="user", content=transcript))

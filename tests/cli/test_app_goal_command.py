@@ -14,8 +14,9 @@ from kolega_code.cli import messages
 from kolega_code.cli.config import build_agent_config, config_summary
 from kolega_code.cli.goal import GOAL_CLEAR_ALIASES, GoalState, build_goal_task_prompt
 from kolega_code.cli.session_store import SessionStore
+from kolega_code.tools import ToolError
 
-from ._app_test_utils import FakeCoderAgent, build_test_config, install_fake_agents
+from ._app_test_utils import FakeCoderAgent, build_test_config, extension_by_name, install_fake_agents
 
 
 # --------------------------------------------------------------------------- #
@@ -95,17 +96,39 @@ class GoalFakeAgent(FakeCoderAgent):
         return None
 
 
+class GoalToolCallingFakeAgent(GoalFakeAgent):
+    """Fake model that calls the host goal tool during its first normal turn."""
+
+    tool_goal_condition = "skill-directed completion condition"
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.goal_tool_result: str | None = None
+
+    async def process_message_stream(self, message, attachments=None):
+        if self._stream_call_count == 0:
+            extension = extension_by_name(self.kwargs["tool_extensions"], "cli-goal-control")
+            self.goal_tool_result = await extension.tools["set_goal"](self.tool_goal_condition)
+        async for chunk in super().process_message_stream(message, attachments):
+            yield chunk
+
+
 # --------------------------------------------------------------------------- #
 # App builder + async helpers
 # --------------------------------------------------------------------------- #
 
 
-def _build_goal_test_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def _build_goal_test_app(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    agent_cls=GoalFakeAgent,
+):
     pytest.importorskip("textual")
     from kolega_code.cli.app import KolegaCodeApp
 
     GoalFakeAgent.instances = []
-    install_fake_agents(monkeypatch, coder_cls=GoalFakeAgent)
+    install_fake_agents(monkeypatch, coder_cls=agent_cls)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -167,6 +190,113 @@ async def _noop_goal_loop(self) -> None:
 # --------------------------------------------------------------------------- #
 # Tests
 # --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_goal_tool_sets_and_persists_skill_directed_goal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The host callback has no direct-user-only gate, so an authorized skill can direct it."""
+    app = _build_goal_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        await _wait_for(app, pilot, lambda: app.agent is not None)
+        assert app.agent is not None
+        agent = GoalFakeAgent.instances[-1]
+        extension = extension_by_name(agent.kwargs["tool_extensions"], "cli-goal-control")
+
+        result = await extension.tools["set_goal"]("  all skill deliverables are verified  ")
+        await pilot.pause()
+
+        assert result == messages.GOAL_SET
+        assert app._goal is not None
+        assert app._goal.condition == "all skill deliverables are verified"
+        assert app._goal.is_active is True
+        assert app.agent.active_goal_condition == "all skill deliverables are verified"
+        prompt_ids = {getattr(item, "id", None) for item in app.agent.prompt_extensions}
+        assert "cli-active-goal" in prompt_ids
+        assert app.session.goal["condition"] == "all skill deliverables are verified"
+        assert app.store.load(app.session.session_id).goal["condition"] == "all skill deliverables are verified"
+        assert app.conversation_entries[-1].kind == "system"
+        assert app.conversation_entries[-1].content == messages.GOAL_SET
+
+
+@pytest.mark.asyncio
+async def test_goal_tool_called_during_turn_enters_goal_loop(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A tool-created goal is evaluated after the current turn without spawning a nested worker."""
+    app = _build_goal_test_app(tmp_path, monkeypatch, agent_cls=GoalToolCallingFakeAgent)
+
+    async with app.run_test() as pilot:
+        await _wait_for(app, pilot, lambda: app.agent is not None)
+        agent = GoalFakeAgent.instances[-1]
+        agent._goal_evaluate_results = [GoalVerdict(met=True, reason="verified")]
+
+        await _submit(app, pilot, "Follow the activated skill's goal-mode instructions.")
+        await _wait_goal_terminal(app, pilot)
+        await _wait_turn_idle(app, pilot)
+
+        assert isinstance(agent, GoalToolCallingFakeAgent)
+        assert agent.goal_tool_result == messages.GOAL_SET
+        assert app._goal is not None
+        assert app._goal.condition == GoalToolCallingFakeAgent.tool_goal_condition
+        assert app._goal.met is True
+        assert agent._evaluate_calls == [GoalToolCallingFakeAgent.tool_goal_condition]
+        assert agent.messages == ["Follow the activated skill's goal-mode instructions."]
+        assert app.store.load(app.session.session_id).goal["met"] is True
+        user_entries = [entry.content for entry in app.conversation_entries if entry.kind == "user"]
+        assert not any(content.startswith("/goal") for content in user_entries)
+
+
+@pytest.mark.asyncio
+async def test_goal_tool_replaces_goal_with_fresh_state_and_rejects_blank_input(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = _build_goal_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        await _wait_for(app, pilot, lambda: app.agent is not None)
+        assert app.agent is not None
+        old_goal = GoalState.create("old condition")
+        old_goal.paused = True
+        old_goal.turns_evaluated = 4
+        old_goal.tokens_spent = 123
+        old_goal_data = old_goal.to_dict()
+        app._set_goal_state(old_goal)
+        await app._persist_goal_async()
+        agent = GoalFakeAgent.instances[-1]
+        extension = extension_by_name(agent.kwargs["tool_extensions"], "cli-goal-control")
+        set_goal = extension.tools["set_goal"]
+
+        with pytest.raises(ToolError, match="non-empty"):
+            await set_goal(" \n ")
+        assert app._goal is old_goal
+        assert app._goal is not None
+        assert app._goal.to_dict() == old_goal_data
+
+        result = await set_goal("new condition")
+
+        assert result == messages.GOAL_REPLACED
+        assert app._goal is not None
+        assert app._goal is not old_goal
+        assert app._goal.condition == "new condition"
+        assert app._goal.paused is False
+        assert app._goal.turns_evaluated == 0
+        assert app._goal.tokens_spent == 0
+        assert app.session.goal["condition"] == "new condition"
+
+
+@pytest.mark.asyncio
+async def test_ordinary_turn_does_not_create_goal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    app = _build_goal_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        await _wait_for(app, pilot, lambda: app.agent is not None)
+        agent = GoalFakeAgent.instances[-1]
+
+        await _submit(app, pilot, "Fix the tests and verify the acceptance criteria.")
+        await _wait_turn_idle(app, pilot)
+
+        assert app._goal is None
+        assert app.session.goal == {}
+        assert agent._evaluate_calls == []
 
 
 @pytest.mark.asyncio
