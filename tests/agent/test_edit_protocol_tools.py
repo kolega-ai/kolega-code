@@ -5,6 +5,18 @@ import pytest
 
 from kolega_code.agent.tools import ToolCollection, ToolCollectionConfig
 from kolega_code.config import AgentConfig, EditProtocol, ModelConfig, ModelProvider
+from kolega_code.tools import ToolRegistry
+
+
+def assert_external_path_description(description: str) -> None:
+    assert "project-relative" in description.lower()
+    assert "../" in description
+    assert "absolute" in description.lower()
+
+
+def parameter_description(registry: ToolRegistry, tool_name: str, parameter_name: str) -> str:
+    parameters = registry.get(tool_name).definition.parameters
+    return next(parameter.description for parameter in parameters if parameter.name == parameter_name)
 
 
 def collection(
@@ -43,6 +55,8 @@ def test_default_protocol_keeps_search_replace_tools(tmp_path: Path) -> None:
 
     assert {"edit", "multi_edit", "write"}.issubset(registry.names())
     assert "apply_patch" not in registry
+    for tool_name in ("edit", "multi_edit", "write"):
+        assert_external_path_description(parameter_description(registry, tool_name, "path"))
 
 
 def test_codex_protocol_replaces_ordinary_write_tools(tmp_path: Path) -> None:
@@ -55,6 +69,7 @@ def test_codex_protocol_replaces_ordinary_write_tools(tmp_path: Path) -> None:
     assert definition.input_kind == "freeform"
     assert definition.freeform_format is not None
     assert definition.freeform_format["syntax"] == "lark"
+    assert_external_path_description(definition.description)
 
 
 def test_read_only_agent_never_gets_apply_patch(tmp_path: Path) -> None:
@@ -84,6 +99,12 @@ def test_claude_protocol_reuses_lowercase_names_with_exact_string_schema(tmp_pat
     }
     assert {parameter.name for parameter in write_parameters} == {"file_path", "content"}
     assert all(parameter.required for parameter in write_parameters)
+    assert_external_path_description(
+        next(parameter.description for parameter in edit_parameters if parameter.name == "file_path")
+    )
+    assert_external_path_description(
+        next(parameter.description for parameter in write_parameters if parameter.name == "file_path")
+    )
 
 
 def test_read_only_agent_never_gets_claude_edit_tools(tmp_path: Path) -> None:
@@ -107,9 +128,21 @@ def test_hashline_protocol_exposes_edit_write_and_nested_schema(tmp_path: Path) 
     assert schema["required"] == ["path", "edits"]
     assert len(schema["properties"]["edits"]["items"]["anyOf"]) == 5
     assert "only CONTENT to content fields" in schema["properties"]["edits"]["description"]
+    assert_external_path_description(schema["properties"]["path"]["description"])
+    assert_external_path_description(schema["properties"]["rename"]["description"])
+    assert_external_path_description(parameter_description(registry, "write", "path"))
     declarations = registry.get("edit").definition.to_google().function_declarations
     assert declarations is not None
     assert declarations[0].parameters is not None
+
+
+def test_lsp_edit_schema_supports_external_source_and_destination_paths(tmp_path: Path) -> None:
+    registry = collection(tmp_path, EditProtocol.SEARCH_REPLACE).registry()
+    schema = registry.get("lsp_edit").definition.input_schema
+
+    assert schema is not None
+    assert_external_path_description(schema["properties"]["path"]["description"])
+    assert_external_path_description(schema["properties"]["new_path"]["description"])
 
 
 @pytest.mark.asyncio

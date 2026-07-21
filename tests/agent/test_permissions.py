@@ -112,6 +112,81 @@ def test_edit_permission_rule_can_scope_to_path():
     assert rule.matches(request)
 
 
+@pytest.mark.parametrize(
+    ("tool_name", "inputs", "expected_path"),
+    [
+        (
+            "edit",
+            {"file_path": "/outside/claude.py", "old_string": "old", "new_string": "new"},
+            "/outside/claude.py",
+        ),
+        (
+            "edit",
+            {"file_path": "../outside/claude.py", "old_string": "old", "new_string": "new"},
+            "../outside/claude.py",
+        ),
+        ("edit", {"path": "/outside/hashline.py", "edits": []}, "/outside/hashline.py"),
+        ("edit", {"path": "../outside/hashline.py", "edits": []}, "../outside/hashline.py"),
+        ("write", {"path": "/outside/write.py", "content": ""}, "/outside/write.py"),
+        ("write", {"file_path": "../outside/write.py", "content": ""}, "../outside/write.py"),
+        ("multi_edit", {"path": "/outside/multi.py", "blocks": ""}, "/outside/multi.py"),
+        ("multi_edit", {"path": "../outside/multi.py", "blocks": ""}, "../outside/multi.py"),
+        (
+            "apply_patch",
+            {"input": "*** Begin Patch\n*** Add File: /outside/patch.py\n+x = 1\n*** End Patch\n"},
+            "/outside/patch.py",
+        ),
+        (
+            "apply_patch",
+            {"input": "*** Begin Patch\n*** Add File: ../outside/patch.py\n+x = 1\n*** End Patch\n"},
+            "../outside/patch.py",
+        ),
+        (
+            "lsp_edit",
+            {"operation": "format_document", "path": "/outside/lsp.py"},
+            "/outside/lsp.py",
+        ),
+        (
+            "lsp_edit",
+            {"operation": "format_document", "path": "../outside/lsp.py"},
+            "../outside/lsp.py",
+        ),
+    ],
+)
+def test_edit_permissions_retain_external_path_spelling(
+    tool_name: str,
+    inputs: dict[str, object],
+    expected_path: str,
+) -> None:
+    request = permission_request_for_tool(tool_name, inputs)
+
+    assert request is not None
+    assert request.kind == PermissionKind.EDIT
+    assert request.path == expected_path
+    rule = PermissionRule.create(
+        kind=PermissionKind.EDIT,
+        tool=tool_name,
+        match_type="path",
+        pattern=expected_path,
+    )
+    assert rule.matches(request)
+
+
+def test_edit_permission_does_not_canonicalize_path() -> None:
+    raw_path = "/outside/dir/../target.py"
+    request = permission_request_for_tool("write", {"path": raw_path, "content": ""})
+
+    assert request is not None
+    assert request.path == raw_path
+    canonicalized_rule = PermissionRule.create(
+        kind=PermissionKind.EDIT,
+        tool="write",
+        match_type="path",
+        pattern="/outside/target.py",
+    )
+    assert not canonicalized_rule.matches(request)
+
+
 def test_claude_edit_permission_uses_file_path():
     request = permission_request_for_tool(
         "edit",
@@ -131,6 +206,25 @@ def test_hashline_rename_permission_includes_source_and_destination():
     assert request is not None
     assert request.path == "src/old.py -> src/new.py"
     assert request.summary == "edit src/old.py -> src/new.py"
+
+
+@pytest.mark.parametrize(
+    ("source", "destination"),
+    [
+        ("../outside/old.py", "/outside/new.py"),
+        ("/outside/old.py", "../outside/new.py"),
+    ],
+)
+def test_hashline_rename_permission_retains_external_source_and_destination(source: str, destination: str) -> None:
+    request = permission_request_for_tool(
+        "edit",
+        {"path": source, "edits": [], "rename": destination},
+    )
+
+    assert request is not None
+    assert request.kind == PermissionKind.EDIT
+    assert request.path == f"{source} -> {destination}"
+    assert request.summary == f"edit {source} -> {destination}"
 
 
 def test_single_file_apply_patch_permission_can_scope_to_path():
@@ -195,6 +289,25 @@ def test_lsp_edit_rename_file_permission_summary_includes_destination():
     assert request is not None
     assert request.kind == PermissionKind.EDIT
     assert request.summary == "lsp_edit src/old.py -> src/new.py"
+
+
+@pytest.mark.parametrize(
+    ("source", "destination"),
+    [
+        ("../outside/old.py", "/outside/new.py"),
+        ("/outside/old.py", "../outside/new.py"),
+    ],
+)
+def test_lsp_edit_rename_file_permission_retains_external_source_and_destination(source: str, destination: str) -> None:
+    request = permission_request_for_tool(
+        "lsp_edit",
+        {"operation": "rename_file", "path": source, "new_path": destination},
+    )
+
+    assert request is not None
+    assert request.kind == PermissionKind.EDIT
+    assert request.path == f"{source} -> {destination}"
+    assert request.summary == f"lsp_edit {source} -> {destination}"
 
 
 @pytest.mark.asyncio

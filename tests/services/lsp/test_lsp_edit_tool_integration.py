@@ -62,6 +62,26 @@ async def test_lsp_edit_rename_file_applies_will_rename_and_resource_rename(fake
 
 
 @pytest.mark.asyncio
+async def test_lsp_edit_rename_file_can_move_file_outside_project(fake_lsp_manager):
+    manager = fake_lsp_manager
+    old_path = manager._project_path / "old_external.py"
+    outside_dir = manager._project_path.parent / "outside"
+    new_path = outside_dir / "new_external.py"
+    outside_dir.mkdir()
+    old_path.write_text("value = 1\n", encoding="utf-8")
+
+    result = await _make_tool(manager).lsp_edit(
+        operation="rename_file",
+        path="old_external.py",
+        new_path=str(new_path),
+    )
+
+    assert "Applied LSP edit `rename_file`." in result
+    assert not old_path.exists()
+    assert new_path.read_text(encoding="utf-8") == "value = 1\n"
+
+
+@pytest.mark.asyncio
 async def test_lsp_edit_apply_code_action_allows_scoped_workspace_apply_edit(fake_lsp_manager):
     manager = fake_lsp_manager
     path = manager._project_path / "imports_tool.py"

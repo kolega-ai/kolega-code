@@ -26,6 +26,15 @@ def edit_tool(tmp_path: Path) -> EditTool:
     return EditTool(tmp_path, "workspace", "thread", AsyncMock(), config, caller)
 
 
+def nested_edit_tool(tmp_path: Path, template: EditTool) -> tuple[EditTool, Path]:
+    project = tmp_path / "project"
+    project.mkdir()
+    return (
+        EditTool(project, "workspace", "thread", AsyncMock(), template.config, template.caller),
+        project,
+    )
+
+
 @pytest.mark.asyncio
 async def test_claude_edit_requires_read_and_replaces_unique_match(edit_tool: EditTool, tmp_path: Path) -> None:
     target = tmp_path / "a.txt"
@@ -110,9 +119,41 @@ async def test_claude_write_preserves_existing_bom_and_line_endings(edit_tool: E
 
 
 @pytest.mark.asyncio
-async def test_claude_edit_rejects_paths_outside_workspace(edit_tool: EditTool, tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match="outside the project"):
-        await edit_tool.claude_write(str(tmp_path.parent / "escape.txt"), "no\n")
+async def test_claude_external_absolute_and_parent_paths_support_full_write_and_update(
+    edit_tool: EditTool, tmp_path: Path
+) -> None:
+    tool, _project = nested_edit_tool(tmp_path, edit_tool)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    absolute = outside / "absolute.txt"
+    absolute.write_text("before\n")
+
+    tool.observe_read(str(absolute))
+    assert await tool.claude_write(str(absolute), "full write\n") == f"Wrote {absolute}"
+    tool.observe_read(str(absolute))
+    assert await tool.claude_edit(str(absolute), "full write", "updated") == f"Edited {absolute}"
+
+    relative = "../outside/relative.txt"
+    assert await tool.claude_write(relative, "created\n") == f"Wrote {relative}"
+    tool.observe_read(relative)
+    assert await tool.claude_edit(relative, "created", "changed") == f"Edited {relative}"
+
+    assert absolute.read_text() == "updated\n"
+    assert (outside / "relative.txt").read_text() == "changed\n"
+
+
+@pytest.mark.asyncio
+async def test_claude_write_preserves_dotdot_after_symlink_component(edit_tool: EditTool, tmp_path: Path) -> None:
+    tool, project = nested_edit_tool(tmp_path, edit_tool)
+    symlink_target = tmp_path / "real" / "child"
+    symlink_target.mkdir(parents=True)
+    (project / "link").symlink_to(symlink_target, target_is_directory=True)
+    raw_path = "link/../symlink-sensitive.txt"
+
+    assert await tool.claude_write(raw_path, "through symlink\n") == f"Wrote {raw_path}"
+
+    assert (tmp_path / "real" / "symlink-sensitive.txt").read_text() == "through symlink\n"
+    assert not (project / "symlink-sensitive.txt").exists()
 
 
 @pytest.mark.asyncio

@@ -28,7 +28,9 @@ def mock_connection_manager():
 
 @pytest.fixture
 def project_path(tmp_path):
-    return tmp_path
+    project = tmp_path / "project"
+    project.mkdir()
+    return project
 
 
 @pytest.fixture
@@ -459,6 +461,11 @@ class TestLspNewReadOnlyOperations:
 
 @pytest.mark.asyncio
 class TestLspEditTool:
+    async def test_file_uri_preserves_parent_segments(self, lsp_edit_tool, project_path):
+        uri = lsp_edit_tool._file_uri("link/../target.py")
+
+        assert f"{project_path.as_uri()}/link/../target.py" == uri
+
     async def test_rename_preview_does_not_write_file(self, lsp_edit_tool, mock_lsp_manager, project_path):
         path = project_path / "foo.py"
         path.write_text("old = 1\nprint(old)\n", encoding="utf-8")
@@ -540,6 +547,79 @@ class TestLspEditTool:
 
         assert result.startswith("Applied LSP edit `apply_code_action`.")
         assert path.read_text(encoding="utf-8") == "value = defined_var\n"
+
+    async def test_external_workspace_edit_applies_without_snapshot_service(
+        self, lsp_edit_tool, mock_lsp_manager, project_path
+    ):
+        outside_dir = project_path.parent / "outside"
+        outside_dir.mkdir()
+        outside = outside_dir / "external.py"
+        outside.write_text("old = 1\n", encoding="utf-8")
+        mock_lsp_manager._resolve_position.return_value = (0, 0)
+        mock_lsp_manager.get_rename.return_value = {
+            "changes": {
+                outside.as_uri(): [
+                    {
+                        "range": {
+                            "start": {"line": 0, "character": 0},
+                            "end": {"line": 0, "character": 3},
+                        },
+                        "newText": "new",
+                    }
+                ]
+            }
+        }
+
+        result = await lsp_edit_tool.lsp_edit(
+            operation="rename",
+            path=str(outside),
+            line=1,
+            symbol="old",
+            new_name="new",
+            apply=True,
+        )
+
+        assert result.startswith("Applied LSP edit `rename`.")
+        assert outside.read_text(encoding="utf-8") == "new = 1\n"
+
+    async def test_mixed_internal_external_workspace_edit_applies_every_change(
+        self, lsp_edit_tool, mock_lsp_manager, project_path
+    ):
+        internal = project_path / "internal.py"
+        outside_dir = project_path.parent / "outside"
+        outside_dir.mkdir()
+        external = outside_dir / "external.py"
+        internal.write_text("old = 1\n", encoding="utf-8")
+        external.write_text("old = 2\n", encoding="utf-8")
+        replacement = [
+            {
+                "range": {
+                    "start": {"line": 0, "character": 0},
+                    "end": {"line": 0, "character": 3},
+                },
+                "newText": "new",
+            }
+        ]
+        mock_lsp_manager._resolve_position.return_value = (0, 0)
+        mock_lsp_manager.get_rename.return_value = {
+            "changes": {
+                internal.as_uri(): replacement,
+                external.as_uri(): replacement,
+            }
+        }
+
+        result = await lsp_edit_tool.lsp_edit(
+            operation="rename",
+            path="internal.py",
+            line=1,
+            symbol="old",
+            new_name="new",
+            apply=True,
+        )
+
+        assert result.startswith("Applied LSP edit `rename`.")
+        assert internal.read_text(encoding="utf-8") == "new = 1\n"
+        assert external.read_text(encoding="utf-8") == "new = 2\n"
 
 
 # ---------------------------------------------------------------------------

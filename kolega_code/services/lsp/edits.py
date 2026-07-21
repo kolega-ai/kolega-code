@@ -325,11 +325,14 @@ class WorkspaceEditApplier:
             raise WorkspaceEditError(f"Unsupported URI scheme for edit: {parsed.scheme!r}.")
         if parsed.netloc not in ("", "localhost"):
             raise WorkspaceEditError(f"Unsupported file URI host: {parsed.netloc!r}.")
-        absolute_path = Path(unquote(parsed.path)).resolve()
+        decoded_path = unquote(parsed.path)
+        if not decoded_path:
+            raise WorkspaceEditError("WorkspaceEdit file URI path must not be empty.")
+        absolute_path = Path(decoded_path)
         try:
             relative = absolute_path.relative_to(self.project_path)
-        except ValueError as exc:
-            raise WorkspaceEditError(f"WorkspaceEdit path is outside the project: {uri}") from exc
+        except ValueError:
+            return str(absolute_path)
         relative_text = relative.as_posix()
         if not relative_text or relative_text == ".":
             raise WorkspaceEditError("WorkspaceEdit path must not be the project root.")

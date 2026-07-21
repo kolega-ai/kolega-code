@@ -71,7 +71,9 @@ _LSP_INPUT_SCHEMA: dict[str, Any] = {
         },
         "path": {
             "type": "string",
-            "description": "File path (relative to project root preferred). Required for most operations.",
+            "description": (
+                "File path: project-relative, using ../ traversal, or absolute. Required for most operations."
+            ),
         },
         "line": {
             "type": "integer",
@@ -116,7 +118,7 @@ _LSP_EDIT_INPUT_SCHEMA: dict[str, Any] = {
         },
         "path": {
             "type": "string",
-            "description": "File path (relative to project root preferred).",
+            "description": "File path: project-relative, using ../ traversal, or absolute.",
         },
         "line": {
             "type": "integer",
@@ -132,7 +134,7 @@ _LSP_EDIT_INPUT_SCHEMA: dict[str, Any] = {
         },
         "new_path": {
             "type": "string",
-            "description": "Destination path for rename_file.",
+            "description": ("Destination path for rename_file: project-relative, using ../ traversal, or absolute."),
         },
         "query": {
             "type": "string",
@@ -249,7 +251,10 @@ def _hashline_operation_schema(
 _HASHLINE_V2_INPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
-        "path": {"type": "string", "description": "Project-relative path to edit."},
+        "path": {
+            "type": "string",
+            "description": "Path to edit: project-relative, using ../ traversal, or absolute.",
+        },
         "edits": {
             "type": "array",
             "description": (
@@ -304,7 +309,10 @@ _HASHLINE_V2_INPUT_SCHEMA: dict[str, Any] = {
             },
         },
         "delete": {"type": "boolean", "description": "Delete path; requires edits=[] and no rename."},
-        "rename": {"type": "string", "description": "Move the edited result to this project-relative path."},
+        "rename": {
+            "type": "string",
+            "description": ("Move the edited result to this path: project-relative, using ../ traversal, or absolute."),
+        },
     },
     "required": ["path", "edits"],
     "additionalProperties": False,
@@ -1411,7 +1419,7 @@ class ToolCollection(LogMixin):
         If you want to create or overwrite a file, use the write tool.
 
         Args:
-            path: Path to the file to edit. Relative to the project root is preferred; an absolute path is also accepted.
+            path: Path to edit: project-relative, using ../ traversal, or absolute.
             block: A single search and replace block formatted as shown above
 
         Returns:
@@ -1439,7 +1447,7 @@ class ToolCollection(LogMixin):
         be unique unless ``replace_all`` is true.
 
         Args:
-            file_path: Absolute or project-relative path to the file to modify.
+            file_path: Path to modify: project-relative, using ../ traversal, or absolute.
             old_string: Exact text to replace.
             new_string: Replacement text, which must differ from old_string.
             replace_all: Replace every exact occurrence instead of requiring a unique match.
@@ -1456,6 +1464,7 @@ class ToolCollection(LogMixin):
         This is a FREEFORM tool, so do not wrap the patch in JSON. Supply one
         complete patch beginning with `*** Begin Patch` and ending with
         `*** End Patch`. A patch may add, update, move, or delete multiple files.
+        Patch paths may be project-relative, use ``../`` traversal, or be absolute.
 
         Args:
             input: The raw Codex apply_patch payload.
@@ -1493,10 +1502,10 @@ class ToolCollection(LogMixin):
         or ``rename`` to move the edited result.
 
         Args:
-            path: Project-relative file path.
+            path: File path: project-relative, using ../ traversal, or absolute.
             edits: Hashline v2 operations for this file.
             delete: Delete the file; cannot be combined with edits or rename.
-            rename: Optional project-relative destination path.
+            rename: Optional destination path: project-relative, using ../ traversal, or absolute.
 
         Returns:
             A short summary, or fresh tagged context when an anchor is stale.
@@ -1511,7 +1520,7 @@ class ToolCollection(LogMixin):
         this tool for deliberate complete-file writes.
 
         Args:
-            path: Project-relative path to create or replace.
+            path: Path to create or replace: project-relative, using ../ traversal, or absolute.
             content: Complete file content.
 
         Returns:
@@ -1545,7 +1554,7 @@ class ToolCollection(LogMixin):
         4. Normalized smart quotes.
 
         Args:
-            path: Path to the file to edit. Relative to the project root is preferred; an absolute path is also accepted.
+            path: Path to edit: project-relative, using ../ traversal, or absolute.
             blocks: One or more search and replace blocks formatted as shown above
 
         Returns:
@@ -1567,7 +1576,7 @@ class ToolCollection(LogMixin):
         Existing files must be read first. Prefer edit for partial changes.
 
         Args:
-            file_path: Absolute or project-relative path to create or overwrite.
+            file_path: Path to create or overwrite: project-relative, using ../ traversal, or absolute.
             content: Complete content to write to the file.
 
         Returns:
@@ -1753,7 +1762,7 @@ class ToolCollection(LogMixin):
         For small edits to existing files, prefer edit or multi_edit.
 
         Args:
-            path: Path to the file to write. Relative to the project root is preferred; an absolute path is also accepted.
+            path: Path to write: project-relative, using ../ traversal, or absolute.
             content: Content to write to the file
 
         Returns:
@@ -1984,7 +1993,7 @@ class ToolCollection(LogMixin):
 
         Args:
             operation: One of the operations listed above.
-            path: File path (relative to project root preferred).
+            path: File path: project-relative, using ../ traversal, or absolute.
             line: 1-based line number for position operations.
             symbol: Symbol name to resolve on the line (supports ``name#N``).
             query: Search query for ``workspace_symbols``.
@@ -2016,7 +2025,9 @@ class ToolCollection(LogMixin):
 
         This is the mutating companion to the read-only ``lsp`` tool. Use
         ``apply=False`` to preview the server-provided WorkspaceEdit without
-        writing files.
+        writing files. ``path`` and ``new_path`` may be project-relative, use
+        ``../`` traversal, or be absolute; local file URIs returned by the
+        server may also target files outside the project.
         """
         return await self.lsp_edit_tool.lsp_edit(
             operation,
@@ -2079,7 +2090,8 @@ class ToolCollection(LogMixin):
         definition = tool_definition_from_callable(method_name, method)
         if method_name == "apply_patch":
             definition.description = (
-                "Use the `apply_patch` tool to edit files. This is a FREEFORM tool, so do not wrap the patch in JSON."
+                "Use the `apply_patch` tool to edit files. This is a FREEFORM tool, so do not wrap the patch in JSON. "
+                "Patch paths may be project-relative, use ../ traversal, or be absolute."
             )
             definition.input_kind = "freeform"
             definition.freeform_format = {

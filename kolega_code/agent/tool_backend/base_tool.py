@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from typing import Union, Optional, Set
+from typing import TYPE_CHECKING, Callable, Optional, Set, TypeVar, Union
 
 from ..common import LogMixin
 from kolega_code.config import AgentConfig
@@ -8,6 +8,12 @@ from kolega_code.events import AgentConnectionManager, AgentEvent
 from kolega_code.services.file_system import FileSystem, LocalFileSystem
 from kolega_code.services.base import TerminalManager, BrowserManager
 from ..prompt_provider import AgentMode
+
+if TYPE_CHECKING:
+    from kolega_code.services.snapshots import SnapshotService
+
+
+T = TypeVar("T")
 
 
 class BaseTool(LogMixin):
@@ -218,6 +224,28 @@ class BaseTool(LogMixin):
         if os.path.basename(path) in self._get_vibe_blacklist_basenames():
             return f"You are not allowed to edit this file: {path}"
         return None
+
+    def _mutate_with_optional_snapshot(
+        self,
+        *,
+        tool_name: str,
+        reason: str,
+        paths: list[str],
+        mutate: Callable[[], T],
+    ) -> T:
+        """Run one mutation, recording it only when every path can be snapshotted."""
+
+        snapshot_service: Optional["SnapshotService"] = getattr(self, "_snapshot_service", None)
+        if snapshot_service is None or not snapshot_service.can_snapshot_paths(paths):
+            return mutate()
+        mutation = snapshot_service.record_mutation(
+            tool_name=tool_name,
+            tool_call_id=getattr(self.caller, "current_tool_execution_id", None),
+            reason=reason,
+            paths=paths,
+            mutate=mutate,
+        )
+        return mutation.result
 
     async def send_edit_preview(self, preview: Optional[dict], *, tool_call_id: Optional[str], tool_name: str) -> None:
         """Broadcast a UI-only diff/head preview for inline rendering in the chat.

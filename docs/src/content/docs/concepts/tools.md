@@ -23,6 +23,12 @@ Read, search, and edit your project:
   [configured language servers](../../configuration/lsp/).
 - Create and edit files — create new files and apply precise edits.
 
+File-edit paths may be project-relative, use `../` traversal, or be absolute;
+local LSP server edits may likewise target external files. Permissions and the
+Vibe edit policy still apply. Any external or mixed mutation is not snapshotted
+or undoable, and an external or mixed LSP preview cannot create a resolvable
+pending action—rerun it with `apply: true`.
+
 ### Terminal
 
 Run shell commands in the project and stream their output to the **Terminal** tab.
