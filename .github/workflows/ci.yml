@@ -96,6 +96,12 @@ jobs:
         if: needs.changes.outputs.coverage-badge-only != 'true'
         run: ./run_tests.sh --coverage
 
+      - name: Build and verify bundled skill package data
+        if: needs.changes.outputs.coverage-badge-only != 'true' && matrix.python-version == '3.11'
+        run: |
+          uv build --out-dir /tmp/kolega-code-dist
+          uv run python scripts/verify_bundled_skill_artifacts.py /tmp/kolega-code-dist/*
+
       - name: Upload coverage report
         if: needs.changes.outputs.coverage-badge-only != 'true'
         uses: actions/upload-artifact@v6

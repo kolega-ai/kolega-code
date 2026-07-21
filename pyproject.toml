@@ -100,13 +100,14 @@ markers = [
 [tool.ruff]
 line-length = 120
 target-version = "py311"
+extend-exclude = ["kolega_code/_bundled_skills"]
 
 [tool.uv]
 exclude-newer = "1 week"
 
 [tool.pyright]
 include = ["kolega_code", "benchmarks", "tests"]
-exclude = ["benchmarks/edit_tools/fixtures/snapshots"]
+exclude = ["benchmarks/edit_tools/fixtures/snapshots", "kolega_code/_bundled_skills"]
 typeCheckingMode = "basic"
 pythonVersion = "3.11"
 venvPath = "."

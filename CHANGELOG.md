@@ -6,6 +6,11 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+### Added
+
+- Bundled the `docx`, `pdf`, `pptx`, `review`, `skill-authoring`, and `xlsx`
+  workflows from `kolega-skills` v0.1.0 so they are available out of the box.
+
 ## 0.21.1 - 2026-07-20
 
 ### Changed

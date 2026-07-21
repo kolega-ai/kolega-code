@@ -8,7 +8,7 @@ three sources, all surfaced in the same autocomplete dropdown:
 
 - **Agent built-ins** — handled inside the agent loop.
 - **TUI commands** — handled by the app.
-- **Skills** — dynamically discovered project/user [Agent Skills](../../skills/),
+- **Skills** — bundled, user, and project [Agent Skills](../../skills/),
   invoked as `/skill-name`.
 
 If a name collides, agent and TUI commands take precedence over a skill of the same
@@ -121,10 +121,12 @@ constraints:
 
 ## Skills
 
-Any [skill](../../skills/) discovered in `.agents/skills/` is available as
-`/skill-name`. Running it loads the skill's instructions (and a manifest of its
-bundled resources) into the conversation. Pass extra text after the command to run
-the skill against a specific request:
+Any bundled or locally discovered [skill](../../skills/) is available as
+`/skill-name`. Local skills are loaded from user or project `.agents/skills/`
+directories, with project and user versions able to override a bundled skill of the
+same name. Running a skill loads its instructions (and a manifest of its bundled
+resources) into the conversation. Pass extra text after the command to run the skill
+against a specific request:
 
 ```text
 /release-notes summarize changes since the last tag
