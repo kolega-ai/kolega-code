@@ -148,6 +148,19 @@ async def test_conversation_entry_supports_mouse_drag_selection(
 
         widget = app.query(ConversationEntryWidget).last()
 
+        def selection_targets_are_ready() -> bool:
+            if app._conversation_anchor_pending:
+                return False
+            for x in (2, 19):
+                hit_widget, select_offset = app.screen.get_widget_and_offset_at(widget.region.x + x, widget.region.y)
+                if hit_widget is not widget or select_offset is None:
+                    return False
+            return True
+
+        # The widget can be queryable before the compositor's hit map reflects
+        # its post-anchor region. Mouse selection requires both to agree.
+        await _wait_for_layout(pilot, selection_targets_are_ready)
+
         # Line 0 is the message itself now: "● select this text".
         await pilot.mouse_down(widget, offset=(2, 0))
         await pilot._post_mouse_events([events.MouseMove], widget, offset=(19, 0), button=1)
