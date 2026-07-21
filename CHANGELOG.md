@@ -14,7 +14,16 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 ### Fixed
 
 - Bounded Gigacode delegation depth so direct workflow workers are leaves by
-  default, with an explicit one-hop nested-agent opt-in.
+  default, with an explicit one-hop nested-agent opt-in. Built-in nested workers
+  share the workflow lifetime-agent count and output-token budget; concurrency
+  caps active execution chains and serializes nested dispatch within each direct
+  worker. Completed spend blocks later launches while in-flight calls may produce
+  bounded overshoot. Depth-2 recursion supports only built-in dispatch tools until
+  opaque host `ToolExtension` callbacks have a workflow-aware accounting and depth
+  protocol. Run totals and failed-agent artifacts now retain finalized nested or
+  pre-failure output usage. Ordinary non-workflow extension and delegation behavior
+  is unchanged, and no supported API, metadata schema, cache-key field, or artifact
+  field was removed or renamed.
 
 ## 0.21.1 - 2026-07-20
 

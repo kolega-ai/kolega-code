@@ -6,11 +6,13 @@ the real run_workflow code path (state-dir resolution, journal, emit, summary).
 
 import json
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
 from kolega_code.agent.tool_backend.workflow_tool import WorkflowTool
+from kolega_code.agent.orchestration.accounting import AgentReservation, WorkflowRunAccounting
 from kolega_code.config import AgentConfig, ModelConfig, ModelProvider
 from kolega_code.events import AgentConnectionManager
 
@@ -53,20 +55,22 @@ def workflow_tool(tmp_path, connection_manager, caller, monkeypatch):
     return tool, tmp_path
 
 
-def _stub_dispatch():
+def _stub_dispatch() -> tuple[Any, list[tuple[Any, ...]]]:
     """A dispatch_workflow_agent stub returning (recap, tokens, structured)."""
     calls = []
 
     async def dispatch_workflow_agent(
-        agent_class,
-        task,
+        agent_class: type[Any],
+        task: str,
         *,
-        config=None,
-        schema=None,
-        sub_agent_info_extra=None,
-        artifact_paths=None,
-        artifact_metadata=None,
-    ):
+        workflow_accounting: WorkflowRunAccounting,
+        reservation: AgentReservation,
+        config: Any = None,
+        schema: Any = None,
+        sub_agent_info_extra: Any = None,
+        artifact_paths: Any = None,
+        artifact_metadata: Any = None,
+    ) -> tuple[str, int, Any]:
         calls.append((task, schema, sub_agent_info_extra, artifact_paths, artifact_metadata))
         if artifact_paths:
             artifact_paths["jsonl"].write_text(json.dumps({"role": "assistant", "content": task}) + "\n")
@@ -203,10 +207,21 @@ async def test_readable_transcript_indexes_agent_calls(workflow_tool):
 
 
 @pytest.mark.asyncio
-async def test_failed_agent_call_is_recorded_in_transcript(workflow_tool):
+async def test_failed_agent_call_is_recorded_in_transcript(
+    workflow_tool: tuple[WorkflowTool, Path],
+) -> None:
     tool, state_dir = workflow_tool
 
-    async def failing_dispatch(*args, **kwargs):
+    async def failing_dispatch(
+        agent_class: type[Any],
+        task: str,
+        *,
+        reservation: AgentReservation,
+        **kwargs: Any,
+    ) -> tuple[str, int, Any]:
+        assert agent_class is not None
+        assert task == "boom"
+        reservation.report_total(9)
         raise RuntimeError("agent exploded")
 
     tool._agent_tool.dispatch_workflow_agent = failing_dispatch
@@ -219,6 +234,8 @@ async def test_failed_agent_call_is_recorded_in_transcript(workflow_tool):
     transcript = (Path(state_dir) / "workflows" / run_id / "transcript.md").read_text()
     assert "failed" in transcript
     assert "agent exploded" in transcript
+    assert "- tokens: `9`" in transcript
+    assert json.loads((Path(state_dir) / "workflows" / run_id / "run.json").read_text())["total_tokens"] == 9
 
 
 @pytest.mark.asyncio
@@ -238,7 +255,9 @@ async def test_run_workflow_carries_phase_and_label_to_dispatch(workflow_tool):
 
 
 @pytest.mark.asyncio
-async def test_run_workflow_propagates_explicit_max_agent_depth(workflow_tool):
+async def test_run_workflow_propagates_explicit_max_agent_depth(
+    workflow_tool: tuple[WorkflowTool, Path],
+) -> None:
     tool, _ = workflow_tool
     stub, calls = _stub_dispatch()
     tool._agent_tool.dispatch_workflow_agent = stub
@@ -293,7 +312,9 @@ async def test_per_agent_markdown_and_jsonl_are_written(workflow_tool):
     markdown_text = markdown.read_text()
     assert "artifact task" in markdown_text
     assert "final artifact recap" in markdown_text
+    assert "Tokens: 11" in markdown_text
     assert "artifact answer" in raw.read_text()
+    assert json.loads((Path(state_dir) / "workflows" / run_id / "run.json").read_text())["total_tokens"] == 11
 
 
 @pytest.mark.asyncio

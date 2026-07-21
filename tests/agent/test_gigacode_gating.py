@@ -87,7 +87,11 @@ def test_sub_agent_never_gets_run_workflow(project_path, mock_connection_manager
     assert "run_workflow" not in names
 
 
-def test_default_workflow_coder_is_a_leaf(project_path, mock_connection_manager, agent_config):
+def test_default_workflow_coder_is_a_leaf(
+    project_path: str,
+    mock_connection_manager: AgentConnectionManager,
+    agent_config: AgentConfig,
+) -> None:
     agent = _coder(project_path, mock_connection_manager, agent_config, sub_agent=True)
     agent.sub_agent_context = {
         "workflow_run_id": "run-1",
@@ -102,8 +106,10 @@ def test_default_workflow_coder_is_a_leaf(project_path, mock_connection_manager,
 
 
 def test_workflow_coder_at_depth_one_can_use_existing_dispatch_tools_when_max_is_two(
-    project_path, mock_connection_manager, agent_config
-):
+    project_path: str,
+    mock_connection_manager: AgentConnectionManager,
+    agent_config: AgentConfig,
+) -> None:
     agent = _coder(project_path, mock_connection_manager, agent_config, sub_agent=True)
     agent.sub_agent_context = {
         "workflow_run_id": "run-1",
@@ -115,12 +121,17 @@ def test_workflow_coder_at_depth_one_can_use_existing_dispatch_tools_when_max_is
 
     assert "dispatch_investigation_agent" in names
     assert "dispatch_browser_agent" in names
+    assert agent.tool_collection.registry().get("dispatch_investigation_agent").parallel_safe is False
     # The depth policy cannot add capabilities excluded by the CoderAgent itself.
     assert "dispatch_general_agent" not in names
     assert "run_workflow" not in names
 
 
-def test_nested_workflow_agent_at_max_depth_is_a_leaf(project_path, mock_connection_manager, agent_config):
+def test_nested_workflow_agent_at_max_depth_is_a_leaf(
+    project_path: str,
+    mock_connection_manager: AgentConnectionManager,
+    agent_config: AgentConfig,
+) -> None:
     agent = _coder(project_path, mock_connection_manager, agent_config, sub_agent=True)
     agent.sub_agent_context = {
         "workflow_run_id": "run-1",

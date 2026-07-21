@@ -20,6 +20,7 @@ class GoogleStreamWrapper:
         self._tool_call_index = 0
         self.stop_reason = None
         self.tool_execution_ids = ToolExecutionIdRegistry()
+        self.usage_metadata: dict[str, Any] = {}
 
         self._closed = False
 
@@ -45,6 +46,13 @@ class GoogleStreamWrapper:
 
             content = chunk.text or ""
             self.final_content += content
+            usage = getattr(chunk, "usage_metadata", None)
+            if usage is not None:
+                self.usage_metadata = {
+                    "prompt_token_count": getattr(usage, "prompt_token_count", 0),
+                    "candidates_token_count": getattr(usage, "candidates_token_count", 0),
+                    "total_token_count": getattr(usage, "total_token_count", 0),
+                }
 
             # Read function calls off the parts so we also capture each part's thought_signature
             # (Gemini 3.x requires it echoed back). Accumulate across chunks with a running index.
@@ -70,6 +78,7 @@ class GoogleStreamWrapper:
             stop_reason=self.stop_reason,
             tool_execution_ids=self.tool_execution_ids,
         )
+        message.usage_metadata.update(self.usage_metadata)
         message.usage_metadata["provider"] = "google"
         return message
 

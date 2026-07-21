@@ -62,6 +62,11 @@ workflow with `agent()`, `parallel()`, and `pipeline()`. Depth `2` is an excepti
 opt-in for a worker that genuinely must consult a specialist; nested calls are
 less visible to workflow-level orchestration and can multiply token use.
 
+At depth `2`, recursive delegation supports built-in agent-dispatch tools only.
+Opaque host-provided `ToolExtension` dispatch callbacks are unavailable in
+workflows until there is a workflow-aware accounting and depth protocol. Ordinary
+non-workflow extension and agent-delegation behavior is unchanged.
+
 ### Primitives (all available as globals in the script)
 
 - `await agent(prompt, *, label=None, phase=None, schema=None, model=None, effort=None, agent_type=None)`
@@ -95,8 +100,15 @@ less visible to workflow-level orchestration and can multiply token use.
   (this is what makes resume work). Pass any timestamps/seeds in via `args`. Vary agents
   by index/prompt, not by randomness.
 - Concurrency is capped automatically; you may pass large lists to `parallel`/`pipeline`
-  (up to 4096) and they all complete — only a handful run at once. A lifetime cap of
-  1000 agents is a runaway-loop backstop.
+  (up to 4096) and they all complete — only a handful active execution chains run
+  at once. Nested dispatch within one direct worker is serialized. A lifetime cap
+  of 1000 agents is a runaway-loop backstop, and built-in nested workers count
+  against both that workflow-wide count and the output-token budget.
+- Budget admission uses completed output-token spend: reaching the limit blocks
+  later direct or nested launches, but calls already in flight can finish and
+  produce bounded overshoot.
+- Run totals and failed-agent artifacts include finalized output from direct and
+  built-in nested workers, including usage recorded before a later failure.
 - Use `schema` for anything you'll compute over (counts, filtering, merging). The
   sub-agent is forced to return data matching the schema instead of prose.
 

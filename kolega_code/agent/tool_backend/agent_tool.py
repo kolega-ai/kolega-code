@@ -10,6 +10,8 @@ from kolega_code.config import AgentConfig
 from kolega_code.events import AgentEvent
 from kolega_code.hooks import HookDispatcher, HookEvent
 from kolega_code.permissions import PermissionMode, auto_allow_permission_callback
+from ..orchestration.accounting import AgentReservation, WorkflowRunAccounting
+from ..orchestration.context import has_workflow_context_marker, validated_workflow_depth
 from .base_tool import BaseTool
 
 
@@ -172,6 +174,25 @@ class AgentTool(BaseTool):
         Returns:
             The agent's recap of its work
         """
+        parent_context = getattr(self.caller, "sub_agent_context", None)
+        workflow_depth: Optional[tuple[int, int]] = None
+        workflow_accounting: Optional[WorkflowRunAccounting] = None
+        reservation: Optional[AgentReservation] = None
+
+        if has_workflow_context_marker(parent_context):
+            workflow_depth = validated_workflow_depth(parent_context)
+            if workflow_depth is None:
+                raise RuntimeError("invalid workflow delegation context")
+            parent_depth, max_agent_depth = workflow_depth
+            if parent_depth >= max_agent_depth:
+                raise RuntimeError(f"workflow agent depth limit reached ({max_agent_depth})")
+            workflow_accounting = getattr(self.caller, "_workflow_accounting", None)
+            if not isinstance(workflow_accounting, WorkflowRunAccounting):
+                raise RuntimeError("workflow delegation accounting is unavailable")
+            # Event-loop-confined admission happens before imports, conversation
+            # creation, events, or child construction.
+            reservation = workflow_accounting.reserve_agent()
+
         # Extract the agent name from the class
         module_path, class_name = agent_class_import.rsplit(".", 1)
 
@@ -202,14 +223,16 @@ class AgentTool(BaseTool):
                 task=task,
             )
 
-        parent_context = getattr(self.caller, "sub_agent_context", None)
         if not isinstance(parent_context, dict):
             parent_context = {}
-        context_depth = parent_context.get("depth")
-        if isinstance(context_depth, int) and not isinstance(context_depth, bool):
-            parent_depth = context_depth
+        if workflow_depth is not None:
+            parent_depth = workflow_depth[0]
         else:
-            parent_depth = 1 if getattr(self.caller, "sub_agent", False) else 0
+            context_depth = parent_context.get("depth")
+            if isinstance(context_depth, int) and not isinstance(context_depth, bool):
+                parent_depth = context_depth
+            else:
+                parent_depth = 1 if getattr(self.caller, "sub_agent", False) else 0
 
         # Attached to every event from this dispatch so the UI can group and
         # disambiguate concurrently running sub-agents.
@@ -225,12 +248,10 @@ class AgentTool(BaseTool):
         # A nested dispatch from a workflow worker inherits the workflow's
         # delegation policy and grouping metadata. Cosmetic call labels/indexes
         # belong only to the direct workflow call and are deliberately not copied.
-        workflow_run_id = parent_context.get("workflow_run_id")
-        max_agent_depth = parent_context.get("max_agent_depth")
-        if isinstance(workflow_run_id, str) and isinstance(max_agent_depth, int):
+        if workflow_depth is not None:
             sub_agent_info.update(
-                workflow_run_id=workflow_run_id,
-                max_agent_depth=max_agent_depth,
+                workflow_run_id=parent_context["workflow_run_id"],
+                max_agent_depth=workflow_depth[1],
                 phase=parent_context.get("phase"),
                 parent_agent_id=parent_context.get("agent_id"),
             )
@@ -240,6 +261,7 @@ class AgentTool(BaseTool):
         # Send start status
         await self._send_status_event("GENERATING", f"Starting {agent_name} task", sub_agent_info=sub_agent_info)
         conversation_finished = False
+        agent = None
 
         try:
             # Create the agent instance
@@ -287,6 +309,9 @@ class AgentTool(BaseTool):
             agent.parent_tool_call_id = tool_call_id
             agent.conversation_id = conversation_id
             agent.sub_agent_context = sub_agent_info
+            if workflow_accounting is not None:
+                agent._workflow_accounting = workflow_accounting
+                agent._accounting_reservation = reservation
 
             # Track messages and their sequence
             last_saved_index = -1  # Track what we've already saved
@@ -429,6 +454,9 @@ class AgentTool(BaseTool):
             raise
 
         finally:
+            if reservation is not None:
+                total_tokens = getattr(agent, "total_tokens_used", None)
+                reservation.report_total(total_tokens if type(total_tokens) is int else None)
             # Handle interrupted conversations
             if conversation_id and not conversation_finished:
                 execution_time = time.time() - start_time
@@ -512,10 +540,8 @@ class AgentTool(BaseTool):
             raise RuntimeError("Custom agents require an initialized parent tool collection.")
 
         eligible = set(collection.registry().names())
-        from ..tools import ToolCollection  # lazy import: tools.py imports AgentTool
-
-        eligible.difference_update(ToolCollection.agent_dispatch_tools)
-        eligible.difference_update(ToolCollection.orchestration_tools)
+        eligible.difference_update(getattr(collection, "agent_dispatch_tools", ()))
+        eligible.difference_update(getattr(collection, "orchestration_tools", ()))
 
         for extension in getattr(self.caller, "tool_extensions", None) or []:
             if not getattr(extension, "propagate_to_sub_agents", True):
@@ -611,6 +637,7 @@ class AgentTool(BaseTool):
             # read-only-safe; otherwise read-only sub-agents would have it filtered
             # out and could never return structured output.
             tool_groups={"read_only_tools": ["submit_result"]},
+            propagate_to_sub_agents=False,
         )
 
     def _construct_workflow_sub_agent(self, agent_class, config, extra_tool_extensions):
@@ -761,6 +788,8 @@ class AgentTool(BaseTool):
         agent_class,
         task: str,
         *,
+        workflow_accounting: WorkflowRunAccounting,
+        reservation: AgentReservation,
         config=None,
         schema: Optional[dict] = None,
         sub_agent_info_extra: Optional[dict] = None,
@@ -833,6 +862,8 @@ class AgentTool(BaseTool):
             agent.parent_tool_call_id = tool_call_id
             agent.conversation_id = conversation_id
             agent.sub_agent_context = sub_agent_info
+            agent._workflow_accounting = workflow_accounting
+            agent._accounting_reservation = reservation
 
             last_saved_index = await self._stream_workflow_agent(
                 agent,
@@ -897,6 +928,8 @@ class AgentTool(BaseTool):
             return result, (total_tokens if isinstance(total_tokens, int) else 0), structured
 
         except Exception as e:
+            failed_tokens = getattr(agent, "total_tokens_used", None)
+            reservation.report_total(failed_tokens if type(failed_tokens) is int else None)
             if conversation_id:
                 await self._fail_conversation(
                     conversation_id,
@@ -919,6 +952,7 @@ class AgentTool(BaseTool):
                 metadata=artifact_metadata,
                 prompt=task,
                 status="failed",
+                tokens=reservation.reported_tokens,
                 error=str(e),
                 history=final_history,
             )
@@ -927,6 +961,8 @@ class AgentTool(BaseTool):
             raise
 
         finally:
+            total_tokens = getattr(agent, "total_tokens_used", None)
+            reservation.report_total(total_tokens if type(total_tokens) is int else None)
             if conversation_id and not conversation_finished:
                 await self._interrupt_conversation(
                     conversation_id,

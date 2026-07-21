@@ -17,8 +17,13 @@ import os
 import random
 from typing import Any, Awaitable, Callable, Dict, Iterable, List, Optional
 
+from .accounting import (
+    WorkflowRunAccounting,
+    reset_current_agent_reservation,
+    set_current_agent_reservation,
+)
 from .budget import Budget
-from .errors import WorkflowAgentCapExceeded, WorkflowScriptError
+from .errors import WorkflowScriptError
 from .executor import DEFAULT_MAX_AGENT_DEPTH, run_script, safe_builtins
 from .journal import RunJournal
 from .types import AgentRunSpec, DispatchFn, EmitFn, WorkflowResolver
@@ -72,6 +77,7 @@ class WorkflowRuntime:
         budget: Budget,
         concurrency: Optional[int] = None,
         agent_cap: int = DEFAULT_AGENT_CAP,
+        accounting: Optional[WorkflowRunAccounting] = None,
         max_agent_depth: int = DEFAULT_MAX_AGENT_DEPTH,
         resume_cache: Optional[Dict[int, Any]] = None,
         workflow_resolver: Optional[WorkflowResolver] = None,
@@ -79,13 +85,14 @@ class WorkflowRuntime:
         self._dispatch = dispatch
         self._emit = emit
         self._journal = journal
-        self.budget = budget
+        self._accounting = accounting or WorkflowRunAccounting(budget, agent_cap)
+        if self._accounting.budget is not budget:
+            raise ValueError("workflow accounting must own the runtime budget")
+        self.budget = self._accounting.budget
         self._sem = asyncio.Semaphore(concurrency or default_concurrency())
-        self._agent_cap = agent_cap
         self._max_agent_depth = max_agent_depth
         self._resolver = workflow_resolver
 
-        self._agent_count = 0
         self._call_index = 0
         self._current_phase: Optional[str] = None
         self._nested_depth = 0
@@ -167,21 +174,20 @@ class WorkflowRuntime:
             self._emit_soon("workflow_agent_cached", {"label": label, "phase": spec.phase})
             return cached_value
 
-        self._agent_count += 1
-        if self._agent_count > self._agent_cap:
-            raise WorkflowAgentCapExceeded(
-                f"workflow exceeded the lifetime agent cap ({self._agent_cap}); likely a runaway loop"
-            )
-
-        self.budget.check()
-
         async with self._sem:
             # Stagger starts within the admitted batch so they don't hit the API in lockstep.
             if START_STAGGER_SECONDS:
                 await asyncio.sleep(random.uniform(0, START_STAGGER_SECONDS))
-            result = await self._dispatch(spec)
+            reservation = self._accounting.reserve_agent()
+            result = None
+            reservation_token = set_current_agent_reservation(reservation)
+            try:
+                result = await self._dispatch(spec)
+            finally:
+                reset_current_agent_reservation(reservation_token)
+                reservation.report_total(result.tokens if result is not None else None)
 
-        self.budget.add(result.tokens)
+        assert result is not None
         value = result.value
         self._journal.record(
             index,
