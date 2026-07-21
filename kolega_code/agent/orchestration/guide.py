@@ -46,7 +46,21 @@ return {"confirmed": confirmed}
 ```
 
 `meta` must be a pure literal (no variables, calls, or f-strings) — it is read
-without running the script. Required keys: `name`, `description`. Optional `phases`.
+without running the script. Required keys: `name`, `description`. Optional keys:
+`phases` and `max_agent_depth`.
+
+`max_agent_depth` controls nested agent delegation for the whole workflow. It
+defaults to `1`, so agents dispatched directly by workflow `agent()` calls are
+leaves and receive no agent-dispatch tools. The only other accepted value, and
+the hard maximum, is `2`: direct workers may then retain only the dispatch tools
+their agent type already supports, and any children they dispatch are leaves.
+This never enables unsupported dispatch tools and never permits a worker to call
+`run_workflow`.
+
+Strongly prefer the default of `1`. Express fan-out and stages visibly in the
+workflow with `agent()`, `parallel()`, and `pipeline()`. Depth `2` is an exceptional
+opt-in for a worker that genuinely must consult a specialist; nested calls are
+less visible to workflow-level orchestration and can multiply token use.
 
 ### Primitives (all available as globals in the script)
 

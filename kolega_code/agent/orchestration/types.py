@@ -25,6 +25,8 @@ class AgentRunSpec:
     model: Optional[str] = None
     effort: Optional[str] = None
     agent_type: Optional[str] = None
+    # Workflow-wide delegation ceiling. Direct workflow workers are depth 1.
+    max_agent_depth: int = 1
     # Position of this call in the run, assigned by the runtime in invocation
     # order. Combined with ``cache_key`` it drives resume.
     call_index: int = 0
@@ -41,6 +43,7 @@ class AgentRunSpec:
             "model": self.model,
             "effort": self.effort,
             "agent_type": self.agent_type,
+            "max_agent_depth": self.max_agent_depth,
         }
         encoded = json.dumps(payload, sort_keys=True, default=str)
         return hashlib.sha1(encoded.encode("utf-8")).hexdigest()

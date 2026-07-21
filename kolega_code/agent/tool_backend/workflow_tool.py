@@ -149,6 +149,7 @@ class WorkflowTool(BaseTool):
                 "run_id": run_id,
                 "name": meta.get("name"),
                 "description": meta.get("description"),
+                "max_agent_depth": meta["max_agent_depth"],
                 "status": "running",
                 "args": args,
                 "resumed_from": resume_from_run_id or None,
@@ -165,6 +166,7 @@ class WorkflowTool(BaseTool):
                 "name": meta.get("name"),
                 "description": meta.get("description"),
                 "phases": meta.get("phases") or [],
+                "max_agent_depth": meta["max_agent_depth"],
             },
         )
 
@@ -173,6 +175,7 @@ class WorkflowTool(BaseTool):
             emit=emit,
             journal=journal,
             budget=budget,
+            max_agent_depth=meta["max_agent_depth"],
             resume_cache=resume_cache,
             workflow_resolver=self._make_resolver(state_dir),
         )
@@ -252,6 +255,8 @@ class WorkflowTool(BaseTool):
                 "phase": spec.phase,
                 "label": spec.label,
                 "call_index": spec.call_index,
+                "depth": 1,
+                "max_agent_depth": spec.max_agent_depth,
             }
             label_for_path = spec.label or spec.agent_type or agent_class.__name__
             artifact_paths = journal.agent_artifact_paths(spec.call_index, label_for_path)
@@ -261,6 +266,7 @@ class WorkflowTool(BaseTool):
                 "phase": spec.phase,
                 "agent_type": spec.agent_type or agent_class.__name__,
                 "agent_name": getattr(agent_class, "agent_name", agent_class.__name__),
+                "max_agent_depth": spec.max_agent_depth,
             }
             try:
                 recap, tokens, structured = await self._agent_tool.dispatch_workflow_agent(
@@ -309,6 +315,7 @@ class WorkflowTool(BaseTool):
                     name=content.get("name"),
                     description=content.get("description"),
                     phases=content.get("phases") or [],
+                    max_agent_depth=content.get("max_agent_depth"),
                 )
             elif kind == "workflow_end":
                 payload.update(
@@ -418,6 +425,7 @@ class WorkflowTool(BaseTool):
             f"- Status: {status}",
             f"- Duration: {duration_seconds}s",
             f"- Tokens: {budget.spent()}",
+            f"- Max agent depth: {meta['max_agent_depth']}",
             f"- Script: `{journal.script_path}`",
             f"- Result: `{journal.result_md_path}`",
             "",

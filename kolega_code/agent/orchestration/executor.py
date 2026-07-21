@@ -20,6 +20,8 @@ from typing import Any, Dict
 from .errors import WorkflowScriptError
 
 WRAPPER_NAME = "__workflow_main__"
+DEFAULT_MAX_AGENT_DEPTH = 1
+MAX_AGENT_DEPTH = 2
 
 # Builtins the script may use. Deliberately omits __import__, open, eval, exec,
 # compile, input, and the time/random surface. __build_class__ is included so a
@@ -125,6 +127,17 @@ def extract_meta(source: str) -> Dict[str, Any]:
                         raise WorkflowScriptError("`meta` must be a dict literal.")
                     if not value.get("name") or not value.get("description"):
                         raise WorkflowScriptError("`meta` must include non-empty `name` and `description`.")
+                    max_agent_depth = value.get("max_agent_depth", DEFAULT_MAX_AGENT_DEPTH)
+                    if (
+                        isinstance(max_agent_depth, bool)
+                        or not isinstance(max_agent_depth, int)
+                        or not DEFAULT_MAX_AGENT_DEPTH <= max_agent_depth <= MAX_AGENT_DEPTH
+                    ):
+                        raise WorkflowScriptError(
+                            f"`meta.max_agent_depth` must be an integer from "
+                            f"{DEFAULT_MAX_AGENT_DEPTH} to {MAX_AGENT_DEPTH}."
+                        )
+                    value["max_agent_depth"] = max_agent_depth
                     return value
 
     raise WorkflowScriptError(

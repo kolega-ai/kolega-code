@@ -21,7 +21,16 @@ from kolega_code.agent.orchestration import (
 META = 'meta = {"name": "t", "description": "d"}\n'
 
 
-def make_runtime(tmp_path, *, dispatch=None, budget=None, resume_cache=None, concurrency=4, agent_cap=1000):
+def make_runtime(
+    tmp_path,
+    *,
+    dispatch=None,
+    budget=None,
+    resume_cache=None,
+    concurrency=4,
+    agent_cap=1000,
+    max_agent_depth=1,
+):
     """Build a runtime backed by a recording stub dispatch."""
     calls = []
 
@@ -45,6 +54,7 @@ def make_runtime(tmp_path, *, dispatch=None, budget=None, resume_cache=None, con
         resume_cache=resume_cache,
         concurrency=concurrency,
         agent_cap=agent_cap,
+        max_agent_depth=max_agent_depth,
     )
     return runtime, calls, events, journal
 
@@ -53,6 +63,20 @@ def make_runtime(tmp_path, *, dispatch=None, budget=None, resume_cache=None, con
 def test_extract_meta_valid():
     meta = extract_meta(META + "return 1")
     assert meta["name"] == "t" and meta["description"] == "d"
+    assert meta["max_agent_depth"] == 1
+
+
+@pytest.mark.parametrize("max_agent_depth", [1, 2])
+def test_extract_meta_accepts_supported_agent_depths(max_agent_depth):
+    source = f'meta = {{"name": "t", "description": "d", "max_agent_depth": {max_agent_depth}}}\nreturn 1'
+    assert extract_meta(source)["max_agent_depth"] == max_agent_depth
+
+
+@pytest.mark.parametrize("max_agent_depth", [0, 3, True, "2", 1.5, None])
+def test_extract_meta_rejects_invalid_agent_depths(max_agent_depth):
+    source = f'meta = {{"name": "t", "description": "d", "max_agent_depth": {max_agent_depth!r}}}\nreturn 1'
+    with pytest.raises(WorkflowScriptError, match="max_agent_depth"):
+        extract_meta(source)
 
 
 @pytest.mark.parametrize(
@@ -96,6 +120,14 @@ async def test_agent_returns_text_and_structured(tmp_path):
     assert out[0] == "recap:hello"
     assert out[1] == {"prompt": "world", "idx": 1}
     assert len(calls) == 2
+    assert all(call.max_agent_depth == 1 for call in calls)
+
+
+@pytest.mark.asyncio
+async def test_agent_spec_carries_explicit_max_agent_depth(tmp_path):
+    runtime, calls, _, _ = make_runtime(tmp_path, max_agent_depth=2)
+    await runtime.execute(META + "return await agent('hello')", args=None)
+    assert calls[0].max_agent_depth == 2
 
 
 @pytest.mark.asyncio
@@ -242,3 +274,15 @@ async def test_resume_reruns_after_change(tmp_path):
     runtime2, calls2, _, _ = make_runtime(tmp_path, resume_cache=cache)
     await runtime2.execute(META + "await agent('one')\nawait agent('CHANGED')\nreturn 1", args=None)
     assert [c.prompt for c in calls2] == ["CHANGED"]
+
+
+@pytest.mark.asyncio
+async def test_resume_reruns_when_max_agent_depth_changes(tmp_path):
+    runtime, _, _, journal = make_runtime(tmp_path, max_agent_depth=1)
+    await runtime.execute(META + "return await agent('one')", args=None)
+
+    runtime2, calls2, _, _ = make_runtime(tmp_path, resume_cache=journal.load_cache(), max_agent_depth=2)
+    await runtime2.execute(META + "return await agent('one')", args=None)
+
+    assert [call.prompt for call in calls2] == ["one"]
+    assert calls2[0].max_agent_depth == 2

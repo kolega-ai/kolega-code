@@ -2267,6 +2267,23 @@ class ToolCollection(LogMixin):
         Returns:
             True if the tool should be included, False otherwise
         """
+        # Gigacode delegation depth is scoped through sub_agent_context. It only
+        # narrows a workflow worker's existing dispatch inventory; callers with no
+        # workflow context retain their normal behavior.
+        if method_name in self.agent_dispatch_tools:
+            sub_agent_context = getattr(self.caller, "sub_agent_context", None)
+            if isinstance(sub_agent_context, dict):
+                depth = sub_agent_context.get("depth")
+                max_agent_depth = sub_agent_context.get("max_agent_depth")
+                if (
+                    isinstance(depth, int)
+                    and not isinstance(depth, bool)
+                    and isinstance(max_agent_depth, int)
+                    and not isinstance(max_agent_depth, bool)
+                    and depth >= max_agent_depth
+                ):
+                    return False
+
         if method_name == "dispatch_custom_agent":
             catalog = getattr(self.caller, "custom_agent_catalog", None)
             if getattr(self.caller, "sub_agent", False) or catalog is None or not catalog.has_agents():

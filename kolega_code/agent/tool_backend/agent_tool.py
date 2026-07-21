@@ -202,12 +202,14 @@ class AgentTool(BaseTool):
                 task=task,
             )
 
-        # Calculate depth based on whether the caller is also a sub-agent
-        parent_depth = 0
-        if hasattr(self.caller, "sub_agent") and self.caller.sub_agent:
-            # If the caller is a sub-agent, get its depth
-            # For now, we'll increment from 1, but ideally we'd track this
-            parent_depth = 1
+        parent_context = getattr(self.caller, "sub_agent_context", None)
+        if not isinstance(parent_context, dict):
+            parent_context = {}
+        context_depth = parent_context.get("depth")
+        if isinstance(context_depth, int) and not isinstance(context_depth, bool):
+            parent_depth = context_depth
+        else:
+            parent_depth = 1 if getattr(self.caller, "sub_agent", False) else 0
 
         # Attached to every event from this dispatch so the UI can group and
         # disambiguate concurrently running sub-agents.
@@ -220,6 +222,18 @@ class AgentTool(BaseTool):
             "parent_tool_call_id": tool_call_id,
             "depth": parent_depth + 1,
         }
+        # A nested dispatch from a workflow worker inherits the workflow's
+        # delegation policy and grouping metadata. Cosmetic call labels/indexes
+        # belong only to the direct workflow call and are deliberately not copied.
+        workflow_run_id = parent_context.get("workflow_run_id")
+        max_agent_depth = parent_context.get("max_agent_depth")
+        if isinstance(workflow_run_id, str) and isinstance(max_agent_depth, int):
+            sub_agent_info.update(
+                workflow_run_id=workflow_run_id,
+                max_agent_depth=max_agent_depth,
+                phase=parent_context.get("phase"),
+                parent_agent_id=parent_context.get("agent_id"),
+            )
         if sub_agent_info_extra:
             sub_agent_info.update(sub_agent_info_extra)
 
@@ -722,6 +736,7 @@ class AgentTool(BaseTool):
             f"- Label: {metadata.get('label') or ''}",
             f"- Phase: {metadata.get('phase') or ''}",
             f"- Agent type: {metadata.get('agent_type') or metadata.get('agent_name') or ''}",
+            f"- Max agent depth: {metadata.get('max_agent_depth', '')}",
             f"- Status: {status}",
             f"- Tokens: {tokens}",
         ]

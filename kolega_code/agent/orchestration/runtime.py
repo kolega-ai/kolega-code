@@ -19,7 +19,7 @@ from typing import Any, Awaitable, Callable, Dict, Iterable, List, Optional
 
 from .budget import Budget
 from .errors import WorkflowAgentCapExceeded, WorkflowScriptError
-from .executor import run_script, safe_builtins
+from .executor import DEFAULT_MAX_AGENT_DEPTH, run_script, safe_builtins
 from .journal import RunJournal
 from .types import AgentRunSpec, DispatchFn, EmitFn, WorkflowResolver
 
@@ -72,6 +72,7 @@ class WorkflowRuntime:
         budget: Budget,
         concurrency: Optional[int] = None,
         agent_cap: int = DEFAULT_AGENT_CAP,
+        max_agent_depth: int = DEFAULT_MAX_AGENT_DEPTH,
         resume_cache: Optional[Dict[int, Any]] = None,
         workflow_resolver: Optional[WorkflowResolver] = None,
     ) -> None:
@@ -81,6 +82,7 @@ class WorkflowRuntime:
         self.budget = budget
         self._sem = asyncio.Semaphore(concurrency or default_concurrency())
         self._agent_cap = agent_cap
+        self._max_agent_depth = max_agent_depth
         self._resolver = workflow_resolver
 
         self._agent_count = 0
@@ -144,6 +146,7 @@ class WorkflowRuntime:
             model=model,
             effort=effort,
             agent_type=agent_type,
+            max_agent_depth=self._max_agent_depth,
             call_index=index,
         )
         key = spec.cache_key()
@@ -188,6 +191,7 @@ class WorkflowRuntime:
             status=result.status,
             phase=spec.phase,
             agent_type=spec.agent_type,
+            max_agent_depth=spec.max_agent_depth,
             tokens=result.tokens,
             error=result.error,
             transcript_path=result.transcript_path,
@@ -200,6 +204,7 @@ class WorkflowRuntime:
                 "label": spec.label,
                 "phase": spec.phase,
                 "agent_type": spec.agent_type,
+                "max_agent_depth": spec.max_agent_depth,
                 "status": result.status,
                 "tokens": result.tokens,
                 "error": result.error,

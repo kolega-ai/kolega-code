@@ -11,6 +11,11 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 - Bundled the `docx`, `pdf`, `pptx`, `review`, `skill-authoring`, and `xlsx`
   workflows from `kolega-skills` v0.1.0 so they are available out of the box.
 
+### Fixed
+
+- Bounded Gigacode delegation depth so direct workflow workers are leaves by
+  default, with an explicit one-hop nested-agent opt-in.
+
 ## 0.21.1 - 2026-07-20
 
 ### Changed

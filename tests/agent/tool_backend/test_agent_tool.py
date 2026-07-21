@@ -239,6 +239,53 @@ class TestAgentTool:
         assert MockAgent.last_instance.init_kwargs["max_iterations"] == 3
         MockAgent.configure_streaming([])
 
+    async def test_nested_dispatch_inherits_workflow_depth_and_grouping(
+        self, agent_tool, mock_connection_manager, mock_caller
+    ):
+        original_import = builtins.__import__
+        mock_caller.sub_agent = True
+        mock_caller.sub_agent_context = {
+            "agent_id": "parent-agent",
+            "workflow_run_id": "workflow-run",
+            "phase": "Verify",
+            "depth": 1,
+            "max_agent_depth": 2,
+        }
+
+        with patch.object(builtins, "__import__") as mock_import:
+            mock_module = MagicMock()
+            mock_module.MockAgent = MockAgent
+
+            def mock_import_func(name, *args, **kwargs):
+                if name == "test.module":
+                    return mock_module
+                return original_import(name, *args, **kwargs)
+
+            mock_import.side_effect = mock_import_func
+            MockAgent.configure_streaming(
+                [{"content": "Done.", "complete": True, "uuid": str(uuid.uuid4()), "type": "response"}]
+            )
+            MockAgent.last_instance = None
+
+            await agent_tool._dispatch_agent(agent_class_import="test.module.MockAgent", task="Nested task")
+
+        assert MockAgent.last_instance is not None
+        context = MockAgent.last_instance.sub_agent_context
+        assert context["workflow_run_id"] == "workflow-run"
+        assert context["phase"] == "Verify"
+        assert context["parent_agent_id"] == "parent-agent"
+        assert context["depth"] == 2
+        assert context["max_agent_depth"] == 2
+
+        start_event = next(
+            call.args[0]
+            for call in mock_connection_manager.broadcast_event.call_args_list
+            if call.args[0].content.get("status") == "GENERATING"
+        )
+        assert start_event.sub_agent_info["depth"] == 2
+        assert start_event.sub_agent_info["workflow_run_id"] == "workflow-run"
+        MockAgent.configure_streaming([])
+
     async def test_dispatch_agent_uses_execution_id_for_sub_agent_conversation(
         self, agent_tool, mock_connection_manager, mock_caller
     ):

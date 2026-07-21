@@ -114,6 +114,7 @@ async def test_run_workflow_writes_artifacts_and_summary(workflow_tool):
     meta = json.loads((run_dir / "run.json").read_text())
     assert meta["status"] == "completed"
     assert meta["name"] == "demo"
+    assert meta["max_agent_depth"] == 1
     assert meta["artifacts"]["resultPath"] == str(run_dir / "result.md")
     # token total = 3*3 (parallel) + 7 (schema) = 16
     assert meta["total_tokens"] == 16
@@ -142,6 +143,7 @@ async def test_run_workflow_writes_artifacts_and_summary(workflow_tool):
     assert start["name"] == "demo"
     assert start["description"] == "demo workflow"
     assert start["phases"] == [{"title": "Find"}]
+    assert start["max_agent_depth"] == 1
     end = next(e for e in workflow_events if e["message_type"] == "workflow_end")
     assert end["status"] == "completed"
 
@@ -188,6 +190,7 @@ async def test_readable_transcript_indexes_agent_calls(workflow_tool):
     run_dir = Path(state_dir) / "workflows" / run_id
     transcript = (run_dir / "transcript.md").read_text()
     assert "# Workflow transcript: transcript" in transcript
+    assert "Max agent depth: 1" in transcript
     assert "alpha-label" in transcript
     assert "beta-label" in transcript
     assert "Find" in transcript
@@ -230,6 +233,27 @@ async def test_run_workflow_carries_phase_and_label_to_dispatch(workflow_tool):
     assert extra["phase"] == "Build"
     assert extra["label"] == "my-label"
     assert "workflow_run_id" in extra
+    assert extra["depth"] == 1
+    assert extra["max_agent_depth"] == 1
+
+
+@pytest.mark.asyncio
+async def test_run_workflow_propagates_explicit_max_agent_depth(workflow_tool):
+    tool, _ = workflow_tool
+    stub, calls = _stub_dispatch()
+    tool._agent_tool.dispatch_workflow_agent = stub
+
+    script = (
+        'meta = {"name": "nested", "description": "d", "max_agent_depth": 2}\n'
+        'await agent("go", label="coordinator")\n'
+        "return 1\n"
+    )
+    await tool.run_workflow(script=script)
+
+    _task, _schema, extra, _artifact_paths, artifact_metadata = calls[0]
+    assert extra["depth"] == 1
+    assert extra["max_agent_depth"] == 2
+    assert artifact_metadata["max_agent_depth"] == 2
 
 
 @pytest.mark.asyncio
