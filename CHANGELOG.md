@@ -6,13 +6,27 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.22.0 - 2026-07-22
+
 ### Added
 
 - Bundled the `docx`, `pdf`, `pptx`, `review`, `skill-authoring`, and `xlsx`
-  workflows from `kolega-skills` v0.1.0 so they are available out of the box.
+  workflows from `kolega-skills` v0.2.1 so they are available out of the box.
 - Added a top-level TUI `set_goal` tool so explicit user, Agent Skill, or host
   workflow instructions can enter the existing persistent autonomous goal loop
   without synthesizing a `/goal` command.
+- Added atomic per-dispatch model overrides for built-in, custom, and Gigacode
+  subagents, with credential-free model discovery and strict route validation.
+- Allowed file-editing and LSP tools to operate on explicitly requested absolute
+  and parent-relative paths outside the project while preserving permission and
+  policy gates.
+
+### Changed
+
+- Exposed the active model's vision capability to every bundled agent prompt and
+  prompt override.
+- Made saved-session listings easier to resume with labeled IDs, chronological
+  ordering, and a clear empty state.
 
 ### Fixed
 
@@ -27,6 +41,15 @@ This project uses GitHub Releases for detailed generated release notes. This fil
   pre-failure output usage. Ordinary non-workflow extension and delegation behavior
   is unchanged, and no supported API, metadata schema, cache-key field, or artifact
   field was removed or renamed.
+- Resolved relative shell-command working directories against the target project
+  instead of the directory where Kolega Code was launched.
+- Prevented model-facing shells from inheriting Kolega Code's own `uv run`
+  virtualenv while preserving user-activated and project-local virtualenvs.
+
+### Security
+
+- Updated the documentation toolchain and `pyasn1` dependency to patched
+  releases, clearing the known dependency alerts.
 
 ## 0.21.1 - 2026-07-20
 
