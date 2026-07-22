@@ -269,6 +269,8 @@ After create/edit:
 - retained slide IDs are unchanged and reported order equals the requested order;
 - all internal relationship targets exist, and relationship-namespace references in owner XML
   resolve through that owner's relationship part;
+- generated title, body, and text-element frames report `text.word_wrap: true`; narrow edits to
+  imported frames preserve their existing wrapping setting;
 - table/chart/image/note inspection reflects the requested values;
 - for PPTX+PDF deliverables, no `RELEASE BLOCKER:` font warning remains in the final inspection;
 - no sibling temporary output remains after success or failure.

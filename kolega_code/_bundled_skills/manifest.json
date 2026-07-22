@@ -98,19 +98,19 @@
     },
     {
       "path": "skills/pptx/SKILL.md",
-      "sha256": "1e99ec6f4b13edbb3d48876bdec17f37ceda50c6e33e0e3459afd7788cbe3906"
+      "sha256": "f4c2ff4db2681de521e16480d34192eeff6c6d8883f196266c2cafa784dd0678"
     },
     {
       "path": "skills/pptx/references/examples.md",
-      "sha256": "e78c4e23a2b1ad628a3b9b8860fdafc7e5bbcf6645e8a9f812bad77c8b3fa917"
+      "sha256": "020ed4fef07d14632fa07cc7fadd106e40877392439422ab4a43acd4fcc47edf"
     },
     {
       "path": "skills/pptx/references/limitations.md",
-      "sha256": "afda2bb5f9483b8e100530e9b5e0680c69e72df2437ba12d4f542e096e40fa0f"
+      "sha256": "dced96e324e70c8c1221481d990c443a23e91d1a2fab7e69cc6a26cfbc815cb4"
     },
     {
       "path": "skills/pptx/references/operations.md",
-      "sha256": "4af252aec435ccefeeb74a368bf16206f692915d1a407e862315ec8312dd21ad"
+      "sha256": "ef0a0f508b562d65d16624cf126075c33924a156b71efbe4cc0ff995a1be87d1"
     },
     {
       "path": "skills/pptx/requirements.txt",
@@ -118,11 +118,11 @@
     },
     {
       "path": "skills/pptx/scripts/pptx_tool.py",
-      "sha256": "797010c17f170010d837be9d3541b7bfaa8856a67e34ce41566889b74925cb35"
+      "sha256": "b67bf31e00ea81904b89b2dc3a48dc346e0a940f99cd86c9c042a81d8b331465"
     },
     {
       "path": "skills/pptx/scripts/smoke_test.py",
-      "sha256": "54ffa99a72c4bdb4effbe6da0ba11920609a28c7d9701fe915e90f6959cc7f2d"
+      "sha256": "200d9d5f1ffdaa8497c589877f0941d8cf79a94743ddb737952e0aeab5179ba0"
     },
     {
       "path": "skills/review/SKILL.md",
@@ -187,8 +187,8 @@
     "xlsx"
   ],
   "source": {
-    "commit": "fa6aaec9b7fdec1dc10c0a7875ce3981ecd1994e",
+    "commit": "22eeee98363a92c199d234a10a798cbdaf3998e2",
     "repository": "https://github.com/kolega-ai/kolega-skills",
-    "tag": "v0.2.0"
+    "tag": "v0.2.1"
   }
 }

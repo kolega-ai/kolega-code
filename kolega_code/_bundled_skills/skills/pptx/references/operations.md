@@ -244,6 +244,11 @@ All geometry uses inches:
 `title` may be a string or a paragraph object. `body` is a string or paragraph list. A paragraph
 supports `text` or `runs`, `level` (0-8), and `alignment` (`left`, `center`, `right`, `justify`).
 A run supports `text`, `bold`, `italic`, `font_name`, `font_size`, and six-digit `color`.
+The tool explicitly enables word wrapping for authored title, body, and text-element frames,
+including frames created by `edit`'s `add_slide` action. Narrow edits to existing frames, such as
+`replace_text` or hyperlink changes, preserve the source frame's wrapping setting. `inspect`
+reports the serialized setting as `text.word_wrap`; require `true` for generated prose frames
+instead of inferring PowerPoint behavior from a LibreOffice render.
 
 Elements:
 

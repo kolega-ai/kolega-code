@@ -483,6 +483,77 @@ def _run_smoke(require_libreoffice: bool) -> dict[str, Any]:
         body_name = body_shape["name"]
         checks.append("inspect/content-inventory")
 
+        authored_text_shapes = [
+            _shape_containing(slides[0], "Operations brief"),
+            _shape_containing(slides[0], "Generated fixture"),
+            _shape_with_name(slides[2], "Appendix Text"),
+        ]
+        _assert(
+            all(shape["text"]["word_wrap"] is True for shape in authored_text_shapes),
+            "created title, body, and text element must explicitly enable word wrapping",
+        )
+        reopened_created = Presentation(str(created))
+        reopened_wrapping = {
+            shape.text_frame.text: shape.text_frame.word_wrap
+            for slide in reopened_created.slides
+            for shape in slide.shapes
+            if shape.has_text_frame
+            and shape.text_frame.text
+            in {"Operations brief", "Generated fixture", "Retained slide identity"}
+        }
+        _assert(
+            reopened_wrapping
+            == {
+                "Operations brief": True,
+                "Generated fixture": True,
+                "Retained slide identity": True,
+            },
+            "word wrapping was not serialized for authored text frames",
+        )
+        checks.append("create/text-wrapping")
+
+        nowrap_source = work / "nowrap-source.pptx"
+        nowrap_presentation = Presentation()
+        nowrap_slide = nowrap_presentation.slides.add_slide(nowrap_presentation.slide_layouts[6])
+        nowrap_shape = nowrap_slide.shapes.add_textbox(
+            PptxTool.Inches(1.0),
+            PptxTool.Inches(1.0),
+            PptxTool.Inches(2.0),
+            PptxTool.Inches(1.0),
+        )
+        nowrap_shape.name = "No-Wrap Text"
+        nowrap_shape.text_frame.word_wrap = False
+        nowrap_shape.text_frame.text = "Original no-wrap content"
+        nowrap_presentation.save(str(nowrap_source))
+        nowrap_job = work / "nowrap-edit.json"
+        nowrap_output = work / "nowrap-edited.pptx"
+        _write_json(
+            nowrap_job,
+            {
+                "schema_version": 1,
+                "operation": "edit",
+                "operations": [
+                    {
+                        "action": "replace_text",
+                        "shape": {"shape_name": "No-Wrap Text"},
+                        "find": "Original",
+                        "replace": "Updated",
+                    }
+                ],
+            },
+        )
+        _run(["edit", str(nowrap_source), "--job", str(nowrap_job), "--output", str(nowrap_output)])
+        nowrap_inspection = _run(["inspect", str(nowrap_output)])
+        edited_nowrap_shape = _shape_with_name(
+            nowrap_inspection["presentation"]["slides"][0], "No-Wrap Text"
+        )
+        _assert(
+            edited_nowrap_shape["text"]["text"] == "Updated no-wrap content"
+            and edited_nowrap_shape["text"]["word_wrap"] is False,
+            "narrow text replacement changed an existing frame's wrapping setting",
+        )
+        checks.append("edit/preserve-existing-text-wrapping")
+
         fonts_report = first_inspection["fonts"]
         _assert(
             {"+mj-lt", "+mn-lt"} <= set(fonts_report["theme_tokens_referenced"]),
@@ -851,6 +922,12 @@ def _run_smoke(require_libreoffice: bool) -> dict[str, Any]:
         _assert(all(slide_id in second_ids for slide_id in original_ids), "retained ID changed")
         new_ids = [slide_id for slide_id in second_ids if slide_id not in original_ids]
         _assert(len(new_ids) == 1 and second_ids[1] == new_ids[0], "inserted slide order mismatch")
+        inserted = next(slide for slide in second_slides if slide["slide_id"] == new_ids[0])
+        _assert(
+            _shape_containing(inserted, "Inserted decision")["text"]["word_wrap"] is True
+            and _shape_with_name(inserted, "Inserted Text")["text"]["word_wrap"] is True,
+            "edit add_slide did not explicitly enable wrapping for authored text frames",
+        )
         evidence = next(slide for slide in second_slides if slide["slide_id"] == original_ids[1])
         _assert(
             "Style-safe replacement" in _shape_containing(evidence, "Style-safe")["text"]["text"],
