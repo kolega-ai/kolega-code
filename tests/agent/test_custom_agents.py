@@ -222,6 +222,42 @@ def test_custom_agent_applies_prompt_model_tools_permissions_and_dynamic_context
     assert not tool_names.intersection(agent.tool_collection.agent_dispatch_tools)
 
 
+def test_custom_agent_runtime_resolved_model_wins_definition(
+    tmp_path: Path,
+    mock_connection_manager,
+    agent_config,
+) -> None:
+    definition = CustomAgentDefinition(
+        name="reviewer",
+        description="Reviews code",
+        prompt="Review.",
+        source_path=tmp_path / "reviewer.md",
+        scope="project",
+        model="anthropic/claude-opus-4-8",
+        thinking_effort="high",
+    )
+    runtime_model = ModelConfig(
+        provider=ModelProvider.ANTHROPIC,
+        model="claude-sonnet-4-5-20250929",
+        thinking_effort=None,
+    )
+
+    agent = CustomAgent(
+        project_path=tmp_path,
+        workspace_id="workspace",
+        thread_id=str(uuid.uuid4()),
+        connection_manager=mock_connection_manager,
+        config=agent_config,
+        definition=definition,
+        allowed_tools=[],
+        resolved_model=runtime_model,
+    )
+
+    assert agent.primary_model_config.provider == ModelProvider.ANTHROPIC
+    assert agent.primary_model_config.model == "claude-sonnet-4-5-20250929"
+    assert agent.primary_model_config.thinking_effort is None
+
+
 def test_custom_agent_catalog_filters_build_plan_and_all_modes(
     tmp_path: Path,
     mock_connection_manager,
@@ -269,6 +305,10 @@ def test_custom_agent_catalog_filters_build_plan_and_all_modes(
     )
     assert coder_tool.input_schema["properties"]["agent"]["enum"] == ["reviewer", "shared"]
     assert planning_tool.input_schema["properties"]["agent"]["enum"] == ["planner", "shared"]
+    assert planning_tool.input_schema["required"] == ["agent", "task"]
+    override_schema = planning_tool.input_schema["properties"]["model_override"]
+    assert override_schema["required"] == ["provider", "model", "thinking_effort"]
+    assert {"type": "null"} in override_schema["properties"]["thinking_effort"]["anyOf"]
     assert "Reviews code for correctness" in coder_tool.description
     assert "Produces focused plans" in planning_tool.description
 
@@ -377,6 +417,68 @@ async def test_dispatch_passes_resolved_definition_and_narrowed_tools_to_fresh_a
     assert captured["allowed_tools"] == ["read_entire_file"]
     assert captured["permission_mode"] == coder.permission_mode
     assert captured["permission_callback"] is coder.permission_callback
+    assert "resolved_model" not in captured
+
+
+@pytest.mark.asyncio
+async def test_dispatch_runtime_override_replaces_custom_frontmatter_route(
+    tmp_path: Path,
+    mock_connection_manager,
+    agent_config,
+) -> None:
+    _write_agent(
+        tmp_path,
+        ".kolega/agents/reviewer.md",
+        ("name: reviewer\ndescription: Reviews code\nmodel: anthropic/claude-opus-4-8\nthinking_effort: high"),
+    )
+    catalog = discover_custom_agents(tmp_path, tmp_path / "state")
+    coder = CoderAgent(
+        project_path=tmp_path,
+        workspace_id="workspace",
+        thread_id=str(uuid.uuid4()),
+        connection_manager=mock_connection_manager,
+        config=agent_config,
+        agent_mode=AgentMode.CLI,
+        custom_agent_catalog=catalog,
+    )
+
+    class StubCustomAgent:
+        last_kwargs: dict[str, object] | None = None
+
+        def __init__(self, *args, **kwargs):
+            StubCustomAgent.last_kwargs = kwargs
+            self.total_tokens_used = 0
+            self.parent_tool_call_id = None
+            self.conversation_id = None
+            self.sub_agent_context = None
+
+        async def process_message_stream(self, task):
+            if False:
+                yield task
+
+        def dump_message_history(self):
+            return []
+
+        async def recap_agent_outcome(self):
+            return "Review complete"
+
+    with patch("kolega_code.agent.custom_agents.CustomAgent", StubCustomAgent):
+        await coder.tool_collection.agent_tool.dispatch_custom_agent(
+            "reviewer",
+            "Review",
+            {
+                "provider": "anthropic",
+                "model": "claude-sonnet-4-5-20250929",
+                "thinking_effort": None,
+            },
+        )
+
+    captured = StubCustomAgent.last_kwargs
+    assert captured is not None
+    resolved_model = captured["resolved_model"]
+    assert isinstance(resolved_model, ModelConfig)
+    assert resolved_model.model == "claude-sonnet-4-5-20250929"
+    assert resolved_model.thinking_effort is None
 
 
 @pytest.mark.asyncio

@@ -31,6 +31,51 @@ When [gigacode](../../gigacode/) is enabled, the main agent can also orchestrate
 **many** of these sub-agents at once through a workflow — running them in parallel
 or in pipelines and collecting the results.
 
+### Per-dispatch model routing
+
+Sub-agent dispatches normally inherit the CLI/host model configuration for the
+target role. Custom agents continue to use their Markdown model settings and then
+their normal General-role inheritance. Omit `model_override` to keep this behavior.
+
+When a particular task needs another model, the agent can call the read-only
+`list_subagent_models` tool. It reports configured providers, provider-qualified
+model IDs, exact effort options, vision support, and current role defaults without
+exposing credentials. Its model-facing result is a compact Markdown catalog
+rather than a repetitive JSON payload. The agent should use it before choosing a
+non-default route rather than guessing model or effort names.
+
+An ordinary dispatch accepts one complete object under `model_override`:
+
+```json
+{
+  "task": "Review the authentication design for subtle security flaws.",
+  "model_override": {
+    "provider": "anthropic",
+    "model": "claude-opus-4-8",
+    "thinking_effort": "high"
+  }
+}
+```
+
+All three fields are mandatory when the object is present; Kolega Code never
+inherits only the missing provider, model, or effort. A model with effort controls
+requires one of the exact `thinking_effort` strings returned by
+`list_subagent_models`. A model without effort controls requires an explicit
+`"thinking_effort": null`—`null` is valid only in that case.
+
+Selections are revalidated at dispatch time. Unsupported provider/model pairs,
+unconfigured providers, incompatible Browser models, invalid efforts, and
+incomplete objects fail the dispatch instead of falling back to another model.
+A Browser dispatch must select a catalog entry with `supports_vision: true`.
+A complete dispatch override replaces a custom agent's Markdown model and effort
+as a unit.
+
+[Gigacode](../../gigacode/#per-worker-model-overrides) uses the same atomic rule,
+but names the third field `effort` inside `model_override`. Its override applies
+only to the direct workflow worker; descendants keep their role defaults unless
+their own dispatch provides a complete override. In Plan mode, model routing never
+changes the forced read-only Investigation agent or its permissions.
+
 Sub-agent activity is reported live. In the TUI each sub-agent gets a live card in
 the conversation, and pressing `Ctrl+G` opens the
 [sub-agent inspector](../../tui/interface/#sub-agent-inspector) — a full-screen view

@@ -17,6 +17,7 @@ import os
 import random
 from typing import Any, Awaitable, Callable, Dict, Iterable, List, Optional
 
+from ..model_routing import AtomicModelOverride, parse_atomic_model_override
 from .accounting import (
     WorkflowRunAccounting,
     reset_current_agent_reservation,
@@ -81,6 +82,9 @@ class WorkflowRuntime:
         max_agent_depth: int = DEFAULT_MAX_AGENT_DEPTH,
         resume_cache: Optional[Dict[int, Any]] = None,
         workflow_resolver: Optional[WorkflowResolver] = None,
+        routing_fingerprint: Optional[str] = None,
+        actual_agent_type_resolver: Optional[Callable[[Optional[str]], str]] = None,
+        read_only_mode: bool = False,
     ) -> None:
         self._dispatch = dispatch
         self._emit = emit
@@ -92,6 +96,9 @@ class WorkflowRuntime:
         self._sem = asyncio.Semaphore(concurrency or default_concurrency())
         self._max_agent_depth = max_agent_depth
         self._resolver = workflow_resolver
+        self._routing_fingerprint = routing_fingerprint
+        self._actual_agent_type_resolver = actual_agent_type_resolver
+        self._read_only_mode = read_only_mode
 
         self._call_index = 0
         self._current_phase: Optional[str] = None
@@ -131,15 +138,32 @@ class WorkflowRuntime:
         label: Optional[str] = None,
         phase: Optional[str] = None,
         schema: Optional[dict] = None,
-        model: Optional[str] = None,
-        effort: Optional[str] = None,
+        model_override: Any = None,
         agent_type: Optional[str] = None,
+        **legacy_kwargs: Any,
     ) -> Any:
         """Dispatch one sub-agent. Returns its recap text, or the validated dict
         when ``schema`` is given, or ``None`` if the agent failed/was skipped.
         """
+        legacy_routing = sorted({"model", "effort"} & set(legacy_kwargs))
+        if legacy_routing:
+            names = ", ".join(f"{name}=" for name in legacy_routing)
+            raise WorkflowScriptError(
+                f"agent() no longer accepts top-level {names}. Migrate to the complete "
+                "model_override={'provider': ..., 'model': ..., 'effort': ...} object."
+            )
+        if legacy_kwargs:
+            names = ", ".join(sorted(legacy_kwargs))
+            raise WorkflowScriptError(f"agent() got unexpected keyword argument(s): {names}")
         if not isinstance(prompt, str) or not prompt.strip():
             raise WorkflowScriptError("agent() requires a non-empty prompt string")
+        try:
+            parsed_override: Optional[AtomicModelOverride] = parse_atomic_model_override(
+                model_override,
+                effort_key="effort",
+            )
+        except (TypeError, ValueError) as exc:
+            raise WorkflowScriptError(str(exc)) from exc
 
         # Index is assigned synchronously (no await before this point), so it is
         # deterministic across runs for a given script — the basis for resume.
@@ -150,9 +174,13 @@ class WorkflowRuntime:
             label=label,
             phase=phase or self._current_phase,
             schema=schema,
-            model=model,
-            effort=effort,
+            model_override=parsed_override,
             agent_type=agent_type,
+            routing_fingerprint=self._routing_fingerprint,
+            actual_agent_type=(
+                self._actual_agent_type_resolver(agent_type) if self._actual_agent_type_resolver is not None else None
+            ),
+            read_only_mode=self._read_only_mode,
             max_agent_depth=self._max_agent_depth,
             call_index=index,
         )
@@ -202,6 +230,9 @@ class WorkflowRuntime:
             error=result.error,
             transcript_path=result.transcript_path,
             transcript_markdown_path=result.transcript_markdown_path,
+            requested_routing=result.requested_routing,
+            effective_routing=result.effective_routing,
+            actual_agent_type=result.actual_agent_type,
         )
         self._journal.append_transcript_event(
             {
@@ -210,6 +241,9 @@ class WorkflowRuntime:
                 "label": spec.label,
                 "phase": spec.phase,
                 "agent_type": spec.agent_type,
+                "actual_agent_type": result.actual_agent_type,
+                "requested_routing": result.requested_routing,
+                "effective_routing": result.effective_routing,
                 "max_agent_depth": spec.max_agent_depth,
                 "status": result.status,
                 "tokens": result.tokens,

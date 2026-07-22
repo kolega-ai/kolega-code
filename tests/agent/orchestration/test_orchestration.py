@@ -5,6 +5,7 @@ so they need none of the agent/LLM stack.
 """
 
 import asyncio
+import json
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Optional
@@ -24,6 +25,7 @@ from kolega_code.agent.orchestration import (
     extract_meta,
 )
 from kolega_code.agent.orchestration.accounting import WorkflowRunAccounting
+from kolega_code.agent.model_routing import AtomicModelOverride
 
 META = 'meta = {"name": "t", "description": "d"}\n'
 
@@ -137,6 +139,58 @@ async def test_agent_spec_carries_explicit_max_agent_depth(tmp_path: Path) -> No
     runtime, calls, _, _ = make_runtime(tmp_path, max_agent_depth=2)
     await runtime.execute(META + "return await agent('hello')", args=None)
     assert calls[0].max_agent_depth == 2
+
+
+@pytest.mark.asyncio
+async def test_agent_normalizes_atomic_model_override(tmp_path: Path) -> None:
+    runtime, calls, _, _ = make_runtime(tmp_path)
+    script = (
+        META
+        + "return await agent('hello', model_override={"
+        + "'provider': 'DEEPSEEK', 'model': 'deepseek-v4-flash', 'effort': 'HIGH'})"
+    )
+
+    assert await runtime.execute(script, args=None) == "recap:hello"
+    assert calls[0].model_override == AtomicModelOverride(
+        provider="deepseek",
+        model="deepseek-v4-flash",
+        effort="high",
+    )
+    with pytest.raises(Exception):
+        calls[0].model_override.effort = "low"  # type: ignore[misc]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "override",
+    [
+        "{'provider': 'anthropic', 'model': 'claude-opus-4-8'}",
+        "{'provider': 'anthropic', 'model': 'claude-opus-4-8', 'effort': 'high', 'extra': 1}",
+        "['anthropic', 'claude-opus-4-8', 'high']",
+    ],
+)
+async def test_agent_rejects_non_atomic_model_override_before_dispatch(
+    tmp_path: Path,
+    override: str,
+) -> None:
+    runtime, calls, _, _ = make_runtime(tmp_path)
+
+    with pytest.raises(WorkflowScriptError, match="model_override"):
+        await runtime.execute(META + f"return await agent('hello', model_override={override})", args=None)
+    assert calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("legacy", ["model='claude-opus-4-8'", "effort='high'", "model='x', effort='high'"])
+async def test_agent_legacy_routing_kwargs_have_targeted_migration_error(
+    tmp_path: Path,
+    legacy: str,
+) -> None:
+    runtime, calls, _, _ = make_runtime(tmp_path)
+
+    with pytest.raises(WorkflowScriptError, match="Migrate.*model_override"):
+        await runtime.execute(META + f"return await agent('hello', {legacy})", args=None)
+    assert calls == []
 
 
 @pytest.mark.asyncio
@@ -364,3 +418,103 @@ async def test_resume_reruns_when_max_agent_depth_changes(tmp_path: Path) -> Non
 
     assert [call.prompt for call in calls2] == ["one"]
     assert calls2[0].max_agent_depth == 2
+
+
+def test_cache_key_uses_atomic_override_or_inherited_routing_fingerprint() -> None:
+    no_override_a = AgentRunSpec(prompt="same", routing_fingerprint="routing-a")
+    no_override_b = AgentRunSpec(prompt="same", routing_fingerprint="routing-b")
+    with_override_a = AgentRunSpec(
+        prompt="same",
+        model_override=AtomicModelOverride("anthropic", "claude-sonnet-4-5-20250929", None),
+        routing_fingerprint="routing-a",
+    )
+    with_override_b = AgentRunSpec(
+        prompt="same",
+        model_override=AtomicModelOverride("anthropic", "claude-sonnet-4-5-20250929", None),
+        routing_fingerprint="routing-b",
+    )
+
+    assert no_override_a.cache_key() != no_override_b.cache_key()
+    assert with_override_a.cache_key() == with_override_b.cache_key()
+    assert no_override_a.cache_key() != with_override_a.cache_key()
+
+
+def test_cache_key_includes_actual_execution_class_and_read_only_mode() -> None:
+    writable = AgentRunSpec(
+        prompt="same",
+        agent_type="coder",
+        actual_agent_type="CoderAgent",
+        read_only_mode=False,
+    )
+    forced_plan = AgentRunSpec(
+        prompt="same",
+        agent_type="coder",
+        actual_agent_type="InvestigationAgent",
+        read_only_mode=True,
+    )
+
+    assert writable.cache_key() != forced_plan.cache_key()
+
+
+@pytest.mark.asyncio
+async def test_runtime_records_dispatch_routing_metadata(tmp_path: Path) -> None:
+    async def dispatch(_spec: AgentRunSpec) -> AgentRunResult:
+        return AgentRunResult(
+            text="ok",
+            requested_routing={"provider": "deepseek", "model": "deepseek-v4-flash", "effort": "high"},
+            effective_routing={"provider": "deepseek", "model": "deepseek-v4-flash", "effort": "high"},
+            actual_agent_type="InvestigationAgent",
+        )
+
+    runtime, _, _, journal = make_runtime(tmp_path, dispatch=dispatch)
+    await runtime.agent(
+        "hello",
+        model_override={"provider": "deepseek", "model": "deepseek-v4-flash", "effort": "high"},
+    )
+
+    journal_entry = json.loads(journal.journal_path.read_text().splitlines()[0])
+    transcript_entry = json.loads(journal.transcript_jsonl_path.read_text().splitlines()[0])
+    assert journal_entry["requested_routing"]["provider"] == "deepseek"
+    assert journal_entry["effective_routing"]["model"] == "deepseek-v4-flash"
+    assert journal_entry["actual_agent_type"] == "InvestigationAgent"
+    assert transcript_entry["requested_routing"] == journal_entry["requested_routing"]
+    assert transcript_entry["actual_agent_type"] == "InvestigationAgent"
+
+
+@pytest.mark.asyncio
+async def test_runtime_preserves_null_requested_routing_metadata(tmp_path: Path) -> None:
+    async def dispatch(_spec: AgentRunSpec) -> AgentRunResult:
+        return AgentRunResult(
+            text="ok",
+            requested_routing=None,
+            effective_routing={"provider": "anthropic", "model": "inherited", "effort": None},
+            actual_agent_type="GeneralAgent",
+        )
+
+    runtime, _, _, journal = make_runtime(tmp_path, dispatch=dispatch)
+    await runtime.agent("hello")
+
+    journal_entry = json.loads(journal.journal_path.read_text().splitlines()[0])
+    transcript_entry = json.loads(journal.transcript_jsonl_path.read_text().splitlines()[0])
+    assert "requested_routing" in journal_entry
+    assert journal_entry["requested_routing"] is None
+    assert "requested_routing" in transcript_entry
+    assert transcript_entry["requested_routing"] is None
+
+
+def test_old_and_malformed_journal_rows_remain_readable(tmp_path: Path) -> None:
+    journal = RunJournal.for_run(tmp_path, "legacy")
+    journal.ensure_dirs()
+    journal.journal_path.write_text(
+        "\n".join(
+            [
+                '{"index": 0, "key": "legacy-key", "value": "legacy-value"}',
+                "[]",
+                '{"not": "a resume row"}',
+                "{malformed",
+            ]
+        )
+        + "\n"
+    )
+
+    assert journal.load_cache() == {0: ("legacy-key", "legacy-value")}

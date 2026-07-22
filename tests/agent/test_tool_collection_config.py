@@ -214,6 +214,26 @@ class TestToolCollection:
         # Should include investigation tools
         assert "dispatch_investigation_agent" in tool_names
         assert "dispatch_browser_agent" in tool_names
+        assert "list_subagent_models" in tool_names
+
+        dispatch_names = [
+            "dispatch_investigation_agent",
+            "dispatch_browser_agent",
+            "dispatch_coding_agent",
+            "dispatch_general_agent",
+        ]
+        definitions = {tool.name: tool for tool in tool_list}
+        for name in dispatch_names:
+            schema = definitions[name].input_schema
+            assert schema is not None
+            assert schema["required"] == ["task"]
+            override = schema["properties"]["model_override"]
+            assert override["required"] == ["provider", "model", "thinking_effort"]
+            assert override["additionalProperties"] is False
+            assert {"type": "null"} in override["properties"]["thinking_effort"]["anyOf"]
+
+        discovery = tool_collection.registry().get("list_subagent_models")
+        assert discovery.parallel_safe is True
 
     async def test_workflow_depth_gate_cannot_be_bypassed_by_dispatch_extension_group(
         self,
@@ -251,6 +271,49 @@ class TestToolCollection:
         )
         names_at_limit = set(tool_collection.registry().names())
         assert not names_at_limit.intersection(ToolCollection.agent_dispatch_tools)
+
+    async def test_model_discovery_is_exposed_to_workflow_authors_but_hidden_from_leaves(
+        self,
+        project_path: Path,
+        mock_connection_manager: AgentConnectionManager,
+        agent_config: AgentConfig,
+        mock_base_agent: BaseAgent,
+    ) -> None:
+        mock_base_agent.sub_agent = False
+        mock_base_agent.gigacode_enabled = False
+        leaf_collection = ToolCollection(
+            project_path,
+            "test_workspace",
+            str(uuid.uuid4()),
+            mock_connection_manager,
+            agent_config,
+            mock_base_agent,
+        )
+        assert "list_subagent_models" not in leaf_collection.registry()
+
+        mock_base_agent.gigacode_enabled = True
+        workflow_collection = ToolCollection(
+            project_path,
+            "test_workspace",
+            str(uuid.uuid4()),
+            mock_connection_manager,
+            agent_config,
+            mock_base_agent,
+        )
+        discovery = workflow_collection.registry().get("list_subagent_models")
+        assert discovery.parallel_safe is True
+
+        mock_base_agent.sub_agent = True
+        setattr(
+            mock_base_agent,
+            "sub_agent_context",
+            {
+                "workflow_run_id": "run-1",
+                "depth": 1,
+                "max_agent_depth": 1,
+            },
+        )
+        assert "list_subagent_models" not in workflow_collection.registry()
 
     async def test_backward_compatibility_legacy_parameters(
         self,

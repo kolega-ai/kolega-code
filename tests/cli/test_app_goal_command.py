@@ -165,9 +165,10 @@ async def _wait_goal_terminal(app, pilot, *, timeout: float = 8.0) -> None:
         return goal is None or goal.met or goal.paused
 
     await _wait_for(app, pilot, _terminal, timeout=timeout)
-    # Let the worker finish any post-terminal bookkeeping / notify calls.
-    for _ in range(5):
-        await pilot.pause(0.02)
+    # Goal state becomes terminal before persistence and transcript notifications
+    # finish. The turn worker owns ``agent_worker`` for the complete goal loop, so
+    # its release is the deterministic post-terminal completion boundary.
+    await _wait_for(app, pilot, lambda: app.agent_worker is None, timeout=timeout)
 
 
 async def _wait_turn_idle(app, pilot, *, timeout: float = 6.0) -> None:

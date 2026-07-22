@@ -39,6 +39,68 @@ from .tool_backend.lsp_tool import LspEditTool, LspTool
 from kolega_code.services.lsp import LspManager
 from kolega_code.services.snapshots import SnapshotService
 
+# Atomic ordinary-dispatch routing cannot be represented by signature
+# introspection: all nested fields are required together and effort is nullable.
+_ORDINARY_MODEL_OVERRIDE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "provider": {
+            "type": "string",
+            "description": "Configured provider name returned by list_subagent_models.",
+        },
+        "model": {
+            "type": "string",
+            "description": "Exact model ID returned for that provider by list_subagent_models.",
+        },
+        "thinking_effort": {
+            "anyOf": [{"type": "string"}, {"type": "null"}],
+            "description": (
+                "Exact supported effort string, or null only when the selected model has no effort control."
+            ),
+        },
+    },
+    "required": ["provider", "model", "thinking_effort"],
+}
+
+
+def _dispatch_input_schema(*, custom: bool = False) -> dict[str, Any]:
+    properties: dict[str, Any] = {
+        "task": {
+            "type": "string",
+            "description": "Detailed, self-contained task for the sub-agent.",
+        },
+        "model_override": {
+            **_ORDINARY_MODEL_OVERRIDE_SCHEMA,
+            "description": (
+                "Optional atomic route. Omit it to inherit normal role/custom-agent settings; "
+                "when present all three nested fields are required."
+            ),
+        },
+    }
+    required = ["task"]
+    if custom:
+        properties = {
+            "agent": {"type": "string", "description": "Name of the custom agent to run."},
+            **properties,
+        }
+        required = ["agent", "task"]
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": properties,
+        "required": required,
+    }
+
+
+_AGENT_DISPATCH_INPUT_SCHEMAS: dict[str, dict[str, Any]] = {
+    "dispatch_investigation_agent": _dispatch_input_schema(),
+    "dispatch_browser_agent": _dispatch_input_schema(),
+    "dispatch_coding_agent": _dispatch_input_schema(),
+    "dispatch_general_agent": _dispatch_input_schema(),
+    "dispatch_custom_agent": _dispatch_input_schema(custom=True),
+}
+
 # Explicit input schema for the generic ``lsp`` tool.  The ``operation`` parameter
 # is an enum that signature introspection cannot express.
 _LSP_INPUT_SCHEMA: dict[str, Any] = {
@@ -406,6 +468,7 @@ class ToolCollection(LogMixin):
         "sleep",
         "read_image",
         "lsp",
+        "list_subagent_models",
     ]
 
     browser_tools = [
@@ -457,6 +520,11 @@ class ToolCollection(LogMixin):
     custom_agent_tools = [
         "dispatch_custom_agent",
     ]
+
+    # Informational support for callers that can dispatch a child or author a
+    # workflow. Inclusion is capability-gated separately so leaf agents never
+    # receive the provider/model catalog tool.
+    delegation_tools = ["list_subagent_models"]
 
     # Memory tools group
     memory_tools = [
@@ -822,6 +890,7 @@ class ToolCollection(LogMixin):
         self.extension_schemas["snapshot"] = _SNAPSHOT_INPUT_SCHEMA
         self.extension_schemas["resolve"] = _RESOLVE_INPUT_SCHEMA
         self.extension_schemas.update(BROWSER_TOOL_SCHEMAS)
+        self.extension_schemas.update(_AGENT_DISPATCH_INPUT_SCHEMAS)
         self.browser_tool = BrowserTool(
             self.project_path,
             self.workspace_id,
@@ -1140,7 +1209,7 @@ class ToolCollection(LogMixin):
         return await self.build_tool.build_frontend()
 
     # Agent Dispatch Tools (available when include_agent_dispatch_tools is True)
-    async def dispatch_investigation_agent(self, task: str) -> str:
+    async def dispatch_investigation_agent(self, task: str, model_override: Any = None) -> str:
         """
         Dispatch an investigation agent to perform a specific task with read-only access to the codebase.
 
@@ -1173,13 +1242,15 @@ class ToolCollection(LogMixin):
 
         Args:
             task: A detailed description of the investigation task to perform
+            model_override: Optional complete provider/model/thinking_effort route. Call
+                list_subagent_models before selecting one; omit it to inherit defaults.
 
         Returns:
             A comprehensive report of the investigation findings
         """
-        return await self.agent_tool.dispatch_investigation_agent(task)
+        return await self.agent_tool.dispatch_investigation_agent(task, model_override)
 
-    async def dispatch_browser_agent(self, task: str) -> str:
+    async def dispatch_browser_agent(self, task: str, model_override: Any = None) -> str:
         """
         Dispatch a browser agent to perform web-based tasks and interactions.
 
@@ -1214,25 +1285,29 @@ class ToolCollection(LogMixin):
 
         Args:
             task: A detailed description of the browser task to perform
+            model_override: Optional complete provider/model/thinking_effort route. Call
+                list_subagent_models before selecting one; the model must support vision.
 
         Returns:
             A comprehensive report of the browser agent's findings and actions
         """
-        return await self.agent_tool.dispatch_browser_agent(task)
+        return await self.agent_tool.dispatch_browser_agent(task, model_override)
 
-    async def dispatch_coding_agent(self, task: str) -> str:
+    async def dispatch_coding_agent(self, task: str, model_override: Any = None) -> str:
         """
         Dispatch a coding agent for processing coding-related tasks with streaming output.
 
         Args:
             task: A detailed description of the coding task to perform
+            model_override: Optional complete provider/model/thinking_effort route. Call
+                list_subagent_models before selecting one; omit it to inherit defaults.
 
         Returns:
             A summary of the coding process outcome
         """
-        return await self.agent_tool.dispatch_coding_agent(task)
+        return await self.agent_tool.dispatch_coding_agent(task, model_override)
 
-    async def dispatch_general_agent(self, task: str) -> str:
+    async def dispatch_general_agent(self, task: str, model_override: Any = None) -> str:
         """
         Dispatch an autonomous general-purpose agent to complete a self-contained task.
 
@@ -1267,13 +1342,15 @@ class ToolCollection(LogMixin):
 
         Args:
             task: A detailed, self-contained description of the task to perform
+            model_override: Optional complete provider/model/thinking_effort route. Call
+                list_subagent_models before selecting one; omit it to inherit defaults.
 
         Returns:
             The agent's final report on the completed task
         """
-        return await self.agent_tool.dispatch_general_agent(task)
+        return await self.agent_tool.dispatch_general_agent(task, model_override)
 
-    async def dispatch_custom_agent(self, agent: str, task: str) -> str:
+    async def dispatch_custom_agent(self, agent: str, task: str, model_override: Any = None) -> str:
         """Dispatch a named custom agent defined in project or user Markdown.
 
         Select an agent whose description matches a self-contained task. The agent
@@ -1284,11 +1361,31 @@ class ToolCollection(LogMixin):
         Args:
             agent: Name of the custom agent to run.
             task: Detailed, self-contained task including relevant context and expected output.
+            model_override: Optional complete provider/model/thinking_effort route. A runtime
+                override replaces the custom definition route as one atomic selection.
 
         Returns:
             The custom agent's final report.
         """
-        return await self.agent_tool.dispatch_custom_agent(agent, task)
+        return await self.agent_tool.dispatch_custom_agent(agent, task, model_override)
+
+    async def list_subagent_models(self, provider: Optional[str] = None) -> str:
+        """List configured models available for ordinary and Gigacode sub-agents.
+
+        Use this before choosing a non-default route. The result contains no
+        credentials and dispatches revalidate every selection at execution time.
+
+        Args:
+            provider: Optional provider name to filter the catalog. Omit it to
+                list every configured provider; a blank value is also treated
+                as an unfiltered request.
+
+        Returns:
+            A compact Markdown catalog of agent defaults, supported
+            provider/model pairs, exact effort options, nullable-effort rules,
+            and vision support.
+        """
+        return await self.agent_tool.list_subagent_models(provider)
 
     async def run_workflow(
         self,
@@ -2150,6 +2247,9 @@ class ToolCollection(LogMixin):
                                 "Detailed, self-contained task including relevant context and expected output."
                             ),
                         },
+                        "model_override": _AGENT_DISPATCH_INPUT_SCHEMAS["dispatch_custom_agent"]["properties"][
+                            "model_override"
+                        ],
                     },
                     "required": ["agent", "task"],
                 }
@@ -2174,6 +2274,7 @@ class ToolCollection(LogMixin):
             "custom_agent_tools",
             "memory_tools",
             "orchestration_tools",
+            "delegation_tools",
             *self._extension_group_names,
         }
         return frozenset(
@@ -2258,6 +2359,21 @@ class ToolCollection(LogMixin):
         explicit_schema = self.extension_schemas.get(method_name)
         if explicit_schema is not None:
             definition.input_schema = explicit_schema
+        if method_name == "dispatch_custom_agent":
+            catalog = getattr(self.caller, "custom_agent_catalog", None)
+            if catalog is not None and catalog.has_agents():
+                custom_schema = definition.input_schema or {"type": "object", "properties": {}}
+                definition.input_schema = {
+                    **custom_schema,
+                    "properties": {
+                        **custom_schema.get("properties", {}),
+                        "agent": {
+                            "type": "string",
+                            "enum": catalog.names(),
+                            "description": "Name of the custom agent to run.",
+                        },
+                    },
+                }
         context = getattr(self.caller, "sub_agent_context", None)
         workflow_dispatch = method_name in self.agent_dispatch_tools and (
             validated_workflow_depth(context) is not None or has_workflow_context_marker(context)
@@ -2316,6 +2432,9 @@ class ToolCollection(LogMixin):
                 if method_name in self._extension_dispatch_tools or depth >= maximum:
                     return False
 
+        if method_name in self.delegation_tools and not self._caller_can_delegate_or_author_workflow():
+            return False
+
         if method_name == "dispatch_custom_agent":
             catalog = getattr(self.caller, "custom_agent_catalog", None)
             if getattr(self.caller, "sub_agent", False) or catalog is None or not catalog.has_agents():
@@ -2323,6 +2442,9 @@ class ToolCollection(LogMixin):
 
         if self.tool_config.allowed_tools is not None and method_name not in self.tool_config.allowed_tools:
             return False
+
+        if method_name in self.delegation_tools:
+            return True
 
         # gigacode orchestration: only the top-level (non-sub) agent may run
         # workflows, and only when gigacode has been enabled for the session.
@@ -2393,6 +2515,33 @@ class ToolCollection(LogMixin):
 
         # Include all other core tools by default
         return True
+
+    def _caller_can_delegate_or_author_workflow(self) -> bool:
+        """Whether this collection belongs to a non-leaf routing-capable caller."""
+        if not getattr(self.caller, "sub_agent", False) and bool(getattr(self.caller, "gigacode_enabled", False)):
+            return True
+
+        context = getattr(self.caller, "sub_agent_context", None)
+        if has_workflow_context_marker(context):
+            depth = validated_workflow_depth(context)
+            if depth is None or depth[0] >= depth[1]:
+                return False
+
+        enabled_groups = set(self.tool_config.custom_tool_groups or [])
+        dispatch_candidates = set()
+        if self.tool_config.include_agent_dispatch_tools:
+            dispatch_candidates.update(self.agent_dispatch_tools)
+        for group_name in enabled_groups:
+            dispatch_candidates.update(set(getattr(self, group_name, []) or []) & set(self.agent_dispatch_tools))
+
+        dispatch_candidates.difference_update(self.tool_exclusions)
+        if self.tool_config.allowed_tools is not None:
+            dispatch_candidates.intersection_update(self.tool_config.allowed_tools)
+        if "dispatch_custom_agent" in dispatch_candidates:
+            catalog = getattr(self.caller, "custom_agent_catalog", None)
+            if getattr(self.caller, "sub_agent", False) or catalog is None or not catalog.has_agents():
+                dispatch_candidates.discard("dispatch_custom_agent")
+        return bool(dispatch_candidates)
 
     async def initialize(self) -> list[str]:
         """Perform async one-time initialization (LSP auto-detection, etc.).

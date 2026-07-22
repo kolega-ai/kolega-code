@@ -67,16 +67,61 @@ Opaque host-provided `ToolExtension` dispatch callbacks are unavailable in
 workflows until there is a workflow-aware accounting and depth protocol. Ordinary
 non-workflow extension and agent-delegation behavior is unchanged.
 
+### Choosing a sub-agent model
+
+Omit `model_override` to inherit the normal model settings for the requested agent
+type from the session's CLI/host configuration. This is the default and is almost
+always correct.
+
+When a task genuinely needs a different model, call the read-only
+`list_subagent_models` tool before authoring the workflow. It reports the configured
+providers, exact model IDs, supported effort values, and effective agent defaults
+without exposing credentials. You may filter it by provider. Do not guess model IDs
+or effort values.
+
+A Gigacode override is atomic and applies to one direct workflow worker:
+
+```python
+result = await agent(
+    "Review the authentication design for subtle security flaws.",
+    agent_type="investigation",
+    model_override={
+        "provider": "anthropic",
+        "model": "claude-opus-4-8",
+        "effort": "high",
+    },
+)
+```
+
+If `model_override` is present, it must be a complete object with exactly
+`provider`, `model`, and `effort`. For a model with effort controls, `effort` must
+be one of the strings returned by `list_subagent_models`. Use `effort: None` only
+when that model has no effort control; `None` does not mean "use the default".
+Unsupported models, unconfigured providers, malformed objects, and invalid effort
+values fail that `agent()` call and return `None` through normal workflow failure
+handling. They never fall back to an inherited or provider-default model.
+
+The override affects only the worker launched by that `agent()` call, not its
+helper models or descendants. At depth `2`, a child dispatched by that worker uses
+its own role default unless the child dispatch supplies its own complete ordinary
+dispatch override. In Plan mode, the direct worker is always forced to the
+read-only Investigation agent first, and the override is validated and applied to
+that actual worker.
+
+The legacy partial arguments `model=` and `effort=` are no longer accepted.
+Migrate saved workflows to the complete `model_override={...}` object; legacy calls
+fail with a migration error rather than running with partially inherited routing.
+
 ### Primitives (all available as globals in the script)
 
-- `await agent(prompt, *, label=None, phase=None, schema=None, model=None, effort=None, agent_type=None)`
+- `await agent(prompt, *, label=None, phase=None, schema=None, model_override=None, agent_type=None)`
   Dispatch one sub-agent. Returns its report text, or a validated dict when `schema`
   (a JSON Schema) is given, or `None` if the agent failed/was skipped (so you can
   filter it out). `agent_type` is one of "general" (default, full toolset), "investigation"
-  (read-only), "browser", or "coder". `model`/`effort` override the model and thinking
-  effort for that one call — omit them to inherit the session's settings (almost always correct).
-  In plan mode every sub-agent is forced read-only regardless of `agent_type`, so use
-  workflows there for parallel research and synthesis, not edits.
+  (read-only), "browser", or "coder". Omit `model_override` to inherit the requested
+  role's configured defaults; otherwise supply the complete atomic object documented
+  above. In plan mode every sub-agent is forced read-only regardless of `agent_type`,
+  so use workflows there for parallel research and synthesis, not edits.
 - `await parallel(thunks)` — run zero-arg thunks concurrently and wait for ALL (a barrier).
   A thunk that raises resolves to `None`; the call never rejects. Filter `None` before use.
 - `await pipeline(items, *stages)` — run each item through all stages independently, with

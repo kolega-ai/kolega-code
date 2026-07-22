@@ -6,10 +6,12 @@ from typing import Any, Awaitable, Callable, Union, Optional, cast
 from datetime import datetime, timezone
 import time
 
-from kolega_code.config import AgentConfig
+from kolega_code.config import AgentConfig, ModelConfig
 from kolega_code.events import AgentEvent
 from kolega_code.hooks import HookDispatcher, HookEvent
+from kolega_code.llm.specs import supports_vision
 from kolega_code.permissions import PermissionMode, auto_allow_permission_callback
+from ..model_routing import render_subagent_model_catalog, resolve_subagent_model, subagent_model_catalog
 from ..orchestration.accounting import AgentReservation, WorkflowRunAccounting
 from ..orchestration.context import has_workflow_context_marker, validated_workflow_depth
 from .base_tool import BaseTool
@@ -55,6 +57,17 @@ class AgentTool(BaseTool):
         # No need to store these separately since they're already in the parent class
         # self.terminal_manager = terminal_manager
         # self.browser_manager = browser_manager
+
+    def _subagent_dispatch_config(self) -> AgentConfig:
+        """Return the unmodified config descendants should route against.
+
+        A caller launched with a per-dispatch override keeps that override for
+        its own primary loop, but publishes its parent's routing config through
+        ``_subagent_dispatch_config``. This prevents a same-role depth-2 child
+        from accidentally inheriting the direct worker's override.
+        """
+        inherited = getattr(self.caller, "_subagent_dispatch_config", None)
+        return inherited if isinstance(inherited, AgentConfig) else self.config
 
     async def _maybe_await(self, value):
         if inspect.isawaitable(value):
@@ -163,6 +176,9 @@ class AgentTool(BaseTool):
         agent_name_override: Optional[str] = None,
         agent_kwargs: Optional[dict[str, Any]] = None,
         sub_agent_info_extra: Optional[dict[str, Any]] = None,
+        model_override: Any = None,
+        routing_agent_name: Optional[str] = None,
+        inherited_model: Optional[ModelConfig] = None,
     ) -> str:
         """
         Generic method to dispatch any agent type.
@@ -189,9 +205,6 @@ class AgentTool(BaseTool):
             workflow_accounting = getattr(self.caller, "_workflow_accounting", None)
             if not isinstance(workflow_accounting, WorkflowRunAccounting):
                 raise RuntimeError("workflow delegation accounting is unavailable")
-            # Event-loop-confined admission happens before imports, conversation
-            # creation, events, or child construction.
-            reservation = workflow_accounting.reserve_agent()
 
         # Extract the agent name from the class
         module_path, class_name = agent_class_import.rsplit(".", 1)
@@ -200,6 +213,35 @@ class AgentTool(BaseTool):
         module = __import__(module_path, fromlist=[class_name])
         agent_class = getattr(module, class_name)
         agent_name = agent_name_override or agent_class.agent_name
+
+        # Resolve the complete route before any conversation, event, reservation,
+        # or child-construction side effect. Custom agents route their primary loop
+        # through the General role while retaining their model frontmatter as the
+        # inherited value when no runtime override is supplied.
+        dispatch_config = self._subagent_dispatch_config()
+        routing = resolve_subagent_model(
+            dispatch_config,
+            routing_agent_name or agent_name,
+            model_override,
+            effort_key="thinking_effort",
+            inherited_model=inherited_model,
+        )
+        if agent_name == "browser-agent" and not supports_vision(
+            routing.model_config.provider, routing.model_config.model
+        ):
+            raise ValueError(
+                "BrowserAgent requires a vision-capable model; "
+                f"{routing.model_config.provider.value}/{routing.model_config.model} does not support image input."
+            )
+
+        if workflow_accounting is not None:
+            # Event-loop-confined admission remains ahead of conversations, events,
+            # and child construction, but follows atomic route validation.
+            reservation = workflow_accounting.reserve_agent()
+
+        effective_agent_kwargs = dict(agent_kwargs or {})
+        if class_name == "CustomAgent" and routing.requested is not None:
+            effective_agent_kwargs["resolved_model"] = routing.model_config
 
         # Create a unique agent ID
         agent_id = str(uuid.uuid4())
@@ -244,6 +286,10 @@ class AgentTool(BaseTool):
             "conversation_id": conversation_id,
             "parent_tool_call_id": tool_call_id,
             "depth": parent_depth + 1,
+            "requested_routing": (
+                routing.requested.as_dict(effort_key="thinking_effort") if routing.requested is not None else None
+            ),
+            "effective_routing": routing.metadata,
         }
         # A nested dispatch from a workflow worker inherits the workflow's
         # delegation policy and grouping metadata. Cosmetic call labels/indexes
@@ -270,7 +316,7 @@ class AgentTool(BaseTool):
                 workspace_id=self.workspace_id,
                 thread_id=self.thread_id,
                 connection_manager=self.connection_manager,
-                config=self.config,
+                config=routing.config,
                 sub_agent=True,
                 filesystem=self.filesystem,
                 terminal_manager=self.terminal_manager,
@@ -299,7 +345,7 @@ class AgentTool(BaseTool):
                 hook_dispatcher=getattr(self.caller, "hook_dispatcher", None) if self.caller else None,
                 max_iterations=getattr(self.caller, "max_iterations", None),
                 memory_manager=self.memory_manager,
-                **(agent_kwargs or {}),
+                **effective_agent_kwargs,
             )
 
             # Store agent reference
@@ -309,6 +355,10 @@ class AgentTool(BaseTool):
             agent.parent_tool_call_id = tool_call_id
             agent.conversation_id = conversation_id
             agent.sub_agent_context = sub_agent_info
+            # The resolved config is private to this worker's primary loop.
+            # Nested dispatch starts again from the inherited parent config
+            # unless the child call supplies its own complete override.
+            agent._subagent_dispatch_config = dispatch_config
             if workflow_accounting is not None:
                 agent._workflow_accounting = workflow_accounting
                 agent._accounting_reservation = reservation
@@ -473,12 +523,16 @@ class AgentTool(BaseTool):
             if agent_id in self.agents:
                 del self.agents[agent_id]
 
-    async def dispatch_investigation_agent(self, task: str) -> str:
+    async def dispatch_investigation_agent(self, task: str, model_override: Any = None) -> str:
         """
         Dispatch an investigation agent to perform a specific task with read-only access to the codebase.
 
         Args:
             task: A detailed description of the investigation task to perform
+            model_override: Optional complete provider/model/thinking_effort
+                route. Call list_subagent_models before selecting one. All
+                fields are required when present; use null only for a model
+                without effort controls. Invalid routes fail without fallback.
 
         Returns:
             A comprehensive report of the investigation findings
@@ -486,14 +540,19 @@ class AgentTool(BaseTool):
         return await self._dispatch_agent(
             agent_class_import="kolega_code.agent.investigationagent.InvestigationAgent",
             task=task,
+            model_override=model_override,
         )
 
-    async def dispatch_browser_agent(self, task: str) -> str:
+    async def dispatch_browser_agent(self, task: str, model_override: Any = None) -> str:
         """
         Dispatch a browser agent to perform web-based tasks and interactions.
 
         Args:
             task: A detailed description of the browser task to perform
+            model_override: Optional complete provider/model/thinking_effort
+                route from list_subagent_models. The selected catalog entry
+                must have supports_vision=true. All fields are required when
+                present, and invalid routes fail without fallback.
 
         Returns:
             A comprehensive report of the browser agent's findings and actions
@@ -501,14 +560,19 @@ class AgentTool(BaseTool):
         return await self._dispatch_agent(
             agent_class_import="kolega_code.agent.browseragent.BrowserAgent",
             task=task,
+            model_override=model_override,
         )
 
-    async def dispatch_coding_agent(self, task: str) -> str:
+    async def dispatch_coding_agent(self, task: str, model_override: Any = None) -> str:
         """
         Dispatch a coding agent for processing coding-related tasks with streaming output.
 
         Args:
             task: A detailed description of the coding task to perform
+            model_override: Optional complete provider/model/thinking_effort
+                route. Call list_subagent_models before selecting one. All
+                fields are required when present; use null only for a model
+                without effort controls. Invalid routes fail without fallback.
 
         Returns:
             A summary of the coding process outcome
@@ -516,14 +580,19 @@ class AgentTool(BaseTool):
         return await self._dispatch_agent(
             agent_class_import="kolega_code.agent.coder.CoderAgent",
             task=task,
+            model_override=model_override,
         )
 
-    async def dispatch_general_agent(self, task: str) -> str:
+    async def dispatch_general_agent(self, task: str, model_override: Any = None) -> str:
         """
         Dispatch a general-purpose agent to autonomously complete a self-contained task.
 
         Args:
             task: A detailed, self-contained description of the task to perform
+            model_override: Optional complete provider/model/thinking_effort
+                route. Call list_subagent_models before selecting one. All
+                fields are required when present; use null only for a model
+                without effort controls. Invalid routes fail without fallback.
 
         Returns:
             The agent's final report on the completed task
@@ -531,7 +600,13 @@ class AgentTool(BaseTool):
         return await self._dispatch_agent(
             agent_class_import="kolega_code.agent.generalagent.GeneralAgent",
             task=task,
+            model_override=model_override,
         )
+
+    async def list_subagent_models(self, provider: Optional[str] = None) -> str:
+        """Return configured, credential-free routing choices as compact Markdown."""
+        catalog = subagent_model_catalog(self._subagent_dispatch_config(), provider)
+        return render_subagent_model_catalog(catalog)
 
     def _eligible_custom_agent_tools(self) -> set[str]:
         """Return the caller's propagatable, non-recursive tool surface."""
@@ -542,14 +617,22 @@ class AgentTool(BaseTool):
         eligible = set(collection.registry().names())
         eligible.difference_update(getattr(collection, "agent_dispatch_tools", ()))
         eligible.difference_update(getattr(collection, "orchestration_tools", ()))
+        eligible.difference_update(getattr(collection, "delegation_tools", ()))
 
         for extension in getattr(self.caller, "tool_extensions", None) or []:
             if not getattr(extension, "propagate_to_sub_agents", True):
                 eligible.difference_update(getattr(extension, "tools", {}).keys())
         return eligible
 
-    async def dispatch_custom_agent(self, agent: str, task: str) -> str:
-        """Dispatch a discovered custom agent within the caller's capability ceiling."""
+    async def dispatch_custom_agent(self, agent: str, task: str, model_override: Any = None) -> str:
+        """Dispatch a discovered custom agent within the caller's capability ceiling.
+
+        ``model_override`` is an optional complete provider/model/thinking_effort
+        route from ``list_subagent_models``. It atomically replaces the custom
+        definition's route. All fields are required when present; null is valid
+        only for models without effort controls, and invalid routes never fall
+        back.
+        """
         if getattr(self.caller, "sub_agent", False):
             raise ValueError("Custom agents cannot be dispatched from another sub-agent.")
 
@@ -586,6 +669,9 @@ class AgentTool(BaseTool):
                 "agent_scope": definition.scope,
                 "agent_definition_path": str(definition.source_path),
             },
+            model_override=model_override,
+            routing_agent_name="general-agent",
+            inherited_model=definition.resolve_model_config(self.config),
         )
 
     # ------------------------------------------------------------------
@@ -767,6 +853,16 @@ class AgentTool(BaseTool):
             f"- Status: {status}",
             f"- Tokens: {tokens}",
         ]
+        if "actual_agent_type" in metadata:
+            lines.append(f"- Actual agent type: {metadata.get('actual_agent_type') or ''}")
+        if "requested_routing" in metadata:
+            lines.append(
+                f"- Requested routing: {json.dumps(metadata.get('requested_routing'), sort_keys=True, default=str)}"
+            )
+        if "effective_routing" in metadata:
+            lines.append(
+                f"- Effective routing: {json.dumps(metadata.get('effective_routing'), sort_keys=True, default=str)}"
+            )
         if error:
             lines.append(f"- Error: {error}")
         jsonl_path = artifact_paths.get("jsonl")
@@ -834,6 +930,8 @@ class AgentTool(BaseTool):
         }
         if sub_agent_info_extra:
             sub_agent_info.update({k: v for k, v in sub_agent_info_extra.items() if v is not None})
+            if "requested_routing" in sub_agent_info_extra:
+                sub_agent_info["requested_routing"] = sub_agent_info_extra["requested_routing"]
 
         artifact_metadata = dict(artifact_metadata or {})
         artifact_metadata.setdefault("agent_name", agent_name)
@@ -862,6 +960,9 @@ class AgentTool(BaseTool):
             agent.parent_tool_call_id = tool_call_id
             agent.conversation_id = conversation_id
             agent.sub_agent_context = sub_agent_info
+            # ``config`` may contain a route installed only for this direct
+            # workflow worker. Descendants must route from the inherited config.
+            agent._subagent_dispatch_config = self._subagent_dispatch_config()
             agent._workflow_accounting = workflow_accounting
             agent._accounting_reservation = reservation
 

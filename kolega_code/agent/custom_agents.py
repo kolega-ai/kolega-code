@@ -389,11 +389,12 @@ class CustomAgent(BaseAgent):
         hook_dispatcher: Optional[Any] = None,
         max_iterations: Optional[int] = None,
         memory_manager: Optional[Any] = None,
+        resolved_model: Optional[ModelConfig] = None,
     ) -> None:
         self.definition = definition
         self.agent_name = definition.name
-        resolved_model = definition.resolve_model_config(config)
-        custom_config = config.model_copy(update={"long_context_config": resolved_model})
+        effective_model = resolved_model or definition.resolve_model_config(config)
+        custom_config = config.model_copy(update={"long_context_config": effective_model})
 
         super().__init__(
             project_path,

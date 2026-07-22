@@ -41,7 +41,10 @@ def caller():
 @pytest.fixture
 def workflow_tool(tmp_path, connection_manager, caller, monkeypatch):
     monkeypatch.setenv("KOLEGA_CODE_STATE_DIR", str(tmp_path))
-    config = Mock(spec=AgentConfig)
+    config = AgentConfig(
+        anthropic_api_key="anthropic-key",
+        deepseek_api_key="deepseek-key",
+    )
     tool = WorkflowTool(
         str(tmp_path / "project"),
         "ws",
@@ -240,18 +243,47 @@ async def test_failed_agent_call_is_recorded_in_transcript(
 
 @pytest.mark.asyncio
 async def test_run_workflow_carries_phase_and_label_to_dispatch(workflow_tool):
-    tool, _ = workflow_tool
+    tool, state_dir = workflow_tool
     stub, calls = _stub_dispatch()
     tool._agent_tool.dispatch_workflow_agent = stub
 
     script = 'meta = {"name": "p", "description": "d"}\nphase("Build")\nawait agent("go", label="my-label")\nreturn 1\n'
-    await tool.run_workflow(script=script)
+    summary = await tool.run_workflow(script=script)
     _task, _schema, extra, _artifact_paths, _artifact_metadata = calls[0]
     assert extra["phase"] == "Build"
     assert extra["label"] == "my-label"
     assert "workflow_run_id" in extra
     assert extra["depth"] == 1
     assert extra["max_agent_depth"] == 1
+    assert extra["effective_routing"]["provider"] == "anthropic"
+    assert extra["requested_routing"] is None
+    assert extra["actual_agent_type"] == "GeneralAgent"
+    run_id = next(line.split("runId:")[1].strip() for line in summary.splitlines() if "runId:" in line)
+    journal_entry = json.loads((state_dir / "workflows" / run_id / "journal.jsonl").read_text().splitlines()[0])
+    transcript = (state_dir / "workflows" / run_id / "transcript.md").read_text()
+    assert "requested_routing" in journal_entry
+    assert journal_entry["requested_routing"] is None
+    assert "requested_routing: `inherited (null)`" in transcript
+
+
+@pytest.mark.asyncio
+async def test_resume_cache_distinguishes_plan_mode_forced_worker(workflow_tool) -> None:
+    tool, _ = workflow_tool
+    stub, calls = _stub_dispatch()
+    tool._agent_tool.dispatch_workflow_agent = stub
+    script = 'meta = {"name": "cache-mode", "description": "d"}\nreturn await agent("same task", agent_type="coder")\n'
+
+    first_summary = await tool.run_workflow(script=script)
+    first_run_id = next(line.split("runId:")[1].strip() for line in first_summary.splitlines() if "runId:" in line)
+    assert len(calls) == 1
+    assert calls[0][2]["actual_agent_type"] == "CoderAgent"
+
+    calls.clear()
+    tool.caller.tool_collection.read_only = True
+    await tool.run_workflow(resume_from_run_id=first_run_id)
+
+    assert len(calls) == 1
+    assert calls[0][2]["actual_agent_type"] == "InvestigationAgent"
 
 
 @pytest.mark.asyncio
@@ -312,7 +344,11 @@ async def test_per_agent_markdown_and_jsonl_are_written(workflow_tool):
     markdown_text = markdown.read_text()
     assert "artifact task" in markdown_text
     assert "final artifact recap" in markdown_text
+    assert "- Requested routing: null" in markdown_text
     assert "Tokens: 11" in markdown_text
+    assert "Actual agent type: ArtifactAgent" in markdown_text
+    assert "Requested routing: null" in markdown_text
+    assert '"provider": "anthropic"' in markdown_text
     assert "artifact answer" in raw.read_text()
     assert json.loads((Path(state_dir) / "workflows" / run_id / "run.json").read_text())["total_tokens"] == 11
 
@@ -347,7 +383,7 @@ async def test_read_only_caller_forces_investigation_agents(workflow_tool, calle
     seen = []
 
     async def stub(agent_class, task, *, config=None, schema=None, sub_agent_info_extra=None, **kwargs):
-        seen.append(agent_class.__name__)
+        seen.append((agent_class.__name__, config, sub_agent_info_extra))
         return (f"recap:{task}", 1, None)
 
     tool._agent_tool.dispatch_workflow_agent = stub
@@ -358,7 +394,8 @@ async def test_read_only_caller_forces_investigation_agents(workflow_tool, calle
         "return 1\n"
     )
     await tool.run_workflow(script=script)
-    assert seen == ["InvestigationAgent", "InvestigationAgent"]
+    assert [entry[0] for entry in seen] == ["InvestigationAgent", "InvestigationAgent"]
+    assert all(entry[2]["actual_agent_type"] == "InvestigationAgent" for entry in seen)
 
 
 @pytest.mark.asyncio
@@ -383,24 +420,219 @@ def _config_with_investigation_override() -> AgentConfig:
     )
 
 
-def test_config_override_clears_agent_models_for_explicit_model(tmp_path, connection_manager, caller):
+@pytest.mark.asyncio
+async def test_atomic_override_replaces_only_actual_worker_role(tmp_path, connection_manager, caller):
     config = _config_with_investigation_override()
     tool = WorkflowTool(str(tmp_path / "project"), "ws", "thread", connection_manager, config, caller, None)
+    original_fast = config.fast_config
+    original_thinking = config.thinking_config
+    original_agent_models = dict(config.agent_models)
+    captured: list[AgentConfig] = []
 
-    overridden = tool._config_override("claude-opus-4-7", "high")
-    assert overridden is not None
+    async def stub(
+        agent_class: type[Any],
+        task: str,
+        *,
+        config: AgentConfig | None = None,
+        **kwargs: Any,
+    ):
+        assert agent_class.__name__ == "InvestigationAgent"
+        assert config is not None
+        captured.append(config)
+        return ("ok", 1, None)
 
-    assert overridden.long_context_config.model == "claude-opus-4-7"
-    assert overridden.long_context_config.thinking_effort == "high"
-    # The workflow author's explicit model wins over the role override.
-    assert overridden.agent_models == {}
-    assert overridden.model_config_for_agent("investigation-agent").model == "claude-opus-4-7"
+    tool._agent_tool.dispatch_workflow_agent = stub
+    script = (
+        'meta = {"name": "override", "description": "d"}\n'
+        'return await agent("route", agent_type="investigation", '
+        'model_override={"provider": "anthropic", "model": "claude-opus-4-7", "effort": "high"})\n'
+    )
+    await tool.run_workflow(script=script)
+
+    overridden = captured[0]
+    selected = overridden.model_config_for_agent("investigation-agent")
+    assert selected.provider == ModelProvider.ANTHROPIC
+    assert selected.model == "claude-opus-4-7"
+    assert selected.thinking_effort == "high"
+    assert overridden.fast_config == original_fast
+    assert overridden.thinking_config == original_thinking
+    assert config.agent_models == original_agent_models
 
 
-def test_config_override_none_preserves_role_overrides(tmp_path, connection_manager, caller):
+@pytest.mark.asyncio
+async def test_atomic_override_accepts_explicit_null_for_no_effort_model(workflow_tool):
+    tool, _ = workflow_tool
+    captured: list[AgentConfig] = []
+
+    async def stub(
+        agent_class: type[Any],
+        task: str,
+        *,
+        config: AgentConfig | None = None,
+        **kwargs: Any,
+    ):
+        assert config is not None
+        captured.append(config)
+        return ("ok", 1, None)
+
+    tool._agent_tool.dispatch_workflow_agent = stub
+    script = (
+        'meta = {"name": "no-effort", "description": "d"}\n'
+        'return await agent("route", model_override={"provider": "anthropic", '
+        '"model": "claude-sonnet-4-5-20250929", "effort": None})\n'
+    )
+    await tool.run_workflow(script=script)
+
+    selected = captured[0].model_config_for_agent("general-agent")
+    assert selected.model == "claude-sonnet-4-5-20250929"
+    assert selected.thinking_effort is None
+
+
+@pytest.mark.asyncio
+async def test_no_override_passes_through_role_configuration(tmp_path, connection_manager, caller):
     config = _config_with_investigation_override()
     tool = WorkflowTool(str(tmp_path / "project"), "ws", "thread", connection_manager, config, caller, None)
+    captured: list[Any] = []
 
-    # No explicit model/effort -> no clone, role overrides still flow to sub-agents.
-    assert tool._config_override(None, None) is None
+    async def stub(agent_class, task, *, config=None, sub_agent_info_extra=None, **kwargs):
+        captured.append((config, sub_agent_info_extra))
+        return ("ok", 1, None)
+
+    tool._agent_tool.dispatch_workflow_agent = stub
+    script = 'meta = {"name": "inherit", "description": "d"}\nreturn await agent("route", agent_type="investigation")\n'
+    await tool.run_workflow(script=script)
+
+    assert captured[0][0] is None
+    assert captured[0][1]["effective_routing"] == {
+        "provider": "deepseek",
+        "model": "deepseek-v4-flash",
+        "effort": None,
+    }
     assert config.model_config_for_agent("investigation-agent").model == "deepseek-v4-flash"
+
+
+@pytest.mark.asyncio
+async def test_invalid_override_is_a_failed_agent_result_without_dispatch(workflow_tool):
+    tool, state_dir = workflow_tool
+    stub = AsyncMock()
+    tool._agent_tool.dispatch_workflow_agent = stub
+    script = (
+        'meta = {"name": "invalid-route", "description": "d"}\n'
+        'return await agent("route", model_override={'
+        '"provider": "anthropic", "model": "claude-opus-4-8", "effort": None})\n'
+    )
+
+    summary = await tool.run_workflow(script=script)
+
+    stub.assert_not_awaited()
+    run_id = next(line.split("runId:")[1].strip() for line in summary.splitlines() if "runId:" in line)
+    run_dir = Path(state_dir) / "workflows" / run_id
+    journal_entry = json.loads((run_dir / "journal.jsonl").read_text().splitlines()[0])
+    assert journal_entry["status"] == "failed"
+    assert "effort must be a string" in journal_entry["error"]
+    assert journal_entry["actual_agent_type"] == "GeneralAgent"
+
+
+@pytest.mark.asyncio
+async def test_browser_override_requires_vision_after_actual_class_selection(workflow_tool):
+    tool, state_dir = workflow_tool
+    stub = AsyncMock()
+    tool._agent_tool.dispatch_workflow_agent = stub
+    script = (
+        'meta = {"name": "browser-route", "description": "d"}\n'
+        'return await agent("browse", agent_type="browser", model_override={'
+        '"provider": "deepseek", "model": "deepseek-v4-flash", "effort": "high"})\n'
+    )
+
+    summary = await tool.run_workflow(script=script)
+
+    stub.assert_not_awaited()
+    run_id = next(line.split("runId:")[1].strip() for line in summary.splitlines() if "runId:" in line)
+    entry = json.loads((Path(state_dir) / "workflows" / run_id / "journal.jsonl").read_text().splitlines()[0])
+    assert entry["status"] == "failed"
+    assert "vision-capable" in entry["error"]
+    assert entry["actual_agent_type"] == "BrowserAgent"
+
+
+@pytest.mark.asyncio
+async def test_plan_mode_resolves_override_for_forced_investigation_agent(workflow_tool, caller):
+    tool, state_dir = workflow_tool
+    caller.tool_collection.read_only = True
+    captured: list[tuple[type[Any], AgentConfig, dict[str, Any], dict[str, Any]]] = []
+
+    async def stub(
+        agent_class: type[Any],
+        task: str,
+        *,
+        config: AgentConfig | None = None,
+        sub_agent_info_extra: dict[str, Any] | None = None,
+        artifact_metadata: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ):
+        assert config is not None
+        assert sub_agent_info_extra is not None
+        assert artifact_metadata is not None
+        captured.append((agent_class, config, sub_agent_info_extra, artifact_metadata))
+        return ("ok", 1, None)
+
+    tool._agent_tool.dispatch_workflow_agent = stub
+    script = (
+        'meta = {"name": "plan-route", "description": "d"}\n'
+        'return await agent("route", agent_type="browser", model_override={'
+        '"provider": "deepseek", "model": "deepseek-v4-flash", "effort": "high"})\n'
+    )
+    summary = await tool.run_workflow(script=script)
+
+    agent_class, config, sub_info, artifact_metadata = captured[0]
+    assert agent_class.__name__ == "InvestigationAgent"
+    assert config.model_config_for_agent("investigation-agent").provider == ModelProvider.DEEPSEEK
+    assert sub_info["actual_agent_type"] == "InvestigationAgent"
+    assert sub_info["requested_routing"]["provider"] == "deepseek"
+    assert artifact_metadata["actual_agent_type"] == "InvestigationAgent"
+
+    run_id = next(line.split("runId:")[1].strip() for line in summary.splitlines() if "runId:" in line)
+    run_dir = Path(state_dir) / "workflows" / run_id
+    journal_entry = json.loads((run_dir / "journal.jsonl").read_text().splitlines()[0])
+    assert journal_entry["actual_agent_type"] == "InvestigationAgent"
+    assert journal_entry["effective_routing"]["provider"] == "deepseek"
+    transcript = (run_dir / "transcript.md").read_text()
+    assert "InvestigationAgent" in transcript
+    assert "deepseek-v4-flash" in transcript
+
+
+@pytest.mark.asyncio
+async def test_changed_inherited_routing_invalidates_resume(
+    tmp_path: Path,
+    connection_manager,
+    caller,
+    monkeypatch,
+):
+    monkeypatch.setenv("KOLEGA_CODE_STATE_DIR", str(tmp_path))
+    first_config = _config_with_investigation_override()
+    first = WorkflowTool(str(tmp_path / "project"), "ws", "thread", connection_manager, first_config, caller, None)
+    first_stub, first_calls = _stub_dispatch()
+    first._agent_tool.dispatch_workflow_agent = first_stub
+    script = (
+        'meta = {"name": "fingerprint", "description": "d"}\nreturn await agent("route", agent_type="investigation")\n'
+    )
+    first_summary = await first.run_workflow(script=script)
+    first_run_id = next(line.split("runId:")[1].strip() for line in first_summary.splitlines() if "runId:" in line)
+    assert len(first_calls) == 1
+
+    second_config = first_config.model_copy(
+        update={
+            "agent_models": {
+                "investigation": ModelConfig(
+                    provider=ModelProvider.ANTHROPIC,
+                    model="claude-opus-4-8",
+                    thinking_effort="high",
+                )
+            }
+        }
+    )
+    second = WorkflowTool(str(tmp_path / "project"), "ws", "thread", connection_manager, second_config, caller, None)
+    second_stub, second_calls = _stub_dispatch()
+    second._agent_tool.dispatch_workflow_agent = second_stub
+
+    await second.run_workflow(script=script, resume_from_run_id=first_run_id)
+    assert len(second_calls) == 1
