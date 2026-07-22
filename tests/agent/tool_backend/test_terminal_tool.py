@@ -175,6 +175,42 @@ class TestUnifiedExecTools:
         assert kwargs["workdir"] == str(terminal_tool.project_path)
 
     @pytest.mark.asyncio
+    async def test_exec_command_resolves_relative_workdir_against_project_root(self, terminal_tool):
+        terminal_tool.terminal_manager = Mock()
+        terminal_tool.terminal_manager.exec_command = AsyncMock(
+            return_value=ExecResult(status="exited", exit_code=0, output="", duration_ms=1)
+        )
+
+        # "." must mean the project root, not the process cwd the CLI was
+        # launched from (regression: commands ran in the launch directory).
+        await terminal_tool.exec_command("pwd", workdir=".")
+        kwargs = terminal_tool.terminal_manager.exec_command.call_args.kwargs
+        assert kwargs["workdir"] == str(terminal_tool.project_path)
+
+        await terminal_tool.exec_command("pwd", workdir="sub/dir")
+        kwargs = terminal_tool.terminal_manager.exec_command.call_args.kwargs
+        assert kwargs["workdir"] == str(terminal_tool.project_path / "sub" / "dir")
+
+    @pytest.mark.asyncio
+    async def test_exec_command_end_to_end_runs_in_project_root(self, terminal_tool):
+        # Real PTY through the default manager: even when the CLI process runs
+        # elsewhere, workdir="." must land in the project root.
+        data = json.loads(await terminal_tool.exec_command("pwd", workdir=".", yield_time_ms=5000))
+        assert data["status"] == "exited"
+        assert data["output"].strip().endswith(terminal_tool.project_path.name)
+
+    @pytest.mark.asyncio
+    async def test_exec_command_passes_absolute_workdir_through(self, terminal_tool):
+        terminal_tool.terminal_manager = Mock()
+        terminal_tool.terminal_manager.exec_command = AsyncMock(
+            return_value=ExecResult(status="exited", exit_code=0, output="", duration_ms=1)
+        )
+
+        await terminal_tool.exec_command("pwd", workdir="/somewhere/else")
+        kwargs = terminal_tool.terminal_manager.exec_command.call_args.kwargs
+        assert kwargs["workdir"] == "/somewhere/else"
+
+    @pytest.mark.asyncio
     async def test_exec_command_running_returns_session_id(self, terminal_tool):
         terminal_tool.terminal_manager = Mock()
         terminal_tool.terminal_manager.exec_command = AsyncMock(

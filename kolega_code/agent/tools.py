@@ -606,7 +606,9 @@ class ToolCollection(LogMixin):
 
         # Create terminal manager instance if not provided
         if terminal_manager is None:
-            self.terminal_manager = LocalTerminalManager(workspace_id, thread_id, connection_manager)
+            self.terminal_manager = LocalTerminalManager(
+                workspace_id, thread_id, connection_manager, default_workdir=self.project_path
+            )
         else:
             self.terminal_manager = terminal_manager
 

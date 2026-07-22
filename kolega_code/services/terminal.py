@@ -19,7 +19,7 @@ import signal
 import struct
 import termios
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Union
 
 from ..events import AgentConnectionManager
 from ..events import AgentEvent
@@ -333,15 +333,23 @@ class PtySession:
 class LocalTerminalManager(TerminalManager):
     """Registry of local PTY sessions implementing the unified-exec interface."""
 
-    def __init__(self, workspace_id: str, thread_id: str, connection_manager: AgentConnectionManager):
+    def __init__(
+        self,
+        workspace_id: str,
+        thread_id: str,
+        connection_manager: AgentConnectionManager,
+        default_workdir: Optional[Union[str, os.PathLike]] = None,
+    ):
         self.workspace_id = workspace_id
         self.thread_id = thread_id
         self.connection_manager = connection_manager
         self.sessions: Dict[str, PtySession] = {}
         self._counter = 0
         self.auto_activate_venv = True
-        # Default working directory for commands that don't pass one.
-        self.default_workdir = os.getcwd()
+        # Default working directory for commands that don't pass one. Callers
+        # that serve a project should pass its root; the process cwd is only a
+        # fallback for standalone use.
+        self.default_workdir = str(default_workdir) if default_workdir else os.getcwd()
 
     def _next_session_id(self) -> str:
         self._counter += 1
@@ -422,7 +430,9 @@ class LocalTerminalManager(TerminalManager):
         env: Optional[Dict[str, str]] = None,
     ) -> ExecResult:
         yield_ms = clamp_yield(yield_time_ms, poll=False)
-        wd = workdir or self.default_workdir or os.getcwd()
+        # workdir should be absolute; a relative path would chdir relative to
+        # this process's cwd, not default_workdir.
+        wd = workdir or self.default_workdir
         session_id = self._next_session_id()
 
         await self._emit_command(session_id, command)

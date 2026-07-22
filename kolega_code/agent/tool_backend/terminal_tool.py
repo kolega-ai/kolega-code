@@ -47,7 +47,10 @@ class TerminalTool(BaseTool):
         # Use injected terminal_manager if provided, otherwise create local one
         if self.terminal_manager is None:
             self.terminal_manager = LocalTerminalManager(
-                workspace_id=workspace_id, thread_id=thread_id, connection_manager=connection_manager
+                workspace_id=workspace_id,
+                thread_id=thread_id,
+                connection_manager=connection_manager,
+                default_workdir=self.project_path,
             )
 
     async def _run_command_security_check(self, command: str) -> Tuple[bool, str]:
@@ -135,7 +138,8 @@ class TerminalTool(BaseTool):
 
         Args:
             command: Shell command line, executed via `bash -c`.
-            workdir: Working directory for the command. Defaults to project root.
+            workdir: Working directory for the command. Relative paths resolve
+                     against the project root. Defaults to project root.
             yield_time_ms: How long to wait for output/exit before returning,
                            in milliseconds (clamped to 250–30000).
             max_output_tokens: Maximum tokens of output to return in this call.
@@ -151,7 +155,9 @@ class TerminalTool(BaseTool):
             if not allowed:
                 return denied_reason
 
-        wd = workdir or str(self.project_path)
+        # Resolve relative workdirs against the project root (same contract as
+        # the file tools), never against this process's cwd.
+        wd = os.path.normpath(str(self.project_path / workdir)) if workdir else str(self.project_path)
         try:
             result = await self.terminal_manager.exec_command(
                 command,
