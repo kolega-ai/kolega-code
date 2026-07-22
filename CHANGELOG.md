@@ -6,6 +6,17 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.22.1 - 2026-07-22
+
+### Fixed
+
+- Eliminated post-edit LSP diagnostics delays by invalidating cached diagnostics
+  immediately and avoiding redundant waits after successful edits.
+- Hardened subagent dispatch guidance and schemas so optional model overrides are
+  omitted by default and explicit overrides cannot contain blank route fields.
+- Clarified that contingent future work remains ordinary task execution and does
+  not authorize autonomous goal mode.
+
 ## 0.22.0 - 2026-07-22
 
 ### Added
