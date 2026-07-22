@@ -466,6 +466,43 @@ class TestLspEditTool:
 
         assert f"{project_path.as_uri()}/link/../target.py" == uri
 
+    async def test_multi_path_diagnostics_uses_batch_and_preserves_order(
+        self,
+        lsp_edit_tool,
+        mock_lsp_manager,
+        project_path,
+    ):
+        for path in ("first.py", "second.py"):
+            (project_path / path).write_text("value = 1\n", encoding="utf-8")
+        mock_lsp_manager._config.auto_diagnostics_on_edit = True
+        mock_lsp_manager.get_fresh_diagnostics_for_paths = AsyncMock(
+            return_value={
+                "first.py": [
+                    LspDiagnostic(
+                        range={"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 5}},
+                        severity=1,
+                        message="first issue",
+                        source="pyright",
+                    )
+                ],
+                "second.py": [
+                    LspDiagnostic(
+                        range={"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 6}},
+                        severity=2,
+                        message="second issue",
+                        source="pyright",
+                    )
+                ],
+            }
+        )
+
+        result = await lsp_edit_tool._diagnostics_for_paths(("first.py", "second.py", "first.py"))
+
+        mock_lsp_manager.get_fresh_diagnostics_for_paths.assert_awaited_once_with(
+            {"first.py": "pyright", "second.py": "pyright"}
+        )
+        assert result.index("first issue") < result.index("second issue")
+
     async def test_rename_preview_does_not_write_file(self, lsp_edit_tool, mock_lsp_manager, project_path):
         path = project_path / "foo.py"
         path.write_text("old = 1\nprint(old)\n", encoding="utf-8")

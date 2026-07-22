@@ -579,12 +579,8 @@ class EditTool(BaseTool):
                 summaries.append(f"M {operation.path}")
 
         result = "Success. Updated the following files:\n" + "\n".join(summaries)
-        diagnostics: list[str] = []
-        for path in changed:
-            if working[path] is not None:
-                item = await self._maybe_append_lsp_diagnostics(path)
-                if item:
-                    diagnostics.append(item.strip())
+        diagnostic_paths = [path for path in changed if working[path] is not None]
+        diagnostics = await self._lsp_diagnostics_for_paths(diagnostic_paths)
         if diagnostics:
             result += "\n\n" + "\n\n".join(diagnostics)
         return result
@@ -929,3 +925,33 @@ class EditTool(BaseTool):
         # Blank-line separator so the diagnostics block reads as a distinct section
         # after the result line (e.g. "Edited foo.py\n\nLSP diagnostics (...)").
         return "\n\n" + format_diagnostics(diagnostics, path, source=server_name)
+
+    async def _lsp_diagnostics_for_paths(self, paths: list[str]) -> list[str]:
+        """Query and format post-edit diagnostics for multiple paths."""
+        if self._lsp_manager is None or not self._lsp_manager.enabled:
+            return []
+        if not self._lsp_manager._config.auto_diagnostics_on_edit:
+            return []
+        if not self._lsp_manager._initialized:
+            await self._lsp_manager.initialize()
+
+        servers = {
+            path: server_name
+            for path in dict.fromkeys(paths)
+            if (server_name := self._lsp_manager.server_for_path(path)) is not None
+        }
+        if not servers:
+            return []
+
+        try:
+            results = await self._lsp_manager.get_fresh_diagnostics_for_paths(servers)
+        except Exception:
+            return []
+
+        from kolega_code.services.lsp import format_diagnostics
+
+        return [
+            format_diagnostics(results[path], path, source=server_name)
+            for path, server_name in servers.items()
+            if results.get(path)
+        ]

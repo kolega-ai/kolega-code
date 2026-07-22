@@ -74,7 +74,7 @@ class LspConfig:
     """Master kill-switch. Set ``False`` to disable all LSP activity."""
 
     auto_diagnostics_on_edit: bool = True
-    """Append LSP diagnostics to ``edit`` / ``multi_edit`` / ``write`` results."""
+    """Append LSP diagnostics to supported post-edit tool results."""
 
     max_diagnostics: int = 20
     """Maximum diagnostics returned per file per query."""

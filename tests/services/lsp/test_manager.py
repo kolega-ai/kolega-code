@@ -6,6 +6,7 @@ End-to-end tests with a fake server are in ``test_integration.py``.
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -387,3 +388,126 @@ def test_has_capability_absent_is_unsupported():
 
 def test_has_capability_none_client_is_unsupported():
     assert LspManager._has_capability(None, "definitionProvider") is False
+
+
+# ---------------------------------------------------------------------------
+# diagnostics routing and push waiters
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_pull_diagnostics_skips_server_without_capability(manager: LspManager):
+    client = MagicMock()
+    client.server_capabilities = {"hoverProvider": True}
+    client.request = AsyncMock()
+
+    result = await manager._pull_diagnostics(client, "file:///test.py")
+
+    assert result is None
+    client.request.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_push_wait_returns_when_publish_already_arrived(manager: LspManager):
+    uri = "file:///already.py"
+    generation = manager._diagnostic_generation("python", uri)
+    manager._on_publish_diagnostics(
+        "python",
+        {"uri": uri, "diagnostics": [], "version": None},
+    )
+
+    await asyncio.wait_for(
+        manager._wait_for_push_diagnostics(
+            "python",
+            uri,
+            after_generation=generation,
+            timeout=3.0,
+        ),
+        timeout=1.0,
+    )
+
+    assert manager._diag_waiters == {}
+
+
+@pytest.mark.asyncio
+async def test_push_wait_is_released_by_later_publish(manager: LspManager):
+    uri = "file:///later.py"
+    generation = manager._diagnostic_generation("python", uri)
+    waiting = asyncio.create_task(
+        manager._wait_for_push_diagnostics(
+            "python",
+            uri,
+            after_generation=generation,
+            timeout=3.0,
+        )
+    )
+    await asyncio.sleep(0)
+
+    assert len(manager._diag_waiters[("python", uri)]) == 1
+    manager._on_publish_diagnostics(
+        "python",
+        {"uri": uri, "diagnostics": [], "version": 1},
+    )
+    await asyncio.wait_for(waiting, timeout=1.0)
+
+    assert manager._diag_waiters == {}
+
+
+@pytest.mark.asyncio
+async def test_push_publish_releases_all_concurrent_waiters(manager: LspManager):
+    uri = "file:///concurrent.py"
+    generation = manager._diagnostic_generation("python", uri)
+    waiting = [
+        asyncio.create_task(
+            manager._wait_for_push_diagnostics(
+                "python",
+                uri,
+                after_generation=generation,
+                timeout=3.0,
+            )
+        )
+        for _ in range(2)
+    ]
+    await asyncio.sleep(0)
+
+    assert len(manager._diag_waiters[("python", uri)]) == 2
+    manager._on_publish_diagnostics(
+        "python",
+        {"uri": uri, "diagnostics": [], "version": 1},
+    )
+    await asyncio.wait_for(asyncio.gather(*waiting), timeout=1.0)
+
+    assert manager._diag_waiters == {}
+
+
+@pytest.mark.asyncio
+async def test_fresh_diagnostics_batch_is_ordered_unique_bounded_and_isolates_failures(
+    manager: LspManager,
+):
+    active = 0
+    max_active = 0
+    calls: list[str] = []
+
+    async def get_fresh(path: str) -> list[LspDiagnostic]:
+        nonlocal active, max_active
+        calls.append(path)
+        active += 1
+        max_active = max(max_active, active)
+        try:
+            await asyncio.sleep(0.01)
+            if path == "bad.py":
+                raise RuntimeError("broken server")
+            return [_make_diag(0, path)]
+        finally:
+            active -= 1
+
+    manager.get_fresh_diagnostics = get_fresh  # type: ignore[method-assign]
+    paths = ["a.py", "b.py", "c.py", "d.py", "e.py", "bad.py", "a.py"]
+
+    results = await manager.get_fresh_diagnostics_for_paths(paths)
+
+    assert list(results) == paths[:-1]
+    assert calls.count("a.py") == 1
+    assert max_active == 4
+    assert results["a.py"][0].message == "a.py"
+    assert results["bad.py"] == []
