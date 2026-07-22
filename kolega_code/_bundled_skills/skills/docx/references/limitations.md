@@ -1,106 +1,100 @@
-# Limitations
+# Remaining limits
 
 ## Contents
 
-- [Round-trip fidelity](#round-trip-fidelity)
-- [Revisions and comments](#revisions-and-comments)
-- [Drawings and media](#drawings-and-media)
+- [Fidelity and styles](#fidelity-and-styles)
+- [Stories and replacement](#stories-and-replacement)
+- [Images and drawings](#images-and-drawings)
 - [Fields and layout](#fields-and-layout)
-- [Conversion](#conversion)
-- [Security boundaries](#security-boundaries)
+- [Revisions, signatures, and protected workflows](#revisions-signatures-and-protected-workflows)
+- [PDF and conformance](#pdf-and-conformance)
+- [Security boundary](#security-boundary)
 
-## Round-trip fidelity
+## Fidelity and styles
 
-The tool preserves unknown untouched content best-effort where `python-docx` retains package
-parts and relationships. It does not promise lossless arbitrary OOXML editing or perfect
-round trips. Unsupported parts are inventoried when recognizable, but an empty warning list
-is not proof that every producer-specific extension is understood.
+`python-docx` preserves unknown untouched package content only best-effort. Opening and saving
+can normalize OOXML, relationships, compatibility markup, numbering, drawings, fields, themes,
+or application-specific extensions. Inspect warnings before and after mutation and never
+promise byte-identical or perfect round-trip fidelity.
 
-Direct edits can change serialization, relationship ordering, generated identifiers, or
-application metadata. Reinspect the output and compare rendered pages when fidelity matters.
+Style inspection reports direct paragraph/character style definitions and `based_on`; it does
+not compute the fully inherited/effective property cascade from document defaults, themes,
+linked styles, table styles, or direct formatting. A renderer is required to confirm actual
+typography and pagination. For fidelity-critical edits, use native Microsoft Word automation
+or a reviewed manual Word workflow.
 
-Digital signatures are not preserved. Any package mutation invalidates a signature even if
-signature parts remain. Do not use this tool where signature preservation is required.
+## Stories and replacement
 
-## Revisions and comments
+Body, table-cell, header, and footer paragraphs can be inspected. `replace_text` can search
+body/header/footer scopes, but story-address image replacement is body-only:
+`word/document.xml#inline-N`. Header/footer inline images cannot be replaced by story address.
 
-Tracked changes are detected and reported, not interpreted as accepted/rejected text. The
-tool does not create, accept, reject, or safely edit revisions. Replacement refuses matches
-that occupy or cross revision markup.
+Replacement is paragraph-local and rejects protected boundaries. It does not cross paragraphs
+or safely normalize hyperlinks, fields, drawings, comments, revisions, or unsupported markup.
+Insert/delete paragraph and table indices address top-level body content only.
 
-Comment parts and ranges are detected, but complete comment workflows are unsupported. The
-tool does not create, reply to, resolve, or reliably renumber comments. Replacement refuses
-matches that occupy or cross comment ranges.
+## Images and drawings
 
-## Drawings and media
+The tool creates and replaces inline images only. It does not create, reposition, or replace
+floating/anchored drawings, text boxes, SmartArt, charts, equations, OLE objects, or other
+embedded objects. Existing unsupported drawings are preservation-sensitive.
 
-Creation and insertion support inline raster images. Body inline-image replacement changes
-the selected image relationship and can adjust its extent.
-
-The following are not fully supported:
-
-- Floating-image insertion or replacement.
-- Text wrapping, anchors, positioning, crop, rotation, artistic effects, or grouped shapes.
-- Charts, diagrams, SmartArt, ink, OLE objects, ActiveX, and embedded packages.
-- Image replacement inside headers, footers, text boxes, comments, footnotes, or endnotes.
-- Universal preservation of producer-specific drawing extensions.
-
-Image replacement can leave an unused old media part in the package. This favors preserving
-relationships over package compaction.
+Image alt text, title, decorative state, display dimensions, pixels, and effective PPI are
+reported for supported inline occurrences. This does not prove reading order, crop behavior,
+contrast, semantic quality, or renderer presentation.
 
 ## Fields and layout
 
-The tool inserts PAGE and TOC field markup with placeholder result text. It does not run a
-pagination engine.
+PAGE, NUMPAGES, SECTIONPAGES, TOC, SEQ, REF, and DATE operations write field markup and
+placeholder results. `update_fields_on_open` asks a consumer to update fields, but Word,
+LibreOffice, policy settings, locked fields, protected view, or automation mode may ignore it.
+There is no guaranteed field refresh, pagination engine, TOC generation, or reference
+resolution in the CLI.
 
-- Saving a PAGE field does not prove its page number.
-- Saving a TOC field does not refresh entries, page numbers, links, or formatting.
-- Automatic TOC refresh is unsupported.
-- Update fields in a layout application, then inspect rendered output.
+Inspect field instructions/results after opening, refreshing, and saving in the target layout
+application. Do not derive editable-DOCX pagination claims from a PDF rendered elsewhere.
 
-The inspector reports field markup but does not evaluate arbitrary field instructions.
-Section, header, footer, widow/orphan, keep-with-next, font substitution, line-breaking, and
-printer-metric interactions can only be judged after layout.
+## Revisions, signatures, and protected workflows
 
-## Conversion
+Tracked revisions and comments are detected but not interpreted. The tool does not accept,
+reject, resolve, author, or safely rewrite tracked changes. Route revision-heavy documents and
+tracked-change resolution to native Word.
 
-Plain-text conversion represents main-body paragraphs and tables, then non-empty
-header/footer stories and their tables. Inherited stories are deduplicated by package-part
-identity, not displayed text; distinct same-text stories and header/footer roles remain
-distinct. It does not reproduce page layout, columns, text boxes, floating drawings, footnote
-placement, revision semantics, or every field result.
+Do not mutate digitally signed documents. Any package mutation can invalidate signatures; the
+tool does not preserve, verify, or re-sign them. It also does not provide full workflows for
+content controls, forms, document protection, rights management, mail merge, or macros.
 
-DOCX-to-PDF is best-effort and requires an external LibreOffice `soffice` executable.
-LibreOffice output can differ from Microsoft Word because of fonts, layout algorithms,
-platform metrics, fields, external links, and unsupported features. Validation rejects PDFs
-over 64 MiB or 1,000 pages, checks text on at most the first 50 pages, and rejects more than
-1,000,000 extracted validation characters. Signature, reopen, bounded extraction, and
-nonzero-page checks do not prove visual correctness or inspect pages beyond the extraction
-limit.
+## PDF and conformance
 
-If LibreOffice is unavailable, PDF conversion returns `missing_dependency`. The default smoke
-test still validates all core Python workflows and reports the PDF check as skipped.
+LibreOffice conversion is best-effort and may differ from Microsoft Word in font substitution,
+line/table wrapping, page breaks, fields, drawing placement, and TOC references.
 
-## Security boundaries
+`render` output inherits every conversion caveat: the PNG pages show LibreOffice's
+interpretation of the document with unrefreshed fields, not Microsoft Word's layout. Rendered
+pages are a review aid, never a deliverable, and are bounded by the pixel and page budgets in
+[render](references/operations.md#render). Rendering additionally requires the optional
+`pypdfium2` package; without it, only structural checks are available and that must be
+disclosed.
 
-Preflight rejects macros, encrypted packages, unsafe ZIP paths, malformed XML, DTD/entity
-declarations, configured size/member excesses, and DOCX external relationships by default.
-The explicit `--allow-external-relationships` flag or Boolean job opt-in permits processing
-after review.
+`verification.content_quality_report` uses pypdf extraction, page boxes, and limited XObject
+detection. Its text anchors, low-text/nearly-blank flags, and page dimensions are structural
+metrics—not raster rendering or visual QA. They cannot detect clipping, overlap, hierarchy,
+contrast, bad wrapping, or whether a page is visually correct.
 
-These controls reduce common OOXML parser and archive risks but are not a malware scanner,
-data-loss-prevention system, network sandbox, or content trust decision. Secure direct XML
-parsing does not imply that LibreOffice is network-isolated. When external relationships are
-allowed, LibreOffice or another consuming application may access external targets.
-User-supplied templates and images remain the user's responsibility.
+The CLI neither creates nor validates tagged PDF, PDF/UA, or PDF/A. Accessibility-oriented and
+archive-oriented delivery profiles are honest check sets, not conformance claims. Use separate
+specialist tooling and the relevant standard's validator before making such claims.
 
-The standard `customXml` part set emitted by a fresh bundled `python-docx` template is not
-warned about. Additional or differently shaped `customXml` parts remain fidelity-sensitive
-and are reported as unsupported.
+## Security boundary
 
-The CLI redacts credential-shaped diagnostics but cannot determine whether ordinary document
-text is confidential. Store outputs and temporary environments according to the document's
-data classification.
+Preflight rejects macros, encrypted or malformed packages, unsafe ZIP members, DTD/entities,
+oversized resources, and external relationships by default. Allowing external relationships
+permits processing; it is not a network sandbox. XML parser network settings do not prevent
+LibreOffice or another consumer from following external targets.
 
-Read [the operation contract](references/operations.md) for exact safety bounds and
-[examples](references/examples.md) for validation patterns.
+LibreOffice's temporary profile/home and process group bound configuration and cleanup. They
+do not provide OS-level network, filesystem, or process isolation. Treat all source documents
+as untrusted and use stronger sandboxing when the threat model requires it.
+
+For supported syntax see [operations](references/operations.md#operations-contract); for release
+acceptance use the single [quality contract](references/quality.md#acceptance-criteria).

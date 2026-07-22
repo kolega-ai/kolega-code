@@ -4,7 +4,8 @@
 
 - [Create and inspect](#create-and-inspect)
 - [Edit safely](#edit-safely)
-- [Convert to PDF](#convert-to-pdf)
+- [Convert and render](#convert-and-render)
+- [Font portability check](#font-portability-check)
 - [Failure examples](#failure-examples)
 - [Expected assertions](#expected-assertions)
 
@@ -86,6 +87,15 @@ Representative stdout fields:
 Absolute paths and version fields are omitted above; callers must not assume this abbreviated
 object is the complete output.
 
+To export the deck's images (picture shapes only, written verbatim to a new directory):
+
+```bash
+"$PPTX_PYTHON" "$PPTX_TOOL" extract "/tmp/field-report.pptx" --output "/tmp/field-report-images"
+```
+
+Each summary record pairs a `slide-<id>-shape-<id>-<hash>.<ext>` file with its slide/shape
+identity and SHA-256; verify the hash against the matching `inspect` image record.
+
 ## Edit safely
 
 Use slide IDs from `inspect`, not guessed indexes. Save this as `edit.json`:
@@ -114,6 +124,43 @@ Use slide IDs from `inspect`, not guessed indexes. Save this as `edit.json`:
       "action": "set_notes",
       "slide": {"slide_id": 257},
       "text": "The final week includes the recovered shift."
+    },
+    {
+      "action": "set_hyperlink",
+      "slide": {"slide_id": 257},
+      "find": "recovered shift",
+      "url": "https://wiki.example.com/recovered-shift"
+    },
+    {
+      "action": "remove_hyperlink",
+      "slide": {"slide_id": 256},
+      "find": "Field report"
+    }
+  ]
+}
+```
+
+`set_hyperlink`/`remove_hyperlink` require the matched text to align with whole runs and accept
+only `http`, `https`, or `mailto` URLs. Use `scope: "shape"` with a shape selector (and no
+`find`) to set or remove a shape's click action instead.
+
+To restructure a table, provide ordered changes; each is validated against the table as already
+changed by the preceding entries:
+
+```json
+{
+  "schema_version": 1,
+  "operation": "edit",
+  "operations": [
+    {
+      "action": "update_table_structure",
+      "slide": {"slide_id": 257},
+      "shape": {"shape_name": "Metrics Table"},
+      "changes": [
+        {"op": "insert_row", "index": 2, "cells": ["Refunds", "3"]},
+        {"op": "insert_column", "index": 0, "cells": ["Kind", "A", "B"]},
+        {"op": "remove_row", "index": 1}
+      ]
     }
   ]
 }
@@ -140,7 +187,7 @@ For reordering, provide every current ID once:
 }
 ```
 
-## Convert to PDF
+## Convert and render
 
 PPTX-to-PDF remains owned by this skill. Verify LibreOffice is on `PATH`:
 
@@ -160,6 +207,33 @@ Convert only after the check succeeds:
 
 Require `verification.pdf_openable: true` and equal `source_slide_count`/`pdf_page_count`.
 Conversion success does not replace visual review.
+
+To review slides visually, render one PNG per slide (requires LibreOffice plus the optional
+`pypdfium2` package, installed only with user approval):
+
+```bash
+"$PPTX_PYTHON" "$PPTX_TOOL" render \
+  "/tmp/field-report-v2.pptx" --output "/tmp/field-report-v2-slides" --dpi 96
+```
+
+Then open each produced `slide-<ordinal>-id-<slide_id>.png` and look at it — check text
+overflow, truncation, overlapping or clipped shapes, missing images, and table/chart layout.
+The render summary alone proves file integrity, not visual correctness.
+
+## Font portability check
+
+Before releasing matching PPTX and PDF deliverables, inspect the final deck and review its font
+inventory:
+
+```bash
+"$PPTX_PYTHON" "$PPTX_TOOL" inspect "/tmp/field-report-v2.pptx"
+```
+
+Review `fonts.referenced`, `fonts.embedded`, and `fonts.unembedded`, and resolve every
+unembedded-font warning. Do not leave a `RELEASE BLOCKER:` font warning unreviewed for a
+PPTX+PDF fidelity task. A correct PDF rendering and clean `pdffonts` output do not prove PPTX
+font portability: they describe the generated PDF, not what another PowerPoint renderer will
+substitute when opening the deck.
 
 ## Failure examples
 
@@ -196,4 +270,5 @@ After create/edit:
 - all internal relationship targets exist, and relationship-namespace references in owner XML
   resolve through that owner's relationship part;
 - table/chart/image/note inspection reflects the requested values;
+- for PPTX+PDF deliverables, no `RELEASE BLOCKER:` font warning remains in the final inspection;
 - no sibling temporary output remains after success or failure.

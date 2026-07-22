@@ -1,4 +1,7 @@
-Pillow~=12.3
-pdfplumber~=0.11.10
-pypdf[crypto]~=6.14
-reportlab~=5.0
+Pillow
+pdfplumber
+pypdf[crypto]
+# pdfplumber rasterizes through pypdfium2; render, ocr, and redaction verification
+# depend on that raster path directly, so the dependency is declared explicitly.
+pypdfium2
+reportlab

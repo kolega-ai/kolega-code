@@ -7,6 +7,7 @@
 - [Forms, metadata, and encryption](#forms-metadata-and-encryption)
 - [OCR](#ocr)
 - [Security](#security)
+- [OCR composition](#ocr-composition)
 - [Future work](#future-work)
 
 ## Extraction and rendering
@@ -21,6 +22,17 @@
   Masks, inline images, tiling patterns, and reused XObjects can be represented differently.
 - Page classification is routing evidence, not proof. Sparse digital pages may look scanned;
   scanned pages with an existing text layer may look hybrid.
+- `render` rasterizes the delivered PDF itself with PDFium (via pdfplumber). Unlike office
+  formats reviewed through an intermediate converter, the pixels reflect the actual
+  artifact — a strictly stronger review guarantee. Two bounds on that claim: rasters are
+  fully deterministic only when every font is embedded (non-embedded fonts render with this
+  machine's substitutes, which is exactly what the font `RELEASE BLOCKER` warning guards),
+  and rasters do not prove viewer-interactive behavior — form-field appearance
+  regeneration, annotation states, JavaScript, optional-content layers, overprint, or ICC
+  color handling.
+- The font inventory walks page, form, and annotation resource dictionaries with bounded
+  depth. Fonts referenced only from constructs beyond that walk are reported as
+  `truncated`, never silently ignored.
 - This tool does not render HTML and does not claim browser-equivalent conversion.
 
 ## Creation and page mutation
@@ -71,7 +83,15 @@
 ## Security
 
 - Crop, overlay, white rectangles, stamps, and watermarks are **not secure redaction**.
-  Underlying text, images, revisions, attachments, metadata, or object streams may remain.
+  Underlying text, images, revisions, attachments, metadata, or object streams remain. The
+  only supported removal path is the `redact` command, which deletes intersecting content,
+  rewrites the document as a single revision, and verifies the result — read
+  [Redaction](references/redaction.md) for its policy table, verification contract, and the explicit
+  non-guarantees (prior copies, backups, attachments, and collateral whole-operator
+  removal, among others).
+- Redaction v1 refuses rather than guesses: encrypted inputs, Type3 or width-unmeasurable
+  fonts inside targets, intersecting Form XObjects, text-clipping modes, XFA, and term hits
+  in outlines, named destinations, or form-field values all fail loudly with instructions.
 - Deleting visible pages does not constitute forensic sanitization.
 - Embedded files, JavaScript, launch actions, malicious links, and other active content are
   not comprehensively analyzed or removed.
@@ -82,20 +102,30 @@
 - Atomic replacement protects against partial publication of one output, not disk failure,
   malicious concurrent replacement, or rollback across multiple destinations.
 
+## OCR composition
+
+- `ocr-compose` writes an invisible text layer from a completed sidecar; the layer inherits
+  every OCR recognition error, and its verification proves extractability and geometry, not
+  transcription correctness.
+- The default base-14 layer maps cp1252 text only; other scripts need an operator-supplied
+  font, which is embedded and subset under the operator's license responsibility.
+- Composition preserves the source pixels (verified by a raster diff) but does not create
+  tagged structure, reading-order guarantees, or accessibility conformance.
+
 ## Future work
 
-The initial release intentionally does not implement:
+This release intentionally does not implement:
 
-- searchable OCR replacement PDFs or invisible text-layer reconstruction;
-- robust, validated redaction and forensic sanitization;
+- forensic sanitization beyond the `redact` contract — no partial image masking, no
+  redaction inside Form XObjects, no encrypted-input redaction, and no claims about copies
+  outside the output file (see [Redaction](references/redaction.md) for the refusal list);
 - digital signing, signature validation, or long-term validation;
 - XFA creation or editing;
-- arbitrary word-level PDF editing;
+- arbitrary word-level PDF editing beyond removal — covering and retyping text is still not
+  editing it;
 - complete annotation, attachment, JavaScript, portfolio, 3D, or multimedia workflows;
 - accessibility tree repair, tagged-PDF authoring, or PDF/UA certification;
 - HTML rendering;
-- remote OCR endpoints;
-- guaranteed preservation of vectors, links, forms, annotations, signatures, and
-  accessibility while adding OCR text.
+- remote OCR endpoints.
 
 Use a specialized reviewed workflow for any of these outcomes.

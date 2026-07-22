@@ -6,7 +6,9 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -148,7 +150,15 @@ def create_fixture(temp: Path) -> Path:
                         "data": "C1:C5",
                         "categories": "B2:B5",
                         "anchor": "J2",
-                    }
+                    },
+                    {
+                        "type": "scatter",
+                        "title": "Revenue vs units",
+                        "x_values": "D2:D5",
+                        "y_values": ["C2:C5"],
+                        "series_titles": ["Revenue"],
+                        "anchor": "J20",
+                    },
                 ],
             },
             {
@@ -179,7 +189,11 @@ def create_fixture(temp: Path) -> Path:
     assert workbook["Sales"]["F2"].data_type == "s"
     assert len(workbook["Sales"].tables) == 1
     assert len(workbook["Sales"].conditional_formatting) == 1
-    assert len(workbook["Sales"]._charts) == 1
+    assert len(workbook["Sales"]._charts) == 2
+    scatter = workbook["Sales"]._charts[1]
+    assert type(scatter).__name__ == "ScatterChart"
+    assert len(scatter.series) == 1
+    assert scatter.scatterStyle is not None
     workbook.close()
     return output
 
@@ -188,7 +202,7 @@ def inspect_extract_edit(temp: Path, source: Path) -> Path:
     before = sha256(source)
     inspection = run_tool("inspect", source, "--max-cells", "100")
     assert inspection["result"]["counts"]["sheets"] == 4
-    assert inspection["result"]["counts"]["charts"] == 1
+    assert inspection["result"]["counts"]["charts"] == 2
     assert inspection["result"]["counts"]["formulas"] == 2
 
     extracted = temp / "sales.json"
@@ -262,7 +276,7 @@ def inspect_extract_edit(temp: Path, source: Path) -> Path:
     assert workbook["Sales"]["B2"].value == "Café au lait"
     assert workbook["Sales"]["C2"].number_format == "$#,##0.00"
     assert workbook["Sales"].tables["SalesTable"].totalsRowShown is True
-    assert len(workbook["Sales"]._charts) == 1
+    assert len(workbook["Sales"]._charts) == 2
     workbook.close()
     return output
 
@@ -291,6 +305,8 @@ def clean_and_summarize(temp: Path, source: Path) -> Path:
     workbook = load_workbook(cleaned)
     assert "Sales" in workbook.sheetnames and "Cleaned" in workbook.sheetnames
     assert workbook["Cleaned"]["C2"].value == 150
+    assert workbook["Cleaned"].auto_filter.ref is None
+    assert "CleanedSales" in workbook["Cleaned"].tables
     workbook.close()
 
     summary_job = {
@@ -713,6 +729,270 @@ def external_link_warning(temp: Path) -> None:
     payload = run_tool("edit", source, job_path, temp / "external-link-edited.xlsx")
     assert any("external link(s)" in warning for warning in payload["warnings"])
 
+    failure = run_tool("convert", source, temp / "external-link.pdf", expect_status=3)
+    assert failure["error"]["category"] == "unsupported_operation"
+
+
+def merge_and_sheet_settings(temp: Path, source: Path) -> None:
+    refused_job = temp / "merge-refused.json"
+    write_json(
+        refused_job,
+        {
+            "schema_version": 1,
+            "operations": [{"op": "set_sheet", "sheet": "Raw Headers", "merges": ["A2:B2"]}],
+        },
+    )
+    failure = run_tool("edit", source, refused_job, temp / "merge-refused.xlsx", expect_status=5)
+    assert failure["error"]["category"] == "ambiguous_edit"
+    assert failure["error"]["details"]["occupied_cells"] == ["B2"]
+
+    merged_job = temp / "merge-acknowledged.json"
+    write_json(
+        merged_job,
+        {
+            "schema_version": 1,
+            "operations": [
+                {
+                    "op": "set_sheet",
+                    "sheet": "Raw Headers",
+                    "merges": ["A2:B2"],
+                    "allow_merge_data_loss": True,
+                    "tab_color": "FF3366CC",
+                    "show_gridlines": False,
+                    "zoom_scale": 150,
+                    "auto_width": {"columns": ["C"], "max_width": 24},
+                }
+            ],
+        },
+    )
+    merged_path = temp / "merge-acknowledged.xlsx"
+    payload = run_tool("edit", source, merged_job, merged_path)
+    assert payload["result"]["counts"]["ranges_merged"] == 1
+    assert payload["result"]["counts"]["columns_auto_sized"] == 1
+    assert any("discarded 1 non-top-left cell value(s)" in w for w in payload["warnings"])
+    inspection = run_tool("inspect", merged_path, "--sheet", "Raw Headers", "--no-cells")
+    sheet = inspection["result"]["sheets"][0]
+    assert sheet["merged_cells"] == ["A2:B2"]
+    assert sheet["tab_color"]["rgb"] == "FF3366CC"
+    assert sheet["show_gridlines"] is False
+    assert sheet["zoom_scale"] == 150
+    assert 8 <= sheet["dimensions"]["columns"]["C"]["width"] <= 24
+
+    unmerged_job = temp / "unmerge.json"
+    write_json(
+        unmerged_job,
+        {
+            "schema_version": 1,
+            "operations": [{"op": "set_sheet", "sheet": "Raw Headers", "unmerge": ["A2:B2"]}],
+        },
+    )
+    unmerged_path = temp / "unmerged.xlsx"
+    payload = run_tool("edit", merged_path, unmerged_job, unmerged_path)
+    assert payload["result"]["counts"]["ranges_unmerged"] == 1
+    inspection = run_tool("inspect", unmerged_path, "--sheet", "Raw Headers", "--no-cells")
+    assert inspection["result"]["sheets"][0]["merged_cells"] == []
+
+    bad_unmerge_job = temp / "bad-unmerge.json"
+    write_json(
+        bad_unmerge_job,
+        {
+            "schema_version": 1,
+            "operations": [{"op": "set_sheet", "sheet": "Raw Headers", "unmerge": ["A9:B9"]}],
+        },
+    )
+    failure = run_tool("edit", source, bad_unmerge_job, temp / "bad-unmerge.xlsx", expect_status=2)
+    assert failure["error"]["category"] == "bad_input"
+    assert failure["error"]["details"]["range"] == "A9:B9"
+
+
+def auto_width_create(temp: Path) -> None:
+    job_path = temp / "auto-width.json"
+    write_json(
+        job_path,
+        {
+            "schema_version": 1,
+            "sheets": [
+                {
+                    "name": "Wide",
+                    "rows": [
+                        ["Header long enough", "x"],
+                        ["Value that is much longer than the header", "y"],
+                    ],
+                    "auto_width": True,
+                }
+            ],
+        },
+    )
+    output = temp / "auto-width.xlsx"
+    payload = run_tool("create", job_path, output)
+    assert payload["result"]["counts"]["columns_auto_sized"] == 2
+    inspection = run_tool("inspect", output, "--no-cells")
+    columns = inspection["result"]["sheets"][0]["dimensions"]["columns"]
+    assert 40 <= columns["A"]["width"] <= 60
+    assert columns["B"]["width"] == 10
+
+
+def formula_error_scan(temp: Path) -> None:
+    plain = temp / "plain-errors.xlsx"
+    workbook = Workbook()
+    workbook.active["A1"] = "ok"
+    workbook.save(plain)
+    workbook.close()
+    crafted = temp / "crafted-errors.xlsx"
+    with zipfile.ZipFile(plain) as bundle, zipfile.ZipFile(crafted, "w") as target:
+        for item in bundle.infolist():
+            data = bundle.read(item.filename)
+            if item.filename == "xl/worksheets/sheet1.xml":
+                text = data.decode("utf-8")
+                assert "</sheetData>" in text
+                injected = (
+                    '<row r="2">'
+                    '<c r="A2" t="e"><v>#REF!</v></c>'
+                    '<c r="B2" t="e"><f>1/0</f><v>#DIV/0!</v></c>'
+                    "</row></sheetData>"
+                )
+                data = text.replace("</sheetData>", injected).encode("utf-8")
+            target.writestr(item, data)
+    inspection = run_tool("inspect", crafted)
+    assert inspection["result"]["counts"]["error_cells"] == 2
+    sheet = inspection["result"]["sheets"][0]
+    assert sheet["errors"]["count"] == 2
+    assert sheet["errors"]["by_error"] == {"#DIV/0!": 1, "#REF!": 1}
+    kinds = {sample["error"]: sample["kind"] for sample in sheet["errors"]["samples"]}
+    assert kinds == {"#REF!": "literal", "#DIV/0!": "cached_formula"}
+    assert any("error value(s)" in warning for warning in inspection["warnings"])
+
+
+def font_inventory(temp: Path, source: Path) -> None:
+    inspection = run_tool("inspect", source, "--no-cells")
+    fonts = inspection["result"]["workbook"]["fonts"]
+    referenced = [name.casefold() for name in fonts["referenced"]]
+    assert "calibri" in referenced
+    assert fonts["embedded"] == []
+    assert fonts["unembedded"] == fonts["referenced"]
+    assert any(warning.startswith("RELEASE BLOCKER") for warning in inspection["warnings"])
+
+    arial_job = temp / "arial.json"
+    write_json(
+        arial_job,
+        {
+            "schema_version": 1,
+            "sheets": [
+                {
+                    "name": "Portable",
+                    "rows": [[{"value": "Arial only", "font": {"name": "Arial"}}]],
+                }
+            ],
+        },
+    )
+    arial_path = temp / "arial.xlsx"
+    run_tool("create", arial_job, arial_path)
+    inspection = run_tool("inspect", arial_path, "--no-cells")
+    fonts = inspection["result"]["workbook"]["fonts"]
+    assert fonts["referenced"] == ["Arial"]
+    assert not any(warning.startswith("RELEASE BLOCKER") for warning in inspection["warnings"])
+
+
+def pdf_render_option_validation(temp: Path, source: Path) -> None:
+    failure = run_tool(
+        "convert",
+        source,
+        temp / "option-check.pdf",
+        "--sheet",
+        "Sales",
+        expect_status=2,
+    )
+    assert failure["error"]["category"] == "bad_input"
+    failure = run_tool(
+        "convert",
+        source,
+        temp / "option-check.csv",
+        "--timeout",
+        "30",
+        expect_status=2,
+    )
+    assert failure["error"]["category"] == "bad_input"
+    failure = run_tool(
+        "render",
+        source,
+        temp / "render-bad-dpi",
+        "--dpi",
+        "9999",
+        expect_status=2,
+    )
+    assert failure["error"]["category"] == "bad_input"
+
+
+def pdf_and_render(temp: Path, source: Path, require_libreoffice: bool) -> dict[str, Any]:
+    libreoffice = shutil.which("soffice") or shutil.which("libreoffice")
+    if libreoffice is None:
+        if require_libreoffice:
+            raise AssertionError("LibreOffice was required but is not available on PATH.")
+        return {"status": "skipped", "reason": "LibreOffice is not available on PATH"}
+    before = sha256(source)
+    pdf = temp / "converted.pdf"
+    conversion = run_tool(
+        "convert",
+        source,
+        pdf,
+        "--timeout",
+        "300",
+        timeout_seconds=360,
+    )
+    pages = conversion["result"]["counts"]["pdf_pages"]
+    assert pages >= 1
+    assert conversion["result"]["verification"]["pdf_openable"]
+    assert conversion["result"]["verification"]["source_unchanged_at_publish_gate"]
+    with pdf.open("rb") as handle:
+        assert handle.read(5) == b"%PDF-"
+    assert sha256(source) == before
+    status: dict[str, Any] = {"status": "passed", "executable": libreoffice, "pdf_pages": pages}
+    if importlib.util.find_spec("pypdfium2") is None:
+        status["render"] = {
+            "status": "skipped",
+            "reason": "optional pypdfium2 package is not installed",
+        }
+        return status
+    render_dir = temp / "rendered-pages"
+    rendered = run_tool(
+        "render",
+        source,
+        render_dir,
+        "--timeout",
+        "300",
+        timeout_seconds=360,
+    )
+    assert rendered["result"]["counts"]["pages_rendered"] == pages
+    files = sorted(render_dir.glob("page-*.png"))
+    assert len(files) == pages
+    hashes = set()
+    for file, record in zip(files, rendered["result"]["images"], strict=True):
+        with file.open("rb") as handle:
+            assert handle.read(8) == b"\x89PNG\r\n\x1a\n"
+        assert record["file"] == file.name
+        assert record["width_px"] > 0 and record["height_px"] > 0
+        hashes.add(sha256(file))
+    if pages > 1:
+        assert len(hashes) >= 2
+    selected_dir = temp / "rendered-first-page"
+    selected = run_tool(
+        "render",
+        source,
+        selected_dir,
+        "--pages",
+        "1",
+        "--timeout",
+        "300",
+        timeout_seconds=360,
+    )
+    assert selected["result"]["counts"]["pages_rendered"] == 1
+    assert (selected_dir / "page-001.png").is_file()
+    failure = run_tool("render", source, render_dir, expect_status=3)
+    assert failure["error"]["category"] == "unsupported_operation"
+    assert sha256(source) == before
+    status["render"] = {"status": "passed", "pages": pages}
+    return status
+
 
 def subprocess_timeout_regression(source: Path) -> None:
     started = time.monotonic()
@@ -752,7 +1032,12 @@ def cumulative_json_budget_regression(temp: Path) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.parse_args()
+    parser.add_argument(
+        "--require-libreoffice",
+        action="store_true",
+        help="fail unless LibreOffice PDF conversion can be exercised",
+    )
+    args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="xlsx-skill-smoke-") as raw_temp:
         temp = Path(raw_temp)
         created = create_fixture(temp)
@@ -763,6 +1048,12 @@ def main() -> int:
         case_insensitive_dependency(temp, created)
         failure_path(temp, created)
         external_link_warning(temp)
+        merge_and_sheet_settings(temp, created)
+        auto_width_create(temp)
+        formula_error_scan(temp)
+        font_inventory(temp, created)
+        pdf_render_option_validation(temp, created)
+        libreoffice_status = pdf_and_render(temp, created, args.require_libreoffice)
         subprocess_timeout_regression(created)
         cumulative_json_budget_regression(temp)
     print(
@@ -791,7 +1082,14 @@ def main() -> int:
                     "cumulative_json_cell_budget",
                     "external_link_preservation_warning",
                     "macro_refusal",
+                    "set_sheet_visual_settings_merge_unmerge",
+                    "auto_width",
+                    "formula_error_scan",
+                    "font_portability_inventory",
+                    "pdf_and_render_option_validation",
+                    "xlsx_to_pdf_and_page_render",
                 ],
+                "libreoffice": libreoffice_status,
             },
             sort_keys=True,
         )
