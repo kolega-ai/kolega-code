@@ -77,6 +77,13 @@ LibreOffice PDF. PNG verification proves signature, openability, page count, and
 not renderer-identical pixels. Rendered slides support layout review, not a PowerPoint-fidelity
 claim.
 
+LibreOffice can visually wrap text even when the frame's serialized wrapping setting is false,
+while PowerPoint may honor that setting and let the line overflow horizontally. The tool
+explicitly enables wrapping for text frames it authors, but imported frames can retain either
+setting. Use `inspect` and check `text.word_wrap` rather than treating a LibreOffice render as
+proof of PowerPoint wrapping. Wrapping can increase vertical text usage, so box height and
+vertical overflow still require visual review.
+
 The font inventory over-approximates: fonts referenced only by unused layouts, masters, notes or
 handout masters, or table styles still count as referenced because they ship with the deck and
 re-engage as soon as a layout is used. Script-specific theme fonts (`a:font script="..."`), VML

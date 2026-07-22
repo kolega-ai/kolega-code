@@ -49,6 +49,9 @@ and with which installer. Use the selected interpreter's `-m pip` for the declar
    expected slide IDs/order/count, existing internal relationship targets, and resolved owner
    relationship references. Inspect the output again; when visual fidelity matters, continue
    with step 7 and treat the target presentation application as the final authority. Review the
+   `text.word_wrap` value for generated titles, bodies, and text elements and require it to be
+   `true`; LibreOffice can visually wrap a non-wrapping frame that PowerPoint lets overflow.
+   Review the
    font inventory (`fonts.referenced`,
    `fonts.embedded`, `fonts.unembedded`). For PPTX+PDF deliverables apply this release gate: use
    only Arial for headings and sans body, Times New Roman for serif body, and Courier New for

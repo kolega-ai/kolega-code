@@ -1973,6 +1973,7 @@ def _normalize_paragraphs(value: Any, label: str) -> list[dict[str, Any]]:
 def _set_text_frame(text_frame: Any, value: Any, label: str) -> None:
     paragraphs = _normalize_paragraphs(value, label)
     text_frame.clear()
+    text_frame.word_wrap = True
     for index, spec in enumerate(paragraphs):
         _reject_unknown(spec, {"text", "runs", "level", "alignment"}, f"{label}[{index}]")
         if ("text" in spec) == ("runs" in spec):
