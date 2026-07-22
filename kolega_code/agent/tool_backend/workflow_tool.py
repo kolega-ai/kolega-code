@@ -16,7 +16,9 @@ from pathlib import Path
 from typing import Any, Optional
 
 from kolega_code.events import AgentEvent
+from kolega_code.llm.specs import supports_vision
 
+from ..model_routing import model_routing_fingerprint, resolve_subagent_model
 from ..orchestration import (
     AgentRunResult,
     AgentRunSpec,
@@ -104,6 +106,16 @@ class WorkflowTool(BaseTool):
             memory_manager=getattr(self.caller, "memory_manager", None),
         )
 
+    def _workflow_is_read_only(self) -> bool:
+        """Whether every direct workflow worker must use read-only tooling."""
+        return bool(getattr(getattr(self.caller, "tool_collection", None), "read_only", False))
+
+    @staticmethod
+    def _agent_import_path(agent_type: Optional[str], *, read_only: bool) -> str:
+        if read_only:
+            return _AGENT_TYPE_IMPORTS["investigation"]
+        return _AGENT_TYPE_IMPORTS.get((agent_type or "").lower(), _DEFAULT_AGENT_IMPORT)
+
     # ------------------------------------------------------------------ tool
     async def run_workflow(
         self,
@@ -175,6 +187,7 @@ class WorkflowTool(BaseTool):
             },
         )
 
+        read_only = self._workflow_is_read_only()
         runtime = WorkflowRuntime(
             dispatch=self._make_dispatch(run_id, journal, accounting),
             emit=emit,
@@ -184,6 +197,11 @@ class WorkflowTool(BaseTool):
             max_agent_depth=meta["max_agent_depth"],
             resume_cache=resume_cache,
             workflow_resolver=self._make_resolver(state_dir),
+            routing_fingerprint=model_routing_fingerprint(self.config),
+            actual_agent_type_resolver=lambda agent_type: self._agent_import_path(
+                agent_type, read_only=read_only
+            ).rsplit(".", 1)[1],
+            read_only_mode=read_only,
         )
 
         status = "completed"
@@ -252,18 +270,49 @@ class WorkflowTool(BaseTool):
         # workflow can research in parallel (including running investigative
         # commands) but cannot edit files, since read_only agents have no
         # file-edit tools.
-        read_only = bool(getattr(getattr(self.caller, "tool_collection", None), "read_only", False))
+        read_only = self._workflow_is_read_only()
 
         async def dispatch(spec: AgentRunSpec) -> AgentRunResult:
             reservation = get_current_agent_reservation()
             if reservation is None:
                 raise RuntimeError("workflow dispatch requires an agent reservation")
-            if read_only:
-                import_path = _AGENT_TYPE_IMPORTS["investigation"]
-            else:
-                import_path = _AGENT_TYPE_IMPORTS.get((spec.agent_type or "").lower(), _DEFAULT_AGENT_IMPORT)
+            import_path = self._agent_import_path(spec.agent_type, read_only=read_only)
             agent_class = _import_agent_class(import_path)
-            config = self._config_override(spec.model, spec.effort)
+            actual_agent_type = agent_class.__name__
+            agent_name = getattr(agent_class, "agent_name", actual_agent_type)
+            requested_routing = spec.model_override.as_dict() if spec.model_override is not None else None
+
+            try:
+                routing = resolve_subagent_model(
+                    self.config,
+                    agent_name,
+                    spec.model_override.as_dict() if spec.model_override is not None else None,
+                    effort_key="effort",
+                )
+                if (
+                    spec.model_override is not None
+                    and agent_name == "browser-agent"
+                    and not supports_vision(routing.model_config.provider, routing.model_config.model)
+                ):
+                    raise ValueError(
+                        "BrowserAgent model_override requires a vision-capable model; "
+                        f"{routing.model_config.provider.value}/{routing.model_config.model} "
+                        "does not support image input."
+                    )
+            except (TypeError, ValueError) as exc:
+                return AgentRunResult(
+                    status="failed",
+                    error=f"invalid model_override: {exc}",
+                    requested_routing=requested_routing,
+                    actual_agent_type=actual_agent_type,
+                )
+
+            effective_routing = {
+                "provider": routing.model_config.provider.value,
+                "model": routing.model_config.model,
+                "effort": routing.model_config.thinking_effort,
+            }
+            config = routing.config if spec.model_override is not None else None
             sub_info_extra = {
                 "workflow_run_id": run_id,
                 "phase": spec.phase,
@@ -271,6 +320,9 @@ class WorkflowTool(BaseTool):
                 "call_index": spec.call_index,
                 "depth": 1,
                 "max_agent_depth": spec.max_agent_depth,
+                "requested_routing": requested_routing,
+                "effective_routing": effective_routing,
+                "actual_agent_type": actual_agent_type,
             }
             label_for_path = spec.label or spec.agent_type or agent_class.__name__
             artifact_paths = journal.agent_artifact_paths(spec.call_index, label_for_path)
@@ -278,9 +330,13 @@ class WorkflowTool(BaseTool):
                 "call_index": spec.call_index,
                 "label": spec.label,
                 "phase": spec.phase,
-                "agent_type": spec.agent_type or agent_class.__name__,
-                "agent_name": getattr(agent_class, "agent_name", agent_class.__name__),
+                "agent_type": actual_agent_type,
+                "requested_agent_type": spec.agent_type,
+                "actual_agent_type": actual_agent_type,
+                "agent_name": agent_name,
                 "max_agent_depth": spec.max_agent_depth,
+                "requested_routing": requested_routing,
+                "effective_routing": effective_routing,
             }
             try:
                 recap, tokens, structured = await self._agent_tool.dispatch_workflow_agent(
@@ -301,6 +357,9 @@ class WorkflowTool(BaseTool):
                     error=str(exc),
                     transcript_path=str(artifact_paths["jsonl"]),
                     transcript_markdown_path=str(artifact_paths["markdown"]),
+                    requested_routing=requested_routing,
+                    effective_routing=effective_routing,
+                    actual_agent_type=actual_agent_type,
                 )
             return AgentRunResult(
                 text=recap,
@@ -309,6 +368,9 @@ class WorkflowTool(BaseTool):
                 status="completed",
                 transcript_path=str(artifact_paths["jsonl"]),
                 transcript_markdown_path=str(artifact_paths["markdown"]),
+                requested_routing=requested_routing,
+                effective_routing=effective_routing,
+                actual_agent_type=actual_agent_type,
             )
 
         return dispatch
@@ -364,26 +426,6 @@ class WorkflowTool(BaseTool):
                 raise WorkflowScriptError(f"could not resolve nested workflow {name_or_ref!r}: {exc}") from exc
 
         return resolve
-
-    def _config_override(self, model: Optional[str], effort: Optional[str]):
-        """Clone the agent config with per-call model/effort overrides, or None."""
-        if not model and not effort:
-            return None
-        lc_update: dict = {}
-        th_update: dict = {}
-        if model:
-            lc_update["model"] = model
-            th_update["model"] = model
-        if effort:
-            lc_update["thinking_effort"] = effort
-            th_update["thinking_effort"] = effort
-        new_long = self.config.long_context_config.model_copy(update=lc_update)
-        new_thinking = self.config.thinking_config.model_copy(update=th_update)
-        # An explicit per-call model/effort is the workflow author's choice and must
-        # win over any per-agent-role override, so drop agent_models on the clone.
-        return self.config.model_copy(
-            update={"long_context_config": new_long, "thinking_config": new_thinking, "agent_models": {}}
-        )
 
     def _result_json_text(self, result: Any) -> str:
         try:
@@ -457,13 +499,13 @@ class WorkflowTool(BaseTool):
 
         lines.extend(["", "## Agent call index", ""])
         if journal_entries:
-            lines.append("| # | Label | Phase | Agent type | Status | Tokens |")
+            lines.append("| # | Label | Phase | Actual agent type | Status | Tokens |")
             lines.append("| --- | --- | --- | --- | --- | ---: |")
             for entry in journal_entries:
                 index = entry.get("index", "")
                 label = str(entry.get("label") or "")
                 phase = str(entry.get("phase") or "")
-                agent_type = str(entry.get("agent_type") or "")
+                agent_type = str(entry.get("actual_agent_type") or entry.get("agent_type") or "")
                 status_text = str(entry.get("status") or "")
                 tokens = entry.get("tokens", "")
                 lines.append(f"| {index} | {label} | {phase} | {agent_type} | {status_text} | {tokens} |")
@@ -478,12 +520,20 @@ class WorkflowTool(BaseTool):
                 lines.extend([f"### Call {index}: {label}", ""])
                 for key in (
                     "phase",
+                    "requested_agent_type",
                     "agent_type",
+                    "actual_agent_type",
+                    "requested_routing",
+                    "effective_routing",
                     "status",
                     "tokens",
                     "error",
                 ):
-                    if entry.get(key) is not None:
+                    if key == "requested_routing" and key in entry:
+                        requested = entry[key]
+                        rendered = "inherited (null)" if requested is None else requested
+                        lines.append(f"- {key}: `{rendered}`")
+                    elif entry.get(key) is not None:
                         lines.append(f"- {key}: `{entry.get(key)}`")
                 value_text = self._render_value_markdown(entry.get("value"))
                 if len(value_text) <= 2000:

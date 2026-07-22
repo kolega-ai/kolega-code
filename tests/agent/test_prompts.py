@@ -94,6 +94,18 @@ def test_gigacode_guide_recommends_leaf_workers_by_default() -> None:
     assert "pipeline()" in GIGACODE_AUTHORING_GUIDE
 
 
+def test_gigacode_guide_documents_atomic_model_overrides() -> None:
+    assert "list_subagent_models" in GIGACODE_AUTHORING_GUIDE
+    assert "model_override=None" in GIGACODE_AUTHORING_GUIDE
+    assert "complete object with exactly" in GIGACODE_AUTHORING_GUIDE
+    assert "`provider`, `model`, and `effort`" in GIGACODE_AUTHORING_GUIDE
+    assert "Use `effort: None` only" in GIGACODE_AUTHORING_GUIDE
+    assert "They never fall back" in GIGACODE_AUTHORING_GUIDE
+    assert "only the worker launched by that `agent()` call" in GIGACODE_AUTHORING_GUIDE
+    assert "forced to the" in GIGACODE_AUTHORING_GUIDE
+    assert "`model=` and `effort=` are no longer accepted" in GIGACODE_AUTHORING_GUIDE
+
+
 def test_init_agents_prompt_renders_arguments() -> None:
     rendered = prompts.build_init_agents_prompt("focus on Python packaging")
 

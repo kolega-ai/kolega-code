@@ -141,6 +141,10 @@ class RunJournal:
         self.ensure_dirs()
         payload = {"index": call_index, "key": key, "label": label, "status": status, "value": value}
         payload.update({k: v for k, v in metadata.items() if v is not None})
+        # ``null`` means this call explicitly inherited routing. Its presence
+        # distinguishes new rows from legacy rows without routing metadata.
+        if "requested_routing" in metadata:
+            payload["requested_routing"] = metadata["requested_routing"]
         line = json.dumps(payload, default=str)
         with self._journal_path.open("a", encoding="utf-8") as handle:
             handle.write(line + "\n")
@@ -183,9 +187,18 @@ class RunJournal:
                 entry = json.loads(raw)
             except json.JSONDecodeError:
                 continue
+            if not isinstance(entry, dict):
+                continue
             if entry.get("status", "completed") != "completed":
                 continue
-            cache[int(entry["index"])] = (entry["key"], entry.get("value"))
+            try:
+                index = int(entry["index"])
+                key = entry["key"]
+            except (KeyError, TypeError, ValueError):
+                continue
+            if not isinstance(key, str):
+                continue
+            cache[index] = (key, entry.get("value"))
         return cache
 
     def agent_transcript_path(self, agent_id: str) -> Path:

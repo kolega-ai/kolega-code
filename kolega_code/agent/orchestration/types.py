@@ -13,6 +13,8 @@ import json
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Optional
 
+from ..model_routing import AtomicModelOverride
+
 
 @dataclass
 class AgentRunSpec:
@@ -22,9 +24,15 @@ class AgentRunSpec:
     label: Optional[str] = None
     phase: Optional[str] = None
     schema: Optional[dict] = None
-    model: Optional[str] = None
-    effort: Optional[str] = None
+    model_override: Optional[AtomicModelOverride] = None
     agent_type: Optional[str] = None
+    # Secret-free identity of inherited role routing. It participates in cache
+    # identity only when model_override is absent.
+    routing_fingerprint: Optional[str] = None
+    # Resolve execution identity before cache lookup so Plan mode cannot replay
+    # a writable worker result for its forced read-only InvestigationAgent.
+    actual_agent_type: Optional[str] = None
+    read_only_mode: bool = False
     # Workflow-wide delegation ceiling. Direct workflow workers are depth 1.
     max_agent_depth: int = 1
     # Position of this call in the run, assigned by the runtime in invocation
@@ -40,9 +48,11 @@ class AgentRunSpec:
         payload = {
             "prompt": self.prompt,
             "schema": self.schema,
-            "model": self.model,
-            "effort": self.effort,
+            "model_override": (self.model_override.as_dict() if self.model_override is not None else None),
+            "routing_fingerprint": (self.routing_fingerprint if self.model_override is None else None),
             "agent_type": self.agent_type,
+            "actual_agent_type": self.actual_agent_type,
+            "read_only_mode": self.read_only_mode,
             "max_agent_depth": self.max_agent_depth,
         }
         encoded = json.dumps(payload, sort_keys=True, default=str)
@@ -61,6 +71,9 @@ class AgentRunResult:
     error: Optional[str] = None
     transcript_path: Optional[str] = None
     transcript_markdown_path: Optional[str] = None
+    requested_routing: Optional[dict[str, Any]] = None
+    effective_routing: Optional[dict[str, Any]] = None
+    actual_agent_type: Optional[str] = None
 
     @property
     def value(self) -> Any:

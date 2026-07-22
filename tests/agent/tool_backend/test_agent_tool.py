@@ -298,7 +298,7 @@ class TestAgentTool:
         assert start_event.sub_agent_info["workflow_run_id"] == "workflow-run"
         MockAgent.configure_streaming([])
 
-    async def test_nested_dispatch_rejects_cap_before_import_or_events(
+    async def test_nested_dispatch_rejects_cap_after_routing_but_before_conversation_or_events(
         self,
         agent_tool: AgentTool,
         mock_connection_manager: AsyncMock,
@@ -318,8 +318,10 @@ class TestAgentTool:
             with pytest.raises(Exception, match="lifetime agent cap"):
                 await agent_tool._dispatch_agent(agent_class_import="test.module.MockAgent", task="Nested task")
 
-        mock_import.assert_not_called()
+        # The class/role must be known to validate routing before the reservation.
+        mock_import.assert_called_once_with("test.module", fromlist=["MockAgent"])
         assert accounting.agent_count == 1
+        assert mock_caller.sub_agent_recorder.start_conversation.await_count == 0
         assert not any(
             call.args[0].content.get("status") == "GENERATING"
             for call in mock_connection_manager.broadcast_event.call_args_list
@@ -427,6 +429,7 @@ class TestAgentTool:
             mock_dispatch.assert_called_once_with(
                 agent_class_import="kolega_code.agent.investigationagent.InvestigationAgent",
                 task="Investigate this code",
+                model_override=None,
             )
             assert result == "Investigation completed"
 
@@ -440,6 +443,7 @@ class TestAgentTool:
             mock_dispatch.assert_called_once_with(
                 agent_class_import="kolega_code.agent.browseragent.BrowserAgent",
                 task="Browse the web",
+                model_override=None,
             )
             assert result == "Browser task completed"
 
@@ -453,8 +457,183 @@ class TestAgentTool:
             mock_dispatch.assert_called_once_with(
                 agent_class_import="kolega_code.agent.coder.CoderAgent",
                 task="Write some code",
+                model_override=None,
             )
             assert result == "Coding completed"
+
+    async def test_atomic_override_is_applied_and_reported_without_mutating_parent(
+        self,
+        agent_tool: AgentTool,
+        mock_connection_manager: AsyncMock,
+    ) -> None:
+        original_import = builtins.__import__
+        parent_general = agent_tool.config.model_config_for_agent("investigation-agent")
+
+        with patch.object(builtins, "__import__") as mock_import:
+            mock_module = MagicMock()
+            mock_module.InvestigationAgent = MockInvestigationAgent
+
+            def mock_import_func(name: str, *args: Any, **kwargs: Any) -> Any:
+                if name == "kolega_code.agent.investigationagent":
+                    return mock_module
+                return original_import(name, *args, **kwargs)
+
+            mock_import.side_effect = mock_import_func
+            MockInvestigationAgent.configure_streaming([])
+            MockAgent.last_instance = None
+
+            await agent_tool.dispatch_investigation_agent(
+                "Investigate",
+                {
+                    "provider": "openai",
+                    "model": "gpt-5.4",
+                    "thinking_effort": "high",
+                },
+            )
+
+        assert MockAgent.last_instance is not None
+        child_config = MockAgent.last_instance.init_kwargs["config"]
+        selected = child_config.model_config_for_agent("investigation-agent")
+        assert selected.provider == ModelProvider.OPENAI
+        assert selected.model == "gpt-5.4"
+        assert selected.thinking_effort == "high"
+        assert agent_tool.config.model_config_for_agent("investigation-agent") is parent_general
+
+        start_event = next(
+            call.args[0]
+            for call in mock_connection_manager.broadcast_event.call_args_list
+            if call.args[0].content.get("status") == "GENERATING"
+        )
+        assert start_event.sub_agent_info["requested_routing"] == {
+            "provider": "openai",
+            "model": "gpt-5.4",
+            "thinking_effort": "high",
+        }
+        assert start_event.sub_agent_info["effective_routing"] == {
+            "provider": "openai",
+            "model": "gpt-5.4",
+            "thinking_effort": "high",
+        }
+        MockInvestigationAgent.configure_streaming([])
+
+    async def test_override_is_scoped_to_direct_worker_for_same_role_child(
+        self,
+        agent_tool: AgentTool,
+        mock_connection_manager: AsyncMock,
+    ) -> None:
+        """A depth-2 same-role child starts from the inherited role default."""
+        original_import = builtins.__import__
+        mock_module = MagicMock()
+        mock_module.InvestigationAgent = MockInvestigationAgent
+
+        def mock_import_func(name: str, *args: Any, **kwargs: Any) -> Any:
+            if name == "kolega_code.agent.investigationagent":
+                return mock_module
+            return original_import(name, *args, **kwargs)
+
+        with patch.object(builtins, "__import__", side_effect=mock_import_func):
+            MockInvestigationAgent.configure_streaming([])
+            await agent_tool.dispatch_investigation_agent(
+                "Direct worker",
+                {"provider": "openai", "model": "gpt-5.4", "thinking_effort": "high"},
+            )
+            direct_worker = MockAgent.last_instance
+            assert direct_worker is not None
+            assert getattr(direct_worker, "_subagent_dispatch_config") is agent_tool.config
+
+            direct_config = direct_worker.init_kwargs["config"]
+            assert direct_config.model_config_for_agent("investigation-agent").model == "gpt-5.4"
+
+            nested_tool = AgentTool(
+                project_path=agent_tool.project_path,
+                workspace_id=agent_tool.workspace_id,
+                thread_id=agent_tool.thread_id,
+                connection_manager=mock_connection_manager,
+                config=direct_config,
+                caller=direct_worker,
+            )
+            await nested_tool.dispatch_investigation_agent("Same-role child")
+
+        nested_worker = MockAgent.last_instance
+        assert nested_worker is not None
+        nested_route = nested_worker.init_kwargs["config"].model_config_for_agent("investigation-agent")
+        assert nested_route.provider == ModelProvider.ANTHROPIC
+        assert nested_route.model == "test-model"
+
+    async def test_invalid_override_precedes_conversation_events_and_workflow_reservation(
+        self,
+        agent_tool: AgentTool,
+        mock_connection_manager: AsyncMock,
+        mock_caller: Mock,
+    ) -> None:
+        original_import = builtins.__import__
+        accounting = WorkflowRunAccounting(Budget(), agent_cap=2)
+        mock_caller.sub_agent = True
+        mock_caller.sub_agent_context = {
+            "workflow_run_id": "workflow-run",
+            "depth": 1,
+            "max_agent_depth": 2,
+        }
+        mock_caller._workflow_accounting = accounting
+
+        with patch.object(builtins, "__import__") as mock_import:
+            mock_module = MagicMock()
+            mock_module.InvestigationAgent = MockInvestigationAgent
+
+            def mock_import_func(name: str, *args: Any, **kwargs: Any) -> Any:
+                if name == "kolega_code.agent.investigationagent":
+                    return mock_module
+                return original_import(name, *args, **kwargs)
+
+            mock_import.side_effect = mock_import_func
+            with pytest.raises(ValueError, match="missing required field.*thinking_effort"):
+                await agent_tool.dispatch_investigation_agent(
+                    "Investigate",
+                    {"provider": "openai", "model": "gpt-5.4"},
+                )
+
+        assert accounting.agent_count == 0
+        assert mock_caller.sub_agent_recorder.start_conversation.await_count == 0
+        assert mock_connection_manager.broadcast_event.await_count == 0
+
+    async def test_browser_override_rejects_nonvision_route_before_lifecycle(
+        self,
+        agent_tool: AgentTool,
+        mock_connection_manager: AsyncMock,
+        mock_caller: Mock,
+    ) -> None:
+        agent_tool.config = agent_tool.config.model_copy(update={"deepseek_api_key": "test-key"})
+
+        with pytest.raises(ValueError, match="vision-capable"):
+            await agent_tool.dispatch_browser_agent(
+                "Browse",
+                {
+                    "provider": "deepseek",
+                    "model": "deepseek-v4-pro",
+                    "thinking_effort": "high",
+                },
+            )
+
+        assert mock_caller.sub_agent_recorder.start_conversation.await_count == 0
+        assert mock_connection_manager.broadcast_event.await_count == 0
+
+    async def test_workflow_markdown_renders_supplied_routing_metadata(self, agent_tool: AgentTool, tmp_path) -> None:
+        markdown = tmp_path / "agent.md"
+        agent_tool._write_workflow_agent_markdown(
+            {"markdown": markdown},
+            metadata={
+                "actual_agent_type": "InvestigationAgent",
+                "requested_routing": {"provider": "openai", "model": "gpt-5.4", "effort": "high"},
+                "effective_routing": {"provider": "openai", "model": "gpt-5.4", "effort": "high"},
+            },
+            prompt="Investigate",
+            status="completed",
+        )
+
+        rendered = markdown.read_text(encoding="utf-8")
+        assert "- Actual agent type: InvestigationAgent" in rendered
+        assert '- Requested routing: {"effort": "high", "model": "gpt-5.4", "provider": "openai"}' in rendered
+        assert '- Effective routing: {"effort": "high", "model": "gpt-5.4", "provider": "openai"}' in rendered
 
     async def test_agent_name_consistency(self, agent_tool):
         """Test that all agent names follow kebab-case convention."""

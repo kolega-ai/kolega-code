@@ -255,6 +255,7 @@ def test_coder_agent_exposes_dispatch_general_agent(project_path, mock_connectio
     assert "dispatch_general_agent" in tool_names
     assert "dispatch_investigation_agent" in tool_names
     assert "dispatch_coding_agent" not in tool_names
+    assert "list_subagent_models" in tool_names
     assert not tool_names.intersection(ToolCollection.browser_tools)
 
 
@@ -300,6 +301,7 @@ def test_general_agent_tool_inventory(project_path, mock_connection_manager, age
     assert not tool_names.intersection(ToolCollection.browser_tools)
     # Recursion guard: no dispatch tools at all
     assert not any(name.startswith("dispatch_") for name in tool_names)
+    assert "list_subagent_models" not in tool_names
 
 
 def test_cli_general_agent_excludes_manifest_build_tools(project_path, mock_connection_manager, agent_config):

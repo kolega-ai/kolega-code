@@ -109,6 +109,67 @@ unknowns through research and option comparison; a debugging task might cluster
 failures, investigate root causes, test targeted fixes, and run a regression
 review. All of those shapes are built from the same primitives above.
 
+### Per-worker model overrides
+
+Normally, each workflow worker inherits the model configured for its agent role
+through your CLI or host settings. Omitting `model_override` preserves those
+defaults and is the recommended behavior.
+
+For a worker that needs a specific model, the main agent first calls the read-only
+`list_subagent_models` tool. The tool lists only providers configured for this
+session, their exact model IDs and effort options, vision support, and the effective
+defaults for each agent role. It can optionally filter by provider. Discovery is
+informational: the selection is validated again when the worker starts, and the
+tool never returns credentials, tokens, or private endpoint details.
+
+The agent can then put one complete, atomic override on a workflow `agent()` call:
+
+```python
+review = await agent(
+    "Review the authentication design for subtle security flaws.",
+    agent_type="investigation",
+    model_override={
+        "provider": "anthropic",
+        "model": "claude-opus-4-8",
+        "effort": "high",
+    },
+)
+```
+
+The contract is all-or-nothing:
+
+- When `model_override` is present, `provider`, `model`, and `effort` are all
+  mandatory. Fields are not inherited individually.
+- For a model with effort controls, `effort` must be one of the exact strings
+  reported by `list_subagent_models`.
+- Use `"effort": None` only for a model that has no effort control. `None` does
+  not ask Kolega Code to choose that model's default effort.
+- An unknown model, unsupported provider/model pair, unconfigured provider, or
+  model-specific effort violation produces a failed worker result. A malformed
+  `model_override` shape (including missing or extra fields) is a workflow script
+  error; when it escapes the workflow's own `pipeline()`/`parallel()` error
+  handling, it fails the workflow. Neither case silently falls back to the
+  inherited model or a provider default.
+- A Browser worker's selected catalog entry must report
+  `supports_vision: true`.
+
+An override applies only to the direct worker launched by that `agent()` call. It
+does not reroute helper models or descendants. If delegation depth `2` is enabled,
+a child uses its own role default unless its own dispatch supplies a separate,
+complete override.
+
+In Plan mode, Kolega Code first forces the requested workflow worker to the
+read-only Investigation agent, then validates and applies the override to that
+actual worker. Selecting another model never grants editing tools or bypasses
+Plan-mode safety.
+
+<Aside type="caution" title="Migrating saved workflows">
+The old partial `agent(..., model=..., effort=...)` arguments are no longer
+accepted. Replace them with the complete `model_override` object shown above.
+Legacy calls fail with a targeted migration error instead of inheriting missing
+routing fields or falling back.
+</Aside>
+
 ### Delegation depth
 
 Workflow metadata has an optional `max_agent_depth` setting. It defaults to `1`,
@@ -145,9 +206,11 @@ artifact paths when you only need to inspect output.
 
 How workflow sub-agents behave depends on the mode you're in.
 
-**Plan mode** — every workflow sub-agent is **read-only** (an investigation agent),
-no matter what the workflow asks for. Use it to fan out parallel research and
-synthesis while planning; it never edits your code.
+**Plan mode** — every workflow sub-agent is **read-only** (an Investigation agent),
+no matter what the workflow asks for. A `model_override`, when present, is
+validated for and applied to that forced Investigation worker; it changes routing,
+not permissions. Use Plan mode to fan out parallel research and synthesis while
+planning; it never edits your code.
 
 **Build mode** — sub-agents have the full toolset and can edit files and run
 commands.
