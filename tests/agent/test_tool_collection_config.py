@@ -230,7 +230,11 @@ class TestToolCollection:
             override = schema["properties"]["model_override"]
             assert override["required"] == ["provider", "model", "thinking_effort"]
             assert override["additionalProperties"] is False
-            assert {"type": "null"} in override["properties"]["thinking_effort"]["anyOf"]
+            assert override["properties"]["provider"]["minLength"] == 1
+            assert override["properties"]["model"]["minLength"] == 1
+            effort_options = override["properties"]["thinking_effort"]["anyOf"]
+            assert {"type": "string", "minLength": 1} in effort_options
+            assert {"type": "null"} in effort_options
 
         discovery = tool_collection.registry().get("list_subagent_models")
         assert discovery.parallel_safe is True
