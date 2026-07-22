@@ -16,10 +16,19 @@ from pathlib import Path
 from typing import Any
 
 from PIL import Image, ImageDraw
-from pypdf import PdfReader
+from pypdf import PdfReader, PdfWriter
+from pypdf.generic import (
+    ArrayObject,
+    ContentStream,
+    DictionaryObject,
+    NameObject,
+    NumberObject,
+    StreamObject,
+)
 
 SCHEMA_VERSION = 1
 TOOL = Path(__file__).with_name("pdf_tool.py")
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 
 class SmokeFailure(Exception):
@@ -786,6 +795,871 @@ def run_core(root: Path) -> dict[str, Any]:
     }
 
 
+def write_font_fixture(source_pdf: Path, out_pdf: Path, *, embedded: bool) -> None:
+    """Inject a synthetic /Font entry so the inventory has a deterministic subject."""
+    reader = PdfReader(str(source_pdf))
+    writer = PdfWriter()
+    writer.clone_document_from_reader(reader)
+    page = writer.pages[0]
+    base_name = "/ABCDEF+FakeSans" if embedded else "/FakeSans"
+    descriptor = DictionaryObject(
+        {
+            NameObject("/Type"): NameObject("/FontDescriptor"),
+            NameObject("/FontName"): NameObject(base_name),
+            NameObject("/Flags"): NumberObject(32),
+            NameObject("/ItalicAngle"): NumberObject(0),
+            NameObject("/Ascent"): NumberObject(800),
+            NameObject("/Descent"): NumberObject(-200),
+            NameObject("/CapHeight"): NumberObject(700),
+            NameObject("/StemV"): NumberObject(80),
+            NameObject("/FontBBox"): ArrayObject(
+                [NumberObject(0), NumberObject(-200), NumberObject(1000), NumberObject(800)]
+            ),
+        }
+    )
+    if embedded:
+        font_file = StreamObject()
+        font_file.set_data(b"\x00\x01\x00\x00fake-truetype-data")
+        descriptor[NameObject("/FontFile2")] = writer._add_object(font_file)
+    font = DictionaryObject(
+        {
+            NameObject("/Type"): NameObject("/Font"),
+            NameObject("/Subtype"): NameObject("/TrueType"),
+            NameObject("/BaseFont"): NameObject(base_name),
+            NameObject("/FirstChar"): NumberObject(32),
+            NameObject("/LastChar"): NumberObject(32),
+            NameObject("/Widths"): ArrayObject([NumberObject(500)]),
+            NameObject("/FontDescriptor"): writer._add_object(descriptor),
+            NameObject("/Encoding"): NameObject("/WinAnsiEncoding"),
+        }
+    )
+    resources = page["/Resources"].get_object()
+    fonts = resources.get("/Font")
+    if fonts is None:
+        fonts = DictionaryObject()
+        resources[NameObject("/Font")] = fonts
+    else:
+        fonts = fonts.get_object()
+    fonts[NameObject("/FZZ1")] = writer._add_object(font)
+    with out_pdf.open("wb") as handle:
+        writer.write(handle)
+
+
+def run_render_and_fonts(root: Path) -> dict[str, Any]:
+    base = root / "render-fonts"
+    base.mkdir()
+    fixture = base / "fixture.pdf"
+    job = base / "job.json"
+    write_json(
+        job,
+        {
+            "schema_version": 1,
+            "page_size": "letter",
+            "pages": [
+                {
+                    "elements": [
+                        {
+                            "type": "text",
+                            "text": "RENDER FIXTURE PAGE ONE",
+                            "x": 72,
+                            "y": 90,
+                            "font_size": 16,
+                        }
+                    ]
+                },
+                {
+                    "elements": [
+                        {
+                            "type": "text",
+                            "text": "RENDER FIXTURE PAGE TWO",
+                            "x": 72,
+                            "y": 90,
+                            "font_size": 16,
+                        }
+                    ]
+                },
+            ],
+        },
+    )
+    run_tool(["create", "--job", str(job), "--output", str(fixture)])
+
+    inspect_result = run_tool(["inspect", "--input", str(fixture)])
+    document = inspect_result["result"]
+    fonts = document.get("fonts")
+    if not fonts or fonts.get("scope") != "document":
+        raise SmokeFailure(f"Inspect omitted the document font inventory: {fonts}")
+    helvetica = [entry for entry in fonts["entries"] if entry["name"] == "Helvetica"]
+    if not helvetica or helvetica[0]["embedded"] or not helvetica[0]["base14"]:
+        raise SmokeFailure(f"Helvetica inventory entry is wrong: {fonts['entries']}")
+    if helvetica[0]["subtype"] != "Type1":
+        raise SmokeFailure(f"Helvetica subtype changed: {helvetica}")
+    if any(w.startswith("RELEASE BLOCKER") for w in document["warnings"]):
+        raise SmokeFailure("Base-14-only fixture raised a release blocker")
+    if not any(w.startswith("Non-embedded standard fonts") for w in document["warnings"]):
+        raise SmokeFailure("Base-14 informational font warning is missing")
+    extract_result = run_tool(["extract", "--input", str(fixture), "--pages", "1"])
+    if "fonts" not in extract_result["result"]:
+        raise SmokeFailure("Extract result omitted the font inventory")
+
+    unembedded_pdf = base / "unembedded.pdf"
+    write_font_fixture(fixture, unembedded_pdf, embedded=False)
+    unembedded = run_tool(["inspect", "--input", str(unembedded_pdf)])["result"]
+    if unembedded["fonts"]["unembedded_non_base14"] != ["FakeSans"]:
+        raise SmokeFailure(f"FakeSans was not flagged: {unembedded['fonts']}")
+    blockers = [
+        w
+        for w in unembedded["warnings"]
+        if w.startswith("RELEASE BLOCKER: non-embedded fonts outside the standard base-14 set")
+    ]
+    if len(blockers) != 1 or "FakeSans" not in blockers[0]:
+        raise SmokeFailure(f"Release blocker warning is wrong: {unembedded['warnings']}")
+
+    embedded_pdf = base / "embedded.pdf"
+    write_font_fixture(fixture, embedded_pdf, embedded=True)
+    embedded = run_tool(["inspect", "--input", str(embedded_pdf)])["result"]
+    fake_entries = [entry for entry in embedded["fonts"]["entries"] if entry["name"] == "FakeSans"]
+    if not fake_entries or not fake_entries[0]["embedded"] or not fake_entries[0]["subset"]:
+        raise SmokeFailure(f"Embedded subset fixture inventory is wrong: {fake_entries}")
+    if any(w.startswith("RELEASE BLOCKER") for w in embedded["warnings"]):
+        raise SmokeFailure("Embedded fixture raised a release blocker")
+
+    render_dir = base / "pngs"
+    render_result = run_tool(
+        ["render", "--input", str(fixture), "--output", str(render_dir), "--dpi", "96"]
+    )
+    if render_result["counts"]["pages_rendered"] != 2:
+        raise SmokeFailure(f"Render page count wrong: {render_result['counts']}")
+    if render_result["verification"]["pngs_reopened"] != 2:
+        raise SmokeFailure("Render did not reopen every published PNG")
+    for item in render_result["renders"]:
+        png = Path(item["output_path"])
+        if not png.is_file():
+            raise SmokeFailure(f"Rendered PNG missing: {png}")
+        with png.open("rb") as handle:
+            if handle.read(8) != PNG_SIGNATURE:
+                raise SmokeFailure(f"Rendered file is not a PNG: {png}")
+        with Image.open(png) as image:
+            width, height = image.size
+        expected_width = math.ceil(612 * 96 / 72)
+        expected_height = math.ceil(792 * 96 / 72)
+        if (width, height) != (expected_width, expected_height):
+            raise SmokeFailure(f"Rendered dimensions wrong: {(width, height)}")
+        if (item["width_px"], item["height_px"]) != (width, height):
+            raise SmokeFailure("Render summary dimensions disagree with the PNG")
+        if sha256(png) != item["sha256"]:
+            raise SmokeFailure(f"Rendered PNG hash mismatch: {png}")
+
+    selection_dir = base / "pngs-page2"
+    selection = run_tool(
+        [
+            "render",
+            "--input",
+            str(fixture),
+            "--output",
+            str(selection_dir),
+            "--pages",
+            "2",
+            "--dpi",
+            "96",
+        ]
+    )
+    files = sorted(path.name for path in selection_dir.iterdir())
+    if files != ["page-0002.png"] or selection["counts"]["pages_rendered"] != 1:
+        raise SmokeFailure(f"Render page selection wrong: {files}")
+
+    rotated_pdf = base / "rotated.pdf"
+    rotate_job = base / "rotate.json"
+    write_json(
+        rotate_job,
+        {
+            "schema_version": 1,
+            "inputs": [{"id": "fixture", "path": str(fixture)}],
+            "outputs": [
+                {
+                    "path": str(rotated_pdf),
+                    "pages": [{"input": "fixture", "page": 1, "rotate": 90}],
+                }
+            ],
+        },
+    )
+    run_tool(["pages", "--job", str(rotate_job)])
+    rotated_dir = base / "pngs-rotated"
+    rotated = run_tool(
+        ["render", "--input", str(rotated_pdf), "--output", str(rotated_dir), "--dpi", "96"]
+    )
+    rotated_render = rotated["renders"][0]
+    if (rotated_render["width_px"], rotated_render["height_px"]) != (
+        math.ceil(792 * 96 / 72),
+        math.ceil(612 * 96 / 72),
+    ):
+        raise SmokeFailure(f"Rotated render did not swap dimensions: {rotated_render}")
+
+    nonempty_dir = base / "nonempty"
+    nonempty_dir.mkdir()
+    (nonempty_dir / "existing.txt").write_text("occupied", encoding="utf-8")
+    assert_bad_input(
+        [
+            "render",
+            "--input",
+            str(fixture),
+            "--output",
+            str(nonempty_dir),
+            "--overwrite",
+        ],
+        "Nonempty render directory",
+    )
+    assert_bad_input(
+        [
+            "render",
+            "--input",
+            str(fixture),
+            "--output",
+            str(base / "too-high-dpi"),
+            "--dpi",
+            "1200",
+        ],
+        "Render DPI ceiling",
+    )
+    big_job = base / "big.json"
+    big_pdf = base / "big.pdf"
+    write_json(
+        big_job,
+        {
+            "schema_version": 1,
+            "page_size": [5000, 5000],
+            "pages": [{"elements": []}],
+        },
+    )
+    run_tool(["create", "--job", str(big_job), "--output", str(big_pdf)])
+    over_limit = run_tool(
+        [
+            "render",
+            "--input",
+            str(big_pdf),
+            "--output",
+            str(base / "over-limit"),
+            "--dpi",
+            "600",
+        ],
+        expected_status=6,
+    )
+    if over_limit["category"] != "resource_limit":
+        raise SmokeFailure(f"Oversized render failure category changed: {over_limit}")
+    return {
+        "render": True,
+        "render_rotation": True,
+        "render_failure_paths": True,
+        "font_inventory": True,
+        "font_release_blocker": True,
+    }
+
+
+def run_manifest_compose_redact(root: Path) -> dict[str, Any]:
+    base = root / "advanced"
+    base.mkdir()
+
+    # Manifest derive and check.
+    tessdata = base / "tessdata"
+    tessdata.mkdir()
+    (tessdata / "eng.traineddata").write_bytes(os.urandom(2_048))
+    manifest_path = base / "manifest.json"
+    derive = run_tool(
+        [
+            "manifest",
+            "--mode",
+            "derive",
+            "--engine",
+            "tesseract",
+            "--languages",
+            "eng",
+            "--tessdata-dir",
+            str(tessdata),
+            "--assume-source",
+            "tessdata_fast",
+            "--output",
+            str(manifest_path),
+        ]
+    )
+    if derive["ready_for_preflight"]:
+        raise SmokeFailure("Derive without approvals claimed preflight readiness")
+    derive = run_tool(
+        [
+            "manifest",
+            "--mode",
+            "derive",
+            "--engine",
+            "tesseract",
+            "--languages",
+            "eng",
+            "--tessdata-dir",
+            str(tessdata),
+            "--assume-source",
+            "tessdata_fast",
+            "--accept-license",
+            "--confirm-eligibility",
+            "--output",
+            str(manifest_path),
+            "--overwrite",
+        ]
+    )
+    if not derive["ready_for_preflight"]:
+        raise SmokeFailure(f"Approved derive is not preflight-ready: {derive}")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if not manifest["model"]["license_terms_accepted"]:
+        raise SmokeFailure("Derived manifest lost the license approval flag")
+    if manifest["artifacts"][0]["provenance"] != "declared-by-operator":
+        raise SmokeFailure(f"Derived provenance wrong: {manifest['artifacts']}")
+    check = run_tool(
+        [
+            "manifest",
+            "--mode",
+            "check",
+            "--engine",
+            "tesseract",
+            "--languages",
+            "eng",
+            "--model-manifest",
+            str(manifest_path),
+        ]
+    )
+    if not check["preflight_would_pass"] or check["summary"]["failed"]:
+        raise SmokeFailure(f"Clean manifest check failed: {check['summary']}")
+    with (tessdata / "eng.traineddata").open("ab") as handle:
+        handle.write(b"tampered")
+    tampered = run_tool(
+        [
+            "manifest",
+            "--mode",
+            "check",
+            "--engine",
+            "tesseract",
+            "--languages",
+            "eng",
+            "--model-manifest",
+            str(manifest_path),
+        ],
+        expected_status=7,
+    )
+    failed_checks = [item for item in tampered["details"]["checks"] if not item["ok"]]
+    if not any(
+        item["check"] == "artifact_sha256"
+        and item.get("expected_sha256")
+        and item.get("actual_sha256")
+        for item in failed_checks
+    ):
+        raise SmokeFailure(f"Tampered check lacks expected/actual hashes: {failed_checks}")
+    missing_language = run_tool(
+        [
+            "manifest",
+            "--mode",
+            "derive",
+            "--engine",
+            "tesseract",
+            "--languages",
+            "deu",
+            "--tessdata-dir",
+            str(tessdata),
+            "--output",
+            str(base / "missing.json"),
+        ],
+        expected_status=2,
+    )
+    if missing_language["category"] != "bad_input":
+        raise SmokeFailure(f"Missing language derive category changed: {missing_language}")
+    paddle_root = base / "paddle"
+    for role_dir in ("det", "rec", "layout"):
+        (paddle_root / role_dir).mkdir(parents=True)
+        (paddle_root / role_dir / "inference.pdiparams").write_bytes(os.urandom(1_024))
+    paddle_manifest = base / "paddle-manifest.json"
+    paddle_derive = run_tool(
+        [
+            "manifest",
+            "--mode",
+            "derive",
+            "--engine",
+            "paddle",
+            "--languages",
+            "en",
+            "--artifact",
+            f"text_detection_model_dir={paddle_root / 'det'}",
+            "--artifact",
+            f"text_recognition_model_dir={paddle_root / 'rec'}",
+            "--artifact",
+            f"layout_detection_model_dir={paddle_root / 'layout'}",
+            "--output",
+            str(paddle_manifest),
+        ]
+    )
+    if paddle_derive["ready_for_preflight"]:
+        raise SmokeFailure("Unreviewed Paddle derive claimed readiness")
+    paddle_data = json.loads(paddle_manifest.read_text(encoding="utf-8"))
+    structure_entries = [
+        entry for entry in paddle_data["artifacts"] if entry["role"] == "layout_detection_model_dir"
+    ]
+    if structure_entries[0]["identifier"] != "REVIEW-REQUIRED":
+        raise SmokeFailure("Paddle structure role provenance was auto-filled")
+
+    # Searchable OCR composition from a fabricated sidecar.
+    scan_image = base / "scan.png"
+    image = Image.new("RGB", (1_275, 1_650), "white")
+    draw = ImageDraw.Draw(image)
+    draw.text((240, 240), "COMPOSE FIXTURE WORDS", fill="black")
+    image.save(scan_image)
+    scan_pdf = base / "scan.pdf"
+    run_tool(
+        [
+            "convert",
+            "--images",
+            str(scan_image),
+            "--to",
+            "pdf",
+            "--output",
+            str(scan_pdf),
+            "--page-size",
+            "letter",
+            "--margin",
+            "0",
+        ]
+    )
+    sidecar_path = base / "sidecar.json"
+    sidecar = {
+        "schema_version": 1,
+        "operation": "ocr",
+        "source": {
+            "path": str(scan_pdf.resolve()),
+            "sha256": sha256(scan_pdf),
+            "selected_pages": [1],
+            "immutable": True,
+        },
+        "pages": [
+            {
+                "source_page": 1,
+                "source_region": None,
+                "classification": "likely-scanned",
+                "page_geometry": {
+                    "width_points": 612,
+                    "height_points": 792,
+                    "rotation": 0,
+                },
+                "coordinate_space": {
+                    "unit": "rendered_pixel",
+                    "dpi": 150,
+                    "width": 1275,
+                    "height": 1650,
+                },
+                "blocks": [
+                    {
+                        "order": 0,
+                        "text": "COMPOSE FIXTURE WORDS",
+                        "block_type": "line",
+                        "bbox": [240, 240, 760, 280],
+                        "confidence": 0.9,
+                        "words": [
+                            {
+                                "text": "COMPOSE",
+                                "bbox": [240, 240, 420, 280],
+                                "confidence": 0.9,
+                            },
+                            {
+                                "text": "FIXTURE",
+                                "bbox": [435, 240, 600, 280],
+                                "confidence": 0.9,
+                            },
+                            {
+                                "text": "WORDS",
+                                "bbox": [615, 240, 760, 280],
+                                "confidence": 0.9,
+                            },
+                        ],
+                    }
+                ],
+                "warnings": [],
+                "engine_specific": {},
+            }
+        ],
+    }
+    write_json(sidecar_path, sidecar)
+    searchable_pdf = base / "searchable.pdf"
+    compose = run_tool(
+        [
+            "ocr-compose",
+            "--input",
+            str(scan_pdf),
+            "--sidecar",
+            str(sidecar_path),
+            "--output",
+            str(searchable_pdf),
+        ]
+    )
+    anchors = compose["verification"]["anchors"]
+    if anchors["checked"] == 0 or anchors["checked"] != anchors["found"]:
+        raise SmokeFailure(f"Compose anchors failed: {anchors}")
+    if compose["verification"]["geometry_spot_check_max_delta_points"] > 3:
+        raise SmokeFailure("Compose geometry spot check deviated")
+    if not compose["verification"]["visual_diff"]["checked"]:
+        raise SmokeFailure("Compose skipped its visual check")
+    composed_text = run_tool(["extract", "--input", str(searchable_pdf)])["result"]["pages"][0][
+        "text"
+    ]
+    if "COMPOSE" not in composed_text or "WORDS" not in composed_text:
+        raise SmokeFailure(f"Composed text not extractable: {composed_text!r}")
+    mismatched = dict(sidecar)
+    mismatched["source"] = dict(sidecar["source"], sha256="0" * 64)
+    mismatch_path = base / "sidecar-mismatch.json"
+    write_json(mismatch_path, mismatched)
+    assert_bad_input(
+        [
+            "ocr-compose",
+            "--input",
+            str(scan_pdf),
+            "--sidecar",
+            str(mismatch_path),
+            "--output",
+            str(base / "never.pdf"),
+        ],
+        "Compose sidecar hash mismatch",
+    )
+    digital = dict(sidecar)
+    digital_pages = [dict(sidecar["pages"][0], classification="digital-text")]
+    digital["pages"] = digital_pages
+    digital_path = base / "sidecar-digital.json"
+    write_json(digital_path, digital)
+    skipped = run_tool(
+        [
+            "ocr-compose",
+            "--input",
+            str(scan_pdf),
+            "--sidecar",
+            str(digital_path),
+            "--output",
+            str(base / "never2.pdf"),
+        ],
+        expected_status=3,
+    )
+    if skipped["category"] != "unsupported_operation":
+        raise SmokeFailure(f"Digital-text compose skip category changed: {skipped}")
+
+    # Redaction.
+    doc_job = base / "redact-doc.json"
+    doc_pdf = base / "redact-doc.pdf"
+    write_json(
+        doc_job,
+        {
+            "schema_version": 1,
+            "page_size": "letter",
+            "pages": [
+                {
+                    "elements": [
+                        {
+                            "type": "text",
+                            "text": "PUBLIC HEADER LINE",
+                            "x": 72,
+                            "y": 90,
+                            "font_size": 14,
+                        },
+                        {
+                            "type": "text",
+                            "text": "CODEWORD REDACT-ME-42 END",
+                            "x": 72,
+                            "y": 140,
+                            "font_size": 14,
+                        },
+                        {
+                            "type": "text",
+                            "text": "PUBLIC FOOTER LINE",
+                            "x": 72,
+                            "y": 190,
+                            "font_size": 14,
+                        },
+                    ]
+                }
+            ],
+        },
+    )
+    run_tool(["create", "--job", str(doc_job), "--output", str(doc_pdf)])
+    # Simulate an incremental-update tail (stale bytes plus a second trailer block
+    # that re-points at the original xref) so the rewrite must drop it.
+    original_bytes = doc_pdf.read_bytes()
+    startxref_offset = original_bytes.rfind(b"startxref")
+    if startxref_offset < 0:
+        raise SmokeFailure("Fixture PDF has no startxref to duplicate")
+    xref_pointer = original_bytes[startxref_offset:].split()[1]
+    doc_pdf.write_bytes(
+        original_bytes + b"\n% JUNK-REVISION-MARKER-99\nstartxref\n" + xref_pointer + b"\n%%EOF\n"
+    )
+    redact_job = base / "redact-job.json"
+    write_json(
+        redact_job,
+        {
+            "schema_version": 1,
+            "targets": [
+                {
+                    "type": "text",
+                    "text": "REDACT-ME-42",
+                    "pages": "all",
+                    "match": "exact",
+                    "grow_points": 2.0,
+                }
+            ],
+        },
+    )
+    redacted_pdf = base / "redacted.pdf"
+    report_path = base / "redact-report.json"
+    redact = run_tool(
+        [
+            "redact",
+            "--input",
+            str(doc_pdf),
+            "--job",
+            str(redact_job),
+            "--output",
+            str(redacted_pdf),
+            "--report",
+            str(report_path),
+        ]
+    )
+    evidence = redact["removal_evidence"]["pages"][0]
+    if evidence["text_operators_removed"] < 1:
+        raise SmokeFailure(f"Redaction removed no text operators: {evidence}")
+    if evidence["characters_removed"] <= len("REDACT-ME-42"):
+        raise SmokeFailure(f"Whole-operator collateral removal was not measured: {evidence}")
+    if redact["residual_scan"]["raw_byte_hits"]:
+        raise SmokeFailure(f"Residual scan found raw hits: {redact['residual_scan']}")
+    if not redact["verification"]["visual_diff"]["checked"]:
+        raise SmokeFailure("Redaction skipped its visual diff check")
+    redacted_bytes = redacted_pdf.read_bytes()
+    if b"REDACT-ME-42" in redacted_bytes:
+        raise SmokeFailure("Redacted output still contains the term bytes")
+    if b"JUNK-REVISION-MARKER-99" in redacted_bytes:
+        raise SmokeFailure("Redacted output retained stale revision bytes")
+    if redacted_bytes.count(b"%%EOF") != 1:
+        raise SmokeFailure("Redacted output is not a single revision")
+    redacted_text = run_tool(["extract", "--input", str(redacted_pdf)])["result"]["pages"][0][
+        "text"
+    ]
+    if "REDACT-ME-42" in redacted_text:
+        raise SmokeFailure("Redacted term is still extractable")
+    if "PUBLIC HEADER LINE" not in redacted_text or "PUBLIC FOOTER LINE" not in redacted_text:
+        raise SmokeFailure(f"Redaction damaged retained text: {redacted_text!r}")
+    if not report_path.is_file():
+        raise SmokeFailure("Redaction report file was not published")
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    if any("REDACT-ME-42" in json.dumps(target) for target in report["targets"]):
+        raise SmokeFailure("Redaction report leaked the target text")
+    no_match_job = base / "redact-nomatch.json"
+    write_json(
+        no_match_job,
+        {
+            "schema_version": 1,
+            "targets": [{"type": "text", "text": "NO-SUCH-TERM-EXISTS", "pages": "all"}],
+        },
+    )
+    assert_bad_input(
+        [
+            "redact",
+            "--input",
+            str(doc_pdf),
+            "--job",
+            str(no_match_job),
+            "--output",
+            str(base / "never3.pdf"),
+        ],
+        "Redaction no-match",
+    )
+    encrypt_job = base / "redact-encrypt.json"
+    encrypted_pdf = base / "redact-encrypted.pdf"
+    write_json(
+        encrypt_job,
+        {
+            "schema_version": 1,
+            "operations": [
+                {
+                    "op": "encrypt",
+                    "algorithm": "AES-256",
+                    "user_password": "redact-smoke-password",
+                }
+            ],
+        },
+    )
+    run_tool(
+        [
+            "edit",
+            "--input",
+            str(doc_pdf),
+            "--job",
+            str(encrypt_job),
+            "--output",
+            str(encrypted_pdf),
+        ]
+    )
+    refused = run_tool(
+        [
+            "redact",
+            "--input",
+            str(encrypted_pdf),
+            "--job",
+            str(redact_job),
+            "--output",
+            str(base / "never4.pdf"),
+        ],
+        expected_status=3,
+    )
+    if refused["category"] != "unsupported_operation":
+        raise SmokeFailure(f"Encrypted redaction category changed: {refused}")
+    form_pdf = base / "form-xobject.pdf"
+    reader = PdfReader(str(doc_pdf))
+    writer = PdfWriter()
+    writer.clone_document_from_reader(reader)
+    page = writer.pages[0]
+    form = StreamObject()
+    form[NameObject("/Type")] = NameObject("/XObject")
+    form[NameObject("/Subtype")] = NameObject("/Form")
+    form[NameObject("/BBox")] = ArrayObject(
+        [NumberObject(0), NumberObject(0), NumberObject(612), NumberObject(792)]
+    )
+    form.set_data(b"q Q")
+    form_reference = writer._add_object(form)
+    resources = page["/Resources"].get_object()
+    xobjects = resources.get("/XObject")
+    if xobjects is None:
+        xobjects = DictionaryObject()
+        resources[NameObject("/XObject")] = xobjects
+    else:
+        xobjects = xobjects.get_object()
+    xobjects[NameObject("/FXZ1")] = form_reference
+    content = ContentStream(page.get_contents(), writer)
+    content.operations.append(([NameObject("/FXZ1")], b"Do"))
+    page.replace_contents(content)
+    with form_pdf.open("wb") as handle:
+        writer.write(handle)
+    form_refused = run_tool(
+        [
+            "redact",
+            "--input",
+            str(form_pdf),
+            "--job",
+            str(redact_job),
+            "--output",
+            str(base / "never5.pdf"),
+        ],
+        expected_status=3,
+    )
+    if form_refused["category"] != "unsupported_operation" or "FXZ1" not in form_refused["message"]:
+        raise SmokeFailure(f"Form XObject refusal changed: {form_refused}")
+
+    # A large rotated stamp near a target must not be removed: its axis-aligned bounding
+    # box overlaps the target rect, but its true oriented glyph quad does not. Redaction
+    # tests the oriented quad, so the stamp survives while the target is removed.
+    stamp_doc_job = base / "redact-stamp.json"
+    stamp_pdf = base / "redact-stamp.pdf"
+    write_json(
+        stamp_doc_job,
+        {
+            "schema_version": 1,
+            "page_size": "letter",
+            "pages": [
+                {
+                    "elements": [
+                        {
+                            "type": "text",
+                            "text": "SECRET GAMMA-88 CODE",
+                            "x": 72,
+                            "y": 700,
+                            "width": 300,
+                            "font_size": 12,
+                        }
+                    ]
+                }
+            ],
+        },
+    )
+    run_tool(["create", "--job", str(stamp_doc_job), "--output", str(stamp_pdf)])
+    stamp_edit_job = base / "redact-stamp-edit.json"
+    stamped_pdf = base / "redact-stamped.pdf"
+    write_json(
+        stamp_edit_job,
+        {
+            "schema_version": 1,
+            "operations": [
+                {
+                    "op": "stamp_text",
+                    "pages": "1",
+                    "text": "CONFIDENTIAL",
+                    "x": 306,
+                    "y": 300,
+                    "angle": 45,
+                    "font_size": 72,
+                    "opacity": 0.3,
+                }
+            ],
+        },
+    )
+    run_tool(
+        [
+            "edit",
+            "--input",
+            str(stamp_pdf),
+            "--job",
+            str(stamp_edit_job),
+            "--output",
+            str(stamped_pdf),
+        ]
+    )
+    stamp_redact_job = base / "redact-stamp-target.json"
+    write_json(
+        stamp_redact_job,
+        {
+            "schema_version": 1,
+            "targets": [{"type": "text", "text": "GAMMA-88", "pages": "all", "match": "exact"}],
+        },
+    )
+    stamp_redacted = base / "redact-stamp-out.pdf"
+    stamp_redaction = run_tool(
+        [
+            "redact",
+            "--input",
+            str(stamped_pdf),
+            "--job",
+            str(stamp_redact_job),
+            "--output",
+            str(stamp_redacted),
+        ]
+    )
+    # Assert on removal evidence, not extracted text: pdfplumber renders the 45-degree
+    # stamp as one letter per line, so the contiguous word never appears in extraction
+    # even when every stamp glyph survives. Exactly one operator (the target line, 20
+    # chars) must be removed; a regression to axis-aligned extents would also remove the
+    # stamp operator, doubling both counts.
+    stamp_evidence = stamp_redaction["removal_evidence"]["pages"][0]
+    if stamp_evidence["text_operators_removed"] != 1:
+        raise SmokeFailure(
+            "Rotated stamp removed by a distant target — oriented-quad extent regressed "
+            f"to an axis-aligned bounding box: {stamp_evidence}"
+        )
+    if stamp_evidence["characters_removed"] != len("SECRET GAMMA-88 CODE"):
+        raise SmokeFailure(f"Unexpected redaction collateral near stamp: {stamp_evidence}")
+    stamp_text = run_tool(["extract", "--input", str(stamp_redacted)])["result"]["pages"][0]["text"]
+    if "GAMMA-88" in stamp_text:
+        raise SmokeFailure("Redaction target survived near a rotated stamp")
+    # The stamp glyphs (CONFIDENTIAL, rendered reversed one-per-line) must still be present.
+    if "".join(stamp_text.split()).count("C") < 1 or "AITNEDIFNOC" not in "".join(
+        stamp_text.split()
+    ):
+        raise SmokeFailure(f"Rotated stamp glyphs did not survive redaction: {stamp_text!r}")
+
+    return {
+        "manifest_derive_and_check": True,
+        "manifest_structure_roles_never_autofilled": True,
+        "ocr_compose": True,
+        "ocr_compose_failure_paths": True,
+        "redact_text_target": True,
+        "redact_single_revision": True,
+        "redact_failure_paths": True,
+        "redact_form_xobject_refused": True,
+        "redact_oriented_quad_spares_rotated_stamp": True,
+    }
+
+
 def run_optional_ocr(
     root: Path,
     *,
@@ -1031,6 +1905,8 @@ def main() -> int:
         with tempfile.TemporaryDirectory(prefix="pdf-skill-smoke-") as temp_name:
             root = Path(temp_name)
             core = run_core(root)
+            core.update(run_render_and_fonts(root))
+            core.update(run_manifest_compose_redact(root))
             optional = None
             if args.ocr_engine:
                 optional = run_optional_ocr(

@@ -1,11 +1,11 @@
 ---
 name: pdf
-description: Create, inspect, extract, edit, secure, reorganize, and convert PDF-native documents; diagnose scanned or hybrid PDFs and run explicitly selected local OCR. Use for PDF page operations, forms, metadata, encryption, spatial text or table extraction, image/text-to-PDF generation, and scanned-PDF OCR planning. Do not use for authoring DOCX, XLSX, or PPTX source files before PDF export.
+description: Create, inspect, render, extract, edit, secure, redact, reorganize, and convert PDF-native documents; diagnose scanned or hybrid PDFs, run explicitly selected local OCR, and compose searchable PDFs from OCR results. Use for PDF page operations, forms, metadata, encryption, spatial text or table extraction, image/text-to-PDF generation, page rasterization for visual review, true content redaction, scanned-PDF OCR planning, and making scanned PDFs searchable. Do not use for authoring DOCX, XLSX, or PPTX source files before PDF export.
 license: Apache-2.0
 compatibility: Requires Python 3.11+ and the declared core environment. OCR engines, model weights, language data, and compatible acceleration are optional external capabilities installed separately.
 metadata:
   author: Kolega
-  version: "1.0"
+  version: "1.1"
   schema_version: "1"
 ---
 
@@ -14,24 +14,39 @@ metadata:
 Use `scripts/pdf_tool.py` for deterministic PDF-native work. Keep every source immutable,
 write to a distinct destination, and verify the published output.
 
+## Workspace discipline
+
+Work directly in visible workspace paths. Never create or use `.build` or another hidden
+build/work directory. Write requested deliverables directly to their declared destinations;
+if intermediate files are necessary, keep them in visible, narrowly scoped paths rather than
+staging the task in a hidden subtree.
+
 ## Route the task
 
-- Use `inspect` before mutation to inventory pages, encryption, forms, images, text, and
-  likely scanned content.
+- Use `inspect` before mutation to inventory pages, encryption, forms, fonts, images,
+  text, and likely scanned content.
 - Use `extract` for text, coordinates, tables, and embedded images.
+- Use `render` to rasterize pages to PNG files for visual review.
 - Use `create` for a new PDF from a versioned JSON layout or story specification.
 - Use `pages` to merge, split, select, reorder, repeat, delete, or rotate pages.
 - Use `edit` for stamps, form values, metadata, encryption, or decryption.
+- Use `redact` for true content removal with a verification report. Never present `edit`
+  stamps, white rectangles, or crops as redaction.
 - Use `convert` only for the explicit lossy mappings it supports.
+- Use `manifest` to derive or check an OCR model manifest before OCR; it hashes local
+  files and never runs an engine.
 - Use `ocr-plan` before OCR. Use `ocr` only after the user selects an engine and approves
   its separately provisioned models or language data. If Surya and PaddleOCR are unavailable,
   tell the user and offer Tesseract as the explicit fallback.
+- Use `ocr-compose` after `ocr` to turn the sidecar into a searchable PDF with an
+  invisible text layer; it never runs an engine.
 - Keep DOCX/XLSX/PPTX authoring and their PDF export in the source-format workflow.
 
 Read [operations](references/operations.md) for command and job schemas. Read
 [examples](references/examples.md) before the first end-to-end invocation. Read
-[limitations](references/limitations.md) before promising fidelity, redaction, signatures,
-or searchable OCR PDFs.
+[quality](references/quality.md) before promising a polished deliverable, and
+[limitations](references/limitations.md) before promising fidelity or signatures. Read
+[redaction](references/redaction.md) before any redaction request.
 
 ## Core workflow
 
@@ -49,8 +64,16 @@ Use the selected interpreter's `-m pip` for the declared core or explicitly sele
 4. Write to a new path. Use `--overwrite` only when replacing an existing destination is
    intentional; it never permits a source path to be its own destination.
 5. Reopen the output and inspect the JSON verification result. Treat warnings as unresolved
-   preservation or interpretation questions, not as success noise.
-6. Open or render representative pages when layout is important.
+   preservation or interpretation questions, not as success noise. Review the `fonts`
+   inventory and resolve every `RELEASE BLOCKER` font warning before release.
+6. **Render and look.** When layout, formatting, or visual fidelity matters, run `render`
+   to produce one PNG per page, then open the rendered PNG files with the Read tool and
+   examine them — at minimum every page you changed, plus the first page. Check for text
+   overflow or truncation, overlapping or clipped content, missing images, and broken
+   table layout. Do not claim visual correctness from JSON verification alone. The PNG
+   files are PDFium rasters of the delivered PDF itself, so they are authoritative for
+   static page appearance; non-embedded fonts still render with local substitutes, and
+   interactive form or annotation appearance can differ per viewer.
 
 The CLI emits a schema-versioned JSON object on stdout. Errors and diagnostics are JSON on
 stderr with stable categories and nonzero exit statuses. It bounds source size, page count,
@@ -94,9 +117,13 @@ OCR.
 ## Resources
 
 - [Operations](references/operations.md): CLI options, JSON jobs, limits, and exit statuses.
-- [Examples](references/examples.md): copy-pasteable core and OCR workflows.
-- [OCR](references/ocr.md): decision matrix, artifact preflight, adapters, and normalized
-  output.
+- [Examples](references/examples.md): copy-pasteable core, redaction, and OCR workflows.
+- [Quality](references/quality.md): design intake, delivery profiles, acceptance criteria,
+  and the structural-versus-visual review contract.
+- [Redaction](references/redaction.md): leakage policy table, verification contract, and
+  explicit non-guarantees.
+- [OCR](references/ocr.md): decision matrix, artifact preflight, manifest derivation,
+  adapters, and normalized output.
 - [Limitations](references/limitations.md): fidelity and security boundaries.
 - `scripts/smoke_test.py`: generated-fixture core smoke test; add `--ocr-engine` only in a
   separately prepared optional engine environment.
@@ -110,7 +137,10 @@ Run:
 ```
 
 Use the absolute `SKILL_ROOT` and `PDF_PYTHON` selected by the canonical environment
-procedure. For
-a requested artifact, also confirm the expected page count/order, text anchors, form and
-encryption state, metadata, output signature, and representative visual layout. Report
-every optional OCR profile not exercised.
+procedure. For a requested artifact, also confirm against the
+[acceptance criteria](references/quality.md#acceptance-criteria): expected page
+count/order, text anchors, a font inventory with zero `RELEASE BLOCKER` warnings, form and
+encryption state, metadata, output signature — and rendered-page review of every changed
+page plus page 1 via `render` and the Read tool. For a redaction, additionally confirm the
+report's removal evidence, clean residual scan, and the published verification rasters.
+Report every optional OCR profile not exercised.

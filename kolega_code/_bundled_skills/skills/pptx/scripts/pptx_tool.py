@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import io
 import json
@@ -48,7 +49,10 @@ except ModuleNotFoundError as exc:
                     "category": "missing_dependency",
                     "message": f"missing Python dependency: {exc.name}",
                     "details": {
-                        "install": "python -m pip install -r requirements.txt",
+                        "install": (
+                            f'"{sys.executable}" -m pip install -r '
+                            f'"{Path(__file__).resolve().parent.parent / "requirements.txt"}"'
+                        ),
                     },
                 },
             },
@@ -77,6 +81,10 @@ MAX_TABLE_ROWS = 200
 MAX_TABLE_COLUMNS = 200
 MAX_CHART_POINTS = 10_000
 MAX_GEOMETRY_INCHES = 100.0
+MIN_RENDER_DPI = 36
+MAX_RENDER_DPI = 300
+MAX_RENDER_PIXELS_PER_SLIDE = 25_000_000
+MAX_RENDER_TOTAL_PIXELS = 250_000_000
 
 CONTENT_TYPES = "[Content_Types].xml"
 PRESENTATION_PART = "ppt/presentation.xml"
@@ -128,6 +136,8 @@ SENSITIVE_QUERY_KEYS = {
 }
 RELATIONSHIP_ID_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9._-]*$")
 SENSITIVE_QUERY_KEYS_COMPACT = {key.replace("_", "") for key in SENSITIVE_QUERY_KEYS}
+ALLOWED_HYPERLINK_SCHEMES = {"http", "https", "mailto"}
+MAX_HYPERLINK_URL_CHARS = 2048
 CHART_TYPES = {
     "column": XL_CHART_TYPE.COLUMN_CLUSTERED,
     "bar": XL_CHART_TYPE.BAR_CLUSTERED,
@@ -258,6 +268,7 @@ def _versions() -> dict[str, str]:
         ("Pillow", "Pillow"),
         ("XlsxWriter", "XlsxWriter"),
         ("typing_extensions", "typing-extensions"),
+        ("pypdfium2", "pypdfium2"),
     ):
         try:
             versions[key] = metadata.version(distribution)
@@ -808,6 +819,71 @@ class OoxmlAdapter:
         cls.require_supported_version()
         return bool(paragraph._p.xpath("./a:fld"))
 
+    @staticmethod
+    def _strip_extension_lists(element: Any) -> None:
+        for ext_list in element.findall(f".//{{{A_NS}}}extLst"):
+            ext_list.getparent().remove(ext_list)
+
+    @staticmethod
+    def _clear_cell_text(cell_element: Any) -> None:
+        text_body = cell_element.find(f"{{{A_NS}}}txBody")
+        if text_body is None:
+            return
+        for paragraph in text_body.findall(f"{{{A_NS}}}p"):
+            text_body.remove(paragraph)
+        etree.SubElement(text_body, f"{{{A_NS}}}p")
+
+    @classmethod
+    def insert_table_row(cls, table: Any, index: int) -> None:
+        cls.require_supported_version()
+        rows = table._tbl.findall(f"{{{A_NS}}}tr")
+        new_row = copy.deepcopy(rows[min(index, len(rows) - 1)])
+        cls._strip_extension_lists(new_row)
+        for cell_element in new_row.findall(f"{{{A_NS}}}tc"):
+            cls._clear_cell_text(cell_element)
+        if index >= len(rows):
+            rows[-1].addnext(new_row)
+        else:
+            rows[index].addprevious(new_row)
+
+    @classmethod
+    def remove_table_row(cls, table: Any, index: int) -> None:
+        cls.require_supported_version()
+        row = table._tbl.findall(f"{{{A_NS}}}tr")[index]
+        row.getparent().remove(row)
+
+    @classmethod
+    def insert_table_column(cls, table: Any, index: int) -> None:
+        cls.require_supported_version()
+        tbl = table._tbl
+        grid = tbl.find(f"{{{A_NS}}}tblGrid")
+        grid_columns = grid.findall(f"{{{A_NS}}}gridCol")
+        new_column = copy.deepcopy(grid_columns[min(index, len(grid_columns) - 1)])
+        cls._strip_extension_lists(new_column)
+        if index >= len(grid_columns):
+            grid_columns[-1].addnext(new_column)
+        else:
+            grid_columns[index].addprevious(new_column)
+        for row in tbl.findall(f"{{{A_NS}}}tr"):
+            cells = row.findall(f"{{{A_NS}}}tc")
+            new_cell = copy.deepcopy(cells[min(index, len(cells) - 1)])
+            cls._strip_extension_lists(new_cell)
+            cls._clear_cell_text(new_cell)
+            if index >= len(cells):
+                cells[-1].addnext(new_cell)
+            else:
+                cells[index].addprevious(new_cell)
+
+    @classmethod
+    def remove_table_column(cls, table: Any, index: int) -> None:
+        cls.require_supported_version()
+        tbl = table._tbl
+        grid_column = tbl.find(f"{{{A_NS}}}tblGrid").findall(f"{{{A_NS}}}gridCol")[index]
+        grid_column.getparent().remove(grid_column)
+        for row in tbl.findall(f"{{{A_NS}}}tr"):
+            cell_element = row.findall(f"{{{A_NS}}}tc")[index]
+            cell_element.getparent().remove(cell_element)
+
     @classmethod
     def replace_picture_relationship(cls, picture: Any, blob: bytes) -> None:
         cls.require_supported_version()
@@ -1017,6 +1093,33 @@ def _sanitize_url(value: str) -> str:
     )
 
 
+def _validate_hyperlink_url(value: Any, label: str) -> str:
+    url = _require_string(value, label)
+    if len(url) > MAX_HYPERLINK_URL_CHARS:
+        raise ToolError(
+            "bad_input",
+            f"{label} exceeds {MAX_HYPERLINK_URL_CHARS} characters",
+        )
+    if any(ord(char) < 33 or ord(char) == 127 or char.isspace() for char in url):
+        raise ToolError("bad_input", f"{label} contains whitespace or control characters")
+    try:
+        parts = urlsplit(url)
+    except ValueError as exc:
+        raise ToolError("bad_input", f"{label} is malformed", {"reason": str(exc)}) from exc
+    scheme = parts.scheme.lower()
+    if scheme not in ALLOWED_HYPERLINK_SCHEMES:
+        raise ToolError(
+            "unsupported_operation",
+            f"{label} scheme must be one of: http, https, mailto",
+            {"scheme": scheme or "<missing>"},
+        )
+    if scheme != "mailto" and not parts.netloc:
+        raise ToolError("bad_input", f"{label} must include a host")
+    if scheme == "mailto" and not parts.path:
+        raise ToolError("bad_input", f"{label} must include a recipient address")
+    return url
+
+
 def _text_frame_info(text_frame: Any) -> dict[str, Any]:
     paragraphs: list[dict[str, Any]] = []
     for paragraph_index, paragraph in enumerate(text_frame.paragraphs):
@@ -1135,6 +1238,133 @@ def _notes_by_slide_part(path: Path, report: PackageReport) -> dict[str, str]:
     return notes
 
 
+def inspect_fonts(path: Path) -> dict[str, Any]:
+    """Inventory referenced fonts and fonts actually embedded in the PPTX package."""
+
+    referenced_by_casefold: dict[str, str] = {}
+    embedded_by_casefold: dict[str, str] = {}
+    symbol_and_bullet_by_casefold: dict[str, str] = {}
+    references: list[dict[str, str]] = []
+    dangling_embeddings: list[dict[str, str]] = []
+    font_tags = (f"{{{A_NS}}}latin", f"{{{A_NS}}}ea", f"{{{A_NS}}}cs")
+    symbol_tags = (f"{{{A_NS}}}sym", f"{{{A_NS}}}buFont")
+    theme_token_groups = {"mj": "major", "mn": "minor"}
+    theme_token_scripts = {"lt": "Latin", "ea": "EastAsia", "cs": "ComplexScript"}
+    embedding_tags = {
+        f"{{{P_NS}}}regular",
+        f"{{{P_NS}}}bold",
+        f"{{{P_NS}}}italic",
+        f"{{{P_NS}}}boldItalic",
+    }
+
+    with zipfile.ZipFile(path) as package:
+        names = set(package.namelist())
+        theme_tokens: set[str] = set()
+        theme_fonts: dict[str, str] = {}
+        for name in names:
+            if name.startswith("ppt/theme/") and name.endswith(".xml"):
+                scheme = _safe_xml(package.read(name), name).find(f".//{{{A_NS}}}fontScheme")
+                if scheme is None:
+                    continue
+                for group_key, group_tag in (("major", "majorFont"), ("minor", "minorFont")):
+                    group = scheme.find(f"{{{A_NS}}}{group_tag}")
+                    if group is None:
+                        continue
+                    for script_key, tag in (
+                        ("Latin", "latin"),
+                        ("EastAsia", "ea"),
+                        ("ComplexScript", "cs"),
+                    ):
+                        element = group.find(f"{{{A_NS}}}{tag}")
+                        value = (
+                            (element.get("typeface") or "").strip() if element is not None else ""
+                        )
+                        if value:
+                            theme_fonts[group_key + script_key] = value
+        for name in names:
+            if not name.startswith("ppt/") or not name.lower().endswith(".xml"):
+                continue
+            if name.startswith("ppt/theme/"):
+                continue
+            root = _safe_xml(package.read(name), name)
+            for element in root.iter(*font_tags):
+                slot = etree.QName(element).localname
+                value = (element.get("typeface") or "").strip()
+                if not value:
+                    continue
+                if not value.startswith("+"):
+                    referenced_by_casefold.setdefault(value.casefold(), value)
+                    references.append(
+                        {"part": name, "slot": slot, "font": value, "source": "explicit"}
+                    )
+                    continue
+                theme_tokens.add(value)
+                token_parts = value.removeprefix("+").split("-", 1)
+                if len(token_parts) != 2:
+                    continue
+                group_key = theme_token_groups.get(token_parts[0])
+                script_key = theme_token_scripts.get(token_parts[1])
+                if not group_key or not script_key:
+                    continue
+                resolved = theme_fonts.get(group_key + script_key)
+                if resolved:
+                    referenced_by_casefold.setdefault(resolved.casefold(), resolved)
+                    references.append(
+                        {"part": name, "slot": slot, "font": resolved, "source": value}
+                    )
+            for element in root.iter(*symbol_tags):
+                value = (element.get("typeface") or "").strip()
+                if value and not value.startswith("+"):
+                    symbol_and_bullet_by_casefold.setdefault(value.casefold(), value)
+        relationships: dict[str, str] = {}
+        if PRESENTATION_RELS in names:
+            rel_root = _safe_xml(package.read(PRESENTATION_RELS), PRESENTATION_RELS)
+            for rel in rel_root.findall(f"{{{REL_NS}}}Relationship"):
+                if (rel.get("TargetMode") or "").lower() == "external":
+                    continue
+                relationships[rel.get("Id", "")] = _resolve_target(
+                    PRESENTATION_PART, rel.get("Target") or ""
+                )
+        if PRESENTATION_PART in names:
+            root = _safe_xml(package.read(PRESENTATION_PART), PRESENTATION_PART)
+            embedded_list = f".//{{{P_NS}}}embeddedFontLst/{{{P_NS}}}embeddedFont"
+            for embedded_font in root.findall(embedded_list):
+                font_element = embedded_font.find(f"{{{P_NS}}}font")
+                font_name = (
+                    (font_element.get("typeface") or "").strip() if font_element is not None else ""
+                )
+                if not font_name:
+                    continue
+                for child in embedded_font:
+                    if child.tag not in embedding_tags:
+                        continue
+                    rid = child.get(f"{{{R_NS}}}id", "")
+                    target = relationships.get(rid)
+                    if target in names:
+                        embedded_by_casefold.setdefault(font_name.casefold(), font_name)
+                    else:
+                        dangling_embeddings.append(
+                            {"font": font_name, "relationship_id": rid, "target": target or ""}
+                        )
+
+    return {
+        "referenced": sorted(referenced_by_casefold.values(), key=str.casefold),
+        "embedded": sorted(embedded_by_casefold.values(), key=str.casefold),
+        "unembedded": sorted(
+            (
+                value
+                for key, value in referenced_by_casefold.items()
+                if key not in embedded_by_casefold
+            ),
+            key=str.casefold,
+        ),
+        "references": references,
+        "theme_tokens_referenced": sorted(theme_tokens),
+        "symbol_and_bullet": sorted(symbol_and_bullet_by_casefold.values(), key=str.casefold),
+        "dangling_embedding_relationships": dangling_embeddings,
+    }
+
+
 def _inspect_pptx_snapshot(
     path: Path,
     source: Path,
@@ -1142,6 +1372,7 @@ def _inspect_pptx_snapshot(
 ) -> dict[str, Any]:
     presentation = _open_presentation(path)
     notes = _notes_by_slide_part(path, report)
+    fonts = inspect_fonts(path)
     warnings = list(report.warnings)
     slides: list[dict[str, Any]] = []
     image_count = table_count = chart_count = shape_count = text_chars = 0
@@ -1234,6 +1465,35 @@ def _inspect_pptx_snapshot(
             "version",
         )
     }
+    if fonts["unembedded"]:
+        warnings.append(
+            "PPTX references fonts that are not embedded in the package ("
+            + ", ".join(fonts["unembedded"])
+            + "). PDF font embedding does not make the PPTX portable; another renderer may "
+            "substitute fonts and change wrapping, autofit, overflow, and slide layout. Use "
+            "conservative cross-renderer fonts or embed licensed fonts, and do not claim "
+            "PPTX/PDF fidelity from a PDF-only check."
+        )
+        portable_fonts = {"arial", "times new roman", "courier new"}
+        nonportable_fonts = [
+            font for font in fonts["unembedded"] if font.casefold() not in portable_fonts
+        ]
+        if nonportable_fonts:
+            warnings.append(
+                "RELEASE BLOCKER: PPTX references unembedded fonts outside the conservative "
+                "cross-renderer set (Arial, Times New Roman, Courier New): "
+                + ", ".join(nonportable_fonts)
+                + ". Replace these fonts before releasing matching PPTX and PDF deliverables; "
+                "renderer substitution can change wrapping and slide layout."
+            )
+    if fonts["dangling_embedding_relationships"]:
+        warnings.append(
+            "Font embedding markup has missing or invalid relationship targets: "
+            + ", ".join(
+                f"{item['font']} ({item['relationship_id']})"
+                for item in fonts["dangling_embedding_relationships"]
+            )
+        )
     return {
         "schema_version": SCHEMA_VERSION,
         "success": True,
@@ -1259,6 +1519,7 @@ def _inspect_pptx_snapshot(
             ],
             "slides": slides,
         },
+        "fonts": fonts,
         "counts": {
             "slides": len(slides),
             "shapes": shape_count,
@@ -1299,6 +1560,166 @@ def inspect_pptx(path: Path) -> dict[str, Any]:
         )
         result["warnings"] = sorted(set(result["warnings"]))
     return result
+
+
+def _prepare_directory_destination(destination: Path, overwrite: bool) -> Path:
+    destination = destination.expanduser()
+    if destination.is_symlink():
+        raise ToolError("bad_input", "destination must not be a symbolic link")
+    destination = destination.resolve()
+    if destination.exists():
+        if not destination.is_dir():
+            raise ToolError("bad_input", "destination exists and is not a directory")
+        if not overwrite:
+            raise ToolError(
+                "bad_input",
+                "destination directory already exists; pass --overwrite to replace it",
+                {"path": str(destination)},
+            )
+        if any(destination.iterdir()):
+            raise ToolError(
+                "bad_input",
+                "destination directory is not empty; this tool never deletes existing files",
+                {"path": str(destination)},
+            )
+    try:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise ToolError("bad_input", "could not create destination parent directory") from exc
+    return destination
+
+
+def _atomic_publish_directory(staged: Path, destination: Path) -> None:
+    try:
+        for staged_file in sorted(staged.rglob("*")):
+            if staged_file.is_file():
+                _fsync(staged_file)
+        if destination.exists():
+            destination.rmdir()
+        os.replace(staged, destination)
+        directory_fd = os.open(destination.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    except OSError as exc:
+        raise ToolError(
+            "post_write_validation",
+            "could not atomically publish the output directory",
+            {"path": str(destination)},
+        ) from exc
+
+
+def extract_pptx(source: Path, output_dir: Path, overwrite: bool) -> dict[str, Any]:
+    with _pptx_source_snapshot(source) as snapshot:
+        destination = _prepare_directory_destination(output_dir, overwrite)
+        presentation = _open_presentation(snapshot.snapshot_path)
+        warnings = list(snapshot.report.warnings)
+        images: list[dict[str, Any]] = []
+        blobs: dict[str, bytes] = {}
+        picture_count = 0
+        pictures_skipped = 0
+        for slide_index, slide in enumerate(presentation.slides):
+            for shape in slide.shapes:
+                if shape.shape_type != MSO_SHAPE_TYPE.PICTURE:
+                    continue
+                picture_count += 1
+                image = shape.image
+                blob = image.blob
+                if len(blob) > MAX_IMAGE_BYTES:
+                    pictures_skipped += 1
+                    warnings.append(
+                        f"slide {int(slide.slide_id)} shape {int(shape.shape_id)}: image "
+                        "exceeds the byte limit and was not extracted"
+                    )
+                    continue
+                sha256 = hashlib.sha256(blob).hexdigest()
+                file_name = (
+                    f"slide-{int(slide.slide_id):04d}-shape-{int(shape.shape_id):04d}-"
+                    f"{sha256[:12]}.{image.ext}"
+                )
+                blobs[file_name] = blob
+                images.append(
+                    {
+                        "slide_id": int(slide.slide_id),
+                        "slide_index": slide_index,
+                        "shape_id": int(shape.shape_id),
+                        "shape_name": shape.name,
+                        "content_type": image.content_type,
+                        "bytes": len(blob),
+                        "sha256": sha256,
+                        "file": file_name,
+                    }
+                )
+        if picture_count == 0:
+            warnings.append("presentation contains no picture shapes to extract")
+        exported_hashes = {record["sha256"] for record in images}
+        skipped_media: list[str] = []
+        with zipfile.ZipFile(snapshot.snapshot_path) as package:
+            for name in sorted(package.namelist()):
+                if not name.startswith("ppt/media/"):
+                    continue
+                digest = hashlib.sha256(package.read(name)).hexdigest()
+                if digest not in exported_hashes:
+                    skipped_media.append(name)
+        if skipped_media:
+            warnings.append(
+                "media members were not extracted (picture shapes only): "
+                + ", ".join(skipped_media)
+            )
+        staged = destination.parent / f".{destination.name}.{uuid.uuid4().hex}.tmp"
+        try:
+            staged.mkdir()
+            for file_name, blob in blobs.items():
+                (staged / file_name).write_bytes(blob)
+            _atomic_publish_directory(staged, destination)
+        finally:
+            if staged.exists():
+                shutil.rmtree(staged, ignore_errors=True)
+        reopened = 0
+        for record in images:
+            published = destination / record["file"]
+            if hashlib.sha256(published.read_bytes()).hexdigest() != record["sha256"]:
+                raise ToolError(
+                    "post_write_validation",
+                    "published image does not match its source hash",
+                    {"file": record["file"]},
+                )
+            reopened += 1
+        path_matches_snapshot = _source_hash_matches(
+            snapshot.original_path,
+            snapshot.sha256,
+        )
+    if not path_matches_snapshot:
+        warnings.append(
+            "source path changed during extraction; results describe the validated immutable "
+            "snapshot"
+        )
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "success": True,
+        "operation": "extract",
+        "source": str(snapshot.original_path.resolve()),
+        "output": str(destination),
+        "versions": _versions(),
+        "counts": {
+            "slides": len(snapshot.report.slide_ids),
+            "pictures": picture_count,
+            "files_written": len(images),
+            "pictures_skipped": pictures_skipped,
+            "skipped_media_members": len(skipped_media),
+        },
+        "images": images,
+        "warnings": sorted(set(warnings)),
+        "verification": {
+            "immutable_source_snapshot": True,
+            "package_preflight": True,
+            "atomic_publish": True,
+            "files_reopened": reopened,
+            "hashes_verified": True,
+            "source_path_matched_snapshot_at_completion": path_matches_snapshot,
+        },
+    }
 
 
 def _load_job(path_value: str, expected_operation: str) -> tuple[dict[str, Any], Path]:
@@ -2416,6 +2837,100 @@ def _replace_text(presentation: Any, operation: dict[str, Any]) -> tuple[int, li
     return len(selected), warnings
 
 
+def _hyperlink_scope(operation: dict[str, Any], action: str) -> str:
+    scope = operation.get("scope", "text")
+    if scope not in {"text", "shape"}:
+        raise ToolError("bad_input", f"{action}.scope must be text or shape")
+    if scope == "shape" and (
+        operation.get("find") is not None or operation.get("occurrence") is not None
+    ):
+        raise ToolError(
+            "bad_input",
+            f"{action} with shape scope does not accept find or occurrence",
+        )
+    return scope
+
+
+def _aligned_hyperlink_matches(
+    presentation: Any,
+    operation: dict[str, Any],
+    action: str,
+) -> list[RunMatch]:
+    needle = _require_string(operation.get("find"), f"{action}.find")
+    matches, unsafe = _collect_run_matches(presentation, operation, needle)
+    if unsafe:
+        raise ToolError(
+            "ambiguous_edit",
+            "hyperlink text selection crosses a paragraph or field boundary",
+            {"matches": unsafe},
+        )
+    selected = _choose_matches(matches, operation)
+    for match in selected:
+        runs = list(match.paragraph.runs)
+        if match.first_offset != 0 or match.last_offset != len(runs[match.last_run].text):
+            raise ToolError(
+                "ambiguous_edit",
+                "hyperlink text must cover whole runs; use replace_text to isolate the "
+                "target text first",
+                {
+                    "first_offset": match.first_offset,
+                    "last_offset": match.last_offset,
+                },
+            )
+    return selected
+
+
+def _set_hyperlink(presentation: Any, operation: dict[str, Any]) -> int:
+    _reject_unknown(
+        operation,
+        {"action", "slide", "shape", "scope", "find", "occurrence", "url"},
+        "set_hyperlink operation",
+    )
+    url = _validate_hyperlink_url(operation.get("url"), "set_hyperlink.url")
+    if _hyperlink_scope(operation, "set_hyperlink") == "shape":
+        _, shape = _select_one_shape_across_scope(presentation, operation)
+        shape.click_action.hyperlink.address = url
+        return 1
+    selected = _aligned_hyperlink_matches(presentation, operation, "set_hyperlink")
+    for match in selected:
+        runs = list(match.paragraph.runs)
+        for index in range(match.first_run, match.last_run + 1):
+            runs[index].hyperlink.address = url
+    return len(selected)
+
+
+def _remove_hyperlink(presentation: Any, operation: dict[str, Any]) -> int:
+    _reject_unknown(
+        operation,
+        {"action", "slide", "shape", "scope", "find", "occurrence"},
+        "remove_hyperlink operation",
+    )
+    if _hyperlink_scope(operation, "remove_hyperlink") == "shape":
+        _, shape = _select_one_shape_across_scope(presentation, operation)
+        hyperlink = shape.click_action.hyperlink
+        if hyperlink.address is None:
+            raise ToolError(
+                "ambiguous_edit",
+                "selected shape has no click hyperlink to remove",
+            )
+        hyperlink.address = None
+        return 1
+    selected = _aligned_hyperlink_matches(presentation, operation, "remove_hyperlink")
+    for match in selected:
+        runs = list(match.paragraph.runs)
+        covered = runs[match.first_run : match.last_run + 1]
+        if any(run.hyperlink.address is None for run in covered):
+            raise ToolError(
+                "ambiguous_edit",
+                "selected text is not fully covered by a hyperlink to remove",
+            )
+    for match in selected:
+        runs = list(match.paragraph.runs)
+        for index in range(match.first_run, match.last_run + 1):
+            runs[index].hyperlink.address = None
+    return len(selected)
+
+
 def _update_table(presentation: Any, operation: dict[str, Any]) -> int:
     _reject_unknown(
         operation,
@@ -2478,6 +2993,130 @@ def _update_table(presentation: Any, operation: dict[str, Any]) -> int:
             )
             updates += 1
     return updates
+
+
+def _table_cell_text(value: Any, label: str) -> str:
+    if not isinstance(value, (str, int, float, bool)) and value is not None:
+        raise ToolError("bad_input", f"{label} must contain JSON scalar values")
+    return "" if value is None else str(value)
+
+
+def _read_table_matrix(table: Any) -> list[list[str]]:
+    return [
+        [table.cell(row, column).text for column in range(len(table.columns))]
+        for row in range(len(table.rows))
+    ]
+
+
+def _update_table_structure(presentation: Any, operation: dict[str, Any]) -> int:
+    _reject_unknown(
+        operation,
+        {"action", "slide", "shape", "changes"},
+        "update_table_structure operation",
+    )
+    _, shape = _select_one_shape_across_scope(presentation, operation)
+    if not shape.has_table:
+        raise ToolError("ambiguous_edit", "selected shape is not a table")
+    table = shape.table
+    if any(cell.is_merge_origin or cell.is_spanned for cell in table.iter_cells()):
+        raise ToolError(
+            "unsupported_operation",
+            "structural table edits are unsupported on tables containing merged cells",
+        )
+    changes = _require_list(operation.get("changes"), "update_table_structure.changes")
+    if not changes:
+        raise ToolError("bad_input", "update_table_structure.changes must not be empty")
+    expected_matrix = _read_table_matrix(table)
+    applied = 0
+    for change_index, value in enumerate(changes):
+        label = f"update_table_structure.changes[{change_index}]"
+        change = _require_mapping(value, label)
+        _reject_unknown(change, {"op", "index", "cells"}, label)
+        change_op = _require_string(change.get("op"), f"{label}.op")
+        index = change.get("index")
+        if not isinstance(index, int) or isinstance(index, bool) or index < 0:
+            raise ToolError("bad_input", f"{label}.index must be a non-negative integer")
+        rows = len(expected_matrix)
+        columns = len(expected_matrix[0]) if expected_matrix else 0
+        if change_op in {"insert_row", "insert_column"}:
+            limit = rows if change_op == "insert_row" else columns
+            if index > limit:
+                raise ToolError(
+                    "bad_input",
+                    f"{label}.index is out of range for insertion",
+                    {"index": index, "rows": rows, "columns": columns},
+                )
+            cells = change.get("cells")
+            expected_length = columns if change_op == "insert_row" else rows
+            if cells is not None:
+                cells = _require_list(cells, f"{label}.cells")
+                if len(cells) != expected_length:
+                    raise ToolError(
+                        "bad_input",
+                        f"{label}.cells must contain exactly {expected_length} entries",
+                        {"expected": expected_length, "actual": len(cells)},
+                    )
+            texts = [
+                _table_cell_text(cell, f"{label}.cells")
+                for cell in (cells if cells is not None else [None] * expected_length)
+            ]
+            if change_op == "insert_row":
+                if rows + 1 > MAX_TABLE_ROWS:
+                    raise ToolError("resource_limit", "table row limit exceeded")
+                OoxmlAdapter.insert_table_row(table, index)
+                for column, text in enumerate(texts):
+                    table.cell(index, column).text = text
+                expected_matrix.insert(index, texts)
+            else:
+                if columns + 1 > MAX_TABLE_COLUMNS:
+                    raise ToolError("resource_limit", "table column limit exceeded")
+                OoxmlAdapter.insert_table_column(table, index)
+                for row, text in enumerate(texts):
+                    table.cell(row, index).text = text
+                for row, text in enumerate(texts):
+                    expected_matrix[row].insert(index, text)
+        elif change_op in {"remove_row", "remove_column"}:
+            if change.get("cells") is not None:
+                raise ToolError("bad_input", f"{label}.cells is not accepted for removal")
+            limit = rows if change_op == "remove_row" else columns
+            if index >= limit:
+                raise ToolError(
+                    "bad_input",
+                    f"{label}.index is out of range for removal",
+                    {"index": index, "rows": rows, "columns": columns},
+                )
+            if limit <= 1:
+                raise ToolError(
+                    "unsupported_operation",
+                    f"removing the final table {change_op.removeprefix('remove_')} is unsupported",
+                )
+            if change_op == "remove_row":
+                OoxmlAdapter.remove_table_row(table, index)
+                expected_matrix.pop(index)
+            else:
+                OoxmlAdapter.remove_table_column(table, index)
+                for row_values in expected_matrix:
+                    row_values.pop(index)
+        else:
+            raise ToolError(
+                "unsupported_operation",
+                "unsupported table structure change",
+                {"op": change_op},
+            )
+        applied += 1
+    actual_matrix = _read_table_matrix(table)
+    if actual_matrix != expected_matrix:
+        raise ToolError(
+            "post_write_validation",
+            "table structure verification failed",
+            {
+                "expected_rows": len(expected_matrix),
+                "expected_columns": len(expected_matrix[0]) if expected_matrix else 0,
+                "actual_rows": len(actual_matrix),
+                "actual_columns": len(actual_matrix[0]) if actual_matrix else 0,
+            },
+        )
+    return applied
 
 
 def _chart_type_name(value: Any) -> str | None:
@@ -2604,7 +3243,10 @@ def edit_pptx(
         "slides_removed": 0,
         "slides_reordered": 0,
         "text_replacements": 0,
+        "hyperlinks_set": 0,
+        "hyperlinks_removed": 0,
         "table_cells_updated": 0,
+        "table_structure_changes": 0,
         "chart_points_updated": 0,
         "images_replaced": 0,
         "notes_updated": 0,
@@ -2655,8 +3297,16 @@ def edit_pptx(
                 replacements, replacement_warnings = _replace_text(presentation, operation)
                 counts["text_replacements"] += replacements
                 warnings.extend(replacement_warnings)
+            elif action == "set_hyperlink":
+                counts["hyperlinks_set"] += _set_hyperlink(presentation, operation)
+            elif action == "remove_hyperlink":
+                counts["hyperlinks_removed"] += _remove_hyperlink(presentation, operation)
             elif action == "update_table":
                 counts["table_cells_updated"] += _update_table(presentation, operation)
+            elif action == "update_table_structure":
+                counts["table_structure_changes"] += _update_table_structure(
+                    presentation, operation
+                )
             elif action == "update_chart":
                 counts["chart_points_updated"] += _update_chart(presentation, operation)
             elif action == "replace_image":
@@ -2776,7 +3426,7 @@ def _find_libreoffice() -> str:
     return executable
 
 
-def _validate_pdf(path: Path, expected_pages: int) -> tuple[int, list[str]]:
+def _validate_pdf(path: Path, expected_pages: int) -> int:
     try:
         with path.open("rb") as source:
             if source.read(5) != b"%PDF-":
@@ -2786,7 +3436,6 @@ def _validate_pdf(path: Path, expected_pages: int) -> tuple[int, list[str]]:
                 )
         reader = pypdf.PdfReader(str(path), strict=True)
         pages = len(reader.pages)
-        warnings = list(reader.metadata.keys()) if reader.metadata else []
     except ToolError:
         raise
     except Exception as exc:
@@ -2800,7 +3449,7 @@ def _validate_pdf(path: Path, expected_pages: int) -> tuple[int, list[str]]:
             "converted PDF page count does not equal the PPTX slide count",
             {"slides": expected_pages, "pages": pages},
         )
-    return pages, warnings
+    return pages
 
 
 def _libreoffice_environment(work: Path) -> dict[str, str]:
@@ -2860,6 +3509,115 @@ def _redact_diagnostic(text: str, paths: list[Path]) -> str:
     return redacted
 
 
+@dataclass
+class LibreOfficePdf:
+    generated: Path
+    stdout: str
+    stderr: str
+    office_version: str
+    engine: str
+
+
+def _run_libreoffice_pdf(
+    snapshot: PptxSourceSnapshot,
+    work: Path,
+    timeout: float,
+    redact_paths: list[Path],
+) -> LibreOfficePdf:
+    executable = _find_libreoffice()
+    output_dir = work / "output"
+    profile = work / "profile"
+    output_dir.mkdir()
+    profile.mkdir()
+    environment = _libreoffice_environment(work)
+    command = [
+        executable,
+        "--headless",
+        "--nologo",
+        "--nodefault",
+        "--nolockcheck",
+        "--nofirststartwizard",
+        f"-env:UserInstallation={profile.resolve().as_uri()}",
+        "--convert-to",
+        "pdf",
+        "--outdir",
+        str(output_dir),
+        str(snapshot.snapshot_path),
+    ]
+    try:
+        completed = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            env=environment,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise ToolError(
+            "external_tool_failure",
+            "LibreOffice conversion timed out",
+            {"timeout_seconds": timeout},
+        ) from exc
+    except OSError as exc:
+        raise ToolError(
+            "external_tool_failure",
+            "LibreOffice could not be launched",
+        ) from exc
+    diagnostic_paths = [
+        snapshot.original_path,
+        snapshot.snapshot_path,
+        work,
+        output_dir,
+        profile,
+        *redact_paths,
+    ]
+    stdout = _redact_diagnostic(completed.stdout, diagnostic_paths)
+    stderr = _redact_diagnostic(completed.stderr, diagnostic_paths)
+    if completed.returncode != 0:
+        raise ToolError(
+            "external_tool_failure",
+            "LibreOffice conversion failed",
+            {
+                "returncode": completed.returncode,
+                "stdout": stdout,
+                "stderr": stderr,
+            },
+        )
+    generated = output_dir / f"{snapshot.original_path.stem}.pdf"
+    if not generated.is_file():
+        candidates = sorted(output_dir.glob("*.pdf"))
+        if len(candidates) != 1:
+            raise ToolError(
+                "external_tool_failure",
+                "LibreOffice did not produce exactly one PDF",
+                {"outputs": [path.name for path in candidates]},
+            )
+        generated = candidates[0]
+    try:
+        version_result = subprocess.run(
+            [executable, "--version"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            env=environment,
+        )
+        office_version = _redact_diagnostic(
+            version_result.stdout.strip(),
+            diagnostic_paths,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        office_version = "unknown"
+    return LibreOfficePdf(
+        generated=generated,
+        stdout=stdout,
+        stderr=stderr,
+        office_version=office_version or "unknown",
+        engine=Path(executable).name,
+    )
+
+
 def _convert_pptx_snapshot(
     snapshot: PptxSourceSnapshot,
     destination: Path,
@@ -2878,101 +3636,22 @@ def _convert_pptx_snapshot(
         )
     source_hash = snapshot.sha256
     destination = _prepare_destination(destination, ".pdf", overwrite, source)
-    executable = _find_libreoffice()
     temporary = _temporary_sibling(destination, ".pdf")
-    stdout = ""
-    stderr = ""
-    office_version = "unknown"
     try:
         with tempfile.TemporaryDirectory(prefix="pptx-libreoffice-") as temp_dir:
             work = Path(temp_dir)
-            output_dir = work / "output"
-            profile = work / "profile"
-            output_dir.mkdir()
-            profile.mkdir()
-            environment = _libreoffice_environment(work)
-            command = [
-                executable,
-                "--headless",
-                "--nologo",
-                "--nodefault",
-                "--nolockcheck",
-                "--nofirststartwizard",
-                f"-env:UserInstallation={profile.resolve().as_uri()}",
-                "--convert-to",
-                "pdf",
-                "--outdir",
-                str(output_dir),
-                str(snapshot.snapshot_path),
-            ]
-            try:
-                completed = subprocess.run(
-                    command,
-                    check=False,
-                    capture_output=True,
-                    text=True,
-                    timeout=timeout,
-                    env=environment,
-                )
-            except subprocess.TimeoutExpired as exc:
-                raise ToolError(
-                    "external_tool_failure",
-                    "LibreOffice conversion timed out",
-                    {"timeout_seconds": timeout},
-                ) from exc
-            except OSError as exc:
-                raise ToolError(
-                    "external_tool_failure",
-                    "LibreOffice could not be launched",
-                ) from exc
-            diagnostic_paths = [
-                source,
-                snapshot.snapshot_path,
-                destination,
-                temporary,
+            office = _run_libreoffice_pdf(
+                snapshot,
                 work,
-                output_dir,
-                profile,
-            ]
-            stdout = _redact_diagnostic(completed.stdout, diagnostic_paths)
-            stderr = _redact_diagnostic(completed.stderr, diagnostic_paths)
-            if completed.returncode != 0:
-                raise ToolError(
-                    "external_tool_failure",
-                    "LibreOffice conversion failed",
-                    {
-                        "returncode": completed.returncode,
-                        "stdout": stdout,
-                        "stderr": stderr,
-                    },
-                )
-            generated = output_dir / f"{source.stem}.pdf"
-            if not generated.is_file():
-                candidates = sorted(output_dir.glob("*.pdf"))
-                if len(candidates) != 1:
-                    raise ToolError(
-                        "external_tool_failure",
-                        "LibreOffice did not produce exactly one PDF",
-                        {"outputs": [path.name for path in candidates]},
-                    )
-                generated = candidates[0]
-            shutil.copyfile(generated, temporary)
-            try:
-                version_result = subprocess.run(
-                    [executable, "--version"],
-                    check=False,
-                    capture_output=True,
-                    text=True,
-                    timeout=10,
-                    env=environment,
-                )
-                office_version = _redact_diagnostic(
-                    version_result.stdout.strip(),
-                    diagnostic_paths,
-                )
-            except (OSError, subprocess.TimeoutExpired):
-                office_version = "unknown"
-        pages, _ = _validate_pdf(temporary, len(source_report.slide_ids))
+                timeout,
+                [destination, temporary],
+            )
+            stdout = office.stdout
+            stderr = office.stderr
+            office_version = office.office_version
+            engine = office.engine
+            shutil.copyfile(office.generated, temporary)
+        pages = _validate_pdf(temporary, len(source_report.slide_ids))
         if not _source_hash_matches(source, source_hash):
             raise ToolError(
                 "post_write_validation",
@@ -3003,7 +3682,7 @@ def _convert_pptx_snapshot(
         },
         "warnings": sorted(set(warnings)),
         "conversion": {
-            "engine": Path(executable).name,
+            "engine": engine,
             "timeout_seconds": timeout,
             "diagnostics": {"stdout": stdout, "stderr": stderr},
         },
@@ -3033,12 +3712,241 @@ def convert_pptx(
         return _convert_pptx_snapshot(snapshot, destination, overwrite, timeout)
 
 
+def _require_pypdfium2() -> Any:
+    try:
+        import pypdfium2
+    except ModuleNotFoundError as exc:
+        raise ToolError(
+            "missing_dependency",
+            "slide rendering requires the optional pypdfium2 package",
+            {"install": f'"{sys.executable}" -m pip install pypdfium2'},
+        ) from exc
+    return pypdfium2
+
+
+def _parse_render_slides(value: str | None, slide_ids: list[int]) -> set[int]:
+    if value is None:
+        return set(slide_ids)
+    selected: set[int] = set()
+    for part in value.split(","):
+        text = part.strip()
+        if not text.isdigit():
+            raise ToolError(
+                "bad_input",
+                "slides must be a comma-separated list of slide IDs",
+                {"slides": value},
+            )
+        slide_id = int(text)
+        if slide_id not in slide_ids:
+            raise ToolError(
+                "bad_input",
+                "requested slide ID does not exist",
+                {"slide_id": slide_id, "current": slide_ids},
+            )
+        selected.add(slide_id)
+    if not selected:
+        raise ToolError("bad_input", "slides must select at least one slide ID")
+    return selected
+
+
+def render_pptx(
+    source: Path,
+    output_dir: Path,
+    overwrite: bool,
+    dpi: int,
+    slides_argument: str | None,
+    timeout: float,
+) -> dict[str, Any]:
+    if (
+        not isinstance(dpi, int)
+        or isinstance(dpi, bool)
+        or not MIN_RENDER_DPI <= dpi <= MAX_RENDER_DPI
+    ):
+        raise ToolError(
+            "bad_input",
+            f"dpi must be an integer between {MIN_RENDER_DPI} and {MAX_RENDER_DPI}",
+            {"dpi": dpi},
+        )
+    if not math.isfinite(timeout) or not 1 <= timeout <= 1800:
+        raise ToolError("bad_input", "timeout must be between 1 and 1800 seconds")
+    with _pptx_source_snapshot(source) as snapshot:
+        report = snapshot.report
+        if report.external_relationships:
+            raise ToolError(
+                "unsupported_operation",
+                "rendering rejects presentations containing external relationships",
+                {"count": report.external_relationships},
+            )
+        slide_ids = list(report.slide_ids)
+        selected_ids = _parse_render_slides(slides_argument, slide_ids)
+        pdfium = _require_pypdfium2()
+        destination = _prepare_directory_destination(output_dir, overwrite)
+        presentation = _open_presentation(snapshot.snapshot_path)
+        pixels_per_slide = math.ceil(presentation.slide_width / 914400 * dpi) * math.ceil(
+            presentation.slide_height / 914400 * dpi
+        )
+        if pixels_per_slide > MAX_RENDER_PIXELS_PER_SLIDE:
+            raise ToolError(
+                "resource_limit",
+                "rendered pixel count per slide exceeds the limit",
+                {"pixels": pixels_per_slide, "limit": MAX_RENDER_PIXELS_PER_SLIDE},
+            )
+        if pixels_per_slide * len(selected_ids) > MAX_RENDER_TOTAL_PIXELS:
+            raise ToolError(
+                "resource_limit",
+                "total rendered pixel count exceeds the limit",
+                {
+                    "pixels": pixels_per_slide * len(selected_ids),
+                    "limit": MAX_RENDER_TOTAL_PIXELS,
+                },
+            )
+        images: list[dict[str, Any]] = []
+        staged = destination.parent / f".{destination.name}.{uuid.uuid4().hex}.tmp"
+        try:
+            with tempfile.TemporaryDirectory(prefix="pptx-libreoffice-") as temp_dir:
+                work = Path(temp_dir)
+                office = _run_libreoffice_pdf(snapshot, work, timeout, [destination])
+                _validate_pdf(office.generated, len(slide_ids))
+                staged.mkdir()
+                dimensions: tuple[int, int] | None = None
+                try:
+                    document = pdfium.PdfDocument(str(office.generated))
+                except Exception as exc:
+                    raise ToolError(
+                        "external_tool_failure",
+                        "PDFium could not open the converted PDF",
+                    ) from exc
+                try:
+                    for ordinal, slide_id in enumerate(slide_ids):
+                        if slide_id not in selected_ids:
+                            continue
+                        file_name = f"slide-{ordinal:02d}-id-{slide_id:04d}.png"
+                        staged_file = staged / file_name
+                        try:
+                            page = document[ordinal]
+                            page.render(scale=dpi / 72).to_pil().save(staged_file, format="PNG")
+                        except Exception as exc:
+                            raise ToolError(
+                                "external_tool_failure",
+                                "PDFium could not rasterize a slide page",
+                                {"slide_id": slide_id},
+                            ) from exc
+                        with staged_file.open("rb") as rendered:
+                            if rendered.read(8) != b"\x89PNG\r\n\x1a\n":
+                                raise ToolError(
+                                    "post_write_validation",
+                                    "rendered file does not have a PNG signature",
+                                    {"file": file_name},
+                                )
+                        with Image.open(staged_file) as verified:
+                            verified.load()
+                            size = verified.size
+                        if size[0] * size[1] > MAX_RENDER_PIXELS_PER_SLIDE:
+                            raise ToolError(
+                                "post_write_validation",
+                                "rendered image exceeds the per-slide pixel limit",
+                                {"file": file_name},
+                            )
+                        if dimensions is None:
+                            dimensions = size
+                        elif size != dimensions:
+                            raise ToolError(
+                                "post_write_validation",
+                                "rendered slides do not share identical dimensions",
+                                {"file": file_name},
+                            )
+                        data = staged_file.read_bytes()
+                        images.append(
+                            {
+                                "slide_id": slide_id,
+                                "index": ordinal,
+                                "file": file_name,
+                                "width_px": size[0],
+                                "height_px": size[1],
+                                "bytes": len(data),
+                                "sha256": hashlib.sha256(data).hexdigest(),
+                            }
+                        )
+                finally:
+                    document.close()
+            if not _source_hash_matches(snapshot.original_path, snapshot.sha256):
+                raise ToolError(
+                    "post_write_validation",
+                    "source changed before the destination publication gate",
+                )
+            _atomic_publish_directory(staged, destination)
+            post_publish_source_changed = not _source_hash_matches(
+                snapshot.original_path, snapshot.sha256
+            )
+        finally:
+            if staged.exists():
+                shutil.rmtree(staged, ignore_errors=True)
+        reopened = 0
+        for record in images:
+            published = destination / record["file"]
+            data = published.read_bytes()
+            if hashlib.sha256(data).hexdigest() != record["sha256"]:
+                raise ToolError(
+                    "post_write_validation",
+                    "published rendering does not match its staged hash",
+                    {"file": record["file"]},
+                )
+            with Image.open(published) as verified:
+                verified.load()
+            reopened += 1
+    warnings = list(report.warnings)
+    if office.stderr.strip():
+        warnings.append("LibreOffice emitted diagnostics; inspect conversion.diagnostics")
+    if post_publish_source_changed:
+        warnings.append(
+            "source path changed after destination publication; the published renderings "
+            "were built from the validated immutable snapshot"
+        )
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "success": True,
+        "operation": "render",
+        "source": str(snapshot.original_path.resolve()),
+        "output": str(destination),
+        "versions": {**_versions(), "libreoffice": office.office_version},
+        "counts": {
+            "source_slides": len(slide_ids),
+            "pages_rendered": len(images),
+        },
+        "images": images,
+        "warnings": sorted(set(warnings)),
+        "conversion": {
+            "engine": office.engine,
+            "timeout_seconds": timeout,
+            "dpi": dpi,
+            "diagnostics": {"stdout": office.stdout, "stderr": office.stderr},
+        },
+        "verification": {
+            "atomic_publish": True,
+            "source_unchanged_at_publish_gate": True,
+            "post_publish_source_changed": post_publish_source_changed,
+            "package_preflight": True,
+            "immutable_source_snapshot": True,
+            "pdf_page_count": len(slide_ids),
+            "source_slide_count": len(slide_ids),
+            "png_reopened": reopened,
+        },
+    }
+
+
 def _build_parser() -> JsonArgumentParser:
     parser = JsonArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     inspect_parser = subparsers.add_parser("inspect", help="inspect a PPTX")
     inspect_parser.add_argument("source", type=Path)
+
+    extract_parser = subparsers.add_parser(
+        "extract", help="export embedded picture-shape images to a directory"
+    )
+    extract_parser.add_argument("source", type=Path)
+    extract_parser.add_argument("--output", required=True, type=Path)
+    extract_parser.add_argument("--overwrite", action="store_true")
 
     create_parser = subparsers.add_parser("create", help="create a PPTX from a JSON job")
     create_parser.add_argument("--job", required=True, help="schema-version-1 JSON file or -")
@@ -3056,6 +3964,16 @@ def _build_parser() -> JsonArgumentParser:
     convert_parser.add_argument("--output", required=True, type=Path)
     convert_parser.add_argument("--overwrite", action="store_true")
     convert_parser.add_argument("--timeout", type=float, default=120.0)
+
+    render_parser = subparsers.add_parser(
+        "render", help="render slides to one PNG each via LibreOffice and PDFium"
+    )
+    render_parser.add_argument("source", type=Path)
+    render_parser.add_argument("--output", required=True, type=Path)
+    render_parser.add_argument("--overwrite", action="store_true")
+    render_parser.add_argument("--dpi", type=int, default=96)
+    render_parser.add_argument("--slides", help="comma-separated slide IDs to rasterize")
+    render_parser.add_argument("--timeout", type=float, default=120.0)
     return parser
 
 
@@ -3064,6 +3982,8 @@ def main(argv: list[str] | None = None) -> int:
         args = _build_parser().parse_args(argv)
         if args.command == "inspect":
             result = inspect_pptx(args.source)
+        elif args.command == "extract":
+            result = extract_pptx(args.source, args.output, args.overwrite)
         elif args.command == "create":
             job, base_dir = _load_job(args.job, "create")
             result = create_pptx(job, base_dir, args.output, args.overwrite)
@@ -3081,6 +4001,15 @@ def main(argv: list[str] | None = None) -> int:
                 args.source,
                 args.output,
                 args.overwrite,
+                args.timeout,
+            )
+        elif args.command == "render":
+            result = render_pptx(
+                args.source,
+                args.output,
+                args.overwrite,
+                args.dpi,
+                args.slides,
                 args.timeout,
             )
         else:

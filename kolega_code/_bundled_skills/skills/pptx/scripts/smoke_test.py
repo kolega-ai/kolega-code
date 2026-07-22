@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import io
 import json
 import shutil
@@ -17,6 +18,7 @@ import zipfile
 import zlib
 from pathlib import Path
 from typing import Any
+from xml.etree import ElementTree
 
 DEPENDENCY_ERROR: ModuleNotFoundError | None = None
 Image: Any = None
@@ -133,6 +135,107 @@ def _rewrite_zip(
     with zipfile.ZipFile(destination, "w", compression=zipfile.ZIP_DEFLATED) as output:
         for name, data in members.items():
             output.writestr(name, data)
+
+
+def _rewrite_font_typefaces(
+    source: Path,
+    destination: Path,
+    font_name: str,
+    *,
+    add_decoys: bool = False,
+) -> None:
+    """Rewrite every DrawingML latin/ea/cs typeface to one font, keeping theme tokens."""
+
+    font_tags = {
+        f"{{{PptxTool.A_NS}}}latin",
+        f"{{{PptxTool.A_NS}}}ea",
+        f"{{{PptxTool.A_NS}}}cs",
+    }
+    replacements: dict[str, bytes] = {}
+    with zipfile.ZipFile(source) as archive:
+        for name in archive.namelist():
+            if not name.startswith("ppt/") or not name.lower().endswith(".xml"):
+                continue
+            root = ElementTree.fromstring(archive.read(name))
+            in_theme = name.startswith("ppt/theme/")
+            changed = False
+            for element in root.iter():
+                if element.tag not in font_tags:
+                    continue
+                value = (element.get("typeface") or "").strip()
+                if not in_theme and value.startswith("+"):
+                    continue
+                element.set("typeface", font_name)
+                changed = True
+            if add_decoys and name.startswith("ppt/slides/"):
+                fill = root.find(f".//{{{PptxTool.A_NS}}}solidFill")
+                if fill is not None:
+                    fill.set("typeface", "ja-JP")
+                decoy = ElementTree.SubElement(root, "{urn:smoke-decoy}latin")
+                decoy.set("typeface", ".")
+                changed = True
+            if changed:
+                replacements[name] = ElementTree.tostring(
+                    root, encoding="UTF-8", xml_declaration=True
+                )
+    _rewrite_zip(source, destination, replacements=replacements)
+
+
+def _embed_font_fixture(
+    source: Path,
+    destination: Path,
+    font_name: str,
+    *,
+    dangling: bool,
+) -> None:
+    """Synthesize a p:embeddedFontLst entry, either resolvable in-package or dangling."""
+
+    p_ns = PptxTool.P_NS
+    with zipfile.ZipFile(source) as archive:
+        presentation_xml = archive.read("ppt/presentation.xml")
+        rels_xml = archive.read("ppt/_rels/presentation.xml.rels")
+        content_types_xml = archive.read("[Content_Types].xml")
+
+    root = ElementTree.fromstring(presentation_xml)
+    font_list = ElementTree.Element(f"{{{p_ns}}}embeddedFontLst")
+    embedded_font = ElementTree.SubElement(font_list, f"{{{p_ns}}}embeddedFont")
+    ElementTree.SubElement(embedded_font, f"{{{p_ns}}}font").set("typeface", font_name)
+    ElementTree.SubElement(embedded_font, f"{{{p_ns}}}regular").set(
+        f"{{{PptxTool.R_NS}}}id", "rIdSmokeFont"
+    )
+    notes_size_index = next(
+        index for index, child in enumerate(list(root)) if child.tag == f"{{{p_ns}}}notesSz"
+    )
+    root.insert(notes_size_index + 1, font_list)
+
+    rel_root = ElementTree.fromstring(rels_xml)
+    relationship = ElementTree.SubElement(rel_root, f"{{{PptxTool.REL_NS}}}Relationship")
+    relationship.set("Id", "rIdSmokeFont")
+    relationship.set("Type", f"{PptxTool.R_NS}/font")
+    if dangling:
+        relationship.set("Target", "https://fonts.example/font1.fntdata")
+        relationship.set("TargetMode", "External")
+    else:
+        relationship.set("Target", "fonts/font1.fntdata")
+
+    types_root = ElementTree.fromstring(content_types_xml)
+    default = ElementTree.SubElement(types_root, f"{{{PptxTool.CONTENT_TYPE_NS}}}Default")
+    default.set("Extension", "fntdata")
+    default.set("ContentType", "application/x-fontdata")
+
+    replacements = {
+        "ppt/presentation.xml": ElementTree.tostring(root, encoding="UTF-8", xml_declaration=True),
+        "ppt/_rels/presentation.xml.rels": ElementTree.tostring(
+            rel_root, encoding="UTF-8", xml_declaration=True
+        ),
+        "[Content_Types].xml": ElementTree.tostring(
+            types_root, encoding="UTF-8", xml_declaration=True
+        ),
+    }
+    additions: dict[str, bytes] = {}
+    if not dangling:
+        additions["ppt/fonts/font1.fntdata"] = b"\x00\x01smoke-fntdata"
+    _rewrite_zip(source, destination, replacements=replacements, additions=additions)
 
 
 def _shape_with_name(slide: dict[str, Any], name: str) -> dict[str, Any]:
@@ -380,6 +483,284 @@ def _run_smoke(require_libreoffice: bool) -> dict[str, Any]:
         body_name = body_shape["name"]
         checks.append("inspect/content-inventory")
 
+        fonts_report = first_inspection["fonts"]
+        _assert(
+            {"+mj-lt", "+mn-lt"} <= set(fonts_report["theme_tokens_referenced"]),
+            "theme font tokens were not inventoried",
+        )
+        _assert(bool(fonts_report["referenced"]), "font inventory found no referenced fonts")
+        _assert(fonts_report["embedded"] == [], "fixture unexpectedly reports embedded fonts")
+        _assert(
+            fonts_report["unembedded"] == fonts_report["referenced"],
+            "unembedded fonts should equal referenced fonts in the fixture",
+        )
+        _assert(
+            any(warning.startswith("RELEASE BLOCKER:") for warning in first_inspection["warnings"]),
+            "default-theme fonts did not raise the portability blocker",
+        )
+        _assert(
+            any(
+                "PDF font embedding does not make the PPTX portable" in warning
+                for warning in first_inspection["warnings"]
+            ),
+            "informational unembedded-font warning missing",
+        )
+        checks.append("inspect/font-inventory")
+
+        for font_index, allowed_font in enumerate(("aRiAl", "Times New Roman", "Courier New")):
+            allowed_deck = work / f"allowed-font-{font_index}.pptx"
+            _rewrite_font_typefaces(created, allowed_deck, allowed_font, add_decoys=font_index == 0)
+            allowed_inspection = _run(["inspect", str(allowed_deck)])
+            _assert(
+                allowed_inspection["fonts"]["referenced"] == [allowed_font],
+                f"allowed font inventory mismatch for {allowed_font!r}: "
+                f"{allowed_inspection['fonts']['referenced']}",
+            )
+            _assert(
+                not any(
+                    warning.startswith("RELEASE BLOCKER:")
+                    for warning in allowed_inspection["warnings"]
+                ),
+                f"allowed font {allowed_font!r} raised the portability blocker",
+            )
+        checks.append("inspect/font-portability-allowed")
+
+        avenir_deck = work / "avenir-font.pptx"
+        _rewrite_font_typefaces(created, avenir_deck, "Avenir")
+        avenir_inspection = _run(["inspect", str(avenir_deck)])
+        _assert(
+            avenir_inspection["fonts"]["referenced"] == ["Avenir"],
+            "nonportable font inventory mismatch",
+        )
+        blockers = [
+            warning
+            for warning in avenir_inspection["warnings"]
+            if warning.startswith("RELEASE BLOCKER:")
+        ]
+        _assert(
+            len(blockers) == 1 and "Avenir" in blockers[0],
+            "nonportable font did not raise exactly one release blocker",
+        )
+        _assert(
+            any(
+                "PDF font embedding does not make the PPTX portable" in warning
+                for warning in avenir_inspection["warnings"]
+            ),
+            "nonportable deck lacks the informational unembedded-font warning",
+        )
+        checks.append("inspect/font-portability-blocker")
+
+        embedded_deck = work / "embedded-font.pptx"
+        _embed_font_fixture(avenir_deck, embedded_deck, "Avenir", dangling=False)
+        embedded_inspection = _run(["inspect", str(embedded_deck)])
+        _assert(
+            embedded_inspection["fonts"]["embedded"] == ["Avenir"],
+            "embedded font was not detected",
+        )
+        _assert(
+            embedded_inspection["fonts"]["unembedded"] == [],
+            "embedded font still reported as unembedded",
+        )
+        _assert(
+            not any(
+                warning.startswith("RELEASE BLOCKER:")
+                for warning in embedded_inspection["warnings"]
+            ),
+            "embedded font raised the portability blocker",
+        )
+        checks.append("inspect/font-embedding")
+
+        dangling_deck = work / "dangling-font.pptx"
+        _embed_font_fixture(avenir_deck, dangling_deck, "Avenir", dangling=True)
+        dangling_inspection = _run(["inspect", str(dangling_deck)])
+        _assert(
+            dangling_inspection["fonts"]["dangling_embedding_relationships"]
+            == [{"font": "Avenir", "relationship_id": "rIdSmokeFont", "target": ""}],
+            "dangling font embedding relationship record mismatch",
+        )
+        _assert(
+            any(
+                "Font embedding markup has missing or invalid relationship targets" in warning
+                for warning in dangling_inspection["warnings"]
+            ),
+            "dangling font embedding warning missing",
+        )
+        _assert(
+            any(
+                warning.startswith("RELEASE BLOCKER:")
+                for warning in dangling_inspection["warnings"]
+            ),
+            "dangling embedding suppressed the portability blocker",
+        )
+        checks.append("inspect/font-embedding-dangling")
+
+        table_structure_job = work / "table-structure.json"
+        table_structure_deck = work / "table-structure.pptx"
+        _write_json(
+            table_structure_job,
+            {
+                "schema_version": 1,
+                "operation": "edit",
+                "operations": [
+                    {
+                        "action": "update_table_structure",
+                        "slide": {"slide_id": original_ids[1]},
+                        "shape": {"shape_name": "Metrics Table"},
+                        "changes": [
+                            {"op": "insert_row", "index": 2, "cells": ["Refunds", "3"]},
+                            {"op": "insert_column", "index": 0, "cells": ["Kind", "A", "B"]},
+                            {"op": "remove_row", "index": 1},
+                        ],
+                    }
+                ],
+            },
+        )
+        table_structure_result = _run(
+            [
+                "edit",
+                str(created),
+                "--job",
+                str(table_structure_job),
+                "--output",
+                str(table_structure_deck),
+            ]
+        )
+        _assert(
+            table_structure_result["counts"]["table_structure_changes"] == 3,
+            "table structure change count mismatch",
+        )
+        structure_inspection = _run(["inspect", str(table_structure_deck)])
+        structure_slide = structure_inspection["presentation"]["slides"][1]
+        structure_table = _shape_with_name(structure_slide, "Metrics Table")["table"]
+        _assert(
+            structure_table["rows"] == 2 and structure_table["columns"] == 3,
+            "table structure dimensions mismatch",
+        )
+        _assert(
+            structure_table["data"] == [["Kind", "Metric", "Value"], ["B", "Refunds", "3"]],
+            f"table structure data mismatch: {structure_table['data']}",
+        )
+        checks.append("edit/table-structure-rows-columns")
+
+        structure_fixture = work / "structure-fixture.pptx"
+        fixture_presentation = Presentation()
+        fixture_slide = fixture_presentation.slides.add_slide(fixture_presentation.slide_layouts[5])
+        merged_shape = fixture_slide.shapes.add_table(
+            2,
+            2,
+            PptxTool.Inches(0.5),
+            PptxTool.Inches(1.5),
+            PptxTool.Inches(4.0),
+            PptxTool.Inches(1.5),
+        )
+        merged_shape.name = "Merged Table"
+        merged_table = merged_shape.table
+        merged_table.cell(0, 0).merge(merged_table.cell(0, 1))
+        narrow_shape = fixture_slide.shapes.add_table(
+            2,
+            1,
+            PptxTool.Inches(5.0),
+            PptxTool.Inches(1.5),
+            PptxTool.Inches(2.0),
+            PptxTool.Inches(1.5),
+        )
+        narrow_shape.name = "Narrow Table"
+        fixture_presentation.save(str(structure_fixture))
+
+        merged_job = work / "table-structure-merged.json"
+        _write_json(
+            merged_job,
+            {
+                "schema_version": 1,
+                "operation": "edit",
+                "operations": [
+                    {
+                        "action": "update_table_structure",
+                        "shape": {"shape_name": "Merged Table"},
+                        "changes": [{"op": "insert_row", "index": 0}],
+                    }
+                ],
+            },
+        )
+        merged_failure = _run(
+            [
+                "edit",
+                str(structure_fixture),
+                "--job",
+                str(merged_job),
+                "--output",
+                str(work / "table-structure-merged.pptx"),
+            ],
+            expected_status=3,
+        )
+        _assert(
+            merged_failure["error"]["category"] == "unsupported_operation",
+            "merged table structural edit failure category mismatch",
+        )
+        checks.append("failure/table-structure-merged")
+
+        out_of_range_job = work / "table-structure-range.json"
+        _write_json(
+            out_of_range_job,
+            {
+                "schema_version": 1,
+                "operation": "edit",
+                "operations": [
+                    {
+                        "action": "update_table_structure",
+                        "shape": {"shape_name": "Narrow Table"},
+                        "changes": [{"op": "remove_row", "index": 99}],
+                    }
+                ],
+            },
+        )
+        out_of_range_failure = _run(
+            [
+                "edit",
+                str(structure_fixture),
+                "--job",
+                str(out_of_range_job),
+                "--output",
+                str(work / "table-structure-range.pptx"),
+            ],
+            expected_status=2,
+        )
+        _assert(
+            out_of_range_failure["error"]["category"] == "bad_input",
+            "table structure range failure category mismatch",
+        )
+        last_column_job = work / "table-structure-last-column.json"
+        _write_json(
+            last_column_job,
+            {
+                "schema_version": 1,
+                "operation": "edit",
+                "operations": [
+                    {
+                        "action": "update_table_structure",
+                        "shape": {"shape_name": "Narrow Table"},
+                        "changes": [{"op": "remove_column", "index": 0}],
+                    }
+                ],
+            },
+        )
+        last_column_failure = _run(
+            [
+                "edit",
+                str(structure_fixture),
+                "--job",
+                str(last_column_job),
+                "--output",
+                str(work / "table-structure-last-column.pptx"),
+            ],
+            expected_status=3,
+        )
+        _assert(
+            last_column_failure["error"]["category"] == "unsupported_operation",
+            "final-column removal failure category mismatch",
+        )
+        checks.append("failure/table-structure-bounds")
+
         first_edit_job = work / "edit-content.json"
         first_edit = work / "edited-content.pptx"
         _write_json(
@@ -495,6 +876,62 @@ def _run_smoke(require_libreoffice: bool) -> dict[str, Any]:
             "replacement changed a picture that shared the original image part",
         )
         checks.append("edit/text-global-table-chart-image-notes-add")
+
+        extract_source_hash = _sha256(first_edit)
+        extract_dir = work / "extracted-images"
+        extract_result = _run(["extract", str(first_edit), "--output", str(extract_dir)])
+        expected_picture_count = second_inspection["counts"]["images"]
+        _assert(
+            extract_result["counts"]["pictures"] == expected_picture_count
+            and extract_result["counts"]["files_written"] == expected_picture_count
+            and extract_result["counts"]["pictures_skipped"] == 0,
+            "extract counts mismatch",
+        )
+        inspected_image_hashes = {
+            shape["image"]["sha256"]
+            for slide in second_slides
+            for shape in slide["shapes"]
+            if "image" in shape
+        }
+        for record in extract_result["images"]:
+            published = extract_dir / record["file"]
+            _assert(published.is_file(), f"extracted file missing: {record['file']}")
+            _assert(
+                hashlib.sha256(published.read_bytes()).hexdigest() == record["sha256"],
+                "extracted file hash mismatch",
+            )
+            _assert(
+                record["sha256"] in inspected_image_hashes,
+                "extracted image does not match the inspected image inventory",
+            )
+        _assert(_sha256(first_edit) == extract_source_hash, "extract modified its source")
+        checks.append("extract/images-directory")
+
+        occupied_dir = work / "occupied-extract"
+        occupied_dir.mkdir()
+        sentinel = occupied_dir / "keep.txt"
+        sentinel.write_text("do not delete", encoding="utf-8")
+        occupied_failure = _run(
+            ["extract", str(first_edit), "--output", str(occupied_dir)],
+            expected_status=2,
+        )
+        _assert(
+            occupied_failure["error"]["category"] == "bad_input",
+            "occupied extract directory failure category mismatch",
+        )
+        occupied_overwrite_failure = _run(
+            ["extract", str(first_edit), "--output", str(occupied_dir), "--overwrite"],
+            expected_status=2,
+        )
+        _assert(
+            occupied_overwrite_failure["error"]["category"] == "bad_input",
+            "non-empty overwrite extract failure category mismatch",
+        )
+        _assert(
+            sentinel.read_text(encoding="utf-8") == "do not delete",
+            "extract deleted files from an existing directory",
+        )
+        checks.append("failure/extract-occupied-directory")
 
         graph_job = work / "edit-graph.json"
         final_deck = work / "final.pptx"
@@ -912,6 +1349,139 @@ def _run_smoke(require_libreoffice: bool) -> dict[str, Any]:
             "hyperlink sanitization did not preserve useful URL structure",
         )
         checks.append("inspect/hyperlink-redaction")
+
+        hyperlink_job = work / "hyperlink-edit.json"
+        hyperlink_deck = work / "hyperlink-edited.pptx"
+        _write_json(
+            hyperlink_job,
+            {
+                "schema_version": 1,
+                "operation": "edit",
+                "operations": [
+                    {
+                        "action": "set_hyperlink",
+                        "find": "Password link",
+                        "url": "https://docs.example.invalid/portal",
+                    },
+                    {
+                        "action": "remove_hyperlink",
+                        "find": " Username link",
+                    },
+                    {
+                        "action": "set_hyperlink",
+                        "scope": "shape",
+                        "shape": {"shape_name": external_title.name},
+                        "url": "mailto:team@example.invalid",
+                    },
+                ],
+            },
+        )
+        hyperlink_result = _run(
+            [
+                "edit",
+                str(external_deck),
+                "--job",
+                str(hyperlink_job),
+                "--output",
+                str(hyperlink_deck),
+            ]
+        )
+        _assert(
+            hyperlink_result["counts"]["hyperlinks_set"] == 2
+            and hyperlink_result["counts"]["hyperlinks_removed"] == 1,
+            "hyperlink edit counts mismatch",
+        )
+        hyperlink_edit_inspection = _run(["inspect", str(hyperlink_deck)])
+        edited_runs = {
+            run["text"]: run["hyperlink"]
+            for slide in hyperlink_edit_inspection["presentation"]["slides"]
+            for shape in slide["shapes"]
+            for paragraph in shape.get("text", {}).get("paragraphs", [])
+            for run in paragraph["runs"]
+        }
+        _assert(
+            edited_runs.get("Password link") == "https://docs.example.invalid/portal",
+            "set_hyperlink did not update the run hyperlink",
+        )
+        _assert(
+            edited_runs.get(" Username link") is None,
+            "remove_hyperlink did not clear the run hyperlink",
+        )
+        reopened_hyperlink_deck = Presentation(str(hyperlink_deck))
+        reopened_title = reopened_hyperlink_deck.slides[0].shapes.title
+        _assert(
+            reopened_title is not None
+            and reopened_title.click_action.hyperlink.address == "mailto:team@example.invalid",
+            "shape-scope hyperlink was not set",
+        )
+        checks.append("edit/hyperlink-set-remove")
+
+        scheme_job = work / "hyperlink-scheme.json"
+        _write_json(
+            scheme_job,
+            {
+                "schema_version": 1,
+                "operation": "edit",
+                "operations": [
+                    {
+                        "action": "set_hyperlink",
+                        "find": "Password link",
+                        "url": "file:///etc/passwd",
+                    }
+                ],
+            },
+        )
+        scheme_failure = _run(
+            [
+                "edit",
+                str(external_deck),
+                "--job",
+                str(scheme_job),
+                "--output",
+                str(work / "hyperlink-scheme.pptx"),
+            ],
+            expected_status=3,
+        )
+        _assert(
+            scheme_failure["error"]["category"] == "unsupported_operation",
+            "hyperlink scheme failure category mismatch",
+        )
+        checks.append("failure/hyperlink-scheme")
+
+        boundary_job = work / "hyperlink-boundary.json"
+        _write_json(
+            boundary_job,
+            {
+                "schema_version": 1,
+                "operation": "edit",
+                "operations": [
+                    {
+                        "action": "set_hyperlink",
+                        "find": "link",
+                        "occurrence": 1,
+                        "url": "https://docs.example.invalid/partial",
+                    }
+                ],
+            },
+        )
+        boundary_failure = _run(
+            [
+                "edit",
+                str(external_deck),
+                "--job",
+                str(boundary_job),
+                "--output",
+                str(work / "hyperlink-boundary.pptx"),
+            ],
+            expected_status=5,
+        )
+        _assert(
+            boundary_failure["error"]["category"] == "ambiguous_edit"
+            and "cover whole runs" in boundary_failure["error"]["message"],
+            "hyperlink run-boundary failure mismatch",
+        )
+        checks.append("failure/hyperlink-run-boundary")
+
         external_failure = _run(
             ["convert", str(external_deck), "--output", str(work / "external.pdf")],
             expected_status=3,
@@ -921,6 +1491,23 @@ def _run_smoke(require_libreoffice: bool) -> dict[str, Any]:
             "external-relationship conversion failure category mismatch",
         )
         checks.append("failure/convert-external-relationship")
+
+        bad_dpi_failure = _run(
+            [
+                "render",
+                str(final_deck),
+                "--output",
+                str(work / "render-bad-dpi"),
+                "--dpi",
+                "9999",
+            ],
+            expected_status=2,
+        )
+        _assert(
+            bad_dpi_failure["error"]["category"] == "bad_input",
+            "render dpi failure category mismatch",
+        )
+        checks.append("failure/render-bad-dpi")
 
         libreoffice = shutil.which("soffice") or shutil.which("libreoffice")
         if libreoffice is None:
@@ -958,6 +1545,51 @@ def _run_smoke(require_libreoffice: bool) -> dict[str, Any]:
                 "pages": len(reader.pages),
                 "text_anchor": "Inserted decision",
             }
+            if importlib.util.find_spec("pypdfium2") is None:
+                conversion["render"] = {
+                    "status": "skipped",
+                    "reason": "optional pypdfium2 package is not installed",
+                }
+            else:
+                render_dir = work / "rendered-slides"
+                render_result = _run(
+                    [
+                        "render",
+                        str(final_deck),
+                        "--output",
+                        str(render_dir),
+                        "--timeout",
+                        "120",
+                    ],
+                    timeout_seconds=150,
+                )
+                _assert(
+                    render_result["counts"]["pages_rendered"] == 3
+                    and render_result["counts"]["source_slides"] == 3,
+                    "render counts mismatch",
+                )
+                rendered_files = sorted(render_dir.glob("*.png"))
+                _assert(len(rendered_files) == 3, "rendered PNG count mismatch")
+                rendered_sizes = set()
+                rendered_hashes = set()
+                for rendered_file in rendered_files:
+                    with Image.open(rendered_file) as rendered_image:
+                        rendered_image.load()
+                        rendered_sizes.add(rendered_image.size)
+                    rendered_hashes.add(_sha256(rendered_file))
+                _assert(
+                    len(rendered_sizes) == 1,
+                    "rendered slides do not share identical dimensions",
+                )
+                _assert(
+                    len(rendered_hashes) >= 2,
+                    "rendered slides are suspiciously identical",
+                )
+                checks.append("render/libreoffice-png")
+                conversion["render"] = {
+                    "status": "passed",
+                    "pages": len(rendered_files),
+                }
 
     return {
         "schema_version": 1,
@@ -981,7 +1613,10 @@ def main(argv: list[str] | None = None) -> int:
                         "category": "missing_dependency",
                         "message": f"missing Python dependency: {DEPENDENCY_ERROR.name}",
                         "details": {
-                            "install": "python -m pip install -r requirements.txt",
+                            "install": (
+                                f'"{sys.executable}" -m pip install -r '
+                                f'"{Path(__file__).resolve().parent.parent / "requirements.txt"}"'
+                            ),
                         },
                     },
                 },

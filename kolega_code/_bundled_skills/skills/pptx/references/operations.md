@@ -6,12 +6,16 @@
 - [Invocation and result contract](#invocation-and-result-contract)
 - [Safe package handling](#safe-package-handling)
 - [Inspect](#inspect)
+- [Extract](#extract)
 - [Create jobs](#create-jobs)
 - [Edit jobs](#edit-jobs)
 - [Selectors and replacement rules](#selectors-and-replacement-rules)
 - [Content specifications](#content-specifications)
 - [LibreOffice prerequisite](#libreoffice-prerequisite)
 - [Convert](#convert)
+- [Render](#render)
+- [Font portability](#font-portability)
+- [PPTX and PDF release gate](#pptx-and-pdf-release-gate)
 - [Exit statuses](#exit-statuses)
 
 ## Runtime prerequisite and installation
@@ -48,9 +52,11 @@ path so skill locations and documents containing spaces remain safe:
 
 ```bash
 "$PPTX_PYTHON" "$PPTX_TOOL" inspect "/path/to/input deck.pptx"
+"$PPTX_PYTHON" "$PPTX_TOOL" extract "/path/to/input deck.pptx" --output "/path/to/image dir"
 "$PPTX_PYTHON" "$PPTX_TOOL" create --job "/path/to/create job.json" --output "/path/to/output deck.pptx"
 "$PPTX_PYTHON" "$PPTX_TOOL" edit "/path/to/input deck.pptx" --job "/path/to/edit job.json" --output "/path/to/output deck.pptx"
 "$PPTX_PYTHON" "$PPTX_TOOL" convert "/path/to/input deck.pptx" --output "/path/to/output deck.pdf"
+"$PPTX_PYTHON" "$PPTX_TOOL" render "/path/to/input deck.pptx" --output "/path/to/slide images"
 "$PPTX_PYTHON" "$PPTX_SMOKE_TEST"
 ```
 
@@ -103,10 +109,30 @@ representations rather than byte-identical source values.
 - image filename/type/byte count/dimensions/SHA-256;
 - table cell text and chart type/title/categories/series values available through public APIs;
 - plain speaker-note text read from package XML without creating a notes part;
+- a package font inventory under `fonts`: `referenced`, `embedded`, `unembedded`, per-part
+  `references`, `theme_tokens_referenced`, `symbol_and_bullet`, and
+  `dangling_embedding_relationships`, with an informational warning for unembedded fonts and a
+  `RELEASE BLOCKER:` warning for unembedded fonts outside Arial, Times New Roman, and Courier
+  New;
 - package feature warnings for signatures, comments, SmartArt, embedded objects, media,
   transitions, animations, and other uncertain content.
 
 Inspection is read-only. Unsupported chart metadata is reported as a warning rather than invented.
+
+## Extract
+
+`extract INPUT.pptx --output DIR [--overwrite]` exports every picture shape's image bytes to a
+new directory, verbatim and without re-encoding. File names follow
+`slide-<slide_id>-shape-<shape_id>-<sha256 prefix>.<ext>`, so the same image placed on two
+shapes produces two files whose shared hash makes the duplication visible. The summary lists
+each image's slide/shape identity, content type, byte count, SHA-256, and file name.
+
+Scope is picture shapes only: shape-fill images, slide backgrounds, audio, video, and embedded
+objects are not exported; unexported `ppt/media/` members are counted and named in a warning.
+An image above the per-image byte limit is skipped with a warning rather than failing the whole
+extraction. The destination must not already exist; with `--overwrite` it must be an empty
+directory — the tool never deletes existing files. Output is staged and atomically published,
+then every published file is re-read and its hash verified.
 
 ## Create jobs
 
@@ -153,8 +179,21 @@ Supported actions:
   insertion `index`.
 - `replace_text`: provide `find`, `replace`, optional slide/shape selectors, and exactly one of
   `replace_all: true` or `occurrence` when the selection is not unique.
+- `set_hyperlink`: with the default `scope: "text"`, provide `find` (plus `occurrence` when not
+  unique) and a validated `url`; every covered run receives the address. With `scope: "shape"`,
+  select exactly one shape and set its click action instead; `find`/`occurrence` are rejected.
+- `remove_hyperlink`: same selection rules without `url`. Every covered run (or the shape click
+  action) must currently carry an address; partial or absent coverage is rejected.
 - `update_table`: select one table and provide an exact-size `data` matrix or `cells` entries
   such as `{"row": 1, "column": 2, "text": "42"}`.
+- `update_table_structure`: select one table and provide ordered `changes`, each
+  `{"op": "insert_row"|"remove_row"|"insert_column"|"remove_column", "index": N}` with optional
+  scalar `cells` content for insertions (sized to the current cross-dimension). Each change is
+  validated against the table as already changed. Insert indexes run `0..n` (`n` appends);
+  removal indexes run `0..n-1`, and the final row or column cannot be removed. Tables containing
+  merged cells are rejected. New rows and columns clone neighbor formatting with cleared text; an
+  inserted column widens the table rather than redistributing widths. A before/after text-matrix
+  verification guards every structural edit.
 - `update_chart`: select one chart and provide a complete category or XY chart data specification.
 - `replace_image`: select one picture and provide `path`. The replacement must use the same media
   content type. Geometry/crop and unselected picture relationships remain unchanged; the selected
@@ -186,6 +225,13 @@ runs. Matches crossing paragraphs, fields, or incompatible hyperlink boundaries 
 Set `destructive_reconstruction: true` only to replace within a flattened text frame and accept
 loss of run/paragraph formatting, fields, and hyperlink structure. Empty search strings are
 invalid.
+
+Hyperlink actions never split runs: the matched text must align exactly with whole-run
+boundaries, or the action fails as ambiguous with guidance to isolate the target text with
+`replace_text` first. URLs must be `http`, `https`, or `mailto`, at most 2048 characters, and
+free of whitespace and control characters; other schemes (`file:`, `javascript:`, `data:`,
+`ppaction:`) are rejected as unsupported. Inspection continues to report sanitized URL
+representations regardless of how a hyperlink was authored.
 
 ## Content specifications
 
@@ -256,6 +302,58 @@ proves the decisive pre-commit check, not indefinite immutability of the path af
 
 Conversion is best effort. Always visually review typography, line wrapping, charts, and media in
 the target environment.
+
+## Render
+
+`render INPUT.pptx --output DIR [--overwrite] [--dpi 96] [--slides ID,ID] [--timeout 120]`
+produces one PNG per slide so the result can be reviewed visually. Rendering exists to be
+looked at: open the produced PNGs and examine them; do not treat a successful render summary as
+visual proof by itself.
+
+Prerequisites are LibreOffice (as for `convert`) plus the optional `pypdfium2` Python package.
+Neither is installed automatically: if `pypdfium2` is missing, the command fails with
+`missing_dependency` and an install hint; tell the user what will be installed and where before
+running `"$PPTX_PYTHON" -m pip install pypdfium2`. Users who decline the package can instead
+convert to PDF and rasterize with an external tool such as poppler's `pdftoppm`.
+
+Behavior:
+
+1. The source is preflighted and any external relationship is rejected, exactly as `convert`.
+2. LibreOffice converts the whole deck to a PDF in an isolated workspace; the PDF must contain
+   one page per slide, which also proves the page-to-slide mapping.
+3. Requested pages (all slides, or the `--slides` comma-separated slide-ID subset) are
+   rasterized with PDFium at `--dpi` (36-300). Predicted pixel sizes are bounded per slide and
+   in total before LibreOffice launches.
+4. Files are named `slide-<ordinal>-id-<slide_id>.png`, verified (PNG signature, Pillow reopen,
+   identical dimensions, pixel caps), staged, and atomically published to a new directory with
+   the same empty-destination rules as `extract`.
+
+The PNGs show LibreOffice's interpretation of the deck, not renderer-identical PowerPoint
+output; treat them as a layout review aid, with the target presentation application as the
+final authority.
+
+## Font portability
+
+A font counts as embedded only when `ppt/presentation.xml` declares it in `p:embeddedFontLst`
+and the embedding relationship resolves to a font part inside the package. Theme tokens such as
+`+mj-lt` and `+mn-lt` are resolved through the theme font scheme; slide masters always reference
+them, so the theme's major and minor fonts always count as referenced even before any slide sets
+an explicit font. Fonts embedded in a generated PDF are not thereby embedded in the source PPTX,
+and `pdffonts` describes only the PDF. Renderer substitution changes wrapping, autofit
+shrink-to-fit, overflow, and slide layout even when the LibreOffice PDF looks correct.
+
+## PPTX and PDF release gate
+
+For matching PPTX and PDF deliverables:
+
+1. Use only Arial for headings and sans body, Times New Roman for serif body, and Courier New
+   for code or logs, including table and chart text.
+2. Do not release while an unembedded font outside that set remains; replace every
+   `RELEASE BLOCKER:` font warning or genuinely embed the licensed font in the PPTX.
+3. Inspect the final PPTX and review its `fonts` inventory; render the final PDF and review it
+   slide by slide.
+4. PDF font embedding does not satisfy PPTX portability, and a clean LibreOffice PDF alone does
+   not prove that PowerPoint preserves wrapping, autofit, or slide layout.
 
 ## Exit statuses
 

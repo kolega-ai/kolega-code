@@ -7,6 +7,7 @@
 - [Engine boundaries](#engine-boundaries)
 - [Artifact and license preflight](#artifact-and-license-preflight)
 - [Model manifest schema](#model-manifest-schema)
+- [Manifest derivation and checking](#manifest-derivation-and-checking)
 - [Rendering and execution](#rendering-and-execution)
 - [Normalized sidecar](#normalized-sidecar)
 - [Engine normalization](#engine-normalization)
@@ -28,8 +29,11 @@
    unavailable, tell the user and explicitly select Tesseract for a new fallback invocation.
 7. Keep processing local. A hosted endpoint requires a separate privacy and security
    decision.
-8. Produce sidecar JSON only. Do not modify the source or synthesize a searchable PDF.
-   The normalized destination must use a `.json` extension.
+8. The `ocr` command produces sidecar JSON only and never modifies the source. The
+   normalized destination must use a `.json` extension. Producing a searchable PDF is the
+   separate, explicit `ocr-compose` step, which consumes a completed sidecar
+   deterministically and never runs an engine
+   (see [Operations](references/operations.md#searchable-ocr-composition)).
 
 On hybrid pages, the adapter renders detected embedded-image regions when practical. It
 skips digital and blank pages unless `--force` is explicit. `--force` means OCR the selected
@@ -269,6 +273,40 @@ official `source`, `license`, and `license_terms_accepted`. The backend must be 
 executable file with exact `size_bytes` and `sha256`, must pass its bounded `--version`
 probe, and must report a recognized llama.cpp/`llama-server` signature.
 
+Preflight rejects every textual placeholder (`REVIEW-REQUIRED`, `replace-with-…`) in model,
+runtime, or artifact provenance fields, in addition to rejecting absent required fields.
+
+## Manifest derivation and checking
+
+The `manifest` command reduces hand-written-manifest ceremony without weakening any gate.
+It never executes a binary — filesystem stat and hashing only. Full CLI forms are in
+[Operations](references/operations.md#manifest-derive-and-check).
+
+Derivation fills two kinds of fields differently:
+
+- **Measured facts** — paths, byte sizes, SHA-256 values, and canonical Paddle directory
+  inventories — are computed by the tool from the local files.
+- **Provenance facts** — identifier, revision, source, license — are filled only from an
+  explicit operator declaration or an exact SHA-256 match against the reviewed artifacts
+  recorded in this document (the two Surya GGUF files and the two PP-OCRv6 main parameter
+  files). Everything else is emitted as `REVIEW-REQUIRED`, which preflight rejects, and the
+  derive summary lists every reason the manifest is not ready.
+
+For Tesseract, `--assume-source tessdata_fast|tessdata_best` is an operator declaration
+that the local `.traineddata` files came from the pinned official repository revisions
+above; the manifest records which fields were declared versus measured, and the tool warns
+that it verified only path, size, and hash — not origin. Language files are located via
+`--tessdata-dir`, `$TESSDATA_PREFIX`, or well-known directories; ambiguity or a missing
+language fails rather than guessing. The six PP-StructureV3 structure roles are **never**
+auto-filled by any flag. `license_terms_accepted` and `use_case_eligibility_confirmed`
+default to `false` and flip only via the explicit `--accept-license` and
+`--confirm-eligibility` flags.
+
+`manifest --mode check` sweeps an existing manifest without fail-fast and reports every
+problem with expected and actual values — the diagnosis tool when `ocr` preflight fails
+with a single mismatch. It excludes, and names, the engine-execution checks that only `ocr`
+performs.
+
 ## Rendering and execution
 
 The core environment renders only selected pages or hybrid image regions with pdfplumber/
@@ -334,6 +372,11 @@ The output JSON contains:
       "source_page": 2,
       "source_region": null,
       "classification": "likely-scanned",
+      "page_geometry": {
+        "width_points": 612,
+        "height_points": 792,
+        "rotation": 0
+      },
       "coordinate_space": {
         "unit": "rendered_pixel",
         "dpi": 300,
@@ -347,7 +390,11 @@ The output JSON contains:
           "block_type": "line",
           "bbox": [100.0, 80.0, 900.0, 160.0],
           "polygon": [[100.0, 80.0], [900.0, 80.0], [900.0, 160.0], [100.0, 160.0]],
-          "confidence": 0.94
+          "confidence": 0.94,
+          "words": [
+            {"text": "Example", "bbox": [100.0, 80.0, 480.0, 160.0], "confidence": 0.95},
+            {"text": "heading", "bbox": [500.0, 80.0, 900.0, 160.0], "confidence": 0.93}
+          ]
         }
       ],
       "warnings": [],
@@ -366,6 +413,13 @@ The output JSON contains:
 complete the schema. `bbox`, `polygon`, and block type remain `null` or conservative when
 the source engine is flat. Table HTML/Markdown is retained only when supplied. Fields that
 cannot be normalized without loss remain under `engine_specific`.
+
+`page_geometry` records the displayed page size and rotation of the source page so
+consumers can cross-check coordinate mappings. `blocks[].words` carries word-level geometry
+**only when the engine supplied it** (the Tesseract adapter records its TSV word rows);
+words are never synthesized for engines that emit line or block geometry only. Both fields
+are additive within `schema_version` 1, and `ocr-compose` uses them for word-accurate
+invisible text placement.
 
 ## Engine normalization
 

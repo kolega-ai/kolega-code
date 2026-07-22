@@ -1,1 +1,1 @@
-surya-ocr~=0.21.2
+surya-ocr

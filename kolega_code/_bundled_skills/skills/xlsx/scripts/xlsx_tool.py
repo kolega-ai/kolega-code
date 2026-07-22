@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""Safely inspect, extract, create, edit, clean, summarize, and convert XLSX files."""
+"""Safely inspect, extract, create, edit, clean, summarize, convert, and render XLSX files."""
 
 from __future__ import annotations
 
@@ -8,11 +8,13 @@ import argparse
 import codecs
 import csv
 import datetime as dt
+import hashlib
 import json
 import math
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import traceback
@@ -30,9 +32,17 @@ try:
     import numpy as np
     import openpyxl
     import pandas as pd
+    import pypdf
     from openpyxl import Workbook, load_workbook
-    from openpyxl.chart import AreaChart, BarChart, LineChart, PieChart, Reference, ScatterChart
-    from openpyxl.chart.series import Series
+    from openpyxl.chart import (
+        AreaChart,
+        BarChart,
+        LineChart,
+        PieChart,
+        Reference,
+        ScatterChart,
+        Series,
+    )
     from openpyxl.formatting.rule import (
         CellIsRule,
         ColorScaleRule,
@@ -49,11 +59,12 @@ try:
         Protection,
         Side,
     )
-    from openpyxl.utils import get_column_letter, range_boundaries
+    from openpyxl.utils import column_index_from_string, get_column_letter, range_boundaries
     from openpyxl.utils.cell import quote_sheetname
     from openpyxl.workbook.defined_name import DefinedName
     from openpyxl.worksheet.datavalidation import DataValidation
     from openpyxl.worksheet.table import Table, TableStyleInfo
+    from PIL import Image
 except ImportError as exc:  # pragma: no cover - exercised only without required dependencies
     IMPORT_ERROR = exc
 
@@ -83,6 +94,26 @@ DANGEROUS_FORMULA_PREFIXES = ("=", "+", "-", "@")
 FORMULA_LEADING_WHITESPACE = " \t\r\n\ufeff\u00a0"
 SUPPORTED_WORKBOOK_SUFFIX = ".xlsx"
 UNSUPPORTED_WORKBOOK_SUFFIXES = {".xls", ".xlsb", ".xlsm", ".xltm", ".xla", ".xlam"}
+FORMULA_ERROR_LITERALS = {
+    "#REF!",
+    "#DIV/0!",
+    "#VALUE!",
+    "#NAME?",
+    "#N/A",
+    "#NULL!",
+    "#NUM!",
+    "#SPILL!",
+    "#CALC!",
+}
+MAX_FORMULA_ERROR_SAMPLES = 20
+PORTABLE_RELEASE_FONTS = {"arial", "times new roman", "courier new"}
+MIN_RENDER_DPI = 36
+MAX_RENDER_DPI = 300
+MAX_RENDER_PIXELS_PER_PAGE = 25_000_000
+MAX_RENDER_TOTAL_PIXELS = 250_000_000
+MAX_RENDER_PAGES = 200
+DEFAULT_EXTERNAL_TOOL_TIMEOUT = 120.0
+AUTO_WIDTH_DEFAULTS = {"min_width": 8, "max_width": 60, "sample_rows": 200}
 FAILURE_STATUS = {
     "bad_input": 2,
     "unsupported_operation": 3,
@@ -92,6 +123,7 @@ FAILURE_STATUS = {
     "licensing_precondition": 7,
     "post_write_validation": 8,
     "internal_error": 9,
+    "external_tool_failure": 10,
 }
 
 
@@ -172,7 +204,16 @@ def versions() -> dict[str, str]:
         "openpyxl": openpyxl.__version__,
         "pandas": pd.__version__,
         "numpy": np.__version__,
+        "pypdf": pypdf.__version__,
     }
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(65536), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def success(operation: str, result: Mapping[str, Any], warnings: Sequence[str]) -> dict[str, Any]:
@@ -794,7 +835,11 @@ def color_value(value: Any, label: str) -> str | None:
     text = require_string(value, label)
     if not re.fullmatch(r"(?:[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})", text):
         fail("bad_input", f"{label} must be a 6- or 8-digit hexadecimal color.")
-    return text.upper()
+    text = text.upper()
+    # openpyxl pads 6-digit values with a fully transparent 00 alpha; make them opaque.
+    if len(text) == 6:
+        text = "FF" + text
+    return text
 
 
 def build_font(spec: Mapping[str, Any] | None) -> Any:
@@ -1161,6 +1206,136 @@ def inventory_pivots(worksheet: Any) -> list[dict[str, Any]]:
     return pivots
 
 
+def inspect_page_setup(worksheet: Any) -> dict[str, Any]:
+    setup = worksheet.page_setup
+    properties = getattr(worksheet.sheet_properties, "pageSetUpPr", None)
+    try:
+        print_area = worksheet.print_area
+    except (TypeError, ValueError):
+        print_area = None
+    return {
+        "orientation": getattr(setup, "orientation", None),
+        "paper_size": getattr(setup, "paperSize", None),
+        "scale": getattr(setup, "scale", None),
+        "fit_to_width": getattr(setup, "fitToWidth", None),
+        "fit_to_height": getattr(setup, "fitToHeight", None),
+        "fit_to_page": getattr(properties, "fitToPage", None) if properties else None,
+        "print_area": print_area or None,
+        "print_title_rows": getattr(worksheet, "print_title_rows", None),
+        "print_title_cols": getattr(worksheet, "print_title_cols", None),
+    }
+
+
+def _package_font_scan(path: Path) -> tuple[set[str], dict[str, str | None]]:
+    """Collect chart and theme typefaces from already-preflighted package XML."""
+
+    chart_fonts: set[str] = set()
+    theme: dict[str, str | None] = {"major": None, "minor": None}
+    try:
+        with zipfile.ZipFile(path) as package:
+            for info in package.infolist():
+                lowered = info.filename.lower()
+                if not lowered.endswith(".xml"):
+                    continue
+                is_chart = lowered.startswith("xl/charts/")
+                is_theme = lowered.startswith("xl/theme/")
+                if not (is_chart or is_theme):
+                    continue
+                text = decode_package_xml(package.read(info), info.filename)
+                root = ElementTree.fromstring(text)
+                if is_chart:
+                    for element in root.iter():
+                        if element.tag.rsplit("}", 1)[-1] in {"latin", "ea", "cs"}:
+                            typeface = element.get("typeface")
+                            if typeface and not typeface.startswith("+"):
+                                chart_fonts.add(typeface)
+                    continue
+                for scheme_key, tag in (("major", "majorFont"), ("minor", "minorFont")):
+                    for element in root.iter():
+                        if element.tag.rsplit("}", 1)[-1] != tag:
+                            continue
+                        for child in element:
+                            if child.tag.rsplit("}", 1)[-1] == "latin":
+                                typeface = child.get("typeface")
+                                if typeface:
+                                    theme[scheme_key] = typeface
+                        break
+    except (OSError, zipfile.BadZipFile, ElementTree.ParseError) as exc:
+        fail("bad_input", "Could not scan package fonts.", path=path, reason=str(exc))
+    return chart_fonts, theme
+
+
+def workbook_font_inventory(workbook: Any, path: Path) -> dict[str, Any]:
+    """Fonts effectively referenced by non-empty cells and chart text.
+
+    XLSX packages cannot embed fonts, so every referenced font is also unembedded and
+    must be installed on each intended renderer. Named-style and theme fonts are
+    reported as separate sources only: a named style applied to any cell already shows
+    up through that cell's resolved font, and an unapplied one renders nothing. Fonts
+    referenced only by unsupported parts (for example rich-text runs in shared strings)
+    are not detected.
+    """
+
+    cell_fonts: dict[str, str] = {}
+    for worksheet in workbook.worksheets:
+        for row in worksheet.iter_rows():
+            for cell in row:
+                if cell.value is None:
+                    continue
+                name = getattr(cell.font, "name", None)
+                if name:
+                    cell_fonts.setdefault(name.casefold(), name)
+    named_style_fonts: dict[str, str] = {}
+    for style in getattr(workbook, "_named_styles", []):
+        name = getattr(getattr(style, "font", None), "name", None)
+        if name:
+            named_style_fonts.setdefault(name.casefold(), name)
+    scanned_chart_fonts, theme = _package_font_scan(path)
+    chart_fonts: dict[str, str] = {}
+    for name in scanned_chart_fonts:
+        chart_fonts.setdefault(name.casefold(), name)
+    referenced: dict[str, str] = {}
+    for source in (cell_fonts, chart_fonts):
+        for key, value in source.items():
+            referenced.setdefault(key, value)
+    ordered = sorted(referenced.values(), key=str.casefold)
+    return {
+        "referenced": ordered,
+        "by_source": {
+            "cells": sorted(cell_fonts.values(), key=str.casefold),
+            "named_styles": sorted(named_style_fonts.values(), key=str.casefold),
+            "charts": sorted(chart_fonts.values(), key=str.casefold),
+        },
+        "theme": theme,
+        "embedded": [],
+        "unembedded": ordered,
+    }
+
+
+def font_portability_warnings(fonts: Mapping[str, Any]) -> list[str]:
+    warnings: list[str] = []
+    referenced = list(fonts.get("referenced", []))
+    if not referenced:
+        return warnings
+    warnings.append(
+        "Workbook references fonts that renderers must supply ("
+        + ", ".join(referenced)
+        + "). XLSX cannot embed fonts; a renderer without them substitutes metrics and can "
+        "change column fit, wrapping, and print pagination. Do not claim visual fidelity "
+        "from structural checks alone."
+    )
+    nonportable = [name for name in referenced if name.casefold() not in PORTABLE_RELEASE_FONTS]
+    if nonportable:
+        warnings.append(
+            "RELEASE BLOCKER: workbook references fonts outside the conservative "
+            "cross-renderer set (Arial, Times New Roman, Courier New): "
+            + ", ".join(nonportable)
+            + ". Replace these fonts before releasing matching XLSX and PDF deliverables; "
+            "renderer substitution can change layout and pagination."
+        )
+    return warnings
+
+
 def inspect_sheet(
     worksheet: Any,
     cached_worksheet: Any,
@@ -1179,6 +1354,8 @@ def inspect_sheet(
     nonempty_count = 0
     style_counts: Counter[tuple[int, str]] = Counter()
     style_samples: dict[tuple[int, str], dict[str, Any]] = {}
+    error_counts: Counter[str] = Counter()
+    error_samples: list[dict[str, Any]] = []
     truncated = False
     for row in worksheet.iter_rows(
         min_row=min_row,
@@ -1230,6 +1407,29 @@ def inspect_sheet(
                 )
             is_formula = cell.data_type == "f"
             formula_count += is_formula
+            cached_value: Any = None
+            if is_formula:
+                cached_value = cached_worksheet[cell.coordinate].value
+            error_text: str | None = None
+            error_kind: str | None = None
+            if cell.data_type == "e" and cell.value is not None:
+                error_text, error_kind = str(cell.value), "literal"
+            elif (
+                is_formula
+                and isinstance(cached_value, str)
+                and cached_value in FORMULA_ERROR_LITERALS
+            ):
+                error_text, error_kind = cached_value, "cached_formula"
+            if error_text is not None:
+                error_counts[error_text] += 1
+                if len(error_samples) < MAX_FORMULA_ERROR_SAMPLES:
+                    error_samples.append(
+                        {
+                            "coordinate": cell.coordinate,
+                            "error": error_text,
+                            "kind": error_kind,
+                        }
+                    )
             if include_cells and len(cells) < max_cells:
                 record = {
                     "coordinate": cell.coordinate,
@@ -1240,8 +1440,7 @@ def inspect_sheet(
                 }
                 if is_formula:
                     record["formula"] = cell.value
-                    cached = cached_worksheet[cell.coordinate].value
-                    record["cached_value"] = serialize_cell_value(cached)
+                    record["cached_value"] = serialize_cell_value(cached_value)
                 cells.append(record)
             elif include_cells:
                 truncated = True
@@ -1252,6 +1451,12 @@ def inspect_sheet(
     if formula_count:
         warnings.append(
             f"Sheet {worksheet.title!r} contains formulas; cached results may be stale or absent."
+        )
+    error_count = sum(error_counts.values())
+    if error_count:
+        breakdown = ", ".join(f"{name} x{count}" for name, count in sorted(error_counts.items()))
+        warnings.append(
+            f"Sheet {worksheet.title!r} contains {error_count} error value(s): {breakdown}."
         )
     dimensions = {
         "columns": {
@@ -1290,6 +1495,15 @@ def inspect_sheet(
             ),
             "merged_cells": [str(item) for item in worksheet.merged_cells.ranges],
             "auto_filter": worksheet.auto_filter.ref,
+            "tab_color": serialize_color(worksheet.sheet_properties.tabColor),
+            "show_gridlines": worksheet.sheet_view.showGridLines,
+            "zoom_scale": worksheet.sheet_view.zoomScale,
+            "page_setup": inspect_page_setup(worksheet),
+            "errors": {
+                "count": error_count,
+                "by_error": dict(sorted(error_counts.items())),
+                "samples": error_samples,
+            },
             "tables": inventory_tables(worksheet),
             "charts": inventory_charts(worksheet),
             "pivots": inventory_pivots(worksheet),
@@ -1343,6 +1557,8 @@ def handle_inspect(args: argparse.Namespace) -> dict[str, Any]:
         warnings.append(
             "External links are inventoried but not repaired or proven to remain resolvable."
         )
+    fonts = workbook_font_inventory(workbook, args.source)
+    warnings.extend(font_portability_warnings(fonts))
     pivot_count = sum(len(sheet["pivots"]) for sheet in sheets)
     if pivot_count:
         warnings.append(
@@ -1356,6 +1572,7 @@ def handle_inspect(args: argparse.Namespace) -> dict[str, Any]:
             "active_sheet": workbook.active.title,
             "defined_names": inventory_defined_names(workbook),
             "external_links": external_links,
+            "fonts": fonts,
             "macros": False,
             "calculation": {
                 "mode": workbook.calculation.calcMode,
@@ -1380,6 +1597,7 @@ def handle_inspect(args: argparse.Namespace) -> dict[str, Any]:
             "charts": sum(len(sheet["charts"]) for sheet in sheets),
             "pivots": pivot_count,
             "formulas": sum(sheet["formula_cells"] for sheet in sheets),
+            "error_cells": sum(sheet["errors"]["count"] for sheet in sheets),
         },
     }
     workbook.close()
@@ -1637,6 +1855,17 @@ def build_table_style(spec: Mapping[str, Any]) -> Any:
     )
 
 
+def ranges_overlap(first: str, second: str) -> bool:
+    a_min_col, a_min_row, a_max_col, a_max_row = range_boundaries(first)
+    b_min_col, b_min_row, b_max_col, b_max_row = range_boundaries(second)
+    return not (
+        a_max_col < b_min_col
+        or b_max_col < a_min_col
+        or a_max_row < b_min_row
+        or b_max_row < a_min_row
+    )
+
+
 def add_table(worksheet: Any, spec: Mapping[str, Any], workbook: Any) -> Any:
     reject_unknown_keys(
         spec,
@@ -1651,6 +1880,11 @@ def add_table(worksheet: Any, spec: Mapping[str, Any], workbook: Any) -> Any:
     table = Table(displayName=name, ref=reference)
     table.tableStyleInfo = style
     table.totalsRowShown = bool(spec.get("totals_row_shown", False))
+    # Excel treats a sheet-level auto filter overlapping a table as invalid content
+    # and offers document recovery; the table supplies its own filter.
+    existing_filter = worksheet.auto_filter.ref
+    if existing_filter and ranges_overlap(existing_filter, reference):
+        worksheet.auto_filter.ref = None
     worksheet.add_table(table)
     return table
 
@@ -1865,6 +2099,10 @@ def add_chart(worksheet: Any, spec: Mapping[str, Any], workbook: Any) -> Any:
     if chart_type not in chart_classes:
         fail("unsupported_operation", "Unsupported native chart type.", type=chart_type)
     chart = chart_classes[chart_type]()
+    if chart_type == "scatter":
+        # ECMA-376 requires CT_ScatterChart/scatterStyle; openpyxl omits it when unset
+        # and Excel then offers document recovery.
+        chart.scatterStyle = "lineMarker"
     chart.title = spec.get("title")
     chart.style = spec.get("style", 10)
     chart.height = spec.get("height", 7.5)
@@ -2166,6 +2404,176 @@ def populate_rows(
     return written
 
 
+MERGE_SCAN_CELL_LIMIT = 100_000
+
+
+def merge_covered_values(worksheet: Any, range_text: str) -> list[str]:
+    """Coordinates of value-bearing cells a merge would discard (all but top-left)."""
+
+    try:
+        min_col, min_row, max_col, max_row = range_boundaries(range_text)
+    except ValueError as exc:
+        fail("bad_input", "Invalid merge range.", range=range_text, reason=str(exc))
+    if None in (min_col, min_row, max_col, max_row):
+        fail("bad_input", "Merge ranges must be bounded A1 rectangles.", range=range_text)
+    span = (max_row - min_row + 1) * (max_col - min_col + 1)
+    if span > MERGE_SCAN_CELL_LIMIT:
+        fail(
+            "resource_limit",
+            "Merge range exceeds the data-loss scan limit.",
+            range=range_text,
+            cells=span,
+            limit=MERGE_SCAN_CELL_LIMIT,
+        )
+    occupied: list[str] = []
+    for row in worksheet.iter_rows(
+        min_row=min_row,
+        min_col=min_col,
+        max_row=max_row,
+        max_col=max_col,
+    ):
+        for cell in row:
+            if cell.row == min_row and cell.column == min_col:
+                continue
+            if cell.value is not None:
+                occupied.append(cell.coordinate)
+    return occupied
+
+
+def parse_auto_width_spec(value: Any, label: str) -> dict[str, Any] | None:
+    if value is None or value is False:
+        return None
+    if value is True:
+        return dict(AUTO_WIDTH_DEFAULTS)
+    spec = require_mapping(value, label)
+    reject_unknown_keys(spec, {"columns", "min_width", "max_width", "sample_rows"}, label)
+    parsed: dict[str, Any] = dict(AUTO_WIDTH_DEFAULTS)
+    if "columns" in spec:
+        columns = require_list(spec["columns"], f"{label}.columns")
+        if not columns:
+            fail("bad_input", f"{label}.columns must not be empty.")
+        parsed["columns"] = [
+            require_string(column, f"{label} column").upper() for column in columns
+        ]
+    for key in ("min_width", "max_width", "sample_rows"):
+        if key in spec:
+            bound = spec[key]
+            if isinstance(bound, bool) or not isinstance(bound, int) or bound < 1:
+                fail("bad_input", f"{label}.{key} must be a positive integer.")
+            parsed[key] = bound
+    if parsed["min_width"] > parsed["max_width"]:
+        fail("bad_input", f"{label}.min_width cannot exceed max_width.")
+    return parsed
+
+
+def auto_width_value(sample_lengths: Sequence[int], *, min_width: int, max_width: int) -> float:
+    widest = max(sample_lengths, default=0)
+    return float(min(max(widest, min_width) + 2, max_width))
+
+
+def apply_auto_width(worksheet: Any, spec: Mapping[str, Any]) -> int:
+    """Set character-count-heuristic column widths from stored cell text."""
+
+    if "columns" in spec:
+        try:
+            targets = [column_index_from_string(letter) for letter in spec["columns"]]
+        except ValueError as exc:
+            fail(
+                "bad_input",
+                "auto_width.columns must contain column letters.",
+                reason=str(exc),
+            )
+    else:
+        targets = list(range(1, (worksheet.max_column or 1) + 1))
+    sample_rows = min(int(spec["sample_rows"]), worksheet.max_row or 1)
+    for column in targets:
+        lengths = [
+            len(str(cell.value))
+            for row in worksheet.iter_rows(
+                min_row=1,
+                max_row=sample_rows,
+                min_col=column,
+                max_col=column,
+            )
+            for cell in row
+            if cell.value is not None
+        ]
+        worksheet.column_dimensions[get_column_letter(column)].width = auto_width_value(
+            lengths,
+            min_width=spec["min_width"],
+            max_width=spec["max_width"],
+        )
+    return len(targets)
+
+
+def apply_sheet_settings(
+    worksheet: Any,
+    spec: Mapping[str, Any],
+    *,
+    context: str,
+    warnings: list[str],
+) -> Counter[str]:
+    """Apply the worksheet settings shared by create sheets, add_sheet, and set_sheet."""
+
+    counts: Counter[str] = Counter()
+    allow_merge_data_loss = bool(spec.get("allow_merge_data_loss", False))
+    for reference in require_list(spec.get("merges", []), "sheet.merges"):
+        range_text = require_string(reference, "merge range").upper()
+        occupied = merge_covered_values(worksheet, range_text)
+        if occupied:
+            if context == "edit" and not allow_merge_data_loss:
+                fail(
+                    "ambiguous_edit",
+                    "Merging this range would discard non-top-left cell values.",
+                    range=range_text,
+                    sheet=worksheet.title,
+                    occupied_cells=occupied[:10],
+                    occupied_count=len(occupied),
+                    resolution="Set allow_merge_data_loss to true to accept the loss.",
+                )
+            warnings.append(
+                f"Merging {range_text} on sheet {worksheet.title!r} discarded "
+                f"{len(occupied)} non-top-left cell value(s); only the top-left value is kept."
+            )
+        worksheet.merge_cells(range_text)
+        counts["ranges_merged"] += 1
+    for reference in require_list(spec.get("unmerge", []), "sheet.unmerge"):
+        range_text = require_string(reference, "unmerge range").upper()
+        existing = sorted(str(item) for item in worksheet.merged_cells.ranges)
+        if range_text not in existing:
+            fail(
+                "bad_input",
+                "unmerge must exactly match an existing merged range.",
+                range=range_text,
+                sheet=worksheet.title,
+                merged=existing,
+            )
+        worksheet.unmerge_cells(range_text)
+        counts["ranges_unmerged"] += 1
+    if "freeze_panes" in spec:
+        worksheet.freeze_panes = spec["freeze_panes"]
+    if "auto_filter" in spec:
+        worksheet.auto_filter.ref = require_string(spec["auto_filter"], "auto_filter")
+    if "tab_color" in spec:
+        worksheet.sheet_properties.tabColor = color_value(spec["tab_color"], "tab_color")
+    if "show_gridlines" in spec:
+        worksheet.sheet_view.showGridLines = bool(spec["show_gridlines"])
+    if "zoom_scale" in spec:
+        zoom = int(spec["zoom_scale"])
+        if not 10 <= zoom <= 400:
+            fail("bad_input", "zoom_scale must be between 10 and 400.")
+        worksheet.sheet_view.zoomScale = zoom
+    auto_width = parse_auto_width_spec(spec.get("auto_width"), "auto_width")
+    if auto_width is not None:
+        counts["columns_auto_sized"] += apply_auto_width(worksheet, auto_width)
+    if "dimensions" in spec:
+        set_sheet_dimensions(
+            worksheet,
+            require_mapping(spec["dimensions"], "sheet.dimensions"),
+        )
+    return counts
+
+
 def configure_worksheet(
     workbook: Any,
     worksheet: Any,
@@ -2173,7 +2581,7 @@ def configure_worksheet(
     *,
     base_directory: Path,
     budget: CellBudget,
-) -> dict[str, int]:
+) -> tuple[dict[str, int], list[str]]:
     reject_unknown_keys(
         spec,
         {
@@ -2188,6 +2596,7 @@ def configure_worksheet(
             "freeze_panes",
             "dimensions",
             "auto_filter",
+            "auto_width",
             "tab_color",
             "show_gridlines",
             "zoom_scale",
@@ -2198,13 +2607,16 @@ def configure_worksheet(
         },
         "sheet",
     )
-    counts = {
-        "cells": 0,
-        "tables": 0,
-        "charts": 0,
-        "conditional_formats": 0,
-        "data_validations": 0,
-    }
+    counts: Counter[str] = Counter(
+        {
+            "cells": 0,
+            "tables": 0,
+            "charts": 0,
+            "conditional_formats": 0,
+            "data_validations": 0,
+        }
+    )
+    warnings: list[str] = []
     if "source" in spec and "rows" in spec:
         fail("bad_input", "A sheet cannot contain both source and rows.")
     if "source" in spec:
@@ -2237,26 +2649,14 @@ def configure_worksheet(
             fail("bad_input", "Cell mapping keys must identify one cell.", coordinate=coordinate)
         set_cell_from_spec(cell, cell_spec)
         counts["cells"] += 1
-    for reference in require_list(spec.get("merges", []), "sheet.merges"):
-        worksheet.merge_cells(require_string(reference, "merge range"))
-    if "freeze_panes" in spec:
-        worksheet.freeze_panes = spec["freeze_panes"]
-    if "dimensions" in spec:
-        set_sheet_dimensions(
+    counts.update(
+        apply_sheet_settings(
             worksheet,
-            require_mapping(spec["dimensions"], "sheet.dimensions"),
+            spec,
+            context="create",
+            warnings=warnings,
         )
-    if "auto_filter" in spec:
-        worksheet.auto_filter.ref = require_string(spec["auto_filter"], "auto_filter")
-    if "tab_color" in spec:
-        worksheet.sheet_properties.tabColor = color_value(spec["tab_color"], "tab_color")
-    if "show_gridlines" in spec:
-        worksheet.sheet_view.showGridLines = bool(spec["show_gridlines"])
-    if "zoom_scale" in spec:
-        zoom = int(spec["zoom_scale"])
-        if not 10 <= zoom <= 400:
-            fail("bad_input", "zoom_scale must be between 10 and 400.")
-        worksheet.sheet_view.zoomScale = zoom
+    )
     for raw_table in require_list(spec.get("tables", []), "sheet.tables"):
         add_table(worksheet, require_mapping(raw_table, "table"), workbook)
         counts["tables"] += 1
@@ -2279,7 +2679,7 @@ def configure_worksheet(
     if state not in {"visible", "hidden", "veryHidden"}:
         fail("bad_input", "Invalid worksheet state.", state=state)
     worksheet.sheet_state = state
-    return counts
+    return dict(counts), warnings
 
 
 def set_workbook_properties(workbook: Any, properties: Mapping[str, Any]) -> None:
@@ -2364,6 +2764,7 @@ def handle_create(args: argparse.Namespace) -> dict[str, Any]:
         fail("bad_input", "Create job must contain at least one sheet.")
     total_counts: Counter[str] = Counter()
     budget = cell_budget_from_args(args)
+    sheet_warnings: list[str] = []
     for index, raw_spec in enumerate(sheets):
         spec = require_mapping(raw_spec, f"sheets[{index}]")
         name = unique_sheet_title(
@@ -2371,15 +2772,15 @@ def handle_create(args: argparse.Namespace) -> dict[str, Any]:
             require_string(spec.get("name"), f"sheets[{index}].name"),
         )
         worksheet = workbook.create_sheet(name)
-        total_counts.update(
-            configure_worksheet(
-                workbook,
-                worksheet,
-                spec,
-                base_directory=args.job.resolve().parent,
-                budget=budget,
-            )
+        sheet_counts, configure_warnings = configure_worksheet(
+            workbook,
+            worksheet,
+            spec,
+            base_directory=args.job.resolve().parent,
+            budget=budget,
         )
+        total_counts.update(sheet_counts)
+        sheet_warnings.extend(configure_warnings)
     if not any(sheet.sheet_state == "visible" for sheet in workbook.worksheets):
         fail("bad_input", "At least one worksheet must remain visible.")
     properties = require_mapping(job.get("properties", {}), "properties")
@@ -2414,11 +2815,12 @@ def handle_create(args: argparse.Namespace) -> dict[str, Any]:
         for cell in row
     )
     workbook.close()
-    warnings = (
-        ["Formulas were written but not calculated; calculation flags request, not prove, refresh."]
-        if formula_count
-        else []
-    )
+    warnings = list(sheet_warnings)
+    if formula_count:
+        warnings.append(
+            "Formulas were written but not calculated; calculation flags request, "
+            "not prove, refresh."
+        )
     return success(
         "create",
         {
@@ -2632,6 +3034,7 @@ def edit_operation(
             "freeze_panes",
             "dimensions",
             "auto_filter",
+            "auto_width",
             "tab_color",
             "show_gridlines",
             "zoom_scale",
@@ -2642,7 +3045,21 @@ def edit_operation(
         },
         "remove_sheet": {"op", "sheet", "allow_unupdated_dependencies"},
         "rename_sheet": {"op", "sheet", "new_name", "allow_unupdated_dependencies"},
-        "set_sheet": {"op", "sheet", "state", "freeze_panes", "auto_filter", "dimensions"},
+        "set_sheet": {
+            "op",
+            "sheet",
+            "state",
+            "freeze_panes",
+            "auto_filter",
+            "auto_width",
+            "dimensions",
+            "merges",
+            "unmerge",
+            "allow_merge_data_loss",
+            "tab_color",
+            "show_gridlines",
+            "zoom_scale",
+        },
         "add_table": {"op", "sheet", "table"},
         "update_table": {"op", "table"},
         "add_chart": {"op", "sheet", "chart"},
@@ -2730,15 +3147,15 @@ def edit_operation(
             require_string(operation.get("name"), "add_sheet.name"),
         )
         worksheet = workbook.create_sheet(name, operation.get("index"))
-        counts.update(
-            configure_worksheet(
-                workbook,
-                worksheet,
-                operation,
-                base_directory=base_directory,
-                budget=budget,
-            )
+        sheet_counts, configure_warnings = configure_worksheet(
+            workbook,
+            worksheet,
+            operation,
+            base_directory=base_directory,
+            budget=budget,
         )
+        counts.update(sheet_counts)
+        warnings.extend(configure_warnings)
         counts["sheets_added"] += 1
     elif op == "remove_sheet":
         name = require_string(operation.get("sheet"), "remove_sheet.sheet")
@@ -2791,15 +3208,14 @@ def edit_operation(
                 if not visible:
                     fail("bad_input", "At least one worksheet must remain visible.")
             worksheet.sheet_state = state
-        if "freeze_panes" in operation:
-            worksheet.freeze_panes = operation["freeze_panes"]
-        if "auto_filter" in operation:
-            worksheet.auto_filter.ref = operation["auto_filter"]
-        if "dimensions" in operation:
-            set_sheet_dimensions(
+        counts.update(
+            apply_sheet_settings(
                 worksheet,
-                require_mapping(operation["dimensions"], "set_sheet.dimensions"),
+                operation,
+                context="edit",
+                warnings=warnings,
             )
+        )
         counts["sheets_updated"] += 1
     elif op == "add_table":
         worksheet = worksheet_by_name(
@@ -3226,11 +3642,15 @@ def write_dataframe_sheet(
         for index, column in enumerate(frame.columns, start=1):
             sample_lengths = [len(str(column))]
             sample_lengths.extend(
-                len(str(value)) for value in frame[column].head(200) if not pd.isna(value)
+                len(str(value))
+                for value in frame[column].head(AUTO_WIDTH_DEFAULTS["sample_rows"])
+                if not pd.isna(value)
             )
-            worksheet.column_dimensions[get_column_letter(index)].width = min(
-                max(sample_lengths, default=8) + 2,
-                60,
+            # min_width 1 keeps the historical header-length-driven widths of result sheets.
+            worksheet.column_dimensions[get_column_letter(index)].width = auto_width_value(
+                sample_lengths,
+                min_width=1,
+                max_width=AUTO_WIDTH_DEFAULTS["max_width"],
             )
         end_row = start_row + len(frame)
         end_col = get_column_letter(frame.shape[1])
@@ -3698,6 +4118,321 @@ def publish_directory_atomic(temp: Path, output: Path) -> None:
         )
 
 
+def require_external_timeout(value: Any) -> float:
+    timeout = float(value)
+    if not math.isfinite(timeout) or not 1 <= timeout <= 1800:
+        fail("bad_input", "--timeout must be between 1 and 1800 seconds.", timeout=value)
+    return timeout
+
+
+def require_pypdfium2() -> Any:
+    try:
+        import pypdfium2
+    except ModuleNotFoundError as exc:
+        raise ToolError(
+            "missing_dependency",
+            "Page rendering requires the optional pypdfium2 package.",
+            details={"install": f'"{sys.executable}" -m pip install pypdfium2'},
+        ) from exc
+    return pypdfium2
+
+
+def _find_libreoffice() -> str:
+    executable = shutil.which("soffice") or shutil.which("libreoffice")
+    if executable is None:
+        fail(
+            "missing_dependency",
+            "LibreOffice is required for PDF conversion and rendering but was not found on PATH.",
+            executables=["soffice", "libreoffice"],
+        )
+    return executable
+
+
+def _libreoffice_environment(work: Path) -> dict[str, str]:
+    environment = {
+        key: value
+        for key, value in os.environ.items()
+        if key in {"PATH", "LANG", "LC_ALL", "LC_CTYPE", "TZ", "SYSTEMROOT", "WINDIR"}
+    }
+    environment.update(
+        {
+            "HOME": str(work),
+            "TMPDIR": str(work),
+            "TMP": str(work),
+            "TEMP": str(work),
+            "XDG_CACHE_HOME": str(work / "cache"),
+            "XDG_CONFIG_HOME": str(work / "config"),
+        }
+    )
+    return environment
+
+
+def _redact_diagnostic(text: str, paths: Sequence[Path]) -> str:
+    redacted = text[-4000:]
+    replacements: set[str] = set()
+    for path in paths:
+        try:
+            resolved = path.resolve()
+            replacements.update({str(path), str(resolved), resolved.as_uri(), path.name})
+        except (OSError, ValueError):
+            replacements.add(str(path))
+    for value in sorted(replacements, key=len, reverse=True):
+        if value:
+            redacted = redacted.replace(value, "<redacted-path>")
+    redacted = re.sub(
+        r"(?i)\b[a-z][a-z0-9+.-]*://[^\s<>'\"]+",
+        "<redacted-url>",
+        redacted,
+    )
+    redacted = re.sub(
+        r"(?i)\b(api[_-]?key|token|password|passwd|secret|authorization|session[_-]?id)"
+        r"\s*[:=]\s*[^\s&;,]+",
+        r"\1=<redacted>",
+        redacted,
+    )
+    return redacted
+
+
+@dataclass
+class LibreOfficePdf:
+    generated: Path
+    stdout: str
+    stderr: str
+    office_version: str
+    engine: str
+
+
+def _run_libreoffice_pdf(
+    source: Path,
+    work: Path,
+    timeout: float,
+    redact_paths: Sequence[Path],
+) -> LibreOfficePdf:
+    """Convert one snapshot copy inside the work directory to PDF via LibreOffice."""
+
+    executable = _find_libreoffice()
+    output_dir = work / "output"
+    profile = work / "profile"
+    output_dir.mkdir()
+    profile.mkdir()
+    environment = _libreoffice_environment(work)
+    command = [
+        executable,
+        "--headless",
+        "--nologo",
+        "--nodefault",
+        "--nolockcheck",
+        "--nofirststartwizard",
+        f"-env:UserInstallation={profile.resolve().as_uri()}",
+        "--convert-to",
+        "pdf",
+        "--outdir",
+        str(output_dir),
+        str(source),
+    ]
+    try:
+        completed = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            env=environment,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise ToolError(
+            "external_tool_failure",
+            "LibreOffice conversion timed out.",
+            details={"timeout_seconds": timeout},
+        ) from exc
+    except OSError as exc:
+        raise ToolError(
+            "external_tool_failure",
+            "LibreOffice could not be launched.",
+            details={"reason": str(exc)},
+        ) from exc
+    diagnostic_paths = [source, work, output_dir, profile, *redact_paths]
+    stdout = _redact_diagnostic(completed.stdout, diagnostic_paths)
+    stderr = _redact_diagnostic(completed.stderr, diagnostic_paths)
+    if completed.returncode != 0:
+        raise ToolError(
+            "external_tool_failure",
+            "LibreOffice conversion failed.",
+            details={"returncode": completed.returncode, "stdout": stdout, "stderr": stderr},
+        )
+    generated = output_dir / f"{source.stem}.pdf"
+    if not generated.is_file():
+        candidates = sorted(output_dir.glob("*.pdf"))
+        if len(candidates) != 1:
+            raise ToolError(
+                "external_tool_failure",
+                "LibreOffice did not produce exactly one PDF.",
+                details={"outputs": [path.name for path in candidates]},
+            )
+        generated = candidates[0]
+    try:
+        version_result = subprocess.run(
+            [executable, "--version"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            env=environment,
+        )
+        office_version = _redact_diagnostic(version_result.stdout.strip(), diagnostic_paths)
+    except (OSError, subprocess.TimeoutExpired):
+        office_version = "unknown"
+    return LibreOfficePdf(
+        generated=generated,
+        stdout=stdout,
+        stderr=stderr,
+        office_version=office_version or "unknown",
+        engine=Path(executable).name,
+    )
+
+
+def _validate_pdf_output(path: Path) -> int:
+    try:
+        with path.open("rb") as handle:
+            if handle.read(5) != b"%PDF-":
+                raise ToolError(
+                    "external_tool_failure",
+                    "LibreOffice output does not have a PDF signature.",
+                )
+        reader = pypdf.PdfReader(str(path), strict=True)
+        pages = len(reader.pages)
+    except ToolError:
+        raise
+    except Exception as exc:
+        raise ToolError(
+            "external_tool_failure",
+            "LibreOffice PDF output could not be opened.",
+            details={"reason": str(exc)},
+        ) from exc
+    if pages < 1:
+        raise ToolError("post_write_validation", "Converted PDF contains no pages.")
+    return pages
+
+
+def workbook_pdf_context(source: Path) -> dict[str, Any]:
+    """Inventory the workbook facts PDF conversion and rendering must report."""
+
+    workbook = open_workbook(source, data_only=False)
+    external_links = inventory_external_links(workbook)
+    if external_links:
+        fail(
+            "unsupported_operation",
+            "PDF conversion and rendering refuse workbooks with external links because "
+            "LibreOffice may attempt to resolve them.",
+            external_links=len(external_links),
+        )
+    context = {
+        "sheet_names": list(workbook.sheetnames),
+        "hidden_sheets": [
+            worksheet.title
+            for worksheet in workbook.worksheets
+            if worksheet.sheet_state != "visible"
+        ],
+        "formula_cells": sum(
+            cell.data_type == "f"
+            for worksheet in workbook.worksheets
+            for row in worksheet.iter_rows()
+            for cell in row
+        ),
+        "fonts": workbook_font_inventory(workbook, source),
+    }
+    workbook.close()
+    return context
+
+
+def print_semantics_warnings(context: Mapping[str, Any], artifact: str) -> list[str]:
+    warnings = font_portability_warnings(context["fonts"])
+    if context["formula_cells"]:
+        warnings.append(
+            f"{artifact} values come from LibreOffice's load-time calculation of stored "
+            "formulas; they are not proven to match another application's results."
+        )
+    if context["hidden_sheets"]:
+        warnings.append(
+            f"{len(context['hidden_sheets'])} hidden sheet(s) were excluded from the "
+            f"{artifact}: " + ", ".join(context["hidden_sheets"]) + "."
+        )
+    warnings.append(
+        f"{artifact} pagination follows LibreOffice print semantics (print areas, page "
+        "setup, printed gridlines, fit settings); it is not proven identical to Excel's."
+    )
+    return warnings
+
+
+def convert_xlsx_to_pdf(args: argparse.Namespace) -> dict[str, Any]:
+    timeout = require_external_timeout(args.timeout)
+    package = preflight_xlsx(args.source)
+    source_hash = sha256_file(args.source)
+    context = workbook_pdf_context(args.source)
+    require_output_path(
+        args.output,
+        source=args.source,
+        overwrite=args.overwrite,
+        suffix=".pdf",
+    )
+    temporary = temporary_sibling(args.output, ".pdf")
+    try:
+        with tempfile.TemporaryDirectory(prefix="xlsx-libreoffice-") as temp_dir:
+            work = Path(temp_dir)
+            snapshot = work / args.source.name
+            shutil.copyfile(args.source, snapshot)
+            office = _run_libreoffice_pdf(
+                snapshot,
+                work,
+                timeout,
+                [args.source, args.output, temporary],
+            )
+            shutil.copyfile(office.generated, temporary)
+        pages = _validate_pdf_output(temporary)
+        if sha256_file(args.source) != source_hash:
+            fail(
+                "post_write_validation",
+                "Source changed before the destination publication gate.",
+                path=args.source,
+            )
+        atomic_publish_file(temporary, args.output)
+    finally:
+        temporary.unlink(missing_ok=True)
+    warnings = print_semantics_warnings(context, "PDF")
+    if office.stderr.strip():
+        warnings.append("LibreOffice emitted diagnostics; inspect conversion.diagnostics.")
+    return success(
+        "convert",
+        {
+            "source": str(args.source.resolve()),
+            "output": str(args.output.resolve()),
+            "input_format": "xlsx",
+            "output_format": "pdf",
+            "counts": {
+                "sheets": len(context["sheet_names"]),
+                "hidden_sheets": len(context["hidden_sheets"]),
+                "pdf_pages": pages,
+            },
+            "fonts": context["fonts"],
+            "conversion": {
+                "engine": office.engine,
+                "libreoffice": office.office_version,
+                "timeout_seconds": timeout,
+                "diagnostics": {"stdout": office.stdout, "stderr": office.stderr},
+            },
+            "source_package": package,
+            "verification": {
+                "atomic_publish": True,
+                "pdf_signature": True,
+                "pdf_openable": True,
+                "pdf_pages": pages,
+                "source_unchanged_at_publish_gate": True,
+            },
+        },
+        warnings,
+    )
+
+
 def convert_xlsx_to_delimited(
     args: argparse.Namespace,
     output_format: str,
@@ -3930,7 +4665,7 @@ def handle_convert(args: argparse.Namespace) -> dict[str, Any]:
         args.input_format,
         allowed={"xlsx", "csv", "tsv"},
     )
-    output_allowed = {"xlsx"} if input_format in {"csv", "tsv"} else {"csv", "tsv"}
+    output_allowed = {"xlsx"} if input_format in {"csv", "tsv"} else {"csv", "tsv", "pdf"}
     output_format = (
         infer_format(
             args.output,
@@ -3940,6 +4675,36 @@ def handle_convert(args: argparse.Namespace) -> dict[str, Any]:
         if not args.all_sheets
         else (args.output_format if args.output_format != "auto" else "csv")
     )
+    if output_format != "pdf" and args.timeout != DEFAULT_EXTERNAL_TOOL_TIMEOUT:
+        fail("bad_input", "--timeout applies only to PDF output.")
+    if input_format == "xlsx" and output_format == "pdf":
+        if (
+            args.sheet is not None
+            or args.range is not None
+            or args.header_row is not None
+            or args.sheet_policy is not None
+            or args.all_sheets
+            or args.values != "cached"
+            or args.schema is not None
+            or args.leading_zeros is not None
+            or args.index
+            or args.no_header
+            or args.input_na_policy != "literal"
+            or args.input_na_value
+            or args.malformed_rows != "error"
+            or args.encoding != "utf-8"
+            or args.delimiter is not None
+            or args.quoting != "minimal"
+            or args.na_value != ""
+            or args.date_format is not None
+            or args.allow_formulas
+        ):
+            fail(
+                "bad_input",
+                "PDF conversion accepts only --timeout and --overwrite; delimited and "
+                "sheet-selection options do not apply.",
+            )
+        return convert_xlsx_to_pdf(args)
     if input_format == "xlsx" and output_format in {"csv", "tsv"}:
         if (
             args.no_header
@@ -3984,6 +4749,222 @@ def handle_convert(args: argparse.Namespace) -> dict[str, Any]:
         "Unsupported conversion direction.",
         input_format=input_format,
         output_format=output_format,
+    )
+
+
+def parse_render_pages(value: str | None, page_count: int) -> list[int]:
+    if value is None:
+        selected = list(range(1, page_count + 1))
+    else:
+        chosen: set[int] = set()
+        for part in value.split(","):
+            text = part.strip()
+            if not text.isdigit():
+                fail(
+                    "bad_input",
+                    "--pages must be a comma-separated list of 1-based page numbers.",
+                    pages=value,
+                )
+            page = int(text)
+            if not 1 <= page <= page_count:
+                fail(
+                    "bad_input",
+                    "Requested page does not exist in the converted PDF.",
+                    page=page,
+                    pdf_pages=page_count,
+                )
+            chosen.add(page)
+        if not chosen:
+            fail("bad_input", "--pages must select at least one page.")
+        selected = sorted(chosen)
+    if len(selected) > MAX_RENDER_PAGES:
+        fail(
+            "resource_limit",
+            "Rendering would produce too many pages; select --pages, set print areas, or "
+            "hide sheets.",
+            pages=len(selected),
+            limit=MAX_RENDER_PAGES,
+        )
+    return selected
+
+
+def handle_render(args: argparse.Namespace) -> dict[str, Any]:
+    dpi = args.dpi
+    if (
+        isinstance(dpi, bool)
+        or not isinstance(dpi, int)
+        or not MIN_RENDER_DPI <= dpi <= MAX_RENDER_DPI
+    ):
+        fail(
+            "bad_input",
+            f"--dpi must be an integer between {MIN_RENDER_DPI} and {MAX_RENDER_DPI}.",
+            dpi=dpi,
+        )
+    timeout = require_external_timeout(args.timeout)
+    pdfium = require_pypdfium2()
+    package = preflight_xlsx(args.source)
+    source_hash = sha256_file(args.source)
+    context = workbook_pdf_context(args.source)
+    output = args.output
+    if output.suffix:
+        fail(
+            "bad_input",
+            "Render output must be a directory path without a suffix.",
+            path=output,
+        )
+    if output.exists():
+        fail(
+            "unsupported_operation",
+            "Atomic render publication requires a destination directory that does not "
+            "already exist.",
+            path=output,
+        )
+    if not output.parent.exists() or not output.parent.is_dir():
+        fail("bad_input", "Destination parent directory does not exist.", path=output.parent)
+    images: list[dict[str, Any]] = []
+    staged = Path(tempfile.mkdtemp(prefix=f".{output.name}.", dir=output.parent))
+    try:
+        with tempfile.TemporaryDirectory(prefix="xlsx-libreoffice-") as temp_dir:
+            work = Path(temp_dir)
+            snapshot = work / args.source.name
+            shutil.copyfile(args.source, snapshot)
+            office = _run_libreoffice_pdf(
+                snapshot,
+                work,
+                timeout,
+                [args.source, output],
+            )
+            page_count = _validate_pdf_output(office.generated)
+            selected = parse_render_pages(args.pages, page_count)
+            try:
+                document = pdfium.PdfDocument(str(office.generated))
+            except Exception as exc:
+                raise ToolError(
+                    "external_tool_failure",
+                    "PDFium could not open the converted PDF.",
+                    details={"reason": str(exc)},
+                ) from exc
+            total_pixels = 0
+            try:
+                for page_number in selected:
+                    page = document[page_number - 1]
+                    width_pt, height_pt = page.get_size()
+                    pixels = math.ceil(width_pt / 72 * dpi) * math.ceil(height_pt / 72 * dpi)
+                    if pixels > MAX_RENDER_PIXELS_PER_PAGE:
+                        raise ToolError(
+                            "resource_limit",
+                            "Rendered pixel count for one page exceeds the limit.",
+                            details={
+                                "page": page_number,
+                                "pixels": pixels,
+                                "limit": MAX_RENDER_PIXELS_PER_PAGE,
+                            },
+                        )
+                    total_pixels += pixels
+                    if total_pixels > MAX_RENDER_TOTAL_PIXELS:
+                        raise ToolError(
+                            "resource_limit",
+                            "Total rendered pixel count exceeds the limit.",
+                            details={"pixels": total_pixels, "limit": MAX_RENDER_TOTAL_PIXELS},
+                        )
+                    file_name = f"page-{page_number:03d}.png"
+                    staged_file = staged / file_name
+                    try:
+                        page.render(scale=dpi / 72).to_pil().save(staged_file, format="PNG")
+                    except Exception as exc:
+                        raise ToolError(
+                            "external_tool_failure",
+                            "PDFium could not rasterize a PDF page.",
+                            details={"page": page_number},
+                        ) from exc
+                    with staged_file.open("rb") as rendered:
+                        if rendered.read(8) != b"\x89PNG\r\n\x1a\n":
+                            raise ToolError(
+                                "post_write_validation",
+                                "Rendered file does not have a PNG signature.",
+                                details={"file": file_name},
+                            )
+                    with Image.open(staged_file) as verified:
+                        verified.load()
+                        size = verified.size
+                    if size[0] * size[1] > MAX_RENDER_PIXELS_PER_PAGE:
+                        raise ToolError(
+                            "post_write_validation",
+                            "Rendered image exceeds the per-page pixel limit.",
+                            details={"file": file_name},
+                        )
+                    data = staged_file.read_bytes()
+                    images.append(
+                        {
+                            "page": page_number,
+                            "file": file_name,
+                            "width_px": size[0],
+                            "height_px": size[1],
+                            "bytes": len(data),
+                            "sha256": hashlib.sha256(data).hexdigest(),
+                        }
+                    )
+            finally:
+                document.close()
+        if sha256_file(args.source) != source_hash:
+            fail(
+                "post_write_validation",
+                "Source changed before the destination publication gate.",
+                path=args.source,
+            )
+        publish_directory_atomic(staged, output)
+    except Exception:
+        shutil.rmtree(staged, ignore_errors=True)
+        raise
+    reopened = 0
+    for record in images:
+        published = output / record["file"]
+        data = published.read_bytes()
+        if hashlib.sha256(data).hexdigest() != record["sha256"]:
+            fail(
+                "post_write_validation",
+                "Published rendering does not match its staged hash.",
+                file=record["file"],
+            )
+        with Image.open(published) as verified:
+            verified.load()
+        reopened += 1
+    warnings = print_semantics_warnings(context, "Rendered page")
+    if office.stderr.strip():
+        warnings.append("LibreOffice emitted diagnostics; inspect conversion.diagnostics.")
+    warnings.append(
+        "Rendering exists to be looked at: open the published PNG pages and review layout "
+        "before claiming visual correctness."
+    )
+    return success(
+        "render",
+        {
+            "source": str(args.source.resolve()),
+            "output": str(output.resolve()),
+            "counts": {
+                "sheets": len(context["sheet_names"]),
+                "hidden_sheets": len(context["hidden_sheets"]),
+                "pdf_pages": page_count,
+                "pages_rendered": len(images),
+            },
+            "images": images,
+            "fonts": context["fonts"],
+            "conversion": {
+                "engine": office.engine,
+                "libreoffice": office.office_version,
+                "timeout_seconds": timeout,
+                "dpi": dpi,
+                "diagnostics": {"stdout": office.stdout, "stderr": office.stderr},
+            },
+            "source_package": package,
+            "verification": {
+                "atomic_publish": True,
+                "pdf_page_count": page_count,
+                "png_reopened": reopened,
+                "source_unchanged_at_publish_gate": True,
+            },
+        },
+        warnings,
     )
 
 
@@ -4090,7 +5071,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     convert_parser = subparsers.add_parser(
         "convert",
-        help="convert XLSX to/from CSV or TSV",
+        help="convert XLSX to/from CSV or TSV, or export XLSX to PDF",
     )
     convert_parser.add_argument("source", type=Path)
     convert_parser.add_argument("output", type=Path)
@@ -4101,8 +5082,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     convert_parser.add_argument(
         "--output-format",
-        choices=["auto", "xlsx", "csv", "tsv"],
+        choices=["auto", "xlsx", "csv", "tsv", "pdf"],
         default="auto",
+    )
+    convert_parser.add_argument(
+        "--timeout",
+        type=float,
+        default=DEFAULT_EXTERNAL_TOOL_TIMEOUT,
+        help="LibreOffice conversion deadline in seconds; PDF output only",
     )
     convert_parser.add_argument("--sheet")
     convert_parser.add_argument("--range")
@@ -4143,6 +5130,30 @@ def build_parser() -> argparse.ArgumentParser:
     add_delimited_options(convert_parser)
     add_overwrite_argument(convert_parser)
     convert_parser.set_defaults(handler=handle_convert)
+
+    render_parser = subparsers.add_parser(
+        "render",
+        help="render workbook pages to PNG images via LibreOffice and PDFium",
+    )
+    render_parser.add_argument("source", type=Path)
+    render_parser.add_argument("output", type=Path)
+    render_parser.add_argument(
+        "--dpi",
+        type=int,
+        default=96,
+        help=f"raster resolution between {MIN_RENDER_DPI} and {MAX_RENDER_DPI}",
+    )
+    render_parser.add_argument(
+        "--pages",
+        help="comma-separated 1-based PDF page numbers; default renders every page",
+    )
+    render_parser.add_argument(
+        "--timeout",
+        type=float,
+        default=DEFAULT_EXTERNAL_TOOL_TIMEOUT,
+        help="LibreOffice conversion deadline in seconds",
+    )
+    render_parser.set_defaults(handler=handle_render)
     return parser
 
 

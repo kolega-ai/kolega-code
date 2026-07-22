@@ -1,2 +1,2 @@
-paddleocr~=3.7
-paddlepaddle~=3.3
+paddleocr
+paddlepaddle

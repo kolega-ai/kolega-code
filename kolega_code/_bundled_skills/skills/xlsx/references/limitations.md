@@ -24,6 +24,11 @@ Loading cached values for `clean`, `summarize`, or cached extraction can therefo
 missing or outdated input. Recalculate the source in a trusted calculation application first
 when current values are required.
 
+The `inspect` error scan detects literal error cells and cached formula error results. It
+cannot detect an error a formula *would* produce: a workbook that was never calculated
+reports `counts.error_cells: 0` alongside its formula warnings. A zero therefore means "no
+stored errors", not "no errors after recalculation".
+
 ## Macros, encryption, and signatures
 
 The tool refuses `.xlsm`, `.xltm`, `.xla`, `.xlam`, macro-bearing OOXML packages, and encrypted
@@ -48,6 +53,11 @@ reference embedded in unsupported parts.
 
 Formula text is not rewritten when ranges, table boundaries, or sheet names change. Guaranteed
 structural-reference updates and external-link repair are not supported.
+
+Merging cells discards every covered value except the top-left one. Edits refuse a
+destructive merge unless `allow_merge_data_loss` is explicitly true; create-time merges warn
+instead because the job just wrote those cells. Unmerging restores nothing — the discarded
+values are gone.
 
 ## Pivot tables and advanced workbook content
 
@@ -108,10 +118,27 @@ to avoid partially replacing a set of files.
 
 ## Rendering and conversion
 
-The skill does not render workbooks, compare visual layout, export PDF, or guarantee
-renderer-identical output. Native charts and dimensions are structurally verified, not
-pixel-rendered. PDF-native work belongs to a PDF workflow; renderer-identical XLSX-to-PDF
-export remains unsupported.
+PDF export and PNG page rendering are LibreOffice-backed. They show one renderer's honest
+interpretation, not Excel's: pagination, calculation results, chart drawing, and font
+substitution can differ, and hidden sheets are excluded. Values in the PDF come from
+LibreOffice's load-time calculation of stored formulas. Renderer-identical output is not
+guaranteed and is never claimed; the render exists so pages can be visually reviewed.
+
+XLSX cannot embed fonts. Every referenced font must be installed on each intended renderer,
+or substitution changes column fit, wrapping, and pagination. The font inventory covers
+fonts effectively used by non-empty cells and chart text; fonts referenced only by
+unsupported parts (for example rich-text runs inside shared strings) are not detected.
+Result sheets written by `clean` and `summarize` use the workbook default font (normally
+Calibri), so they re-trigger the conservative font gate — restyle them with `format_range`
+before a print/PDF release that requires the portable set.
+
+`auto_width` is a character-count heuristic over stored cell text — formula text, not
+calculated results, and no renderer text metrics. Verify visually with `render` when column
+fit matters. PDF-native editing still belongs to a PDF workflow.
+
+Page-setup (orientation, paper size, fit, print areas, print titles) is read-only in
+`inspect`; writing it requires a spreadsheet application. Use print areas, hidden sheets, or
+`--pages` to control what PDF export and rendering produce.
 
 ## Resource limits
 
@@ -134,5 +161,5 @@ complete sandbox. Use an isolated environment for untrusted documents.
 - Native pivot creation/editing and refresh validation.
 - Macro, ActiveX, encryption, and digital-signature workflows.
 - External-link and guaranteed structured-reference repair.
-- Renderer-backed visual review and validated PDF export.
+- Page-setup and print-area write support.
 - Broader chart, validation, conditional-format, comment, and drawing semantics.
