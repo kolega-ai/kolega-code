@@ -79,6 +79,39 @@ class TestBaseAgent:
         assert context.project_guidance_file == ""
         assert context.project_guidance == ""
 
+    def test_build_prompt_context_reports_vision_support_for_resolved_model(self, base_agent):
+        context = base_agent.build_prompt_context()
+
+        assert context.model_name == "claude-haiku-4-5-20251001"
+        assert context.model_supports_vision is True
+
+    def test_build_prompt_context_reports_non_vision_resolved_model(
+        self, tmp_path, mock_connection_manager, agent_config
+    ):
+        deepseek_model = ModelConfig(
+            provider=ModelProvider.DEEPSEEK,
+            model="deepseek-v4-flash",
+            rate_limits=RateLimitConfig(),
+        )
+        config = agent_config.model_copy(
+            update={
+                "deepseek_api_key": "test-key",
+                "long_context_config": deepseek_model,
+            }
+        )
+        agent = BaseAgent(
+            project_path=tmp_path,
+            workspace_id="test_workspace",
+            thread_id=str(uuid.uuid4()),
+            connection_manager=mock_connection_manager,
+            config=config,
+        )
+
+        context = agent.build_prompt_context()
+
+        assert context.model_name == "deepseek-v4-flash"
+        assert context.model_supports_vision is False
+
     def test_build_prompt_context_ignores_removed_agent_memory_file(self, base_agent, tmp_path):
         legacy_content = "Legacy repository memory must not reach the model."
         (tmp_path / "AGENT_MEMORY.md").write_text(legacy_content, encoding="utf-8")

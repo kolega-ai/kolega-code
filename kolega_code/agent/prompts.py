@@ -103,6 +103,7 @@ def build_planning_agent_system_prompt(
     platform: str,
     date_today: str,
     model_name: str,
+    model_supports_vision: bool = False,
 ) -> str:
     return render_prompt_template(
         "system/agents/planning.md.j2",
@@ -112,4 +113,5 @@ def build_planning_agent_system_prompt(
         platform=platform,
         date_today=date_today,
         model_name=model_name,
+        model_supports_vision=model_supports_vision,
     )

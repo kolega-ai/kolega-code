@@ -133,6 +133,8 @@ def test_coder_override_renders_jinja_context_and_aliases(tmp_path):
                 "Project via alias: {{ project_path }}",
                 "Today: {{ context.date_today }}",
                 "Model: {{ context.model_name }}",
+                "Vision via context: {{ context.model_supports_vision | lower }}",
+                "Vision via alias: {{ model_supports_vision | lower }}",
                 "Mode: {{ mode }}",
             ]
         ),
@@ -153,6 +155,8 @@ def test_coder_override_renders_jinja_context_and_aliases(tmp_path):
     assert f"Project via alias: {tmp_path}" in prompt
     assert f"Today: {datetime.now().strftime('%Y-%m-%d')}" in prompt
     assert "Model: claude-haiku-4-5-20251001" in prompt
+    assert "Vision via context: true" in prompt
+    assert "Vision via alias: true" in prompt
     assert "Mode: cli" in prompt
 
 

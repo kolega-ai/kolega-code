@@ -34,6 +34,7 @@ class TestPromptProvider:
             platform="Darwin",
             date_today="2024-01-15",
             model_name="claude-opus-4-8",
+            model_supports_vision=True,
             available_ports="9001-9999",
             project_guidance="Test project documentation",
             project_guidance_file="AGENTS.md",
@@ -53,6 +54,42 @@ class TestPromptProvider:
         assert "Test project documentation" in prompt
         assert "AGENTS.md" in prompt
         assert len(prompt) > 0
+
+    @pytest.mark.parametrize(
+        ("agent_type", "mode"),
+        [
+            (AgentType.CODER, AgentMode.CLI),
+            (AgentType.PLANNING, None),
+            (AgentType.GENERAL, None),
+            (AgentType.INVESTIGATION, None),
+            (AgentType.BROWSER, None),
+        ],
+    )
+    @pytest.mark.parametrize(
+        ("supports_vision", "expected"),
+        [
+            (True, "- Model supports vision: true"),
+            (False, "- Model supports vision: false"),
+        ],
+    )
+    def test_agent_prompts_render_lowercase_vision_support(
+        self,
+        prompt_provider,
+        prompt_context,
+        agent_type,
+        mode,
+        supports_vision,
+        expected,
+    ):
+        prompt_context.model_supports_vision = supports_vision
+
+        prompt = prompt_provider.get_system_prompt(
+            agent_type=agent_type,
+            mode=mode,
+            context=prompt_context,
+        )
+
+        assert expected in prompt
 
     @pytest.mark.parametrize("mode", [AgentMode.CODE, AgentMode.VIBE, AgentMode.FIX])
     def test_hosted_coder_modes_require_host_template(self, prompt_provider, prompt_context, mode):

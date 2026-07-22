@@ -13,6 +13,13 @@ metadata:
 Create focused skills that add procedural knowledge rather than restating general model
 capabilities.
 
+## Workspace discipline
+
+Work directly in visible workspace paths. Never create or use `.build` or another hidden
+build/work directory. Write requested deliverables directly to their declared destinations;
+if intermediate files are necessary, keep them in visible, narrowly scoped paths rather than
+staging the task in a hidden subtree.
+
 ## Workflow
 
 1. **Clarify activation.** Collect at least three realistic requests that should trigger the

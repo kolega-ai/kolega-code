@@ -32,10 +32,15 @@ or execute them.
 - Layout names must match exactly and uniquely. Indexes are stable only for the specific template.
 - Text replacement does not infer intent. Cross-run formatting needs an explicit policy. Destructive
   reconstruction flattens formatting, fields, and hyperlinks in the affected text frame.
+- Hyperlink editing sets or removes one external `http`, `https`, or `mailto` address on whole
+  runs or on a shape click action. It never splits runs, and internal slide jumps, hover
+  actions, tooltips, and `ppaction` behaviors are not authored.
 - Image replacement requires the same media content type. It does not change crop, geometry, or
   aspect settings.
-- Table updates do not add/delete rows or columns. Merged-cell semantics and advanced table styles
-  are not authored.
+- Structural table edits insert or remove whole rows and columns only. Tables containing merged
+  cells are rejected for structural edits, and merged-cell authoring and advanced table styles
+  remain unsupported. New rows and columns clone neighbor formatting with cleared text, and the
+  table's overall width or height grows or shrinks rather than redistributing existing sizes.
 - Chart updates replace the complete cached/native data payload supported by `python-pptx`. Complex
   combination charts, secondary axes, trendlines, error bars, data labels, external workbook links,
   and chart extensions are not preserved by a data replacement guarantee.
@@ -43,10 +48,14 @@ or execute them.
   layout already present in the destination.
 - Shape z-order editing, grouping/ungrouping, connector repair, and arbitrary relationship editing
   are outside the interface.
+- Extraction exports picture shapes only. Shape-fill images, slide backgrounds, and audio/video
+  media are not exported, and extracted bytes are copied verbatim without decode validation.
 
-Slide removal/reordering uses a small adapter constrained to the supported `python-pptx` range because
-the library has no public mutation API for those operations. Every slide-graph mutation is
-checkpointed and reopened, but structural verification cannot prove rendering equivalence.
+Slide removal/reordering and table row/column mutation use a small adapter constrained to the
+supported `python-pptx` range because the library has no public mutation API for those
+operations. Every slide-graph mutation is checkpointed and reopened, and every table structure
+change is verified against an expected text matrix, but structural verification cannot prove
+rendering equivalence.
 
 ## Conversion boundaries
 
@@ -62,6 +71,20 @@ rejected rather than passed to LibreOffice. Results otherwise vary with:
 The tool proves PDF signature, openability, and page count only. Text extraction anchors used by the
 opt-in smoke test are not a general visual-fidelity test. Keep the source presentation and visually
 review important exports.
+
+`render` shares every LibreOffice variance above because its PNGs are rasterized from the same
+LibreOffice PDF. PNG verification proves signature, openability, page count, and dimensions —
+not renderer-identical pixels. Rendered slides support layout review, not a PowerPoint-fidelity
+claim.
+
+The font inventory over-approximates: fonts referenced only by unused layouts, masters, notes or
+handout masters, or table styles still count as referenced because they ship with the deck and
+re-engage as soon as a layout is used. Script-specific theme fonts (`a:font script="..."`), VML
+text, chart-style (`cs:`) parts, embedded chart workbooks, and renderer fallback chains are not
+scanned. Symbol and bullet fonts (`a:sym`, `a:buFont`) are inventoried under
+`fonts.symbol_and_bullet` but excluded from the release blocker because substitution changes a
+glyph, not text layout. Embedding detection proves a resolvable in-package font part exists, not
+that its payload is a valid, complete, or licensed font; obfuscated embedded fonts are not parsed.
 
 ## Future work
 

@@ -10,6 +10,7 @@ Here is some useful information about the environment you are running in:
 - Platform: {{ context.platform }}
 - Today's date: {{ context.date_today }}
 - Model: {{ context.model_name }}
+- Model supports vision: {{ context.model_supports_vision | lower }}
 
 {% if context.memories and context.memories|length > 0 %}
 ## Workspace Memories

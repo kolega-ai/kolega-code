@@ -3,12 +3,15 @@
 ## Contents
 
 - [Create, inspect, edit, and verify](#create-inspect-edit-and-verify)
+- [Render and visual review](#render-and-visual-review)
 - [Page merge and split](#page-merge-and-split)
+- [Redaction](#redaction)
 - [Conversions](#conversions)
 - [OCR plan](#ocr-plan)
 - [Surya preflight and OCR](#surya-preflight-and-ocr)
 - [PaddleOCR preflight and OCR](#paddleocr-preflight-and-ocr)
 - [Tesseract preflight and OCR](#tesseract-preflight-and-ocr)
+- [Searchable OCR composition](#searchable-ocr-composition)
 - [Expected normalized output](#expected-normalized-output)
 - [Failure examples](#failure-examples)
 
@@ -139,6 +142,48 @@ Expected assertions:
 - `APPROVED` is visible and extractable;
 - table cells are checked against a rendered page because extraction is heuristic.
 
+## Render and visual review
+
+Rasterize the published output and look at it:
+
+```bash
+"$PDF_PYTHON" "$SKILL_ROOT/scripts/pdf_tool.py" render \
+  --input invoice.pdf \
+  --output invoice-render \
+  --dpi 150
+```
+
+Expected summary shape:
+
+```json
+{
+  "operation": "render",
+  "dpi": 150,
+  "renders": [
+    {"page": 1, "file": "page-0001.png", "width_px": 1275, "height_px": 1650,
+     "sha256": "…"}
+  ],
+  "counts": {"pages_rendered": 1, "total_pixels": 2103750},
+  "verification": {"valid": true, "atomic_publish": true, "pngs_reopened": 1,
+                   "renderer": "pdfplumber/pypdfium2"}
+}
+```
+
+Then open `invoice-render/page-0001.png` (and every other changed page) with the Read tool
+and examine it. The summary above is structural evidence that PNG files were produced — it
+says nothing about how the pages look.
+
+Review the font inventory from the same `inspect` you already ran:
+
+```bash
+"$PDF_PYTHON" "$SKILL_ROOT/scripts/pdf_tool.py" inspect --input invoice.pdf \
+  --output invoice-inspect.json
+```
+
+In the sidecar, `fonts.unembedded_non_base14` must be empty and no warning may begin with
+`RELEASE BLOCKER:` before release. A base-14-only document instead carries an informational
+substitution warning, which is acceptable when disclosed.
+
 ## Page merge and split
 
 Create `pages.json`:
@@ -174,6 +219,56 @@ Create `pages.json`:
 Assert `packet.pdf` has four pages in the listed order, page two is rotated 90 degrees, and
 `appendix-page-3.pdf` has one page. Each output is atomic, but the two-output publication is
 not a transaction.
+
+## Redaction
+
+Create `redact.json` (full schema and policy in
+[Operations](references/operations.md#redact) and [Redaction](references/redaction.md)):
+
+```json
+{
+  "schema_version": 1,
+  "targets": [
+    {"type": "text", "text": "ACME-SECRET-9931", "pages": "all",
+     "match": "exact", "grow_points": 2.0},
+    {"type": "rect", "page": 2, "rect": [72, 640, 468, 60],
+     "coordinate_origin": "top-left"}
+  ]
+}
+```
+
+```bash
+"$PDF_PYTHON" "$SKILL_ROOT/scripts/pdf_tool.py" redact \
+  --input contract.pdf \
+  --job redact.json \
+  --output contract-redacted.pdf \
+  --report contract-redacted.report.json \
+  --render-check-dir contract-redacted-qa
+```
+
+Expected report excerpt — note the target text appears only as a digest:
+
+```json
+{
+  "targets": [
+    {"index": 0, "type": "text", "text_sha256": "…",
+     "resolved_rects": [{"page": 1, "rect": [175.0, 140.9, 255.3, 158.9]}]}
+  ],
+  "removal_evidence": {
+    "pages": [{"page": 1, "text_operators_removed": 1, "characters_removed": 26,
+               "image_xobjects_removed": 0, "annotations_removed": 0}],
+    "incremental_history_dropped": true
+  },
+  "residual_scan": {"raw_byte_hits": 0, "decompressed_stream_hits": 0},
+  "verification": {"visual_diff": {"checked": true,
+                   "max_fraction_changed_outside_expected": 0.0}}
+}
+```
+
+Open the published `contract-redacted-qa/after-*.png` rasters and confirm the black boxes
+sit exactly where intended. `characters_removed` larger than the term length is the
+documented whole-operator collateral — text sharing a show operator with the target is
+removed with it.
 
 ## Conversions
 
@@ -455,8 +550,31 @@ test -n "$ENGINE_EXECUTABLE"
 "$ENGINE_EXECUTABLE" --version
 ```
 
-Record the exact `.traineddata` path, source/package version, immutable upstream revision
-where applicable, license, byte size, and checksum:
+The fastest correct path is manifest derivation — the tool measures paths, sizes, and
+hashes; you declare the origin and approvals explicitly after reviewing them:
+
+```bash
+"$PDF_PYTHON" "$SKILL_ROOT/scripts/pdf_tool.py" manifest \
+  --mode derive \
+  --engine tesseract \
+  --languages eng \
+  --assume-source tessdata_fast \
+  --accept-license \
+  --confirm-eligibility \
+  --output tesseract-model.json
+
+"$PDF_PYTHON" "$SKILL_ROOT/scripts/pdf_tool.py" manifest \
+  --mode check \
+  --engine tesseract \
+  --languages eng \
+  --model-manifest tesseract-model.json
+```
+
+`--assume-source` records that you assert the local files came from the pinned official
+repository revision in [OCR](references/ocr.md); omit it to get `REVIEW-REQUIRED`
+placeholders that preflight rejects until you fill them. The check mode reports every
+problem at once with expected and actual hashes. The equivalent hand-written manifest —
+still the authoritative schema reference — is:
 
 ```json
 {
@@ -509,10 +627,47 @@ empty.
 ```
 
 Expect line blocks derived from TSV, pixel coordinates, and confidence only where Tesseract
-supplied nonnegative word values. The normalized engine metadata reports `cpu` and
-`tesseract-cpu` even if another device label was requested. The one `--timeout` budget is
-shared by every selected page. Do not expect headings, reading order, table HTML, math, or
-layout semantics.
+supplied nonnegative word values. The Tesseract adapter also records word-level geometry
+under `blocks[].words`, which `ocr-compose` uses for word-accurate placement. The
+normalized engine metadata reports `cpu` and `tesseract-cpu` even if another device label
+was requested. The one `--timeout` budget is shared by every selected page. Do not expect
+headings, reading order, table HTML, math, or layout semantics.
+
+## Searchable OCR composition
+
+After any successful `ocr` run, compose the sidecar into a searchable PDF — no engine, no
+manifest, fully re-runnable:
+
+```bash
+"$PDF_PYTHON" "$SKILL_ROOT/scripts/pdf_tool.py" ocr-compose \
+  --input scanned.pdf \
+  --sidecar scanned.tesseract.json \
+  --output scanned-searchable.pdf
+```
+
+Expected verification shape:
+
+```json
+{
+  "operation": "ocr-compose",
+  "counts": {"pages_composed": 4, "pages_skipped": 0, "words_drawn": 812,
+             "characters_dropped": 0},
+  "font": {"name": "Helvetica", "embedded": false},
+  "verification": {
+    "page_count_unchanged": true,
+    "anchors": {"checked": 20, "found": 20},
+    "geometry_spot_check_max_delta_points": 0.4,
+    "visual_diff": {"checked": true, "max_fraction_changed": 0.0002,
+                    "threshold": 0.002}
+  }
+}
+```
+
+The run fails rather than publishing when composed text does not extract, when its
+geometry deviates, or when the supposedly invisible layer visibly changes a page. The
+sidecar's recorded source hash must match `--input`; re-run OCR if the scan changed.
+Non-Latin sidecars need `--font /path/to/covering.ttf`. Confirm selectability the same way
+a user would: `extract` the output and check the recognized anchors appear.
 
 ## Expected normalized output
 
@@ -567,9 +722,29 @@ The first command is rejected because PDF-producing edits require `.pdf`; the se
 rejected because geometry and margins must be finite. Normalized OCR output similarly
 requires `.json`, and `ocr-plan --languages ' , '` is rejected before planning.
 
+Render refuses unsafe destinations and oversized rasters:
+
+```bash
+"$PDF_PYTHON" "$SKILL_ROOT/scripts/pdf_tool.py" render \
+  --input invoice.pdf --output occupied-directory --overwrite   # bad_input (2)
+"$PDF_PYTHON" "$SKILL_ROOT/scripts/pdf_tool.py" render \
+  --input invoice.pdf --output out --dpi 1200                   # bad_input (2)
+"$PDF_PYTHON" "$SKILL_ROOT/scripts/pdf_tool.py" render \
+  --input poster-5000pt.pdf --output out --dpi 600              # resource_limit (6)
+```
+
+A redaction text target that matches nothing exits `2` (`bad_input`) without writing
+anything — silent no-op redaction does not exist. A redaction target intersecting a Form
+XObject exits `3` (`unsupported_operation`) naming the page and XObject; flatten or
+rasterize first. Redacting an encrypted input exits `3`; decrypt explicitly with `edit`
+first. `ocr-compose` with a sidecar whose recorded source hash mismatches `--input` exits
+`2`. `manifest --mode check` against a tampered artifact exits `7` with every failed check,
+including expected and actual hashes, in `details`.
+
 Encrypted input without an approved password exits `3` with `unsupported_operation`.
 An OCR request without a model manifest is rejected by argument parsing. A manifest without
-operator approval exits `7` with `license_precondition`. An untested engine major exits `3`;
+operator approval — or with `REVIEW-REQUIRED`/`replace-with` placeholder provenance —
+exits `7` with `license_precondition`. An untested engine major exits `3`;
 the tool never downgrades, installs, downloads, or switches engines within an invocation.
 If Surya and PaddleOCR are unavailable, tell the user before starting a separate explicit
 Tesseract fallback invocation.

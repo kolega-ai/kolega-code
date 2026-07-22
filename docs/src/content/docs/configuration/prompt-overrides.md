@@ -96,6 +96,7 @@ Dumped files are editable Markdown templates. Environment values are written as 
 - Platform: {{ context.platform }}
 - Today's date: {{ context.date_today }}
 - Model: {{ context.model_name }}
+- Model supports vision: {{ context.model_supports_vision | lower }}
 ```
 
 ## Template variables
@@ -108,6 +109,7 @@ Override files are rendered with a limited Jinja variable context. These variabl
 - `context.platform`
 - `context.date_today`
 - `context.model_name`
+- `context.model_supports_vision`
 - `context.available_ports`
 - `context.workspace_id`
 - `context.workspace_environment_variables`
@@ -122,8 +124,12 @@ Common fields are also available as top-level aliases:
 - `platform`
 - `date_today`
 - `model_name`
+- `model_supports_vision`
 - `available_ports`
 - `workspace_id`
+
+`model_supports_vision` is `true` when the selected model accepts image input.
+It does not indicate that the model can generate images.
 
 Project override templates can use variables, conditionals, and loops over the exposed values. Project-local `{% include %}` and `{% import %}` are not supported.
 

@@ -4,8 +4,11 @@
 
 - [Install and smoke test](#install-and-smoke-test)
 - [End-to-end create, inspect, edit, and extract](#end-to-end-create-inspect-edit-and-extract)
+- [Merge, unmerge, and sheet settings](#merge-unmerge-and-sheet-settings)
+- [Formula-error scan](#formula-error-scan)
 - [Static summary](#static-summary)
 - [UTF-8 CSV/TSV interchange](#utf-8-csvtsv-interchange)
+- [PDF export and render-and-look](#pdf-export-and-render-and-look)
 - [Expected artifact assertions](#expected-artifact-assertions)
 - [Failure examples](#failure-examples)
 
@@ -20,10 +23,12 @@ SKILL_ROOT="/absolute/path/to/skills/xlsx"
 "$XLSX_PYTHON" "$SKILL_ROOT/scripts/smoke_test.py"
 ```
 
-Expected final stdout:
+Expected final stdout (the `libreoffice` object varies by machine: `"status": "passed"` with
+an executable path and page counts where LibreOffice/pypdfium2 are installed, otherwise
+`"status": "skipped"` with a reason; pass `--require-libreoffice` to fail instead of skip):
 
 ```json
-{"fixtures":"temporary","ok":true,"operations":["create","inspect","extract","edit","clean","summarize","convert_csv_xlsx_tsv_xlsx","raw_all_sheet_static_summary_export","header_aware_export","conversion_option_direction_validation","json_formula_preservation","case_insensitive_formula_dependencies","bad_input_categories","xml_encoding_security","subprocess_timeout","cumulative_json_cell_budget","external_link_preservation_warning","macro_refusal"],"schema_version":1,"test":"xlsx_smoke"}
+{"fixtures":"temporary","libreoffice":{"...":"machine-dependent"},"ok":true,"operations":["create","inspect","extract","edit","clean","summarize","convert_csv_xlsx_tsv_xlsx","raw_all_sheet_static_summary_export","header_aware_export","conversion_option_direction_validation","json_formula_preservation","case_insensitive_formula_dependencies","bad_input_categories","xml_encoding_security","subprocess_timeout","cumulative_json_cell_budget","external_link_preservation_warning","macro_refusal","set_sheet_visual_settings_merge_unmerge","auto_width","formula_error_scan","font_portability_inventory","pdf_and_render_option_validation","xlsx_to_pdf_and_page_render"],"schema_version":1,"test":"xlsx_smoke"}
 ```
 
 The test uses `TemporaryDirectory`; no workbook or delimited fixture is left in the skill.
@@ -164,6 +169,76 @@ JSON extraction is data-preserving rather than spreadsheet-executable: formula e
 and text such as `=2+2` remain exactly `=2+2` in the JSON row matrix. Apostrophe formula
 injection guarding applies only to CSV/TSV output.
 
+## Merge, unmerge, and sheet settings
+
+`set_sheet` refuses a merge that would discard values unless the loss is acknowledged:
+
+```bash
+cat >"$work/merge.json" <<'JSON'
+{
+  "schema_version": 1,
+  "operations": [
+    {"op": "set_sheet", "sheet": "Sales", "merges": ["A1:B1"]}
+  ]
+}
+JSON
+"$XLSX_PYTHON" "$SKILL_ROOT/scripts/xlsx_tool.py" edit \
+  "$work/report.xlsx" "$work/merge.json" "$work/merged.xlsx"
+echo "$?"
+```
+
+Status 5 with the occupied coordinates:
+
+```json
+{"error":{"category":"ambiguous_edit","details":{"occupied_cells":["B1"],"occupied_count":1,"range":"A1:B1","resolution":"Set allow_merge_data_loss to true to accept the loss.","sheet":"Sales"},"message":"Merging this range would discard non-top-left cell values."},"ok":false,"schema_version":1}
+```
+
+Acknowledge the loss and adjust the sheet's presentation in the same operation:
+
+```bash
+cat >"$work/merge-ok.json" <<'JSON'
+{
+  "schema_version": 1,
+  "operations": [
+    {
+      "op": "set_sheet",
+      "sheet": "Sales",
+      "merges": ["A1:B1"],
+      "allow_merge_data_loss": true,
+      "unmerge": [],
+      "tab_color": "FF1F4E78",
+      "show_gridlines": false,
+      "zoom_scale": 120,
+      "auto_width": {"columns": ["B", "C"], "max_width": 40}
+    }
+  ]
+}
+JSON
+"$XLSX_PYTHON" "$SKILL_ROOT/scripts/xlsx_tool.py" edit \
+  "$work/report.xlsx" "$work/merge-ok.json" "$work/merged.xlsx"
+```
+
+The result counts `ranges_merged` and `columns_auto_sized`, warns about the discarded
+value, and a follow-up `inspect` reports the merge, tab color, gridline setting, and zoom.
+To undo a merge later, pass `"unmerge": ["A1:B1"]`; each entry must exactly match a currently
+merged range, and the discarded values do not come back.
+
+## Formula-error scan
+
+`inspect` counts stored error values per sheet and in `counts.error_cells`:
+
+```bash
+"$XLSX_PYTHON" "$SKILL_ROOT/scripts/xlsx_tool.py" inspect "$work/edited.xlsx" --no-cells \
+  | "$XLSX_PYTHON" -c 'import json,sys; r=json.load(sys.stdin)["result"]; \
+print(r["counts"]["error_cells"], [s["errors"]["by_error"] for s in r["sheets"]])'
+```
+
+A sheet with a cached `#DIV/0!` reports
+`"errors": {"count": 1, "by_error": {"#DIV/0!": 1}, "samples": [{"coordinate": "D4", "error": "#DIV/0!", "kind": "cached_formula"}]}`
+and a warning. Zero means no *stored* errors: a workbook that was never calculated has no
+cached error values to find, so pair the scan with the recalculation caveats in
+[limitations](references/limitations.md#formula-calculation).
+
 ## Static summary
 
 ```bash
@@ -277,6 +352,51 @@ for example `001-Sales.csv` and `004-Static_Summary.csv`; the JSON result retain
 sheet-to-file mapping. Add `--sheet-policy header` only for conventional unique, non-empty
 headers when `--schema`, `--header-row`, or `--index` is needed. The directory is published
 after all numbered sheet files are written and reopened.
+
+## PDF export and render-and-look
+
+Export the workbook to PDF and render its pages for visual review:
+
+```bash
+"$XLSX_PYTHON" "$SKILL_ROOT/scripts/xlsx_tool.py" convert \
+  "$work/summarized.xlsx" "$work/report.pdf" --timeout 120
+
+"$XLSX_PYTHON" "$SKILL_ROOT/scripts/xlsx_tool.py" render \
+  "$work/summarized.xlsx" "$work/review-pages" --dpi 96 --timeout 120
+```
+
+Representative PDF-convert result fields:
+
+```json
+{
+  "ok": true,
+  "operation": "convert",
+  "result": {
+    "output_format": "pdf",
+    "counts": {"sheets": 4, "hidden_sheets": 0, "pdf_pages": 4},
+    "conversion": {"engine": "soffice", "timeout_seconds": 120.0},
+    "verification": {
+      "atomic_publish": true,
+      "pdf_signature": true,
+      "pdf_openable": true,
+      "source_unchanged_at_publish_gate": true
+    }
+  }
+}
+```
+
+Assert the release gate before delivering a PDF:
+
+- `verification.pdf_openable` is true and `counts.pdf_pages` is at least 1;
+- no warning starts with `RELEASE BLOCKER` — otherwise replace the offending fonts and
+  re-export (see [quality](references/quality.md) for the profile that requires this);
+- the formula-calculation and print-semantics warnings are acceptable for the deliverable.
+
+Then **look at the rendered pages**. `render` writes `page-001.png`, `page-002.png`, … —
+open each changed page with the Read tool and check column overflow (`#####`), clipped or
+wrapped text, merge layout, chart appearance, and conditional formatting. A successful JSON
+result proves publication, not appearance. Select pages with `--pages 1,3` when the workbook
+paginates widely, and control content with print areas or hidden sheets.
 
 ## Expected artifact assertions
 
