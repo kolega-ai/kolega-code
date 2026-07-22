@@ -1,9 +1,12 @@
 import asyncio
+import os
+import sys
+from unittest.mock import patch
 
 import pytest
 
 from kolega_code.events import AgentConnectionManager
-from kolega_code.services.terminal import LocalTerminalManager, PtySession
+from kolega_code.services.terminal import LocalTerminalManager, PtySession, _strip_runtime_venv
 
 
 class _RecordingConnectionManager(AgentConnectionManager):
@@ -151,6 +154,53 @@ async def test_no_cwd_persistence_between_calls(manager, tmp_path):
     await manager.exec_command(f"cd {sub}", workdir=str(tmp_path), yield_time_ms=3000)
     result = await manager.exec_command("pwd", workdir=str(tmp_path), yield_time_ms=3000)
     assert result.output.strip().endswith(tmp_path.name)
+
+
+def test_strip_runtime_venv_removes_own_venv():
+    env = {
+        "VIRTUAL_ENV": "/opt/app/.venv",
+        "VIRTUAL_ENV_PROMPT": "app",
+        "UV": "/usr/local/bin/uv",
+        "UV_RUN_RECURSION_DEPTH": "1",
+        "PATH": "/opt/app/.venv/bin:/usr/local/bin:/usr/bin",
+        "HOME": "/Users/u",
+    }
+    out = _strip_runtime_venv(env, runtime_prefix="/opt/app/.venv")
+    for var in ("VIRTUAL_ENV", "VIRTUAL_ENV_PROMPT", "UV", "UV_RUN_RECURSION_DEPTH"):
+        assert var not in out
+    assert out["PATH"] == "/usr/local/bin:/usr/bin"
+    assert out["HOME"] == "/Users/u"
+
+
+def test_strip_runtime_venv_keeps_user_activated_venv():
+    env = {
+        "VIRTUAL_ENV": "/Users/u/venvs/proj",
+        "PATH": "/Users/u/venvs/proj/bin:/usr/bin",
+        "UV": "/usr/local/bin/uv",
+    }
+    out = _strip_runtime_venv(dict(env), runtime_prefix="/opt/app/.venv")
+    assert out == env
+
+
+def test_strip_runtime_venv_without_active_venv_is_untouched():
+    env = {"PATH": "/usr/local/bin:/usr/bin", "HOME": "/Users/u"}
+    assert _strip_runtime_venv(dict(env), runtime_prefix="/opt/app/.venv") == env
+
+
+@pytest.mark.asyncio
+async def test_child_shell_does_not_inherit_runtime_venv(manager, tmp_path):
+    # Simulate launching from the checkout via `uv run`: the app's own venv is
+    # exported and prepended to PATH. The child shell must see neither.
+    polluted = {"VIRTUAL_ENV": sys.prefix, "PATH": f"{sys.prefix}/bin{os.pathsep}" + os.environ.get("PATH", "")}
+    with patch.dict(os.environ, polluted):
+        # workdir without a .venv so auto-activation doesn't re-set VIRTUAL_ENV
+        result = await manager.exec_command(
+            'echo "V=${VIRTUAL_ENV:-unset}"; echo "P=$PATH"', workdir=str(tmp_path), yield_time_ms=5000
+        )
+    assert result.status == "exited"
+    assert "V=unset" in result.output
+    path_line = next(line for line in result.output.splitlines() if line.startswith("P="))
+    assert f"{sys.prefix}/bin" not in path_line
 
 
 @pytest.mark.asyncio

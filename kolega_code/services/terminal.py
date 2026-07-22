@@ -17,6 +17,7 @@ import pty
 import shlex
 import signal
 import struct
+import sys
 import termios
 import time
 from typing import Any, Dict, Optional, Union
@@ -49,6 +50,45 @@ CLEAN_ENV = {
 }
 
 _VENV_ACTIVATE_REL = os.path.join(".venv", "bin", "activate")
+
+# Env vars `uv run` injects when launching this app from a source checkout.
+_RUNTIME_VENV_VARS = ("VIRTUAL_ENV", "VIRTUAL_ENV_PROMPT", "UV", "UV_RUN_RECURSION_DEPTH")
+
+
+def _strip_runtime_venv(env: Dict[str, str], runtime_prefix: Optional[str] = None) -> Dict[str, str]:
+    """Remove this process's own venv from ``env`` (mutating and returning it).
+
+    Launching from a source checkout via ``uv run`` exports the app's dev venv
+    (VIRTUAL_ENV + a PATH prepend), which child shells would otherwise inherit —
+    making ``python``/``pip`` resolve into the app's venv instead of behaving
+    like a fresh user terminal. Only the app's own venv is stripped: a venv the
+    user activated deliberately is a different prefix and passes through.
+    """
+    venv = env.get("VIRTUAL_ENV")
+    prefix = runtime_prefix or sys.prefix
+    if not venv or os.path.realpath(venv) != os.path.realpath(prefix):
+        return env
+    for var in _RUNTIME_VENV_VARS:
+        env.pop(var, None)
+    venv_bin = os.path.realpath(os.path.join(venv, "bin"))
+    path = env.get("PATH")
+    if path:
+        env["PATH"] = os.pathsep.join(entry for entry in path.split(os.pathsep) if os.path.realpath(entry) != venv_bin)
+    return env
+
+
+def build_child_env(extra: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+    """Assemble the environment for a model-facing child shell.
+
+    The user's own environment minus the app's runtime venv, plus per-session
+    overrides, plus the CLEAN_ENV overlay. Overrides are applied after the
+    scrub so a caller can still set VIRTUAL_ENV deliberately.
+    """
+    env = _strip_runtime_venv(os.environ.copy())
+    if extra:
+        env.update(extra)
+    env.update(CLEAN_ENV)
+    return env
 
 
 def _pick_shell() -> str:
@@ -113,10 +153,7 @@ class PtySession:
     # -- lifecycle ---------------------------------------------------------
 
     async def start(self) -> None:
-        env = os.environ.copy()
-        if self.env:
-            env.update(self.env)
-        env.update(CLEAN_ENV)
+        env = build_child_env(self.env)
 
         command = self.command
         if self.auto_activate_venv:
