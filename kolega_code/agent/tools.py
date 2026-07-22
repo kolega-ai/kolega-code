@@ -47,14 +47,19 @@ _ORDINARY_MODEL_OVERRIDE_SCHEMA: dict[str, Any] = {
     "properties": {
         "provider": {
             "type": "string",
-            "description": "Configured provider name returned by list_subagent_models.",
+            "minLength": 1,
+            "description": (
+                "Non-empty configured provider name returned by list_subagent_models. "
+                "Never infer it from the model name."
+            ),
         },
         "model": {
             "type": "string",
-            "description": "Exact model ID returned for that provider by list_subagent_models.",
+            "minLength": 1,
+            "description": "Non-empty exact model ID returned for that provider by list_subagent_models.",
         },
         "thinking_effort": {
-            "anyOf": [{"type": "string"}, {"type": "null"}],
+            "anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}],
             "description": (
                 "Exact supported effort string, or null only when the selected model has no effort control."
             ),
@@ -73,8 +78,10 @@ def _dispatch_input_schema(*, custom: bool = False) -> dict[str, Any]:
         "model_override": {
             **_ORDINARY_MODEL_OVERRIDE_SCHEMA,
             "description": (
-                "Optional atomic route. Omit it to inherit normal role/custom-agent settings; "
-                "when present all three nested fields are required."
+                'Usually omit this property entirely: a normal call is {"task": "..."}. '
+                "Only include it after calling list_subagent_models and selecting one exact route. "
+                "Never send an empty object, blank strings, placeholder values, or a guessed provider/model. "
+                "When present, all three nested fields are required."
             ),
         },
     }

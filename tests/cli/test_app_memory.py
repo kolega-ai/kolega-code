@@ -309,8 +309,10 @@ async def test_memory_screen_create_and_path_delete_refresh_prompt(
 
         for _ in range(40):
             await pilot.pause(0.025)
-            if not app.memory_manager.read_entry("topics/testing.md").present:
+            if refresh_prompt.await_count == 2:
                 break
+        else:
+            raise AssertionError("Timed out waiting for the memory prompt to refresh after deletion")
 
         assert deleted_references == [("topics/testing.md", True)]
         assert not app.memory_manager.read_entry("topics/testing.md").present
