@@ -12,7 +12,7 @@ from kolega_code.llm.models import Message, MessageHistory, TextBlock
 from kolega_code.llm.specs import get_model_specs
 from kolega_code.events import AgentEvent
 from kolega_code.services.base import ExecResult
-from kolega_code.services.terminal import LocalTerminalManager
+from kolega_code.services.terminal import LocalTerminalManager, build_child_env
 from .base_tool import BaseTool
 
 
@@ -277,6 +277,7 @@ class TerminalTool(BaseTool):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=str(self.project_path),
+                env=build_child_env(),
                 shell=True,
             )
 

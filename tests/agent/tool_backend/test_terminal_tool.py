@@ -1,6 +1,7 @@
 import os
 import asyncio
 import json
+import sys
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -140,6 +141,24 @@ class TestTerminalTool:
             result = await terminal_tool.execute_terminal_command("empty command")
 
             assert result == ""
+
+    @pytest.mark.asyncio
+    async def test_execute_terminal_command_env_scrubbed_and_clean(self, terminal_tool, mock_connection_manager):
+        mock_process = AsyncMock()
+        mock_process.communicate = AsyncMock(return_value=(b"", b""))
+
+        # Simulate `uv run` from the checkout: the app's own venv leaks into the env.
+        polluted = {"VIRTUAL_ENV": sys.prefix, "PATH": f"{sys.prefix}/bin{os.pathsep}" + os.environ.get("PATH", "")}
+        with patch.dict(os.environ, polluted):
+            with patch("asyncio.create_subprocess_shell", return_value=mock_process) as mock_create:
+                await terminal_tool.execute_terminal_command("pwd")
+
+        env = mock_create.call_args.kwargs["env"]
+        assert "VIRTUAL_ENV" not in env
+        assert f"{sys.prefix}/bin" not in env["PATH"].split(os.pathsep)
+        # CLEAN_ENV overlay now applies to this path too
+        assert env["TERM"] == "dumb"
+        assert env["NO_COLOR"] == "1"
 
     @pytest.mark.asyncio
     async def test_execute_terminal_command_working_directory(self, terminal_tool, mock_connection_manager):
