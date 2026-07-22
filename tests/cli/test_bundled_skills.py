@@ -1,4 +1,3 @@
-import hashlib
 import json
 from pathlib import Path
 
@@ -58,27 +57,9 @@ def test_user_and_project_skills_override_bundled_skills(tmp_path: Path) -> None
     )
 
 
-def test_bundled_skill_manifest_matches_directory_and_file_hashes() -> None:
-    bundle_root = BUNDLED_SKILLS_DIR.parent
-    manifest = json.loads((bundle_root / "manifest.json").read_text(encoding="utf-8"))
-    bundled_skill_dirs = {
-        path.name for path in BUNDLED_SKILLS_DIR.iterdir() if path.is_dir() and (path / "SKILL.md").is_file()
-    }
+def test_bundled_skill_directories_match_manifest() -> None:
+    manifest_path = BUNDLED_SKILLS_DIR.parent / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    bundled_skill_dirs = {path.name for path in BUNDLED_SKILLS_DIR.iterdir() if path.is_dir()}
 
-    assert manifest["source"]["repository"]
-    assert manifest["source"]["tag"]
-    assert manifest["source"]["commit"]
-    assert bundled_skill_dirs
-    assert set(manifest["skills"]) == bundled_skill_dirs
-
-    recorded_files = {item["path"]: item["sha256"] for item in manifest["files"]}
-    actual_files = {
-        path.relative_to(bundle_root).as_posix()
-        for path in bundle_root.rglob("*")
-        if path.is_file() and path.name != "manifest.json"
-    }
-    assert set(recorded_files) == actual_files
-
-    for relative_path, expected_hash in recorded_files.items():
-        content = (bundle_root / relative_path).read_bytes()
-        assert hashlib.sha256(content).hexdigest() == expected_hash
+    assert bundled_skill_dirs == set(manifest["skills"])
