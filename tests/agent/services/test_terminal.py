@@ -135,6 +135,15 @@ async def test_workdir_is_respected(manager, tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_constructed_default_workdir_is_used_when_workdir_omitted(tmp_path):
+    manager = LocalTerminalManager("workspace", "thread", _RecordingConnectionManager(), default_workdir=tmp_path)
+    result = await manager.exec_command("pwd", yield_time_ms=3000)
+    assert result.status == "exited"
+    # Commands must run in the configured project root, not the process cwd.
+    assert result.output.strip().endswith(tmp_path.name)
+
+
+@pytest.mark.asyncio
 async def test_no_cwd_persistence_between_calls(manager, tmp_path):
     sub = tmp_path / "sub"
     sub.mkdir()

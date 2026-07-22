@@ -59,7 +59,9 @@ class AgentServices:
         """Default local-machine services rooted at the workspace project path."""
         return cls(
             filesystem=LocalFileSystem(root_path=workspace.project_path),
-            terminal_manager=LocalTerminalManager(workspace.workspace_id, workspace.thread_id, connection_manager),
+            terminal_manager=LocalTerminalManager(
+                workspace.workspace_id, workspace.thread_id, connection_manager, default_workdir=workspace.project_path
+            ),
             browser_manager=PlaywrightBrowserManager(),
         )
 
