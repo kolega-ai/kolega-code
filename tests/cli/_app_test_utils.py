@@ -152,14 +152,19 @@ async def wait_for_onboarding_screen(app, pilot):
     The app pushes OnboardingScreen via call_after_refresh and the screen's
     children mount a further message-pump cycle later, so a single
     pilot.pause() can lose the race on slow CI runners (NoMatches on
-    #onboarding_next). Pause until the screen and its widgets both exist.
+    #onboarding_next). Pause until the widgets exist and the screen's mount
+    hook has initialized the owner's screen reference and startup status.
     """
     from kolega_code.cli.tui.onboarding_screen import OnboardingScreen
 
     for _ in range(20):
         await pilot.pause()
         screen = app.screen
-        if isinstance(screen, OnboardingScreen) and screen.query("#onboarding_next"):
+        if (
+            isinstance(screen, OnboardingScreen)
+            and app._onboarding_screen is screen
+            and screen.query("#onboarding_next")
+        ):
             return screen
     raise AssertionError("onboarding screen did not finish mounting")
 
