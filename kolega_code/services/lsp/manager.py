@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -27,6 +28,8 @@ logger = logging.getLogger(__name__)
 
 # Maximum concurrent server starts to avoid thundering herd
 _MAX_CONCURRENT_STARTS = 4
+# Maximum concurrent diagnostics queries for a multi-file edit.
+_MAX_CONCURRENT_DIAGNOSTICS = 4
 
 # Client capabilities advertised in the initialize handshake.
 _CLIENT_CAPABILITIES: dict = {
@@ -126,8 +129,11 @@ class LspManager:
         self._open_files: dict[str, str] = {}
         # Latest diagnostics per URI (from publishDiagnostics notifications)
         self._diagnostics: dict[str, list[LspDiagnostic]] = {}
-        # Diagnostics events for non-blocking await, keyed by (session_key, uri)
-        self._diag_events: dict[tuple[str, str], asyncio.Event] = {}
+        # Diagnostics waiters and publish generations, keyed by (session_key, uri).
+        # Generations prevent a publish that arrives just before waiter registration
+        # from being missed and turning into an unnecessary timeout.
+        self._diag_waiters: dict[tuple[str, str], set[asyncio.Event]] = {}
+        self._diag_generations: dict[tuple[str, str], int] = {}
         # Detection report (populated by initialize)
         self.report: Optional[DetectionReport] = None
         # Initialization lock
@@ -272,6 +278,7 @@ class LspManager:
             return []
 
         uri = _path_to_uri(self._project_path, path)
+        push_generation = self._diagnostic_generation(effective_id, uri)
 
         # Open / change the document so the server knows about it
         try:
@@ -287,7 +294,12 @@ class LspManager:
             return dedupe_and_sort(primary + extra, self._config.max_diagnostics)
 
         # Fallback: wait briefly for publishDiagnostics
-        await self._wait_for_push_diagnostics(effective_id, uri, timeout=3.0)
+        await self._wait_for_push_diagnostics(
+            effective_id,
+            uri,
+            after_generation=push_generation,
+            timeout=3.0,
+        )
         return dedupe_and_sort(self._diagnostics_for(effective_id, uri) + extra, self._config.max_diagnostics)
 
     async def get_fresh_diagnostics(self, path: str) -> list[LspDiagnostic]:
@@ -313,6 +325,7 @@ class LspManager:
         # Snapshot pre-edit version for freshness comparison
         record = self._session_records.get(effective_id)
         pre_edit_version = record.diag_versions.get(uri) if record else self._diag_versions.get(uri)
+        push_generation = self._diagnostic_generation(effective_id, uri)
 
         # Sync new content (sends didChange with incremented version)
         try:
@@ -333,7 +346,12 @@ class LspManager:
             return dedupe_and_sort(primary + extra, self._config.max_diagnostics)
 
         # Fallback: wait for fresh push diagnostics
-        await self._wait_for_push_diagnostics(effective_id, uri, timeout=3.0)
+        await self._wait_for_push_diagnostics(
+            effective_id,
+            uri,
+            after_generation=push_generation,
+            timeout=3.0,
+        )
 
         # Accept push diagnostics only if the version is fresh (different from
         # pre-edit, or version tracking is not supported by the server)
@@ -346,6 +364,29 @@ class LspManager:
             return []
 
         return dedupe_and_sort(push_diags + extra, self._config.max_diagnostics)
+
+    async def get_fresh_diagnostics_for_paths(
+        self,
+        paths: Iterable[str],
+    ) -> dict[str, list[LspDiagnostic]]:
+        """Get fresh diagnostics for unique paths with bounded concurrency.
+
+        Results preserve first-seen path order. A failure for one path is isolated
+        to that path so post-edit diagnostics never fail an applied multi-file edit.
+        """
+        unique_paths = tuple(dict.fromkeys(paths))
+        semaphore = asyncio.Semaphore(_MAX_CONCURRENT_DIAGNOSTICS)
+
+        async def query(path: str) -> list[LspDiagnostic]:
+            async with semaphore:
+                try:
+                    return await self.get_fresh_diagnostics(path)
+                except Exception:
+                    logger.exception("Failed to get fresh LSP diagnostics for %s", path)
+                    return []
+
+        results = await asyncio.gather(*(query(path) for path in unique_paths))
+        return dict(zip(unique_paths, results))
 
     # -- code intelligence ---------------------------------------
 
@@ -932,7 +973,8 @@ class LspManager:
         self._session_records.clear()
         self._open_files.clear()
         self._diagnostics.clear()
-        self._diag_events.clear()
+        self._diag_waiters.clear()
+        self._diag_generations.clear()
         self._doc_versions.clear()
         self._diag_versions.clear()
         self._registered_capabilities.clear()
@@ -1078,6 +1120,8 @@ class LspManager:
     async def _pull_diagnostics(
         self, client: LspClient, uri: str, *, source: Optional[str] = None
     ) -> Optional[list[LspDiagnostic]]:
+        if not self._supports_method(client, ("diagnosticProvider",), "textDocument/diagnostic"):
+            return None
         try:
             result = await client.request(
                 "textDocument/diagnostic",
@@ -1093,15 +1137,36 @@ class LspManager:
             return None
         return self._parse_diagnostic_items(items, source=source)
 
-    async def _wait_for_push_diagnostics(self, session_key: str, uri: str, *, timeout: float) -> None:
+    def _diagnostic_generation(self, session_key: str, uri: str) -> int:
+        return self._diag_generations.get((session_key, uri), 0)
+
+    async def _wait_for_push_diagnostics(
+        self,
+        session_key: str,
+        uri: str,
+        *,
+        after_generation: int,
+        timeout: float,
+    ) -> None:
         event_key = (session_key, uri)
-        self._diag_events[event_key] = asyncio.Event()
+        if self._diagnostic_generation(session_key, uri) > after_generation:
+            return
+
+        event = asyncio.Event()
+        waiters = self._diag_waiters.setdefault(event_key, set())
+        waiters.add(event)
         try:
-            await asyncio.wait_for(self._diag_events[event_key].wait(), timeout=timeout)
+            # Recheck after registration so a publish at the registration boundary
+            # cannot be missed.
+            if self._diagnostic_generation(session_key, uri) > after_generation:
+                return
+            await asyncio.wait_for(event.wait(), timeout=timeout)
         except asyncio.TimeoutError:
             pass
         finally:
-            self._diag_events.pop(event_key, None)
+            waiters.discard(event)
+            if not waiters:
+                self._diag_waiters.pop(event_key, None)
 
     def _diagnostics_for(self, session_key: str, uri: str) -> list[LspDiagnostic]:
         record = self._session_records.get(session_key)
@@ -1226,6 +1291,8 @@ class LspManager:
                 logger.exception("Failed to start extra diagnostic server %s", extra_name)
                 continue
 
+            push_generation = self._diagnostic_generation(session_key, uri)
+
             # Ensure document is open in the extra server
             try:
                 await self._ensure_document_open(client, uri, path, lang_id, session_key=session_key)
@@ -1238,7 +1305,12 @@ class LspManager:
                 all_diagnostics.extend(pulled)
                 continue
 
-            await self._wait_for_push_diagnostics(session_key, uri, timeout=3.0)
+            await self._wait_for_push_diagnostics(
+                session_key,
+                uri,
+                after_generation=push_generation,
+                timeout=3.0,
+            )
             all_diagnostics.extend(self._diagnostics_for(session_key, uri))
 
         return all_diagnostics
@@ -1337,8 +1409,9 @@ class LspManager:
         if record is not None:
             record.diag_versions[parsed.uri] = version
         self._diag_versions[parsed.uri] = version
-        event = self._diag_events.get((session_key, parsed.uri))
-        if event:
+        event_key = (session_key, parsed.uri)
+        self._diag_generations[event_key] = self._diag_generations.get(event_key, 0) + 1
+        for event in tuple(self._diag_waiters.get(event_key, ())):
             event.set()
 
     # -- server→client request handlers ------------------------

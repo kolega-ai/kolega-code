@@ -982,14 +982,20 @@ class LspEditTool(BaseTool):
         assert self._lsp_manager is not None
         if not self._lsp_manager._config.auto_diagnostics_on_edit:
             return ""
-        lines: list[str] = []
+        servers: dict[str, str] = {}
         for path in dict.fromkeys(paths):
             if not path or not self.filesystem.exists(path) or self.filesystem.is_dir(path):
                 continue
             server_name = self._lsp_manager.server_for_path(path)
-            if server_name is None:
-                continue
-            diagnostics = await self._lsp_manager.get_fresh_diagnostics(path)
+            if server_name is not None:
+                servers[path] = server_name
+        if not servers:
+            return ""
+
+        results = await self._lsp_manager.get_fresh_diagnostics_for_paths(servers)
+        lines: list[str] = []
+        for path, server_name in servers.items():
+            diagnostics = results.get(path, [])
             if diagnostics:
                 lines.append(format_diagnostics(diagnostics, path, source=server_name))
         return "\n\n".join(lines)

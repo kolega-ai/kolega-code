@@ -8,6 +8,7 @@ from kolega_code.agent.tool_backend.codex_patch import CodexPatchError, parse_co
 from kolega_code.agent.tool_backend.edit_tool import EditTool
 from kolega_code.agent.prompt_provider import AgentMode
 from kolega_code.config import AgentConfig, ModelConfig, ModelProvider
+from kolega_code.services.lsp import LspDiagnostic
 from kolega_code.services.snapshots import SnapshotService
 
 
@@ -264,3 +265,71 @@ async def test_apply_patch_snapshot_can_restore_multi_file_change(
 
     assert original.read_text() == "before\n"
     assert not (tmp_path / "created.txt").exists()
+
+
+@pytest.mark.asyncio
+async def test_apply_patch_batches_diagnostics_for_surviving_files_in_change_order(
+    tmp_path: Path,
+    caller: Mock,
+    config: AgentConfig,
+) -> None:
+    for path, content in (
+        ("first.py", "first = 1\n"),
+        ("second.py", "second = 1\n"),
+        ("deleted.py", "deleted = 1\n"),
+    ):
+        (tmp_path / path).write_text(content)
+
+    lsp_manager = Mock()
+    lsp_manager.enabled = True
+    lsp_manager._initialized = True
+    lsp_manager._config.auto_diagnostics_on_edit = True
+    lsp_manager.server_for_path.side_effect = lambda path: "pyright" if path.endswith(".py") else None
+    lsp_manager.get_fresh_diagnostics_for_paths = AsyncMock(
+        return_value={
+            "first.py": [
+                LspDiagnostic(
+                    range={"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 5}},
+                    severity=1,
+                    message="first issue",
+                    source="pyright",
+                )
+            ],
+            "second.py": [
+                LspDiagnostic(
+                    range={"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 6}},
+                    severity=2,
+                    message="second issue",
+                    source="pyright",
+                )
+            ],
+        }
+    )
+    tool = EditTool(
+        tmp_path,
+        "workspace",
+        str(uuid.uuid4()),
+        AsyncMock(),
+        config,
+        caller,
+        lsp_manager=lsp_manager,
+    )
+
+    result = await tool.apply_patch(
+        patch(
+            "*** Update File: first.py",
+            "@@",
+            "-first = 1",
+            "+first = 2",
+            "*** Update File: second.py",
+            "@@",
+            "-second = 1",
+            "+second = 2",
+            "*** Delete File: deleted.py",
+        )
+    )
+
+    lsp_manager.get_fresh_diagnostics_for_paths.assert_awaited_once_with(
+        {"first.py": "pyright", "second.py": "pyright"}
+    )
+    assert result.index("first issue") < result.index("second issue")
