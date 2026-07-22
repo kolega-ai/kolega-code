@@ -119,12 +119,14 @@ def test_planning_agent_prompt_renders_environment() -> None:
         platform="darwin",
         date_today="2026-06-17",
         model_name="test-model",
+        model_supports_vision=True,
     )
 
     assert "Kolega Code's planning agent" in rendered
     assert "Working directory: /repo" in rendered
     assert "Is directory a git repo: True" in rendered
     assert "Model: test-model" in rendered
+    assert "Model supports vision: true" in rendered
     assert "submit it through `write_plan`; do not only print the plan" in rendered
     assert "complete replacement plan that incorporates those decisions" in rendered
 

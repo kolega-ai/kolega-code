@@ -28,6 +28,7 @@ def test_dump_prompt_overrides_creates_all_uppercase_files(tmp_path):
     assert "- Platform: {{ context.platform }}" in coder_text
     assert "- Today's date: {{ context.date_today }}" in coder_text
     assert "- Model: {{ context.model_name }}" in coder_text
+    assert "- Model supports vision: {{ context.model_supports_vision | lower }}" in coder_text
     assert str(tmp_path) not in coder_text
     assert "continuity briefing" in (tmp_path / PROMPT_OVERRIDE_DIR / "COMPACTION.md").read_text(encoding="utf-8")
 
@@ -59,6 +60,7 @@ def test_prompt_dump_contents_use_placeholders_for_agent_environment(tmp_path):
         assert "{{ context.platform }}" in text
         assert "{{ context.date_today }}" in text
         assert "{{ context.model_name }}" in text
+        assert "- Model supports vision: {{ context.model_supports_vision | lower }}" in text
         assert str(tmp_path) not in text
 
 

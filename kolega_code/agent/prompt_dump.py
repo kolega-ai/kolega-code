@@ -144,6 +144,7 @@ def placeholder_dump_context(project_path: str | Path, base_context: Optional[Pr
         platform="{{ context.platform }}",
         date_today="{{ context.date_today }}",
         model_name="{{ context.model_name }}",
+        model_supports_vision="{{ context.model_supports_vision | lower }}",  # type: ignore[arg-type]
         available_ports="{{ context.available_ports }}",
         workspace_id="{{ context.workspace_id }}",
         workspace_environment_variables={},

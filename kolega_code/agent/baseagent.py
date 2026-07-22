@@ -595,6 +595,7 @@ class BaseAgent(LogMixin):
             platform=platform.system(),
             date_today=datetime.now().strftime("%Y-%m-%d"),
             model_name=self.primary_model_config.model,
+            model_supports_vision=self.supports_vision,
             available_ports=self.available_ports,
             project_guidance=project_guidance,
             project_guidance_file=project_guidance_file,

@@ -54,6 +54,7 @@ class PromptContext:
     platform: str = ""
     date_today: str = ""
     model_name: str = ""
+    model_supports_vision: bool = False
     available_ports: str = "9001-9999"
     project_guidance: str = ""
     project_guidance_file: str = ""
@@ -119,6 +120,7 @@ class PromptProvider:
             "platform": context.platform,
             "date_today": context.date_today,
             "model_name": context.model_name,
+            "model_supports_vision": context.model_supports_vision,
             "available_ports": context.available_ports,
             "workspace_id": context.workspace_id,
         }
