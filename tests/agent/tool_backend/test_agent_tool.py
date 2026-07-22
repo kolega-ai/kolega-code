@@ -461,6 +461,14 @@ class TestAgentTool:
             )
             assert result == "Coding completed"
 
+    async def test_list_subagent_models_accepts_blank_optional_provider(self, agent_tool: AgentTool) -> None:
+        catalog = await agent_tool.list_subagent_models("")
+
+        assert catalog.startswith("# Available sub-agent models")
+        assert "`anthropic/" in catalog
+        assert "`openai/" in catalog
+        assert not catalog.lstrip().startswith("{")
+
     async def test_atomic_override_is_applied_and_reported_without_mutating_parent(
         self,
         agent_tool: AgentTool,

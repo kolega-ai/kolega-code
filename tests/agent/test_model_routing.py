@@ -6,6 +6,7 @@ import pytest
 
 from kolega_code.agent.model_routing import (
     model_routing_fingerprint,
+    render_subagent_model_catalog,
     resolve_subagent_model,
     subagent_model_catalog,
 )
@@ -146,6 +147,29 @@ def test_catalog_provider_filter_and_nullable_effort_marker() -> None:
     )
     assert no_effort["thinking_efforts"] == []
     assert no_effort["override_effort"] == "null"
+
+
+@pytest.mark.parametrize("provider", [None, "", "   "])
+def test_catalog_omitted_or_blank_provider_lists_all_configured_models(provider: str | None) -> None:
+    catalog = subagent_model_catalog(_config(), provider)
+    providers = {entry["provider"] for entry in catalog["providers"]}
+    assert {"anthropic", "deepseek", "openai_chatgpt"} <= providers
+
+
+def test_catalog_markdown_is_compact_readable_and_credential_free() -> None:
+    catalog = subagent_model_catalog(_config())
+    rendered = render_subagent_model_catalog(catalog)
+    compact_json = json.dumps(catalog, separators=(",", ":"))
+
+    assert rendered.startswith("# Available sub-agent models")
+    assert "| Role | Provider/model | Effort |" in rendered
+    assert "`anthropic/claude-opus-4-8`" in rendered
+    assert "`null`" in rendered
+    assert "Vision" in rendered
+    assert not rendered.lstrip().startswith("{")
+    assert len(rendered) < len(compact_json) * 0.7
+    assert "secret-" not in rendered
+    assert "private@example.com" not in rendered
 
 
 def test_routing_fingerprint_changes_without_including_secrets() -> None:

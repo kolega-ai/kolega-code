@@ -40,8 +40,9 @@ their normal General-role inheritance. Omit `model_override` to keep this behavi
 When a particular task needs another model, the agent can call the read-only
 `list_subagent_models` tool. It reports configured providers, provider-qualified
 model IDs, exact effort options, vision support, and current role defaults without
-exposing credentials. The agent should use it before choosing a non-default route
-rather than guessing model or effort names.
+exposing credentials. Its model-facing result is a compact Markdown catalog
+rather than a repetitive JSON payload. The agent should use it before choosing a
+non-default route rather than guessing model or effort names.
 
 An ordinary dispatch accepts one complete object under `model_override`:
 

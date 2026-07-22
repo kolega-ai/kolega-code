@@ -195,8 +195,14 @@ def subagent_model_catalog(config: AgentConfig, provider: Optional[str] = None) 
 
     provider_filter: Optional[ModelProvider] = None
     if provider is not None:
-        if not isinstance(provider, str) or not provider.strip():
-            raise ValueError("provider must be a non-empty string when supplied.")
+        if not isinstance(provider, str):
+            raise ValueError("provider must be a string when supplied.")
+        # Some model providers serialize an omitted optional string as ``""``.
+        # Treat blank input exactly like omission so an unfiltered discovery
+        # call remains portable across tool-calling APIs.
+        if not provider.strip():
+            provider = None
+    if provider is not None:
         try:
             provider_filter = ModelProvider(provider.strip().lower())
         except ValueError as exc:
@@ -254,3 +260,43 @@ def subagent_model_catalog(config: AgentConfig, provider: Optional[str] = None) 
             {"provider": provider_value, "models": models} for provider_value, models in models_by_provider.items()
         ],
     }
+
+
+def render_subagent_model_catalog(catalog: dict[str, Any]) -> str:
+    """Render discovery data compactly for an LLM and the visible transcript."""
+
+    lines = [
+        "# Available sub-agent models",
+        "",
+        "Use a complete atomic override:",
+        "- Ordinary dispatch: `provider`, `model`, `thinking_effort`",
+        "- Gigacode: `provider`, `model`, `effort`",
+        "- Effort must be an exact listed value; use `null` only where efforts are `null`.",
+        "",
+        "## Effective role defaults",
+        "",
+        "| Role | Provider/model | Effort |",
+        "| --- | --- | --- |",
+    ]
+    for role, route in catalog["agent_defaults"].items():
+        effort = route["thinking_effort"] if route["thinking_effort"] is not None else "null"
+        lines.append(f"| {role} | `{route['provider']}/{route['model']}` | `{effort}` |")
+
+    lines.extend(
+        [
+            "",
+            "## Configured models",
+            "",
+            "| Provider/model | Efforts | Default | Vision |",
+            "| --- | --- | --- | --- |",
+        ]
+    )
+    for provider_entry in catalog["providers"]:
+        provider = provider_entry["provider"]
+        for model in provider_entry["models"]:
+            efforts = ", ".join(model["thinking_efforts"]) or "null"
+            default = model["default_thinking_effort"] or "null"
+            vision = "yes" if model["supports_vision"] else "no"
+            lines.append(f"| `{provider}/{model['model']}` | `{efforts}` | `{default}` | {vision} |")
+
+    return "\n".join(lines)

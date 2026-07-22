@@ -1369,18 +1369,21 @@ class ToolCollection(LogMixin):
         """
         return await self.agent_tool.dispatch_custom_agent(agent, task, model_override)
 
-    async def list_subagent_models(self, provider: Optional[str] = None) -> dict[str, Any]:
+    async def list_subagent_models(self, provider: Optional[str] = None) -> str:
         """List configured models available for ordinary and Gigacode sub-agents.
 
         Use this before choosing a non-default route. The result contains no
         credentials and dispatches revalidate every selection at execution time.
 
         Args:
-            provider: Optional provider name to filter the catalog.
+            provider: Optional provider name to filter the catalog. Omit it to
+                list every configured provider; a blank value is also treated
+                as an unfiltered request.
 
         Returns:
-            Configured agent defaults, supported provider/model pairs, exact effort
-            options, nullable-effort rules, and vision support.
+            A compact Markdown catalog of agent defaults, supported
+            provider/model pairs, exact effort options, nullable-effort rules,
+            and vision support.
         """
         return await self.agent_tool.list_subagent_models(provider)
 

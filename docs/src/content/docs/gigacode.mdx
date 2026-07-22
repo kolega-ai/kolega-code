@@ -120,7 +120,9 @@ For a worker that needs a specific model, the main agent first calls the read-on
 session, their exact model IDs and effort options, vision support, and the effective
 defaults for each agent role. It can optionally filter by provider. Discovery is
 informational: the selection is validated again when the worker starts, and the
-tool never returns credentials, tokens, or private endpoint details.
+tool never returns credentials, tokens, or private endpoint details. The result
+uses a compact Markdown table so exact routing values remain readable without
+the repeated keys of a large JSON payload.
 
 The agent can then put one complete, atomic override on a workflow `agent()` call:
 

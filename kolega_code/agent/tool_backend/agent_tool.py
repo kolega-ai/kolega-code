@@ -11,7 +11,7 @@ from kolega_code.events import AgentEvent
 from kolega_code.hooks import HookDispatcher, HookEvent
 from kolega_code.llm.specs import supports_vision
 from kolega_code.permissions import PermissionMode, auto_allow_permission_callback
-from ..model_routing import resolve_subagent_model, subagent_model_catalog
+from ..model_routing import render_subagent_model_catalog, resolve_subagent_model, subagent_model_catalog
 from ..orchestration.accounting import AgentReservation, WorkflowRunAccounting
 from ..orchestration.context import has_workflow_context_marker, validated_workflow_depth
 from .base_tool import BaseTool
@@ -603,9 +603,10 @@ class AgentTool(BaseTool):
             model_override=model_override,
         )
 
-    async def list_subagent_models(self, provider: Optional[str] = None) -> dict[str, Any]:
-        """Return configured, credential-free sub-agent model routing choices."""
-        return subagent_model_catalog(self._subagent_dispatch_config(), provider)
+    async def list_subagent_models(self, provider: Optional[str] = None) -> str:
+        """Return configured, credential-free routing choices as compact Markdown."""
+        catalog = subagent_model_catalog(self._subagent_dispatch_config(), provider)
+        return render_subagent_model_catalog(catalog)
 
     def _eligible_custom_agent_tools(self) -> set[str]:
         """Return the caller's propagatable, non-recursive tool surface."""
