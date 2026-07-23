@@ -210,22 +210,29 @@ def _sub_agent_event(
     parent_tool_call_id="tc-1",
     uuid=None,
     is_streaming=False,
+    effective_routing=None,
+    requested_routing=None,
     **content,
 ):
     kwargs = {"uuid": uuid} if uuid is not None else {}
+    sub_agent_info = {
+        "agent_id": agent_id,
+        "agent_name": agent_name,
+        "task": task,
+        "parent_tool_call_id": parent_tool_call_id,
+        "conversation_id": None,
+        "depth": 1,
+    }
+    # Opt-in so the default fixture doubles as missing-routing coverage.
+    if effective_routing is not None:
+        sub_agent_info["effective_routing"] = effective_routing
+        sub_agent_info["requested_routing"] = requested_routing
     return AgentEvent(
         event_type="chat_message",
         sender=agent_name,
         content=content,
         is_streaming=is_streaming,
-        sub_agent_info={
-            "agent_id": agent_id,
-            "agent_name": agent_name,
-            "task": task,
-            "parent_tool_call_id": parent_tool_call_id,
-            "conversation_id": None,
-            "depth": 1,
-        },
+        sub_agent_info=sub_agent_info,
         **kwargs,
     )
 

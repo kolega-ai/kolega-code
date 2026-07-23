@@ -423,6 +423,133 @@ async def test_sub_agent_completion_event_records_tokens(tmp_path: Path, monkeyp
         assert "3.1k tok" in activity.entry.content
 
 
+_ROUTING = {"provider": "anthropic", "model": "claude-opus-4-8", "thinking_effort": "high"}
+
+
+@pytest.mark.asyncio
+async def test_sub_agent_card_shows_effective_model(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        app._render_event(_sub_agent_event(status="GENERATING", message="Starting", effective_routing=_ROUTING))
+
+        activity = next(iter(app._sub_agent_activities.values()))
+        assert activity.routing is not None
+        assert activity.routing.overridden is False
+        # The session provider (anthropic) is elided; effort binds to the model.
+        assert "claude-opus-4-8 (high)" in activity.entry.content
+        assert "anthropic/" not in activity.entry.content
+
+
+@pytest.mark.asyncio
+async def test_sub_agent_card_shows_cross_provider_prefix(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        routing = {"provider": "deepseek", "model": "deepseek-r1", "thinking_effort": "high"}
+        app._render_event(_sub_agent_event(status="GENERATING", message="Starting", effective_routing=routing))
+
+        activity = next(iter(app._sub_agent_activities.values()))
+        assert "deepseek/deepseek-r1 (high)" in activity.entry.content
+
+
+@pytest.mark.asyncio
+async def test_sub_agent_routing_normalizes_workflow_effort_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        # Workflow dispatch spells the effort key "effort", not "thinking_effort".
+        routing = {"provider": "anthropic", "model": "claude-opus-4-8", "effort": "medium"}
+        app._render_event(_sub_agent_event(status="GENERATING", message="Starting", effective_routing=routing))
+
+        activity = next(iter(app._sub_agent_activities.values()))
+        assert activity.routing is not None
+        assert activity.routing.effort == "medium"
+        assert "claude-opus-4-8 (medium)" in activity.entry.content
+
+
+@pytest.mark.asyncio
+async def test_sub_agent_override_marks_routing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from kolega_code.cli.theme import Color
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        app._render_event(
+            _sub_agent_event(
+                status="GENERATING", message="Starting", effective_routing=_ROUTING, requested_routing=_ROUTING
+            )
+        )
+
+        activity = next(iter(app._sub_agent_activities.values()))
+        assert activity.routing is not None
+        assert activity.routing.overridden is True
+        # The header markup tints the overridden route; the plain card content keeps the bare label.
+        assert f"[{Color.ACCENT}]claude-opus-4-8 (high)[/{Color.ACCENT}]" in app._sub_agent_header(activity)
+        assert "claude-opus-4-8 (high)" in activity.entry.content
+
+
+@pytest.mark.asyncio
+async def test_sub_agent_routing_absent_renders_clean(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        app._render_event(_sub_agent_event(status="GENERATING", message="Starting"))
+
+        activity = next(iter(app._sub_agent_activities.values()))
+        assert activity.routing is None
+        header_line = activity.entry.content.splitlines()[0]
+        assert "(" not in header_line
+        assert not header_line.rstrip().endswith(("·", "-"))
+
+
+@pytest.mark.asyncio
+async def test_sub_agent_routing_late_arrival(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        app._render_event(_sub_agent_event(status="GENERATING", message="Starting"))
+        activity = next(iter(app._sub_agent_activities.values()))
+        assert activity.routing is None
+
+        app._render_event(
+            _sub_agent_event(status="STOPPED", message="Completed", total_tokens=100, effective_routing=_ROUTING)
+        )
+        assert activity.routing is not None
+        assert "claude-opus-4-8 (high)" in activity.entry.content
+
+
+@pytest.mark.asyncio
+async def test_sub_agent_inspector_header_and_copy_include_routing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        app._render_event(
+            _sub_agent_event(
+                message_type="tool_call",
+                text="Reading",
+                tool_description="read_file",
+                tool_call_id="t1",
+                effective_routing=_ROUTING,
+            )
+        )
+        app.action_open_sub_agent()
+        await pilot.pause()
+
+        screen = app._sub_agent_inspector
+        assert screen is not None
+        activity = next(iter(app._sub_agent_activities.values()))
+        assert "claude-opus-4-8 (high)" in screen._header_markup(activity)
+        copy_text = screen._trajectory_text(activity)
+        assert "Model: anthropic/claude-opus-4-8" in copy_text
+        assert "effort: high" in copy_text
+        assert "inherited default" in copy_text
+
+
 @pytest.mark.asyncio
 async def test_open_sub_agent_inspector_renders_trajectory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from kolega_code.cli.tui.sub_agent_screen import SubAgentInspectorScreen
