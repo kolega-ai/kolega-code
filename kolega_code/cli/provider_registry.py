@@ -74,6 +74,8 @@ MODEL_LABELS: dict[str, str] = {
     "gpt-5.4-mini": "GPT-5.4 Mini",
     "gpt-5.3-codex-spark": "GPT-5.3 Codex Spark",
     # Google
+    "gemini-3.6-flash": "Gemini 3.6 Flash",
+    "gemini-3.5-flash-lite": "Gemini 3.5 Flash-Lite",
     "gemini-3.1-pro-preview": "Gemini 3.1 Pro",
     "gemini-3.5-flash": "Gemini 3.5 Flash",
     # xAI

@@ -4,7 +4,7 @@ from google.genai import Client as genai_client
 from google.genai import types as genai_types
 
 from ..models import Message, MessageChunk, MessageHistory, ToolDefinition
-from ..specs import build_thinking_request_params
+from ..specs import build_thinking_request_params, get_model_specs
 from ..tool_execution_ids import ToolExecutionIdRegistry
 from .base import BaseLLMProvider
 from .models import GenerationParams, TokenCount
@@ -119,6 +119,22 @@ class GoogleProvider(BaseLLMProvider):
             return None
         return genai_types.ThinkingConfig(**thinking_config)
 
+    def _prepare_generation_config(
+        self,
+        model: str,
+        system: Message,
+        params: GenerationParams,
+    ) -> genai_types.GenerateContentConfig:
+        config: dict[str, Any] = {
+            "system_instruction": cast(Any, system.content[0]).text,
+            "max_output_tokens": params.max_completion_tokens,
+            "tools": [tool.to_google() for tool in params.tools] if params.tools else None,
+            "thinking_config": self._prepare_thinking_config(model, params),
+        }
+        if get_model_specs("google", model).get("supports_temperature", True):
+            config["temperature"] = params.temperature
+        return genai_types.GenerateContentConfig(**config)
+
     async def count_tokens(
         self,
         messages: MessageHistory,
@@ -157,13 +173,7 @@ class GoogleProvider(BaseLLMProvider):
         """
         model = kwargs["model"]
         assert system is not None and params is not None
-        config = genai_types.GenerateContentConfig(
-            system_instruction=cast(Any, system.content[0]).text,
-            temperature=params.temperature,
-            max_output_tokens=params.max_completion_tokens,
-            tools=[t.to_google() for t in params.tools] if params.tools else None,
-            thinking_config=self._prepare_thinking_config(model, params),
-        )
+        config = self._prepare_generation_config(model, system, params)
 
         await self.rate_limiter.acquire()
 
@@ -188,13 +198,7 @@ class GoogleProvider(BaseLLMProvider):
     ) -> Message:
         model = kwargs["model"]
         assert system is not None and params is not None
-        config = genai_types.GenerateContentConfig(
-            system_instruction=cast(Any, system.content[0]).text,
-            temperature=params.temperature,
-            max_output_tokens=params.max_completion_tokens,
-            tools=[t.to_google() for t in params.tools] if params.tools else None,
-            thinking_config=self._prepare_thinking_config(model, params),
-        )
+        config = self._prepare_generation_config(model, system, params)
 
         await self.rate_limiter.acquire()
 
