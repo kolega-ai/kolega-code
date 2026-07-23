@@ -24,6 +24,7 @@ from .state import (
     PhaseState,
     SessionFileChange,
     SubAgentActivity,
+    SubAgentRouting,
     TurnState,
     WorkflowActivity,
     TOOL_STATE_PRESENTATION,
@@ -576,9 +577,9 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
 
     def _ensure_sub_agent_activity(self, event: AgentEvent) -> SubAgentActivity:
         key = self._sub_agent_key(event)
+        info = event.sub_agent_info or {}
         activity = self._sub_agent_activities.get(key)
         if activity is None:
-            info = event.sub_agent_info or {}
             self._sub_agent_seq += 1
             entry = ConversationEntry(kind="sub_agent", content="", complete=False)
             task_full = str(info.get("task_full") or info.get("task") or "")
@@ -591,6 +592,7 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
                 task_full=task_full,
                 workflow_run_id=str(info.get("workflow_run_id") or ""),
                 workflow_phase=str(info.get("phase") or ""),
+                routing=SubAgentRouting.from_info(info),
                 started_at=self._now(),
             )
             self._sub_agent_activities[key] = activity
@@ -607,6 +609,10 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
             self._add_conversation_entry(entry)
             self._refresh_sub_agent_activity_status()
             self._note_workflow_sub_agent(activity)
+        elif activity.routing is None:
+            # Every child event carries sub_agent_info, so an activity whose first
+            # event lacked routing picks it up from any later one.
+            activity.routing = SubAgentRouting.from_info(info)
         return activity
 
     def _render_sub_agent_event(self, event: AgentEvent) -> None:
@@ -808,7 +814,27 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
             escape(activity.agent_name),
             color,
             state=f"#{activity.index} {theme.g(Glyph.BULLET_SEP)} {state}",
+            detail=self._format_sub_agent_routing(activity) or None,
         )
+
+    def _format_sub_agent_routing(self, activity: SubAgentActivity) -> str:
+        """Compact routing label: [provider/]model[ (effort)]; "" when unreported.
+
+        The provider prefix appears only when it differs from the session's own
+        provider; a parent-pinned override is tinted ACCENT (still dim in situ).
+        """
+        routing = activity.routing
+        if routing is None:
+            return ""
+        label = escape(routing.model)
+        session_provider = getattr(getattr(self, "_status_state", None), "provider", None)
+        if routing.provider != session_provider:
+            label = f"{escape(routing.provider)}/{label}"
+        if routing.effort:
+            label = f"{label} ({escape(routing.effort)})"
+        if routing.overridden:
+            label = f"[{Color.ACCENT}]{label}[/{Color.ACCENT}]"
+        return label
 
     def _sub_agent_body_lines(self, activity: SubAgentActivity) -> list[str]:
         sep = theme.g(Glyph.BULLET_SEP)

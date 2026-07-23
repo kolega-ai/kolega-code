@@ -393,6 +393,12 @@ class SubAgentInspectorScreen(ModalScreen):
         full_task = activity.task_full or activity.task
         if full_task:
             lines.append(f"Task: {full_task}")
+        routing = activity.routing
+        if routing is not None:
+            sep = theme.g(Glyph.BULLET_SEP)
+            origin = "parent override" if routing.overridden else "inherited default"
+            effort = routing.effort or "none"
+            lines.append(f"Model: {routing.provider}/{routing.model} {sep} effort: {effort} {sep} {origin}")
         lines.append("")
         for step in activity.steps:
             # The full task is already printed above as the header Task line.

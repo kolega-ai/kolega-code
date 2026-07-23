@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import itertools
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional
+from typing import Any, Optional
 
 from kolega_code.permissions import PermissionDecision, PermissionMode, PermissionRequest, PermissionRuleOption
 
@@ -126,6 +127,42 @@ class SessionFileChange:
     created_at: float = 0.0
 
 
+@dataclass(frozen=True)
+class SubAgentRouting:
+    """Effective provider/model/effort route for one dispatched sub-agent."""
+
+    provider: str
+    model: str
+    effort: Optional[str] = None
+    overridden: bool = False  # parent explicitly pinned this route via model_override
+
+    @classmethod
+    def from_info(cls, info: Optional[Mapping[str, Any]]) -> Optional["SubAgentRouting"]:
+        """Parse event sub_agent_info; tolerates old/partial shapes by returning None.
+
+        Ordinary dispatch keys effort as "thinking_effort"; workflow dispatch keys
+        it as "effort" — both are accepted here.
+        """
+        if not isinstance(info, Mapping):
+            return None
+        effective = info.get("effective_routing")
+        if not isinstance(effective, Mapping):
+            return None
+        provider = effective.get("provider")
+        model = effective.get("model")
+        if not isinstance(provider, str) or not provider.strip() or not isinstance(model, str) or not model.strip():
+            return None
+        effort = effective.get("thinking_effort", effective.get("effort"))
+        if not isinstance(effort, str) or not effort.strip():
+            effort = None
+        return cls(
+            provider=provider.strip(),
+            model=model.strip(),
+            effort=effort,
+            overridden=info.get("requested_routing") is not None,
+        )
+
+
 @dataclass
 class SubAgentActivity:
     """Live display state for one dispatched sub-agent."""
@@ -157,6 +194,7 @@ class SubAgentActivity:
     context_input_tokens: Optional[int] = None
     context_max_tokens: Optional[int] = None
     depth: int = 1
+    routing: Optional[SubAgentRouting] = None  # effective model route, None when unreported
     current_action: str = ""  # live "now:" action while running
     workflow_run_id: str = ""  # set when dispatched by a workflow, for card rollup
     workflow_phase: str = ""  # the workflow phase this agent runs under
