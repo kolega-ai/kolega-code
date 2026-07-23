@@ -3,6 +3,30 @@ import pytest
 from kolega_code.llm.specs import get_model_specs, thinking_effort_options
 
 
+@pytest.mark.parametrize(
+    "model,thinking_options,default_thinking",
+    [
+        ("gemini-3.6-flash", ("minimal", "low", "medium", "high"), "medium"),
+        ("gemini-3.5-flash-lite", ("minimal", "low", "medium", "high"), "minimal"),
+    ],
+)
+def test_new_google_model_specs(
+    model: str,
+    thinking_options: tuple[str, ...],
+    default_thinking: str,
+) -> None:
+    specs = get_model_specs("google", model)
+
+    assert specs["context_length"] == 1048576
+    assert specs["max_completion_tokens"] == 65536
+    assert specs["default_temperature"] == 1.0
+    assert specs["supports_temperature"] is False
+    assert specs["supports_vision"] is True
+    assert specs["thinking_effort"].options == thinking_options
+    assert specs["thinking_effort"].default == default_thinking
+    assert specs["thinking_effort"].mode == "google_thinking_level"
+
+
 @pytest.mark.parametrize("model", ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"])
 @pytest.mark.parametrize("provider,context_length", [("openai", 1050000), ("openai_chatgpt", 272000)])
 def test_gpt56_model_specs(provider, context_length, model):

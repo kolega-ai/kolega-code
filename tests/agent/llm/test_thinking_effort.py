@@ -21,6 +21,10 @@ def test_model_specs_expose_provider_specific_thinking_efforts() -> None:
     assert default_thinking_effort("moonshot", "kimi-k2.6") == "auto"
     assert thinking_effort_options("deepseek", "deepseek-v4-pro") == ("none", "high", "max")
     assert default_thinking_effort("deepseek", "deepseek-v4-pro") == "high"
+    assert thinking_effort_options("google", "gemini-3.6-flash") == ("minimal", "low", "medium", "high")
+    assert default_thinking_effort("google", "gemini-3.6-flash") == "medium"
+    assert thinking_effort_options("google", "gemini-3.5-flash-lite") == ("minimal", "low", "medium", "high")
+    assert default_thinking_effort("google", "gemini-3.5-flash-lite") == "minimal"
     assert thinking_effort_options("google", "gemini-3.1-pro-preview") == ("low", "medium", "high")
     assert default_thinking_effort("google", "gemini-3.1-pro-preview") == "high"
     assert thinking_effort_options("zai", "glm-5.2") == ("high", "max")
@@ -213,6 +217,44 @@ def test_google_gemini_3_pro_uses_thinking_level() -> None:
     assert high_config.thinking_level.value.lower() == "high"
     # thinking_level mode does not set an integer budget
     assert high_config.thinking_budget is None
+
+
+@pytest.mark.parametrize(
+    "model,effort",
+    [
+        ("gemini-3.6-flash", "minimal"),
+        ("gemini-3.6-flash", "low"),
+        ("gemini-3.6-flash", "medium"),
+        ("gemini-3.6-flash", "high"),
+        ("gemini-3.5-flash-lite", "minimal"),
+        ("gemini-3.5-flash-lite", "low"),
+        ("gemini-3.5-flash-lite", "medium"),
+        ("gemini-3.5-flash-lite", "high"),
+    ],
+)
+def test_new_google_models_use_supported_thinking_levels(model: str, effort: str) -> None:
+    provider = GoogleProvider(api_key="test-key")
+
+    config = provider._prepare_thinking_config(model, GenerationParams(thinking=effort))
+
+    assert config is not None
+    assert config.thinking_level is not None
+    assert config.thinking_level.value.lower() == effort
+    assert config.thinking_budget is None
+
+
+@pytest.mark.parametrize(
+    "model,effort",
+    [
+        ("gemini-3.6-flash", "xhigh"),
+        ("gemini-3.5-flash-lite", "xhigh"),
+    ],
+)
+def test_new_google_models_reject_unsupported_thinking_levels(model: str, effort: str) -> None:
+    client = LLMClient(provider="google", api_key="test-key")
+
+    with pytest.raises(ValueError, match="Unsupported thinking effort"):
+        client._prepare_thinking_param(effort, model=model)
 
 
 def test_openai_reasoning_effort_is_sent_for_reasoning_models() -> None:
