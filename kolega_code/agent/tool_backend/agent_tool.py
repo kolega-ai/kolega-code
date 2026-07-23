@@ -351,6 +351,10 @@ class AgentTool(BaseTool):
             # Store agent reference
             self.agents[agent_id] = agent
 
+            # Sub-agents share the parent's scratchpad directory (the model-facing
+            # section is inherited separately via propagate_to_sub_agents).
+            agent.scratchpad_dir = getattr(self.caller, "scratchpad_dir", None)
+
             # Set parent context so the agent's own events carry sub_agent_info
             agent.parent_tool_call_id = tool_call_id
             agent.conversation_id = conversation_id
@@ -733,7 +737,7 @@ class AgentTool(BaseTool):
         tool_extensions = self._sub_agent_extensions(getattr(self.caller, "tool_extensions", None))
         if extra_tool_extensions:
             tool_extensions = list(tool_extensions or []) + list(extra_tool_extensions)
-        return agent_class(
+        agent = agent_class(
             project_path=self.project_path,
             workspace_id=self.workspace_id,
             thread_id=self.thread_id,
@@ -768,6 +772,9 @@ class AgentTool(BaseTool):
             hook_dispatcher=getattr(self.caller, "hook_dispatcher", None) if self.caller else None,
             max_iterations=getattr(self.caller, "max_iterations", None),
         )
+        # Workflow sub-agents share the parent's scratchpad directory too.
+        agent.scratchpad_dir = getattr(self.caller, "scratchpad_dir", None)
+        return agent
 
     @staticmethod
     def _write_jsonl_message(path: Optional[Path], message: dict) -> None:

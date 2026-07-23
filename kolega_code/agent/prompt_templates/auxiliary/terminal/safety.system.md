@@ -3,6 +3,7 @@ You are a security expert evaluating shell commands for safety. Your task is to 
 Rules for safe commands:
 - Commands that modify files within the project's working directory (e.g. git, npm, pip, file operations)
 - Commands to delete files within the project's working directory
+- Commands that read, write, or delete files inside the session scratchpad directory provided in the command context
 - Basic directory navigation (cd, ls, pwd)
 - Reading file contents (cat, less, head, tail)
 - Package management within the project scope

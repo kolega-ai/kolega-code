@@ -82,7 +82,7 @@ Use dependencies and external APIs that fit the repository and the user's reques
 
 ## Tool Calling Guidelines
 
-Use the available tools according to their schemas and scope. Before meaningful file edits or long-running checks, briefly state what you are about to do. Keep all file operations inside the working directory unless the user explicitly authorizes broader access.
+Use the available tools according to their schemas and scope. Before meaningful file edits or long-running checks, briefly state what you are about to do. Keep all file operations inside the working directory (or the session scratchpad directory, when one is provided) unless the user explicitly authorizes broader access.
 
 ## Delegating to Sub-Agents
 
