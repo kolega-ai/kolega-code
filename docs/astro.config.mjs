@@ -95,6 +95,7 @@ export default defineConfig({
             { label: "Chat Composer", slug: "tui/composer" },
             { label: "Slash Commands", slug: "tui/slash-commands" },
             { label: "Project Memory", slug: "tui/project-memory" },
+            { label: "Session Scratchpad", slug: "tui/scratchpad" },
             { label: "Sessions & Resuming", slug: "tui/sessions-and-resume" },
           ],
         },

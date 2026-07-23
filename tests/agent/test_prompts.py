@@ -52,6 +52,22 @@ def test_current_plan_artifact_prompt_renders_path() -> None:
     assert "read-only" in rendered
 
 
+def test_scratchpad_prompt_renders_path_and_rules() -> None:
+    rendered = prompts.build_scratchpad_prompt("/tmp/kolega-code-501/project-key/session-1/scratchpad")
+
+    assert "/tmp/kolega-code-501/project-key/session-1/scratchpad" in rendered
+    assert "throwaway" in rendered
+    assert "deliverables" in rendered
+    assert "uniquely named files" in rendered
+    assert "{{" not in rendered
+
+
+def test_coder_cli_prompt_allows_scratchpad_file_operations() -> None:
+    source = prompts.prompt_template_source("system/agents/coder_cli.md.j2")
+
+    assert "session scratchpad directory" in source
+
+
 def test_implement_plan_prompt_omits_gigacode_nudge_by_default() -> None:
     rendered = prompts.build_implement_plan_prompt("- [ ] update docs")
 

@@ -72,13 +72,15 @@ class TerminalTool(BaseTool):
 
             system_message = Message(role="system", content=[TextBlock(text=prompts.SHELL_SAFETY_SYSTEM_PROMPT)])
 
+            scratchpad_dir = getattr(self.caller, "scratchpad_dir", None)
+            directory_context = f"Project directory:\n{str(self.caller.project_path)}"
+            if isinstance(scratchpad_dir, (str, Path)) and scratchpad_dir:
+                directory_context += f"\nScratchpad directory (session-writable):\n{scratchpad_dir}"
             messages = MessageHistory(
                 [
                     Message(
                         role="user",
-                        content=[
-                            TextBlock(text=f"Project directory:\n{str(self.caller.project_path)}\nCommand:\n{command}")
-                        ],
+                        content=[TextBlock(text=f"{directory_context}\nCommand:\n{command}")],
                     )
                 ]
             )

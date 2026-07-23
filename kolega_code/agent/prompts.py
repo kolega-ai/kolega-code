@@ -87,6 +87,13 @@ def build_current_plan_artifact_prompt(plan_artifact_path: str | Path) -> str:
     )
 
 
+def build_scratchpad_prompt(scratchpad_path: str | Path) -> str:
+    return render_prompt_template(
+        "extensions/cli/scratchpad.md.j2",
+        scratchpad_path=str(scratchpad_path),
+    )
+
+
 def build_init_agents_prompt(arguments: str) -> str:
     return render_prompt_template("user_tasks/cli/init_agents.md.j2", arguments=arguments.strip())
 

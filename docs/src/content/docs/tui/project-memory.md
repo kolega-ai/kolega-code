@@ -168,8 +168,9 @@ Project memory is distinct from:
   instructions;
 - host-provided `workspace_memories`: a separately labelled host context;
 - session history: the messages and tool results used to resume a conversation;
-  and
-- the Planning tab's task list: current work state, not durable knowledge.
+- the Planning tab's task list: current work state, not durable knowledge; and
+- the [session scratchpad](../scratchpad/): a per-session throwaway working
+  directory in OS temp for scripts, downloads, and other transient files.
 
 ## Pluggable backends
 

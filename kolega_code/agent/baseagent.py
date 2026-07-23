@@ -298,6 +298,36 @@ class BaseAgent(LogMixin):
             self.context.services.memory_manager = self.memory_manager
             self._owns_memory_manager = True
 
+        # Session scratchpad: a per-session throwaway working directory under the
+        # OS temp dir. The TUI injects the prompt extension itself (keyed by its
+        # session id); other local hosts get it here, keyed by thread id.
+        # Sandbox/E2B hosts are unchanged, as are sub-agents, which inherit the
+        # section and the resolved directory from their parent.
+        self.scratchpad_dir: Optional[Path] = None
+        if not sub_agent and isinstance(self.filesystem, LocalFileSystem):
+            from kolega_code.scratchpad import SCRATCHPAD_PROMPT_EXTENSION_ID, ensure_scratchpad_dir
+
+            extensions = self.prompt_extensions or []
+            if not any(getattr(ext, "id", None) == SCRATCHPAD_PROMPT_EXTENSION_ID for ext in extensions):
+                try:
+                    scratchpad_path = ensure_scratchpad_dir(self.project_path, self.thread_id)
+                except (OSError, ValueError):
+                    scratchpad_path = None
+                if scratchpad_path is not None:
+                    from .prompts import build_scratchpad_prompt
+
+                    self.prompt_extensions = [
+                        *extensions,
+                        PromptExtension(
+                            id=SCRATCHPAD_PROMPT_EXTENSION_ID,
+                            title="Session Scratchpad",
+                            markdown=build_scratchpad_prompt(scratchpad_path),
+                            # No mode restriction: the fallback serves any local host.
+                            propagate_to_sub_agents=True,
+                        ),
+                    ]
+                    self.scratchpad_dir = scratchpad_path
+
         # gigacode (workflow orchestration) opt-in. Off by default; the host toggles
         # it via apply_gigacode(). The run_workflow tool gate reads this live, so
         # toggling takes effect on the next turn without rebuilding the agent.

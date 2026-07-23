@@ -1,0 +1,11 @@
+You have a private scratchpad working directory for this session at:
+
+`{{ scratchpad_path }}`
+
+Use it for throwaway work that must not touch the user's working tree: one-off scripts, ad-hoc virtual environments, downloaded files, extracted archives, generated intermediates, and log captures. This is the only location outside the working directory where you may create files without asking.
+
+Rules:
+
+- Never place deliverables in the scratchpad. It is a per-session temp directory that the OS may delete at any time; anything the user must keep belongs in the working directory.
+- The directory may already contain files from earlier turns of this session or from sub-agents that share it. Do not delete files you did not create.
+- Create uniquely named files; other agents may use the directory concurrently.

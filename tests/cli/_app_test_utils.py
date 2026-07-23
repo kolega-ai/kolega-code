@@ -43,6 +43,8 @@ class FakeCoderAgent:
         self.active_goal_condition = None
         self.session_recorder = kwargs.get("session_recorder")
         self.queued_input_provider = None
+        # Set by _build_agent when the scratchpad prompt extension is active.
+        self.scratchpad_dir = None
 
     def apply_goal(self, condition, prompt_extension=None):
         self.active_goal_condition = condition

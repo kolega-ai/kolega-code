@@ -8,8 +8,9 @@ from kolega_code.agent import AgentConfig, AgentEvent, CoderAgent, PlanningAgent
 from kolega_code.agent.baseagent import QueuedUserInput
 from kolega_code.agent.prompt_provider import AgentMode
 from kolega_code.agent.custom_agents import discover_custom_agents, validate_custom_agent_models
-from kolega_code.agent.prompts import build_current_plan_artifact_prompt
+from kolega_code.agent.prompts import build_current_plan_artifact_prompt, build_scratchpad_prompt
 from kolega_code.hooks import HookDispatcher, HookEvent, load_hook_config, project_hooks_present
+from kolega_code.scratchpad import SCRATCHPAD_PROMPT_EXTENSION_ID, ensure_scratchpad_dir, scratchpad_dir_for
 from kolega_code.llm.exceptions import LLMError, llm_error_message
 from kolega_code.mcp.tools import build_mcp_tool_extension
 from kolega_code.services.browser import PlaywrightBrowserManager
@@ -759,6 +760,35 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             propagate_to_sub_agents=True,
         )
 
+    def _scratchpad_prompt_extension(self) -> PromptExtension | None:
+        """Return prompt context advertising this session's scratchpad directory.
+
+        Applies to both interaction modes and is stable across resumes and
+        plan/build switches because it is keyed by ``session.session_id``.
+        Best-effort: if the temp directory cannot be created the agent simply
+        runs without a scratchpad section.
+        """
+        try:
+            scratchpad_path = ensure_scratchpad_dir(self.project_path, self.session.session_id)
+        except (OSError, ValueError) as exc:
+            try:
+                self._notify_user(
+                    f"Could not prepare the session scratchpad: {exc}",
+                    severity="warning",
+                )
+            except Exception:
+                pass
+            return None
+        return PromptExtension(
+            id=SCRATCHPAD_PROMPT_EXTENSION_ID,
+            title="Session Scratchpad",
+            markdown=build_scratchpad_prompt(scratchpad_path),
+            modes=[AgentMode.CLI],
+            # Delegated agents share the parent's scratchpad; the prompt text
+            # tells them to use unique filenames for concurrent safety.
+            propagate_to_sub_agents=True,
+        )
+
     async def _build_agent(
         self,
         config: AgentConfig,
@@ -799,6 +829,11 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         # callback stay on the top-level agent and are never inherited by delegates.
         prompt_extensions.append(self._goal_control_prompt_extension())
         tool_extensions.append(self._goal_control_tool_extension())
+        # Both interaction modes get the scratchpad: plan-mode research and
+        # build-mode execution both produce throwaway files.
+        scratchpad_extension = self._scratchpad_prompt_extension()
+        if scratchpad_extension is not None:
+            prompt_extensions.append(scratchpad_extension)
         skill_prompt_extension = build_skill_prompt_extension(
             self.skill_catalog,
             context_window_tokens=context_window_tokens_for_skill_budget(
@@ -861,6 +896,10 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             custom_agent_catalog=self.custom_agent_catalog,
         )
         assert self.agent is not None
+        if scratchpad_extension is not None:
+            # Expose the resolved directory for the terminal safety checker; the
+            # prompt extension above is what the model sees.
+            self.agent.scratchpad_dir = scratchpad_dir_for(self.project_path, self.session.session_id)
         # Mid-turn queue delivery: the running turn drains composer messages
         # queued while it works (main agent only; sub-agents never get this).
         self.agent.set_queued_input_provider(self._provide_queued_user_inputs)
