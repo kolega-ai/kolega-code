@@ -6,11 +6,15 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.23.0 - 2026-07-23
+
 ### Added
 
 - Added stable Google Gemini 3.6 Flash and Gemini 3.5 Flash-Lite model support,
   including model-specific thinking levels and omission of their deprecated
   sampling temperature parameter.
+- Displayed each sub-agent's provider, model, and thinking effort in live status,
+  completed transcript summaries, and the sub-agent inspector.
 
 ## 0.22.1 - 2026-07-22
 
