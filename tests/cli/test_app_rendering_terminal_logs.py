@@ -546,3 +546,206 @@ async def test_log_output_is_batched_until_flush(tmp_path: Path, monkeypatch: py
         rendered = renderable_text(written[0])
         assert "line 0" in rendered
         assert "line 4" in rendered
+
+
+async def _wait_for_layout(pilot, predicate, *, timeout: float = 6.0) -> None:
+    """Poll until ``predicate()`` is truthy or the layout deadline expires."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        await pilot.pause(0.02)
+        if predicate():
+            return
+    raise AssertionError(f"layout did not settle within {timeout}s")
+
+
+@pytest.mark.asyncio
+async def test_terminal_output_extracts_selected_text(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("textual")
+
+    from textual.geometry import Offset
+    from textual.selection import Selection
+    from textual.widgets import TabbedContent
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        # RichLog defers writes until its size is known; the pane must be visible first.
+        app.query_one("#events", TabbedContent).active = "terminal_pane"
+        await pilot.pause()
+
+        terminal = app._terminal
+        terminal.write_terminal("alpha\nbeta\ngamma\n")
+        await pilot.pause()
+
+        selected = terminal.get_selection(Selection(None, None))
+        assert selected is not None
+        text, ending = selected
+        assert ending == "\n"
+        assert "alpha" in text
+        assert "beta" in text
+        assert "gamma" in text
+        assert "\x1b" not in text
+        assert not any(line != line.rstrip() for line in text.split("\n"))
+
+        # Coordinates are content (line, column) pairs across visual lines.
+        partial = terminal.get_selection(Selection(Offset(1, 0), Offset(3, 2)))
+        assert partial is not None
+        assert partial[0] == "lpha\nbeta\ngam"
+
+
+@pytest.mark.asyncio
+async def test_terminal_render_line_marks_selection_offsets_and_highlight(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from textual.geometry import Offset
+    from textual.selection import Selection
+    from textual.widgets import TabbedContent
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        app.query_one("#events", TabbedContent).active = "terminal_pane"
+        terminal = app._terminal
+        terminal.write_terminal("highlight this line\n")
+        await pilot.pause()
+
+        app.screen.selections = {terminal: Selection(Offset(0, 0), Offset(9, 0))}
+        strip = terminal.render_line(0)
+        selection_bg = terminal.selection_style.bgcolor
+
+        assert any(
+            segment.style is not None
+            and segment.style.bgcolor == selection_bg
+            and segment.style.meta.get("offset") is not None
+            for segment in strip
+        )
+
+        # Unscrolled log: selection coordinates start at the content origin.
+        tagged_offsets = [
+            segment.style.meta["offset"]
+            for segment in strip
+            if segment.style is not None and segment.style.meta.get("offset") is not None
+        ]
+        assert tagged_offsets
+        assert min(tagged_offsets) == (0, 0)
+
+        app.screen.selections = {}
+
+
+@pytest.mark.asyncio
+async def test_terminal_output_supports_mouse_drag_selection(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("textual")
+
+    from textual import events
+    from textual.widgets import TabbedContent
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        app.query_one("#events", TabbedContent).active = "terminal_pane"
+        terminal = app._terminal
+        terminal.write_terminal("select this terminal text\nsecond line\n")
+        await pilot.pause()
+
+        def selection_targets_are_ready() -> bool:
+            for x in (0, 24):
+                hit_widget, select_offset = app.screen.get_widget_and_offset_at(
+                    terminal.region.x + x, terminal.region.y
+                )
+                if hit_widget is not terminal or select_offset is None:
+                    return False
+            return True
+
+        # The widget can be queryable before the compositor's hit map reflects its
+        # region. Mouse selection requires both to agree.
+        await _wait_for_layout(pilot, selection_targets_are_ready)
+
+        await pilot.mouse_down(terminal, offset=(0, 0))
+        await pilot._post_mouse_events([events.MouseMove], terminal, offset=(24, 0), button=1)
+        await pilot.mouse_up(terminal, offset=(24, 0))
+
+        def selection_copied_text() -> bool:
+            return (app.screen.get_selected_text() or "").strip() == "select this terminal text"
+
+        await _wait_for_layout(pilot, selection_copied_text)
+        selected_text = app.screen.get_selected_text()
+        assert selected_text is not None
+        assert selected_text.strip() == "select this terminal text"
+
+
+@pytest.mark.asyncio
+async def test_terminal_selection_offsets_follow_vertical_scroll(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from textual.geometry import Offset
+    from textual.selection import Selection
+    from textual.widgets import TabbedContent
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        app.query_one("#events", TabbedContent).active = "terminal_pane"
+        terminal = app._terminal
+        terminal.write_terminal("".join(f"scroll line {index}\n" for index in range(120)))
+        await pilot.pause()
+        assert terminal.max_scroll_y > 0
+
+        terminal.scroll_to(y=10, animate=False, immediate=True)
+        await pilot.pause()
+        assert terminal.scroll_offset.y == 10
+
+        # Viewport line 0 renders content line 10; stamped offsets must follow the scroll.
+        strip = terminal.render_line(0)
+        offset_meta = [
+            segment.style.meta["offset"]
+            for segment in strip
+            if segment.style is not None and segment.style.meta.get("offset") is not None
+        ]
+        assert offset_meta
+        assert all(y == 10 for _x, y in offset_meta)
+
+        # Extraction uses the same content coordinates as the stamped offsets.
+        selected = terminal.get_selection(Selection(Offset(0, 10), Offset(len("scroll line 10"), 10)))
+        assert selected is not None
+        assert selected[0] == "scroll line 10"
+
+
+@pytest.mark.asyncio
+async def test_logs_output_supports_mouse_drag_selection(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("textual")
+
+    from textual import events
+    from textual.widgets import TabbedContent
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch, show_logs=True)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        app.query_one("#events", TabbedContent).active = "logs_pane"
+        logs = app._logs
+        logs.write_log("select this log text\n")
+        await pilot.pause()
+
+        def selection_targets_are_ready() -> bool:
+            for x in (0, 19):
+                hit_widget, select_offset = app.screen.get_widget_and_offset_at(logs.region.x + x, logs.region.y)
+                if hit_widget is not logs or select_offset is None:
+                    return False
+            return True
+
+        await _wait_for_layout(pilot, selection_targets_are_ready)
+
+        await pilot.mouse_down(logs, offset=(0, 0))
+        await pilot._post_mouse_events([events.MouseMove], logs, offset=(19, 0), button=1)
+        await pilot.mouse_up(logs, offset=(19, 0))
+
+        def selection_copied_text() -> bool:
+            return (app.screen.get_selected_text() or "").strip() == "select this log text"
+
+        await _wait_for_layout(pilot, selection_copied_text)
+        selected_text = app.screen.get_selected_text()
+        assert selected_text is not None
+        assert selected_text.strip() == "select this log text"

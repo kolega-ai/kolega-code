@@ -598,6 +598,31 @@ class StickyRichLog(RichLog):
         self.clear()
         self.auto_follow_bottom = True
 
+    def render_line(self, y: int) -> Strip:
+        # RichLog does not participate in Textual text selection: its strips carry no
+        # "offset" meta, so drags never start a selection. Stamp content coordinates so
+        # the compositor can map mouse positions back into `self.lines`, and overlay the
+        # selection highlight. Both happen after super().render_line, i.e. outside
+        # RichLog's _line_cache, so the base selection_updated() refresh is enough to
+        # repaint highlight changes without cache invalidation.
+        strip = super().render_line(y)
+        content_y = self.scroll_offset.y + y
+        # #logs/#terminal set `overflow-x: hidden`, so scroll_x stays 0 and x-offsets
+        # may start at 0; y must still be translated by the vertical scroll offset.
+        strip = _with_selection_style(strip, self.text_selection, content_y, self.selection_style)
+        return _with_selection_offsets(strip, content_y)
+
+    def get_selection(self, selection: Selection) -> tuple[str, str] | None:
+        # Extract from `self.lines` (one Strip per visual line, indexed by content y)
+        # so coordinates match what is on screen. Strips are padded to render width,
+        # so rstrip each line to keep copied text clean.
+        if not self.lines:
+            return None
+        text = "\n".join(strip.text.rstrip() for strip in self.lines)
+        if not text.strip():
+            return None
+        return selection.extract(text), "\n"
+
 
 class TerminalOutputLog(StickyRichLog):
     """Sticky log for terminal output."""
