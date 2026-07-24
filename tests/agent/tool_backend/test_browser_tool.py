@@ -128,6 +128,65 @@ def test_browser_tool_schemas_use_snake_case_and_exclude_legacy_contract():
     assert "text_gone" in BROWSER_TOOL_SCHEMAS["browser_wait_for"]["properties"]
     assert "doubleClick" not in BROWSER_TOOL_SCHEMAS["browser_click"]["properties"]
 
+
+class TestLoopbackRefusedHint:
+    """Loopback connection refusals get guidance instead of a bare net error."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "http://localhost:9999/",
+            "http://127.0.0.1:9999/",
+            "http://[::1]:9999/",
+            "http://app.localhost:9999/",
+            "localhost:9999",
+        ],
+    )
+    async def test_refused_loopback_navigate_includes_hint(self, browser_tool, browser_manager, url):
+        browser_manager.navigate = AsyncMock(
+            side_effect=RuntimeError(f"Page.goto: net::ERR_CONNECTION_REFUSED at {url}")
+        )
+
+        with pytest.raises(RuntimeError) as exc_info:
+            await browser_tool.browser_navigate(url)
+
+        message = str(exc_info.value)
+        assert "ERR_CONNECTION_REFUSED" in message
+        assert "no server is listening on that port" in message
+        assert "same machine as the terminal" in message
+
+    @pytest.mark.asyncio
+    async def test_refused_remote_navigate_passes_through(self, browser_tool, browser_manager):
+        error = RuntimeError("Page.goto: net::ERR_CONNECTION_REFUSED at https://example.com/")
+        browser_manager.navigate = AsyncMock(side_effect=error)
+
+        with pytest.raises(RuntimeError) as exc_info:
+            await browser_tool.browser_navigate("https://example.com/")
+
+        assert exc_info.value is error
+        assert "no server is listening" not in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_loopback_other_errors_pass_through(self, browser_tool, browser_manager):
+        error = RuntimeError("Page.goto: Timeout 30000ms exceeded")
+        browser_manager.navigate = AsyncMock(side_effect=error)
+
+        with pytest.raises(RuntimeError) as exc_info:
+            await browser_tool.browser_navigate("http://localhost:9999/")
+
+        assert exc_info.value is error
+        assert "no server is listening" not in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_refused_loopback_new_tab_includes_hint(self, browser_tool, browser_manager):
+        browser_manager.tabs = AsyncMock(
+            side_effect=RuntimeError("Page.goto: net::ERR_CONNECTION_REFUSED at http://127.0.0.1:9999/")
+        )
+
+        with pytest.raises(RuntimeError, match="no server is listening on that port"):
+            await browser_tool.browser_tabs("new", url="http://127.0.0.1:9999/")
+
     legacy = {
         "launch_browser",
         "list_browsers",

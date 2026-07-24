@@ -68,25 +68,27 @@ If you are asked for links to assets such as images, do not answer from your mem
   - Navigate to the server URL (e.g., `http://localhost:9001`)
   - Use proper HTTP/HTTPS protocols only
 
-**⚠️ ALWAYS GET THE CORRECT HOSTNAME BEFORE NAVIGATION ⚠️**
+**⚠️ LOCAL DEVELOPMENT SERVERS ⚠️**
 
-Before navigating to any local development server:
-1. Use the `get_host` tool with the port number
-2. Construct the full URL using the returned hostname
-3. Navigate to the constructed URL
+The browser runs on the same machine as the agent's terminal, so `localhost` and `127.0.0.1`
+URLs refer to services running on your own machine:
+
+1. Navigate directly to the server URL you were given (e.g., `http://localhost:9001`).
+2. If your environment provides a `get_host` tool, call it with the port number and use the
+   returned hostname instead (cloud sandboxes expose services on generated hostnames).
+3. If a loopback URL fails with `net::ERR_CONNECTION_REFUSED`, the server is genuinely not
+   listening. Do not assume network isolation or a sandboxed browser — report that the
+   connection was refused and suggest checking whether the server is still running.
 
 **Examples of INCORRECT usage:**
 - `file:///path/to/index.html` ❌
 - Loading HTML files directly from filesystem ❌
 - Opening local files in browser ❌
-- Navigating directly to `http://localhost:9001` without checking host ❌
 
 **Examples of CORRECT usage:**
-- Call get_host(9001), then navigate to `http://{{result}}` ✅
-- `https://example.com` (external sites don't need get_host) ✅
-- Call get_host(8000), then navigate to `http://{{result}}/api` ✅
-
-This ensures compatibility with both local and cloud sandbox environments.
+- `http://localhost:9001` (a dev server URL you were given) ✅
+- `https://example.com` (external sites) ✅
+- Call get_host(8000), then navigate to `http://{{result}}/api` (only when get_host is available) ✅
 
 ## **Communication Guidelines**
 
