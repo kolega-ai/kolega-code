@@ -105,6 +105,9 @@ class CliSettings:
     # Additive optional field — absent in older files -> None -> use default
     # LSP config (enabled=True).
     lsp_enabled: Optional[bool] = None
+    # Additive optional field — absent in older files -> None -> eval tool
+    # enabled (persistent code kernels with the loopback tool bridge).
+    eval_enabled: Optional[bool] = None
     schema_version: int = SETTINGS_SCHEMA_VERSION
 
     @classmethod
@@ -139,6 +142,8 @@ class CliSettings:
             permission_mode=_coerce_permission_mode(data.get("permission_mode")),
             # Additive optional field; absent in older files -> None (use default).
             lsp_enabled=data.get("lsp_enabled"),
+            # Additive optional field; absent in older files -> None (enabled).
+            eval_enabled=data.get("eval_enabled"),
         )
 
     def to_dict(self) -> dict:
@@ -158,6 +163,7 @@ class CliSettings:
             "oauth_tokens": self.oauth_tokens,
             "permission_mode": _coerce_permission_mode(self.permission_mode),
             "lsp_enabled": self.lsp_enabled,
+            "eval_enabled": self.eval_enabled,
         }
 
     def get_api_key(self, provider: str) -> Optional[str]:

@@ -16,6 +16,7 @@ from kolega_code.services.browser import PlaywrightBrowserManager
 from .tool_backend.agent_tool import AgentTool
 from .tool_backend.browser_tool import BROWSER_TOOL_SCHEMAS, BrowserTool
 from .tool_backend.edit_tool import EditTool
+from .tool_backend.eval_tool import EvalTool
 from .tool_backend.codex_patch import CODEX_APPLY_PATCH_GRAMMAR
 from .tool_backend.glob_tool import GlobTool
 from .tool_backend.hashline_v2 import format_hash_lines, format_line_tag
@@ -551,12 +552,15 @@ class ToolCollection(LogMixin):
     # Shell execution + session management. Exposed to the planning and
     # investigation agents (via custom_tool_groups) so they can run investigative
     # commands even while read_only=True. Not read-only, so deliberately excluded
-    # from the parallel-safe set in _build_tool.
+    # from the parallel-safe set in _build_tool. `eval` (arbitrary code in the
+    # persistent kernels) carries the same power level as exec_command, so it
+    # shares this group.
     command_tools = [
         "exec_command",
         "write_stdin",
         "kill_command",
         "list_sessions",
+        "eval",
     ]
 
     def __init__(
@@ -805,6 +809,15 @@ class ToolCollection(LogMixin):
             self.caller,
             self.filesystem,
             terminal_manager=self.terminal_manager,
+        )
+        self.eval_tool = EvalTool(
+            self.project_path,
+            self.workspace_id,
+            self.thread_id,
+            self.connection_manager,
+            self.config,
+            self.caller,
+            self.filesystem,
         )
         memory_manager = getattr(self.caller, "memory_manager", None)
         if not isinstance(memory_manager, ProjectMemoryManager):
@@ -1854,6 +1867,50 @@ class ToolCollection(LogMixin):
         """
         return await self.terminal_tool.list_sessions()
 
+    async def eval(
+        self,
+        language: str,
+        code: str,
+        title: Optional[str] = None,
+        timeout: Optional[float] = None,
+        reset: bool = False,
+    ) -> Union[str, List[Any]]:
+        """Run one step of code in a persistent kernel. State (imports, variables, functions) persists across eval calls, across tool calls, and across sub-agents in this session — each call is one logical step.
+
+        language="py" runs Python in kolega-code's own managed environment (check python_info()): numpy, pandas, matplotlib, and pillow are preinstalled, and pip_install("scipy") adds more. Use tool.exec_command for anything that needs the project's own venv. language="js" runs JavaScript on Bun or Node (>= 18) when available.
+
+        Work incrementally: imports → define → test → use, each its own cell. Re-run setup ONLY after reset or a kernel crash. On error, fix and re-run just the failing step. Prior top-level names survive into the next cell — NEVER re-import or re-declare them.
+
+        Both kernels can call back into your own tools over a loopback bridge — loop tool.search_codebase over many patterns, read images with tool.read_image, or dispatch sub-agents without leaving the cell. Bridge calls count as real tool calls (permissions and hooks apply). Use list_tools() in a cell to discover available tool names. tool.* results arrive in each tool's model-facing format (e.g. tool.read_file_section wraps content in a markdown header and code fence) — for raw file bytes like CSV/data loads, use the read()/write() helpers instead, which hit the filesystem directly.
+
+        Python prelude (sync; pass kwargs):
+          display(value)                 rich output: dict/list → JSON, matplotlib Figure → image
+          print(value)                   shows in the cell's stdout
+          read(path, offset=1, limit=None)   write(path, content)   env(key=None, value=None)
+          tool.<name>(args_dict, **kwargs)   call any session tool (list_tools() shows names)
+          parallel([lambda: ..., ...])   run thunks concurrently, results in order
+          pip_install(*pkgs)   python_info()   log(msg)   phase(title)
+        Top-level await works; do NOT call asyncio.run() inside a coroutine cell.
+
+        JavaScript prelude (async; ONE trailing object literal, never positional args):
+          display(value)   read(path, offset, limit)   write(path, content)   env(key, value)
+          await tool.<name>({...})   await listTools()
+          await parallel([() => ..., ...])   npm_install("pkg")   setGlobal(name, value)
+          log(msg)   phase(title)
+        Top-level await works; declarations inside await-wrapped cells do NOT persist — use setGlobal(name, value) for cross-cell state there. Redeclaring an existing top-level name errors: assign without redeclaring, or pass reset=true.
+
+        Args:
+            language: "py" for the persistent Python kernel, "js" for the persistent JavaScript kernel (js needs bun or node >= 18 on PATH).
+            code: code to run in this eval call, verbatim. Top-level await is fine.
+            title: short label for this step shown in the transcript (e.g. "load csv", "chart by region").
+            timeout: timeout for this cell in seconds; 0 disables it. Default 120, max 600.
+            reset: wipe this language's kernel before running (fresh state). The other language is untouched.
+
+        Returns:
+            The cell's stdout/stderr, the last expression's value (REPL echo), display() outputs (images included when the model supports vision), log()/phase() status lines, and any error with its traceback.
+        """
+        return await self.eval_tool.eval(language, code, title=title, timeout=timeout, reset=reset)
+
     async def read_entire_file(self, path: str) -> str:
         """
         Read the contents of a file in the project.
@@ -2487,6 +2544,11 @@ class ToolCollection(LogMixin):
         if method_name == "read_image":
             return bool(getattr(self.caller, "supports_vision", False))
 
+        # Settings gate: eval can be disabled host-wide (AgentConfig.eval_enabled).
+        # Strict `is False` so Mock configs in tests keep the default (enabled).
+        if method_name == "eval" and getattr(self.config, "eval_enabled", True) is False:
+            return False
+
         # Check custom tool groups first
         if self.tool_config.custom_tool_groups:
             for group_name in self.tool_config.custom_tool_groups:
@@ -2594,6 +2656,12 @@ class ToolCollection(LogMixin):
             if hasattr(self, "terminal_tool") and hasattr(self.terminal_tool, "terminal_manager"):
                 await self.terminal_tool.terminal_manager.cleanup_all()
                 await self.log_info("Cleaned up terminal resources", sender="ToolCollection")
+
+            # Clean up eval kernel resources (only the top-level agent owns the
+            # session-shared kernel manager; EvalTool enforces that internally).
+            if hasattr(self, "eval_tool"):
+                await self.eval_tool.shutdown_if_owner()
+                await self.log_info("Cleaned up eval kernel resources", sender="ToolCollection")
 
             # Clean up any browser resources
             if hasattr(self, "browser_tool") and hasattr(self.browser_tool, "cleanup"):

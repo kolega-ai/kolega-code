@@ -46,6 +46,44 @@ use) reports its real exit code and output. Processes started by the agent
 never outlive kolega-code: all sessions are terminated when the agent session
 ends, including on quit.
 
+### Code execution (eval)
+
+`eval` runs one step of code in a **persistent kernel** — `language="py"` for
+Python or `language="js"` for JavaScript (requires Bun or Node ≥ 18 on PATH).
+Imports, variables, and functions survive across `eval` calls, across tool
+calls, and across sub-agents in the session, so the agent works incrementally
+(imports → define → test → use) instead of re-running whole scripts.
+
+Inside a cell, either kernel can **call back into the agent's own tools** over
+an authenticated loopback bridge — `tool.search_codebase({pattern: "TODO"})`
+from Python, or `await tool.read_image({path: "chart.png"})` from JavaScript.
+Bridge calls go through the same permission and hook pipeline as model-issued
+tool calls, and results arrive in each tool's model-facing format (for example,
+`tool.read_file_section` wraps content in a markdown header and code fence).
+For raw file contents — CSV loads, JSON handoffs — use the in-kernel
+`read`/`write` helpers, which hit the filesystem directly. Other helpers include
+`display()` for rich outputs (matplotlib figures are returned as images to
+vision-capable models), `env`, `list_tools()` for tool discovery, `parallel()`
+for concurrent calls, and `pip_install()` / `npm_install()` for adding packages.
+
+The Python kernel runs in a **dedicated managed environment** (not your project
+venv, not the CLI's own interpreter): kolega-code provisions a CPython 3.12 with
+numpy, pandas, matplotlib, and pillow preinstalled on first use, so data and
+charting work everywhere without touching project or CLI dependencies. Executing
+your project's own code with its dependencies stays with `exec_command`, which
+auto-activates the project `.venv`.
+
+The environment lives at `eval-env/` under the [state directory](../troubleshooting/diagnostics/)
+(override with `KOLEGA_CODE_STATE_DIR`). It upgrades itself: if a Kolega Code
+update changes the bundled packages or Python version, the next `eval` call
+reprovisions automatically. Deleting the directory is always safe — it is simply
+recreated on demand. Updating the CLI with `kolega-code update` never touches it.
+
+Set `reset: true` to wipe a kernel's state; `timeout` bounds a cell (interrupts
+with `KeyboardInterrupt` on Python). Cells run locally with the same trust level
+as `exec_command` and are gated by command permissions in ask mode. Disable the
+feature with `"eval_enabled": false` in settings.
+
 ### Browser
 
 Drive a real browser (Playwright) for web tasks:

@@ -57,6 +57,20 @@ def test_settings_store_missing_file_returns_empty_settings(tmp_path: Path) -> N
     assert settings.permission_mode == "ask"
     assert settings.api_keys == {}
     assert settings.agent_models == {}
+    assert settings.eval_enabled is None
+
+
+def test_settings_store_round_trips_eval_enabled(tmp_path: Path) -> None:
+    store = SettingsStore(tmp_path)
+    store.save(CliSettings(eval_enabled=False))
+
+    loaded = store.load()
+    assert loaded.eval_enabled is False
+    assert loaded.to_dict()["eval_enabled"] is False
+
+    # Absent in older files -> None -> the eval tool stays enabled downstream.
+    store.save(CliSettings())
+    assert SettingsStore(tmp_path).load().eval_enabled is None
 
 
 def test_settings_store_round_trips_agent_models(tmp_path: Path) -> None:

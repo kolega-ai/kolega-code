@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, PrivateAttr, model_validator
 
@@ -216,6 +216,28 @@ class AgentConfig(BaseModel):
     # servers. Excluded from serialization (parity with mcp_config) — it is a
     # runtime-resolved trust flag, not user-editable config.
     lsp_project_trusted: bool = Field(default=False, exclude=True, description="Project LSP config trust flag")
+
+    # eval tool (persistent code kernels with a loopback tool bridge). All fields
+    # are additive with defaults that enable the feature; excluded from
+    # serialization since they carry local paths (parity with lsp/mcp_config).
+    eval_enabled: bool = Field(default=True, exclude=True, description="Enable the eval tool and its kernels")
+    eval_python_version: str = Field(
+        default="3.12", exclude=True, description="Python version requested for the managed eval environment"
+    )
+    eval_env_path: Optional[str] = Field(
+        default=None, exclude=True, description="Override location of the managed eval environment directory"
+    )
+    eval_kernel_packages: Optional[List[str]] = Field(
+        default=None, exclude=True, description="Extra packages installed into the eval environment at provision time"
+    )
+    eval_python_path: Optional[str] = Field(
+        default=None,
+        exclude=True,
+        description="Full interpreter override for the eval Python kernel (skips managed-env provisioning)",
+    )
+    eval_js_runtime: Optional[str] = Field(
+        default=None, exclude=True, description="JS runtime for the eval JS kernel: 'bun', 'node', or a path"
+    )
 
     def model_config_for_agent(self, agent_name: Optional[str]) -> ModelConfig:
         """Return the model configuration an agent should use for its main loop.
