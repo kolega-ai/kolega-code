@@ -8,21 +8,21 @@ fonttools==4.63.0
     # via matplotlib
 kiwisolver==1.5.0
     # via matplotlib
-matplotlib==3.10.3
-    # via -r kolega_code/agent/eval/bundle-requirements.in
-numpy==2.2.6
+matplotlib==3.11.1
+    # via -r bundle-requirements.in
+numpy==2.5.1
     # via
-    #   -r kolega_code/agent/eval/bundle-requirements.in
+    #   -r bundle-requirements.in
     #   contourpy
     #   matplotlib
     #   pandas
 packaging==26.2
     # via matplotlib
-pandas==2.3.1
-    # via -r kolega_code/agent/eval/bundle-requirements.in
+pandas==3.0.5
+    # via -r bundle-requirements.in
 pillow==12.3.0
     # via
-    #   -r kolega_code/agent/eval/bundle-requirements.in
+    #   -r bundle-requirements.in
     #   matplotlib
 pyparsing==3.3.2
     # via matplotlib
@@ -30,9 +30,5 @@ python-dateutil==2.9.0.post0
     # via
     #   matplotlib
     #   pandas
-pytz==2026.2
-    # via pandas
 six==1.17.0
     # via python-dateutil
-tzdata==2026.3
-    # via pandas
