@@ -219,6 +219,47 @@ async def test_close_all_terminates_sessions(manager):
 
 
 @pytest.mark.asyncio
+async def test_warns_when_command_leaves_background_jobs(manager):
+    # Backgrounded (`&`) processes die with the shell that started them; the
+    # result must say so loudly instead of letting the agent believe a server
+    # it launched is still listening. By policy the warning must NOT teach
+    # detach recipes (nohup/disown): nothing should outlive kolega-code.
+    result = await manager.exec_command("sleep 30 & echo main-done", yield_time_ms=8000)
+    assert result.status == "exited"
+    assert "main-done" in result.output
+    assert "[kolega-code] WARNING: background process(es)" in result.output
+    assert "exec_command background=true" in result.output
+    assert "nohup" not in result.output
+    assert "disown" not in result.output
+
+
+@pytest.mark.asyncio
+async def test_no_background_warning_for_quiet_commands(manager):
+    result = await manager.exec_command("echo plain-done", yield_time_ms=5000)
+    assert result.status == "exited"
+    assert "WARNING" not in result.output
+
+
+@pytest.mark.asyncio
+async def test_no_background_warning_when_jobs_finished(manager):
+    result = await manager.exec_command("sleep 0.2 & wait; echo waited-done", yield_time_ms=5000)
+    assert result.status == "exited"
+    assert "waited-done" in result.output
+    assert "WARNING" not in result.output
+
+
+@pytest.mark.asyncio
+async def test_no_background_warning_when_foreground_session_killed(manager):
+    # kill_command on a foreground process leaves a stale job-table entry when
+    # the EXIT trap fires; the liveness filter must keep that from warning.
+    result = await manager.exec_command("sleep 30", yield_time_ms=300)
+    assert result.status == "running"
+    killed = await manager.kill_session(result.session_id, "TERM")
+    assert killed.status == "exited"
+    assert "WARNING" not in killed.output
+
+
+@pytest.mark.asyncio
 async def test_pty_display_broadcast_decodes_split_utf8_without_replacement(tmp_path):
     connection = _RecordingConnectionManager()
     session = PtySession("s_test", "echo", str(tmp_path), connection, "workspace", "thread")

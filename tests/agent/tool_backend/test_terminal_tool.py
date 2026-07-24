@@ -10,7 +10,7 @@ import uuid
 from kolega_code.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
 from kolega_code.events import AgentEvent
 from kolega_code.services.base import ExecResult
-from kolega_code.agent.tool_backend.terminal_tool import TerminalTool
+from kolega_code.agent.tool_backend.terminal_tool import BACKGROUND_SETTLE_MS, TerminalTool
 
 # Check if running in CI environment
 SKIP_IN_CI = bool(os.getenv("CI")) or bool(os.getenv("GITLAB_CI"))
@@ -298,3 +298,99 @@ class TestUnifiedExecTools:
         result = await terminal_tool.exec_command("rm -rf /")
         assert "blocked" in result
         terminal_tool.terminal_manager.exec_command.assert_not_awaited()
+
+
+class TestBackgroundExec:
+    """Tests for exec_command(background=True) dev-server style launches."""
+
+    @pytest.mark.asyncio
+    async def test_background_running_caps_yield_and_annotates_result(self, terminal_tool):
+        terminal_tool.terminal_manager = Mock()
+        terminal_tool.terminal_manager.exec_command = AsyncMock(
+            return_value=ExecResult(status="running", session_id="s_1", output="ready", duration_ms=2000)
+        )
+
+        data = json.loads(await terminal_tool.exec_command("npm run dev", background=True, yield_time_ms=30000))
+
+        assert data["status"] == "running"
+        assert data["session_id"] == "s_1"
+        assert data["background"] is True
+        assert "kill_command" in data["note"]
+        kwargs = terminal_tool.terminal_manager.exec_command.call_args.kwargs
+        assert kwargs["yield_time_ms"] == BACKGROUND_SETTLE_MS
+        assert "s_1" in terminal_tool._background_sessions
+
+    @pytest.mark.asyncio
+    async def test_background_early_exit_returns_real_exit_code(self, terminal_tool):
+        terminal_tool.terminal_manager = Mock()
+        terminal_tool.terminal_manager.exec_command = AsyncMock(
+            return_value=ExecResult(status="exited", exit_code=1, output="EADDRINUSE", duration_ms=300)
+        )
+
+        data = json.loads(await terminal_tool.exec_command("npm run dev", background=True))
+
+        assert data["status"] == "exited"
+        assert data["exit_code"] == 1
+        assert "background" not in data
+        assert terminal_tool._background_sessions == set()
+
+    @pytest.mark.asyncio
+    async def test_default_exec_is_not_annotated_as_background(self, terminal_tool):
+        terminal_tool.terminal_manager = Mock()
+        terminal_tool.terminal_manager.exec_command = AsyncMock(
+            return_value=ExecResult(status="running", session_id="s_2", output="", duration_ms=10000)
+        )
+
+        data = json.loads(await terminal_tool.exec_command("sleep 5", yield_time_ms=30000))
+
+        assert data["status"] == "running"
+        assert "background" not in data
+        kwargs = terminal_tool.terminal_manager.exec_command.call_args.kwargs
+        assert kwargs["yield_time_ms"] == 30000
+        assert terminal_tool._background_sessions == set()
+
+    @pytest.mark.asyncio
+    async def test_list_sessions_marks_background_and_prunes_dead(self, terminal_tool):
+        terminal_tool.terminal_manager = Mock()
+        terminal_tool.terminal_manager.exec_command = AsyncMock(
+            return_value=ExecResult(status="running", session_id="s_1", output="", duration_ms=2000)
+        )
+        await terminal_tool.exec_command("npm run dev", background=True)
+        terminal_tool._background_sessions.add("s_stale")
+
+        terminal_tool.terminal_manager.list_sessions = AsyncMock(
+            return_value={"s_1": {"command": "npm run dev", "running": True}}
+        )
+        data = json.loads(await terminal_tool.list_sessions())
+
+        assert data["sessions"]["s_1"]["background"] is True
+        # Ids no longer running are pruned from the tracking set.
+        assert terminal_tool._background_sessions == {"s_1"}
+
+    @pytest.mark.asyncio
+    async def test_kill_command_forgets_background_session(self, terminal_tool):
+        terminal_tool.terminal_manager = Mock()
+        terminal_tool.terminal_manager.kill_session = AsyncMock(return_value=ExecResult(status="exited", exit_code=143))
+        terminal_tool._background_sessions.add("s_1")
+
+        await terminal_tool.kill_command("s_1", "TERM")
+
+        assert terminal_tool._background_sessions == set()
+
+    @pytest.mark.asyncio
+    async def test_background_end_to_end_dev_server_pattern(self, terminal_tool):
+        # Real PTY through the default manager: a backgrounded server process
+        # stays alive across later tool calls, appears in list_sessions, and
+        # dies via kill_command — the dev-server flow the browser agent needs.
+        data = json.loads(await terminal_tool.exec_command("sleep 30", background=True))
+        assert data["status"] == "running"
+        assert data["background"] is True
+        session_id = data["session_id"]
+
+        sessions = json.loads(await terminal_tool.list_sessions())["sessions"]
+        assert session_id in sessions
+        assert sessions[session_id]["background"] is True
+
+        killed = json.loads(await terminal_tool.kill_command(session_id))
+        assert killed["status"] == "exited"
+        assert session_id not in json.loads(await terminal_tool.list_sessions())["sessions"]

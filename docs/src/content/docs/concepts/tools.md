@@ -33,6 +33,19 @@ pending action—rerun it with `apply: true`.
 
 Run shell commands in the project and stream their output to the **Terminal** tab.
 
+**Background processes & dev servers:** pass `background=true` to `exec_command`
+for dev servers, watchers, and long builds you want to keep running. It returns
+after a short startup window (~2s) with a `session_id`; the process keeps
+running until stopped. Poll output with `write_stdin`, stop it with
+`kill_command`, and see all running shells with `list_sessions` (background
+sessions are marked `background: true`). Avoid shell `&` instead — processes
+backgrounded that way are killed when the command that started them ends, and
+the result prints a warning when that happens. A command passed with
+`background=true` that exits within the startup window (e.g. port already in
+use) reports its real exit code and output. Processes started by the agent
+never outlive kolega-code: all sessions are terminated when the agent session
+ends, including on quit.
+
 ### Browser
 
 Drive a real browser (Playwright) for web tasks:

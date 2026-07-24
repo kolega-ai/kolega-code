@@ -15,6 +15,17 @@ from kolega_code.services.base import ExecResult
 from kolega_code.services.terminal import LocalTerminalManager, build_child_env
 from .base_tool import BaseTool
 
+# Startup window for background=true launches: long enough to capture a dev
+# server's "ready" line or an early crash (port in use, missing env), short
+# enough that the agent is not blocked on a process meant to outlive the call.
+BACKGROUND_SETTLE_MS = 2000
+
+_BACKGROUND_NOTE = (
+    "Running in background. Poll output with write_stdin(session_id), stop with "
+    "kill_command(session_id), and see all running shells with list_sessions. "
+    "The session keeps running until killed or the agent session ends."
+)
+
 
 class TerminalTool(BaseTool):
     def __init__(
@@ -43,6 +54,10 @@ class TerminalTool(BaseTool):
         self.venv_activation_command = None
         self.initialized = False
         self.security_check_enabled = False
+        # Ids of sessions started with background=true that are still running.
+        # Best-effort annotation metadata for list_sessions; the sessions
+        # themselves are always tracked manager-wide.
+        self._background_sessions: set[str] = set()
 
         # Use injected terminal_manager if provided, otherwise create local one
         if self.terminal_manager is None:
@@ -104,18 +119,20 @@ class TerminalTool(BaseTool):
 
     # -- model-facing unified-exec tools -----------------------------------
 
-    def _format_result(self, result: ExecResult) -> str:
-        return json.dumps(
-            {
-                "status": result.status,
-                "exit_code": result.exit_code,
-                "session_id": result.session_id,
-                "output": result.output,
-                "truncated": result.truncated,
-                "original_token_count": result.original_token_count,
-                "duration_ms": result.duration_ms,
-            }
-        )
+    def _format_result(self, result: ExecResult, *, background: bool = False) -> str:
+        payload = {
+            "status": result.status,
+            "exit_code": result.exit_code,
+            "session_id": result.session_id,
+            "output": result.output,
+            "truncated": result.truncated,
+            "original_token_count": result.original_token_count,
+            "duration_ms": result.duration_ms,
+        }
+        if background and result.status == "running" and result.session_id is not None:
+            payload["background"] = True
+            payload["note"] = _BACKGROUND_NOTE
+        return json.dumps(payload)
 
     async def exec_command(
         self,
@@ -124,6 +141,7 @@ class TerminalTool(BaseTool):
         yield_time_ms: int = 10000,
         max_output_tokens: int = 10000,
         login: bool = False,
+        background: bool = False,
     ) -> str:
         """Run a shell command as a fresh process and return its output.
 
@@ -138,6 +156,16 @@ class TerminalTool(BaseTool):
         chain commands in one call with `cd path && ...`. Defaults to the
         project root.
 
+        Running long-lived processes: pass background=true for dev servers,
+        watchers, and long builds you want to keep running while you do other
+        work. It returns after a short startup window with a session_id; the
+        process keeps running until you stop it with kill_command or the agent
+        session ends. Do NOT use shell `&` for this — processes backgrounded
+        that way are killed when the command that started them ends. Manage
+        background sessions with write_stdin (poll output), kill_command
+        (stop), and list_sessions (see all running shells). Always verify a
+        server answers (e.g. curl) before handing its URL to the browser agent.
+
         Args:
             command: Shell command line, executed via `bash -c`.
             workdir: Working directory for the command. Relative paths resolve
@@ -146,11 +174,15 @@ class TerminalTool(BaseTool):
                            in milliseconds (clamped to 250–30000).
             max_output_tokens: Maximum tokens of output to return in this call.
             login: Run the shell as a login shell (sources profile). Default false.
+            background: Keep the command running and return after a short
+                        startup window (~2s) with a session_id. Commands that
+                        exit within that window report their real exit code.
 
         Returns:
             A JSON object: {"status": "exited"|"running", "exit_code",
             "session_id", "output", "truncated", "original_token_count",
-            "duration_ms"}.
+            "duration_ms"}. Background launches that are still running also
+            include "background": true and a "note" with management hints.
         """
         if self.security_check_enabled:
             allowed, denied_reason = await self._run_command_security_check(command)
@@ -164,13 +196,15 @@ class TerminalTool(BaseTool):
             result = await self.terminal_manager.exec_command(
                 command,
                 workdir=wd,
-                yield_time_ms=yield_time_ms,
+                yield_time_ms=min(yield_time_ms, BACKGROUND_SETTLE_MS) if background else yield_time_ms,
                 max_output_tokens=max_output_tokens,
                 login=login,
             )
         except Exception as exc:
             return json.dumps({"status": "error", "error": str(exc)})
-        return self._format_result(result)
+        if background and result.status == "running" and result.session_id is not None:
+            self._background_sessions.add(result.session_id)
+        return self._format_result(result, background=background)
 
     async def write_stdin(
         self,
@@ -222,16 +256,23 @@ class TerminalTool(BaseTool):
             result = await self.terminal_manager.kill_session(session_id, signal)
         except KeyError as exc:
             return json.dumps({"status": "error", "error": str(exc)})
+        self._background_sessions.discard(session_id)
         return self._format_result(result)
 
     async def list_sessions(self) -> str:
         """List currently running exec sessions.
 
+        Includes sessions started with exec_command background=true, annotated
+        with "background": true.
+
         Returns:
             A JSON object mapping each running session id to its command,
-            working directory, and runtime in seconds.
+            working directory, runtime in seconds, and background flag.
         """
         sessions = await self.terminal_manager.list_sessions()
+        self._background_sessions.intersection_update(sessions)
+        for session_id, info in sessions.items():
+            info["background"] = session_id in self._background_sessions
         return json.dumps({"sessions": sessions})
 
     # -- internal one-shot helper (not exposed to the model) ---------------

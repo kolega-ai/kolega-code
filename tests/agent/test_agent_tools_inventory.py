@@ -351,6 +351,26 @@ def test_planning_agent_exposes_read_only_and_planning_tools(project_path, mock_
     )
 
 
+def test_exec_command_exposes_optional_background_param(project_path, mock_connection_manager, agent_config):
+    """The model-facing exec_command schema includes the optional background flag."""
+    agent = CoderAgent(
+        project_path=project_path,
+        workspace_id="test_workspace",
+        thread_id=str(uuid.uuid4()),
+        connection_manager=mock_connection_manager,
+        config=agent_config,
+        agent_mode=AgentMode.CLI,
+    )
+
+    exec_tool = next(tool for tool in agent.tool_collection.get_tool_list() if tool.name == "exec_command")
+    params = {param.name: param for param in exec_tool.parameters}
+
+    assert "background" in params
+    assert params["background"].type == "boolean"
+    assert params["background"].required is False
+    assert params["background"].description
+
+
 def test_shared_tool_names_are_well_formed(project_path, mock_connection_manager, agent_config):
     """Shared agent tool definitions have valid names and descriptions."""
     agents = [

@@ -1,4 +1,5 @@
 import json
+import urllib.parse
 from pathlib import Path
 from typing import Any, Optional, Union
 
@@ -12,6 +13,28 @@ _TARGET = {
     "type": "string",
     "description": "Exact element ref from browser_snapshot (for example e12), or a unique selector.",
 }
+
+_LOOPBACK_REFUSED_HINT = (
+    "The connection was refused — no server is listening on that port. The browser runs on the "
+    "same machine as the terminal; if the server was started backgrounded (`&`) in an earlier "
+    "terminal command it has since exited. Restart it with exec_command background=true, "
+    "confirm it answers with curl, then retry."
+)
+
+
+def _is_loopback_url(url: str) -> bool:
+    candidate = url.strip()
+    if "://" not in candidate:
+        candidate = f"http://{candidate}"
+    host = (urllib.parse.urlsplit(candidate).hostname or "").lower()
+    return host == "localhost" or host.endswith(".localhost") or host == "::1" or host.startswith("127.")
+
+
+def _augment_loopback_refused(url: Optional[str], exc: Exception) -> Exception:
+    """Append localhost troubleshooting guidance to loopback connection refusals."""
+    if url and "ERR_CONNECTION_REFUSED" in str(exc) and _is_loopback_url(url):
+        return RuntimeError(f"{exc}\n\n{_LOOPBACK_REFUSED_HINT}")
+    return exc
 
 
 def _schema(properties: dict[str, Any], required: Optional[list[str]] = None) -> dict[str, Any]:
@@ -255,7 +278,10 @@ class BrowserTool(BaseTool):
 
     async def browser_navigate(self, url: str) -> str:
         previous = self.browser_manager.session_id
-        result = await self.browser_manager.navigate(url)
+        try:
+            result = await self.browser_manager.navigate(url)
+        except Exception as exc:
+            raise _augment_loopback_refused(url, exc) from exc
         await self._broadcast_launched(previous, result)
         return self._format_page(result)
 
@@ -322,7 +348,10 @@ class BrowserTool(BaseTool):
 
     async def browser_tabs(self, action: str, index: Optional[int] = None, url: Optional[str] = None) -> str:
         previous = self.browser_manager.session_id
-        result = await self.browser_manager.tabs(action, index=index, url=url)
+        try:
+            result = await self.browser_manager.tabs(action, index=index, url=url)
+        except Exception as exc:
+            raise _augment_loopback_refused(url if action == "new" else None, exc) from exc
         await self._broadcast_launched(previous, result)
         lines = ["## Open tabs"]
         for tab in result["tabs"]:

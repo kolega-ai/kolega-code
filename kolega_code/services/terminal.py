@@ -54,6 +54,38 @@ _VENV_ACTIVATE_REL = os.path.join(".venv", "bin", "activate")
 # Env vars `uv run` injects when launching this app from a source checkout.
 _RUNTIME_VENV_VARS = ("VIRTUAL_ENV", "VIRTUAL_ENV_PROMPT", "UV", "UV_RUN_RECURSION_DEPTH")
 
+# Shell preamble installed ahead of every command. Each exec runs as a pty
+# session leader, so when its shell exits the kernel SIGHUPs the whole
+# foreground process group — silently killing anything the command left
+# backgrounded with `&`. The EXIT trap turns that silent kill into an explicit
+# warning that names the surviving-till-exit pids and the supported patterns.
+# (`jobs -p` is empty when no background jobs linger, so quiet commands stay
+# quiet; bash and sh both evaluate the trap the same way. The message avoids
+# backticks and extra `%` specifiers: the trap body is re-evaluated when it
+# fires, and printf reuses its format for surplus arguments.)
+#
+# Two guards keep the warning accurate:
+# - The TERM/INT/HUP traps record signal-driven exits (kill_command) in
+#   `_kolega_signaled` and re-exit with the equivalent 128+signal status. A
+#   killed foreground command lingers in the job table when the EXIT trap
+#   fires, so without this flag kill_command would warn as if `&` had been
+#   misused. (Checking job state or pid liveness alone races under load —
+#   the doomed child may not have been reaped yet.)
+# - `kill -0` liveness filters jobs that already died on their own before a
+#   normal exit, so the warning only names processes the shell exit actually
+#   kills.
+_BACKGROUND_JOB_TRAP = (
+    "trap '_kolega_signaled=1; exit 143' TERM; "
+    "trap '_kolega_signaled=1; exit 130' INT; "
+    "trap '_kolega_signaled=1; exit 129' HUP; "
+    'trap \'if [ -z "${_kolega_signaled:-}" ]; then pids=""; for p in $(jobs -p); do '
+    'kill -0 $p 2>/dev/null && pids="$pids $p"; done; '
+    'pids="${pids# }"; if [ -n "$pids" ]; then '
+    'printf "\\n[kolega-code] WARNING: background process(es) (%s) backgrounded with & were terminated when this '
+    "command ended. To keep a process running between commands, re-run it with exec_command background=true; "
+    'it will still be stopped when the kolega-code session ends.\\n" "$pids" >&2; fi; fi\' EXIT; '
+)
+
 
 def _strip_runtime_venv(env: Dict[str, str], runtime_prefix: Optional[str] = None) -> Dict[str, str]:
     """Remove this process's own venv from ``env`` (mutating and returning it).
@@ -160,6 +192,11 @@ class PtySession:
             activate = os.path.join(str(self.workdir), _VENV_ACTIVATE_REL)
             if os.path.isfile(activate):
                 command = f"source {shlex.quote(activate)} 2>/dev/null; {command}"
+        # Install the background-job warning ahead of everything else so it
+        # survives venv activation and still fires if the command backgrounds
+        # processes and exits (the trap is overwritten only if the command
+        # sets its own EXIT trap).
+        command = _BACKGROUND_JOB_TRAP + command
 
         shell = _pick_shell()
         shell_args = ["-lc", command] if self.login else ["-c", command]

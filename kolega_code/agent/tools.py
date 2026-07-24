@@ -1747,6 +1747,7 @@ class ToolCollection(LogMixin):
         yield_time_ms: int = 10000,
         max_output_tokens: int = 10000,
         login: bool = False,
+        background: bool = False,
     ) -> str:
         """Run a shell command as a fresh process and return its output.
 
@@ -1761,6 +1762,16 @@ class ToolCollection(LogMixin):
         chain commands in one call with `cd path && ...`. Defaults to the
         project root.
 
+        Running long-lived processes: pass background=true for dev servers,
+        watchers, and long builds you want to keep running while you do other
+        work. It returns after a short startup window with a session_id; the
+        process keeps running until you stop it with kill_command or the agent
+        session ends. Do NOT use shell `&` for this — processes backgrounded
+        that way are killed when the command that started them ends. Manage
+        background sessions with write_stdin (poll output), kill_command
+        (stop), and list_sessions (see all running shells). Always verify a
+        server answers (e.g. curl) before handing its URL to the browser agent.
+
         Args:
             command: Shell command line, executed via `bash -c`.
             workdir: Working directory for the command. Defaults to project root.
@@ -1768,11 +1779,15 @@ class ToolCollection(LogMixin):
                            milliseconds (clamped to 250–30000).
             max_output_tokens: Maximum tokens of output to return in this call.
             login: Run the shell as a login shell (sources profile). Default false.
+            background: Keep the command running and return after a short
+                        startup window (~2s) with a session_id. Commands that
+                        exit within that window report their real exit code.
 
         Returns:
             A JSON object: {"status": "exited"|"running", "exit_code",
             "session_id", "output", "truncated", "original_token_count",
-            "duration_ms"}.
+            "duration_ms"}. Background launches that are still running also
+            include "background": true and a "note" with management hints.
         """
         return await self.terminal_tool.exec_command(
             command,
@@ -1780,6 +1795,7 @@ class ToolCollection(LogMixin):
             yield_time_ms=yield_time_ms,
             max_output_tokens=max_output_tokens,
             login=login,
+            background=background,
         )
 
     async def write_stdin(
@@ -1829,9 +1845,12 @@ class ToolCollection(LogMixin):
     async def list_sessions(self) -> str:
         """List currently running exec sessions.
 
+        Includes sessions started with exec_command background=true, annotated
+        with "background": true.
+
         Returns:
             A JSON object mapping each running session id to its command,
-            working directory, and runtime in seconds.
+            working directory, runtime in seconds, and background flag.
         """
         return await self.terminal_tool.list_sessions()
 
