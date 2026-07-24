@@ -33,6 +33,7 @@ COMMAND_PERMISSION_TOOLS = frozenset(
     {
         "execute_terminal_command",
         "exec_command",
+        "eval",
     }
 )
 EDIT_PERMISSION_TOOLS = frozenset(
@@ -201,6 +202,19 @@ class ProjectPermissionStore:
 
 
 def permission_request_for_tool(tool_name: str, inputs: dict[str, Any]) -> Optional[PermissionRequest]:
+    if tool_name == "eval":
+        # Shape the cell as "[py] <code>" so the generic command rules work:
+        # the "executable" allow-rule option becomes "[py]" / "[js]", letting a
+        # user allow all cells for one language with a single rule.
+        language = str(inputs.get("language") or "").strip() or "?"
+        code = str(inputs.get("code") or "").strip()
+        return PermissionRequest(
+            kind=PermissionKind.COMMAND,
+            tool_name=tool_name,
+            inputs=inputs,
+            command=f"[{language}] {code}",
+        )
+
     if tool_name in COMMAND_PERMISSION_TOOLS:
         command = str(inputs.get("command") or "").strip()
         return PermissionRequest(

@@ -512,6 +512,7 @@ def build_agent_config(
             mcp_config=mcp_config,
             lsp=LspConfig(enabled=True if settings is None or settings.lsp_enabled is None else settings.lsp_enabled),
             lsp_project_trusted=lsp_project_trusted,
+            eval_enabled=(True if settings is None or settings.eval_enabled is None else bool(settings.eval_enabled)),
         )
     except ValueError as exc:
         raise CliConfigError(str(exc)) from exc

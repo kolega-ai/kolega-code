@@ -181,6 +181,7 @@ def test_investigation_agent_tools(project_path, mock_connection_manager, agent_
         "write_stdin",
         "kill_command",
         "list_sessions",
+        "eval",
         "find_files_by_pattern",
         "list_directory",
         "lsp",
@@ -369,6 +370,52 @@ def test_exec_command_exposes_optional_background_param(project_path, mock_conne
     assert params["background"].type == "boolean"
     assert params["background"].required is False
     assert params["background"].description
+
+
+def test_eval_tool_schema_carries_the_kernel_contract(project_path, mock_connection_manager, agent_config):
+    """The eval tool's docstring-derived schema teaches the model the feature."""
+    agent = CoderAgent(
+        project_path=project_path,
+        workspace_id="test_workspace",
+        thread_id=str(uuid.uuid4()),
+        connection_manager=mock_connection_manager,
+        config=agent_config,
+        agent_mode=AgentMode.CLI,
+    )
+
+    eval_tool = next(tool for tool in agent.tool_collection.get_tool_list() if tool.name == "eval")
+    description = eval_tool.description
+
+    # The contract: persistence, the prelude API, the bridge, and cell workflow.
+    assert "persistent" in description
+    assert "tool.<name>" in description
+    assert "list_tools()" in description
+    assert "pip_install" in description
+    assert "reset" in description
+    assert "parallel" in description
+
+    params = {param.name: param for param in eval_tool.parameters}
+    assert params["language"].required is True
+    assert params["code"].required is True
+    assert params["title"].required is False
+    assert params["timeout"].type == "number"
+    assert params["reset"].type == "boolean"
+
+
+def test_eval_tool_hidden_when_disabled(project_path, mock_connection_manager, agent_config):
+    """AgentConfig.eval_enabled=False removes the eval tool from the registry."""
+    agent_config.eval_enabled = False
+    agent = CoderAgent(
+        project_path=project_path,
+        workspace_id="test_workspace",
+        thread_id=str(uuid.uuid4()),
+        connection_manager=mock_connection_manager,
+        config=agent_config,
+        agent_mode=AgentMode.CLI,
+    )
+
+    tool_names = {tool.name for tool in agent.tool_collection.get_tool_list()}
+    assert "eval" not in tool_names
 
 
 def test_shared_tool_names_are_well_formed(project_path, mock_connection_manager, agent_config):
