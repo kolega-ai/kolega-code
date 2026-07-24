@@ -209,6 +209,25 @@ jobs:
           enable-cache: true
           cache-dependency-glob: uv.lock
 
+      - name: Verify and audit eval bundle
+        if: needs.changes.outputs.coverage-badge-only != 'true'
+        run: |
+          cp kolega_code/agent/eval/bundle-requirements.txt /tmp/eval-bundle-requirements.txt
+          uv pip compile \
+            --universal \
+            --python-version 3.12 \
+            --custom-compile-command \
+              'uv pip compile --universal --python-version 3.12 bundle-requirements.in -o bundle-requirements.txt' \
+            kolega_code/agent/eval/bundle-requirements.in \
+            -o /tmp/eval-bundle-requirements.txt \
+            --quiet
+          diff -u kolega_code/agent/eval/bundle-requirements.txt /tmp/eval-bundle-requirements.txt
+          uvx --from pip-audit==2.10.1 pip-audit \
+            -r kolega_code/agent/eval/bundle-requirements.txt \
+            --no-deps \
+            --disable-pip \
+            --progress-spinner off
+
       - name: Audit locked dependencies
         if: needs.changes.outputs.coverage-badge-only != 'true'
         run: |
