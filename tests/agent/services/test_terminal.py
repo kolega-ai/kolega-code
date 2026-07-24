@@ -1,5 +1,7 @@
 import asyncio
 import os
+import re
+import signal
 import sys
 from unittest.mock import patch
 
@@ -254,6 +256,27 @@ async def test_no_background_warning_when_foreground_session_killed(manager):
     killed = await manager.kill_session(result.session_id, "TERM")
     assert killed.status == "exited"
     assert "WARNING" not in killed.output
+
+
+@pytest.mark.asyncio
+async def test_documented_detach_pattern_survives_without_warning(manager):
+    # The warning message recommends `trap "" HUP; nohup cmd & disown` as the
+    # full-detach pattern. That pattern must actually survive the shell exit
+    # (plain `nohup ... &` races the session-leader-exit SIGHUP and dies) and
+    # must not trip the warning (disown removes it from the job table).
+    result = await manager.exec_command(
+        'trap "" HUP; nohup sleep 30 >/dev/null 2>&1 & disown; echo pid=$!',
+        yield_time_ms=8000,
+    )
+    assert result.status == "exited"
+    assert "WARNING" not in result.output
+    match = re.search(r"pid=(\d+)", result.output)
+    assert match is not None
+    pid = int(match.group(1))
+    try:
+        os.kill(pid, 0)  # detached process is still alive
+    finally:
+        os.kill(pid, signal.SIGKILL)
 
 
 @pytest.mark.asyncio

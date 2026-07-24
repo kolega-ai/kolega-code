@@ -17,8 +17,8 @@ _TARGET = {
 _LOOPBACK_REFUSED_HINT = (
     "The connection was refused — no server is listening on that port. The browser runs on the "
     "same machine as the terminal; if the server was started backgrounded (`&`) in an earlier "
-    "terminal command it has since exited. Restart it with exec_command background=true (or "
-    "`nohup`), confirm it answers with curl, then retry."
+    "terminal command it has since exited. Restart it with exec_command background=true, "
+    "confirm it answers with curl, then retry."
 )
 
 
