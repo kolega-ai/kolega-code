@@ -6,6 +6,33 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.24.0 - 2026-07-24
+
+### Added
+
+- Added persistent Python and JavaScript eval kernels whose state survives
+  between calls, with a loopback bridge for invoking agent tools from eval code.
+- Added managed background shell sessions for development servers and other
+  long-running processes.
+- Added a private per-session scratchpad for temporary agent files.
+
+### Changed
+
+- Kept agent-created Git worktrees in the project's `.kolega/worktrees/`
+  directory instead of using temporary system paths.
+
+### Fixed
+
+- Enabled mouse text selection and copying in the sidebar Terminal and Logs tabs.
+- Announced eval environment provisioning only when provisioning actually starts.
+- Corrected shell guidance for background processes so it no longer recommends
+  unsupported ways to outlive the agent session.
+
+### Security
+
+- Updated and constrained eval bundle dependencies to resolve known
+  vulnerabilities.
+
 ## 0.23.0 - 2026-07-23
 
 ### Added
