@@ -42,7 +42,9 @@ sessions are marked `background: true`). Avoid shell `&` instead — processes
 backgrounded that way are killed when the command that started them ends, and
 the result prints a warning when that happens. A command passed with
 `background=true` that exits within the startup window (e.g. port already in
-use) reports its real exit code and output.
+use) reports its real exit code and output. Processes started by the agent
+never outlive kolega-code: all sessions are terminated when the agent session
+ends, including on quit.
 
 ### Browser
 

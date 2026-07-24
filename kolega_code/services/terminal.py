@@ -82,9 +82,8 @@ _BACKGROUND_JOB_TRAP = (
     'kill -0 $p 2>/dev/null && pids="$pids $p"; done; '
     'pids="${pids# }"; if [ -n "$pids" ]; then '
     'printf "\\n[kolega-code] WARNING: background process(es) (%s) backgrounded with & were terminated when this '
-    "command ended. To keep a process running, re-run it with exec_command background=true. "
-    'To detach a process so it outlives this session, use: trap \\"\\" HUP; nohup cmd >log 2>&1 & disown.\\n" '
-    '"$pids" >&2; fi; fi\' EXIT; '
+    "command ended. To keep a process running between commands, re-run it with exec_command background=true; "
+    'it will still be stopped when the kolega-code session ends.\\n" "$pids" >&2; fi; fi\' EXIT; '
 )
 
 

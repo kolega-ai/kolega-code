@@ -1,7 +1,5 @@
 import asyncio
 import os
-import re
-import signal
 import sys
 from unittest.mock import patch
 
@@ -224,12 +222,15 @@ async def test_close_all_terminates_sessions(manager):
 async def test_warns_when_command_leaves_background_jobs(manager):
     # Backgrounded (`&`) processes die with the shell that started them; the
     # result must say so loudly instead of letting the agent believe a server
-    # it launched is still listening.
+    # it launched is still listening. By policy the warning must NOT teach
+    # detach recipes (nohup/disown): nothing should outlive kolega-code.
     result = await manager.exec_command("sleep 30 & echo main-done", yield_time_ms=8000)
     assert result.status == "exited"
     assert "main-done" in result.output
     assert "[kolega-code] WARNING: background process(es)" in result.output
     assert "exec_command background=true" in result.output
+    assert "nohup" not in result.output
+    assert "disown" not in result.output
 
 
 @pytest.mark.asyncio
@@ -256,27 +257,6 @@ async def test_no_background_warning_when_foreground_session_killed(manager):
     killed = await manager.kill_session(result.session_id, "TERM")
     assert killed.status == "exited"
     assert "WARNING" not in killed.output
-
-
-@pytest.mark.asyncio
-async def test_documented_detach_pattern_survives_without_warning(manager):
-    # The warning message recommends `trap "" HUP; nohup cmd & disown` as the
-    # full-detach pattern. That pattern must actually survive the shell exit
-    # (plain `nohup ... &` races the session-leader-exit SIGHUP and dies) and
-    # must not trip the warning (disown removes it from the job table).
-    result = await manager.exec_command(
-        'trap "" HUP; nohup sleep 30 >/dev/null 2>&1 & disown; echo pid=$!',
-        yield_time_ms=8000,
-    )
-    assert result.status == "exited"
-    assert "WARNING" not in result.output
-    match = re.search(r"pid=(\d+)", result.output)
-    assert match is not None
-    pid = int(match.group(1))
-    try:
-        os.kill(pid, 0)  # detached process is still alive
-    finally:
-        os.kill(pid, signal.SIGKILL)
 
 
 @pytest.mark.asyncio
