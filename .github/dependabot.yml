@@ -7,8 +7,6 @@ updates:
       day: monday
       time: "09:00"
       timezone: Europe/London
-    versioning-strategy: increase
-    groups:
-      eval-runtime:
-        patterns:
-          - "*"
+    # Eval pins mirror shared project dependencies and must be updated together.
+    # This disables version-update PRs without affecting security-update PRs.
+    open-pull-requests-limit: 0
