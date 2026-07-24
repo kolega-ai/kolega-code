@@ -29,7 +29,7 @@ class ProjectIdentity:
 
 def resolve_project_identity(project_path: Path | str) -> ProjectIdentity:
     project = Path(project_path).expanduser().resolve()
-    common_dir = _git_common_dir(project)
+    common_dir = resolve_git_common_dir(project)
     if common_dir is not None:
         canonical = common_dir.resolve()
         return ProjectIdentity("git-common-dir", f"git:{canonical}", str(project))
@@ -66,7 +66,13 @@ def resolve_git_worktree_root(path: Path | str) -> Path | None:
     return None
 
 
-def _git_common_dir(project: Path) -> Path | None:
+def resolve_git_common_dir(path: Path | str) -> Path | None:
+    """Return the containing repository's shared Git directory, if any.
+
+    Linked worktrees resolve to the same common directory as their primary
+    checkout. The returned path is absolute but is not required to exist.
+    """
+    project = Path(path).expanduser().resolve()
     commands = (
         ["git", "-C", str(project), "rev-parse", "--path-format=absolute", "--git-common-dir"],
         ["git", "-C", str(project), "rev-parse", "--git-common-dir"],
