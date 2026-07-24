@@ -298,6 +298,14 @@ class BaseAgent(LogMixin):
             self.context.services.memory_manager = self.memory_manager
             self._owns_memory_manager = True
 
+        # Agent-created Git worktrees live under .kolega/worktrees. Keep that
+        # runtime-only subtree out of Git status through the clone-local shared
+        # info/exclude file; linked worktrees inherit the same rule.
+        if not sub_agent and isinstance(self.filesystem, LocalFileSystem):
+            from kolega_code.worktrees import ensure_worktree_dir_ignored
+
+            ensure_worktree_dir_ignored(self.project_path)
+
         # Session scratchpad: a per-session throwaway working directory under the
         # OS temp dir. The TUI injects the prompt extension itself (keyed by its
         # session id); other local hosts get it here, keyed by thread id.

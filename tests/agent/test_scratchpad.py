@@ -139,6 +139,10 @@ class TestScratchpadPrompt:
         assert "did not create" in rendered
         # Sanctioned out-of-worktree location.
         assert "outside the working directory" in rendered
+        # Persistent worktrees must remain project-local, not in temp.
+        assert ".kolega/worktrees/<safe-unique-slug>" in rendered
+        assert "Never create a Git worktree in the scratchpad" in rendered
+        assert "shared Git `info/exclude`" in rendered
 
     def test_template_is_fully_rendered(self, tmp_path: Path) -> None:
         rendered = build_scratchpad_prompt(tmp_path / "scratchpad")
@@ -254,11 +258,31 @@ class TestBaseAgentFallback:
         assert agent.scratchpad_dir == expected
         assert expected.is_dir()
 
+    def test_top_level_local_agent_ensures_worktree_exclusion(
+        self, tmp_path, agent_config, mock_connection_manager, monkeypatch
+    ) -> None:
+        ensure_ignored = MagicMock(return_value=True)
+        monkeypatch.setattr("kolega_code.worktrees.ensure_worktree_dir_ignored", ensure_ignored)
+
+        self._make_agent(tmp_path, agent_config, mock_connection_manager)
+
+        ensure_ignored.assert_called_once_with(tmp_path)
+
     def test_sub_agent_gets_no_fallback(self, tmp_path, agent_config, mock_connection_manager) -> None:
         agent = self._make_agent(tmp_path, agent_config, mock_connection_manager, sub_agent=True)
 
         assert self._scratchpad_extensions(agent) == []
         assert agent.scratchpad_dir is None
+
+    def test_sub_agent_does_not_repeat_worktree_exclusion(
+        self, tmp_path, agent_config, mock_connection_manager, monkeypatch
+    ) -> None:
+        ensure_ignored = MagicMock(return_value=True)
+        monkeypatch.setattr("kolega_code.worktrees.ensure_worktree_dir_ignored", ensure_ignored)
+
+        self._make_agent(tmp_path, agent_config, mock_connection_manager, sub_agent=True)
+
+        ensure_ignored.assert_not_called()
 
     def test_non_local_filesystem_gets_no_fallback(self, tmp_path, agent_config, mock_connection_manager) -> None:
         from kolega_code.services.file_system import FileSystem
@@ -268,6 +292,19 @@ class TestBaseAgentFallback:
 
         assert self._scratchpad_extensions(agent) == []
         assert agent.scratchpad_dir is None
+
+    def test_non_local_filesystem_does_not_setup_worktree_exclusion(
+        self, tmp_path, agent_config, mock_connection_manager, monkeypatch
+    ) -> None:
+        from kolega_code.services.file_system import FileSystem
+
+        ensure_ignored = MagicMock(return_value=True)
+        monkeypatch.setattr("kolega_code.worktrees.ensure_worktree_dir_ignored", ensure_ignored)
+        sandbox_fs = MagicMock(spec=FileSystem)
+
+        self._make_agent(tmp_path, agent_config, mock_connection_manager, filesystem=sandbox_fs)
+
+        ensure_ignored.assert_not_called()
 
     def test_host_injected_extension_is_not_duplicated(self, tmp_path, agent_config, mock_connection_manager) -> None:
         from kolega_code.agent.prompt_provider import PromptExtension

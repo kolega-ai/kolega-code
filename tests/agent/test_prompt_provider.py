@@ -55,6 +55,20 @@ class TestPromptProvider:
         assert "AGENTS.md" in prompt
         assert len(prompt) > 0
 
+    def test_coder_agent_cli_mode_keeps_worktrees_project_local(self, prompt_provider, prompt_context):
+        prompt = prompt_provider.get_system_prompt(
+            agent_type=AgentType.CODER, mode=AgentMode.CLI, context=prompt_context
+        )
+
+        assert "/test/project/.kolega/worktrees/<slug>" in prompt
+        assert "never in the OS temp directory or session scratchpad" in prompt
+        assert "inspect both the filesystem and `git worktree list`" in prompt
+        assert "use `worktree` if nothing remains" in prompt
+        assert "if the name collides, add a suffix" in prompt
+        assert "add only `/.kolega/worktrees/` to the shared `info/exclude`" in prompt
+        assert "Never ignore all of `.kolega/`" in prompt
+        assert "Do not move or remove any existing worktree" in prompt
+
     @pytest.mark.parametrize(
         ("agent_type", "mode"),
         [

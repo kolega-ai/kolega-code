@@ -59,6 +59,9 @@ def test_scratchpad_prompt_renders_path_and_rules() -> None:
     assert "throwaway" in rendered
     assert "deliverables" in rendered
     assert "uniquely named files" in rendered
+    assert ".kolega/worktrees/<safe-unique-slug>" in rendered
+    assert "Never create a Git worktree in the scratchpad" in rendered
+    assert "shared Git `info/exclude`" in rendered
     assert "{{" not in rendered
 
 

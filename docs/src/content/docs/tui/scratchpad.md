@@ -38,6 +38,8 @@ schedule (for example on reboot). The agent is instructed accordingly:
 
 - deliverables and anything you must keep belong in the working directory,
   never in the scratchpad;
+- Git worktrees are persistent developer-visible state, not scratchpad
+  content;
 - sub-agents share the session's scratchpad and use unique filenames to avoid
   collisions;
 - the agent must not delete scratchpad files it did not create.
@@ -47,6 +49,29 @@ agent may create files without asking. If the optional shell-command safety
 checker is enabled, commands that read, write, or delete files inside the
 scratchpad directory are treated as in-scope; other out-of-project paths are
 still flagged.
+
+## Git worktrees
+
+When an agent needs an auxiliary Git worktree, it creates it inside the
+project instead:
+
+```text
+<project>/.kolega/worktrees/<safe-unique-slug>/
+```
+
+Kolega Code automatically adds `/.kolega/worktrees/` to the clone's shared
+Git `info/exclude` file. This is local Git metadata, so the nested worktrees
+stay out of `git status` without adding or modifying a tracked `.gitignore`.
+Linked worktrees share the same Git common directory and therefore the same
+exclude rule.
+
+Only the `worktrees` subtree is excluded. Other `.kolega` content—such as
+project agents, prompts, hooks, and LSP settings—remains trackable. Each clone
+establishes its own exclude rule when a local top-level agent starts.
+
+The convention applies to newly created worktrees. Kolega Code does not move
+or delete existing worktrees, including worktrees previously created under a
+session scratchpad.
 
 ## Relation to other state
 
