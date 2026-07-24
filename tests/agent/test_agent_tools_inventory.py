@@ -393,6 +393,9 @@ def test_eval_tool_schema_carries_the_kernel_contract(project_path, mock_connect
     assert "pip_install" in description
     assert "reset" in description
     assert "parallel" in description
+    # The read()-vs-bridge guidance: raw bytes via read(), tool formats via tool.*.
+    assert "read()/write()" in description
+    assert "model-facing format" in description
 
     params = {param.name: param for param in eval_tool.parameters}
     assert params["language"].required is True

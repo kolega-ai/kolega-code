@@ -55,13 +55,16 @@ calls, and across sub-agents in the session, so the agent works incrementally
 (imports → define → test → use) instead of re-running whole scripts.
 
 Inside a cell, either kernel can **call back into the agent's own tools** over
-an authenticated loopback bridge — `tool.read_file_section({"path": "data.csv"})`
-from Python, or `await tool.search_codebase({pattern: "TODO"})` from JavaScript.
+an authenticated loopback bridge — `tool.search_codebase({pattern: "TODO"})`
+from Python, or `await tool.read_image({path: "chart.png"})` from JavaScript.
 Bridge calls go through the same permission and hook pipeline as model-issued
-tool calls. In-kernel helpers include `display()` for rich outputs (matplotlib
-figures are returned as images to vision-capable models), `read`/`write`/`env`,
-`list_tools()` for tool discovery, `parallel()` for concurrent calls, and
-`pip_install()` / `npm_install()` for adding packages.
+tool calls, and results arrive in each tool's model-facing format (for example,
+`tool.read_file_section` wraps content in a markdown header and code fence).
+For raw file contents — CSV loads, JSON handoffs — use the in-kernel
+`read`/`write` helpers, which hit the filesystem directly. Other helpers include
+`display()` for rich outputs (matplotlib figures are returned as images to
+vision-capable models), `env`, `list_tools()` for tool discovery, `parallel()`
+for concurrent calls, and `pip_install()` / `npm_install()` for adding packages.
 
 The Python kernel runs in a **dedicated managed environment** (not your project
 venv, not the CLI's own interpreter): kolega-code provisions a CPython 3.12 with

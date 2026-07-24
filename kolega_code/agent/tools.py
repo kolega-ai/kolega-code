@@ -1881,7 +1881,7 @@ class ToolCollection(LogMixin):
 
         Work incrementally: imports → define → test → use, each its own cell. Re-run setup ONLY after reset or a kernel crash. On error, fix and re-run just the failing step. Prior top-level names survive into the next cell — NEVER re-import or re-declare them.
 
-        Both kernels can call back into your own tools over a loopback bridge — load a CSV with tool.read_file_section({"path": "data.csv"}) inside Python, or loop tool.search_codebase over many patterns without leaving the cell. Bridge calls count as real tool calls (permissions and hooks apply). Use list_tools() in a cell to discover available tool names.
+        Both kernels can call back into your own tools over a loopback bridge — loop tool.search_codebase over many patterns, read images with tool.read_image, or dispatch sub-agents without leaving the cell. Bridge calls count as real tool calls (permissions and hooks apply). Use list_tools() in a cell to discover available tool names. tool.* results arrive in each tool's model-facing format (e.g. tool.read_file_section wraps content in a markdown header and code fence) — for raw file bytes like CSV/data loads, use the read()/write() helpers instead, which hit the filesystem directly.
 
         Python prelude (sync; pass kwargs):
           display(value)                 rich output: dict/list → JSON, matplotlib Figure → image
