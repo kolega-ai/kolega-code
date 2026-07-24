@@ -63,5 +63,10 @@ async def test_provisions_real_env_and_runs_cell(tmp_path, config, isolated_cli_
         again = await manager.execute(language="py", code="'warm'", agent=FakeAgent(), timeout=30)
         assert again.status == "ok"
         assert not any("one-time setup" in note for note in again.notes)
+
+        # A kernel restart (reset) must not re-announce the one-time setup.
+        restarted = await manager.execute(language="py", code="'fresh'", agent=FakeAgent(), timeout=30, reset=True)
+        assert restarted.status == "ok"
+        assert not any("one-time setup" in note for note in restarted.notes)
     finally:
         await manager.shutdown()

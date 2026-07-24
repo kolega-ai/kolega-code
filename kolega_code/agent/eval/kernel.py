@@ -20,7 +20,7 @@ import json
 import signal
 import sys
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, ClassVar, Coroutine, Dict, List, Optional, Tuple
 
@@ -449,7 +449,13 @@ class EvalKernelManager:
 
     async def _ensure_env(self) -> KernelEnvInfo:
         if self._env_info is None or self._env_info.degraded:
-            self._env_info = await self._env_manager_for_thread().ensure()
+            info = await self._env_manager_for_thread().ensure()
+            if info.provisioned_now:
+                # The one-time setup note belongs only to the kernel start that
+                # actually provisioned; later starts must reuse the env quietly.
+                self._env_info = replace(info, provisioned_now=False, note=None)
+                return info
+            self._env_info = info
         return self._env_info
 
     async def _start_python_kernel(self) -> Tuple[BaseKernel, List[str]]:
