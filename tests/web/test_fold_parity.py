@@ -124,8 +124,38 @@ def _fixture_events() -> list[AgentEvent]:
         ),
         _event("an_unknown_future_event", 20, elapsed_ms=740, text="ignored"),
         _event(KnownEventType.SYSTEM_MESSAGE, 21, elapsed_ms=760, text="note"),
-        _event(KnownEventType.STREAM_TRUNCATED, 22, elapsed_ms=800, reason="retention_limit"),
-        _event(KnownEventType.TURN_ENDED, 23, elapsed_ms=900, turn_id="t1", status="completed"),
+        # A permission round trip, plus one prompt left outstanding, so both the
+        # resolved and pending branches of the prompt fold are compared.
+        _event(
+            KnownEventType.CONTROL_REQUESTED,
+            22,
+            elapsed_ms=770,
+            request_id="req-1",
+            kind="permission",
+            payload={"command": "rm -rf build"},
+            has_controller=True,
+        ),
+        _event(
+            KnownEventType.CONTROL_RESOLVED,
+            23,
+            elapsed_ms=780,
+            request_id="req-1",
+            kind="permission",
+            payload={"command": "rm -rf build"},
+            response={"allowed": True},
+            reason="answered",
+        ),
+        _event(
+            KnownEventType.CONTROL_REQUESTED,
+            24,
+            elapsed_ms=790,
+            request_id="req-2",
+            kind="question",
+            payload={"question": "which option?"},
+            has_controller=True,
+        ),
+        _event(KnownEventType.STREAM_TRUNCATED, 25, elapsed_ms=800, reason="retention_limit"),
+        _event(KnownEventType.TURN_ENDED, 26, elapsed_ms=900, turn_id="t1", status="completed"),
     ]
 
 
@@ -168,7 +198,7 @@ def test_folds_agree_at_every_prefix(tmp_path: Path) -> None:
     """Seeking must agree too, not just the final state."""
     events = _fixture_events()
     serialized = [event.model_dump(mode="json") for event in events]
-    for cut in (1, 5, 11, 18, len(events)):
+    for cut in (1, 5, 11, 18, 22, len(events)):
         expected = replay(events[:cut]).to_dict()
         actual = _run_js_fold(serialized[:cut], tmp_path)
         assert actual == expected, f"folds diverged after {cut} events"

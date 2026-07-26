@@ -69,6 +69,12 @@ class KnownEventType:
     TURN_ENDED = "turn_ended"
     # Emitted in place of payload that exceeded a configured retention bound.
     STREAM_TRUNCATED = "stream_truncated"
+    # Interactions that need an answer from whichever client holds control:
+    # permission prompts and planning questions. Previously an in-process
+    # callback, which meant only a co-located UI could ever answer, and which
+    # left decision points absent from the recording entirely.
+    CONTROL_REQUESTED = "control_requested"
+    CONTROL_RESOLVED = "control_resolved"
 
 
 class ArtifactPurpose:

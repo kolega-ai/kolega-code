@@ -301,6 +301,71 @@ def test_state_is_json_serializable() -> None:
     assert tool["artifacts"][0]["sha256"] == "a" * 64
 
 
+def test_pending_prompt_is_visible_and_blocks_activity() -> None:
+    """A replay must show where the agent stopped to ask, not just skip the gap."""
+    state = replay(
+        [
+            _event(
+                KnownEventType.CONTROL_REQUESTED,
+                1,
+                elapsed_ms=100,
+                request_id="r1",
+                kind="permission",
+                payload={"command": "rm -rf build"},
+            ),
+        ]
+    )
+    assert len(state.prompts) == 1
+    prompt = state.prompts[0]
+    assert prompt.kind == "permission"
+    assert prompt.payload == {"command": "rm -rf build"}
+    assert prompt.resolved is False
+    assert state.activity == "waiting_for_user"
+
+
+def test_resolved_prompt_records_the_answer_and_how_it_settled() -> None:
+    state = replay(
+        [
+            _event(KnownEventType.CONTROL_REQUESTED, 1, request_id="r1", kind="permission", payload={}),
+            _event(
+                KnownEventType.CONTROL_RESOLVED,
+                2,
+                request_id="r1",
+                response={"allowed": False},
+                reason="timeout",
+            ),
+        ]
+    )
+    (prompt,) = state.prompts
+    assert prompt.resolved is True
+    assert prompt.response == {"allowed": False}
+    assert prompt.reason == "timeout", "how a prompt settled is part of the record"
+    assert state.activity == "generating"
+
+
+def test_a_second_open_prompt_keeps_the_session_waiting() -> None:
+    state = replay(
+        [
+            _event(KnownEventType.CONTROL_REQUESTED, 1, request_id="r1", kind="permission", payload={}),
+            _event(KnownEventType.CONTROL_REQUESTED, 2, request_id="r2", kind="question", payload={}),
+            _event(KnownEventType.CONTROL_RESOLVED, 3, request_id="r1", response={}, reason="answered"),
+        ]
+    )
+    assert state.activity == "waiting_for_user", "one answer must not clear a still-open prompt"
+    assert [prompt.resolved for prompt in state.prompts] == [True, False]
+
+
+def test_duplicate_request_announcement_is_idempotent() -> None:
+    """A client catching up may see the same request twice; it is one prompt."""
+    state = replay(
+        [
+            _event(KnownEventType.CONTROL_REQUESTED, 1, request_id="r1", kind="permission", payload={}),
+            _event(KnownEventType.CONTROL_REQUESTED, 2, request_id="r1", kind="permission", payload={}),
+        ]
+    )
+    assert len(state.prompts) == 1
+
+
 def test_retention_marker_is_visible_in_the_transcript() -> None:
     state = replay(
         [

@@ -25,6 +25,7 @@ export function emptyState() {
     conversation: [],
     subAgents: new Map(),
     turns: [],
+    prompts: [],
     terminal: "",
     terminalTruncated: false,
     logs: [],
@@ -346,6 +347,33 @@ const HANDLERS = {
   memory_suggestions: () => {},
   llm_error: () => {},
   llm_request: () => {},
+  control_requested: (state, event) => {
+    const requestId = String((event.content && event.content.request_id) || "");
+    if (!requestId || state.prompts.some((prompt) => prompt.request_id === requestId)) return;
+    state.prompts.push({
+      request_id: requestId,
+      kind: String((event.content && event.content.kind) || "prompt"),
+      payload: Object.assign({}, (event.content && event.content.payload) || {}),
+      response: null,
+      reason: null,
+      seq: event.seq === undefined ? null : event.seq,
+      elapsed_ms: event.elapsed_ms || 0,
+    });
+    state.activity = "waiting_for_user";
+  },
+  control_resolved: (state, event) => {
+    const requestId = String((event.content && event.content.request_id) || "");
+    for (let index = state.prompts.length - 1; index >= 0; index -= 1) {
+      if (state.prompts[index].request_id === requestId) {
+        const response = event.content && event.content.response;
+        state.prompts[index].response =
+          response && typeof response === "object" ? Object.assign({}, response) : null;
+        state.prompts[index].reason = String((event.content && event.content.reason) || "answered");
+        break;
+      }
+    }
+    if (!state.prompts.some((prompt) => prompt.reason === null)) state.activity = "generating";
+  },
 };
 
 export function fold(state, event) {
@@ -445,6 +473,16 @@ export function toDict(state) {
     edit_previews: state.editPreviews,
     context: state.context,
     compaction: state.compaction,
+    prompts: state.prompts.map((prompt) => ({
+      request_id: prompt.request_id,
+      kind: prompt.kind,
+      payload: prompt.payload,
+      response: prompt.response,
+      reason: prompt.reason,
+      resolved: prompt.reason !== null,
+      seq: prompt.seq,
+      elapsed_ms: prompt.elapsed_ms,
+    })),
     status: state.status,
     activity: state.activity,
     open_browsers: Array.from(state.openBrowsers).sort(),

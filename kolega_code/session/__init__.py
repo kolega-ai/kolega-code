@@ -6,6 +6,7 @@ nothing here may assume local disk, an in-process sequence counter, or a single
 writer. The filesystem-backed implementation lives in ``kolega_code.cli``.
 """
 
+from .control import ControlChannel, ControlLeaseError, ControlRequest
 from .inmemory import InMemoryArtifactStore, InMemorySessionEventStore
 from .recording import RecordingConnectionManager, RetentionPolicy
 from .store import (
@@ -17,6 +18,9 @@ from .store import (
 
 __all__ = [
     "ArtifactStore",
+    "ControlChannel",
+    "ControlLeaseError",
+    "ControlRequest",
     "InMemoryArtifactStore",
     "InMemorySessionEventStore",
     "RecordingConnectionManager",

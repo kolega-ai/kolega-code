@@ -84,6 +84,26 @@ class TurnMarker:
 
 
 @dataclass
+class PendingPrompt:
+    """A decision point the agent is waiting on, or one already answered."""
+
+    request_id: str
+    #: "permission", "question", or another prompt kind.
+    kind: str
+    payload: dict
+    #: None while outstanding; the answer once resolved.
+    response: Optional[dict] = None
+    #: How it settled: "answered", "timeout", "no_controller", "controller_left".
+    reason: Optional[str] = None
+    seq: Optional[int] = None
+    elapsed_ms: int = 0
+
+    @property
+    def resolved(self) -> bool:
+        return self.reason is not None
+
+
+@dataclass
 class ContextStatus:
     input_tokens: int = 0
     max_tokens: int = 0
@@ -106,6 +126,9 @@ class PresentationState:
     edit_previews: list[dict] = field(default_factory=list)
     context: Optional[ContextStatus] = None
     compaction: Optional[dict] = None
+    #: Decision points in the order they arose, resolved or not. A replay shows
+    #: where the agent stopped to ask and what the answer was.
+    prompts: list[PendingPrompt] = field(default_factory=list)
     #: Latest status line, e.g. a provider overload notice.
     status: str = ""
     #: "idle" | "generating" | "thinking" | "running_tool"
@@ -170,6 +193,19 @@ class PresentationState:
                 "will_compress_at": self.context.will_compress_at,
             },
             "compaction": self.compaction,
+            "prompts": [
+                {
+                    "request_id": prompt.request_id,
+                    "kind": prompt.kind,
+                    "payload": prompt.payload,
+                    "response": prompt.response,
+                    "reason": prompt.reason,
+                    "resolved": prompt.resolved,
+                    "seq": prompt.seq,
+                    "elapsed_ms": prompt.elapsed_ms,
+                }
+                for prompt in self.prompts
+            ],
             "status": self.status,
             "activity": self.activity,
             "open_browsers": sorted(self.open_browsers),
@@ -541,6 +577,34 @@ def _on_stream_truncated(state: PresentationState, event: AgentEvent) -> None:
     )
 
 
+def _on_control_requested(state: PresentationState, event: AgentEvent) -> None:
+    request_id = str(event.content.get("request_id") or "")
+    if not request_id or any(prompt.request_id == request_id for prompt in state.prompts):
+        return
+    state.prompts.append(
+        PendingPrompt(
+            request_id=request_id,
+            kind=str(event.content.get("kind") or "prompt"),
+            payload=dict(event.content.get("payload") or {}),
+            seq=event.seq,
+            elapsed_ms=event.elapsed_ms,
+        )
+    )
+    state.activity = "waiting_for_user"
+
+
+def _on_control_resolved(state: PresentationState, event: AgentEvent) -> None:
+    request_id = str(event.content.get("request_id") or "")
+    for prompt in reversed(state.prompts):
+        if prompt.request_id == request_id:
+            response = event.content.get("response")
+            prompt.response = dict(response) if isinstance(response, dict) else None
+            prompt.reason = str(event.content.get("reason") or "answered")
+            break
+    if not any(not prompt.resolved for prompt in state.prompts):
+        state.activity = "generating"
+
+
 def _on_system_message(state: PresentationState, event: AgentEvent) -> None:
     text = _text_of(event, "text", "message")
     if text:
@@ -572,6 +636,8 @@ _HANDLERS = {
     KnownEventType.BROWSER_LAUNCHED: _on_browser_launched,
     KnownEventType.BROWSER_CLOSED: _on_browser_closed,
     KnownEventType.STREAM_TRUNCATED: _on_stream_truncated,
+    KnownEventType.CONTROL_REQUESTED: _on_control_requested,
+    KnownEventType.CONTROL_RESOLVED: _on_control_resolved,
     KnownEventType.SYSTEM_MESSAGE: _on_system_message,
     KnownEventType.MEMORY_SUGGESTIONS: _ignore,
     KnownEventType.CREDIT_ALERT: _on_status_update,
