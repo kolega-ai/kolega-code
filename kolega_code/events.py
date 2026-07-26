@@ -3,46 +3,144 @@
 AgentEvent is the wire format broadcast to hosts; AgentConnectionManager is
 the abstract transport hosts implement; AgentEventEmitter is the agent-side
 helper that constructs and broadcasts events.
+
+Events form a durable, ordered *session event stream*: every frontend (the
+Textual TUI, the web client, the replay player) renders a session by folding
+this stream, so anything a UI must show has to travel as an event. Durability
+and ordering live behind the protocols in :mod:`kolega_code.session.store`;
+``seq`` is assigned there, never by an emitter.
 """
 
 import abc
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Callable, Dict, Literal, Optional
+from typing import Any, Callable, Dict, Optional
 
 from pydantic import BaseModel, Field
 
+#: Version of the AgentEvent wire format. Bumped when the envelope changes
+#: shape; consumers should treat unknown-but-newer envelopes as forward
+#: compatible so long as the fields they read are present.
+AGENT_EVENT_SCHEMA_VERSION = 2
+
+
+def utc_now_iso() -> str:
+    """Timezone-aware UTC timestamp. Naive local time cannot be ordered or replayed."""
+    return datetime.now(timezone.utc).isoformat()
+
+
+class KnownEventType:
+    """Event types emitted by this package.
+
+    ``AgentEvent.event_type`` is an open string rather than a closed enum: hosts
+    and future versions must be able to introduce types without a release here,
+    and every consumer (fold, replay, UI) must treat unrecognized types as inert
+    rather than an error.
+    """
+
+    SYSTEM_MESSAGE = "system_message"
+    CHAT_MESSAGE = "chat_message"
+    LOG_MESSAGE = "log_message"
+    TERMINAL_COMMAND = "terminal_command"
+    TERMINAL_OUTPUT = "terminal_output"
+    TERMINAL_LAUNCHED = "terminal_launched"
+    TERMINAL_CLOSED = "terminal_closed"
+    BROWSER_LAUNCHED = "browser_launched"
+    BROWSER_CLOSED = "browser_closed"
+    STATUS_UPDATE = "status_update"
+    LLM_STATUS_UPDATE = "llm_status_update"
+    LLM_ERROR = "llm_error"
+    LLM_REQUEST = "llm_request"
+    CREDIT_ALERT = "credit_alert"
+    LLM_CONTEXT_UPDATE = "llm_context_update"
+    COMPACTION_STATUS = "compaction_status"
+    TOOL_STREAMING_UPDATE = "tool_streaming_update"
+    FILE_EDIT_PREVIEW = "file_edit_preview"
+    MEMORY_SUGGESTIONS = "memory_suggestions"
+    # Assistant response and reasoning text. Historically these reached the TUI
+    # only through process_message_stream's generator, which left them absent
+    # from the event stream and therefore unrenderable by any other frontend.
+    ASSISTANT_DELTA = "assistant_delta"
+    THINKING_DELTA = "thinking_delta"
+    # Turn boundaries, so a frontend can seek by turn without reading the
+    # provider-facing journal.
+    TURN_STARTED = "turn_started"
+    TURN_ENDED = "turn_ended"
+    # Emitted in place of payload that exceeded a configured retention bound.
+    STREAM_TRUNCATED = "stream_truncated"
+
+
+class ArtifactPurpose:
+    """Why a payload was externalized, and therefore how it may be used.
+
+    Purpose is the export gate. ``TOOL_RESULT`` and ``IMAGE`` are content a
+    viewer needs in order to render a session. The remaining four are opaque
+    provider state — reasoning signatures and encrypted reasoning — which exist
+    only so a conversation can be replayed back to the model that produced it.
+    They carry no display value and must never be shared, so export is
+    allowlist-based rather than denylist-based.
+    """
+
+    TOOL_RESULT = "tool_result"
+    IMAGE = "image"
+    PROVIDER_SIGNATURE = "provider_signature"
+    REDACTED_REASONING = "redacted_reasoning"
+    ENCRYPTED_REASONING = "encrypted_reasoning"
+    THOUGHT_SIGNATURE = "thought_signature"
+
+    #: The only purposes permitted to leave this machine.
+    SHAREABLE: frozenset[str] = frozenset({TOOL_RESULT, IMAGE})
+
+
+class ArtifactRef(BaseModel):
+    """Pointer to content held outside the event, addressed by content hash.
+
+    ``purpose`` drives export policy: only an explicit allowlist is ever shared,
+    because provider-opaque payloads (reasoning signatures, encrypted reasoning)
+    are secrets that must never leave the machine that produced them.
+    """
+
+    sha256: str
+    bytes: int
+    media_type: str
+    purpose: str
+    encoding: str
+    #: Filesystem hint for local diagnostics. Absent for non-file stores, and
+    #: stripped on export so bundles never leak local paths.
+    path: Optional[str] = None
+    #: Character count for text payloads, used to describe what was elided.
+    chars: Optional[int] = None
+
 
 class AgentEvent(BaseModel):
+    schema_version: int = AGENT_EVENT_SCHEMA_VERSION
     uuid: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    timestamp: str = Field(default_factory=lambda: datetime.now().isoformat())
-    event_type: Literal[
-        "system_message",
-        "chat_message",
-        "log_message",
-        "terminal_command",
-        "terminal_output",
-        "terminal_launched",
-        "terminal_closed",
-        "browser_launched",
-        "browser_closed",
-        "status_update",
-        "llm_status_update",
-        "llm_error",
-        "llm_request",
-        "credit_alert",
-        "llm_context_update",
-        "compaction_status",
-        "tool_streaming_update",
-        "file_edit_preview",
-        "memory_suggestions",
-    ]
+    timestamp: str = Field(default_factory=utc_now_iso)
+    event_type: str
     sender: str
     recipient: Optional[str] = None
     content: dict = Field(default_factory=dict)
     is_streaming: bool = False
     sub_agent_info: Optional[dict] = None
+
+    # --- Addressing -------------------------------------------------------
+    # Carried on the event, not only as broadcast arguments, so a persisted or
+    # forwarded event stays self-describing once separated from its call site.
+    session_id: str = ""
+    workspace_id: str = ""
+    thread_id: str = ""
+
+    # --- Ordering and replay ---------------------------------------------
+    #: Assigned by SessionEventStore.append(). ``None`` means "not durable":
+    #: live-only events (for example coalesced streaming deltas) are broadcast
+    #: but not replayable.
+    seq: Optional[int] = None
+    #: Monotonic milliseconds since the session's first recorded event. This,
+    #: not ``timestamp``, is the replay timing key: wall-clock time can jump
+    #: backwards and is not comparable across machines.
+    elapsed_ms: int = 0
+    artifacts: list[ArtifactRef] = Field(default_factory=list)
 
 
 class AgentStatus(Enum):
@@ -159,9 +257,65 @@ class AgentEventEmitter:
                     "tool_description": tool_description,
                     "tool_call_id": tool_call_id,
                 },
-                timestamp=datetime.now().isoformat(),
                 is_streaming=is_streaming,
                 sub_agent_info=sub_agent_info,
+            )
+        )
+
+    async def assistant_delta(
+        self,
+        text: str,
+        *,
+        complete: bool,
+        stream_uuid: str,
+        thinking: bool = False,
+    ) -> None:
+        """Send assistant response or reasoning text as a stream event.
+
+        ``process_message_stream`` also yields this text to its caller, which is
+        how the TUI has always rendered it. Emitting it here as well is what lets
+        any other frontend render a conversation at all: without these events the
+        stream contains tool activity and status but no assistant prose.
+
+        ``stream_uuid`` groups the deltas of one contiguous segment so consumers
+        can append to the segment they already started; ``complete`` marks the
+        final delta of that segment.
+        """
+        sub_agent_info = self._sub_agent_info_provider() if self._sub_agent_info_provider else None
+
+        await self.emit(
+            AgentEvent(
+                sender=self.sender,
+                event_type=KnownEventType.THINKING_DELTA if thinking else KnownEventType.ASSISTANT_DELTA,
+                uuid=stream_uuid,
+                content={"text": text, "complete": complete},
+                is_streaming=not complete,
+                sub_agent_info=sub_agent_info,
+            )
+        )
+
+    async def turn_boundary(
+        self,
+        phase: str,
+        *,
+        turn_id: str,
+        status: Optional[str] = None,
+        user_text: Optional[str] = None,
+    ) -> None:
+        """Mark a turn boundary so frontends can seek by turn.
+
+        ``phase`` is "started" or "ended"; ``status`` carries the terminal
+        outcome on "ended".
+        """
+        await self.emit(
+            AgentEvent(
+                sender=self.sender,
+                event_type=(KnownEventType.TURN_STARTED if phase == "started" else KnownEventType.TURN_ENDED),
+                content={
+                    "turn_id": turn_id,
+                    "status": status,
+                    "user_text": user_text,
+                },
             )
         )
 
@@ -206,9 +360,8 @@ class AgentEventEmitter:
         await self.emit(
             AgentEvent(
                 sender=self.sender,
-                event_type="compaction_status",
+                event_type=KnownEventType.COMPACTION_STATUS,
                 content={"phase": phase, "message": message, "summary": summary},
-                timestamp=datetime.now().isoformat(),
                 is_streaming=False,
                 sub_agent_info=sub_agent_info,
             )
@@ -221,9 +374,8 @@ class AgentEventEmitter:
         await self.emit(
             AgentEvent(
                 sender=self.sender,
-                event_type="llm_status_update",
+                event_type=KnownEventType.LLM_STATUS_UPDATE,
                 content={"status": status, "message": message},
-                timestamp=datetime.now().isoformat(),
                 is_streaming=False,
                 sub_agent_info=sub_agent_info,
             )
@@ -238,9 +390,8 @@ class AgentEventEmitter:
         await self.emit(
             AgentEvent(
                 sender=self.sender,
-                event_type="llm_error",
+                event_type=KnownEventType.LLM_ERROR,
                 content=dict(fields),
-                timestamp=datetime.now().isoformat(),
                 is_streaming=False,
                 sub_agent_info=sub_agent_info,
             )
@@ -253,9 +404,8 @@ class AgentEventEmitter:
         await self.emit(
             AgentEvent(
                 sender=self.sender,
-                event_type="llm_request",
+                event_type=KnownEventType.LLM_REQUEST,
                 content={"phase": phase, **fields},
-                timestamp=datetime.now().isoformat(),
                 is_streaming=False,
                 sub_agent_info=sub_agent_info,
             )

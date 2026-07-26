@@ -13,7 +13,7 @@ from .custom_agents import CustomAgent, CustomAgentCatalog, CustomAgentDefinitio
 from .errors import AgentError, MaxAgentIterationsExceeded
 
 # Export agent models
-from kolega_code.events import AgentStatus, AgentEvent
+from kolega_code.events import AgentStatus, AgentEvent, ArtifactPurpose, ArtifactRef, KnownEventType
 
 # Export configuration
 from kolega_code.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
@@ -36,6 +36,9 @@ __all__ = [
     "MaxAgentIterationsExceeded",
     "AgentStatus",
     "AgentEvent",
+    "ArtifactPurpose",
+    "ArtifactRef",
+    "KnownEventType",
     "AgentConfig",
     "ModelConfig",
     "RateLimitConfig",
