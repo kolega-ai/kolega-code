@@ -557,5 +557,139 @@ def build_textual_themes(truecolor: bool = True) -> list:
     return [build_textual_theme(spec, truecolor=truecolor) for spec in THEMES.values()]
 
 
+# ---------------------------------------------------------------------------
+# Web export
+#
+# The web UI and the replay player render in a browser, which has no terminal
+# palette of its own: Kolega Dark's nine role colors are ANSI *names* that the
+# terminal resolves, so they must be resolved to concrete hex before shipping.
+# ANSI_HEX is the reference palette for that resolution -- a muted, slightly
+# desaturated modern terminal palette tuned to Kolega Dark's #14171b background
+# and #d6d6d6 foreground. The harsh VGA/xterm defaults (#ff0000, #00ff00, ...)
+# are deliberately avoided: they clash with the chrome and glare on a dark
+# surface. Normal variants reuse the theme's own chrome where a counterpart
+# exists (black == tt_background, green == tt_success, yellow == tt_warning,
+# cyan == tt_primary/tt_accent, white == tt_foreground, bright_magenta ==
+# tt_secondary, bright_black == tt_text_muted) so hex and ANSI renderings of the
+# same UI agree. Every bright_* variant clears WCAG AA (>= 4.5:1) against
+# #14171b, which matters because Kolega Dark uses bright_* for error/muted/user/
+# agent/tool/thinking. Measured ratios vs #14171b: bright_black 5.53,
+# bright_red 6.73, bright_green 9.17, bright_yellow 10.17, bright_blue 8.02,
+# bright_magenta 6.11, bright_cyan 10.71, bright_white 15.78 (normal variants:
+# red 4.75, green 5.72, yellow 7.40, blue 4.92, magenta 5.18, cyan 7.47).
+# ---------------------------------------------------------------------------
+
+ANSI_HEX: dict[str, str] = {
+    "black": "#14171b",
+    "red": "#d06060",
+    "green": "#5fa05f",
+    "yellow": "#c9a13b",
+    "blue": "#5f87c4",
+    "magenta": "#b072c4",
+    "cyan": "#5fb3c4",
+    "white": "#d6d6d6",
+    "bright_black": "#8a8f98",
+    "bright_red": "#e08585",
+    "bright_green": "#86c986",
+    "bright_yellow": "#e0c060",
+    "bright_blue": "#8ab0e0",
+    "bright_magenta": "#c678dd",
+    "bright_cyan": "#86d4e0",
+    "bright_white": "#f0f0f0",
+}
+
+# Font stacks for the web surfaces. Mono carries every transcript/tool surface so
+# the browser keeps the TUI's character grid; sans is for chrome only.
+WEB_FONT_MONO = "ui-monospace, 'SF Mono', 'JetBrains Mono', 'Fira Code', Menlo, Consolas, monospace"
+WEB_FONT_SANS = "ui-sans-serif, -apple-system, 'Segoe UI', Inter, Roboto, 'Helvetica Neue', Arial, sans-serif"
+
+# ThemeSpec color field -> web token key. The nine role colors keep their names;
+# the Textual chrome loses its tt_ prefix. Where the two layers would collide
+# (accent/success/warning/error) the chrome side is prefixed chrome_* so BOTH
+# survive the export. Every color field of ThemeSpec appears exactly once.
+WEB_COLOR_KEYS: dict[str, str] = {
+    # Rich role colors (inline markup: glyphs, headers, splash).
+    "accent": "accent",
+    "success": "success",
+    "warning": "warning",
+    "error": "error",
+    "muted": "muted",
+    "user": "user",
+    "agent": "agent",
+    "tool": "tool",
+    "thinking": "thinking",
+    # Textual chrome (surfaces, buttons, semantic chrome).
+    "tt_background": "background",
+    "tt_surface": "surface",
+    "tt_panel": "panel",
+    "tt_primary": "primary",
+    "tt_secondary": "secondary",
+    "tt_accent": "chrome_accent",
+    "tt_foreground": "foreground",
+    "tt_text_muted": "text_muted",
+    "tt_success": "chrome_success",
+    "tt_warning": "chrome_warning",
+    "tt_error": "chrome_error",
+    # Choice-list highlight.
+    "row_highlight": "row_highlight",
+}
+
+
+def resolve_color(value: str) -> str:
+    """Concrete ``#rrggbb`` for a hex color or one of the 16 ANSI color names.
+
+    Browsers have no terminal palette, so every color handed to the web must go
+    through here. Raises ValueError for anything that is neither.
+    """
+    if _parse_hex(value) is not None:
+        return value.lower()
+    resolved = ANSI_HEX.get(value.strip().lower()) if isinstance(value, str) else None
+    if resolved is None:
+        raise ValueError(f"cannot resolve color for the web: {value!r}")
+    return resolved
+
+
+def web_glyphs() -> dict[str, str]:
+    """Every public :class:`Glyph` attribute as ``lowercased_name -> glyph``.
+
+    Read by introspection so glyphs added to the TUI appear in the web UI too.
+    """
+    return {
+        name.lower(): value
+        for name, value in vars(Glyph).items()
+        if not name.startswith("_") and isinstance(value, str)
+    }
+
+
+def web_tokens(spec: ThemeSpec) -> dict[str, object]:
+    """JSON-serializable design tokens for ``spec``, safe for browser use.
+
+    Colors are resolved to hex (never ANSI names) and are the *raw* theme values:
+    unlike :func:`build_textual_theme`, no luminance-gray neutralizing is applied
+    because that only exists to stop tinted darks quantizing in 256-color
+    terminals, and browsers are always truecolor.
+    """
+    return {
+        "name": spec.name,
+        "slug": spec.slug,
+        "colors": {key: resolve_color(getattr(spec, field)) for field, key in WEB_COLOR_KEYS.items()},
+        "code_theme": spec.markdown_code_theme,
+        "glyphs": web_glyphs(),
+        "spinner": {"frames": list(SPINNER_FRAMES), "interval_ms": int(SPINNER_INTERVAL * 1000)},
+        "layout": {"context_bar_width": CONTEXT_BAR_WIDTH, "transcript_indent": TRANSCRIPT_INDENT},
+        "fonts": {"mono": WEB_FONT_MONO, "sans": WEB_FONT_SANS},
+    }
+
+
+def all_web_tokens() -> dict[str, dict]:
+    """Web tokens for every theme keyed by slug, in menu order."""
+    return {spec.slug: web_tokens(spec) for spec in THEMES.values()}
+
+
+def default_theme_slug() -> str:
+    """Slug of the default theme (the one the web UI ships as :root)."""
+    return THEMES[DEFAULT_THEME_NAME].slug
+
+
 # Populate Color / LOG_LEVEL_COLORS at import so consumers see a ready palette.
 apply_theme(DEFAULT_THEME_NAME)
