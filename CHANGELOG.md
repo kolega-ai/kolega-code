@@ -8,9 +8,38 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ### Added
 
+- **Shareable session replay.** `kolega-code share export <session-id>` writes a
+  self-contained bundle that plays a session back in any browser with pause,
+  seek, turn-by-turn jumping, and 1x/2x/4x/max playback. Long idle gaps are
+  compressed so a session with a break in it stays watchable. Secrets are
+  scrubbed, local filesystem paths are stripped, and only tool output and images
+  are included — opaque provider payloads such as reasoning signatures are never
+  shared. The command prints exactly what it removed.
+- **Built-in session server.** `kolega-code serve` exposes recorded sessions over
+  HTTP and WebSocket, including a replay player, a generated OpenAPI reference at
+  `/docs`, and a stream endpoint that replays a session's backlog and then follows
+  it live, so a second client can attach to a running session and lose nothing on
+  reconnect. Bound to loopback by default, with `--token` and `--bind` for use
+  behind a private network or tunnel. Read-only.
+- **Durable session event stream.** Sessions now record an ordered event stream
+  alongside their conversation history, sharing one sequence space so UI activity
+  and provider messages are correlatable. High-volume output is coalesced, large
+  payloads are offloaded to content-addressed artifacts, and retention ceilings
+  record an explicit truncation marker rather than losing data silently.
+- Assistant responses, reasoning, and turn boundaries are now carried on the event
+  stream. They previously reached only the terminal UI, which meant no other
+  frontend could render a conversation.
 - Added Anthropic Claude Opus 5 (`claude-opus-5`) with a 1M-token context
   window, 128K max output, vision input, and adaptive thinking with
   `low`/`medium`/`high`/`xhigh`/`max` effort levels.
+
+### Changed
+
+- `AgentEvent` gained `session_id`, `workspace_id`, `thread_id`, `seq`,
+  `elapsed_ms`, `artifacts`, and `schema_version`; `event_type` is now an open
+  string rather than a closed literal, and `timestamp` is timezone-aware UTC.
+  `fastapi`, `uvicorn`, `websockets`, and `pygments` are now direct dependencies.
+  See `MIGRATION.md` for host applications embedding this package.
 
 ### Changed
 
