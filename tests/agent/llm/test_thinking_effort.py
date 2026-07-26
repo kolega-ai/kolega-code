@@ -11,6 +11,8 @@ from kolega_code.llm.specs import default_thinking_effort, thinking_effort_optio
 def test_model_specs_expose_provider_specific_thinking_efforts() -> None:
     assert thinking_effort_options("anthropic", "claude-fable-5") == ("low", "medium", "high", "xhigh", "max")
     assert default_thinking_effort("anthropic", "claude-fable-5") == "medium"
+    assert thinking_effort_options("anthropic", "claude-opus-5") == ("low", "medium", "high", "xhigh", "max")
+    assert default_thinking_effort("anthropic", "claude-opus-5") == "medium"
     assert thinking_effort_options("anthropic", "claude-sonnet-5") == ("low", "medium", "high", "xhigh", "max")
     assert default_thinking_effort("anthropic", "claude-sonnet-5") == "medium"
     assert thinking_effort_options("moonshot", "kimi-k3") == ("max",)
@@ -65,6 +67,20 @@ def test_anthropic_opus_effort_uses_adaptive_thinking_without_budget_tokens() ->
     assert generation_params["thinking"] == {"type": "adaptive"}
     assert generation_params["output_config"] == {"effort": "xhigh"}
     assert "budget_tokens" not in generation_params["thinking"]
+
+
+def test_anthropic_default_request_uses_opus_5_adaptive_thinking_without_temperature() -> None:
+    provider = AnthropicProvider(api_key="test-key", provider_name="anthropic")
+    params = GenerationParams(temperature=0.5, thinking="medium")
+    generation_params = provider._prepare_generation_params(params)
+
+    provider._apply_thinking_params(generation_params, params)
+    generation_params = provider._sanitize_generation_params(generation_params)
+
+    assert generation_params["model"] == "claude-opus-5"
+    assert generation_params["thinking"] == {"type": "adaptive"}
+    assert generation_params["output_config"] == {"effort": "medium"}
+    assert "temperature" not in generation_params
 
 
 def test_deepseek_routes_to_openai_v1_endpoint() -> None:

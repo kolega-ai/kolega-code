@@ -14,6 +14,18 @@ ANTHROPIC_SPECS = {
             mode="anthropic_adaptive_effort",
         ),
     },
+    ("anthropic", "claude-opus-5"): {
+        "context_length": 1000000,
+        "max_completion_tokens": 128000,
+        "default_temperature": 1.0,
+        "supports_temperature": False,
+        "supports_vision": True,
+        "thinking_effort": ThinkingEffortSpec(
+            options=("low", "medium", "high", "xhigh", "max"),
+            default="medium",
+            mode="anthropic_adaptive_effort",
+        ),
+    },
     ("anthropic", "claude-opus-4-8"): {
         "context_length": 1000000,
         "max_completion_tokens": 128000,
