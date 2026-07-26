@@ -695,8 +695,7 @@ async def test_terminal_selection_offsets_follow_vertical_scroll(
         assert terminal.max_scroll_y > 0
 
         terminal.scroll_to(y=10, animate=False, immediate=True)
-        await pilot.pause()
-        assert terminal.scroll_offset.y == 10
+        await _wait_for_layout(pilot, lambda: terminal.scroll_offset.y == 10)
 
         # Viewport line 0 renders content line 10; stamped offsets must follow the scroll.
         strip = terminal.render_line(0)
