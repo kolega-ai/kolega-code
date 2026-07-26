@@ -3,8 +3,9 @@ from typing import Any, cast
 from unittest.mock import AsyncMock
 
 import pytest
+from google.genai import types as genai_types
 
-from kolega_code.llm.models import Message, MessageHistory, TextBlock
+from kolega_code.llm.models import Message, MessageHistory, TextBlock, ToolDefinition, ToolParameter
 from kolega_code.llm.providers.google import GoogleProvider, GoogleStreamWrapper
 from kolega_code.llm.providers.models import GenerationParams
 
@@ -54,6 +55,13 @@ async def test_google_request_config_respects_model_temperature_support(
     params = GenerationParams(
         temperature=0.7,
         max_completion_tokens=1024,
+        tools=[
+            ToolDefinition(
+                name="lookup",
+                description="Look something up.",
+                parameters=[ToolParameter(name="query", type="string", description="Search query.", required=True)],
+            )
+        ],
         thinking=thinking,
     )
 
@@ -67,6 +75,13 @@ async def test_google_request_config_respects_model_temperature_support(
     else:
         assert serialized["temperature"] == expected_temperature
     assert serialized["thinking_config"]["thinking_level"].lower() == thinking
+    assert config.tools is not None
+    assert config.tools[0].function_declarations is not None
+    declaration = config.tools[0].function_declarations[0]
+    assert type(declaration) is not genai_types.FunctionDeclaration
+    assert isinstance(declaration.parameters, genai_types.Schema)
+    assert declaration.parameters.properties is not None
+    assert set(declaration.parameters.properties) == {"query"}
 
     if method == "generate":
         assert result is fake_models.response
