@@ -9,6 +9,7 @@ writer. The filesystem-backed implementation lives in ``kolega_code.cli``.
 from .control import ControlChannel, ControlLeaseError, ControlRequest
 from .inmemory import InMemoryArtifactStore, InMemorySessionEventStore
 from .recording import RecordingConnectionManager, RetentionPolicy
+from .runtime import SessionRuntime, SessionRuntimeError, control_channel_for
 from .store import (
     ArtifactStore,
     SessionEventMeta,
@@ -27,5 +28,8 @@ __all__ = [
     "RetentionPolicy",
     "SessionEventMeta",
     "SessionEventStore",
+    "SessionRuntime",
+    "SessionRuntimeError",
     "SessionStoreError",
+    "control_channel_for",
 ]
