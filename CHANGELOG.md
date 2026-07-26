@@ -6,6 +6,16 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.24.1 - 2026-07-26
+
+### Changed
+
+- Updated provider SDK dependencies (`google-genai` and `openai`) for improved wire compatibility.
+
+### Fixed
+
+- Serialized Google Gemini tool execution results as user turns to comply with wire protocol requirements.
+
 ## 0.24.0 - 2026-07-24
 
 ### Added
