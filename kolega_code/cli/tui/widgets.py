@@ -575,10 +575,12 @@ class StickyRichLog(RichLog):
 
     bottom_tolerance = 1
 
-    def __init__(self, *args, **kwargs) -> None:
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         kwargs["auto_scroll"] = False
         super().__init__(*args, **kwargs)
         self.auto_follow_bottom = True
+        self._follow_bottom_pending = False
+        self._follow_bottom_callback_scheduled = False
 
     def is_at_bottom(self) -> bool:
         """Return whether the current scroll position is effectively at the end."""
@@ -586,15 +588,53 @@ class StickyRichLog(RichLog):
 
     def watch_scroll_y(self, old_value: float, new_value: float) -> None:
         super().watch_scroll_y(old_value, new_value)
-        self.auto_follow_bottom = self.is_at_bottom()
+        at_bottom = self.is_at_bottom()
+        self.auto_follow_bottom = at_bottom
+        if not at_bottom:
+            self._follow_bottom_pending = False
+
+    def _schedule_follow_bottom(self) -> None:
+        """Coalesce a guarded sticky-bottom update after the next refresh."""
+        self._follow_bottom_pending = True
+        if self._follow_bottom_callback_scheduled or not self._size_known or not self.is_attached:
+            return
+        self._follow_bottom_callback_scheduled = True
+        self.call_after_refresh(self._apply_pending_follow_bottom)
+
+    def _apply_pending_follow_bottom(self) -> None:
+        self._follow_bottom_callback_scheduled = False
+        if not self._follow_bottom_pending:
+            return
+        if not self.is_attached:
+            self._follow_bottom_pending = False
+            return
+        if not self._size_known:
+            return
+        if not self.auto_follow_bottom:
+            self._follow_bottom_pending = False
+            return
+        self._follow_bottom_pending = False
+        super().scroll_end(animate=False, immediate=True, x_axis=False)
+
+    def on_resize(self, event: events.Resize) -> None:
+        super().on_resize(event)
+        if self._follow_bottom_pending:
+            self._schedule_follow_bottom()
 
     def write_sticky(self, content: object) -> None:
         """Append content, following only if the user was at the bottom."""
         should_follow = self.auto_follow_bottom or self.is_at_bottom()
-        self.write(content, scroll_end=should_follow)
+        if should_follow:
+            self.auto_follow_bottom = True
+        else:
+            self._follow_bottom_pending = False
+        self.write(content, scroll_end=False)
+        if should_follow:
+            self._schedule_follow_bottom()
 
     def clear_output(self) -> None:
         """Clear rendered output and restore sticky-follow defaults."""
+        self._follow_bottom_pending = False
         self.clear()
         self.auto_follow_bottom = True
 

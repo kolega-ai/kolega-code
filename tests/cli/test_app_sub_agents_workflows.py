@@ -563,10 +563,19 @@ async def test_open_sub_agent_inspector_renders_trajectory(tmp_path: Path, monke
         app._render_event(_sub_agent_event(uuid="r1", text="some response"))
 
         app.action_open_sub_agent()
-        await pilot.pause()
 
         assert isinstance(app._sub_agent_inspector, SubAgentInspectorScreen)
         screen = app._sub_agent_inspector
+        activity_key, activity = next(iter(app._sub_agent_activities.items()))
+        expected_entry_ids = {step.entry_id for step in activity.steps}
+        await _wait_for_layout(
+            pilot,
+            lambda: (
+                screen._selected_key == activity_key
+                and set(screen._step_widgets) == expected_entry_ids
+                and all(widget.is_attached for widget in screen._step_widgets.values())
+            ),
+        )
         # One roster row per agent, and a trajectory widget per captured step.
         assert len(screen._rows) == 1
         # Seeded task step + tool_call + assistant response.
@@ -616,13 +625,29 @@ async def test_sub_agent_inspector_switches_agents(tmp_path: Path, monkeypatch: 
         )
 
         app.action_open_sub_agent("a1")
-        await pilot.pause()
         screen = app._sub_agent_inspector
         assert screen is not None
+        a1 = app._sub_agent_activities["a1"]
+        await _wait_for_layout(
+            pilot,
+            lambda: (
+                screen._selected_key == "a1"
+                and set(screen._step_widgets) == {step.entry_id for step in a1.steps}
+                and all(widget.is_attached for widget in screen._step_widgets.values())
+            ),
+        )
         assert screen._selected_key == "a1"
 
         screen.action_next_agent()
-        await pilot.pause()
+        a2 = app._sub_agent_activities["a2"]
+        await _wait_for_layout(
+            pilot,
+            lambda: (
+                screen._selected_key == "a2"
+                and set(screen._step_widgets) == {step.entry_id for step in a2.steps}
+                and all(widget.is_attached for widget in screen._step_widgets.values())
+            ),
+        )
         assert screen._selected_key == "a2"
 
 
