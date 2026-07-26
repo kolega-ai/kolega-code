@@ -1,6 +1,7 @@
 # ruff: noqa: F401,F811,E402
 import time
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -148,27 +149,46 @@ def build_test_config(project: Path):
     )
 
 
-async def wait_for_onboarding_screen(app, pilot):
-    """Wait until the auto-opened onboarding wizard is up AND fully composed.
+async def wait_for_onboarding_screen(app: Any, pilot: Any, *, timeout: float = 6.0) -> Any:
+    """Wait until the auto-opened onboarding wizard is initialized and laid out."""
+    from textual.css.query import NoMatches
+    from textual.widgets import Button, Static
 
-    The app pushes OnboardingScreen via call_after_refresh and the screen's
-    children mount a further message-pump cycle later, so a single
-    pilot.pause() can lose the race on slow CI runners (NoMatches on
-    #onboarding_next). Pause until the widgets exist and the screen's mount
-    hook has initialized the owner's screen reference and startup status.
-    """
     from kolega_code.cli.tui.onboarding_screen import OnboardingScreen
 
-    for _ in range(20):
+    deadline = time.monotonic() + timeout
+    last_state: dict[str, object] = {}
+    while time.monotonic() < deadline:
+        screen = app._onboarding_screen
+        last_state = {
+            "screen_type": type(screen).__name__ if screen is not None else None,
+            "active": screen is not None and app.screen is screen,
+        }
+        if isinstance(screen, OnboardingScreen) and app.screen is screen:
+            try:
+                status = screen.query_one("#onboarding_status", Static)
+                key_status = screen.query_one("#onboarding_key_status", Static)
+                next_button = screen.query_one("#onboarding_next", Button)
+            except NoMatches as exc:
+                last_state["query_error"] = repr(exc)
+            else:
+                status_text = str(status.render())
+                key_status_text = str(key_status.render())
+                startup_error = getattr(app, "startup_config_error", None)
+                startup_status_ready = not startup_error or str(startup_error) in status_text
+                credentials_ready = key_status_text.startswith("Credential status:")
+                continue_laid_out = next_button.region.width > 0 and next_button.region.height > 0
+                last_state.update(
+                    {
+                        "status": status_text,
+                        "key_status": key_status_text,
+                        "continue_region": repr(next_button.region),
+                    }
+                )
+                if credentials_ready and startup_status_ready and continue_laid_out:
+                    return screen
         await pilot.pause()
-        screen = app.screen
-        if (
-            isinstance(screen, OnboardingScreen)
-            and app._onboarding_screen is screen
-            and screen.query("#onboarding_next")
-        ):
-            return screen
-    raise AssertionError("onboarding screen did not finish mounting")
+    raise AssertionError(f"onboarding screen did not become ready within {timeout:.1f}s: {last_state!r}")
 
 
 async def open_settings_screen(app, pilot, category: str = "model"):

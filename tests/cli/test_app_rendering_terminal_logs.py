@@ -1,4 +1,5 @@
 # ruff: noqa: F401,F811,E402
+from collections.abc import Callable
 from pathlib import Path
 import asyncio
 import json
@@ -134,33 +135,131 @@ async def test_terminal_output_preserves_scrollback_when_user_scrolls_up(
 
     async with app.run_test(size=(100, 30)) as pilot:
         app.query_one("#events", TabbedContent).active = "terminal_pane"
-        await pilot.pause()
 
         terminal = app._terminal
+        await _wait_for_layout(pilot, lambda: terminal._size_known and terminal.region.height > 0)
         terminal.write_terminal("".join(f"line {index}\n" for index in range(120)))
-        await pilot.pause()
-        terminal.scroll_end(animate=False, immediate=True)
-        await pilot.pause()
-        assert terminal.max_scroll_y > 0
+        await _wait_for_layout(
+            pilot,
+            lambda: (
+                terminal.max_scroll_y > 0
+                and terminal.is_at_bottom()
+                and not terminal._follow_bottom_pending
+                and not terminal._follow_bottom_callback_scheduled
+            ),
+        )
 
         terminal.scroll_to(y=0, animate=False, immediate=True)
-        await pilot.pause()
+        await _wait_for_layout(pilot, lambda: terminal.scroll_y == 0 and not terminal.auto_follow_bottom)
         scroll_y = terminal.scroll_y
-        assert terminal.auto_follow_bottom is False
 
         app._render_event(AgentEvent(event_type="terminal_output", sender="coder", content={"output": "new line\n"}))
         app._flush_terminal_output()
-        await pilot.pause()
+        await _wait_for_layout(
+            pilot,
+            lambda: "new line" in "\n".join(strip.text for strip in terminal.lines),
+        )
 
         assert terminal.scroll_y == scroll_y
+        assert terminal.auto_follow_bottom is False
 
         terminal.scroll_end(animate=False, immediate=True)
-        await pilot.pause()
+        await _wait_for_layout(pilot, terminal.is_at_bottom)
         app._render_event(AgentEvent(event_type="terminal_output", sender="coder", content={"output": "tail line\n"}))
         app._flush_terminal_output()
-        await pilot.pause()
+        await _wait_for_layout(
+            pilot,
+            lambda: (
+                "tail line" in "\n".join(strip.text for strip in terminal.lines)
+                and terminal.is_at_bottom()
+                and not terminal._follow_bottom_pending
+                and not terminal._follow_bottom_callback_scheduled
+            ),
+        )
 
-        assert terminal.scroll_y >= terminal.max_scroll_y - terminal.bottom_tolerance
+        assert terminal.is_at_bottom()
+
+
+@pytest.mark.asyncio
+async def test_terminal_output_written_while_hidden_follows_when_shown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from textual.widgets import TabbedContent
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        tabs = app.query_one("#events", TabbedContent)
+        assert tabs.active == "status_pane"
+        terminal = app._terminal
+
+        terminal.write_terminal("".join(f"hidden line {index}\n" for index in range(120)))
+        assert terminal._follow_bottom_pending is True
+
+        tabs.active = "terminal_pane"
+        await _wait_for_layout(
+            pilot,
+            lambda: (
+                "hidden line 119" in "\n".join(strip.text for strip in terminal.lines)
+                and terminal.max_scroll_y > 0
+                and terminal.is_at_bottom()
+                and not terminal._follow_bottom_pending
+                and not terminal._follow_bottom_callback_scheduled
+            ),
+        )
+
+
+@pytest.mark.asyncio
+async def test_terminal_clear_cancels_pending_follow_and_restores_following(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from textual.widgets import TabbedContent
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        app.query_one("#events", TabbedContent).active = "terminal_pane"
+        terminal = app._terminal
+        await _wait_for_layout(pilot, lambda: terminal._size_known and terminal.region.height > 0)
+
+        scheduled_follow_count = 0
+        call_after_refresh = terminal.call_after_refresh
+
+        def track_call_after_refresh(callback: Callable[..., object], *args: object) -> None:
+            nonlocal scheduled_follow_count
+            if callback == terminal._apply_pending_follow_bottom:
+                scheduled_follow_count += 1
+            call_after_refresh(callback, *args)
+
+        monkeypatch.setattr(terminal, "call_after_refresh", track_call_after_refresh)
+        terminal.write_terminal("".join(f"stale line {index}\n" for index in range(120)))
+        terminal.write_terminal("another stale line\n")
+        assert terminal._follow_bottom_pending is True
+        assert scheduled_follow_count == 1
+        terminal.clear_output()
+
+        assert terminal._follow_bottom_pending is False
+        assert terminal.auto_follow_bottom is True
+        await _wait_for_layout(pilot, lambda: not terminal._follow_bottom_callback_scheduled)
+        assert terminal.lines == []
+        assert terminal.scroll_y == 0
+
+        terminal.write_terminal("".join(f"fresh line {index}\n" for index in range(120)))
+        await _wait_for_layout(
+            pilot,
+            lambda: (
+                "fresh line 119" in "\n".join(strip.text for strip in terminal.lines)
+                and terminal.max_scroll_y > 0
+                and terminal.is_at_bottom()
+                and not terminal._follow_bottom_pending
+                and not terminal._follow_bottom_callback_scheduled
+            ),
+        )
+        assert scheduled_follow_count == 2
 
 
 @pytest.mark.asyncio
@@ -690,12 +789,21 @@ async def test_terminal_selection_offsets_follow_vertical_scroll(
     async with app.run_test(size=(100, 30)) as pilot:
         app.query_one("#events", TabbedContent).active = "terminal_pane"
         terminal = app._terminal
+        await _wait_for_layout(pilot, lambda: terminal._size_known and terminal.region.height > 0)
         terminal.write_terminal("".join(f"scroll line {index}\n" for index in range(120)))
-        await pilot.pause()
-        assert terminal.max_scroll_y > 0
+        assert terminal._follow_bottom_pending is True
 
         terminal.scroll_to(y=10, animate=False, immediate=True)
-        await _wait_for_layout(pilot, lambda: terminal.scroll_offset.y == 10)
+        await _wait_for_layout(
+            pilot,
+            lambda: (
+                terminal.max_scroll_y > 10
+                and terminal.scroll_offset.y == 10
+                and not terminal._follow_bottom_pending
+                and not terminal._follow_bottom_callback_scheduled
+            ),
+        )
+        assert terminal.auto_follow_bottom is False
 
         # Viewport line 0 renders content line 10; stamped offsets must follow the scroll.
         strip = terminal.render_line(0)

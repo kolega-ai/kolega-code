@@ -127,7 +127,8 @@ class OnboardingScreen(ModalScreen[None]):
                         classes="onboarding-hint",
                     )
                     yield Static("", id="onboarding_test_status")
-            yield Static("", id="onboarding_status")
+            startup_error = getattr(self.owner, "startup_config_error", None)
+            yield Static(str(startup_error) if startup_error else "", id="onboarding_status")
             with Horizontal(id="onboarding_actions"):
                 yield Static("esc Skip", classes="dialog-hint")
                 yield Button("Skip for now", id="onboarding_skip", classes="quiet")
