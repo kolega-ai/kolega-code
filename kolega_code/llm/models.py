@@ -7,6 +7,7 @@ import base64
 import importlib
 import json
 import logging
+from functools import cache
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Union, cast
 
 from kolega_code.utils.images import ascii_thumbnail_from_base64
@@ -48,6 +49,28 @@ CONTENT_BLOCK_CLASSES = {}
 logger = logging.getLogger(__name__)
 
 ToolInputKind = Literal["json", "freeform"]
+
+
+@cache
+def _google_function_declaration_type() -> type[Any]:
+    """Return the declaration adapter used at google-genai's wire boundary.
+
+    google-genai 2.12.1 normalizes tools while retaining their declaration
+    instances, then serializes each declaration with ``model_dump()`` without
+    ``by_alias=True``. For nested ``Schema`` models that emits Python field
+    names such as ``additional_properties`` instead of REST field aliases.
+
+    Define the subclass lazily to preserve this module's optional Google import.
+    This adapter can be removed only after a future SDK serializes nested
+    declarations by alias and the mldev regression test passes without it.
+    """
+
+    class _AliasFunctionDeclaration(genai_types.FunctionDeclaration):
+        def model_dump(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
+            kwargs["by_alias"] = True
+            return super().model_dump(*args, **kwargs)
+
+    return _AliasFunctionDeclaration
 
 
 def _remove_trailing_commas(payload: str) -> str:
@@ -643,7 +666,7 @@ class ToolDefinition(ContentBlock):
                     required.append(parameter.name)
             parameters = genai_types.Schema(type=cast(Any, "OBJECT"), properties=properties, required=required)
 
-        function_declaration = genai_types.FunctionDeclaration(
+        function_declaration = _google_function_declaration_type()(
             name=self.name,
             description=self.description,
             parameters=parameters,
@@ -1760,7 +1783,7 @@ class MessageHistory(list):
                 processed_messages.append(message.to_google())
             else:
                 tool_response_message = genai_types.Content(
-                    role="tool", parts=[item.to_google() for item in message.content]
+                    role="user", parts=[item.to_google() for item in message.content]
                 )
 
                 processed_messages.append(tool_response_message)

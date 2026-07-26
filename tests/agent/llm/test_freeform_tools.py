@@ -219,7 +219,13 @@ def test_same_provider_fallback_history_remains_replayable(provider: str) -> Non
         assert payload[0]["content"][0]["input"] == {"input": "RAW"}
     elif provider == "google":
         payload = history.to_google()
+        assert [message.role for message in payload] == ["model", "user"]
         assert payload[0].parts[0].function_call.args == {"input": "RAW"}
+        function_response = payload[1].parts[0].function_response
+        assert function_response is not None
+        assert function_response.id == "call-1"
+        assert function_response.name == "apply_patch"
+        assert function_response.response == {"output": "Success"}
     else:
         payload = history.to_openai(provider=provider, model="model")
         assert payload[0]["tool_calls"][0]["function"]["arguments"] == '{"input": "RAW"}'

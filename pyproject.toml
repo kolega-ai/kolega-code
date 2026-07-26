@@ -22,6 +22,8 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Software Development",
     "Topic :: Utilities",
 ]
@@ -32,7 +34,7 @@ dependencies = [
     "firecrawl-py==4.28.2",
     # Project memory needs a persistent Unix lock file; unlink-on-release can split cooperating waiters.
     "filelock==3.20.3",
-    "google-genai==2.0.1",
+    "google-genai==2.12.1",
     "httpx==0.28.1",
     "jinja2==3.1.6",
     "langfuse==3.14.5",
@@ -41,7 +43,9 @@ dependencies = [
     "markitdown[docx,pdf,pptx,xls,xlsx]==0.1.6",
     "mcp==1.28.1",
     "nest-asyncio==1.6.0",
-    "openai==1.109.1",
+    # Magika's cross-platform resolution selects onnxruntime 1.20.1, which has no CPython 3.14 wheels.
+    "onnxruntime==1.27.0; python_version >= '3.14' and sys_platform != 'win32'",
+    "openai==2.46.0",
     "packaging==25.0",
     "pathspec==1.1.1",
     "pillow==12.3.0",
