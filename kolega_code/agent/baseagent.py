@@ -1599,18 +1599,72 @@ class BaseAgent(LogMixin):
     async def process_message_stream(
         self, message: str, attachments: Optional[List[Dict[str, Any]]] = None
     ) -> AsyncGenerator[Dict[str, Any], None]:
-        """Run one durable top-level turn and record its terminal outcome."""
+        """Run one durable top-level turn and record its terminal outcome.
+
+        Chunks yielded to the caller are also mirrored onto the event stream.
+        Assistant prose and reasoning historically travelled *only* through this
+        generator, which meant the event stream — the thing every other frontend
+        and the replay player render from — contained tool activity and status but
+        no actual conversation. Mirroring here rather than at each ``yield`` keeps
+        one choke point that cannot drift out of sync with the yields.
+        """
+        turn_id = str(uuid.uuid4())
+        await self._emit_turn_boundary("started", turn_id=turn_id, user_text=message)
         try:
             async for chunk in self._process_message_stream_impl(message, attachments):
+                await self._mirror_stream_chunk(chunk)
                 yield chunk
         except asyncio.CancelledError:
             await self._finish_recorded_turn("cancelled")
+            await self._emit_turn_boundary("ended", turn_id=turn_id, status="cancelled")
             raise
         except Exception as exc:
             await self._finish_recorded_turn("failed", error=str(exc))
+            await self._emit_turn_boundary("ended", turn_id=turn_id, status="failed")
             raise
         else:
             await self._finish_recorded_turn("completed")
+            await self._emit_turn_boundary("ended", turn_id=turn_id, status="completed")
+
+    async def _mirror_stream_chunk(self, chunk: Dict[str, Any]) -> None:
+        """Re-emit one generator chunk as a stream event. Never raises."""
+        kind = chunk.get("type")
+        if kind not in ("response", "thinking"):
+            return
+        complete = bool(chunk.get("complete"))
+        text = str(chunk.get("content") or "")
+        if not text and not complete:
+            return
+        try:
+            await self.emitter.assistant_delta(
+                text,
+                complete=complete,
+                stream_uuid=str(chunk.get("uuid") or uuid.uuid4()),
+                thinking=kind == "thinking",
+            )
+        except Exception:
+            # Mirroring is observability for other frontends; it must never break
+            # the turn that the local caller is already consuming.
+            pass
+
+    async def _emit_turn_boundary(
+        self,
+        phase: str,
+        *,
+        turn_id: str,
+        status: Optional[str] = None,
+        user_text: Optional[str] = None,
+    ) -> None:
+        """Emit a turn boundary, swallowing everything including cancellation.
+
+        Called from ``except asyncio.CancelledError`` blocks, where any further
+        await can itself raise, so this must not let that mask the original
+        exception it is about to re-raise.
+        """
+        try:
+            await self.emitter.turn_boundary(phase, turn_id=turn_id, status=status, user_text=user_text)
+        except BaseException:
+            pass
 
     async def _finish_recorded_turn(self, status: str, *, error: Optional[str] = None) -> None:
         recorder = self.session_recorder
