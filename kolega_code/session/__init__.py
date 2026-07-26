@@ -1,4 +1,4 @@
-"""Durable session event stream: storage contracts and projection.
+"""Durable session event stream: storage contracts, recording, and projection.
 
 This package is the storage-agnostic half of the session event spine. Host
 applications embed this package and persist sessions in their own databases, so
@@ -7,6 +7,7 @@ writer. The filesystem-backed implementation lives in ``kolega_code.cli``.
 """
 
 from .inmemory import InMemoryArtifactStore, InMemorySessionEventStore
+from .recording import RecordingConnectionManager, RetentionPolicy
 from .store import (
     ArtifactStore,
     SessionEventMeta,
@@ -18,6 +19,8 @@ __all__ = [
     "ArtifactStore",
     "InMemoryArtifactStore",
     "InMemorySessionEventStore",
+    "RecordingConnectionManager",
+    "RetentionPolicy",
     "SessionEventMeta",
     "SessionEventStore",
     "SessionStoreError",
