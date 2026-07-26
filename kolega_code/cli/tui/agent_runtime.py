@@ -4,7 +4,15 @@ from __future__ import annotations
 
 import asyncio
 
-from kolega_code.agent import AgentConfig, AgentEvent, CoderAgent, PlanningAgent, PromptExtension, ToolExtension
+from kolega_code.agent import (
+    AgentConfig,
+    AgentEvent,
+    CoderAgent,
+    KnownEventType,
+    PlanningAgent,
+    PromptExtension,
+    ToolExtension,
+)
 from kolega_code.agent.baseagent import QueuedUserInput
 from kolega_code.agent.prompt_provider import AgentMode
 from kolega_code.agent.custom_agents import discover_custom_agents, validate_custom_agent_models
@@ -39,7 +47,35 @@ from . import state as tui_state
 from . import widgets as tui_widgets
 
 
+#: Event types carried on the stream purely so it is a complete, replayable
+#: record of the session. The TUI renders this content from the agent's
+#: generator instead, so it must not also render these or output would double.
+_RECORDING_ONLY_EVENTS = frozenset(
+    {
+        KnownEventType.ASSISTANT_DELTA,
+        KnownEventType.THINKING_DELTA,
+        KnownEventType.TURN_STARTED,
+        KnownEventType.TURN_ENDED,
+        KnownEventType.STREAM_TRUNCATED,
+    }
+)
+
+
 class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
+    async def _prime_recording_offset(self) -> None:
+        """Continue the replay clock from an existing recording, once per session.
+
+        Without this a resumed session would restart at zero, so a replay would
+        show the second sitting overlapping the first.
+        """
+        if self._recording_primed:
+            return
+        self._recording_primed = True
+        try:
+            await self.recording_connection_manager.prime_elapsed_offset()
+        except Exception:
+            pass
+
     async def _record_turn_checkpoint(self, label: str) -> None:
         """Capture the rewind boundary for the turn about to start.
 
@@ -619,6 +655,13 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         self._diag_tee(event)
         if event.event_type in ("llm_error", "llm_request"):
             return  # diagnostics-only events; persisted by the tee, nothing to render
+        if event.event_type in _RECORDING_ONLY_EVENTS:
+            # Assistant prose, reasoning, and turn boundaries exist on the event
+            # stream so that non-TUI frontends and the replay player can render a
+            # conversation. This TUI still renders them from
+            # process_message_stream's generator, so rendering them here too would
+            # duplicate every response.
+            return
         if event.event_type == "log_message":
             if self.show_logs:
                 level = str(event.content.get("level", "info"))
@@ -796,6 +839,7 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         *,
         restore_transcript: bool = True,
     ) -> None:
+        await self._prime_recording_offset()
         history = self.session.history
         compaction = self.session.compaction
         if rebuild:
@@ -891,7 +935,7 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             project_path=self.project_path,
             workspace_id=self.session.workspace_id,
             thread_id=self.session.thread_id,
-            connection_manager=self.connection_manager,
+            connection_manager=self.recording_connection_manager,
             config=config,
             browser_manager=browser_manager,
             agent_mode=AgentMode(self.mode),

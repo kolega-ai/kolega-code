@@ -36,6 +36,7 @@ from textual.widgets import (
 from textual.widgets.option_list import Option
 
 from kolega_code.agent import AgentConfig
+from kolega_code.session.recording import RecordingConnectionManager
 from kolega_code.agent.prompt_dump import list_prompt_overrides
 from kolega_code.agent.prompt_provider import AgentMode
 from kolega_code.agent.prompts import (
@@ -54,6 +55,7 @@ from kolega_code.permissions import (
 from . import messages, theme
 from .config import CliConfigOverrides, active_model_override_message, key_status
 from .connection import CliConnectionManager
+from .session_event_store import FileArtifactStore, FileSessionEventStore
 from .goal import GoalState
 from .diagnostics import DiagnosticsLog, ResponsivenessWatchdog
 from .file_index import WorkspaceFileIndex
@@ -186,7 +188,19 @@ class KolegaCodeApp(
         self.check_for_updates = check_for_updates
         self.show_logs = show_logs
         self.startup_config_error = startup_config_error
+        # Two managers, one stream. The TUI reads live events off the CLI queue;
+        # the agent broadcasts into the recording wrapper, which assigns each
+        # event a sequence number and persists it before forwarding. That is what
+        # makes a session replayable and followable rather than only visible now.
         self.connection_manager = CliConnectionManager()
+        _journal = store.journal(session.session_id)
+        self.recording_connection_manager = RecordingConnectionManager(
+            self.connection_manager,
+            FileSessionEventStore(_journal),
+            session_id=session.session_id,
+            artifact_store=FileArtifactStore(_journal),
+        )
+        self._recording_primed = False
         self._hook_dispatcher: Optional[HookDispatcher] = None
         self._session_started = False
         self.agent = None
@@ -1515,6 +1529,9 @@ class KolegaCodeApp(
         try:
             if self._watchdog is not None:
                 self._watchdog.stop()
+            # Persist any streaming tail still buffered for coalescing, so a
+            # session quit mid-stream still replays what was on screen.
+            await self.recording_connection_manager.flush()
             if self.agent is not None:
                 fire = getattr(self.agent, "fire_hook", None)
                 if fire is not None:

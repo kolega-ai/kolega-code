@@ -36,6 +36,8 @@ if TYPE_CHECKING:
     from kolega_code.permissions import PermissionDecision, PermissionMode, PermissionRequest
 
     from ..config import CliConfigOverrides
+    from kolega_code.session.recording import RecordingConnectionManager
+
     from ..connection import CliConnectionManager
     from ..diagnostics import DiagnosticsLog, ResponsivenessWatchdog
     from ..file_index import WorkspaceFileIndex
@@ -95,6 +97,10 @@ class KolegaAppBase(App):
         _onboarding_screen: OnboardingScreen | None
         _onboarding_skipped: bool
         connection_manager: CliConnectionManager
+        #: Wraps ``connection_manager`` to persist and sequence what it broadcasts.
+        #: Agents are built against this one so their output is replayable.
+        recording_connection_manager: RecordingConnectionManager
+        _recording_primed: bool
         _hook_dispatcher: HookDispatcher | None
         _session_started: bool
         agent: BaseAgent | None
