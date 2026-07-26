@@ -168,6 +168,19 @@ def test_claude_fable_5_model_specs():
     assert specs["thinking_effort"].mode == "anthropic_adaptive_effort"
 
 
+def test_claude_opus_5_model_specs() -> None:
+    specs = get_model_specs("anthropic", "claude-opus-5")
+
+    assert specs["context_length"] == 1000000
+    assert specs["max_completion_tokens"] == 128000
+    assert specs["default_temperature"] == 1.0
+    assert specs["supports_temperature"] is False
+    assert specs["supports_vision"] is True
+    assert specs["thinking_effort"].options == ("low", "medium", "high", "xhigh", "max")
+    assert specs["thinking_effort"].default == "medium"
+    assert specs["thinking_effort"].mode == "anthropic_adaptive_effort"
+
+
 def test_claude_sonnet_5_model_specs():
     specs = get_model_specs("anthropic", "claude-sonnet-5")
 

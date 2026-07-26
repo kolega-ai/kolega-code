@@ -87,7 +87,7 @@ result = await agent(
     agent_type="investigation",
     model_override={
         "provider": "anthropic",
-        "model": "claude-opus-4-8",
+        "model": "claude-opus-5",
         "effort": "high",
     },
 )

@@ -6,6 +6,16 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+### Added
+
+- Added Anthropic Claude Opus 5 (`claude-opus-5`) with a 1M-token context
+  window, 128K max output, vision input, and adaptive thinking with
+  `low`/`medium`/`high`/`xhigh`/`max` effort levels.
+
+### Changed
+
+- Made Claude Opus 5 the default Anthropic long-context and thinking model.
+
 ## 0.24.1 - 2026-07-26
 
 ### Changed

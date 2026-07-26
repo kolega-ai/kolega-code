@@ -22,11 +22,11 @@ from .settings import CliSettings, SettingsStore
 OAUTH_PROVIDERS = frozenset({ModelProvider.OPENAI_CHATGPT})
 
 DEFAULT_LONG_PROVIDER = ModelProvider.ANTHROPIC
-DEFAULT_LONG_MODEL = "claude-opus-4-8"
+DEFAULT_LONG_MODEL = "claude-opus-5"
 DEFAULT_FAST_PROVIDER = ModelProvider.ANTHROPIC
 DEFAULT_FAST_MODEL = "claude-haiku-4-5-20251001"
 DEFAULT_THINKING_PROVIDER = ModelProvider.ANTHROPIC
-DEFAULT_THINKING_MODEL = "claude-opus-4-8"
+DEFAULT_THINKING_MODEL = "claude-opus-5"
 DEPRECATED_THINKING_TOKENS_MESSAGE = (
     "Thinking token budgets have been replaced by model-specific named effort. "
     "Use --thinking-effort or KOLEGA_CODE_THINKING_EFFORT."

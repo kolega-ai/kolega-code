@@ -57,6 +57,7 @@ MODEL_LABELS: dict[str, str] = {
     "glm-5.1": "GLM-5.1",
     # Anthropic
     "claude-fable-5": "Claude Fable 5",
+    "claude-opus-5": "Claude Opus 5",
     "claude-opus-4-8": "Claude Opus 4.8",
     "claude-opus-4-7": "Claude Opus 4.7",
     "claude-opus-4-6": "Claude Opus 4.6",
@@ -134,7 +135,7 @@ PROVIDER_DEFAULT_MODEL: dict[ModelProvider, str] = {
     ModelProvider.DEEPSEEK: "deepseek-v4-pro",
     ModelProvider.ZAI: "glm-5.2",
     ModelProvider.KIMI_CODING: "kimi-for-coding",
-    ModelProvider.ANTHROPIC: "claude-opus-4-8",
+    ModelProvider.ANTHROPIC: "claude-opus-5",
     ModelProvider.OPENAI: "gpt-5.6-sol",
     ModelProvider.OPENAI_CHATGPT: "gpt-5.6-sol",
     ModelProvider.GOOGLE: "gemini-3.1-pro-preview",

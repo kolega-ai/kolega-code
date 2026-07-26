@@ -142,7 +142,7 @@ class AnthropicProvider(BaseLLMProvider):
     def _prepare_generation_params(self, params: Optional[GenerationParams] = None) -> Dict[str, Any]:
         """Convert common parameters to provider-specific format"""
         generation_params = {
-            "model": "claude-opus-4-8",  # Default model
+            "model": "claude-opus-5",  # Default model
             "max_tokens": 1024,  # Default max tokens
         }
 

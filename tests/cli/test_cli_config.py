@@ -69,6 +69,7 @@ def test_build_agent_config_explicit_provider_uses_provider_default_model(tmp_pa
     )
 
     assert config.long_context_config.provider == ModelProvider.ANTHROPIC
+    assert DEFAULT_LONG_MODEL == "claude-opus-5"
     assert config.long_context_config.model == DEFAULT_LONG_MODEL
     assert config.fast_config.model == DEFAULT_LONG_MODEL
     assert config.thinking_config.model == DEFAULT_LONG_MODEL

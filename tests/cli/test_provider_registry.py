@@ -1,4 +1,6 @@
 from kolega_code.cli.provider_registry import (
+    UI_DEFAULT_MODEL,
+    UI_DEFAULT_PROVIDER,
     default_model_for_provider,
     ui_model_options,
     ui_thinking_effort_options,
@@ -11,6 +13,25 @@ def test_kimi_k3_is_first_and_default_for_moonshot():
     assert ui_model_options(ModelProvider.MOONSHOT.value)[0] == ("Kimi K3", "kimi-k3")
     assert default_model_for_provider(ModelProvider.MOONSHOT) == "kimi-k3"
     assert ui_thinking_effort_options("moonshot", "kimi-k3") == [("Max", "max")]
+    assert (UI_DEFAULT_PROVIDER, UI_DEFAULT_MODEL) == ("moonshot", "kimi-k3")
+
+
+def test_opus_5_is_selectable_and_default_for_anthropic() -> None:
+    options = ui_model_options(ModelProvider.ANTHROPIC.value)
+
+    assert options[:3] == [
+        ("Claude Fable 5", "claude-fable-5"),
+        ("Claude Opus 5", "claude-opus-5"),
+        ("Claude Opus 4.8", "claude-opus-4-8"),
+    ]
+    assert default_model_for_provider(ModelProvider.ANTHROPIC) == "claude-opus-5"
+    assert ui_thinking_effort_options("anthropic", "claude-opus-5") == [
+        ("Low", "low"),
+        ("Medium", "medium"),
+        ("High", "high"),
+        ("Extra high", "xhigh"),
+        ("Max", "max"),
+    ]
 
 
 def test_kimi_coding_exposes_plan_specific_k3_models():
