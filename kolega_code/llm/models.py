@@ -1783,7 +1783,7 @@ class MessageHistory(list):
                 processed_messages.append(message.to_google())
             else:
                 tool_response_message = genai_types.Content(
-                    role="tool", parts=[item.to_google() for item in message.content]
+                    role="user", parts=[item.to_google() for item in message.content]
                 )
 
                 processed_messages.append(tool_response_message)

@@ -109,6 +109,74 @@ def test_tool_call_execution_id_is_internal_and_provider_id_is_preserved():
     assert restored.execution_id == first.execution_id
 
 
+def test_google_tool_results_use_user_role_and_preserve_structured_responses():
+    source = Message(
+        role="tool",
+        content=[
+            ToolResult(
+                tool_use_id="call-success",
+                content="repository details",
+                name="gh",
+                is_error=False,
+            ),
+            ToolResult(
+                tool_use_id="call-error",
+                content="permission denied",
+                name="read_file",
+                is_error=True,
+            ),
+        ],
+    )
+
+    converted = MessageHistory([source]).to_google()
+
+    assert source.role == "tool"
+    assert [content.role for content in converted] == ["user"]
+    assert all(content.role != "tool" for content in converted)
+    assert converted[0].parts is not None
+    responses = [part.function_response for part in converted[0].parts]
+    assert all(response is not None for response in responses)
+    assert [(response.id, response.name, response.response) for response in responses if response is not None] == [
+        ("call-success", "gh", {"output": "repository details"}),
+        ("call-error", "read_file", {"error": "permission denied"}),
+    ]
+
+
+def test_google_mixed_user_content_preserves_part_order_and_function_response():
+    source = Message(
+        role="user",
+        content=[
+            TextBlock(text="Before"),
+            ToolResult(
+                tool_use_id="call-1",
+                content="Success",
+                name="apply_patch",
+                is_error=False,
+            ),
+            TextBlock(text="After"),
+        ],
+    )
+
+    converted = MessageHistory(
+        [
+            source,
+            Message(role="assistant", content=[TextBlock(text="Done")]),
+        ]
+    ).to_google()
+
+    assert [content.role for content in converted] == ["user", "model"]
+    assert converted[0].parts is not None
+    before, function_response_part, after = converted[0].parts
+    assert before.text == "Before"
+    assert function_response_part.function_response is not None
+    assert function_response_part.function_response.id == "call-1"
+    assert function_response_part.function_response.name == "apply_patch"
+    assert function_response_part.function_response.response == {"output": "Success"}
+    assert after.text == "After"
+    assert converted[1].parts is not None
+    assert converted[1].parts[0].text == "Done"
+
+
 def test_local_anthropic_token_counting_includes_tool_result_content():
     provider = AnthropicProvider(api_key="test_key", provider_name="moonshot")
     large_tool_output = "unique_token " * 20_000
