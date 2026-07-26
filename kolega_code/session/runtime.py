@@ -85,7 +85,7 @@ class SessionRuntime:
         session_id: str,
         project_path: Path,
         control: ControlChannel,
-        agent_factory: AgentFactory,
+        agent_factory: Optional[AgentFactory] = None,
         permission_mode: PermissionMode = PermissionMode.ASK,
         on_notice: Optional[Callable[[str], None]] = None,
     ) -> None:
@@ -117,12 +117,26 @@ class SessionRuntime:
         return self._agent is not None
 
     async def start(self) -> Any:
-        """Build the agent for this session."""
+        """Build the agent for this session using the supplied factory."""
+        if self._agent_factory is None:
+            raise SessionRuntimeError("This runtime has no agent factory; use adopt() instead")
         self._agent = await self._agent_factory()
         return self._agent
 
+    def adopt(self, agent: Any) -> None:
+        """Take ownership of an agent the caller composed itself.
+
+        A host that already assembles agents from its own configuration —
+        settings, skills, hooks, prompt extensions — should not have to invert
+        that logic to gain a runtime. It composes as before and hands the result
+        over, and control still flows through this runtime and its channel.
+        """
+        self._agent = agent
+
     async def rebuild(self) -> Any:
         """Replace the agent, disposing of the previous one first."""
+        if self._agent_factory is None:
+            raise SessionRuntimeError("This runtime has no agent factory; use adopt() instead")
         if self._agent is not None:
             await self._agent.cleanup()
             self._agent = None

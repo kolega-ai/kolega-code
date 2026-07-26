@@ -19,7 +19,6 @@ from kolega_code.agent.prompts import (
 )
 from kolega_code.permissions import (
     PermissionDecision,
-    PermissionMode,
     PermissionRequest,
     PermissionRuleOption,
     PermissionStoreError,
@@ -326,41 +325,39 @@ class PromptFlowMixin(tui_app_base.KolegaAppBase):
         panel.prompt(escape(question), option_widgets)
         self._focus_active_prompt()
 
-    async def _permission_callback(self, request: PermissionRequest) -> PermissionDecision:
-        if self.permission_mode != PermissionMode.ASK:
-            return PermissionDecision(allowed=True)
+    def _begin_approval(self, request_id: str, request: PermissionRequest) -> None:
+        """Show a permission prompt announced on the control channel.
 
-        async with self._permission_lock:
-            store = ProjectPermissionStore(self.project_path)
-            try:
-                matched_rule = store.first_match(request)
-            except PermissionStoreError as exc:
-                matched_rule = None
-                self._notify_user(str(exc), severity="warning")
-
-            if matched_rule is not None:
-                return PermissionDecision(allowed=True, reason=f"Allowed by saved rule {matched_rule.id}.")
-
-            return await self._ask_permission(request)
-
-    async def _ask_permission(self, request: PermissionRequest) -> PermissionDecision:
-        loop = asyncio.get_running_loop()
-        future: asyncio.Future[PermissionDecision] = loop.create_future()
+        This client learns about a prompt the same way any other frontend does, by
+        receiving a control_requested event, rather than through a callback only a
+        co-located UI could be handed. Mode checks and saved-rule matching already
+        happened in the session runtime, so anything reaching here genuinely needs
+        a person.
+        """
         rule_options = allow_rule_options(request)
-        self._pending_approval = PendingApproval(request=request, future=future, rule_options=rule_options)
+        self._pending_approval = PendingApproval(
+            request=request,
+            rule_options=rule_options,
+            request_id=request_id,
+        )
         self._show_approval_options(rule_options)
         self._set_composer_status(messages.APPROVAL_PLACEHOLDER)
         self._set_chat_enabled(False)
         self._refresh_input_area_visibility()
         self._update_activity_progress(messages.WAITING_FOR_PERMISSION, state=TurnState.WAITING_FOR_USER)
 
-        try:
-            return await future
-        finally:
-            if self._pending_approval is not None and self._pending_approval.future is future:
-                self._pending_approval = None
-                self._set_approval_actions_visible(False)
-                self._refresh_input_area_visibility()
+    def _clear_approval_if_resolved(self, request_id: str) -> None:
+        """Drop the prompt once the channel reports it answered.
+
+        Covers the answers this client did not give: a timeout, or the request
+        being settled because control was released.
+        """
+        pending = self._pending_approval
+        if pending is None or pending.request_id != request_id:
+            return
+        self._pending_approval = None
+        self._set_approval_actions_visible(False)
+        self._refresh_input_area_visibility()
 
     def _show_approval_options(self, rule_options: list[PermissionRuleOption]) -> None:
         self._set_approval_actions_visible(True)
@@ -398,8 +395,7 @@ class PromptFlowMixin(tui_app_base.KolegaAppBase):
             ConversationEntry(kind="question", content=self._format_permission_content(pending.request))
         )
         self._add_conversation_entry(ConversationEntry(kind="user", content=chosen_label))
-        if not pending.future.done():
-            pending.future.set_result(decision)
+        self._answer_permission_request(pending.request_id, decision)
 
         if self._turn_active:
             self._set_composer_status(messages.QUEUE_PLACEHOLDER)
@@ -475,8 +471,13 @@ class PromptFlowMixin(tui_app_base.KolegaAppBase):
 
     def _cancel_pending_approval(self) -> None:
         pending_approval = self._pending_approval
-        if pending_approval is not None and not pending_approval.future.done():
-            pending_approval.future.cancel()
+        if pending_approval is not None:
+            # Cancelling the turn must not leave the agent waiting on a prompt
+            # this client has stopped showing.
+            self._answer_permission_request(
+                pending_approval.request_id,
+                PermissionDecision(allowed=False, reason="The turn was cancelled before this was answered."),
+            )
         self._pending_approval = None
         self._set_approval_actions_visible(False)
         self._refresh_input_area_visibility()

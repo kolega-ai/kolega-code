@@ -5,7 +5,7 @@ import pytest
 
 from kolega_code.cli.config import config_summary
 from kolega_code.cli.session_store import SessionStore
-from kolega_code.permissions import PermissionDecision, allow_rule_options, permission_request_for_tool
+from kolega_code.permissions import allow_rule_options, permission_request_for_tool
 
 from ._app_test_utils import FakeCoderAgent, build_test_config, install_fake_agents
 
@@ -71,10 +71,9 @@ async def test_app_focus_keeps_active_approval_prompt_focused(tmp_path: Path, mo
     async with app.run_test() as pilot:
         request = permission_request_for_tool("exec_command", {"command": "npm test"})
         assert request is not None
-        future: asyncio.Future[PermissionDecision] = asyncio.get_running_loop().create_future()
         app._pending_approval = PendingApproval(
             request=request,
-            future=future,
+            request_id="req-test",
             rule_options=allow_rule_options(request),
         )
         app._set_approval_actions_visible(True)

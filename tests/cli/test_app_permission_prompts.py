@@ -20,6 +20,7 @@ from kolega_code.llm.exceptions import (
 )
 from kolega_code.llm.models import Message, TextBlock, ToolCall, ToolResult
 from kolega_code.events import AgentEvent
+from kolega_code.session.runtime import serialize_permission_request
 from kolega_code.agent.prompt_provider import AgentMode
 from kolega_code.cli.config import build_agent_config, config_summary
 from kolega_code.cli.provider_registry import (
@@ -76,6 +77,32 @@ async def _wait_for_layout(pilot, predicate, *, timeout: float = 6.0) -> None:
     raise AssertionError(f"layout did not settle within {timeout}s")
 
 
+DEFAULT_DENIAL = {"allowed": False, "reason": "nobody answered"}
+
+
+async def _open_permission_request(app, request) -> tuple[str, "asyncio.Task[dict]"]:
+    """Start a real control-channel request and return its id and the agent's wait.
+
+    Driving the actual channel rather than a fabricated future is what makes these
+    tests exercise the path every frontend uses: the terminal UI answers a prompt
+    by responding to a request id, exactly as a browser client would.
+    """
+    task = asyncio.create_task(
+        app.control_channel.request(
+            "permission",
+            {"request": serialize_permission_request(request), "rule_options": []},
+            default=DEFAULT_DENIAL,
+        )
+    )
+    for _ in range(400):
+        if app.control_channel.pending():
+            break
+        await asyncio.sleep(0.005)
+    pending = app.control_channel.pending()
+    assert pending, "the control channel never registered the request"
+    return pending[0].request_id, task
+
+
 @pytest.mark.asyncio
 async def test_textual_app_permission_approval_actions_show_rule_labels_without_descriptions(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -99,10 +126,10 @@ async def test_textual_app_permission_approval_actions_show_rule_labels_without_
     async with app.run_test():
         request = permission_request_for_tool("exec_command", {"command": "npm run test"})
         assert request is not None
-        future: asyncio.Future[PermissionDecision] = asyncio.get_running_loop().create_future()
+        request_id = "req-layout"
         app._pending_approval = PendingApproval(
             request=request,
-            future=future,
+            request_id=request_id,
             rule_options=allow_rule_options(request),
         )
 
@@ -164,10 +191,10 @@ async def test_textual_app_long_permission_command_keeps_approval_actions_visibl
         long_command = 'python -c "' + "print('approval layout') ; " * 80 + '"'
         request = permission_request_for_tool("exec_command", {"command": long_command})
         assert request is not None
-        future: asyncio.Future[PermissionDecision] = asyncio.get_running_loop().create_future()
+        request_id, decision_task = await _open_permission_request(app, request)
         app._pending_approval = PendingApproval(
             request=request,
-            future=future,
+            request_id=request_id,
             rule_options=allow_rule_options(request),
         )
 
@@ -210,9 +237,9 @@ async def test_textual_app_long_permission_command_keeps_approval_actions_visibl
         assert approval_actions.region.y + approval_actions.region.height <= app.size.height
 
         await pilot.press("1")
-        decision = await asyncio.wait_for(future, timeout=1)
+        response = await asyncio.wait_for(decision_task, timeout=1)
 
-        assert decision.allowed is True
+        assert response["allowed"] is True
         assert app._pending_approval is None
         assert approval_actions.display is False
 
@@ -316,11 +343,11 @@ async def test_textual_app_approval_answer_reenables_active_turn_composer(
     async with app.run_test():
         request = permission_request_for_tool("exec_command", {"command": "npm run test"})
         assert request is not None
-        future: asyncio.Future[PermissionDecision] = asyncio.get_running_loop().create_future()
+        request_id, decision_task = await _open_permission_request(app, request)
         app._turn_active = True
         app._pending_approval = PendingApproval(
             request=request,
-            future=future,
+            request_id=request_id,
             rule_options=allow_rule_options(request),
         )
         app._set_composer_status(messages.APPROVAL_PLACEHOLDER)
@@ -332,9 +359,9 @@ async def test_textual_app_approval_answer_reenables_active_turn_composer(
         assert composer.display is True
 
         await app._answer_approval_option(0)
-        decision = await asyncio.wait_for(future, timeout=1)
+        response = await asyncio.wait_for(decision_task, timeout=1)
 
-        assert decision.allowed is True
+        assert response["allowed"] is True
         assert app._pending_approval is None
         assert composer.display is True
         assert composer.disabled is False
@@ -365,7 +392,9 @@ async def test_textual_app_queued_messages_hide_during_permission_and_restore_af
 
         request = permission_request_for_tool("exec_command", {"command": "npm run test"})
         assert request is not None
-        permission_task = asyncio.create_task(app._ask_permission(request))
+        request_id, permission_task = await _open_permission_request(app, request)
+        # Drive the real path: the prompt appears because the channel announced it.
+        app._begin_approval(request_id, request)
         await pilot.pause()
 
         composer = app.query_one("#composer", ChatComposer)
@@ -376,10 +405,10 @@ async def test_textual_app_queued_messages_hide_during_permission_and_restore_af
         assert [item.text for item in app._queued_messages] == ["second", "third"]
 
         await app._answer_approval_option(0)
-        decision = await asyncio.wait_for(permission_task, timeout=1)
+        response = await asyncio.wait_for(permission_task, timeout=1)
         await pilot.pause()
 
-        assert decision.allowed is True
+        assert response["allowed"] is True
         assert app._pending_approval is None
         assert queued_panel.display is True
         assert composer.display is True
@@ -404,12 +433,12 @@ async def test_textual_app_queued_messages_do_not_drain_while_permission_pending
     async with app.run_test():
         request = permission_request_for_tool("exec_command", {"command": "npm run test"})
         assert request is not None
-        future: asyncio.Future[PermissionDecision] = asyncio.get_running_loop().create_future()
+        request_id = "req-layout"
         app._queue_user_message("second")
         app._queue_user_message("third")
         app._pending_approval = PendingApproval(
             request=request,
-            future=future,
+            request_id=request_id,
             rule_options=allow_rule_options(request),
         )
         app._refresh_input_area_visibility()

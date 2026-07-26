@@ -210,9 +210,8 @@ async def test_textual_app_prompt_list_recovers_focus_after_drift(
     async with app.run_test() as pilot:
         request = permission_request_for_tool("exec_command", {"command": "npm run test"})
         assert request is not None
-        future: asyncio.Future[PermissionDecision] = asyncio.get_running_loop().create_future()
         app._pending_approval = PendingApproval(
-            request=request, future=future, rule_options=allow_rule_options(request)
+            request=request, rule_options=allow_rule_options(request), request_id="req-test"
         )
         app._set_approval_actions_visible(True)
         app._set_chat_enabled(False)

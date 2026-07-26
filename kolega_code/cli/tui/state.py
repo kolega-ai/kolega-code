@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Optional
 
-from kolega_code.permissions import PermissionDecision, PermissionMode, PermissionRequest, PermissionRuleOption
+from kolega_code.permissions import PermissionMode, PermissionRequest, PermissionRuleOption
 
 from ..provider_registry import UI_DEFAULT_MODEL, UI_DEFAULT_PROVIDER
 from ..theme import Color
@@ -245,9 +245,16 @@ class PendingQuestion:
 
 @dataclass
 class PendingApproval:
+    """A permission prompt this client is currently showing.
+
+    Identified by the control-channel request id rather than holding a future:
+    the agent's wait lives in the channel, and this client answers it by
+    responding to that id like any other frontend would.
+    """
+
     request: PermissionRequest
-    future: asyncio.Future[PermissionDecision]
     rule_options: list[PermissionRuleOption]
+    request_id: str
 
 
 @dataclass

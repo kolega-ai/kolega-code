@@ -21,6 +21,8 @@ from kolega_code.hooks import HookDispatcher, HookEvent, load_hook_config, proje
 from kolega_code.scratchpad import SCRATCHPAD_PROMPT_EXTENSION_ID, ensure_scratchpad_dir, scratchpad_dir_for
 from kolega_code.llm.exceptions import LLMError, llm_error_message
 from kolega_code.mcp.tools import build_mcp_tool_extension
+from kolega_code.permissions import PermissionDecision
+from kolega_code.session.runtime import deserialize_permission_request
 from kolega_code.services.browser import PlaywrightBrowserManager
 from kolega_code.tools import ToolError
 from textual.widgets import Static
@@ -62,6 +64,39 @@ _RECORDING_ONLY_EVENTS = frozenset(
 
 
 class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
+    def _handle_control_request(self, event: AgentEvent) -> None:
+        """Show a prompt the agent raised on the control channel.
+
+        Requests arrive as ordinary events on the same stream everything else
+        does, which is why this client needs no privileged callback and why a
+        replay can show that the agent stopped to ask.
+        """
+        request_id = str(event.content.get("request_id") or "")
+        kind = str(event.content.get("kind") or "")
+        if not request_id or kind != "permission":
+            return
+        payload = event.content.get("payload")
+        if not isinstance(payload, dict) or not isinstance(payload.get("request"), dict):
+            return
+        try:
+            request = deserialize_permission_request(payload["request"])
+        except Exception:
+            # A request this client cannot render must not wedge the turn; leave
+            # it to the channel's default rather than showing a broken prompt.
+            return
+        self._begin_approval(request_id, request)
+
+    def _answer_permission_request(self, request_id: str, decision: PermissionDecision) -> None:
+        """Send a decision back over the control channel. Never raises."""
+        try:
+            self.session_runtime.answer_permission(
+                request_id,
+                decision,
+                client_id=tui_constants.TUI_CLIENT_ID,
+            )
+        except Exception:
+            pass
+
     async def _prime_recording_offset(self) -> None:
         """Continue the replay clock from an existing recording, once per session.
 
@@ -655,6 +690,12 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         self._diag_tee(event)
         if event.event_type in ("llm_error", "llm_request"):
             return  # diagnostics-only events; persisted by the tee, nothing to render
+        if event.event_type == KnownEventType.CONTROL_REQUESTED:
+            self._handle_control_request(event)
+            return
+        if event.event_type == KnownEventType.CONTROL_RESOLVED:
+            self._clear_approval_if_resolved(str(event.content.get("request_id") or ""))
+            return
         if event.event_type in _RECORDING_ONLY_EVENTS:
             # Assistant prose, reasoning, and turn boundaries exist on the event
             # stream so that non-TUI frontends and the replay player can render a
@@ -943,12 +984,18 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             tool_extensions=tool_extensions,
             memory_manager=self.memory_manager,
             permission_mode=self.permission_mode,
-            permission_callback=self._permission_callback,
+            # Permission policy lives in the session runtime, not the UI: mode
+            # checks and saved-rule matching are decisions about the session, so
+            # every frontend gets them and only real questions reach a person.
+            permission_callback=self.session_runtime.permission_callback,
             session_recorder=self._session_recorder,
             hook_dispatcher=self._session_hook_dispatcher(),
             custom_agent_catalog=self.custom_agent_catalog,
         )
         assert self.agent is not None
+        # The runtime owns the agent for control purposes while the CLI keeps
+        # composing it from settings, skills, hooks, and MCP configuration.
+        self.session_runtime.adopt(self.agent)
         if scratchpad_extension is not None:
             # Expose the resolved directory for the terminal safety checker; the
             # prompt extension above is what the model sees.
