@@ -364,6 +364,49 @@ async def test_permission_mode_change_reaches_the_agent(tmp_path: Path) -> None:
     assert agent.permission_mode == PermissionMode.AUTO
 
 
+@pytest.mark.asyncio
+async def test_planning_question_round_trips_over_the_channel(tmp_path: Path) -> None:
+    """Questions use the same transport as permissions, so any client can answer."""
+    runtime, emitted, _ = _runtime(tmp_path)
+    await runtime.start()
+    runtime.control.acquire(CLIENT)
+
+    async def act_as_client() -> None:
+        for _ in range(200):
+            if runtime.control.pending():
+                break
+            await asyncio.sleep(0.005)
+        pending = runtime.control.pending()[0]
+        assert pending.kind == "question"
+        assert pending.payload["options"] == ["Rewrite", "Patch"]
+        runtime.answer_question(pending.request_id, {"answer": "Patch"}, client_id=CLIENT)
+
+    client = asyncio.create_task(act_as_client())
+    response = await runtime.control.request(
+        "question",
+        {"question": "How should we fix it?", "options": ["Rewrite", "Patch"], "descriptions": []},
+        default={"answer": None},
+    )
+    await client
+
+    assert response["answer"] == "Patch"
+    assert KnownEventType.CONTROL_REQUESTED in [event.event_type for event in emitted]
+
+
+@pytest.mark.asyncio
+async def test_unanswerable_question_returns_no_answer(tmp_path: Path) -> None:
+    """With nobody to ask, the caller is told rather than left waiting."""
+    runtime, _, _ = _runtime(tmp_path, timeout=30.0)
+    await runtime.start()
+
+    response = await asyncio.wait_for(
+        runtime.control.request("question", {"question": "?", "options": ["a", "b"]}, default={"answer": None}),
+        timeout=2.0,
+    )
+
+    assert response["answer"] is None
+
+
 def test_permission_request_survives_serialisation() -> None:
     for request in (
         _request(),

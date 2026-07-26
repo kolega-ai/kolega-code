@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 from typing import Optional
 
@@ -255,24 +254,29 @@ class PromptFlowMixin(tui_app_base.KolegaAppBase):
     async def _ask_user_choice(
         self, question: str, options: list[str], descriptions: Optional[list[str]] = None
     ) -> str:
-        loop = asyncio.get_running_loop()
-        future: asyncio.Future[str] = loop.create_future()
-        self._pending_question = PendingQuestion(
-            question=question, options=options, future=future, descriptions=descriptions
-        )
-        self._show_question_options(question, options, descriptions)
-        self._set_composer_status(messages.QUESTION_PLACEHOLDER)
-        self._set_chat_enabled(True)
-        self._refresh_input_area_visibility()
-        self._update_activity_progress(messages.WAITING_FOR_ANSWER, state=TurnState.WAITING_FOR_USER)
+        """Ask the controlling client a planning question over the control channel.
 
-        try:
-            return await future
-        finally:
-            if self._pending_question is not None and self._pending_question.future is future:
-                self._pending_question = None
-                self._set_question_actions_visible(False)
-                self._refresh_input_area_visibility()
+        Like permission prompts, this goes out as an event and comes back as a
+        response, so any frontend can answer it. The tool raises rather than
+        inventing an answer when nobody can: a plan built on a fabricated choice
+        would be worse than a failed tool call.
+        """
+        response = await self.session_runtime.control.request(
+            "question",
+            {
+                "question": question,
+                "options": list(options),
+                "descriptions": list(descriptions or []),
+            },
+            default={"answer": None},
+        )
+        answer = response.get("answer")
+        if not isinstance(answer, str) or not answer.strip():
+            raise ToolError(
+                "No answer was given for this planning question. "
+                "Proceed without it, or state the assumption you are making instead."
+            )
+        return answer
 
     async def _answer_question_option(self, option_index: int) -> None:
         if self._pending_question is None:
@@ -280,6 +284,35 @@ class PromptFlowMixin(tui_app_base.KolegaAppBase):
         if option_index < 0 or option_index >= len(self._pending_question.options):
             return
         await self._answer_pending_question(self._pending_question.options[option_index])
+
+    def _begin_question(
+        self,
+        request_id: str,
+        question: str,
+        options: list[str],
+        descriptions: Optional[list[str]] = None,
+    ) -> None:
+        """Show a planning question announced on the control channel."""
+        self._pending_question = PendingQuestion(
+            question=question,
+            options=options,
+            descriptions=descriptions,
+            request_id=request_id,
+        )
+        self._show_question_options(question, options, descriptions)
+        self._set_composer_status(messages.QUESTION_PLACEHOLDER)
+        self._set_chat_enabled(True)
+        self._refresh_input_area_visibility()
+        self._update_activity_progress(messages.WAITING_FOR_ANSWER, state=TurnState.WAITING_FOR_USER)
+
+    def _clear_question_if_resolved(self, request_id: str) -> None:
+        """Drop the prompt once the channel reports it settled by any means."""
+        pending = self._pending_question
+        if pending is None or pending.request_id != request_id:
+            return
+        self._pending_question = None
+        self._set_question_actions_visible(False)
+        self._refresh_input_area_visibility()
 
     async def _answer_pending_question(self, answer: str) -> None:
         pending_question = self._pending_question
@@ -296,8 +329,7 @@ class PromptFlowMixin(tui_app_base.KolegaAppBase):
         self._refresh_input_area_visibility()
         self._add_conversation_entry(ConversationEntry(kind="question", content=pending_question.question))
         self._add_conversation_entry(ConversationEntry(kind="user", content=clean_answer))
-        if not pending_question.future.done():
-            pending_question.future.set_result(clean_answer)
+        self._answer_question_request(pending_question.request_id, clean_answer)
 
         if self._turn_active:
             self._set_composer_status(messages.QUEUE_PLACEHOLDER)
@@ -463,8 +495,10 @@ class PromptFlowMixin(tui_app_base.KolegaAppBase):
 
     def _cancel_pending_question(self) -> None:
         pending_question = self._pending_question
-        if pending_question is not None and not pending_question.future.done():
-            pending_question.future.cancel()
+        if pending_question is not None:
+            # Settle the request so a cancelled turn does not leave the tool
+            # waiting on a prompt this client has stopped showing.
+            self._answer_question_request(pending_question.request_id, "")
         self._pending_question = None
         self._set_question_actions_visible(False)
         self._refresh_input_area_visibility()

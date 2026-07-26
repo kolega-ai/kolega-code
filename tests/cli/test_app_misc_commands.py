@@ -262,8 +262,7 @@ async def test_textual_app_question_recovers_focus_but_allows_free_form_answer(
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
 
     async with app.run_test() as pilot:
-        future: asyncio.Future[str] = asyncio.get_running_loop().create_future()
-        app._pending_question = PendingQuestion(question="Choose?", options=["A", "B"], future=future)
+        app._pending_question = PendingQuestion(question="Choose?", options=["A", "B"], request_id="req-test")
         app._show_question_options("Choose?", ["A", "B"])
         app._set_chat_enabled(True)
 

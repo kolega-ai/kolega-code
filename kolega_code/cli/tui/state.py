@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import itertools
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -237,9 +236,15 @@ class WorkflowActivity:
 
 @dataclass
 class PendingQuestion:
+    """A planning question this client is currently showing.
+
+    Like a permission prompt, identified by its control-channel request id: the
+    tool's wait lives in the channel, so answering means responding to that id.
+    """
+
     question: str
     options: list[str]  # selectable option labels; the selected label is the answer
-    future: asyncio.Future[str]
+    request_id: str
     descriptions: Optional[list[str]] = None  # per-option descriptions, parallel to options
 
 

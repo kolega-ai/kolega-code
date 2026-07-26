@@ -73,18 +73,33 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         """
         request_id = str(event.content.get("request_id") or "")
         kind = str(event.content.get("kind") or "")
-        if not request_id or kind != "permission":
-            return
         payload = event.content.get("payload")
-        if not isinstance(payload, dict) or not isinstance(payload.get("request"), dict):
+        if not request_id or not isinstance(payload, dict):
             return
-        try:
-            request = deserialize_permission_request(payload["request"])
-        except Exception:
-            # A request this client cannot render must not wedge the turn; leave
-            # it to the channel's default rather than showing a broken prompt.
+        if kind == "permission":
+            if not isinstance(payload.get("request"), dict):
+                return
+            try:
+                request = deserialize_permission_request(payload["request"])
+            except Exception:
+                # A request this client cannot render must not wedge the turn;
+                # leave it to the channel's default rather than show a broken
+                # prompt.
+                return
+            self._begin_approval(request_id, request)
             return
-        self._begin_approval(request_id, request)
+        if kind == "question":
+            options = payload.get("options")
+            question = str(payload.get("question") or "")
+            if not question or not isinstance(options, list) or len(options) < 2:
+                return
+            descriptions = payload.get("descriptions")
+            self._begin_question(
+                request_id,
+                question,
+                [str(option) for option in options],
+                [str(item) for item in descriptions] if isinstance(descriptions, list) else None,
+            )
 
     def _answer_permission_request(self, request_id: str, decision: PermissionDecision) -> None:
         """Send a decision back over the control channel. Never raises."""
@@ -92,6 +107,21 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             self.session_runtime.answer_permission(
                 request_id,
                 decision,
+                client_id=tui_constants.TUI_CLIENT_ID,
+            )
+        except Exception:
+            pass
+
+    def _answer_question_request(self, request_id: str, answer: str) -> None:
+        """Send a planning answer back over the control channel. Never raises.
+
+        An empty answer is a non-answer: the tool treats it as unanswered and
+        tells the model to proceed without it rather than acting on a blank.
+        """
+        try:
+            self.session_runtime.answer_question(
+                request_id,
+                {"answer": answer},
                 client_id=tui_constants.TUI_CLIENT_ID,
             )
         except Exception:
@@ -694,7 +724,9 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             self._handle_control_request(event)
             return
         if event.event_type == KnownEventType.CONTROL_RESOLVED:
-            self._clear_approval_if_resolved(str(event.content.get("request_id") or ""))
+            resolved_id = str(event.content.get("request_id") or "")
+            self._clear_approval_if_resolved(resolved_id)
+            self._clear_question_if_resolved(resolved_id)
             return
         if event.event_type in _RECORDING_ONLY_EVENTS:
             # Assistant prose, reasoning, and turn boundaries exist on the event
