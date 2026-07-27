@@ -57,6 +57,71 @@ def provider_is_configured(config: AgentConfig, provider: ModelProvider) -> bool
     return bool(config.get_api_key(provider))
 
 
+# The two OpenAI backends serve the same models, so a caller that names one when only
+# the other is configured is one word away from a valid route. Preference between them
+# is advice, never enforcement: a subscription can run out of quota, and the user may
+# have their own reason to direct a worker at a particular backend.
+_SIBLING_PROVIDERS: dict[ModelProvider, ModelProvider] = {
+    ModelProvider.OPENAI: ModelProvider.OPENAI_CHATGPT,
+    ModelProvider.OPENAI_CHATGPT: ModelProvider.OPENAI,
+}
+_PREFERRED_SIBLING = ModelProvider.OPENAI_CHATGPT
+
+SIBLING_PREFERENCE_ADVICE = (
+    f"`{ModelProvider.OPENAI.value}` and `{ModelProvider.OPENAI_CHATGPT.value}` serve the same models. "
+    f"Prefer `{_PREFERRED_SIBLING.value}` when configured."
+)
+
+
+def configured_provider_names(config: AgentConfig) -> list[str]:
+    """Configured providers that actually have dispatchable models, in catalog order.
+
+    Mirrors what ``subagent_model_catalog`` reports so an error message and the
+    discovery tool can never disagree about what is available.
+    """
+    names: list[str] = []
+    for provider_value, _model_name in MODEL_SPECS:
+        if provider_value in names:
+            continue
+        try:
+            provider = ModelProvider(provider_value)
+        except ValueError:
+            continue
+        if provider_is_configured(config, provider):
+            names.append(provider_value)
+    return names
+
+
+def _configured_providers_sentence(config: AgentConfig) -> str:
+    names = configured_provider_names(config)
+    if not names:
+        return "No providers are configured for sub-agent model overrides."
+    return f"Configured providers: {', '.join(names)}."
+
+
+def _sibling_sentence(config: AgentConfig, provider: Optional[ModelProvider]) -> str:
+    """Advice naming the configured sibling backend, when one is relevant."""
+    sibling = _SIBLING_PROVIDERS.get(provider) if provider is not None else None
+    if sibling is None or not provider_is_configured(config, sibling):
+        return ""
+    return (
+        f"'{ModelProvider.OPENAI.value}' and '{ModelProvider.OPENAI_CHATGPT.value}' serve the same models; "
+        f"prefer '{_PREFERRED_SIBLING.value}' when it is configured."
+    )
+
+
+def _omit_override_sentence(inherited: ModelConfig) -> str:
+    effort = inherited.thinking_effort if inherited.thinking_effort is not None else "null"
+    return (
+        "Omit model_override entirely to run with the default: "
+        f"{inherited.provider.value}/{inherited.model} ({effort})."
+    )
+
+
+def _override_error(*parts: str) -> ValueError:
+    return ValueError(" ".join(part for part in parts if part))
+
+
 def parse_atomic_model_override(
     value: Any,
     *,
@@ -99,21 +164,34 @@ def parse_atomic_model_override(
 def _validated_override_model(
     config: AgentConfig, override: AtomicModelOverride, inherited: ModelConfig
 ) -> ModelConfig:
+    # Every failure below names what *is* available and how to proceed without an
+    # override. Listing the supported enum instead of the configured providers sent
+    # callers straight into another unusable guess.
     try:
         provider = ModelProvider(override.provider)
     except ValueError as exc:
-        valid = ", ".join(item.value for item in ModelProvider)
-        raise ValueError(
-            f"Unsupported model_override provider '{override.provider}'. Valid providers: {valid}."
+        raise _override_error(
+            f"Unsupported model_override provider '{override.provider}'.",
+            _configured_providers_sentence(config),
+            _omit_override_sentence(inherited),
         ) from exc
 
     try:
         get_model_specs(provider, override.model)
     except ValueError as exc:
-        raise ValueError(str(exc)) from exc
+        raise _override_error(
+            str(exc),
+            _sibling_sentence(config, provider),
+            _omit_override_sentence(inherited),
+        ) from exc
 
     if not provider_is_configured(config, provider):
-        raise ValueError(f"Provider '{provider.value}' is not configured for sub-agent model overrides.")
+        raise _override_error(
+            f"Provider '{provider.value}' is not configured.",
+            _configured_providers_sentence(config),
+            _sibling_sentence(config, provider),
+            _omit_override_sentence(inherited),
+        )
 
     efforts = thinking_effort_options(provider, override.model)
     if efforts:
@@ -265,6 +343,7 @@ def subagent_model_catalog(config: AgentConfig, provider: Optional[str] = None) 
 def render_subagent_model_catalog(catalog: dict[str, Any]) -> str:
     """Render discovery data compactly for an LLM and the visible transcript."""
 
+    configured = {entry["provider"] for entry in catalog["providers"]}
     lines = [
         "# Available sub-agent models",
         "",
@@ -272,12 +351,18 @@ def render_subagent_model_catalog(catalog: dict[str, Any]) -> str:
         "- Ordinary dispatch: `provider`, `model`, `thinking_effort`",
         "- Gigacode: `provider`, `model`, `effort`",
         "- Effort must be an exact listed value; use `null` only where efforts are `null`.",
-        "",
-        "## Effective role defaults",
-        "",
-        "| Role | Provider/model | Effort |",
-        "| --- | --- | --- |",
     ]
+    if {ModelProvider.OPENAI.value, ModelProvider.OPENAI_CHATGPT.value} <= configured:
+        lines.append(f"- {SIBLING_PREFERENCE_ADVICE}")
+    lines.extend(
+        [
+            "",
+            "## Effective role defaults",
+            "",
+            "| Role | Provider/model | Effort |",
+            "| --- | --- | --- |",
+        ]
+    )
     for role, route in catalog["agent_defaults"].items():
         effort = route["thinking_effort"] if route["thinking_effort"] is not None else "null"
         lines.append(f"| {role} | `{route['provider']}/{route['model']}` | `{effort}` |")
