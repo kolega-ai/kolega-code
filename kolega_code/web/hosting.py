@@ -43,7 +43,13 @@ _STARTUP_TIMEOUT_S = 10.0
 _STARTUP_POLL_S = 0.02
 
 LOOPBACK = "127.0.0.1"
-#: Bind address that accepts connections from other machines.
+#: Ask for a bind that other machines on this network can reach.
+#:
+#: A request, not the address finally bound. Binding the wildcard would listen on
+#: every interface the machine happens to have — a VPN, a tether, a cloud NIC —
+#: which is more than "reachable on your local network" promises and more than
+#: the link handed out advertises. ``_resolve_bind_host`` turns this into the
+#: single local-network address that link points at.
 ALL_INTERFACES = "0.0.0.0"
 #: The port both ``kolega-code serve`` and ``/share`` use unless told otherwise.
 #: Sharing through a tunnel means forwarding a port, and a forwarding rule is
@@ -124,7 +130,12 @@ class ShareServer:
         session_id: Optional[str] = None,
     ) -> None:
         self._store = store
-        self._bind = bind
+        # The wildcard is a request for reach, and it is turned into one here
+        # rather than carried around as an address. Nothing downstream can then
+        # pass it to bind() by accident, and a reader does not have to trace a
+        # guard to see that the server never listens on every interface.
+        self._expose_on_lan = bind == ALL_INTERFACES
+        self._bind = LOOPBACK if self._expose_on_lan else bind
         self._requested_port = port
         self._token = token or secrets.token_urlsafe(16)
         # None keeps every session reachable, which only makes sense for a host
@@ -146,7 +157,7 @@ class ShareServer:
     @property
     def exposed(self) -> bool:
         """Whether this is bound beyond loopback. Known before it starts."""
-        return self._bind != LOOPBACK
+        return self._expose_on_lan or self._bind != LOOPBACK
 
     async def start(self) -> ShareHandle:
         """Bind and begin serving, returning once the port is accepting."""
@@ -157,10 +168,11 @@ class ShareServer:
 
         from .server import ServerConfig, create_app
 
+        bind_host = self._resolve_bind_host()
         app = create_app(ServerConfig(store=self._store, token=self._token, session_ids=self._session_ids))
         config = uvicorn.Config(
             app,
-            host=self._bind,
+            host=bind_host,
             port=self._requested_port,
             log_level="warning",
             ws=WS_IMPL,
@@ -172,7 +184,7 @@ class ShareServer:
         # startup and reports failure with sys.exit, and a SystemExit raised
         # inside a task is re-raised into the event loop -- taking the host down
         # over a port collision. Binding here turns that into an ordinary error.
-        self._socket = self._bind_socket()
+        self._socket = self._bind_socket(bind_host)
         self._server = _build_server(config)
         self._task = asyncio.create_task(self._server.serve(sockets=[self._socket]))
 
@@ -182,13 +194,15 @@ class ShareServer:
             await self.stop()
             raise
 
-        host = self._bind if self._bind != ALL_INTERFACES else (local_network_address() or LOOPBACK)
+        # The address bound is the address advertised; there is no wildcard to
+        # translate back into something a recipient could type.
+        host = bind_host
         self._handle = ShareHandle(
             url=f"http://{host}:{self._bound_port()}",
             host=host,
             port=self._bound_port(),
             token=self._token,
-            exposed=self._bind != LOOPBACK,
+            exposed=self.exposed,
         )
         return self._handle
 
@@ -198,16 +212,33 @@ class ShareServer:
             raise ShareServerError("The share server is not running")
         return f"{self._handle.url}/s/{session_id}?token={self._handle.token}"
 
-    def _bind_socket(self) -> socket.socket:
+    def _resolve_bind_host(self) -> str:
+        """The concrete address to listen on for the requested reach.
+
+        ``ALL_INTERFACES`` asks for "reachable on my local network", and the
+        narrowest listener that satisfies it is this machine's address on that
+        network — which is also the address the share link already advertises.
+        Binding the wildcard would additionally expose the session on every
+        other interface the machine has.
+        """
+        if not self._expose_on_lan:
+            return self._bind
+        address = local_network_address()
+        if address is None:
+            raise ShareServerError(
+                "could not determine this machine's local network address, so there is nothing "
+                "for /share lan to bind to. Share on loopback and forward the port through a tunnel instead."
+            )
+        return address
+
+    def _bind_socket(self, host: str) -> socket.socket:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
-            sock.bind((self._bind, self._requested_port))
+            sock.bind((host, self._requested_port))
         except OSError as exc:
             sock.close()
-            raise ShareServerError(
-                f"could not bind {self._bind}:{self._requested_port} ({exc.strerror or exc})"
-            ) from exc
+            raise ShareServerError(f"could not bind {host}:{self._requested_port} ({exc.strerror or exc})") from exc
         return sock
 
     def request_stop(self) -> None:

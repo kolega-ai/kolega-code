@@ -212,6 +212,12 @@ link = server.session_url(session_id)                # carries ?token=...
 await server.stop()                                  # request_stop() from sync teardown
 ```
 
+`ALL_INTERFACES` is a request for "reachable on this machine's local network",
+not the address bound. It resolves to the single local-network address the link
+advertises, so a session is not also served on every other interface the host
+happens to have — a VPN, a tether, a cloud NIC. With no such address, `start()`
+raises rather than falling back to the wildcard.
+
 **Pass `session_id` for anything you hand to another person.** The token gates
 routes, not sessions. Without a scope, the link you gave one person reads every
 session in the store, including ones recorded for unrelated projects. With it,

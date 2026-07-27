@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from kolega_code.cli.session_store import SessionStore
+from kolega_code.web import hosting
 from kolega_code.web.hosting import ALL_INTERFACES, LOOPBACK, ShareServer, ShareServerError
 
 
@@ -140,3 +141,43 @@ async def test_does_not_touch_the_host_signal_handlers(store: SessionStore) -> N
         assert {sig: signal.getsignal(sig) for sig in before} == before
     finally:
         await server.stop()
+
+
+@pytest.mark.asyncio
+async def test_reaching_the_lan_binds_one_address_not_every_interface(
+    store: SessionStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ "Reachable on my local network" must not mean "reachable everywhere".
+
+    Binding the wildcard listens on every interface the machine happens to have
+    — a VPN, a tether, a cloud NIC — which is more than the request asks for and
+    more than the link handed out advertises. The narrowest listener that
+    satisfies it is the one address that link points at.
+    """
+    monkeypatch.setattr(hosting, "local_network_address", lambda: LOOPBACK)
+    server = ShareServer(store, bind=ALL_INTERFACES)
+
+    handle = await server.start()
+    try:
+        bound = server._socket.getsockname()  # pyright: ignore[reportOptionalMemberAccess]
+        assert bound[0] != ALL_INTERFACES, "the share server still listens on every interface"
+        assert bound[0] == LOOPBACK
+        # The advertised link points at exactly what was bound.
+        assert handle.host == LOOPBACK and f"{LOOPBACK}:{handle.port}" in handle.url
+        assert handle.exposed, "the caller still asked for a reachable share"
+    finally:
+        await server.stop()
+
+
+@pytest.mark.asyncio
+async def test_reaching_the_lan_without_a_network_fails_instead_of_opening_up(
+    store: SessionStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With no local address there is nothing to narrow to, and falling back to
+    the wildcard would quietly expose more than was asked for."""
+    monkeypatch.setattr(hosting, "local_network_address", lambda: None)
+
+    with pytest.raises(ShareServerError) as failure:
+        await ShareServer(store, bind=ALL_INTERFACES).start()
+
+    assert "local network address" in str(failure.value)

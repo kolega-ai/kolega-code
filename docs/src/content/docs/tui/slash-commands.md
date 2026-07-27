@@ -88,9 +88,11 @@ Viewers are **read-only**: they cannot type, approve a permission prompt, or
 interrupt a turn.
 
 :::caution
-`/share lan` binds every interface, so anyone who can reach your machine on that
-network and has the link can read the whole session, including file contents and
-command output.
+`/share lan` binds your machine's address on the local network, so anyone who can
+reach it there and has the link can read that whole session, including file
+contents and command output. A live link is also **not redacted** — unlike
+`kolega-code share export`, whatever the agent printed is visible to whoever
+holds it. Run `/share stop` when you are done.
 :::
 
 To let someone watch from outside your network, leave the share on loopback and
