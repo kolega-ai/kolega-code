@@ -20,6 +20,12 @@ const TOOL_STATUS = {
   tool_error: "failed",
 };
 
+//: AgentTool's dispatch lifecycle statuses, which carry no transcript text.
+const SUB_AGENT_LIFECYCLE = {
+  STOPPED: "completed",
+  ERROR: "failed",
+};
+
 export function emptyState() {
   return {
     conversation: [],
@@ -132,7 +138,11 @@ function onAssistantDelta(state, event, kind) {
   const index = state.streams.get(streamKey);
   const target = index === undefined ? null : resolve(state, event, index);
   if (!target) {
-    if (!text && !complete) return;
+    // A segment that never carried text produces nothing. The agent closes every
+    // iteration with a final empty prose delta even when it only called a tool,
+    // and rendering that as an entry puts a bare glyph with no content into the
+    // transcript.
+    if (!text) return;
     append(state, newItem({ kind, text, complete, streamId: event.uuid }), event);
     state.streams.set(streamKey, indexOf(state, event));
     if (complete) state.streams.delete(streamKey);
@@ -179,6 +189,14 @@ function onChatMessage(state, event) {
   const messageType = String((event.content && event.content.message_type) || "message");
   if (messageType in TOOL_STATUS) {
     onToolMessage(state, event, messageType);
+    return;
+  }
+  const lifecycle = event.content ? event.content.status : undefined;
+  const key = subAgentKey(event);
+  if (lifecycle !== undefined && lifecycle !== null && key !== null) {
+    // Dispatch lifecycle, not conversation: without it a finished sub-agent keeps
+    // reporting "running" for the rest of the replay.
+    subAgent(state, key, event).status = SUB_AGENT_LIFECYCLE[String(lifecycle)] || "running";
     return;
   }
   const text = textOf(event, "text");
@@ -298,18 +316,25 @@ const HANDLERS = {
   turn_started: (state, event) => {
     const turnId = String((event.content && event.content.turn_id) || "");
     const userText = String((event.content && event.content.user_text) || "");
-    state.turns.push({
-      turn_id: turnId,
-      status: "open",
-      user_text: userText,
-      started_seq: event.seq === undefined ? null : event.seq,
-      started_ms: event.elapsed_ms || 0,
-      ended_ms: null,
-    });
+    // A dispatched agent runs its own turns. They are not session turns: indexing
+    // them would put work nobody typed into the turn rail, and letting them drive
+    // the activity flag would report the session idle while the main agent is
+    // still going. The task text still opens the sub-agent's own trajectory.
+    if (subAgentKey(event) === null) {
+      state.turns.push({
+        turn_id: turnId,
+        status: "open",
+        user_text: userText,
+        started_seq: event.seq === undefined ? null : event.seq,
+        started_ms: event.elapsed_ms || 0,
+        ended_ms: null,
+      });
+      state.activity = "generating";
+    }
     if (userText) append(state, newItem({ kind: "user", text: userText }), event);
-    state.activity = "generating";
   },
   turn_ended: (state, event) => {
+    if (subAgentKey(event) !== null) return;
     const turnId = String((event.content && event.content.turn_id) || "");
     const status = String((event.content && event.content.status) || "completed");
     for (let index = state.turns.length - 1; index >= 0; index -= 1) {

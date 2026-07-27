@@ -396,6 +396,52 @@ class TestAgentTool:
         assert sub_agent_events[0].sub_agent_info["parent_tool_call_id"] == "tool_exec_unique_123"
         MockAgent.configure_streaming([])
 
+    async def test_streamed_chunks_are_not_rebroadcast_as_chat_messages(self, agent_tool, mock_connection_manager):
+        """BaseAgent already mirrors prose and reasoning onto the event stream.
+
+        Re-broadcasting them here put the same text on the stream twice: once as
+        a uuid-keyed delta a projection folds into one entry, and once as a
+        chat_message trail that folded into a second, chunk-per-item copy beside
+        it. Only chunk types the agent does not mirror still need broadcasting.
+        """
+        original_import = builtins.__import__
+
+        with patch.object(builtins, "__import__") as mock_import:
+            mock_module = MagicMock()
+            mock_module.MockAgent = MockAgent
+
+            def mock_import_func(name, *args, **kwargs):
+                if name == "test.module":
+                    return mock_module
+                return original_import(name, *args, **kwargs)
+
+            mock_import.side_effect = mock_import_func
+            MockAgent.configure_streaming(
+                [
+                    {"content": "weighing ", "complete": False, "uuid": "th", "type": "thinking"},
+                    {"content": "options.", "complete": True, "uuid": "th", "type": "thinking"},
+                    {"content": "Done.", "complete": True, "uuid": "r1", "type": "response"},
+                ]
+            )
+            MockAgent.last_instance = None
+
+            await agent_tool._dispatch_agent(agent_class_import="test.module.MockAgent", task="Test task")
+
+        chat_messages = [
+            call.args[0]
+            for call in mock_connection_manager.broadcast_event.call_args_list
+            if call.args[0].event_type == "chat_message" and "text" in call.args[0].content
+        ]
+        assert chat_messages == [], "streamed chunks must reach the stream only as deltas"
+        # The dispatch lifecycle still announces itself.
+        statuses = [
+            call.args[0].content["status"]
+            for call in mock_connection_manager.broadcast_event.call_args_list
+            if "status" in call.args[0].content
+        ]
+        assert statuses == ["GENERATING", "STOPPED"]
+        MockAgent.configure_streaming([])
+
     async def test_all_agents_get_consistent_status_messages(self, agent_tool):
         """Test that all agent types get consistent start/end/error messages."""
         # This is a meta-test to ensure our simplification goal is achieved

@@ -33,6 +33,7 @@ from ._app_test_utils import (
     _build_mention_test_app,
     _build_sub_agent_test_app,
     _sub_agent_context_event,
+    _sub_agent_delta,
     _sub_agent_entries,
     _sub_agent_event,
     _workflow_event,
@@ -176,6 +177,55 @@ async def test_sub_agent_stream_chunks_group_into_single_entry(tmp_path: Path, m
         assert "#1" in entries[0].content
         assert "The session store writes JSON records" in entries[0].content
         assert "Task: inspect sessions" in entries[0].content
+
+
+@pytest.mark.asyncio
+async def test_sub_agent_deltas_from_the_event_stream_render(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Delegated prose and reasoning reach the TUI as deltas, not chat messages.
+
+    AgentTool no longer re-broadcasts a sub-agent's generator, because the agent
+    already mirrors it onto the stream. The main agent's deltas stay
+    recording-only here — the TUI renders those from its own generator — but a
+    sub-agent's generator runs inside the tool, so these are the only copy.
+    """
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        app._render_event(_sub_agent_delta("weighing the options", thinking=True, uuid="th1"))
+        app._render_event(_sub_agent_delta("The session store wri", uuid="u1", complete=False))
+        app._render_event(_sub_agent_delta("tes JSON records", uuid="u1"))
+
+        entries = _sub_agent_entries(app)
+        assert len(entries) == 1
+        # Not rendered as top-level conversation, and not dropped as recording-only.
+        assert not any(entry.kind == "message" for entry in app.conversation_entries)
+        assert "The session store writes JSON records" in entries[0].content
+
+        activity = next(iter(app._sub_agent_activities.values()))
+        streamed = [step for step in activity.steps if step.kind != "sub_agent_task"]
+        assert [step.kind for step in streamed] == ["thinking", "assistant"]
+        assert streamed[0].materialize() == "weighing the options"
+        assert streamed[1].materialize() == "The session store writes JSON records"
+
+
+@pytest.mark.asyncio
+async def test_main_agent_deltas_stay_recording_only(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The sub-agent carve-out must not resurrect the main agent's deltas."""
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        for event_type in ("assistant_delta", "thinking_delta"):
+            app._render_event(
+                AgentEvent(
+                    event_type=event_type,
+                    sender="agent",
+                    content={"text": "should not render", "complete": True},
+                    uuid="main-1",
+                )
+            )
+
+        assert not _sub_agent_entries(app)
+        assert not any("should not render" in (entry.content or "") for entry in app.conversation_entries)
 
 
 @pytest.mark.asyncio

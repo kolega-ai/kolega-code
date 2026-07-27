@@ -12,6 +12,7 @@ from rich.table import Table
 from rich.text import Text
 
 from kolega_code.agent import AgentEvent
+from kolega_code.events import KnownEventType
 from kolega_code.llm.models import Message, TextBlock, ToolCall, ToolResult
 from kolega_code.services.lsp import extract_lsp_label
 
@@ -656,24 +657,47 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
             activity.current_action = f"{tool} {suffix}"
             self._record_sub_agent_tool_step(activity, message_type, content)
         elif message_type == "thinking":
-            activity.last_activity = "thinking"
-            activity.current_action = "thinking"
-            self._accumulate_sub_agent_stream(activity, "thinking", event, text)
+            self._apply_sub_agent_thinking(activity, event, text)
         else:  # streamed response text - accumulate by chunk uuid
-            activity.current_action = "responding"
-            if event.uuid and text:
-                # Keep only a bounded tail. The card shows just the last
-                # SUB_AGENT_TAIL_CHARS (whitespace-collapsed), so storing the whole
-                # response via `get()+text` per delta was pure O(n^2) waste that froze
-                # the UI on long reasoning streams. A small multiple of the display
-                # window preserves the truncation/ellipsis behavior at O(1) per delta.
-                tail_cap = theme.SUB_AGENT_TAIL_CHARS * 4
-                buffer = (activity.stream_buffers.get(event.uuid, "") + text)[-tail_cap:]
-                activity.stream_buffers[event.uuid] = buffer
-                activity.active_stream_uuid = event.uuid
-            self._accumulate_sub_agent_stream(activity, "assistant", event, text)
+            self._apply_sub_agent_response(activity, event, text)
         self._refresh_sub_agent_entry(activity)
         self._invalidate_sub_agent_detail(activity)
+
+    def _render_sub_agent_delta(self, event: AgentEvent) -> None:
+        """Render a sub-agent's reasoning or prose from the event stream.
+
+        The main agent's deltas are recording-only here because this TUI renders
+        them from ``process_message_stream``. A sub-agent's generator is consumed
+        inside ``AgentTool`` instead, so for delegated work these events are the
+        only copy the TUI ever sees.
+        """
+        activity = self._ensure_sub_agent_activity(event)
+        text = str(event.content.get("text") or "")
+        if event.event_type == KnownEventType.THINKING_DELTA:
+            self._apply_sub_agent_thinking(activity, event, text)
+        else:
+            self._apply_sub_agent_response(activity, event, text)
+        self._refresh_sub_agent_entry(activity)
+        self._invalidate_sub_agent_detail(activity)
+
+    def _apply_sub_agent_thinking(self, activity: SubAgentActivity, event: AgentEvent, text: str) -> None:
+        activity.last_activity = "thinking"
+        activity.current_action = "thinking"
+        self._accumulate_sub_agent_stream(activity, "thinking", event, text)
+
+    def _apply_sub_agent_response(self, activity: SubAgentActivity, event: AgentEvent, text: str) -> None:
+        activity.current_action = "responding"
+        if event.uuid and text:
+            # Keep only a bounded tail. The card shows just the last
+            # SUB_AGENT_TAIL_CHARS (whitespace-collapsed), so storing the whole
+            # response via `get()+text` per delta was pure O(n^2) waste that froze
+            # the UI on long reasoning streams. A small multiple of the display
+            # window preserves the truncation/ellipsis behavior at O(1) per delta.
+            tail_cap = theme.SUB_AGENT_TAIL_CHARS * 4
+            buffer = (activity.stream_buffers.get(event.uuid, "") + text)[-tail_cap:]
+            activity.stream_buffers[event.uuid] = buffer
+            activity.active_stream_uuid = event.uuid
+        self._accumulate_sub_agent_stream(activity, "assistant", event, text)
 
     def _record_sub_agent_tool_step(self, activity: SubAgentActivity, message_type: str, content: dict) -> None:
         """Capture a sub-agent tool_call/result/error as a ConversationEntry step,

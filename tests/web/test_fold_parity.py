@@ -164,7 +164,30 @@ def _fixture_events() -> list[AgentEvent]:
         _event(KnownEventType.ASSISTANT_DELTA, 29, elapsed_ms=1020, uuid="as2", text="Doing ", complete=False),
         _event(KnownEventType.THINKING_DELTA, 30, elapsed_ms=1030, uuid="th2", text="the options.", complete=True),
         _event(KnownEventType.ASSISTANT_DELTA, 31, elapsed_ms=1040, uuid="as2", text="it now.", complete=True),
-        _event(KnownEventType.TURN_ENDED, 32, elapsed_ms=1050, turn_id="t2", status="completed"),
+        # A dispatched agent's own turn: it must not reach the turn rail or the
+        # activity flag, but its task and reasoning belong to its trajectory.
+        _sub_agent(
+            _event(KnownEventType.TURN_STARTED, 32, elapsed_ms=1042, turn_id="sub-t", user_text="trace it"),
+            dispatch_id="d2",
+            agent_name="investigator",
+            task="trace it",
+        ),
+        _sub_agent(
+            _event(KnownEventType.THINKING_DELTA, 33, elapsed_ms=1044, uuid="subth", text="Looking.", complete=True),
+            dispatch_id="d2",
+        ),
+        _sub_agent(
+            _event(KnownEventType.TURN_ENDED, 34, elapsed_ms=1046, turn_id="sub-t", status="completed"),
+            dispatch_id="d2",
+        ),
+        _sub_agent(
+            _event(KnownEventType.CHAT_MESSAGE, 35, elapsed_ms=1048, status="STOPPED", message="done"),
+            dispatch_id="d2",
+        ),
+        _event(KnownEventType.TURN_ENDED, 36, elapsed_ms=1050, turn_id="t2", status="completed"),
+        # A prose segment that only ever carries an empty final delta, which the
+        # agent emits on every iteration that ended in a tool call.
+        _event(KnownEventType.ASSISTANT_DELTA, 37, elapsed_ms=1060, uuid="empty", text="", complete=True),
     ]
 
 

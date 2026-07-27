@@ -340,7 +340,11 @@ def _on_assistant_delta(state: PresentationState, event: AgentEvent, *, kind: st
     if index is not None:
         target = _resolve(state, event, index)
     if target is None:
-        if not text and not complete:
+        # A segment that never carried text produces nothing. The agent closes
+        # every iteration with a final empty prose delta even when it only called
+        # a tool, and rendering that as an entry puts a bare glyph with no content
+        # into the transcript.
+        if not text:
             return
         _append(state, ConversationItem(kind=kind, text=text, complete=complete, stream_id=event.uuid), event)
         state._streams[stream_key] = _index_of(state, event)
@@ -373,10 +377,21 @@ def _resolve(state: PresentationState, event: AgentEvent, index: int) -> Optiona
     return None
 
 
+#: AgentTool's dispatch lifecycle statuses, which carry no transcript text.
+_SUB_AGENT_LIFECYCLE = {"STOPPED": "completed", "ERROR": "failed"}
+
+
 def _on_chat_message(state: PresentationState, event: AgentEvent) -> None:
     message_type = str(event.content.get("message_type") or "message")
     if message_type in ("tool_call", "tool_result", "tool_error"):
         _on_tool_message(state, event, message_type)
+        return
+    lifecycle = event.content.get("status")
+    key = _sub_agent_key(event)
+    if lifecycle is not None and key is not None:
+        # Dispatch lifecycle, not conversation: without it a finished sub-agent
+        # keeps reporting "running" for the rest of the replay.
+        _sub_agent(state, key, event).status = _SUB_AGENT_LIFECYCLE.get(str(lifecycle), "running")
         return
     text = _text_of(event, "text")
     if not text:
@@ -535,15 +550,22 @@ def _on_status_update(state: PresentationState, event: AgentEvent) -> None:
 def _on_turn_started(state: PresentationState, event: AgentEvent) -> None:
     turn_id = str(event.content.get("turn_id") or "")
     user_text = str(event.content.get("user_text") or "")
-    state.turns.append(
-        TurnMarker(turn_id=turn_id, user_text=user_text, started_seq=event.seq, started_ms=event.elapsed_ms)
-    )
+    # A dispatched agent runs its own turns. They are not session turns: indexing
+    # them would put work nobody typed into the turn rail, and letting them drive
+    # the activity flag would report the session idle while the main agent is
+    # still going. The task text still opens the sub-agent's own trajectory.
+    if _sub_agent_key(event) is None:
+        state.turns.append(
+            TurnMarker(turn_id=turn_id, user_text=user_text, started_seq=event.seq, started_ms=event.elapsed_ms)
+        )
+        state.activity = "generating"
     if user_text:
         _append(state, ConversationItem(kind="user", text=user_text), event)
-    state.activity = "generating"
 
 
 def _on_turn_ended(state: PresentationState, event: AgentEvent) -> None:
+    if _sub_agent_key(event) is not None:
+        return
     turn_id = str(event.content.get("turn_id") or "")
     status = str(event.content.get("status") or "completed")
     for marker in reversed(state.turns):

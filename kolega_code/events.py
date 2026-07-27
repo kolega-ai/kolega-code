@@ -312,7 +312,14 @@ class AgentEventEmitter:
 
         ``phase`` is "started" or "ended"; ``status`` carries the terminal
         outcome on "ended".
+
+        A dispatched agent runs turns of its own, so these carry ``sub_agent_info``
+        like every other event. Without it a consumer cannot tell a delegated turn
+        from a session turn, and folds the sub-agent's task into the main
+        transcript as a message the user never sent.
         """
+        sub_agent_info = self._sub_agent_info_provider() if self._sub_agent_info_provider else None
+
         await self.emit(
             AgentEvent(
                 sender=self.sender,
@@ -322,6 +329,7 @@ class AgentEventEmitter:
                     "status": status,
                     "user_text": user_text,
                 },
+                sub_agent_info=sub_agent_info,
             )
         )
 

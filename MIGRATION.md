@@ -38,6 +38,25 @@ renders from events will now receive assistant text it did not receive before; a
 host that also renders the generator output should ignore these to avoid
 duplicating each response.
 
+**Sub-agent prose and reasoning moved to those types too — this one is breaking.**
+`AgentTool` used to re-broadcast every chunk of a dispatched agent's generator as a
+`chat_message` carrying `sub_agent_info` (and `message_type: "thinking"` for
+reasoning). The dispatched agent is itself a `BaseAgent`, so it now mirrors the same
+chunks as `assistant_delta`/`thinking_delta` with the same `sub_agent_info`, and
+keeping both put every delegated sentence on the stream twice. The re-broadcast is
+gone; chunk types the agent does not mirror are still broadcast as before.
+
+The delta form is strictly better to render from: deltas of one segment share a
+`uuid` so they accumulate into a single entry, whereas the `chat_message` copies had
+to be re-assembled by the consumer and reasoning was distinguishable only by a
+magic `message_type` string.
+
+**Turn boundaries now carry `sub_agent_info`.** A dispatched agent runs turns of its
+own. Without attribution they were indistinguishable from session turns, so the
+sub-agent's task folded into the main transcript as a message the user never sent,
+and its `turn_ended` reported the session idle while the main agent was still
+working.
+
 ### Upgrading
 
 #### 1. Take the additive changes (no work)
@@ -47,7 +66,29 @@ consumers that ignore unknown keys. Existing `AgentConnectionManager` subclasses
 keep working untouched. If you match on `event_type` with an exhaustive
 `if/elif`, add a fallback branch before upgrading.
 
-#### 2. Adopt the stores (opt in)
+#### 2. Re-point sub-agent rendering at the delta events (required if you render dispatches)
+
+If you render delegated work, you were reading `chat_message` events that carried
+`sub_agent_info`. Prose and reasoning no longer arrive that way. Tool calls, tool
+results, edit previews, context updates, and the `GENERATING`/`STOPPED`/`ERROR`
+lifecycle statuses are unchanged — only the streamed chunks moved.
+
+```python
+# before: one chat_message per chunk, reasoning flagged by a string
+if event.event_type == "chat_message" and event.sub_agent_info:
+    if event.content.get("message_type") == "thinking":
+        ...
+
+# after: typed deltas, grouped by uuid, completion on the envelope
+if event.sub_agent_info and event.event_type in ("assistant_delta", "thinking_delta"):
+    reasoning = event.event_type == "thinking_delta"
+    append_to_segment(event.uuid, event.content["text"], complete=not event.is_streaming)
+```
+
+`kolega_code.session.projection.fold` already does this; hosts that render from it
+need no change.
+
+#### 3. Adopt the stores (opt in)
 
 Implement the two protocols in `kolega_code.session.store` against your own
 storage:
@@ -109,14 +150,14 @@ for check in CONFORMANCE_CHECKS:
     await check(factory)
 ```
 
-#### 3. Replace bespoke reconnect buffers
+#### 4. Replace bespoke reconnect buffers
 
 If you keep a bounded in-memory cache of recent events so reconnecting clients can
 catch up, `tail(from_seq=...)` supersedes it: durable, unbounded, and unaffected by
 a process restart. Any hand-rolled reassembly of partial streaming messages is
 likewise replaced by the recording wrapper's coalescing.
 
-#### 4. Converge message persistence (optional, last)
+#### 5. Converge message persistence (optional, last)
 
 If you already store per-thread ordered messages, that record can become a
 *projection* of the event log rather than a parallel source of truth. Dual-write

@@ -208,6 +208,27 @@ body::after {
   color: var(--kc-warning);
 }
 
+/* Delegated work is part of the same thread, set in from the main transcript so
+   its attribution is obvious without moving the reader to a second pane. */
+.kc-entry[data-sub-agent] {
+  margin-left: 1.1rem;
+  padding-left: 0.85rem;
+  margin-bottom: 0.6rem;
+  border-left: 2px solid color-mix(in srgb, var(--kc-tool) 38%, transparent);
+}
+
+.kc-sub-agent-lead {
+  grid-column: 1 / -1;
+  margin-bottom: 0.35rem;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--kc-tool);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Tool entries get the TUI's inset rule so their output reads as nested. */
 .kc-tool-head {
   display: flex;

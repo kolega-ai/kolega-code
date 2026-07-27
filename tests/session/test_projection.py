@@ -146,6 +146,60 @@ def test_sub_agent_activity_is_routed_away_from_the_main_transcript() -> None:
     assert [step.text for step in activity.steps] == ["delegated work"]
 
 
+def _delegated(event: AgentEvent, dispatch_id: str = "d1", **info: Any) -> AgentEvent:
+    event.sub_agent_info = {"dispatch_id": dispatch_id, "agent_name": "investigator", **info}
+    return event
+
+
+def test_sub_agent_turns_stay_out_of_the_turn_index_and_activity() -> None:
+    """A dispatched agent runs its own turns; they are not session turns.
+
+    Indexing them would put work nobody typed into the turn rail, and its
+    turn_ended would report the session idle while the main agent is still going.
+    """
+    events = [
+        _event(KnownEventType.TURN_STARTED, 1, turn_id="t1", user_text="ship it"),
+        _delegated(_event(KnownEventType.TURN_STARTED, 2, turn_id="sub", user_text="trace it"), task="trace it"),
+        _delegated(_event(KnownEventType.TURN_ENDED, 3, turn_id="sub", status="completed")),
+    ]
+
+    state = replay(events)
+
+    assert [marker.turn_id for marker in state.turns] == ["t1"]
+    assert state.activity == "generating", "a delegated turn ending must not idle the session"
+    assert [item.text for item in state.conversation] == ["ship it"]
+    # The task still opens the sub-agent's own trajectory.
+    assert [step.text for step in state.sub_agents["d1"].steps] == ["trace it"]
+
+
+def test_sub_agent_lifecycle_status_settles_the_activity() -> None:
+    events = [
+        _delegated(_event(KnownEventType.CHAT_MESSAGE, 1, status="GENERATING", message="Starting")),
+        _delegated(_event(KnownEventType.CHAT_MESSAGE, 2, status="STOPPED", message="Completed")),
+    ]
+
+    state = replay(events)
+
+    assert state.sub_agents["d1"].status == "completed"
+    assert state.conversation == [], "lifecycle events are not transcript content"
+
+
+def test_sub_agent_error_lifecycle_marks_failure() -> None:
+    event = _delegated(_event(KnownEventType.CHAT_MESSAGE, 1, status="ERROR", message="Error: boom"))
+
+    assert replay([event]).sub_agents["d1"].status == "failed"
+
+
+def test_empty_completed_delta_creates_no_entry() -> None:
+    """Every iteration that ends in a tool call closes with an empty prose delta."""
+    events = [
+        _event(KnownEventType.ASSISTANT_DELTA, 1, uuid="a", text="", complete=True),
+        _event(KnownEventType.THINKING_DELTA, 2, uuid="b", text="", complete=True),
+    ]
+
+    assert replay(events).conversation == []
+
+
 def test_sub_agent_compaction_does_not_touch_main_indicator() -> None:
     main = _event(KnownEventType.COMPACTION_STATUS, 1, phase="started", message="main")
     delegate = _event(KnownEventType.COMPACTION_STATUS, 2, phase="finished", message="delegate")

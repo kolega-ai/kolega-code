@@ -49,6 +49,8 @@ let lastFrame = 0;
 let renderedCount = 0;
 /** Per-index snapshot of the mutable fields renderEntry draws, for change detection. */
 let renderedEntries = [];
+/** Cached chronological merge of the main transcript and every sub-agent trajectory. */
+let mergedRows = null;
 let spinnerTick = 0;
 
 // ---------------------------------------------------------------- bootstrap ---
@@ -160,6 +162,7 @@ function applyCount(target) {
     appliedCount = 0;
     renderedCount = 0;
     renderedEntries = [];
+    mergedRows = null;
     dom.transcript.replaceChildren();
   }
   for (let index = appliedCount; index < target; index += 1) {
@@ -332,6 +335,49 @@ function render() {
   syncTransport();
 }
 
+/** How many entries exist across the main thread and every sub-agent. */
+function transcriptSize() {
+  let total = state.conversation.length;
+  for (const activity of state.subAgents.values()) total += activity.steps.length;
+  return total;
+}
+
+/**
+ * The main transcript and every sub-agent trajectory as one chronological list.
+ *
+ * The fold keeps delegated work out of the main conversation so a client can
+ * present it separately, but a replay reads as one thread: a sub-agent's
+ * reasoning and tool calls belong where they happened, not in a side panel that
+ * only ever showed the task line.
+ *
+ * Every entry carries the seq of the event that created it and never moves, and
+ * events fold in seq order, so a new entry always sorts last. The merge is
+ * therefore append-only, which is what lets the render diff stay index-based.
+ */
+function transcriptRows() {
+  if (mergedRows && mergedRows.length === transcriptSize()) return mergedRows;
+  const rows = state.conversation.map((item) => ({ item, agent: null }));
+  for (const activity of state.subAgents.values()) {
+    for (const step of activity.steps) rows.push({ item: step, agent: activity });
+  }
+  rows.forEach((row, order) => {
+    row.order = order;
+  });
+  rows.sort((left, right) => {
+    const a = left.item.seq ?? Number.MAX_SAFE_INTEGER;
+    const b = right.item.seq ?? Number.MAX_SAFE_INTEGER;
+    return a === b ? left.order - right.order : a - b;
+  });
+  // Name a sub-agent once per run rather than on every line it produces.
+  let previousAgent = null;
+  for (const row of rows) {
+    row.lead = row.agent !== null && row.agent !== previousAgent;
+    previousAgent = row.agent;
+  }
+  mergedRows = rows;
+  return rows;
+}
+
 /**
  * Snapshot the fields renderEntry draws that the fold can still mutate.
  *
@@ -339,8 +385,12 @@ function render() {
  * concatenation, `artifacts` and the edit preview are reassigned), so comparing
  * a snapshot is exact and costs a handful of identity checks per entry.
  */
-function entrySnapshot(item) {
+function entrySnapshot(row) {
+  const item = row.item;
   return {
+    item,
+    agent: row.agent,
+    lead: row.lead,
     text: item.text,
     complete: item.complete,
     status: item.status,
@@ -350,9 +400,13 @@ function entrySnapshot(item) {
   };
 }
 
-function entryChanged(previous, item) {
+function entryChanged(previous, row) {
+  const item = row.item;
   return (
     previous === undefined ||
+    previous.item !== item ||
+    previous.agent !== row.agent ||
+    previous.lead !== row.lead ||
     previous.text !== item.text ||
     previous.complete !== item.complete ||
     previous.status !== item.status ||
@@ -368,33 +422,44 @@ function renderTranscript() {
   // that interrupted it was appended — every turn interleaves them — and a tool
   // entry resolves long after later entries exist. Re-rendering only the newest
   // entry left those frozen mid-stream, spinner and all.
-  const items = state.conversation;
-  if (renderedCount > items.length) {
+  const rows = transcriptRows();
+  if (renderedCount > rows.length) {
     dom.transcript.replaceChildren();
     renderedCount = 0;
     renderedEntries = [];
   }
   for (let index = 0; index < renderedCount; index += 1) {
-    const item = items[index];
-    if (!entryChanged(renderedEntries[index], item)) continue;
-    dom.transcript.children[index]?.replaceWith(renderEntry(item));
-    renderedEntries[index] = entrySnapshot(item);
+    const row = rows[index];
+    if (!entryChanged(renderedEntries[index], row)) continue;
+    dom.transcript.children[index]?.replaceWith(renderEntry(row));
+    renderedEntries[index] = entrySnapshot(row);
   }
-  for (let index = renderedCount; index < items.length; index += 1) {
-    const item = items[index];
-    dom.transcript.append(renderEntry(item));
-    renderedEntries[index] = entrySnapshot(item);
+  for (let index = renderedCount; index < rows.length; index += 1) {
+    dom.transcript.append(renderEntry(rows[index]));
+    renderedEntries[index] = entrySnapshot(rows[index]);
   }
-  renderedCount = items.length;
+  renderedCount = rows.length;
   const atEnd = dom.transcript.parentElement;
   if (atEnd) atEnd.scrollTop = atEnd.scrollHeight;
 }
 
-function renderEntry(item) {
+function renderEntry(entry) {
+  const item = entry.item;
   const row = document.createElement("div");
   row.className = "kc-entry";
   row.dataset.kind = item.kind;
   if (item.tone) row.dataset.tone = item.tone;
+  if (entry.agent) {
+    row.dataset.subAgent = entry.agent.name || entry.agent.key;
+    if (entry.lead) {
+      const lead = document.createElement("div");
+      lead.className = "kc-sub-agent-lead";
+      lead.textContent = entry.agent.task
+        ? `${entry.agent.name} · ${entry.agent.task}`
+        : entry.agent.name;
+      row.append(lead);
+    }
+  }
 
   const glyph = document.createElement("span");
   glyph.className = "kc-glyph";

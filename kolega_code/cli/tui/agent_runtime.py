@@ -62,6 +62,16 @@ _RECORDING_ONLY_EVENTS = frozenset(
     }
 )
 
+#: ...except when they belong to a sub-agent. Only the main agent's generator is
+#: consumed here; a sub-agent's runs inside AgentTool, so these events are the
+#: TUI's only view of what delegated work said.
+_SUB_AGENT_STREAM_EVENTS = frozenset(
+    {
+        KnownEventType.ASSISTANT_DELTA,
+        KnownEventType.THINKING_DELTA,
+    }
+)
+
 
 class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
     def _handle_control_request(self, event: AgentEvent) -> None:
@@ -745,6 +755,9 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             resolved_id = str(event.content.get("request_id") or "")
             self._clear_approval_if_resolved(resolved_id)
             self._clear_question_if_resolved(resolved_id)
+            return
+        if event.sub_agent_info and event.event_type in _SUB_AGENT_STREAM_EVENTS:
+            self._render_sub_agent_delta(event)
             return
         if event.event_type in _RECORDING_ONLY_EVENTS:
             # Assistant prose, reasoning, and turn boundaries exist on the event
