@@ -704,3 +704,66 @@ async def test_textual_app_queued_messages_do_not_drain_while_plan_decision_acti
         assert [item.text for item in app._queued_messages] == ["second", "third"]
         assert app.agent_worker is None
         assert app.query_one("#queued_messages").display is False
+
+
+@pytest.mark.asyncio
+async def test_cancelling_with_a_permission_prompt_open_restores_the_queued_message(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Stopping a turn mid-prompt must not swallow what you queued behind it.
+
+    Cancelling has to dismiss the outstanding approval *and* hand the queued
+    text back, or the message is neither answered nor visible anywhere: the
+    prompt vanishes with the turn and the queue drains into nothing.
+    """
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.state import PendingApproval
+    from kolega_code.cli.tui.widgets import ChatComposer
+    from kolega_code.permissions import allow_rule_options, permission_request_for_tool
+
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    started = asyncio.Event()
+
+    async def _never_finishes(*_args, **_kwargs):
+        started.set()
+        await asyncio.sleep(3600)
+        yield {}  # pragma: no cover - unreachable, keeps this an async generator
+
+    async with app.run_test() as pilot:
+        composer = app.query_one("#composer", ChatComposer)
+        monkeypatch.setattr(app, "_agent_turn_stream", _never_finishes)
+
+        composer.load_text("run the thing")
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+        await asyncio.wait_for(started.wait(), timeout=5)
+
+        composer.load_text("and then check the logs")
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+        assert [item.text for item in app._queued_messages] == ["and then check the logs"]
+
+        request = permission_request_for_tool("exec_command", {"command": "rm -rf build"})
+        assert request is not None
+        app._pending_approval = PendingApproval(
+            request=request, request_id="req-cancel", rule_options=allow_rule_options(request)
+        )
+
+        app.action_cancel_generation()
+        for _ in range(20):
+            await pilot.pause()
+            if app.agent_worker is None:
+                break
+
+        assert app.agent_worker is None, "cancelling with a prompt open must not hang the turn"
+        assert app._pending_approval is None, "the prompt has to go with the turn it belonged to"
+        assert app._queued_messages == []
+        assert composer.text == "and then check the logs", "the queued follow-up was lost on cancel"
