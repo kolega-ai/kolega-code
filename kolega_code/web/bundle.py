@@ -18,8 +18,9 @@ from __future__ import annotations
 
 import json
 import shutil
+import tempfile
 import zipfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Optional, Sequence
 
@@ -27,12 +28,20 @@ from kolega_code.cli import theme as cli_theme
 from kolega_code.events import AgentEvent, ArtifactRef
 from kolega_code.session.store import ArtifactStore
 
-from .redaction import RedactionReport, redact_event, shareable_artifacts
+from .redaction import RedactionReport, redact_artifact_bytes, redact_event, shareable_artifacts
 from .singlefile import build_single_file
 from .theme_css import stylesheet
 
 #: Bumped when the on-disk bundle layout changes so a player can refuse politely.
 BUNDLE_FORMAT_VERSION = 1
+
+#: Ceilings on images embedded in a single-file replay. Base64 inflates bytes by
+#: a third, and the point of the one-file shape is that it can be emailed, so a
+#: session full of screenshots keeps the text badge rather than growing without
+#: bound. The directory and zip shapes write artifacts as separate files and are
+#: not capped.
+MAX_INLINE_IMAGE_BYTES = 2 * 1024 * 1024
+MAX_INLINE_IMAGE_TOTAL = 16 * 1024 * 1024
 
 _ASSET_DIR = Path(__file__).parent / "assets"
 _PLAYER_ASSETS = ("player.html", "player.js", "player.css", "fold.js")
@@ -49,6 +58,21 @@ class BundleResult:
     report: RedactionReport
     #: True when the whole replay is one HTML document rather than a directory.
     single_file: bool = False
+    #: Non-fatal notes for the caller to surface, e.g. writing into a directory
+    #: that already held unrelated files. Printing is the CLI's job, not ours.
+    warnings: list[str] = field(default_factory=list)
+
+
+def zip_destination(destination: Path) -> Path:
+    """Archive path for ``destination``, appending ``.zip`` rather than replacing.
+
+    ``with_suffix(".zip")`` would turn ``my.project`` into ``my.zip``, silently
+    writing somewhere the caller never named. Only an explicit ``.zip`` is left
+    alone.
+    """
+    if destination.suffix.lower() == ".zip":
+        return destination
+    return destination.with_name(destination.name + ".zip")
 
 
 async def export_bundle(
@@ -70,7 +94,7 @@ async def export_bundle(
     """
     report = RedactionReport()
     safe_events = [redact_event(event, report=report, extra_secrets=extra_secrets) for event in events]
-    loaded_artifacts = await _load_artifacts(safe_events, artifact_store)
+    loaded_artifacts = await _load_artifacts(safe_events, artifact_store, report=report, extra_secrets=extra_secrets)
     events_jsonl = _events_jsonl(safe_events)
     duration_ms = max((event.elapsed_ms for event in safe_events), default=0)
 
@@ -87,42 +111,100 @@ async def export_bundle(
             report=report,
         )
 
-    target = destination.with_suffix("") if as_zip else destination
-    target.mkdir(parents=True, exist_ok=True)
-
-    (target / "events.jsonl").write_bytes(events_jsonl)
-    artifact_count = _write_artifacts(target / "artifacts", loaded_artifacts)
-    _write_assets(target)
-    (target / "theme.css").write_text(stylesheet(), encoding="utf-8")
-    (target / "themes.json").write_text(
-        json.dumps(cli_theme.all_web_tokens(), indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
-
-    manifest = _manifest(
+    write_directory = _directory_writer(
         safe_events,
+        events_jsonl=events_jsonl,
+        artifacts=loaded_artifacts,
         session_id=session_id,
         title=title,
         theme_slug=theme_slug,
         duration_ms=duration_ms,
-        artifact_count=artifact_count,
         report=report,
     )
-    (target / "manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
 
-    final_path = target
     if as_zip:
-        final_path = destination if destination.suffix == ".zip" else destination.with_suffix(".zip")
-        _write_zip(target, final_path)
-        shutil.rmtree(target, ignore_errors=True)
+        # Stage in a private temporary directory rather than in a path derived
+        # from the caller's. The old behaviour wrote into `destination` with its
+        # suffix stripped and then removed that tree, so `--out backup.zip`
+        # deleted an unrelated `backup/`. Nothing under a caller-named path is
+        # ever removed here.
+        final_path = zip_destination(destination)
+        final_path.parent.mkdir(parents=True, exist_ok=True)
+        staging = Path(tempfile.mkdtemp(prefix=".kc-replay-", dir=final_path.parent))
+        try:
+            artifact_count = write_directory(staging)
+            _write_zip(staging, final_path)
+        finally:
+            shutil.rmtree(staging, ignore_errors=True)
+        return BundleResult(
+            path=final_path,
+            event_count=len(safe_events),
+            artifact_count=artifact_count,
+            duration_ms=duration_ms,
+            report=report,
+        )
+
+    warnings: list[str] = []
+    if destination.is_dir() and any(destination.iterdir()):
+        # Writing a bundle over unrelated files leaves a directory that is part
+        # replay and part something else. Say so instead of merging silently.
+        warnings.append(
+            f"{destination} already existed and was not empty; the replay was written alongside "
+            "what was already there. Delete it first if you want only the replay."
+        )
+    destination.mkdir(parents=True, exist_ok=True)
+    artifact_count = write_directory(destination)
 
     return BundleResult(
-        path=final_path,
+        path=destination,
         event_count=len(safe_events),
         artifact_count=artifact_count,
         duration_ms=duration_ms,
         report=report,
+        warnings=warnings,
     )
+
+
+def _directory_writer(
+    events: Sequence[AgentEvent],
+    *,
+    events_jsonl: bytes,
+    artifacts: dict[str, tuple[ArtifactRef, bytes]],
+    session_id: str,
+    title: str,
+    theme_slug: Optional[str],
+    duration_ms: int,
+    report: RedactionReport,
+):
+    """Return a callable that lays the directory form out under a given root.
+
+    Shared by the directory and zip shapes so the zip can stage somewhere safe
+    without duplicating what a bundle contains.
+    """
+
+    def write(target: Path) -> int:
+        target.mkdir(parents=True, exist_ok=True)
+        (target / "events.jsonl").write_bytes(events_jsonl)
+        artifact_count = _write_artifacts(target / "artifacts", artifacts)
+        _write_assets(target)
+        (target / "theme.css").write_text(stylesheet(), encoding="utf-8")
+        (target / "themes.json").write_text(
+            json.dumps(cli_theme.all_web_tokens(), indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        manifest = _manifest(
+            events,
+            session_id=session_id,
+            title=title,
+            theme_slug=theme_slug,
+            duration_ms=duration_ms,
+            artifact_count=artifact_count,
+            report=report,
+        )
+        (target / "manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
+        return artifact_count
+
+    return write
 
 
 def _write_single_file(
@@ -138,14 +220,13 @@ def _write_single_file(
     report: RedactionReport,
 ) -> BundleResult:
     """Write the whole replay as one HTML document."""
-    # Only images earn their place inline. A text artifact is already described
-    # by the preview its event carries, and embedding it would just inflate the
-    # file with bytes nothing renders.
-    inlinable = {
-        digest: (ref.media_type, data)
-        for digest, (ref, data) in artifacts.items()
-        if str(ref.media_type or "").startswith("image/")
-    }
+    inlinable, omitted = _inlinable_images(artifacts)
+    warnings: list[str] = []
+    if omitted:
+        warnings.append(
+            f"{omitted} image(s) were too large to embed and appear as a badge instead. "
+            "Use --dir if the recipient needs them."
+        )
     manifest = _manifest(
         events,
         session_id=session_id,
@@ -177,7 +258,31 @@ def _write_single_file(
         duration_ms=duration_ms,
         report=report,
         single_file=True,
+        warnings=warnings,
     )
+
+
+def _inlinable_images(
+    artifacts: dict[str, tuple[ArtifactRef, bytes]],
+) -> tuple[dict[str, tuple[str, bytes]], int]:
+    """Pick the images worth embedding, and count the ones that did not fit.
+
+    Only images earn their place inline: a text artifact is already described by
+    the preview its event carries, so embedding it would just inflate the file
+    with bytes nothing renders.
+    """
+    inlinable: dict[str, tuple[str, bytes]] = {}
+    omitted = 0
+    total = 0
+    for digest, (ref, data) in artifacts.items():
+        if not str(ref.media_type or "").startswith("image/"):
+            continue
+        if len(data) > MAX_INLINE_IMAGE_BYTES or total + len(data) > MAX_INLINE_IMAGE_TOTAL:
+            omitted += 1
+            continue
+        inlinable[digest] = (ref.media_type, data)
+        total += len(data)
+    return inlinable, omitted
 
 
 def _manifest(
@@ -220,8 +325,11 @@ def _events_jsonl(events: Sequence[AgentEvent]) -> bytes:
 async def _load_artifacts(
     events: Sequence[AgentEvent],
     artifact_store: Optional[ArtifactStore],
+    *,
+    report: RedactionReport,
+    extra_secrets: Optional[Iterable[str]] = None,
 ) -> dict[str, tuple[ArtifactRef, bytes]]:
-    """Read every shareable artifact's bytes once, for either output shape."""
+    """Read every shareable artifact's bytes once, redacted, for either shape."""
     refs = shareable_artifacts(events)
     if not refs or artifact_store is None:
         return {}
@@ -233,7 +341,7 @@ async def _load_artifacts(
             # A missing artifact must not abort an export; the player renders the
             # preview text that the event still carries.
             continue
-        loaded[digest] = (ref, data)
+        loaded[digest] = (ref, redact_artifact_bytes(ref, data, report=report, extra_secrets=extra_secrets))
     return loaded
 
 

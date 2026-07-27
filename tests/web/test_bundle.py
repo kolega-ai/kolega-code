@@ -272,3 +272,285 @@ async def test_export_tolerates_a_missing_artifact_blob(tmp_path: Path) -> None:
     assert result.event_count == 1
     assert result.artifact_count == 0
     assert "preview only" in (result.path / "events.jsonl").read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_zip_export_never_deletes_a_path_the_caller_named(tmp_path: Path) -> None:
+    """Exporting must not be able to destroy data.
+
+    The staging directory used to be the destination with its suffix stripped,
+    and it was removed afterwards, so ``--out backup.zip`` deleted an unrelated
+    ``backup/`` — recursively, silently, and with a zero exit code.
+    """
+    artifacts = InMemoryArtifactStore()
+    events = await _seeded_session(artifacts)
+    victim = tmp_path / "backup"
+    (victim / "nested").mkdir(parents=True)
+    (victim / "nested" / "keep.txt").write_text("precious")
+
+    result = await export_bundle(
+        events,
+        tmp_path / "backup.zip",
+        session_id="s1",
+        artifact_store=artifacts,
+        as_zip=True,
+    )
+
+    assert (victim / "nested" / "keep.txt").read_text() == "precious", (
+        "an export wrote over a directory the caller never named"
+    )
+    assert result.path == tmp_path / "backup.zip" and result.path.is_file()
+
+
+@pytest.mark.asyncio
+async def test_zip_export_appends_to_a_dotted_name_instead_of_replacing_it(tmp_path: Path) -> None:
+    """``--out my.project`` must not silently become ``my.zip``."""
+    artifacts = InMemoryArtifactStore()
+    events = await _seeded_session(artifacts)
+
+    result = await export_bundle(
+        events,
+        tmp_path / "my.project",
+        session_id="s1",
+        artifact_store=artifacts,
+        as_zip=True,
+    )
+
+    assert result.path == tmp_path / "my.project.zip"
+    assert not (tmp_path / "my.zip").exists()
+
+
+@pytest.mark.asyncio
+async def test_zip_export_leaves_no_staging_directory_behind(tmp_path: Path) -> None:
+    artifacts = InMemoryArtifactStore()
+    events = await _seeded_session(artifacts)
+
+    await export_bundle(events, tmp_path / "out.zip", session_id="s1", artifact_store=artifacts, as_zip=True)
+
+    leftovers = [path.name for path in tmp_path.iterdir() if path.name.startswith(".kc-replay-")]
+    assert leftovers == [], f"staging directories were left behind: {leftovers}"
+
+
+@pytest.mark.asyncio
+async def test_directory_export_warns_before_mixing_with_existing_files(tmp_path: Path) -> None:
+    """A directory export is additive, so say when it lands on top of something."""
+    artifacts = InMemoryArtifactStore()
+    events = await _seeded_session(artifacts)
+    target = tmp_path / "site"
+    target.mkdir()
+    (target / "unrelated.txt").write_text("mine")
+
+    result = await export_bundle(events, target, session_id="s1", artifact_store=artifacts)
+
+    assert (target / "unrelated.txt").read_text() == "mine", "a directory export must never delete"
+    assert any("not empty" in warning for warning in result.warnings), result.warnings
+
+
+@pytest.mark.asyncio
+async def test_an_image_a_tool_produced_reaches_the_single_file_replay(tmp_path: Path) -> None:
+    """End to end from an emitted event, because the wiring is what broke.
+
+    Image artifacts are only ever created for provider-facing history records,
+    which the exporter does not read, so every image in every real session was
+    silently absent from its replay while a hand-built fixture passed.
+    """
+    import base64
+
+    from kolega_code.events import AgentConnectionManager
+    from kolega_code.session.inmemory import InMemorySessionEventStore
+    from kolega_code.session.recording import RecordingConnectionManager
+
+    class _Null(AgentConnectionManager):
+        async def connect(self, *a, **k): ...
+        def disconnect(self, *a, **k): ...
+        async def broadcast_event(self, *a, **k): ...
+        def get_connection_count(self, *a, **k):
+            return {}
+
+    png = b"\x89PNG\r\n\x1a\n" + b"pretend pixels" * 8
+    artifacts = InMemoryArtifactStore()
+    store = InMemorySessionEventStore()
+    manager = RecordingConnectionManager(_Null(), store, session_id="s1", artifact_store=artifacts)
+    await manager.broadcast_event(
+        AgentEvent(
+            sender="agent",
+            event_type=KnownEventType.CHAT_MESSAGE,
+            content={
+                "message_type": "tool_result",
+                "text": "# marker.png",
+                "tool_description": "read_image",
+                "images": [{"media_type": "image/png", "data": base64.b64encode(png).decode("ascii")}],
+            },
+        ),
+        "w",
+        "t",
+    )
+    await manager.flush()
+
+    result = await export_bundle(
+        await store.read("s1"),
+        tmp_path / "replay.html",
+        session_id="s1",
+        artifact_store=artifacts,
+        single_file=True,
+    )
+
+    document = result.path.read_text(encoding="utf-8")
+    assert result.artifact_count == 1, "the image should have been inlined"
+    assert f"data:image/png;base64,{base64.b64encode(png).decode('ascii')}" in document
+
+
+@pytest.mark.asyncio
+async def test_an_oversize_image_falls_back_to_a_badge_and_is_reported(tmp_path: Path) -> None:
+    from kolega_code.web import bundle as bundle_module
+
+    artifacts = InMemoryArtifactStore()
+    big = b"\x89PNG" + b"x" * (bundle_module.MAX_INLINE_IMAGE_BYTES + 1)
+    ref = await artifacts.put(big, media_type="image/png", purpose=ArtifactPurpose.IMAGE, encoding="base64")
+    event = _event(KnownEventType.CHAT_MESSAGE, 1, message_type="tool_result", text="shot")
+    event.artifacts = [ref]
+
+    result = await export_bundle(
+        [event], tmp_path / "replay.html", session_id="s1", artifact_store=artifacts, single_file=True
+    )
+
+    assert result.artifact_count == 0, "an image over the cap must not be embedded"
+    assert any("too large to embed" in warning for warning in result.warnings), result.warnings
+
+
+def test_home_directory_is_rewritten_to_a_tilde(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """A bundle should not disclose the directory layout that produced it.
+
+    Only artifact references had their paths stripped, so the home directory
+    still appeared thousands of times in command output, tool results, and the
+    turn titles the player renders in its rail.
+    """
+    from kolega_code.web import redaction as redaction_module
+
+    home = tmp_path / "home" / "someone"
+    home.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    redaction_module._prefixes_for_home.cache_clear()
+
+    report = RedactionReport()
+    event = _event(
+        KnownEventType.TERMINAL_OUTPUT,
+        1,
+        output=f"cd {home}/git/project && ls {home}/notes.txt",
+    )
+    safe = redact_event(event, report=report)
+
+    assert str(home) not in safe.content["output"]
+    assert safe.content["output"] == "cd ~/git/project && ls ~/notes.txt"
+    assert report.home_paths_rewritten == 1
+    assert any("home directory" in line for line in report.summary_lines())
+
+
+def test_the_macos_private_twin_of_a_home_path_is_rewritten_too(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Command output prints whichever spelling the tool happened to resolve."""
+    from kolega_code.web import redaction as redaction_module
+
+    home = tmp_path / "home" / "someone"
+    home.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    redaction_module._prefixes_for_home.cache_clear()
+
+    resolved = str(home.resolve())
+    safe = redact_event(
+        _event(KnownEventType.TERMINAL_OUTPUT, 1, output=f"{resolved}/x"),
+        report=RedactionReport(),
+    )
+
+    assert resolved not in safe.content["output"]
+
+
+def test_caller_supplied_secrets_are_redacted_even_without_a_known_shape() -> None:
+    """Pattern matching does not recognise every provider's key format."""
+    unmatched = "fw_3ZUftNOTAREALKEY"
+    report = RedactionReport()
+
+    safe = redact_event(
+        _event(KnownEventType.CHAT_MESSAGE, 1, message_type="tool_result", text=f"key={unmatched} done"),
+        report=report,
+        extra_secrets=[unmatched],
+    )
+
+    assert unmatched not in safe.content["text"]
+    assert report.strings_redacted == 1
+
+
+def test_the_summary_always_says_detection_is_best_effort() -> None:
+    """ "Redacted 3 strings" must not read as "this bundle is clean"."""
+    lines = RedactionReport(events_scanned=1).summary_lines()
+
+    assert any("best-effort" in line for line in lines), lines
+
+
+def test_sub_agent_dispatch_metadata_is_scrubbed_too() -> None:
+    """A dispatch task is free text, and it rides every event of that dispatch.
+
+    Scrubbing only ``content`` left the task string — which routinely quotes
+    absolute paths and whatever the caller pasted in — repeated verbatim across
+    hundreds of events, making it the single largest source of leaked host paths
+    in a real export.
+    """
+    report = RedactionReport()
+    event = _event(KnownEventType.ASSISTANT_DELTA, 1, text="fine")
+    event.sub_agent_info = {
+        "dispatch_id": "d1",
+        "agent_name": "investigation-agent",
+        "task": f"Investigate {SECRET} in the repo",
+    }
+
+    safe = redact_event(event, report=report)
+
+    assert safe.sub_agent_info is not None
+    assert SECRET not in safe.sub_agent_info["task"]
+    assert safe.sub_agent_info["agent_name"] == "investigation-agent"
+    assert event.sub_agent_info["task"].count(SECRET) == 1, "the live event must not be mutated"
+
+
+@pytest.mark.asyncio
+async def test_artifact_payloads_are_redacted_not_just_their_references(tmp_path: Path) -> None:
+    """The bytes behind an artifact are the likeliest place for a secret.
+
+    Only the reference was redacted; the payload was copied into the bundle
+    verbatim. Those payloads exist *because* they were too big to inline — a
+    file dump, a command that printed a config — so this was the one place in an
+    export nothing looked at.
+    """
+    artifacts = InMemoryArtifactStore()
+    payload = f"config dump\nAPI_KEY={SECRET}\npath=/home/somebody/project\n".encode()
+    ref = await artifacts.put(
+        payload,
+        media_type="text/plain; charset=utf-8",
+        purpose=ArtifactPurpose.TOOL_RESULT,
+        encoding="utf-8",
+        chars=len(payload),
+    )
+    event = _event(KnownEventType.CHAT_MESSAGE, 1, message_type="tool_result", text="see artifact")
+    event.artifacts = [ref]
+
+    result = await export_bundle([event], tmp_path / "site", session_id="s1", artifact_store=artifacts)
+
+    written = (result.path / "artifacts" / ref.sha256).read_bytes()
+    assert SECRET.encode() not in written, "an artifact payload carried a secret into the bundle"
+    assert b"config dump" in written, "redaction must not destroy the payload"
+
+
+@pytest.mark.asyncio
+async def test_image_artifact_bytes_are_never_rewritten(tmp_path: Path) -> None:
+    """Scrubbing binary would corrupt it, and an image cannot hold a string secret."""
+    artifacts = InMemoryArtifactStore()
+    png = b"\x89PNG\r\n\x1a\n" + bytes(range(256))
+    ref = await artifacts.put(png, media_type="image/png", purpose=ArtifactPurpose.IMAGE, encoding="base64")
+    event = _event(KnownEventType.CHAT_MESSAGE, 1, message_type="tool_result", text="shot")
+    event.artifacts = [ref]
+
+    result = await export_bundle([event], tmp_path / "site", session_id="s1", artifact_store=artifacts)
+
+    assert (result.path / "artifacts" / ref.sha256).read_bytes() == png

@@ -637,22 +637,9 @@ def _run_tui(args: argparse.Namespace) -> int:
     try:
         app.run()
     except Exception as exc:  # noqa: BLE001 — last-resort crash capture before re-raising
-        _secrets = [v for v in getattr(settings, "api_keys", {}).values() if v]
-        try:
-            from kolega_code.mcp.config import load_mcp_config, mcp_secret_values
-            from kolega_code.mcp.state import MCPOAuthTokenStore
-
-            mcp_config = getattr(config, "mcp_config", None) if config is not None else None
-            if mcp_config is None:
-                mcp_config = load_mcp_config(
-                    project_path,
-                    settings_store.root,
-                    project_trusted=settings.is_mcp_project_trusted(project_path),
-                )
-            _secrets.extend(mcp_secret_values(mcp_config))
-            _secrets.extend(MCPOAuthTokenStore(settings_store.root).secret_values())
-        except Exception:
-            pass
+        _secrets = known_secret_values(
+            settings, settings_store, project_path=project_path, mcp_config=getattr(config, "mcp_config", None)
+        )
         path = write_crash_log(
             store.root, exc=exc, header=f"kolega-code crash | session {session.session_id}", secret_values=_secrets
         )
@@ -665,6 +652,49 @@ def _run_tui(args: argparse.Namespace) -> int:
             )
         raise
     return 0
+
+
+def known_secret_values(
+    settings: CliSettings,
+    settings_store: SettingsStore,
+    *,
+    project_path: Optional[Path] = None,
+    mcp_config: Any = None,
+) -> list[str]:
+    """Every credential this installation knows it holds.
+
+    Secret *detection* is pattern matching, and plenty of real keys match no
+    pattern at all — a Fireworks ``fw_`` key, a Tavily ``tvly-`` key, and the
+    bare-hex keys some providers issue all sail straight through. Anywhere
+    session content leaves this machine, these values are handed over
+    explicitly so the redactor does not have to guess.
+    """
+    values = [value for value in (settings.api_keys or {}).values() if value]
+    for token in (settings.oauth_tokens or {}).values():
+        if not isinstance(token, dict):
+            continue
+        for key in ("access_token", "refresh_token", "id_token"):
+            value = token.get(key)
+            if value:
+                values.append(str(value))
+    try:
+        from kolega_code.mcp.config import load_mcp_config, mcp_secret_values
+        from kolega_code.mcp.state import MCPOAuthTokenStore
+
+        if mcp_config is None and project_path is not None:
+            mcp_config = load_mcp_config(
+                project_path,
+                settings_store.root,
+                project_trusted=settings.is_mcp_project_trusted(project_path),
+            )
+        if mcp_config is not None:
+            values.extend(mcp_secret_values(mcp_config))
+        values.extend(MCPOAuthTokenStore(settings_store.root).secret_values())
+    except Exception:
+        # Best effort: a broken MCP config must not stop a crash log or an
+        # export from being written at all.
+        pass
+    return [value for value in values if value]
 
 
 def _permission_callback_for_ask(project_path: Path):
@@ -1157,7 +1187,8 @@ async def _run_share(args: argparse.Namespace) -> int:
     as_directory = args.dir or args.zip
     default_name = f"{record.session_id}-replay" + ("" if as_directory else ".html")
     destination = args.out or Path.cwd() / default_name
-    settings = SettingsStore().load()
+    settings_store = SettingsStore(root=getattr(args, "state_dir", None))
+    settings = settings_store.load()
     result = await export_bundle(
         events,
         destination.expanduser(),
@@ -1165,6 +1196,13 @@ async def _run_share(args: argparse.Namespace) -> int:
         title=args.title or getattr(record, "title", "") or "",
         theme_slug=args.theme or textual_theme_name(settings.active_theme),
         artifact_store=FileArtifactStore(journal),
+        # An export leaves this machine, so hand the redactor every credential
+        # we know about rather than trusting it to recognise their shapes.
+        extra_secrets=known_secret_values(
+            settings,
+            settings_store,
+            project_path=Path(record.project_path) if getattr(record, "project_path", None) else None,
+        ),
         as_zip=args.zip,
         single_file=not as_directory,
     )
@@ -1172,6 +1210,8 @@ async def _run_share(args: argparse.Namespace) -> int:
     _print_styled(f"Wrote replay to {result.path}", style="success")
     for line in result.report.summary_lines():
         print(f"  {line}")
+    for warning in result.warnings:
+        _print_styled(f"  {warning}", style="warning")
     if result.single_file:
         size_mb = result.path.stat().st_size / (1024 * 1024)
         print(f"\nOne file, {size_mb:.1f} MB. Open it in a browser, or send it to someone and they can too.")
