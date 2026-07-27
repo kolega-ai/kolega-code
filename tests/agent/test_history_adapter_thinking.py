@@ -41,7 +41,7 @@ def _assistant(*blocks, provider: str | None = None) -> Message:
     )
 
 
-def test_adapt_converts_kimi_thinking_when_targeting_anthropic():
+def test_adapt_drops_kimi_thinking_when_targeting_anthropic():
     tool_call = ToolCall(id="tool1", name="read_image", input={"path": "a.png"})
     history = [
         _assistant(ThinkingBlock(thinking="foreign reasoning", signature="kimi-sig"), tool_call, provider="kimi_coding")
@@ -56,8 +56,8 @@ def test_adapt_converts_kimi_thinking_when_targeting_anthropic():
 
     assert out[0] is not history[0]
     assert not any(isinstance(block, ThinkingBlock) for block in out[0].content)
-    assert isinstance(out[0].content[0], TextBlock)
-    assert "Prior reasoning from kimi_coding omitted" in out[0].content[0].text
+    # Dropped outright: a text stand-in would be echoed back by the model.
+    assert not any(isinstance(block, TextBlock) for block in out[0].content)
     assert any(isinstance(block, ToolCall) and block.id == "tool1" for block in out[0].content)
 
 
@@ -136,7 +136,7 @@ def test_adapt_preserves_ollama_cloud_thinking_when_targeting_ollama_cloud():
     assert out[0].content[0].thinking == "ollama reasoning"
 
 
-def test_adapt_converts_ollama_cloud_thinking_when_targeting_foreign_provider():
+def test_adapt_drops_ollama_cloud_thinking_when_targeting_foreign_provider():
     history = [_assistant(ThinkingBlock(thinking="ollama reasoning"), provider="ollama_cloud")]
 
     out = adapt_history_for_provider(
@@ -146,12 +146,11 @@ def test_adapt_converts_ollama_cloud_thinking_when_targeting_foreign_provider():
         supports_vision=True,
     )
 
-    assert out[0] is not history[0]
-    assert isinstance(out[0].content[0], TextBlock)
-    assert "Prior reasoning from ollama_cloud omitted" in out[0].content[0].text
+    # Reasoning was the whole message, so the message itself goes away.
+    assert out == []
 
 
-def test_adapt_converts_ollama_cloud_thinking_without_source_provider():
+def test_adapt_drops_ollama_cloud_thinking_without_source_provider():
     history = [_assistant(ThinkingBlock(thinking="ollama reasoning"))]
 
     out = adapt_history_for_provider(
@@ -161,12 +160,10 @@ def test_adapt_converts_ollama_cloud_thinking_without_source_provider():
         supports_vision=False,
     )
 
-    assert out[0] is not history[0]
-    assert isinstance(out[0].content[0], TextBlock)
-    assert "Prior reasoning from unknown provider omitted" in out[0].content[0].text
+    assert out == []
 
 
-def test_adapt_converts_thinking_without_source_provider():
+def test_adapt_drops_thinking_without_source_provider():
     history = [_assistant(ThinkingBlock(thinking="unknown-source reasoning"))]
 
     out = adapt_history_for_provider(
@@ -176,12 +173,10 @@ def test_adapt_converts_thinking_without_source_provider():
         supports_vision=False,
     )
 
-    assert out[0] is not history[0]
-    assert isinstance(out[0].content[0], TextBlock)
-    assert "Prior reasoning from unknown provider omitted" in out[0].content[0].text
+    assert out == []
 
 
-def test_adapt_preserves_images_for_vision_target_while_converting_foreign_thinking():
+def test_adapt_preserves_images_for_vision_target_while_dropping_foreign_thinking():
     tr = ToolResult(tool_use_id="t1", name="read_image", content=[_image("image/jpeg")], is_error=False)
     history = [
         _user(TextBlock(text="look"), _image("image/png"), tr),
@@ -200,10 +195,11 @@ def test_adapt_preserves_images_for_vision_target_while_converting_foreign_think
     nested_tr = out[0].content[2]
     assert isinstance(nested_tr, ToolResult)
     assert isinstance(nested_tr.content[0], ImageBlock)
-    assert isinstance(out[1].content[0], TextBlock)
+    # The reasoning-only assistant message is dropped; the user message remains.
+    assert len(out) == 1
 
 
-def test_adapt_replaces_images_for_non_vision_target_and_converts_foreign_thinking():
+def test_adapt_replaces_images_for_non_vision_target_and_drops_foreign_thinking():
     tr = ToolResult(tool_use_id="t1", name="read_image", content=[_image("image/jpeg")], is_error=False)
     history = [
         _user(TextBlock(text="look"), _image("image/png"), tr),
@@ -223,8 +219,8 @@ def test_adapt_replaces_images_for_non_vision_target_and_converts_foreign_thinki
     nested_tr = out[0].content[2]
     assert isinstance(nested_tr, ToolResult)
     assert isinstance(nested_tr.content[0], TextBlock)
-    assert isinstance(out[1].content[0], TextBlock)
-    assert "redacted reasoning from kimi_coding omitted" in out[1].content[0].text
+    # Redacted reasoning is dropped too, taking its otherwise-empty message with it.
+    assert len(out) == 1
 
 
 def test_adapt_does_not_mutate_stored_history():
@@ -244,7 +240,9 @@ def test_adapt_does_not_mutate_stored_history():
     assert history[0].content[0] is image
     assert isinstance(history[1].content[0], ThinkingBlock)
     assert history[1].content[0] is thinking
-    assert isinstance(out[1].content[0], TextBlock)
+    # Storage keeps both messages; only the request copy loses the reasoning one.
+    assert len(history) == 2
+    assert len(out) == 1
 
 
 def test_repaired_preserves_usage_metadata_when_rebuilding_tool_result_message():
@@ -280,7 +278,9 @@ def test_adapted_kimi_thinking_is_not_serialized_as_anthropic_thinking():
 
     assert payload[0]["role"] == "assistant"
     assert all(block.get("type") != "thinking" for block in payload[0]["content"])
-    assert payload[0]["content"][1]["type"] == "tool_use"
+    # No text stand-in is emitted, so the tool call is the only remaining block.
+    assert len(payload[0]["content"]) == 1
+    assert payload[0]["content"][0]["type"] == "tool_use"
     assert payload[1]["role"] == "user"
     assert payload[1]["content"][0]["type"] == "tool_result"
     assert payload[1]["content"][0]["tool_use_id"] == "tool1"
@@ -325,7 +325,7 @@ def test_adapt_preserves_responses_reasoning_across_openai_backends():
         assert out[0].content[0].encrypted_content == "ENC"
 
 
-def test_adapt_converts_responses_reasoning_when_targeting_anthropic():
+def test_adapt_drops_responses_reasoning_when_targeting_anthropic():
     block = ResponsesReasoningBlock(encrypted_content="ENC", summary=[], item_id="rs_1")
     history = [_assistant(block, provider="openai_chatgpt")]
 
@@ -336,6 +336,124 @@ def test_adapt_converts_responses_reasoning_when_targeting_anthropic():
         supports_vision=True,
     )
 
-    assert out[0] is not history[0]
-    assert isinstance(out[0].content[0], TextBlock)
-    assert "Prior reasoning from openai_chatgpt omitted" in out[0].content[0].text
+    assert out == []
+    # Storage is untouched, so switching back to OpenAI restores continuity.
+    assert isinstance(history[0].content[0], ResponsesReasoningBlock)
+
+
+# ---------------------------------------------------------------------------
+# Scrubbing placeholders that earlier builds already echoed into stored history
+# ---------------------------------------------------------------------------
+
+
+def test_adapt_scrubs_echoed_placeholder_from_assistant_prose():
+    """Reproduces the shape seen in a real contaminated session.
+
+    The model reproduced the placeholder as the opening tokens of its own reply, so
+    it landed in stored history fused with genuine prose in a single text block.
+    """
+    text = "[Prior reasoning from openai_chatgpt omitted for compatibility.]I see what is happening."
+    stored = _assistant(TextBlock(text=text), provider="google")
+    history = [stored]
+
+    out = adapt_history_for_provider(
+        history,
+        target_provider="google",
+        target_model="gemini-3.1-pro-preview",
+        supports_vision=True,
+    )
+
+    adapted_block = out[0].content[0]
+    assert isinstance(adapted_block, TextBlock)
+    assert adapted_block.text == "I see what is happening."
+    # Request copy only: storage keeps what the model actually produced.
+    stored_block = stored.content[0]
+    assert isinstance(stored_block, TextBlock)
+    assert stored_block.text == text
+
+
+def test_adapt_scrubs_echoed_placeholder_before_a_tool_call():
+    tool_call = ToolCall(id="t1", name="exec_command", input={"command": "ls"})
+    history = [
+        _assistant(
+            TextBlock(text="[Prior reasoning from openai_chatgpt omitted for compatibility.]"),
+            tool_call,
+            provider="google",
+        )
+    ]
+
+    out = adapt_history_for_provider(
+        history,
+        target_provider="google",
+        target_model="gemini-3.1-pro-preview",
+        supports_vision=True,
+    )
+
+    # The text block held nothing else, so it goes; the tool call survives.
+    assert len(out[0].content) == 1
+    assert isinstance(out[0].content[0], ToolCall)
+    assert out[0].content[0].id == "t1"
+
+
+def test_adapt_drops_message_that_was_only_an_echoed_placeholder():
+    history = [_assistant(TextBlock(text="[Prior reasoning from kimi_coding omitted for compatibility.]"))]
+
+    out = adapt_history_for_provider(
+        history,
+        target_provider="google",
+        target_model="gemini-3.1-pro-preview",
+        supports_vision=True,
+    )
+
+    assert out == []
+
+
+def test_adapt_scrubs_redacted_placeholder_spelling():
+    history = [
+        _assistant(
+            TextBlock(text="[Prior redacted reasoning from anthropic omitted for compatibility.]done"),
+            provider="google",
+        )
+    ]
+
+    out = adapt_history_for_provider(
+        history,
+        target_provider="google",
+        target_model="gemini-3.1-pro-preview",
+        supports_vision=True,
+    )
+
+    adapted_block = out[0].content[0]
+    assert isinstance(adapted_block, TextBlock)
+    assert adapted_block.text == "done"
+
+
+def test_adapt_leaves_placeholder_text_in_user_messages_alone():
+    """A user quoting the phrase (e.g. pasting a transcript) must not be rewritten."""
+    text = "why does it say [Prior reasoning from openai_chatgpt omitted for compatibility.] ?"
+    history = [_user(TextBlock(text=text))]
+
+    out = adapt_history_for_provider(
+        history,
+        target_provider="google",
+        target_model="gemini-3.1-pro-preview",
+        supports_vision=True,
+    )
+
+    assert out is history
+    user_block = out[0].content[0]
+    assert isinstance(user_block, TextBlock)
+    assert user_block.text == text
+
+
+def test_adapt_leaves_ordinary_assistant_prose_untouched():
+    history = [_assistant(TextBlock(text="Here is the plan."), provider="google")]
+
+    out = adapt_history_for_provider(
+        history,
+        target_provider="google",
+        target_model="gemini-3.1-pro-preview",
+        supports_vision=True,
+    )
+
+    assert out is history
