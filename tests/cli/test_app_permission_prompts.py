@@ -20,6 +20,7 @@ from kolega_code.llm.exceptions import (
 )
 from kolega_code.llm.models import Message, TextBlock, ToolCall, ToolResult
 from kolega_code.events import AgentEvent
+from kolega_code.session.runtime import serialize_permission_request
 from kolega_code.agent.prompt_provider import AgentMode
 from kolega_code.cli.config import build_agent_config, config_summary
 from kolega_code.cli.provider_registry import (
@@ -76,6 +77,54 @@ async def _wait_for_layout(pilot, predicate, *, timeout: float = 6.0) -> None:
     raise AssertionError(f"layout did not settle within {timeout}s")
 
 
+DEFAULT_DENIAL = {"allowed": False, "reason": "nobody answered"}
+
+
+async def _open_permission_request(app, request) -> tuple[str, "asyncio.Task[dict]"]:
+    """Start a real control-channel request and return its id and the agent's wait.
+
+    Driving the actual channel rather than a fabricated future is what makes these
+    tests exercise the path every frontend uses: the terminal UI answers a prompt
+    by responding to a request id, exactly as a browser client would.
+    """
+    task = asyncio.create_task(
+        app.control_channel.request(
+            "permission",
+            {"request": serialize_permission_request(request), "rule_options": []},
+            default=DEFAULT_DENIAL,
+        )
+    )
+    for _ in range(400):
+        if app.control_channel.pending():
+            break
+        await asyncio.sleep(0.005)
+    pending = app.control_channel.pending()
+    assert pending, "the control channel never registered the request"
+    return pending[0].request_id, task
+
+
+async def _open_question_request(app, question: str, options: list[str]) -> tuple[str, "asyncio.Task[dict]"]:
+    """Start a real question request on the control channel and return its id.
+
+    Used by tests that run without a pilot and so cannot wait for the announcement
+    event; the answer path being asserted is still the real one.
+    """
+    task = asyncio.create_task(
+        app.control_channel.request(
+            "question",
+            {"question": question, "options": list(options), "descriptions": []},
+            default={"answer": None},
+        )
+    )
+    for _ in range(400):
+        if app.control_channel.pending():
+            break
+        await asyncio.sleep(0.005)
+    pending = app.control_channel.pending()
+    assert pending, "the control channel never registered the question"
+    return pending[0].request_id, task
+
+
 @pytest.mark.asyncio
 async def test_textual_app_permission_approval_actions_show_rule_labels_without_descriptions(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -99,10 +148,10 @@ async def test_textual_app_permission_approval_actions_show_rule_labels_without_
     async with app.run_test():
         request = permission_request_for_tool("exec_command", {"command": "npm run test"})
         assert request is not None
-        future: asyncio.Future[PermissionDecision] = asyncio.get_running_loop().create_future()
+        request_id = "req-layout"
         app._pending_approval = PendingApproval(
             request=request,
-            future=future,
+            request_id=request_id,
             rule_options=allow_rule_options(request),
         )
 
@@ -164,10 +213,10 @@ async def test_textual_app_long_permission_command_keeps_approval_actions_visibl
         long_command = 'python -c "' + "print('approval layout') ; " * 80 + '"'
         request = permission_request_for_tool("exec_command", {"command": long_command})
         assert request is not None
-        future: asyncio.Future[PermissionDecision] = asyncio.get_running_loop().create_future()
+        request_id, decision_task = await _open_permission_request(app, request)
         app._pending_approval = PendingApproval(
             request=request,
-            future=future,
+            request_id=request_id,
             rule_options=allow_rule_options(request),
         )
 
@@ -210,9 +259,9 @@ async def test_textual_app_long_permission_command_keeps_approval_actions_visibl
         assert approval_actions.region.y + approval_actions.region.height <= app.size.height
 
         await pilot.press("1")
-        decision = await asyncio.wait_for(future, timeout=1)
+        response = await asyncio.wait_for(decision_task, timeout=1)
 
-        assert decision.allowed is True
+        assert response["allowed"] is True
         assert app._pending_approval is None
         assert approval_actions.display is False
 
@@ -247,15 +296,22 @@ async def test_textual_app_long_question_keeps_actions_visible_and_selectable(
             )
         long_question = "Which migration path should we use? " + "Consider all edge cases and rollout steps. " * 80
         options = ["Keep current path", "Use bounded prompt header", "Defer the decision"]
-        future: asyncio.Future[str] = asyncio.get_running_loop().create_future()
-        app._pending_question = PendingQuestion(
-            question=long_question,
-            options=options,
-            future=future,
-            descriptions=["Least change", "Fixes the layout", "Needs follow-up"],
+        question_task = asyncio.create_task(
+            app._ask_user_choice(
+                long_question,
+                options,
+                ["Least change", "Fixes the layout", "Needs follow-up"],
+            )
         )
+        for _ in range(200):
+            if app._pending_question is not None:
+                break
+            await pilot.pause()
 
-        app._show_question_options(long_question, options, app._pending_question.descriptions)
+        # _begin_question already rendered the prompt from the announcement, so
+        # there is nothing for the test to show by hand.
+        assert app._pending_question is not None
+        assert app._pending_question.descriptions == ["Least change", "Fixes the layout", "Needs follow-up"]
         await pilot.pause()
 
         question_prompt = app.query_one("#question_prompt", PromptPanel)
@@ -294,7 +350,7 @@ async def test_textual_app_long_question_keeps_actions_visible_and_selectable(
         assert question_actions.region.y + question_actions.region.height <= app.size.height
 
         await pilot.press("2")
-        answer = await asyncio.wait_for(future, timeout=1)
+        answer = await asyncio.wait_for(question_task, timeout=1)
 
         assert answer == "Use bounded prompt header"
         assert app._pending_question is None
@@ -316,11 +372,11 @@ async def test_textual_app_approval_answer_reenables_active_turn_composer(
     async with app.run_test():
         request = permission_request_for_tool("exec_command", {"command": "npm run test"})
         assert request is not None
-        future: asyncio.Future[PermissionDecision] = asyncio.get_running_loop().create_future()
+        request_id, decision_task = await _open_permission_request(app, request)
         app._turn_active = True
         app._pending_approval = PendingApproval(
             request=request,
-            future=future,
+            request_id=request_id,
             rule_options=allow_rule_options(request),
         )
         app._set_composer_status(messages.APPROVAL_PLACEHOLDER)
@@ -332,9 +388,9 @@ async def test_textual_app_approval_answer_reenables_active_turn_composer(
         assert composer.display is True
 
         await app._answer_approval_option(0)
-        decision = await asyncio.wait_for(future, timeout=1)
+        response = await asyncio.wait_for(decision_task, timeout=1)
 
-        assert decision.allowed is True
+        assert response["allowed"] is True
         assert app._pending_approval is None
         assert composer.display is True
         assert composer.disabled is False
@@ -365,7 +421,9 @@ async def test_textual_app_queued_messages_hide_during_permission_and_restore_af
 
         request = permission_request_for_tool("exec_command", {"command": "npm run test"})
         assert request is not None
-        permission_task = asyncio.create_task(app._ask_permission(request))
+        request_id, permission_task = await _open_permission_request(app, request)
+        # Drive the real path: the prompt appears because the channel announced it.
+        app._begin_approval(request_id, request)
         await pilot.pause()
 
         composer = app.query_one("#composer", ChatComposer)
@@ -376,10 +434,10 @@ async def test_textual_app_queued_messages_hide_during_permission_and_restore_af
         assert [item.text for item in app._queued_messages] == ["second", "third"]
 
         await app._answer_approval_option(0)
-        decision = await asyncio.wait_for(permission_task, timeout=1)
+        response = await asyncio.wait_for(permission_task, timeout=1)
         await pilot.pause()
 
-        assert decision.allowed is True
+        assert response["allowed"] is True
         assert app._pending_approval is None
         assert queued_panel.display is True
         assert composer.display is True
@@ -404,12 +462,12 @@ async def test_textual_app_queued_messages_do_not_drain_while_permission_pending
     async with app.run_test():
         request = permission_request_for_tool("exec_command", {"command": "npm run test"})
         assert request is not None
-        future: asyncio.Future[PermissionDecision] = asyncio.get_running_loop().create_future()
+        request_id = "req-layout"
         app._queue_user_message("second")
         app._queue_user_message("third")
         app._pending_approval = PendingApproval(
             request=request,
-            future=future,
+            request_id=request_id,
             rule_options=allow_rule_options(request),
         )
         app._refresh_input_area_visibility()
@@ -433,21 +491,21 @@ async def test_textual_app_question_answer_reenables_active_turn_composer(
     app = _build_permission_test_app(tmp_path, monkeypatch)
 
     async with app.run_test():
-        future: asyncio.Future[str] = asyncio.get_running_loop().create_future()
         app._turn_active = True
+        request_id, question_task = await _open_question_request(app, "Which path?", ["A", "B"])
         app._pending_question = PendingQuestion(
             question="Which path?",
             options=["A", "B"],
-            future=future,
+            request_id=request_id,
         )
         app._set_composer_status(messages.QUESTION_PLACEHOLDER)
         app._set_chat_enabled(True)
 
         await app._answer_pending_question("A")
-        answer = await asyncio.wait_for(future, timeout=1)
+        response = await asyncio.wait_for(question_task, timeout=1)
 
         composer = app.query_one("#composer", ChatComposer)
-        assert answer == "A"
+        assert response["answer"] == "A"
         assert app._pending_question is None
         assert composer.display is True
         assert composer.disabled is False
@@ -518,11 +576,11 @@ async def test_textual_app_queued_messages_hide_during_question_and_restore_afte
     app = _build_permission_test_app(tmp_path, monkeypatch)
 
     async with app.run_test():
-        future: asyncio.Future[str] = asyncio.get_running_loop().create_future()
+        request_id, question_task = await _open_question_request(app, "Which path?", ["A", "B"])
         app._turn_active = True
         app._queue_user_message("second")
         app._queue_user_message("third")
-        app._pending_question = PendingQuestion(question="Which path?", options=["A", "B"], future=future)
+        app._pending_question = PendingQuestion(question="Which path?", options=["A", "B"], request_id=request_id)
         app._refresh_input_area_visibility()
 
         queued_panel = app.query_one("#queued_messages")
@@ -532,7 +590,10 @@ async def test_textual_app_queued_messages_hide_during_question_and_restore_afte
 
         app._cancel_pending_question()
 
-        assert future.cancelled() is True
+        # Cancelling settles the request with a non-answer, so the tool is told
+        # nobody chose rather than being left waiting.
+        response = await asyncio.wait_for(question_task, timeout=1)
+        assert response["answer"] == ""
         assert app._pending_question is None
         assert [item.text for item in app._queued_messages] == ["second", "third"]
         assert queued_panel.display is True
@@ -550,10 +611,9 @@ async def test_textual_app_queued_messages_do_not_drain_while_question_pending(
     app = _build_permission_test_app(tmp_path, monkeypatch)
 
     async with app.run_test():
-        future: asyncio.Future[str] = asyncio.get_running_loop().create_future()
         app._queue_user_message("second")
         app._queue_user_message("third")
-        app._pending_question = PendingQuestion(question="Which path?", options=["A", "B"], future=future)
+        app._pending_question = PendingQuestion(question="Which path?", options=["A", "B"], request_id="req-test")
         app._refresh_input_area_visibility()
 
         assert app._maybe_start_queued_message() is False
@@ -644,3 +704,66 @@ async def test_textual_app_queued_messages_do_not_drain_while_plan_decision_acti
         assert [item.text for item in app._queued_messages] == ["second", "third"]
         assert app.agent_worker is None
         assert app.query_one("#queued_messages").display is False
+
+
+@pytest.mark.asyncio
+async def test_cancelling_with_a_permission_prompt_open_restores_the_queued_message(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Stopping a turn mid-prompt must not swallow what you queued behind it.
+
+    Cancelling has to dismiss the outstanding approval *and* hand the queued
+    text back, or the message is neither answered nor visible anywhere: the
+    prompt vanishes with the turn and the queue drains into nothing.
+    """
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.state import PendingApproval
+    from kolega_code.cli.tui.widgets import ChatComposer
+    from kolega_code.permissions import allow_rule_options, permission_request_for_tool
+
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeCoderAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    started = asyncio.Event()
+
+    async def _never_finishes(*_args, **_kwargs):
+        started.set()
+        await asyncio.sleep(3600)
+        yield {}  # pragma: no cover - unreachable, keeps this an async generator
+
+    async with app.run_test() as pilot:
+        composer = app.query_one("#composer", ChatComposer)
+        monkeypatch.setattr(app, "_agent_turn_stream", _never_finishes)
+
+        composer.load_text("run the thing")
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+        await asyncio.wait_for(started.wait(), timeout=5)
+
+        composer.load_text("and then check the logs")
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+        assert [item.text for item in app._queued_messages] == ["and then check the logs"]
+
+        request = permission_request_for_tool("exec_command", {"command": "rm -rf build"})
+        assert request is not None
+        app._pending_approval = PendingApproval(
+            request=request, request_id="req-cancel", rule_options=allow_rule_options(request)
+        )
+
+        app.action_cancel_generation()
+        for _ in range(20):
+            await pilot.pause()
+            if app.agent_worker is None:
+                break
+
+        assert app.agent_worker is None, "cancelling with a prompt open must not hang the turn"
+        assert app._pending_approval is None, "the prompt has to go with the turn it belonged to"
+        assert app._queued_messages == []
+        assert composer.text == "and then check the logs", "the queued follow-up was lost on cancel"

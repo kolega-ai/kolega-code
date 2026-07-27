@@ -4,7 +4,15 @@ from __future__ import annotations
 
 import asyncio
 
-from kolega_code.agent import AgentConfig, AgentEvent, CoderAgent, PlanningAgent, PromptExtension, ToolExtension
+from kolega_code.agent import (
+    AgentConfig,
+    AgentEvent,
+    CoderAgent,
+    KnownEventType,
+    PlanningAgent,
+    PromptExtension,
+    ToolExtension,
+)
 from kolega_code.agent.baseagent import QueuedUserInput
 from kolega_code.agent.prompt_provider import AgentMode
 from kolega_code.agent.custom_agents import discover_custom_agents, validate_custom_agent_models
@@ -13,6 +21,8 @@ from kolega_code.hooks import HookDispatcher, HookEvent, load_hook_config, proje
 from kolega_code.scratchpad import SCRATCHPAD_PROMPT_EXTENSION_ID, ensure_scratchpad_dir, scratchpad_dir_for
 from kolega_code.llm.exceptions import LLMError, llm_error_message
 from kolega_code.mcp.tools import build_mcp_tool_extension
+from kolega_code.permissions import PermissionDecision
+from kolega_code.session.runtime import deserialize_permission_request
 from kolega_code.services.browser import PlaywrightBrowserManager
 from kolega_code.tools import ToolError
 from textual.widgets import Static
@@ -39,7 +49,126 @@ from . import state as tui_state
 from . import widgets as tui_widgets
 
 
+#: Event types carried on the stream purely so it is a complete, replayable
+#: record of the session. The TUI renders this content from the agent's
+#: generator instead, so it must not also render these or output would double.
+_RECORDING_ONLY_EVENTS = frozenset(
+    {
+        KnownEventType.ASSISTANT_DELTA,
+        KnownEventType.THINKING_DELTA,
+        KnownEventType.TURN_STARTED,
+        KnownEventType.TURN_ENDED,
+        KnownEventType.STREAM_TRUNCATED,
+    }
+)
+
+#: ...except when they belong to a sub-agent. Only the main agent's generator is
+#: consumed here; a sub-agent's runs inside AgentTool, so these events are the
+#: TUI's only view of what delegated work said.
+_SUB_AGENT_STREAM_EVENTS = frozenset(
+    {
+        KnownEventType.ASSISTANT_DELTA,
+        KnownEventType.THINKING_DELTA,
+    }
+)
+
+
 class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
+    def _handle_control_request(self, event: AgentEvent) -> None:
+        """Show a prompt the agent raised on the control channel.
+
+        Requests arrive as ordinary events on the same stream everything else
+        does, which is why this client needs no privileged callback and why a
+        replay can show that the agent stopped to ask.
+        """
+        request_id = str(event.content.get("request_id") or "")
+        kind = str(event.content.get("kind") or "")
+        payload = event.content.get("payload")
+        if not request_id or not isinstance(payload, dict):
+            return
+        if not self._control_request_is_open(request_id):
+            # The announcement is queued, so it can arrive after the request has
+            # already been settled — by a fast answer, a timeout, or control
+            # being released. Showing a prompt nobody is waiting on would leave
+            # the user answering into the void.
+            return
+        if kind == "permission":
+            if not isinstance(payload.get("request"), dict):
+                return
+            try:
+                request = deserialize_permission_request(payload["request"])
+            except Exception:
+                # A request this client cannot render must not wedge the turn;
+                # leave it to the channel's default rather than show a broken
+                # prompt.
+                return
+            self._begin_approval(request_id, request)
+            return
+        if kind == "question":
+            options = payload.get("options")
+            question = str(payload.get("question") or "")
+            if not question or not isinstance(options, list) or len(options) < 2:
+                return
+            descriptions = payload.get("descriptions")
+            self._begin_question(
+                request_id,
+                question,
+                [str(option) for option in options],
+                [str(item) for item in descriptions] if isinstance(descriptions, list) else None,
+            )
+
+    def _control_request_is_open(self, request_id: str) -> bool:
+        """Whether the channel is still waiting on this request.
+
+        Only a client sharing a process with the channel can check this. A remote
+        client relies on the ``control_resolved`` announcement instead, which is
+        why that event clears a prompt as well.
+        """
+        try:
+            return any(request.request_id == request_id for request in self.control_channel.pending())
+        except Exception:
+            return True
+
+    def _answer_permission_request(self, request_id: str, decision: PermissionDecision) -> None:
+        """Send a decision back over the control channel. Never raises."""
+        try:
+            self.session_runtime.answer_permission(
+                request_id,
+                decision,
+                client_id=tui_constants.TUI_CLIENT_ID,
+            )
+        except Exception:
+            pass
+
+    def _answer_question_request(self, request_id: str, answer: str) -> None:
+        """Send a planning answer back over the control channel. Never raises.
+
+        An empty answer is a non-answer: the tool treats it as unanswered and
+        tells the model to proceed without it rather than acting on a blank.
+        """
+        try:
+            self.session_runtime.answer_question(
+                request_id,
+                {"answer": answer},
+                client_id=tui_constants.TUI_CLIENT_ID,
+            )
+        except Exception:
+            pass
+
+    async def _prime_recording_offset(self) -> None:
+        """Continue the replay clock from an existing recording, once per session.
+
+        Without this a resumed session would restart at zero, so a replay would
+        show the second sitting overlapping the first.
+        """
+        if self._recording_primed:
+            return
+        self._recording_primed = True
+        try:
+            await self.recording_connection_manager.prime_elapsed_offset()
+        except Exception:
+            pass
+
     async def _record_turn_checkpoint(self, label: str) -> None:
         """Capture the rewind boundary for the turn about to start.
 
@@ -619,6 +748,24 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         self._diag_tee(event)
         if event.event_type in ("llm_error", "llm_request"):
             return  # diagnostics-only events; persisted by the tee, nothing to render
+        if event.event_type == KnownEventType.CONTROL_REQUESTED:
+            self._handle_control_request(event)
+            return
+        if event.event_type == KnownEventType.CONTROL_RESOLVED:
+            resolved_id = str(event.content.get("request_id") or "")
+            self._clear_approval_if_resolved(resolved_id)
+            self._clear_question_if_resolved(resolved_id)
+            return
+        if event.sub_agent_info and event.event_type in _SUB_AGENT_STREAM_EVENTS:
+            self._render_sub_agent_delta(event)
+            return
+        if event.event_type in _RECORDING_ONLY_EVENTS:
+            # Assistant prose, reasoning, and turn boundaries exist on the event
+            # stream so that non-TUI frontends and the replay player can render a
+            # conversation. This TUI still renders them from
+            # process_message_stream's generator, so rendering them here too would
+            # duplicate every response.
+            return
         if event.event_type == "log_message":
             if self.show_logs:
                 level = str(event.content.get("level", "info"))
@@ -796,6 +943,7 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         *,
         restore_transcript: bool = True,
     ) -> None:
+        await self._prime_recording_offset()
         history = self.session.history
         compaction = self.session.compaction
         if rebuild:
@@ -891,7 +1039,7 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             project_path=self.project_path,
             workspace_id=self.session.workspace_id,
             thread_id=self.session.thread_id,
-            connection_manager=self.connection_manager,
+            connection_manager=self.recording_connection_manager,
             config=config,
             browser_manager=browser_manager,
             agent_mode=AgentMode(self.mode),
@@ -899,12 +1047,18 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             tool_extensions=tool_extensions,
             memory_manager=self.memory_manager,
             permission_mode=self.permission_mode,
-            permission_callback=self._permission_callback,
+            # Permission policy lives in the session runtime, not the UI: mode
+            # checks and saved-rule matching are decisions about the session, so
+            # every frontend gets them and only real questions reach a person.
+            permission_callback=self.session_runtime.permission_callback,
             session_recorder=self._session_recorder,
             hook_dispatcher=self._session_hook_dispatcher(),
             custom_agent_catalog=self.custom_agent_catalog,
         )
         assert self.agent is not None
+        # The runtime owns the agent for control purposes while the CLI keeps
+        # composing it from settings, skills, hooks, and MCP configuration.
+        self.session_runtime.adopt(self.agent)
         if scratchpad_extension is not None:
             # Expose the resolved directory for the terminal safety checker; the
             # prompt extension above is what the model sees.

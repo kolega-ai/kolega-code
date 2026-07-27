@@ -16,6 +16,15 @@ from ..orchestration.accounting import AgentReservation, WorkflowRunAccounting
 from ..orchestration.context import has_workflow_context_marker, validated_workflow_depth
 from .base_tool import BaseTool
 
+#: Chunk types ``BaseAgent.process_message_stream`` already mirrors onto the event
+#: stream as ``assistant_delta``/``thinking_delta``, carrying this dispatch's
+#: ``sub_agent_info``. Re-broadcasting them here as ``chat_message`` would put the
+#: same text on the stream twice, and a projection keyed on stream uuid folds the
+#: mirrored copy into one entry while the re-broadcast lands as a second,
+#: chunk-per-item trail beside it. Anything outside this set is not mirrored, so
+#: it still has to be broadcast here to reach the stream at all.
+_MIRRORED_CHUNK_TYPES = frozenset({"response", "thinking"})
+
 
 class AgentTool(BaseTool):
     """
@@ -380,22 +389,18 @@ class AgentTool(BaseTool):
                 msg_uuid = msg.get("uuid", str(uuid.uuid4()))
                 timestamp = datetime.now().isoformat()
 
-                content_payload = {"text": content}
-                if message_type != "response":
-                    content_payload["message_type"] = message_type
-
-                evt = AgentEvent(
-                    event_type="chat_message",
-                    content=content_payload,
-                    sender=agent_name,
-                    timestamp=timestamp,
-                    is_streaming=(message_type in ["response", "thinking"] and not complete),
-                    uuid=msg_uuid,
-                    sub_agent_info=sub_agent_info,
-                )
-
-                # Broadcast to connection manager
-                await self.connection_manager.broadcast_event(evt, self.workspace_id, self.thread_id)
+                if message_type not in _MIRRORED_CHUNK_TYPES:
+                    content_payload = {"text": content, "message_type": message_type}
+                    evt = AgentEvent(
+                        event_type="chat_message",
+                        content=content_payload,
+                        sender=agent_name,
+                        timestamp=timestamp,
+                        is_streaming=False,
+                        uuid=msg_uuid,
+                        sub_agent_info=sub_agent_info,
+                    )
+                    await self.connection_manager.broadcast_event(evt, self.workspace_id, self.thread_id)
 
                 # Track streaming messages
                 if msg_uuid not in streamed_messages:
@@ -1103,20 +1108,17 @@ class AgentTool(BaseTool):
             complete = msg.get("complete", False)
             msg_uuid = msg.get("uuid", str(uuid.uuid4()))
 
-            content_payload = {"text": content}
-            if message_type != "response":
-                content_payload["message_type"] = message_type
-
-            evt = AgentEvent(
-                event_type="chat_message",
-                content=content_payload,
-                sender=agent_name,
-                timestamp=datetime.now().isoformat(),
-                is_streaming=(message_type in ["response", "thinking"] and not complete),
-                uuid=msg_uuid,
-                sub_agent_info=sub_agent_info,
-            )
-            await self.connection_manager.broadcast_event(evt, self.workspace_id, self.thread_id)
+            if message_type not in _MIRRORED_CHUNK_TYPES:
+                evt = AgentEvent(
+                    event_type="chat_message",
+                    content={"text": content, "message_type": message_type},
+                    sender=agent_name,
+                    timestamp=datetime.now().isoformat(),
+                    is_streaming=False,
+                    uuid=msg_uuid,
+                    sub_agent_info=sub_agent_info,
+                )
+                await self.connection_manager.broadcast_event(evt, self.workspace_id, self.thread_id)
 
             if complete:
                 current_history = agent.dump_message_history()

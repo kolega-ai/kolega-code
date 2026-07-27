@@ -364,11 +364,10 @@ async def test_textual_app_reset_command_clears_current_thread(
         app._plan_reofferable = True
         app._plan_decision_active = False
         app._set_plan_actions_visible(True)
-        question_future = asyncio.get_running_loop().create_future()
         app._pending_question = PendingQuestion(
             question="Old question?",
             options=["A", "B"],
-            future=question_future,
+            request_id="req-test",
         )
         app._set_question_actions_visible(True)
 
@@ -384,7 +383,7 @@ async def test_textual_app_reset_command_clears_current_thread(
         assert app._plan_reofferable is False
         assert app._plan_decision_active is False
         assert app._pending_question is None
-        assert question_future.cancelled()
+        assert app._pending_question is None
         assert app.query_one("#plan_actions").display is False
         assert app.query_one("#question_actions").display is False
         assert app.query_one("#planning_plan_markdown", PlanningMarkdown).source == "No plan captured yet."

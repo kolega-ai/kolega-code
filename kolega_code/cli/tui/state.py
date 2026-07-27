@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import asyncio
 import itertools
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Optional
 
-from kolega_code.permissions import PermissionDecision, PermissionMode, PermissionRequest, PermissionRuleOption
+from kolega_code.permissions import PermissionMode, PermissionRequest, PermissionRuleOption
 
 from ..provider_registry import UI_DEFAULT_MODEL, UI_DEFAULT_PROVIDER
 from ..theme import Color
@@ -237,17 +236,30 @@ class WorkflowActivity:
 
 @dataclass
 class PendingQuestion:
+    """A planning question this client is currently showing.
+
+    Like a permission prompt, identified by its control-channel request id: the
+    tool's wait lives in the channel, so answering means responding to that id.
+    """
+
     question: str
     options: list[str]  # selectable option labels; the selected label is the answer
-    future: asyncio.Future[str]
+    request_id: str
     descriptions: Optional[list[str]] = None  # per-option descriptions, parallel to options
 
 
 @dataclass
 class PendingApproval:
+    """A permission prompt this client is currently showing.
+
+    Identified by the control-channel request id rather than holding a future:
+    the agent's wait lives in the channel, and this client answers it by
+    responding to that id like any other frontend would.
+    """
+
     request: PermissionRequest
-    future: asyncio.Future[PermissionDecision]
     rule_options: list[PermissionRuleOption]
+    request_id: str
 
 
 @dataclass

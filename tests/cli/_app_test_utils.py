@@ -8,7 +8,7 @@ import pytest
 from kolega_code.cli.tui import agent_runtime as agent_runtime_module
 from kolega_code.cli.config import build_agent_config, config_summary
 from kolega_code.cli.session_store import SessionStore
-from kolega_code.events import AgentEvent
+from kolega_code.events import AgentEvent, KnownEventType
 from kolega_code.llm.models import Message, TextBlock
 
 
@@ -256,6 +256,39 @@ def _sub_agent_event(
         is_streaming=is_streaming,
         sub_agent_info=sub_agent_info,
         **kwargs,
+    )
+
+
+def _sub_agent_delta(
+    text,
+    *,
+    thinking=False,
+    complete=True,
+    uuid="d-1",
+    agent_id="agent-1",
+    agent_name="general-agent",
+    task="inspect sessions",
+):
+    """One streamed reasoning or prose delta from a dispatched agent.
+
+    This is the shape AgentTool leaves on the stream: the sub-agent's own
+    generator is mirrored as assistant_delta/thinking_delta carrying its
+    sub_agent_info, rather than re-broadcast as chat_message.
+    """
+    return AgentEvent(
+        event_type=KnownEventType.THINKING_DELTA if thinking else KnownEventType.ASSISTANT_DELTA,
+        sender=agent_name,
+        content={"text": text, "complete": complete},
+        is_streaming=not complete,
+        uuid=uuid,
+        sub_agent_info={
+            "agent_id": agent_id,
+            "agent_name": agent_name,
+            "task": task,
+            "parent_tool_call_id": "tc-1",
+            "conversation_id": None,
+            "depth": 1,
+        },
     )
 
 

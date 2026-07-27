@@ -11,7 +11,7 @@ import uuid
 from email.utils import parsedate_to_datetime
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, AsyncGenerator, Awaitable, Callable, Dict, List, Optional, cast
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Awaitable, Callable, Dict, List, Optional, Sequence, Tuple, cast
 from contextlib import AbstractAsyncContextManager
 from collections.abc import Coroutine
 
@@ -85,6 +85,23 @@ HOOK_DECISION_SYSTEM_PROMPT = (
 class QueuedUserInput:
     text: str
     attachments: Optional[List[Dict[str, Any]]] = None
+
+
+def _image_payloads(blocks: List[Any]) -> List[Tuple[str, str]]:
+    """``(media_type, base64_data)`` for the base64 images among ``blocks``.
+
+    A tool that returns pictures — reading an image, a browser screenshot —
+    describes them in markdown for the transcript, but the bytes themselves
+    otherwise reach only the model. Lifting them out here is what lets the event
+    stream carry the picture, and therefore what lets a replay show it.
+    """
+    payloads: List[Tuple[str, str]] = []
+    for block in blocks:
+        if not isinstance(block, ImageBlock) or block.image_type != "base64":
+            continue
+        if block.media_type and block.data:
+            payloads.append((block.media_type, block.data))
+    return payloads
 
 
 class BaseAgent(LogMixin):
@@ -1077,8 +1094,10 @@ class BaseAgent(LogMixin):
 
             # Handle the case where the output is a list of ContentBlock objects
             chat_message_content = output
+            images: List[Tuple[str, str]] = []
             if isinstance(output, list):
                 chat_message_content = "\n\n".join(item.to_markdown() for item in output)
+                images = _image_payloads(output)
 
             # Send tool_result message for successful execution
             await self.send_chat_message(
@@ -1087,6 +1106,7 @@ class BaseAgent(LogMixin):
                 is_streaming=False,
                 tool_description=tool_name,
                 tool_call_id=tool_execution_id,
+                images=images,
             )
 
             return ToolResult(
@@ -1391,7 +1411,13 @@ class BaseAgent(LogMixin):
         return None
 
     async def send_chat_message(
-        self, message_type: str, content: str, is_streaming: bool = False, tool_description=None, tool_call_id=None
+        self,
+        message_type: str,
+        content: str,
+        is_streaming: bool = False,
+        tool_description=None,
+        tool_call_id=None,
+        images: Optional[Sequence[Tuple[str, str]]] = None,
     ) -> None:
         """
         Send a message to the chat interface.
@@ -1399,6 +1425,8 @@ class BaseAgent(LogMixin):
         Args:
             content: The message content to send
             is_streaming: Whether this is part of a streaming message
+            images: ``(media_type, base64_data)`` pairs a tool produced, so a
+                frontend can show the picture rather than a description of one
         """
         await self.emitter.chat(
             message_type,
@@ -1406,6 +1434,7 @@ class BaseAgent(LogMixin):
             is_streaming=is_streaming,
             tool_description=tool_description,
             tool_call_id=tool_call_id,
+            images=images,
         )
 
     @staticmethod
@@ -1599,18 +1628,72 @@ class BaseAgent(LogMixin):
     async def process_message_stream(
         self, message: str, attachments: Optional[List[Dict[str, Any]]] = None
     ) -> AsyncGenerator[Dict[str, Any], None]:
-        """Run one durable top-level turn and record its terminal outcome."""
+        """Run one durable top-level turn and record its terminal outcome.
+
+        Chunks yielded to the caller are also mirrored onto the event stream.
+        Assistant prose and reasoning historically travelled *only* through this
+        generator, which meant the event stream — the thing every other frontend
+        and the replay player render from — contained tool activity and status but
+        no actual conversation. Mirroring here rather than at each ``yield`` keeps
+        one choke point that cannot drift out of sync with the yields.
+        """
+        turn_id = str(uuid.uuid4())
+        await self._emit_turn_boundary("started", turn_id=turn_id, user_text=message)
         try:
             async for chunk in self._process_message_stream_impl(message, attachments):
+                await self._mirror_stream_chunk(chunk)
                 yield chunk
         except asyncio.CancelledError:
             await self._finish_recorded_turn("cancelled")
+            await self._emit_turn_boundary("ended", turn_id=turn_id, status="cancelled")
             raise
         except Exception as exc:
             await self._finish_recorded_turn("failed", error=str(exc))
+            await self._emit_turn_boundary("ended", turn_id=turn_id, status="failed")
             raise
         else:
             await self._finish_recorded_turn("completed")
+            await self._emit_turn_boundary("ended", turn_id=turn_id, status="completed")
+
+    async def _mirror_stream_chunk(self, chunk: Dict[str, Any]) -> None:
+        """Re-emit one generator chunk as a stream event. Never raises."""
+        kind = chunk.get("type")
+        if kind not in ("response", "thinking"):
+            return
+        complete = bool(chunk.get("complete"))
+        text = str(chunk.get("content") or "")
+        if not text and not complete:
+            return
+        try:
+            await self.emitter.assistant_delta(
+                text,
+                complete=complete,
+                stream_uuid=str(chunk.get("uuid") or uuid.uuid4()),
+                thinking=kind == "thinking",
+            )
+        except Exception:
+            # Mirroring is observability for other frontends; it must never break
+            # the turn that the local caller is already consuming.
+            pass
+
+    async def _emit_turn_boundary(
+        self,
+        phase: str,
+        *,
+        turn_id: str,
+        status: Optional[str] = None,
+        user_text: Optional[str] = None,
+    ) -> None:
+        """Emit a turn boundary, swallowing everything including cancellation.
+
+        Called from ``except asyncio.CancelledError`` blocks, where any further
+        await can itself raise, so this must not let that mask the original
+        exception it is about to re-raise.
+        """
+        try:
+            await self.emitter.turn_boundary(phase, turn_id=turn_id, status=status, user_text=user_text)
+        except BaseException:
+            pass
 
     async def _finish_recorded_turn(self, status: str, *, error: Optional[str] = None) -> None:
         recorder = self.session_recorder

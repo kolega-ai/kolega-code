@@ -31,6 +31,12 @@ dependencies = [
     "anthropic==0.101.0",
     "beautifulsoup4==4.14.3",
     "ddgs==9.14.4",
+    # The session server ships to every user, so its stack is a core dependency.
+    # starlette/uvicorn/websockets were already installed transitively (mcp pulls
+    # the first two, firecrawl-py and google-genai pull websockets); they are
+    # pinned directly because the server must not depend on an unrelated package
+    # continuing to require them.
+    "fastapi==0.139.2",
     "firecrawl-py==4.28.2",
     # Project memory needs a persistent Unix lock file; unlink-on-release can split cooperating waiters.
     "filelock==3.20.3",
@@ -53,6 +59,9 @@ dependencies = [
     "psutil==7.2.2",
     "pydantic==2.13.4",
     "python-dotenv==1.2.2",
+    # Load-bearing for the web UI: code highlighting is generated with the same
+    # Pygments styles the TUI renders with, so both stay identical.
+    "pygments==2.20.0",
     "pyyaml==6.0.3",
     "readability-lxml==0.8.4.1",
     "tavily-python==0.7.26",
@@ -60,6 +69,8 @@ dependencies = [
     "textual==8.2.5",
     "tiktoken==0.12.0",
     "trafilatura==2.0.0",
+    "uvicorn==0.49.0",
+    "websockets==16.0",
 ]
 
 [project.urls]

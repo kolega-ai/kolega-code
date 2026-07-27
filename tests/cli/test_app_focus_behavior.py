@@ -5,7 +5,7 @@ import pytest
 
 from kolega_code.cli.config import config_summary
 from kolega_code.cli.session_store import SessionStore
-from kolega_code.permissions import PermissionDecision, allow_rule_options, permission_request_for_tool
+from kolega_code.permissions import allow_rule_options, permission_request_for_tool
 
 from ._app_test_utils import FakeCoderAgent, build_test_config, install_fake_agents
 
@@ -71,10 +71,9 @@ async def test_app_focus_keeps_active_approval_prompt_focused(tmp_path: Path, mo
     async with app.run_test() as pilot:
         request = permission_request_for_tool("exec_command", {"command": "npm test"})
         assert request is not None
-        future: asyncio.Future[PermissionDecision] = asyncio.get_running_loop().create_future()
         app._pending_approval = PendingApproval(
             request=request,
-            future=future,
+            request_id="req-test",
             rule_options=allow_rule_options(request),
         )
         app._set_approval_actions_visible(True)
@@ -106,8 +105,7 @@ async def test_app_focus_preserves_question_free_form_composer_focus(
     app = _build_focus_test_app(tmp_path, monkeypatch)
 
     async with app.run_test() as pilot:
-        future: asyncio.Future[str] = asyncio.get_running_loop().create_future()
-        app._pending_question = PendingQuestion(question="Choose?", options=["A", "B"], future=future)
+        app._pending_question = PendingQuestion(question="Choose?", options=["A", "B"], request_id="req-test")
         app._show_question_options("Choose?", ["A", "B"])
         app._set_chat_enabled(True)
 
@@ -138,8 +136,7 @@ async def test_app_focus_heals_question_drift_to_options(tmp_path: Path, monkeyp
     app = _build_focus_test_app(tmp_path, monkeypatch)
 
     async with app.run_test() as pilot:
-        future: asyncio.Future[str] = asyncio.get_running_loop().create_future()
-        app._pending_question = PendingQuestion(question="Choose?", options=["A", "B"], future=future)
+        app._pending_question = PendingQuestion(question="Choose?", options=["A", "B"], request_id="req-test")
         app._show_question_options("Choose?", ["A", "B"])
         app._set_chat_enabled(True)
 
@@ -163,15 +160,18 @@ async def test_question_composer_top_line_up_returns_focus_to_options(
 ) -> None:
     pytest.importorskip("textual")
 
-    from kolega_code.cli.tui.state import PendingQuestion
     from kolega_code.cli.tui.widgets import ActionList, ChatComposer
 
     app = _build_focus_test_app(tmp_path, monkeypatch)
 
     async with app.run_test() as pilot:
-        future: asyncio.Future[str] = asyncio.get_running_loop().create_future()
-        app._pending_question = PendingQuestion(question="Choose?", options=["A", "B"], future=future)
-        app._show_question_options("Choose?", ["A", "B"])
+        # Drive the real path: the tool asks over the control channel and the
+        # prompt appears because this client received the announcement.
+        question_task = asyncio.create_task(app._ask_user_choice("Choose?", ["A", "B"]))
+        for _ in range(200):
+            if app._pending_question is not None:
+                break
+            await pilot.pause()
         app._set_chat_enabled(True)
 
         composer = app.query_one("#composer", ChatComposer)
@@ -186,7 +186,7 @@ async def test_question_composer_top_line_up_returns_focus_to_options(
         assert question_actions.highlighted == 1
 
         await pilot.press("enter")
-        assert await future == "B"
+        assert await asyncio.wait_for(question_task, timeout=1) == "B"
         assert app._pending_question is None
 
 
@@ -202,8 +202,7 @@ async def test_question_composer_multiline_up_keeps_editor_focus(
     app = _build_focus_test_app(tmp_path, monkeypatch)
 
     async with app.run_test() as pilot:
-        future: asyncio.Future[str] = asyncio.get_running_loop().create_future()
-        app._pending_question = PendingQuestion(question="Choose?", options=["A", "B"], future=future)
+        app._pending_question = PendingQuestion(question="Choose?", options=["A", "B"], request_id="req-test")
         app._show_question_options("Choose?", ["A", "B"])
         app._set_chat_enabled(True)
 
@@ -238,8 +237,7 @@ async def test_question_composer_dropdown_up_keeps_completion_navigation(
     app = _build_focus_test_app(tmp_path, monkeypatch)
 
     async with app.run_test() as pilot:
-        future: asyncio.Future[str] = asyncio.get_running_loop().create_future()
-        app._pending_question = PendingQuestion(question="Choose?", options=["A", "B"], future=future)
+        app._pending_question = PendingQuestion(question="Choose?", options=["A", "B"], request_id="req-test")
         app._show_question_options("Choose?", ["A", "B"])
         app._set_chat_enabled(True)
 
@@ -278,8 +276,7 @@ async def test_question_actions_bottom_down_focuses_composer(tmp_path: Path, mon
     app = _build_focus_test_app(tmp_path, monkeypatch)
 
     async with app.run_test() as pilot:
-        future: asyncio.Future[str] = asyncio.get_running_loop().create_future()
-        app._pending_question = PendingQuestion(question="Choose?", options=["A", "B", "C"], future=future)
+        app._pending_question = PendingQuestion(question="Choose?", options=["A", "B", "C"], request_id="req-test")
         app._show_question_options("Choose?", ["A", "B", "C"])
         app._set_chat_enabled(True)
 

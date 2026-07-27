@@ -83,7 +83,7 @@ from .skills import (
 )
 from .updater import check_for_update, run_self_update, update_status_message
 
-SUBCOMMANDS = {"ask", "sessions", "doctor", "update", "prompts", "agents", "mcp", "tui"}
+SUBCOMMANDS = {"ask", "sessions", "doctor", "update", "prompts", "agents", "mcp", "tui", "share"}
 RESUME_LATEST = "__latest__"
 CLI_AGENT_MODE = AgentMode.CLI.value
 ASK_DEFAULT_PERMISSION_MODE = PermissionMode.AUTO.value
@@ -115,6 +115,8 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
             return asyncio.run(_run_ask(args))
         if args.command == "sessions":
             return _run_sessions(args)
+        if args.command == "share":
+            return asyncio.run(_run_share(args))
         if args.command == "doctor":
             return _run_doctor(args)
         if args.command == "prompts":
@@ -317,6 +319,31 @@ def _build_subcommand_parser() -> argparse.ArgumentParser:
     sessions_export.add_argument("session_id")
     sessions_export.add_argument("--output", type=Path, help="Write JSON to a file instead of stdout.")
     sessions_export.add_argument("--state-dir", type=Path, help="Directory for CLI session state.")
+
+    share = subparsers.add_parser("share", help="Export a session as a shareable replay.")
+    share_sub = share.add_subparsers(dest="share_command", required=True)
+    share_export = share_sub.add_parser(
+        "export",
+        help="Write a self-contained replay file that plays in any browser.",
+    )
+    share_export.add_argument("session_id")
+    share_export.add_argument(
+        "--out",
+        type=Path,
+        help="Destination path (default: ./<session-id>-replay.html).",
+    )
+    share_export.add_argument(
+        "--dir",
+        action="store_true",
+        help="Write a directory of separate files instead of one HTML file, for hosting on a static site.",
+    )
+    share_export.add_argument("--zip", action="store_true", help="Write a .zip of the directory form. Implies --dir.")
+    share_export.add_argument("--title", help="Human-readable title shown in the player.")
+    share_export.add_argument(
+        "--theme",
+        help="Theme slug to open the replay with (default: the active theme).",
+    )
+    share_export.add_argument("--state-dir", type=Path, help="Directory for CLI session state.")
 
     doctor = subparsers.add_parser("doctor", help="Check local CLI configuration.")
     doctor.add_argument("--project", default=".", type=Path, help="Project directory to check.")
@@ -610,22 +637,9 @@ def _run_tui(args: argparse.Namespace) -> int:
     try:
         app.run()
     except Exception as exc:  # noqa: BLE001 — last-resort crash capture before re-raising
-        _secrets = [v for v in getattr(settings, "api_keys", {}).values() if v]
-        try:
-            from kolega_code.mcp.config import load_mcp_config, mcp_secret_values
-            from kolega_code.mcp.state import MCPOAuthTokenStore
-
-            mcp_config = getattr(config, "mcp_config", None) if config is not None else None
-            if mcp_config is None:
-                mcp_config = load_mcp_config(
-                    project_path,
-                    settings_store.root,
-                    project_trusted=settings.is_mcp_project_trusted(project_path),
-                )
-            _secrets.extend(mcp_secret_values(mcp_config))
-            _secrets.extend(MCPOAuthTokenStore(settings_store.root).secret_values())
-        except Exception:
-            pass
+        _secrets = known_secret_values(
+            settings, settings_store, project_path=project_path, mcp_config=getattr(config, "mcp_config", None)
+        )
         path = write_crash_log(
             store.root, exc=exc, header=f"kolega-code crash | session {session.session_id}", secret_values=_secrets
         )
@@ -638,6 +652,49 @@ def _run_tui(args: argparse.Namespace) -> int:
             )
         raise
     return 0
+
+
+def known_secret_values(
+    settings: CliSettings,
+    settings_store: SettingsStore,
+    *,
+    project_path: Optional[Path] = None,
+    mcp_config: Any = None,
+) -> list[str]:
+    """Every credential this installation knows it holds.
+
+    Secret *detection* is pattern matching, and plenty of real keys match no
+    pattern at all — a Fireworks ``fw_`` key, a Tavily ``tvly-`` key, and the
+    bare-hex keys some providers issue all sail straight through. Anywhere
+    session content leaves this machine, these values are handed over
+    explicitly so the redactor does not have to guess.
+    """
+    values = [value for value in (settings.api_keys or {}).values() if value]
+    for token in (settings.oauth_tokens or {}).values():
+        if not isinstance(token, dict):
+            continue
+        for key in ("access_token", "refresh_token", "id_token"):
+            value = token.get(key)
+            if value:
+                values.append(str(value))
+    try:
+        from kolega_code.mcp.config import load_mcp_config, mcp_secret_values
+        from kolega_code.mcp.state import MCPOAuthTokenStore
+
+        if mcp_config is None and project_path is not None:
+            mcp_config = load_mcp_config(
+                project_path,
+                settings_store.root,
+                project_trusted=settings.is_mcp_project_trusted(project_path),
+            )
+        if mcp_config is not None:
+            values.extend(mcp_secret_values(mcp_config))
+        values.extend(MCPOAuthTokenStore(settings_store.root).secret_values())
+    except Exception:
+        # Best effort: a broken MCP config must not stop a crash log or an
+        # export from being written at all.
+        pass
+    return [value for value in values if value]
 
 
 def _permission_callback_for_ask(project_path: Path):
@@ -1100,6 +1157,68 @@ def _parse_skill_prompt(prompt: str, catalog: SkillCatalog) -> Optional[tuple[st
     if catalog.get(skill_name) is None:
         return None
     return skill_name, rest.strip()
+
+
+async def _run_share(args: argparse.Namespace) -> int:
+    """Export a session as a static replay bundle."""
+    from kolega_code.cli.session_event_store import FileArtifactStore, FileSessionEventStore
+    from kolega_code.web.bundle import export_bundle
+
+    if args.share_command != "export":
+        raise ValueError(f"Unknown share command: {args.share_command}")
+
+    from .theme import textual_theme_name
+
+    store = _store_from_args(args)
+    record = store.load_session_or_thread(args.session_id)
+    journal = store.journal(record.session_id)
+    events = await FileSessionEventStore(journal).read(record.session_id)
+    if not events:
+        _print_styled(
+            f"Session {record.session_id} has no recorded presentation events, so there is nothing to replay. "
+            "Sessions recorded before this release only contain conversation history.",
+            style="warning",
+            stderr=True,
+        )
+        return 1
+
+    # One HTML file unless a directory was asked for, because the common case is
+    # sending a replay to someone and a folder cannot be opened by double-click.
+    as_directory = args.dir or args.zip
+    default_name = f"{record.session_id}-replay" + ("" if as_directory else ".html")
+    destination = args.out or Path.cwd() / default_name
+    settings_store = SettingsStore(root=getattr(args, "state_dir", None))
+    settings = settings_store.load()
+    result = await export_bundle(
+        events,
+        destination.expanduser(),
+        session_id=record.session_id,
+        title=args.title or getattr(record, "title", "") or "",
+        theme_slug=args.theme or textual_theme_name(settings.active_theme),
+        artifact_store=FileArtifactStore(journal),
+        # An export leaves this machine, so hand the redactor every credential
+        # we know about rather than trusting it to recognise their shapes.
+        extra_secrets=known_secret_values(
+            settings,
+            settings_store,
+            project_path=Path(record.project_path) if getattr(record, "project_path", None) else None,
+        ),
+        as_zip=args.zip,
+        single_file=not as_directory,
+    )
+
+    _print_styled(f"Wrote replay to {result.path}", style="success")
+    for line in result.report.summary_lines():
+        print(f"  {line}")
+    for warning in result.warnings:
+        _print_styled(f"  {warning}", style="warning")
+    if result.single_file:
+        size_mb = result.path.stat().st_size / (1024 * 1024)
+        print(f"\nOne file, {size_mb:.1f} MB. Open it in a browser, or send it to someone and they can too.")
+    elif not args.zip:
+        print(f"\nServe {result.path} over HTTP. Opening index.html directly will not work — browsers block")
+        print("module scripts on file:// URLs. Drop --dir for a single file that does open by double-click.")
+    return 0
 
 
 def _run_sessions(args: argparse.Namespace) -> int:

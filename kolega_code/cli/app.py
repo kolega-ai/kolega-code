@@ -36,6 +36,8 @@ from textual.widgets import (
 from textual.widgets.option_list import Option
 
 from kolega_code.agent import AgentConfig
+from kolega_code.session.recording import RecordingConnectionManager
+from kolega_code.session.runtime import SessionRuntime, control_channel_for
 from kolega_code.agent.prompt_dump import list_prompt_overrides
 from kolega_code.agent.prompt_provider import AgentMode
 from kolega_code.agent.prompts import (
@@ -54,6 +56,7 @@ from kolega_code.permissions import (
 from . import messages, theme
 from .config import CliConfigOverrides, active_model_override_message, key_status
 from .connection import CliConnectionManager
+from .session_event_store import FileArtifactStore, FileSessionEventStore
 from .goal import GoalState
 from .diagnostics import DiagnosticsLog, ResponsivenessWatchdog
 from .file_index import WorkspaceFileIndex
@@ -186,7 +189,41 @@ class KolegaCodeApp(
         self.check_for_updates = check_for_updates
         self.show_logs = show_logs
         self.startup_config_error = startup_config_error
+        # Two managers, one stream. The TUI reads live events off the CLI queue;
+        # the agent broadcasts into the recording wrapper, which assigns each
+        # event a sequence number and persists it before forwarding. That is what
+        # makes a session replayable and followable rather than only visible now.
         self.connection_manager = CliConnectionManager()
+        _journal = store.journal(session.session_id)
+        self.recording_connection_manager = RecordingConnectionManager(
+            self.connection_manager,
+            FileSessionEventStore(_journal),
+            session_id=session.session_id,
+            artifact_store=FileArtifactStore(_journal),
+        )
+        self._recording_primed = False
+        # Started on demand by /share; nothing listens until the user asks.
+        self._share_server = None
+        # Interactions that need a human answer go through the control channel, so
+        # this client answers prompts exactly the way a browser or a remote client
+        # would. The channel announces on the recording transport, which is what
+        # puts decision points into the session's replayable history.
+        self.control_channel = control_channel_for(
+            session.session_id,
+            self.recording_connection_manager.broadcast_event,
+            workspace_id=session.workspace_id,
+            thread_id=session.thread_id,
+        )
+        self.session_runtime = SessionRuntime(
+            session_id=session.session_id,
+            project_path=self.project_path,
+            control=self.control_channel,
+            permission_mode=self.permission_mode,
+            on_notice=lambda text: self._notify_user(text, severity="warning"),
+        )
+        # A single client holds control; viewers of a shared session may watch a
+        # prompt appear but never answer it.
+        self.control_channel.acquire(tui_constants.TUI_CLIENT_ID)
         self._hook_dispatcher: Optional[HookDispatcher] = None
         self._session_started = False
         self.agent = None
@@ -1493,6 +1530,11 @@ class KolegaCodeApp(
         # Stop the watchdog thread on shutdown (also keeps test apps from leaking threads).
         if self._watchdog is not None:
             self._watchdog.stop()
+        # Backstop for teardown paths that never reach action_quit; this hook is
+        # sync, so the socket closes when the serve task next runs.
+        if self._share_server is not None:
+            self._share_server.request_stop()
+            self._share_server = None
         self._close_memory_manager()
 
     def on_worker_state_changed(self, event) -> None:
@@ -1513,8 +1555,16 @@ class KolegaCodeApp(
 
     async def action_quit(self) -> None:
         try:
+            # Release control first, so any prompt still open resolves to its
+            # default instead of leaving a turn waiting on a closing window.
+            self.control_channel.release(tui_constants.TUI_CLIENT_ID)
             if self._watchdog is not None:
                 self._watchdog.stop()
+            # Persist any streaming tail still buffered for coalescing, so a
+            # session quit mid-stream still replays what was on screen.
+            await self.recording_connection_manager.flush()
+            # Never leave a port listening on someone's network after they quit.
+            await self._stop_share_server()
             if self.agent is not None:
                 fire = getattr(self.agent, "fire_hook", None)
                 if fire is not None:
@@ -1574,9 +1624,11 @@ class KolegaCodeApp(
         self.settings.permission_mode = mode.value
         await self._save_session_async()
         await asyncio.to_thread(self.settings_store.save, self.settings)
+        # The runtime holds permission policy, so telling it is what actually
+        # changes behaviour; it propagates the mode to the live agent.
+        self.session_runtime.set_permission_mode(mode)
         if self.agent is not None:
-            self.agent.set_permission_mode(mode)
-            self.agent.set_permission_callback(self._permission_callback)
+            self.agent.set_permission_callback(self.session_runtime.permission_callback)
         self._update_mode_chrome()
         self._notify_user(messages.SWITCHED_PERMISSION_MODE.format(mode=mode.value))
 

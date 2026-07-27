@@ -27,3 +27,8 @@ repos:
         types: [python]
         pass_filenames: false
         require_serial: true
+      - id: no-host-internals
+        name: no closed-source host internals in tracked files
+        entry: uv run python scripts/check_no_host_internals.py
+        language: system
+        pass_filenames: true

@@ -460,11 +460,10 @@ async def test_textual_app_shift_tab_toggles_between_build_and_plan_agents(
         app._latest_plan = "# Plan\n\nDo it."
         app._plan_decision_active = False
         app._set_plan_actions_visible(True)
-        question_future = asyncio.get_running_loop().create_future()
         app._pending_question = PendingQuestion(
             question="Choose?",
             options=["A", "B"],
-            future=question_future,
+            request_id="req-test",
         )
         app._set_question_actions_visible(True)
 
@@ -475,7 +474,7 @@ async def test_textual_app_shift_tab_toggles_between_build_and_plan_agents(
         assert app._latest_plan == "# Plan\n\nDo it."
         assert app._plan_decision_active is False
         assert app._pending_question is None
-        assert question_future.cancelled()
+        assert app._pending_question is None
         assert app.query_one("#planning_plan_markdown", PlanningMarkdown).source == "# Plan\n\nDo it."
         assert app.query_one("#plan_actions").display is False
         assert app.query_one("#question_actions").display is False

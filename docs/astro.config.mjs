@@ -84,6 +84,7 @@ export default defineConfig({
             { label: "Overview", slug: "cli/overview" },
             { label: "ask", slug: "cli/ask" },
             { label: "sessions", slug: "cli/sessions" },
+            { label: "share", slug: "cli/share" },
             { label: "doctor", slug: "cli/doctor" },
           ],
         },

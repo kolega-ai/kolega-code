@@ -1,5 +1,9 @@
 """Constants used by the Textual UI."""
 
+#: Identifies this client to the session control channel. Exactly one client may
+#: answer prompts at a time, and this is how the terminal UI claims that right.
+TUI_CLIENT_ID = "kolega-code-tui"
+
 BUILD_INTERACTION_MODE = "build"
 PLAN_INTERACTION_MODE = "plan"
 QUESTION_TOOL_NAME = "ask_user_choice"

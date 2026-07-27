@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en" data-theme="kolega-dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>Kolega Code — session replay</title>
+    <!-- theme.css is generated from kolega_code/cli/theme.py; player.css never
+         hard-codes a colour, so both files must be served together. -->
+    <link rel="stylesheet" href="theme.css" />
+    <link rel="stylesheet" href="player.css" />
+  </head>
+  <body>
+    <div class="kc-app">
+      <header class="kc-header">
+        <span class="kc-wordmark">Kolega Code</span>
+        <span class="kc-title" id="title">Loading recording…</span>
+        <span class="kc-badge" id="truncated" hidden>recording truncated</span>
+        <span class="kc-meta" id="meta"></span>
+      </header>
+
+      <main class="kc-main">
+        <div class="kc-error" id="error" hidden role="alert"></div>
+        <div id="transcript"></div>
+      </main>
+
+      <aside class="kc-rail">
+        <section class="kc-panel">
+          <h2 class="kc-panel-title">Context</h2>
+          <div class="kc-gauge" id="gauge" aria-live="polite"></div>
+          <div class="kc-gauge-label" id="gaugeLabel"></div>
+          <div class="kc-gauge-label" id="status"></div>
+        </section>
+
+        <section class="kc-panel">
+          <h2 class="kc-panel-title">Turns</h2>
+          <div id="turns"></div>
+        </section>
+
+        <section class="kc-panel">
+          <h2 class="kc-panel-title">Sub-agents</h2>
+          <div id="subAgents"></div>
+        </section>
+
+        <section class="kc-panel">
+          <h2 class="kc-panel-title">Terminal</h2>
+          <pre class="kc-terminal" id="terminal"></pre>
+        </section>
+      </aside>
+
+      <footer class="kc-transport">
+        <div class="kc-scrub">
+          <input
+            type="range"
+            id="scrub"
+            min="0"
+            max="1000"
+            value="0"
+            step="1"
+            aria-label="Seek through the recording"
+          />
+          <div class="kc-ticks" id="ticks" aria-hidden="true"></div>
+        </div>
+        <div class="kc-controls">
+          <button class="kc-button kc-play" id="play" type="button" aria-label="Play">▶</button>
+          <button class="kc-button" id="speed" type="button" aria-label="Playback speed">1x</button>
+          <button class="kc-button kc-live" id="live" type="button" aria-live="polite" hidden>● LIVE</button>
+          <select class="kc-select" id="theme" aria-label="Colour theme"></select>
+          <span class="kc-clock" id="clock">0:00 / 0:00</span>
+        </div>
+      </footer>
+    </div>
+
+    <script type="module" src="player.js"></script>
+  </body>
+</html>

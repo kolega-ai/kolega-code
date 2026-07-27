@@ -51,6 +51,7 @@ These control the app and your session.
 | `/goal` | Set, show, or clear an autonomous completion goal |
 | `/tasks` | Show the shared task list |
 | `/queue-clear` | Clear queued follow-up messages |
+| `/share` | Share a live link to this session (`/share lan`, `/share <port>`, `/share stop`) |
 | `/copy` | Copy the last response to the clipboard |
 | `/diagnostics` | Show version, model/endpoint, and the local diagnostics log path |
 | `/bug` | Package local diagnostics into a shareable zip for a bug report |
@@ -58,6 +59,51 @@ These control the app and your session.
 | `/update` | Update Kolega Code to the latest version |
 | `/quit` | Save the session and exit |
 | `/exit` | Save the session and exit |
+
+## Sharing a live session
+
+`/share` starts a server for the session you are in and copies the link to your
+clipboard. Whoever opens it watches the session as it happens — reasoning, tool
+calls, terminal output — with a **LIVE** badge and the option to scrub back through
+what already happened.
+
+```
+/share             # reachable from this machine
+/share lan         # reachable from your local network
+/share 9000        # ...on a port you choose
+/share lan 9000
+/share stop        # stop sharing
+```
+
+Sharing listens on port `8765` unless you name another one. If something already
+has that port, the share quietly takes a different one and says so; a port you
+asked for explicitly is treated as a requirement instead, because a tunnel is
+probably pointed at it.
+
+The link carries a token that is generated per share and is the only thing gating
+access, so treat it as the secret it is. Sharing stops when you run `/share stop`
+or leave the session; nothing keeps listening afterwards.
+
+Viewers are **read-only**: they cannot type, approve a permission prompt, or
+interrupt a turn.
+
+:::caution
+`/share lan` binds your machine's address on the local network, so anyone who can
+reach it there and has the link can read that whole session, including file
+contents and command output. A live link is also **not redacted** — unlike
+`kolega-code share export`, whatever the agent printed is visible to whoever
+holds it. Run `/share stop` when you are done.
+:::
+
+To let someone watch from outside your network, leave the share on loopback and
+forward the port through a tunnel you control. There is no built-in relay. See
+[Letting someone off your machine watch](/cli/share/#letting-someone-off-your-machine-watch) for verified
+Tailscale, ngrok, and SSH recipes, and for how to turn the link `/share` gave you
+into the one you send.
+
+To send someone a recording rather than live access,
+[`kolega-code share export`](/cli/share/) writes a static bundle with secrets
+scrubbed.
 
 Run `/goal <condition>` to set an autonomous completion goal the agent works
 toward, verifying its own progress after each turn until the goal is met, the turn
