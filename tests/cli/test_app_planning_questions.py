@@ -340,3 +340,98 @@ async def test_textual_app_planning_question_tool_rejects_malformed_input(
             )
 
         assert app._pending_question is None
+
+
+@pytest.mark.asyncio
+async def test_question_tool_answers_in_build_mode(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The same prompt flow the permission prompt already uses, now driven by the coder agent.
+
+    Build mode previously raised "ask_user_choice is only available in planning mode",
+    so a build agent blocked on a product decision could only guess.
+    """
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.widgets import ActionList
+
+    class FakeBaseAgent(FakeCoderAgent):
+        instances: list["FakeBaseAgent"] = []
+
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.__class__.instances.append(self)
+
+    install_fake_agents(monkeypatch, coder_cls=FakeBaseAgent, planning_cls=FakeBaseAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test() as pilot:
+        # No mode toggle: this is build mode.
+        assert app.interaction_mode == "build"
+        ask_user_choice = extension_by_name(
+            FakeBaseAgent.instances[-1].kwargs["tool_extensions"], "cli-planning-questions"
+        ).tools["ask_user_choice"]
+
+        app._turn_active = True
+        answer_task = asyncio.create_task(
+            ask_user_choice(
+                questions=question_payload(
+                    "Which storage should the cache use?",
+                    [("In-memory", "Lost on restart"), ("On disk", "Survives restart")],
+                    header="Cache",
+                )
+            )
+        )
+        await pilot.pause()
+
+        assert app._pending_question is not None
+        question_actions = app.query_one("#question_actions", ActionList)
+        assert question_actions.display is True
+
+        await app._answer_question_option(1)
+        result = await asyncio.wait_for(answer_task, timeout=5)
+
+        assert json.loads(result) == {"Cache": "On disk"}
+        assert app._pending_question is None
+
+
+@pytest.mark.asyncio
+async def test_build_and_plan_modes_get_different_question_guidance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.app import KolegaCodeApp
+
+    class FakeBaseAgent(FakeCoderAgent):
+        instances: list["FakeBaseAgent"] = []
+
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.__class__.instances.append(self)
+
+    install_fake_agents(monkeypatch, coder_cls=FakeBaseAgent, planning_cls=FakeBaseAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    def prompt_ids() -> set:
+        return {getattr(ext, "id", None) for ext in FakeBaseAgent.instances[-1].kwargs["prompt_extensions"]}
+
+    async with app.run_test():
+        assert "cli-build-questions" in prompt_ids()
+        assert "cli-planning-questions" not in prompt_ids()
+
+        await app.action_toggle_interaction_mode()
+
+        assert "cli-planning-questions" in prompt_ids()
+        assert "cli-build-questions" not in prompt_ids()

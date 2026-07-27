@@ -14,6 +14,12 @@ implementing whatever you ask.
 
 Use Build mode for hands-on work: making changes, running tests, fixing bugs.
 
+The agent can also **ask you a multiple-choice question** when a decision cannot be
+settled from the repository — an irreversible action, a public interface, or a product
+choice. It is told to prefer deciding and stating its assumption, so this should be rare
+in Build mode; questions appear in the same arrow-key-selectable option list that Plan
+mode and permission prompts use.
+
 Build mode is still subject to the current **permission mode**. TUI sessions
 default to `ask`, so shell commands and file edits prompt before they run. Press
 `Ctrl+P` to toggle between `ask` and `auto`, or use `/permissions ask`,

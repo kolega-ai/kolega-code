@@ -75,7 +75,14 @@ async def test_textual_app_passes_shared_task_list_tools_to_build_agent_only(
         assert {"get_task_list", "update_task_list"} == set(build_tools)
         # The task list is single-owner; it must not be inherited by sub-agents.
         assert task_list_extension.propagate_to_sub_agents is False
-        assert all("ask_user_choice" not in extension.tools for extension in app.agent.kwargs["tool_extensions"])
+        # Build mode gets the question tool too, under its own framing.
+        build_question_extension = extension_by_name(app.agent.kwargs["tool_extensions"], "cli-planning-questions")
+        assert set(build_question_extension.tools) == {"ask_user_choice"}
+        assert build_question_extension.propagate_to_sub_agents is False
+        assert "ask_user_choice" in build_question_extension.tool_groups["coder_agent_tools"]
+        build_prompt_ids = {getattr(ext, "id", None) for ext in app.agent.kwargs["prompt_extensions"]}
+        assert "cli-build-questions" in build_prompt_ids
+        assert "cli-planning-questions" not in build_prompt_ids
         build_task_list_prompt = app.agent.kwargs["prompt_extensions"][0].markdown
         assert "After each meaningful task is completed" in build_task_list_prompt
         assert "Do not wait until every TODO is complete" in build_task_list_prompt

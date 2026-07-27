@@ -12,6 +12,7 @@ def test_static_prompt_templates_load() -> None:
     assert "get_task_list" in prompts.SHARED_TASK_LIST_PROMPT
     assert "get_task_list" in prompts.SHARED_TASK_LIST_READONLY_PROMPT
     assert "ask_user_choice" in prompts.PLANNING_QUESTION_PROMPT
+    assert "ask_user_choice" in prompts.BUILD_QUESTION_PROMPT
     assert "read-only" in prompts.CURRENT_PLAN_ARTIFACT_PROMPT_TEMPLATE
 
 
@@ -205,3 +206,14 @@ def test_prompt_template_tree_uses_canonical_agents_md_naming() -> None:
     assert not (template_root / "agents").exists()
     assert not (template_root / "cli").exists()
     assert not (template_root / "tasks").exists()
+
+
+def test_build_question_prompt_pushes_toward_deciding_not_asking() -> None:
+    """Plan mode treats a question as cheap; implementation must not be a conversation."""
+    prompt = prompts.BUILD_QUESTION_PROMPT
+
+    assert "stating the assumption" in prompt
+    assert "expensive" in prompt
+    assert "Batch related decisions" in prompt
+    # Must not send the agent asking for things it can look up.
+    assert "Never ask for something a search, a file read, or a test run would tell you." in prompt
