@@ -10,8 +10,21 @@ def test_static_prompt_templates_load() -> None:
     assert "evaluating shell commands for safety" in prompts.SHELL_SAFETY_SYSTEM_PROMPT
     assert "analyzing shell command output" in prompts.SHELL_COMPRESSION_SYSTEM_PROMPT
     assert "get_task_list" in prompts.SHARED_TASK_LIST_PROMPT
+    assert "get_task_list" in prompts.SHARED_TASK_LIST_READONLY_PROMPT
     assert "ask_user_choice" in prompts.PLANNING_QUESTION_PROMPT
     assert "read-only" in prompts.CURRENT_PLAN_ARTIFACT_PROMPT_TEMPLATE
+
+
+def test_readonly_task_list_prompt_never_names_the_write_tool() -> None:
+    """Plan mode has no ``update_task_list``.
+
+    Naming an absent tool is what made the planning agent call ``get_task_list``
+    when it was gated away, so the read-only guidance must not name the writer
+    either — it points at ``write_plan`` instead.
+    """
+    assert "update_task_list" not in prompts.SHARED_TASK_LIST_READONLY_PROMPT
+    assert "write_plan" in prompts.SHARED_TASK_LIST_READONLY_PROMPT
+    assert "build agent" in prompts.SHARED_TASK_LIST_READONLY_PROMPT
 
 
 def test_compression_summary_user_prompt_renders_history() -> None:
@@ -160,6 +173,28 @@ def test_planning_agent_prompt_renders_environment() -> None:
     assert "Model supports vision: true" in rendered
     assert "submit it through `write_plan`; do not only print the plan" in rendered
     assert "complete replacement plan that incorporates those decisions" in rendered
+
+
+def test_planning_agent_prompt_omits_host_specific_task_list_guidance() -> None:
+    """The generic planning prompt is shared with hosts that provide no task-list tools.
+
+    Naming CLI-only tools here is what caused plan-mode agents to call a tool that
+    was not registered; CLI task-list guidance now ships as a prompt extension.
+    """
+    rendered = prompts.build_planning_agent_system_prompt(
+        system_name="Kolega Code",
+        project_path="/repo",
+        is_git_repo=True,
+        platform="darwin",
+        date_today="2026-06-17",
+        model_name="test-model",
+        model_supports_vision=True,
+    )
+
+    assert "task-list" not in rendered
+    assert "task list" not in rendered
+    assert "get_task_list" not in rendered
+    assert "Use read-only tools and investigative commands" in rendered
 
 
 def test_prompt_template_tree_uses_canonical_agents_md_naming() -> None:

@@ -49,6 +49,7 @@ These control the app and your session.
 | `/logout` | Sign out of a provider, e.g. `/logout chatgpt` |
 | `/gigacode` | Toggle [gigacode](../../gigacode/) workflow orchestration on or off |
 | `/goal` | Set, show, or clear an autonomous completion goal |
+| `/tasks` | Show the shared task list |
 | `/queue-clear` | Clear queued follow-up messages |
 | `/copy` | Copy the last response to the clipboard |
 | `/diagnostics` | Show version, model/endpoint, and the local diagnostics log path |
@@ -95,6 +96,11 @@ without an API key; `/logout chatgpt` removes the stored credentials. See
 Run `/queue-clear` to discard follow-up prompts that you queued while the current
 turn is running. It removes their `Queued` transcript entries, but it does not
 cancel or otherwise stop the active agent turn.
+
+Run `/tasks` to print the shared task list into the transcript. It reads session
+state directly and never starts an agent turn, so it is available in both
+interaction modes. [Build mode](../modes/) owns the list and is the only mode that
+can change it; in [Plan mode](../modes/) the agent can read it but not modify it.
 
 Run `/agents` or `/agents list` to inspect all effective user and project
 [custom-agent definitions](../../custom-agents/), including agents configured for

@@ -25,6 +25,7 @@ DISCONNECTED_SIDEBAR_GUIDANCE = "Press Ctrl+O, select Settings, then choose Cont
 DISCONNECTED_ACTIVITY = "Complete setup or open Settings to connect a provider."
 DISCONNECTED_MODEL = "not connected"
 TASK_LIST_EMPTY_MESSAGE = "No task list has been set."
+TASK_LIST_HEADER = "## Task List"
 PLAN_EMPTY_MESSAGE = "No plan captured yet."
 # Shown once in the startup block when running inside tmux/screen, where Shift
 # chords often never reach the app.

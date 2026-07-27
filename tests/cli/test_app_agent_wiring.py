@@ -113,9 +113,24 @@ async def test_textual_app_passes_shared_task_list_tools_to_build_agent_only(
 
         assert isinstance(app.agent, FakePlanningAgent)
         plan_extension_names = {getattr(ext, "name", None) for ext in app.agent.kwargs["tool_extensions"]}
-        # Plan mode no longer gets the shared task list (build-mode only)...
+        # Plan mode never gets the writable task list (build-mode only)...
         assert "cli-shared-task-list" not in plan_extension_names
-        # ...but still gets the planning-question tool.
+        # ...but it does get a read-only view, so a re-plan started mid-build can
+        # see what has already been completed.
+        assert "cli-shared-task-list-readonly" in plan_extension_names
+        plan_task_list_extension = extension_by_name(
+            app.agent.kwargs["tool_extensions"], "cli-shared-task-list-readonly"
+        )
+        assert set(plan_task_list_extension.tools) == {"get_task_list"}
+        assert plan_task_list_extension.propagate_to_sub_agents is False
+        # PlanningAgent only exposes extension tools declared in its custom_tool_groups.
+        assert plan_task_list_extension.tool_groups["planning_tools"] == ["get_task_list"]
+        # The read-only getter sees the list build mode wrote a moment ago.
+        assert await plan_task_list_extension.tools["get_task_list"]() == "- [ ] inspect\n- [x] plan"
+        plan_prompt_ids = {getattr(ext, "id", None) for ext in app.agent.kwargs["prompt_extensions"]}
+        assert "cli-shared-task-list-readonly" in plan_prompt_ids
+        assert "cli-shared-task-list" not in plan_prompt_ids
+        # ...and still gets the planning-question tool.
         assert "cli-planning-questions" in plan_extension_names
         assert "cli-goal-control" in plan_extension_names
         plan_goal_extension = extension_by_name(app.agent.kwargs["tool_extensions"], "cli-goal-control")

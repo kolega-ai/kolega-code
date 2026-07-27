@@ -238,6 +238,48 @@ def test_workflow_sub_agent_does_not_inherit_task_list(project_path, mock_connec
     assert "update_task_list" not in sub_tools
 
 
+def test_workflow_sub_agent_does_not_inherit_readonly_task_list(project_path, mock_connection_manager, agent_config):
+    """Plan mode's read-only task-list extension is single-owner too.
+
+    It exposes no writer, but sub-agents still must not see it: a shared getter
+    would imply a shared list they are expected to coordinate through.
+    """
+
+    async def get_task_list() -> str:
+        return ""
+
+    readonly_ext = ToolExtension(
+        name="cli-shared-task-list-readonly",
+        tools={"get_task_list": get_task_list},
+        tool_groups={"planning_tools": ["get_task_list"]},
+        propagate_to_sub_agents=False,
+    )
+
+    caller = CoderAgent(
+        project_path=project_path,
+        workspace_id="test_workspace",
+        thread_id=str(uuid.uuid4()),
+        connection_manager=mock_connection_manager,
+        config=agent_config,
+        agent_mode=AgentMode.CLI,
+        tool_extensions=[readonly_ext],
+    )
+    assert "get_task_list" in {tool.name for tool in caller.tool_collection.get_tool_list()}
+
+    agent_tool = AgentTool(
+        project_path,
+        "test_workspace",
+        str(uuid.uuid4()),
+        mock_connection_manager,
+        agent_config,
+        caller,
+        None,
+    )
+    sub_agent = agent_tool._construct_workflow_sub_agent(GeneralAgent, None, [])
+    assert sub_agent.tool_collection is not None
+    assert "get_task_list" not in {tool.name for tool in sub_agent.tool_collection.get_tool_list()}
+
+
 def test_workflow_sub_agent_runs_in_auto_permission_mode(project_path, mock_connection_manager, agent_config):
     """Workflow sub-agents run unattended in AUTO mode even when the caller is in ASK mode."""
     caller = CoderAgent(

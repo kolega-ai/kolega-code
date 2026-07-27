@@ -817,14 +817,18 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         ).for_mode(self.interaction_mode)
         prompt_extensions: list[PromptExtension] = []
         tool_extensions: list[ToolExtension] = []
-        # The shared task list is build-mode execution tracking; plan mode produces
-        # a plan via write_plan and does not get the task-list tools.
+        # The shared task list is build-mode execution tracking, so only build mode
+        # can write it. Plan mode gets a read-only view so a re-plan started mid-build
+        # can see what has already been completed.
         if self.interaction_mode == tui_constants.BUILD_INTERACTION_MODE:
             prompt_extensions.append(self._shared_task_list_prompt_extension())
             tool_extensions.append(self._shared_task_list_tool_extension())
             plan_artifact_extension = self._current_plan_artifact_prompt_extension()
             if plan_artifact_extension is not None:
                 prompt_extensions.append(plan_artifact_extension)
+        else:
+            prompt_extensions.append(self._shared_task_list_readonly_prompt_extension())
+            tool_extensions.append(self._shared_task_list_readonly_tool_extension())
         # Both TUI interaction modes can set autonomous goals. The policy and
         # callback stay on the top-level agent and are never inherited by delegates.
         prompt_extensions.append(self._goal_control_prompt_extension())
