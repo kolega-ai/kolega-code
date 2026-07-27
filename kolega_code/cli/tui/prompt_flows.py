@@ -11,7 +11,11 @@ from textual.widgets.option_list import Option
 
 from kolega_code.agent import PromptExtension, ToolExtension
 from kolega_code.agent.prompt_provider import AgentMode
-from kolega_code.agent.prompts import PLANNING_QUESTION_PROMPT, SHARED_TASK_LIST_PROMPT
+from kolega_code.agent.prompts import (
+    PLANNING_QUESTION_PROMPT,
+    SHARED_TASK_LIST_PROMPT,
+    SHARED_TASK_LIST_READONLY_PROMPT,
+)
 from kolega_code.permissions import (
     PermissionDecision,
     PermissionMode,
@@ -84,6 +88,52 @@ class PromptFlowMixin(tui_app_base.KolegaAppBase):
                 "cli_task_list_tools": ["get_task_list", "update_task_list"],
             },
             # Single-owner, shared mutable state: never hand it to sub-agents.
+            propagate_to_sub_agents=False,
+        )
+
+    def _shared_task_list_readonly_prompt_extension(self) -> PromptExtension:
+        return PromptExtension(
+            id="cli-shared-task-list-readonly",
+            title="Shared Task List (read-only)",
+            markdown=SHARED_TASK_LIST_READONLY_PROMPT,
+            modes=[AgentMode.CLI],
+            # Same single-owner rule as the build-mode extension.
+            propagate_to_sub_agents=False,
+        )
+
+    def _shared_task_list_readonly_tool_extension(self) -> ToolExtension:
+        """Plan-mode task list access: read the build agent's list, never write it.
+
+        Plan mode must not mutate session state, and ``session.task_list_markdown``
+        is cleared only on thread reset — a plan-mode write would silently clobber
+        a build session's in-flight progress. Reading it is what makes re-planning
+        mid-implementation useful, so only the getter is exposed here. The docstring
+        below is the model-facing tool description, so it is deliberately distinct
+        from the build-mode getter's.
+        """
+
+        async def get_task_list() -> str:
+            """
+            Return the shared CLI task list, which the build agent owns.
+
+            Use this when re-planning work that is already underway, to see what an in-progress build
+            session has already completed. You cannot modify the list in plan mode; capture the remaining
+            work in the plan you submit with `write_plan` instead.
+
+            Returns:
+                The current shared task list, or a note that no task list has been set.
+            """
+            return self.session.task_list_markdown or messages.TASK_LIST_EMPTY_MESSAGE
+
+        return ToolExtension(
+            name="cli-shared-task-list-readonly",
+            tools={"get_task_list": get_task_list},
+            # PlanningAgent only exposes extension tools declared in its
+            # custom_tool_groups, of which planning_tools is one.
+            tool_groups={
+                "planning_tools": ["get_task_list"],
+                "cli_task_list_tools": ["get_task_list"],
+            },
             propagate_to_sub_agents=False,
         )
 

@@ -116,6 +116,48 @@ async def test_planning_agent_uses_host_task_list_extension(tmp_path, mock_conne
     assert "write" not in tool_names
 
 
+@pytest.mark.asyncio
+async def test_planning_agent_read_only_task_list_rejects_writes(tmp_path, mock_connection_manager, agent_config):
+    """The CLI plan-mode extension shape: readable list, no writer.
+
+    Plan mode must not mutate ``session.task_list_markdown``, so the host registers
+    only ``get_task_list``. A model that tries the writer anyway must get the
+    unknown-tool error rather than silently clobbering build progress.
+    """
+
+    async def get_task_list() -> str:
+        return "- [x] inspect CLI\n- [ ] ship it"
+
+    agent = PlanningAgent(
+        project_path=tmp_path,
+        workspace_id="test_workspace",
+        thread_id=str(uuid.uuid4()),
+        connection_manager=mock_connection_manager,
+        config=agent_config,
+        agent_mode=AgentMode.CLI,
+        tool_extensions=[
+            ToolExtension(
+                name="cli-shared-task-list-readonly",
+                tools={"get_task_list": get_task_list},
+                tool_groups={"planning_tools": ["get_task_list"]},
+                propagate_to_sub_agents=False,
+            )
+        ],
+    )
+
+    tool_names = {tool.name for tool in agent.tool_collection.get_tool_list()}
+    assert "get_task_list" in tool_names
+    assert "update_task_list" not in tool_names
+    assert await agent.tool_collection.get_task_list() == "- [x] inspect CLI\n- [ ] ship it"
+
+    result = await agent.execute_single_tool(
+        ToolCall(id="call-1", name="update_task_list", input={"task_list_markdown": "- [ ] clobbered"})
+    )
+
+    assert result.is_error is True
+    assert result.content == "Tool 'update_task_list' is not available in this mode."
+
+
 def test_planning_agent_only_exposes_write_plan_without_host_task_tools(
     tmp_path, mock_connection_manager, agent_config
 ):
