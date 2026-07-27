@@ -138,11 +138,23 @@ def _preserve_reasoning_block(block: Any, *, source_provider: str, target_provid
     return _providers_replay_compatible(source_provider, target_provider)
 
 
-def _reasoning_placeholder(block: Any, source_provider: str) -> TextBlock:
-    source = source_provider or "unknown provider"
-    if isinstance(block, RedactedThinkingBlock):
-        return TextBlock(text=f"[Prior redacted reasoning from {source} omitted for compatibility.]")
-    return TextBlock(text=f"[Prior reasoning from {source} omitted for compatibility.]")
+# Foreign reasoning used to be replaced with a text placeholder here. Do not
+# reintroduce one: anything model-visible gets echoed. Models reproduced that
+# placeholder as the opening tokens of their own replies, the echo was persisted
+# by the session recorder, and it then re-primed every later turn. An omitted
+# -reasoning notice is not actionable for the model anyway, so the blocks are
+# simply dropped from the request copy.
+#
+# This pattern matches placeholders that earlier builds already echoed into
+# stored assistant text, so contaminated sessions stop re-priming themselves.
+_ECHOED_REASONING_PLACEHOLDER = re.compile(
+    r"\[Prior (?:redacted )?reasoning from [^\]\n]{1,64} omitted for compatibility\.\]"
+)
+
+
+def _scrub_echoed_reasoning_placeholder(text: str) -> str:
+    """Strip echoed reasoning placeholders from assistant prose, preserving the rest."""
+    return _ECHOED_REASONING_PLACEHOLDER.sub("", text).strip()
 
 
 def _preserve_freeform_exchange(
@@ -191,6 +203,7 @@ def _adapt_content_blocks_for_provider(
     tool_call_providers: Optional[Dict[str, str]] = None,
     tool_call_protocols: Optional[Dict[str, Optional[str]]] = None,
     source_usage_metadata: Optional[Dict[str, Any]] = None,
+    message_role: Optional[str] = None,
 ) -> tuple[List[Any], bool]:
     adapted: List[Any] = []
     changed = False
@@ -203,7 +216,7 @@ def _adapt_content_blocks_for_provider(
             if _preserve_reasoning_block(block, source_provider=source_provider, target_provider=target_provider):
                 adapted.append(block)
             else:
-                adapted.append(_reasoning_placeholder(block, source_provider))
+                # Dropped, never substituted — see _ECHOED_REASONING_PLACEHOLDER.
                 changed = True
         elif isinstance(block, ToolCall) and block.input_kind == "freeform":
             if _preserve_freeform_exchange(
@@ -262,12 +275,24 @@ def _adapt_content_blocks_for_provider(
                 tool_call_providers=tool_call_providers,
                 tool_call_protocols=tool_call_protocols,
                 source_usage_metadata=source_usage_metadata,
+                # Nested tool-result content is tool output, never assistant prose.
+                message_role=None,
             )
             if inner_changed:
                 adapted.append(_tool_result_with_content(block, inner))
                 changed = True
             else:
                 adapted.append(block)
+        elif isinstance(block, TextBlock) and message_role == "assistant":
+            cleaned = _scrub_echoed_reasoning_placeholder(block.text)
+            if cleaned == block.text:
+                adapted.append(block)
+            elif cleaned:
+                adapted.append(TextBlock(text=cleaned, cache_checkpoint=block.cache_checkpoint))
+                changed = True
+            else:
+                # The block was nothing but echoed placeholders.
+                changed = True
         else:
             adapted.append(block)
 
@@ -286,10 +311,18 @@ def adapt_history_for_provider(
 
     Provider-managed reasoning blocks are not portable across providers, but
     reasoning produced by a provider is safe to send back to the same provider.
-    Preserve same-provider reasoning; convert foreign or unknown reasoning
-    blocks to text placeholders. Image blocks are preserved for vision models
-    and replaced with placeholders for non-vision models, matching the previous
-    image compatibility behavior.
+    Preserve same-provider reasoning and **drop** foreign or unknown reasoning
+    blocks — substituting model-visible text there gets echoed back by the model
+    and then persisted as real history. Assistant text carrying placeholders
+    echoed by earlier builds is scrubbed for the same reason. Image blocks are
+    preserved for vision models and replaced with placeholders for non-vision
+    models, matching the previous image compatibility behavior.
+
+    An assistant message left with no content blocks is omitted from the returned
+    history. That orphans nothing: tool calls are never dropped by this pass, so
+    only reasoning-only or placeholder-only messages can empty out. A dropped
+    message could in principle carry a ``cache_checkpoint`` mark, but checkpoints
+    land on the trailing user/tool-result message, not on a reasoning-only turn.
     """
     target_provider = _provider_value(target_provider)
     if target_edit_protocol is not None:
@@ -322,7 +355,11 @@ def adapt_history_for_provider(
             tool_call_providers=tool_call_providers,
             tool_call_protocols=tool_call_protocols,
             source_usage_metadata=message.usage_metadata,
+            message_role=message.role,
         )
+        if changed and not adapted_content:
+            changed_any = True
+            continue
         if changed:
             result.append(_message_with_content(message, adapted_content))
             changed_any = True

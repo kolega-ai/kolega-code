@@ -65,7 +65,7 @@ class TestBaseAgent:
         assert effective[0].content[1].signature == "sig"
         assert effective[0].content[2].data == "encrypted-redacted-thinking"
 
-    def test_history_for_llm_converts_foreign_thinking_when_switching_to_anthropic(self, base_agent):
+    def test_history_for_llm_drops_foreign_thinking_when_switching_to_anthropic(self, base_agent):
         tool_call = ToolCall(id="tool1", name="read_file", input={"path": "README.md"})
         base_agent.primary_model_config.provider = ModelProvider.ANTHROPIC
         base_agent.primary_model_config.model = "claude-opus-4-8"
@@ -87,9 +87,10 @@ class TestBaseAgent:
         history = base_agent._history_for_llm()
 
         assert not any(isinstance(block, ThinkingBlock) for block in history[0].content)
-        assert isinstance(history[0].content[0], TextBlock)
-        assert "Prior reasoning from kimi_coding omitted" in history[0].content[0].text
-        assert isinstance(history[0].content[1], ToolCall)
+        # Dropped, not replaced: a text stand-in gets echoed back by the model.
+        assert not any(isinstance(block, TextBlock) for block in history[0].content)
+        assert len(history[0].content) == 1
+        assert isinstance(history[0].content[0], ToolCall)
         assert history[1].role == "user"
         assert isinstance(history[1].content[0], ToolResult)
         assert history[1].content[0].tool_use_id == "tool1"

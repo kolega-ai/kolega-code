@@ -1183,9 +1183,9 @@ class Message:
         """
         # Native reasoning replay applies only when the target is a configured
         # reasoning model AND this assistant message was produced by that same
-        # provider. adapt_history_for_provider already converts foreign reasoning
-        # to text upstream; this source==target check is defense-in-depth so
-        # foreign reasoning can never serialize as native replay metadata.
+        # provider. adapt_history_for_provider already drops foreign reasoning
+        # upstream; this source==target check is defense-in-depth so foreign
+        # reasoning can never serialize as native replay metadata.
         reasoning_field: Optional[str] = None
         source_provider = (self.usage_metadata or {}).get("provider")
         if (

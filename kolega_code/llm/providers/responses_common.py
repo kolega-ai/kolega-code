@@ -177,7 +177,7 @@ def to_responses_input(messages: MessageHistory) -> List[Dict[str, Any]]:
                 text_parts.append(("image", _image_data_url(block)))
             # Foreign Anthropic thinking/redacted-thinking blocks (from a prior
             # provider) are skipped here; adapt_history_for_provider has already
-            # replaced them with text placeholders before this conversion runs.
+            # dropped them before this conversion runs.
         if text_parts:
             item = _role_message_item(message.role, text_parts)
             if item:
