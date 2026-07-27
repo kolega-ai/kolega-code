@@ -76,6 +76,12 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         payload = event.content.get("payload")
         if not request_id or not isinstance(payload, dict):
             return
+        if not self._control_request_is_open(request_id):
+            # The announcement is queued, so it can arrive after the request has
+            # already been settled — by a fast answer, a timeout, or control
+            # being released. Showing a prompt nobody is waiting on would leave
+            # the user answering into the void.
+            return
         if kind == "permission":
             if not isinstance(payload.get("request"), dict):
                 return
@@ -100,6 +106,18 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
                 [str(option) for option in options],
                 [str(item) for item in descriptions] if isinstance(descriptions, list) else None,
             )
+
+    def _control_request_is_open(self, request_id: str) -> bool:
+        """Whether the channel is still waiting on this request.
+
+        Only a client sharing a process with the channel can check this. A remote
+        client relies on the ``control_resolved`` announcement instead, which is
+        why that event clears a prompt as well.
+        """
+        try:
+            return any(request.request_id == request_id for request in self.control_channel.pending())
+        except Exception:
+            return True
 
     def _answer_permission_request(self, request_id: str, decision: PermissionDecision) -> None:
         """Send a decision back over the control channel. Never raises."""

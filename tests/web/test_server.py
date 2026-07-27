@@ -76,6 +76,54 @@ async def test_lists_sessions_with_replay_metadata(store: SessionStore, tmp_path
 
 
 @pytest.mark.asyncio
+async def test_project_filter_matches_the_returned_path(store: SessionStore, tmp_path: Path) -> None:
+    mine = await _seed(store, tmp_path)
+    other = store.create(tmp_path / "elsewhere", "code", {"model": "test"}, title="Other project")
+
+    with _client(store) as client:
+        listed = client.get("/api/sessions").json()
+        by_id = {item["session_id"]: item for item in listed}
+        filtered = client.get("/api/sessions", params={"project": by_id[mine.session_id]["project_path"]}).json()
+
+    assert {item["session_id"] for item in filtered} == {mine.session_id}
+    assert other.session_id not in {item["session_id"] for item in filtered}
+    # A trailing slash is the one difference a client is likely to introduce.
+    with _client(store) as client:
+        trailing = client.get(
+            "/api/sessions",
+            params={"project": by_id[mine.session_id]["project_path"] + "/"},
+        ).json()
+    assert {item["session_id"] for item in trailing} == {mine.session_id}
+
+
+@pytest.mark.asyncio
+async def test_project_filter_never_reaches_the_filesystem(store: SessionStore, tmp_path: Path) -> None:
+    """The filter is an opaque string match, so hostile input is inert.
+
+    Regression test for a path-injection finding: the parameter used to be
+    resolved into a real path, which put untrusted request data into a
+    filesystem expression for a comparison that never needed one.
+    """
+    await _seed(store, tmp_path)
+    hostile = ["../../../../etc", "/etc/passwd", "~/.ssh/id_rsa", "\x00/etc", "a" * 4096]
+
+    with _client(store) as client:
+        for value in hostile:
+            response = client.get("/api/sessions", params={"project": value})
+            assert response.status_code == 200, f"{value!r} produced {response.status_code}"
+            assert response.json() == [], f"{value!r} unexpectedly matched a session"
+
+
+@pytest.mark.asyncio
+async def test_session_id_traversal_is_rejected(store: SessionStore, tmp_path: Path) -> None:
+    await _seed(store, tmp_path)
+    with _client(store) as client:
+        for value in ("..", "../../etc/passwd", "%2e%2e%2f"):
+            response = client.get(f"/api/sessions/{value}")
+            assert response.status_code in (404, 400), f"{value!r} produced {response.status_code}"
+
+
+@pytest.mark.asyncio
 async def test_session_without_events_is_marked_unreplayable(store: SessionStore, tmp_path: Path) -> None:
     """Sessions predating the event spine must not offer a broken replay."""
     record = store.create(tmp_path, "code", {"model": "test"})

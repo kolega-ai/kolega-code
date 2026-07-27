@@ -85,10 +85,24 @@ def create_app(config: ServerConfig) -> FastAPI:
     # -- Discovery ---------------------------------------------------------
 
     @app.get("/api/sessions", summary="List recorded sessions")
-    async def list_sessions(project: Optional[str] = None) -> list[dict[str, Any]]:
-        project_path = Path(project).expanduser().resolve() if project else None
+    async def list_sessions(
+        project: Optional[str] = Query(
+            None,
+            description=(
+                "Filter to sessions recorded for this project, matched exactly against the "
+                "`project_path` this endpoint returns. Pass back the value you were given."
+            ),
+        ),
+    ) -> list[dict[str, Any]]:
+        # Matched as an opaque string, never turned into a filesystem path.
+        # Resolving it would put untrusted request data into a path expression —
+        # and touch the filesystem to follow symlinks — for a filter that only
+        # ever compares against metadata already in memory.
+        wanted = _normalized_project(project)
         summaries: list[dict[str, Any]] = []
-        for record in config.store.list(project_path=project_path):
+        for record in config.store.list():
+            if wanted is not None and _normalized_project(record.project_path) != wanted:
+                continue
             meta = await _head(config, record.session_id)
             summaries.append(
                 {
@@ -327,6 +341,19 @@ def create_app(config: ServerConfig) -> FastAPI:
 
 def _escape(value: str) -> str:
     return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _normalized_project(value: Optional[str]) -> Optional[str]:
+    """Normalize a project path for comparison, without touching the filesystem.
+
+    Purely lexical on purpose. The request-supplied value is compared against
+    recorded metadata and is never opened, joined, or resolved, so it must not
+    reach any filesystem API.
+    """
+    if not value:
+        return None
+    trimmed = value.strip().rstrip("/")
+    return trimmed or "/"
 
 
 def _authorized(config: ServerConfig, header: Optional[str], query_token: Optional[str]) -> bool:
