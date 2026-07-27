@@ -69,6 +69,13 @@ class SubAgentActivity:
     steps: list[ConversationItem] = field(default_factory=list)
     last_text: str = ""
     context: Optional[dict] = None
+    #: Workflow-supplied name for this agent. Every agent in a fan-out shares one
+    #: ``name`` ("general-agent"), so without the label they cannot be told apart.
+    label: str = ""
+    #: Workflow phase this agent ran in, when it was dispatched by one.
+    phase: str = ""
+    #: Groups the agents belonging to one ``run_workflow`` call.
+    workflow_run_id: str = ""
 
 
 @dataclass
@@ -163,6 +170,9 @@ class PresentationState:
                     "status": activity.status,
                     "last_text": activity.last_text,
                     "context": activity.context,
+                    "label": activity.label,
+                    "phase": activity.phase,
+                    "workflow_run_id": activity.workflow_run_id,
                     "steps": [_item_dict(step) for step in activity.steps],
                 }
                 for key, activity in self.sub_agents.items()
@@ -278,10 +288,17 @@ def fold(state: PresentationState, event: AgentEvent) -> PresentationState:
 
 
 def _sub_agent_key(event: AgentEvent) -> Optional[str]:
+    """Identity of the delegate an event belongs to.
+
+    ``agent_id`` matters as much as ``dispatch_id``: a workflow leaves
+    ``dispatch_id`` unset, so keying on the name alone folded every agent of a
+    fan-out into one activity — a dozen parallel agents appearing as a single
+    "general-agent" whose task line was whichever one happened to arrive first.
+    """
     info = event.sub_agent_info
     if not info:
         return None
-    return str(info.get("dispatch_id") or info.get("agent_name") or "sub-agent")
+    return str(info.get("dispatch_id") or info.get("agent_id") or info.get("agent_name") or "sub-agent")
 
 
 def _sub_agent(state: PresentationState, key: str, event: AgentEvent) -> SubAgentActivity:
@@ -292,6 +309,9 @@ def _sub_agent(state: PresentationState, key: str, event: AgentEvent) -> SubAgen
             key=key,
             name=str(info.get("agent_name") or key),
             task=str(info.get("task") or ""),
+            label=str(info.get("label") or ""),
+            phase=str(info.get("phase") or ""),
+            workflow_run_id=str(info.get("workflow_run_id") or ""),
         )
         state.sub_agents[key] = activity
     return activity
@@ -381,10 +401,54 @@ def _resolve(state: PresentationState, event: AgentEvent, index: int) -> Optiona
 _SUB_AGENT_LIFECYCLE = {"STOPPED": "completed", "ERROR": "failed"}
 
 
+#: Workflow lifecycle messages, and the tone each carries into the transcript.
+_WORKFLOW_TONES = {"workflow_start": "start", "workflow_phase": "phase", "workflow_end": "end"}
+
+
+def _on_workflow_message(state: PresentationState, event: AgentEvent, message_type: str) -> None:
+    """Render a gigacode run's own lifecycle.
+
+    ``workflow_start`` and ``workflow_end`` carry their detail in named fields
+    and leave ``text`` empty, so the generic path dropped them outright: a
+    workflow appeared as a few unlabelled lines with no name, no phases, and no
+    outcome, while its agents' work was merged into the transcript around them.
+    """
+    content = event.content
+    tone = _WORKFLOW_TONES[message_type]
+    status: Optional[str] = None
+    if message_type == "workflow_start":
+        name = str(content.get("name") or "workflow")
+        description = str(content.get("description") or "")
+        text = f"{name} — {description}" if description else name
+        status = "running"
+    elif message_type == "workflow_end":
+        status = str(content.get("status") or "completed")
+        error = str(content.get("error") or "")
+        text = f"{status}: {error}" if error else status
+    else:
+        text = _text_of(event, "text")
+        if not text:
+            return
+    _append(
+        state,
+        ConversationItem(
+            kind="workflow",
+            text=text,
+            tone=tone,
+            status=status,
+            tool_call_id=str(content.get("workflow_run_id") or "") or None,
+        ),
+        event,
+    )
+
+
 def _on_chat_message(state: PresentationState, event: AgentEvent) -> None:
     message_type = str(event.content.get("message_type") or "message")
     if message_type in ("tool_call", "tool_result", "tool_error"):
         _on_tool_message(state, event, message_type)
+        return
+    if message_type in _WORKFLOW_TONES:
+        _on_workflow_message(state, event, message_type)
         return
     lifecycle = event.content.get("status")
     key = _sub_agent_key(event)

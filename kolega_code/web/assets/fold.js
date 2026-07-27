@@ -26,6 +26,13 @@ const SUB_AGENT_LIFECYCLE = {
   ERROR: "failed",
 };
 
+//: Workflow lifecycle messages, and the tone each carries into the transcript.
+const WORKFLOW_TONES = {
+  workflow_start: "start",
+  workflow_phase: "phase",
+  workflow_end: "end",
+};
+
 export function emptyState() {
   return {
     conversation: [],
@@ -58,10 +65,18 @@ function textOf(event, ...keys) {
   return "";
 }
 
+/**
+ * Identity of the delegate an event belongs to.
+ *
+ * `agent_id` matters as much as `dispatch_id`: a workflow leaves `dispatch_id`
+ * unset, so keying on the name alone folded every agent of a fan-out into one
+ * activity — a dozen parallel agents appearing as a single "general-agent"
+ * whose task line was whichever one happened to arrive first.
+ */
 function subAgentKey(event) {
   const info = event.sub_agent_info;
   if (!info) return null;
-  return String(info.dispatch_id || info.agent_name || "sub-agent");
+  return String(info.dispatch_id || info.agent_id || info.agent_name || "sub-agent");
 }
 
 function subAgent(state, key, event) {
@@ -76,6 +91,11 @@ function subAgent(state, key, event) {
       steps: [],
       lastText: "",
       context: null,
+      // Every agent in a fan-out shares one name, so the workflow's label is
+      // the only thing that tells them apart.
+      label: String(info.label || ""),
+      phase: String(info.phase || ""),
+      workflowRunId: String(info.workflow_run_id || ""),
     };
     state.subAgents.set(key, activity);
   }
@@ -185,10 +205,53 @@ function onToolMessage(state, event, messageType) {
   state.activity = "running_tool";
 }
 
+/**
+ * Render a gigacode run's own lifecycle.
+ *
+ * `workflow_start` and `workflow_end` carry their detail in named fields and
+ * leave `text` empty, so the generic path dropped them outright: a workflow
+ * appeared as a few unlabelled lines with no name, no phases, and no outcome,
+ * while its agents' work was merged into the transcript around them.
+ */
+function onWorkflowMessage(state, event, messageType) {
+  const content = event.content || {};
+  const tone = WORKFLOW_TONES[messageType];
+  let status = null;
+  let text;
+  if (messageType === "workflow_start") {
+    const name = String(content.name || "workflow");
+    const description = String(content.description || "");
+    text = description ? `${name} — ${description}` : name;
+    status = "running";
+  } else if (messageType === "workflow_end") {
+    status = String(content.status || "completed");
+    const error = String(content.error || "");
+    text = error ? `${status}: ${error}` : status;
+  } else {
+    text = textOf(event, "text");
+    if (!text) return;
+  }
+  append(
+    state,
+    newItem({
+      kind: "workflow",
+      text,
+      tone,
+      status,
+      toolCallId: String(content.workflow_run_id || "") || null,
+    }),
+    event,
+  );
+}
+
 function onChatMessage(state, event) {
   const messageType = String((event.content && event.content.message_type) || "message");
   if (messageType in TOOL_STATUS) {
     onToolMessage(state, event, messageType);
+    return;
+  }
+  if (messageType in WORKFLOW_TONES) {
+    onWorkflowMessage(state, event, messageType);
     return;
   }
   const lifecycle = event.content ? event.content.status : undefined;
@@ -478,6 +541,9 @@ export function toDict(state) {
       status: activity.status,
       last_text: activity.lastText,
       context: activity.context,
+      label: activity.label,
+      phase: activity.phase,
+      workflow_run_id: activity.workflowRunId,
       steps: activity.steps.map(itemDict),
     };
   }

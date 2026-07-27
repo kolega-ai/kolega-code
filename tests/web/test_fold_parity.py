@@ -188,6 +188,54 @@ def _fixture_events() -> list[AgentEvent]:
         # A prose segment that only ever carries an empty final delta, which the
         # agent emits on every iteration that ended in a tool call.
         _event(KnownEventType.ASSISTANT_DELTA, 37, elapsed_ms=1060, uuid="empty", text="", complete=True),
+        # A gigacode run: lifecycle messages whose detail lives in named fields,
+        # and two parallel agents that share a name and differ only by agent_id.
+        _event(
+            KnownEventType.CHAT_MESSAGE,
+            38,
+            elapsed_ms=1070,
+            message_type="workflow_start",
+            workflow_run_id="run-1",
+            name="triage",
+            description="classify in parallel",
+            text="",
+        ),
+        _event(
+            KnownEventType.CHAT_MESSAGE,
+            39,
+            elapsed_ms=1072,
+            message_type="workflow_phase",
+            workflow_run_id="run-1",
+            text="Classify",
+        ),
+        _sub_agent(
+            _event(KnownEventType.ASSISTANT_DELTA, 40, elapsed_ms=1074, uuid="wfa", text="alpha done", complete=True),
+            agent_id="wf-alpha",
+            agent_name="general-agent",
+            label="alpha",
+            phase="Classify",
+            task="classify alpha",
+            workflow_run_id="run-1",
+        ),
+        _sub_agent(
+            _event(KnownEventType.ASSISTANT_DELTA, 41, elapsed_ms=1076, uuid="wfb", text="beta done", complete=True),
+            agent_id="wf-beta",
+            agent_name="general-agent",
+            label="beta",
+            phase="Classify",
+            task="classify beta",
+            workflow_run_id="run-1",
+        ),
+        _event(
+            KnownEventType.CHAT_MESSAGE,
+            42,
+            elapsed_ms=1078,
+            message_type="workflow_end",
+            workflow_run_id="run-1",
+            status="failed",
+            error="budget exhausted",
+            text="",
+        ),
     ]
 
 
@@ -230,7 +278,7 @@ def test_folds_agree_at_every_prefix(tmp_path: Path) -> None:
     """Seeking must agree too, not just the final state."""
     events = _fixture_events()
     serialized = [event.model_dump(mode="json") for event in events]
-    for cut in (1, 5, 11, 18, 22, 30, len(events)):
+    for cut in (1, 5, 11, 18, 22, 30, 38, 41, len(events)):
         expected = replay(events[:cut]).to_dict()
         actual = _run_js_fold(serialized[:cut], tmp_path)
         assert actual == expected, f"folds diverged after {cut} events"
