@@ -10,12 +10,17 @@ from kolega_code.cli.tui.widgets import ChatComposer
 from ._app_test_utils import _build_sub_agent_test_app, _sub_agent_event, renderable_text, settle_changes_inspector
 
 
+pytestmark = pytest.mark.usefixtures("hermetic_git_config")
+
+
 def _git(project: Path, *args: str) -> None:
     subprocess.run(["git", *args], cwd=project, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
 
 def _init_git_project(project: Path) -> None:
-    _git(project, "init")
+    # Pin the initial branch: without a global init.defaultBranch (as on CI) git
+    # would name it "master" and branch assertions would depend on the machine.
+    _git(project, "init", "-b", "main")
     _git(project, "config", "user.email", "test@example.com")
     _git(project, "config", "user.name", "Test User")
     (project / "src").mkdir(exist_ok=True)
@@ -260,7 +265,7 @@ async def test_changes_scope_line_reports_branch_and_baseline(tmp_path: Path, mo
         assert screen is not None
         scope = app._session_diff_scope
         assert scope is not None
-        assert scope.branch in {"main", "master"}
+        assert scope.branch == "main"
         assert scope.linked_worktree is False
 
         text = str(screen.query_one("#changes_scope", Static).render())

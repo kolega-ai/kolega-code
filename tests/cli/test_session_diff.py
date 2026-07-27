@@ -3,7 +3,14 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from kolega_code.cli.tui.session_diff import GitSessionDiffTracker
+
+
+# These tests name the initial branch, merge it, and rebase onto it, so they must
+# not inherit whatever the developer's ~/.gitconfig says about git's behaviour.
+pytestmark = pytest.mark.usefixtures("hermetic_git_config")
 
 
 def _git(project: Path, *args: str) -> None:
@@ -11,7 +18,9 @@ def _git(project: Path, *args: str) -> None:
 
 
 def _init_repo(project: Path) -> None:
-    _git(project, "init")
+    # Pin the initial branch: without a global init.defaultBranch (as on CI) git
+    # would name it "master" and every reference to "main" below would fail.
+    _git(project, "init", "-b", "main")
     _git(project, "config", "user.email", "test@example.com")
     _git(project, "config", "user.name", "Test User")
 
@@ -549,7 +558,7 @@ def test_scope_reports_worktree_branch_and_history(tmp_path: Path) -> None:
 
     assert main_scope.linked_worktree is False
     assert main_scope.root_label == ""
-    assert main_scope.branch in {"main", "master"}
+    assert main_scope.branch == "main"
     assert main_scope.history_moved is False
     assert main_scope.history_tracked is True
 

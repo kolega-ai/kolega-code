@@ -11,6 +11,9 @@ from ._app_test_utils import _build_sub_agent_test_app, settle_changes_inspector
 from .test_app_changes_inspector import _file_edit_preview_event, _init_git_project
 
 
+pytestmark = pytest.mark.usefixtures("hermetic_git_config")
+
+
 def _terminal_output_event(text: str) -> AgentEvent:
     return AgentEvent(event_type="terminal_output", sender="coder", content={"output": text})
 
@@ -214,7 +217,7 @@ async def test_diff_scope_is_resolved_off_the_ui_thread(tmp_path: Path, monkeypa
         assert scope_threads
         assert ui_thread not in scope_threads
         assert app._session_diff_scope is not None
-        assert app._session_diff_scope.branch in {"main", "master"}
+        assert app._session_diff_scope.branch == "main"
 
 
 @pytest.mark.asyncio
@@ -231,7 +234,7 @@ async def test_startup_scope_probe_populates_scope_without_opening_changes(
 
         assert app._changes_inspector is None
         assert app._session_diff_scope is not None
-        assert app._session_diff_scope.branch in {"main", "master"}
+        assert app._session_diff_scope.branch == "main"
         assert app._session_diff_scope.linked_worktree is False
 
 

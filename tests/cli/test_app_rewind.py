@@ -9,6 +9,9 @@ from ._app_test_utils import _build_sub_agent_test_app, settle_changes_inspector
 from .test_app_changes_inspector import _init_git_project
 
 
+pytestmark = pytest.mark.usefixtures("hermetic_git_config")
+
+
 def _record_turn(recorder, user_text: str) -> None:
     recorder.start_turn(Message(role="user", content=[TextBlock(user_text)]))
     recorder.record_assistant(Message(role="assistant", content=[TextBlock("done")], stop_reason="end_turn"))

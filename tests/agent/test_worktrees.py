@@ -6,8 +6,13 @@ import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+import pytest
+
 from kolega_code.memory.identity import resolve_git_common_dir
 from kolega_code.worktrees import WORKTREE_EXCLUDE_RULE, ensure_worktree_dir_ignored, list_worktrees
+
+
+pytestmark = pytest.mark.usefixtures("hermetic_git_config")
 
 
 def _git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -21,7 +26,9 @@ def _git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProc
 
 def _git_init(repo: Path) -> None:
     repo.mkdir()
-    _git(repo, "init", "-q")
+    # Pin the initial branch: without a global init.defaultBranch (as on CI) git
+    # would name it "master" and branch assertions would depend on the machine.
+    _git(repo, "init", "-q", "-b", "main")
 
 
 def _exclude_path(repo: Path) -> Path:
@@ -109,10 +116,7 @@ def test_list_worktrees_reports_main_checkout_first_with_branches(tmp_path: Path
     from_linked = list_worktrees(nested)
 
     assert [info.path for info in from_main] == [repo.resolve(), nested.resolve()]
-    assert [info.branch for info in from_main] == ["main", "feat-a"] or [info.branch for info in from_main] == [
-        "master",
-        "feat-a",
-    ]
+    assert [info.branch for info in from_main] == ["main", "feat-a"]
     assert all(info.head for info in from_main)
     # Every worktree of a repository sees the same list.
     assert from_linked == from_main

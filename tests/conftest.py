@@ -1,5 +1,6 @@
 """Shared pytest configuration for the repository."""
 
+import os
 import tempfile
 from pathlib import Path
 
@@ -35,6 +36,24 @@ def isolated_cli_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     for key in {*API_KEY_ENV.values(), *CLI_CONFIG_ENV_KEYS}:
         monkeypatch.delenv(key, raising=False)
     monkeypatch.setenv("KOLEGA_CODE_STATE_DIR", str(tmp_path / "state"))
+
+
+@pytest.fixture
+def hermetic_git_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Run git subprocesses without the developer's global/system config.
+
+    CI runners have neither, so a test that silently depends on a personal
+    ``~/.gitconfig`` (``init.defaultBranch``, ``merge.ff``, ``commit.gpgsign``,
+    ``core.hooksPath``, ``pull.rebase``) passes locally and fails in CI. Opt in
+    from any module that shells out to git.
+
+    ``os.devnull`` is git's documented way to skip a configuration level, so no
+    file is created and a test's ``tmp_path`` stays exactly as the test left it.
+    """
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_SYSTEM", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    monkeypatch.setenv("GIT_TERMINAL_PROMPT", "0")
 
 
 @pytest.fixture(autouse=True)
