@@ -246,13 +246,13 @@ async def test_seeking_backwards_then_forwards_rebuilds_the_transcript(bundle_ur
 
 
 @pytest.mark.asyncio
-async def test_sub_agent_trajectory_is_visible_in_the_transcript(delegating_url: str) -> None:
-    """Delegated reasoning belongs in the thread, where it happened.
+async def test_a_dispatch_is_one_openable_entry_not_spliced_into_the_thread(delegating_url: str) -> None:
+    """Delegated work is reachable from the main thread without invading it.
 
-    The fold routes a sub-agent's work into its own trajectory so a client can
-    present it separately. Rendering only the main conversation meant a dispatch
-    showed as a bare tool call and everything the sub-agent reasoned about was
-    invisible.
+    Splicing a delegate's steps into the transcript reads fine for one agent
+    and falls apart for several: parallel agents interleave line by line, so
+    answers arrive in an order unrelated to the questions above them. The
+    terminal collapses a dispatch to one entry you open, and so does this.
     """
     async with playwright_api.async_playwright() as driver:
         try:
@@ -264,26 +264,191 @@ async def test_sub_agent_trajectory_is_visible_in_the_transcript(delegating_url:
             await page.goto(delegating_url)
             await page.wait_for_selector(".kc-entry")
             await _step_to_end(page)
-            entries = await page.evaluate(_ENTRIES_JS)
+            main_thread = await page.evaluate(_ENTRIES_JS)
+            card = await page.evaluate(
+                """() => {
+                    const el = document.querySelector('.kc-agent-card');
+                    return el && {text: el.innerText, status: el.dataset.status, key: el.dataset.agentKey};
+                }"""
+            )
+            await page.click(".kc-agent-card")
+            opened = await page.evaluate(_ENTRIES_JS)
+            header = await page.inner_text(".kc-agent-header")
+            await page.click(".kc-agent-back")
+            restored = await page.evaluate(_ENTRIES_JS)
         finally:
             await browser.close()
 
-    delegated = [entry for entry in entries if entry["agent"] == "investigator"]
-    assert [entry["kind"] for entry in delegated] == ["user", "thinking", "assistant"]
-    assert delegated[1]["text"] == "Delegated reasoning that must be visible."
+    assert card is not None, "the dispatch left no entry in the main thread"
+    assert "investigator" in card["text"] and card["status"] == "completed"
+    assert "3 steps" in card["text"], "the card should say how much the agent did"
+    assert not any(entry["agent"] == "investigator" for entry in main_thread), (
+        "the delegate's own steps must not be spliced into the main thread"
+    )
 
-    # Placed where it happened: after the dispatching tool call, before the
-    # main agent's closing prose.
-    kinds = [(entry["kind"], entry["agent"]) for entry in entries]
-    assert kinds.index(("thinking", "investigator")) > kinds.index(("tool", None))
-    assert kinds.index(("thinking", "investigator")) < kinds.index(("assistant", None))
+    # The card sits where the dispatch happened.
+    kinds = [entry["kind"] for entry in main_thread]
+    assert kinds.index("agent") > kinds.index("tool")
+    assert kinds.index("agent") < len(kinds) - 1
 
-    # Attributed once per run rather than on every line.
-    leads = [entry["lead"] for entry in entries if entry["lead"]]
-    assert len(leads) == 1
-    assert leads[0].startswith("investigator")
+    # Opening it shows that agent's thread, and only that.
+    assert [entry["kind"] for entry in opened] == ["user", "thinking", "assistant"]
+    assert opened[1]["text"] == "Delegated reasoning that must be visible."
+    assert "investigator" in header and "Back" in header
+
+    assert restored == main_thread, "going back did not restore the main thread"
 
     # The main transcript keeps only what the session itself said.
-    assert [entry["text"] for entry in entries if entry["agent"] is None and entry["kind"] == "user"] == [
-        "count the lines"
+    assert [entry["text"] for entry in main_thread if entry["kind"] == "user"] == ["count the lines"]
+
+
+def _workflow_agent(event: AgentEvent, *, agent_id: str, label: str) -> AgentEvent:
+    event.sub_agent_info = {
+        "agent_id": agent_id,
+        "agent_name": "general-agent",
+        "dispatch_id": None,
+        "label": label,
+        "phase": "Classify",
+        "task": f"classify {label}",
+        "workflow_run_id": "run-1",
+    }
+    return event
+
+
+def _workflow_turn() -> list[AgentEvent]:
+    """A gigacode fan-out: two agents that share a name and run in parallel."""
+    return [
+        _event(KnownEventType.TURN_STARTED, 1, elapsed_ms=0, turn_id="t1", user_text="triage these"),
+        _event(
+            KnownEventType.CHAT_MESSAGE,
+            2,
+            elapsed_ms=100,
+            message_type="workflow_start",
+            workflow_run_id="run-1",
+            name="triage",
+            description="classify in parallel",
+            text="",
+        ),
+        _event(
+            KnownEventType.CHAT_MESSAGE,
+            3,
+            elapsed_ms=200,
+            message_type="workflow_phase",
+            workflow_run_id="run-1",
+            text="Classify",
+        ),
+        _workflow_agent(
+            _event(KnownEventType.ASSISTANT_DELTA, 4, elapsed_ms=300, uuid="a", text="alpha done", complete=True),
+            agent_id="wf-alpha",
+            label="alpha",
+        ),
+        _workflow_agent(
+            _event(KnownEventType.ASSISTANT_DELTA, 5, elapsed_ms=400, uuid="b", text="beta done", complete=True),
+            agent_id="wf-beta",
+            label="beta",
+        ),
+        _event(
+            KnownEventType.CHAT_MESSAGE,
+            6,
+            elapsed_ms=500,
+            message_type="workflow_end",
+            workflow_run_id="run-1",
+            status="completed",
+            text="",
+        ),
+        _event(KnownEventType.TURN_ENDED, 7, elapsed_ms=600, turn_id="t1", status="completed"),
+    ]
+
+
+@pytest.fixture
+def workflow_url(tmp_path: Path) -> Iterator[str]:
+    yield from _bundle(_workflow_turn(), tmp_path / "bundle", "workflow")
+
+
+@pytest.mark.asyncio
+async def test_tool_output_is_collapsed_until_asked_for(bundle_url: str) -> None:
+    """A transcript of expanded tool results is unreadable.
+
+    Every result rendered in full, so following the conversation meant scrolling
+    past screens of output to find the sentence between two calls.
+    """
+    async with playwright_api.async_playwright() as driver:
+        try:
+            browser = await driver.chromium.launch(headless=True)
+        except Exception as exc:  # pragma: no cover - depends on the local install
+            pytest.skip(f"chromium is not installed for playwright: {exc}")
+        try:
+            page = await browser.new_page()
+            await page.goto(bundle_url)
+            await page.wait_for_selector(".kc-entry")
+            await _step_to_end(page)
+
+            count = "() => document.querySelectorAll('.kc-tool-output').length"
+            collapsed = await page.evaluate(count)
+            # The head still says what ran and how it went.
+            head = await page.inner_text(".kc-tool-head")
+            await page.click("[data-tool-key] >> nth=0")
+            expanded = await page.evaluate(count)
+            opened_text = await page.inner_text(".kc-tool-output")
+            await page.click("[data-tool-key] >> nth=0")
+            recollapsed = await page.evaluate(count)
+        finally:
+            await browser.close()
+
+    assert collapsed == 0, "tool output was rendered before anyone asked for it"
+    assert "read_file" in head and "done" in head.lower()
+    assert expanded == 1 and "12 lines" in opened_text
+    assert recollapsed == 0, "clicking again did not put it away"
+
+
+@pytest.mark.asyncio
+async def test_clicking_an_agent_narrows_the_transcript_to_its_own_work(workflow_url: str) -> None:
+    """A fan-out is unreadable as one merged stream.
+
+    Parallel agents interleave line by line, and every agent of a workflow
+    shares the name "general-agent", so without per-agent identity and a way to
+    isolate one there is no way to follow what any single agent did.
+    """
+    async with playwright_api.async_playwright() as driver:
+        try:
+            browser = await driver.chromium.launch(headless=True)
+        except Exception as exc:  # pragma: no cover - depends on the local install
+            pytest.skip(f"chromium is not installed for playwright: {exc}")
+        try:
+            page = await browser.new_page()
+            await page.goto(workflow_url)
+            await page.wait_for_selector(".kc-entry")
+            await _step_to_end(page)
+
+            labels = await page.evaluate(
+                "() => [...document.querySelectorAll('#subAgents [data-agent-key]')]"
+                ".map(b => b.querySelector('.kc-sub-agent-name').innerText)"
+            )
+            everything = await page.evaluate(_ENTRIES_JS)
+
+            await page.click('[data-agent-key="wf-beta"]')
+            focused = await page.evaluate(_ENTRIES_JS)
+            back_label = await page.inner_text(".kc-sub-agent-all")
+
+            await page.click(".kc-sub-agent-all")
+            restored = await page.evaluate(_ENTRIES_JS)
+
+            workflow_rows = [entry for entry in everything if entry["kind"] == "workflow"]
+        finally:
+            await browser.close()
+
+    assert len(labels) == 2, f"parallel agents were not listed separately: {labels}"
+    assert any("alpha" in label for label in labels) and any("beta" in label for label in labels)
+
+    assert [entry["text"] for entry in focused] == ["beta done"], (
+        "clicking an agent did not narrow the transcript to that agent"
+    )
+    assert "Back" in back_label
+    assert restored == everything, "going back did not restore the whole session"
+
+    # The run's own lifecycle is visible, not silently dropped.
+    assert [entry["text"] for entry in workflow_rows] == [
+        "triage — classify in parallel",
+        "Classify",
+        "completed",
     ]

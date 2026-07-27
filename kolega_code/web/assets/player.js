@@ -46,6 +46,8 @@ const GLYPHS = {
   thinking: "◦",
   tool: "⏺",
   system: "·",
+  workflow: "◆",
+  agent: "◈",
 };
 const BAR_FILLED = "█";
 const BAR_EMPTY = "░";
@@ -78,6 +80,10 @@ let lastFrame = 0;
 let renderedCount = 0;
 /** Per-index snapshot of the mutable fields renderEntry draws, for change detection. */
 let renderedEntries = [];
+/** Tool entries the viewer has opened. Tool output is collapsed by default. */
+const expandedTools = new Set();
+/** Sub-agent key the transcript is narrowed to, or null for the whole thread. */
+let focusedAgent = null;
 /** Cached chronological merge of the main transcript and every sub-agent trajectory. */
 let mergedRows = null;
 let spinnerTick = 0;
@@ -538,6 +544,25 @@ function wireControls() {
   dom.scrub.addEventListener("input", () => scrubbed((Number(dom.scrub.value) / 1000) * totalPlaybackMs));
   dom.live.addEventListener("click", () => setFollowing(true));
   dom.theme.addEventListener("change", () => applyTheme(dom.theme.value));
+  dom.transcript.addEventListener("click", (event) => {
+    if (!(event.target instanceof Element)) return;
+    const card = event.target.closest(".kc-agent-card[data-agent-key]");
+    if (card) {
+      focusAgent(card.dataset.agentKey);
+      return;
+    }
+    const toggle = event.target.closest("[data-tool-key]");
+    if (!toggle) return;
+    const key = toggle.dataset.toolKey;
+    if (expandedTools.has(key)) expandedTools.delete(key);
+    else expandedTools.add(key);
+    redrawTranscript();
+  });
+  dom.subAgents.addEventListener("click", (event) => {
+    const row = event.target instanceof Element ? event.target.closest("[data-agent-key]") : null;
+    if (!row) return;
+    focusAgent(focusedAgent === row.dataset.agentKey ? null : row.dataset.agentKey);
+  });
   document.addEventListener("keydown", (event) => {
     if (event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement) return;
     if (event.code === "Space") {
@@ -584,45 +609,47 @@ function render() {
   syncTransport();
 }
 
-/** How many entries exist across the main thread and every sub-agent. */
+/** Rows in the main thread: its own entries plus one card per dispatch. */
 function transcriptSize() {
-  let total = state.conversation.length;
-  for (const activity of state.subAgents.values()) total += activity.steps.length;
-  return total;
+  return state.conversation.length + state.subAgents.size;
+}
+
+/** Seq of an activity's first step, which is where its card belongs. */
+function activitySeq(activity) {
+  for (const step of activity.steps) {
+    if (step.seq !== null && step.seq !== undefined) return step.seq;
+  }
+  return Number.MAX_SAFE_INTEGER;
 }
 
 /**
- * The main transcript and every sub-agent trajectory as one chronological list.
+ * The main thread, with each delegated agent standing in as a single card.
  *
- * The fold keeps delegated work out of the main conversation so a client can
- * present it separately, but a replay reads as one thread: a sub-agent's
- * reasoning and tool calls belong where they happened, not in a side panel that
- * only ever showed the task line.
+ * Splicing a sub-agent's steps into the main transcript reads fine for one
+ * delegate and falls apart for several: parallel agents interleave line by
+ * line, so three answers arrive in an order unrelated to the three questions
+ * above them and nothing says which belongs to which. The terminal has always
+ * collapsed a dispatch to one entry you open, and that is the model here — the
+ * card reports the agent and whether it is still going, and clicking it shows
+ * that agent's thread on its own.
  *
- * Every entry carries the seq of the event that created it and never moves, and
- * events fold in seq order, so a new entry always sorts last. The merge is
- * therefore append-only, which is what lets the render diff stay index-based.
+ * A card sorts to its agent's first step and never moves afterwards, so the
+ * list stays append-only and the render diff below can stay index-based.
  */
 function transcriptRows() {
   if (mergedRows && mergedRows.length === transcriptSize()) return mergedRows;
-  const rows = state.conversation.map((item) => ({ item, agent: null }));
+  const rows = state.conversation.map((item) => ({ item, agent: null, seq: item.seq }));
   for (const activity of state.subAgents.values()) {
-    for (const step of activity.steps) rows.push({ item: step, agent: activity });
+    rows.push({ item: null, agent: activity, card: true, seq: activitySeq(activity) });
   }
   rows.forEach((row, order) => {
     row.order = order;
   });
   rows.sort((left, right) => {
-    const a = left.item.seq ?? Number.MAX_SAFE_INTEGER;
-    const b = right.item.seq ?? Number.MAX_SAFE_INTEGER;
+    const a = left.seq ?? Number.MAX_SAFE_INTEGER;
+    const b = right.seq ?? Number.MAX_SAFE_INTEGER;
     return a === b ? left.order - right.order : a - b;
   });
-  // Name a sub-agent once per run rather than on every line it produces.
-  let previousAgent = null;
-  for (const row of rows) {
-    row.lead = row.agent !== null && row.agent !== previousAgent;
-    previousAgent = row.agent;
-  }
   mergedRows = rows;
   return rows;
 }
@@ -636,10 +663,14 @@ function transcriptRows() {
  */
 function entrySnapshot(row) {
   const item = row.item;
+  if (row.card) {
+    // A card is a live view of its agent, so what it draws keeps changing after
+    // it is on screen: the status settles and the step count climbs.
+    return { card: true, agent: row.agent, status: row.agent.status, steps: row.agent.steps.length };
+  }
   return {
     item,
     agent: row.agent,
-    lead: row.lead,
     text: item.text,
     complete: item.complete,
     status: item.status,
@@ -650,12 +681,19 @@ function entrySnapshot(row) {
 }
 
 function entryChanged(previous, row) {
+  if (previous === undefined) return true;
+  if (row.card || previous.card) {
+    return (
+      previous.card !== row.card ||
+      previous.agent !== row.agent ||
+      previous.status !== row.agent.status ||
+      previous.steps !== row.agent.steps.length
+    );
+  }
   const item = row.item;
   return (
-    previous === undefined ||
     previous.item !== item ||
     previous.agent !== row.agent ||
-    previous.lead !== row.lead ||
     previous.text !== item.text ||
     previous.complete !== item.complete ||
     previous.status !== item.status ||
@@ -665,13 +703,105 @@ function entryChanged(previous, row) {
   );
 }
 
+/**
+ * The rows currently on screen: the main thread, or one agent's own steps.
+ *
+ * Both lists only ever grow at the end, so the index-based render diff holds
+ * while a filter is active. Changing the filter itself does not, which is why
+ * focusAgent redraws from scratch.
+ */
+function visibleRows() {
+  if (focusedAgent === null) return transcriptRows();
+  const activity = state.subAgents.get(focusedAgent);
+  if (!activity) return [];
+  return activity.steps.map((item) => ({ item, agent: activity, seq: item.seq }));
+}
+
+function agentKeyOf(activity) {
+  return activity.key ?? activity.name;
+}
+
+/** Narrow the transcript to one agent, or clear the filter with null. */
+function focusAgent(key) {
+  focusedAgent = key;
+  redrawTranscript();
+  renderSubAgents();
+  if (key === null) return;
+  // The list scrolls, so the selected agent can sit outside it after a redraw —
+  // leaving whichever row happens to be under the cursor looking like the
+  // selected one.
+  dom.subAgents
+    .querySelector(`[data-agent-key="${CSS.escape(key)}"]`)
+    ?.scrollIntoView({ block: "nearest" });
+}
+
+/** Throw away the rendered transcript and build it again from current state. */
+function redrawTranscript() {
+  dom.transcript.replaceChildren();
+  renderedCount = 0;
+  renderedEntries = [];
+  renderAgentHeader();
+  renderTranscript();
+}
+
+/**
+ * Say whose thread is on screen while one agent is open.
+ *
+ * Without it the transcript silently becomes a different, much shorter
+ * conversation and the only clue is a highlight in the rail.
+ */
+function renderAgentHeader() {
+  const existing = document.getElementById("agentHeader");
+  const activity = focusedAgent === null ? null : state.subAgents.get(focusedAgent);
+  if (!activity) {
+    if (existing) existing.remove();
+    return;
+  }
+  if (existing) {
+    // Rebuilding every frame would drop keyboard focus from the back button, so
+    // only the part that actually changes is written while an agent runs.
+    const badge = existing.querySelector(".kc-tool-status");
+    if (badge) {
+      badge.dataset.status = activity.status === "running" ? "running" : activity.status;
+      badge.textContent = activity.status || "running";
+    }
+    return;
+  }
+
+  const header = document.createElement("div");
+  header.className = "kc-agent-header";
+  header.id = "agentHeader";
+
+  const back = document.createElement("button");
+  back.type = "button";
+  back.className = "kc-agent-back";
+  back.textContent = "← Back to the session";
+  back.addEventListener("click", () => focusAgent(null));
+  header.append(back);
+
+  const title = document.createElement("div");
+  title.className = "kc-agent-header-title";
+  title.textContent = agentDisplayName(activity);
+  if (activity.task) title.title = activity.task;
+  header.append(title);
+
+  const status = document.createElement("span");
+  status.className = "kc-tool-status";
+  status.dataset.status = activity.status === "running" ? "running" : activity.status;
+  status.textContent = activity.status || "running";
+  header.append(status);
+
+  dom.transcript.parentElement?.prepend(header);
+}
+
 function renderTranscript() {
   // An entry that is no longer the newest can still change. Streaming segments
   // are keyed by uuid, so reasoning keeps accumulating after the assistant prose
   // that interrupted it was appended — every turn interleaves them — and a tool
   // entry resolves long after later entries exist. Re-rendering only the newest
   // entry left those frozen mid-stream, spinner and all.
-  const rows = transcriptRows();
+  const rows = visibleRows();
+  renderAgentHeader();
   if (renderedCount > rows.length) {
     dom.transcript.replaceChildren();
     renderedCount = 0;
@@ -692,23 +822,76 @@ function renderTranscript() {
   if (atEnd) atEnd.scrollTop = atEnd.scrollHeight;
 }
 
+/** The label is what tells one agent of a fan-out from the next; they share a name. */
+function agentDisplayName(activity) {
+  return activity.label || activity.name || activity.key;
+}
+
+/**
+ * A dispatch, as one openable entry in the main thread.
+ *
+ * This is what a delegate looks like from outside: who it is, what it was
+ * asked, whether it is still going, and how much it has done. Its actual
+ * thread is one click away rather than spliced into this one.
+ */
+function renderAgentCard(activity) {
+  const row = document.createElement("div");
+  row.className = "kc-entry";
+  row.dataset.kind = "agent";
+
+  const glyph = document.createElement("span");
+  glyph.className = "kc-glyph";
+  glyph.textContent = GLYPHS.agent;
+  row.append(glyph);
+
+  const card = document.createElement("button");
+  card.type = "button";
+  card.className = "kc-agent-card";
+  card.dataset.agentKey = agentKeyOf(activity);
+  card.dataset.status = activity.status || "running";
+
+  const head = document.createElement("div");
+  head.className = "kc-agent-card-head";
+  const name = document.createElement("span");
+  name.className = "kc-agent-card-name";
+  name.textContent = agentDisplayName(activity);
+  head.append(name);
+  if (activity.phase) {
+    const phase = document.createElement("span");
+    phase.className = "kc-sub-agent-phase";
+    phase.textContent = activity.phase;
+    head.append(phase);
+  }
+  const status = document.createElement("span");
+  status.className = "kc-tool-status";
+  status.dataset.status = activity.status === "running" ? "running" : activity.status;
+  status.textContent = activity.status || "running";
+  head.append(status);
+  if (activity.status === "running") head.append(spinnerNode());
+  const steps = document.createElement("span");
+  steps.className = "kc-agent-card-steps";
+  steps.textContent = `${activity.steps.length} step${activity.steps.length === 1 ? "" : "s"} · open`;
+  head.append(steps);
+  card.append(head);
+
+  if (activity.task) {
+    const task = document.createElement("div");
+    task.className = "kc-agent-card-task";
+    task.textContent = activity.task;
+    card.append(task);
+  }
+  row.append(card);
+  return row;
+}
+
 function renderEntry(entry) {
+  if (entry.card) return renderAgentCard(entry.agent);
   const item = entry.item;
   const row = document.createElement("div");
   row.className = "kc-entry";
   row.dataset.kind = item.kind;
   if (item.tone) row.dataset.tone = item.tone;
-  if (entry.agent) {
-    row.dataset.subAgent = entry.agent.name || entry.agent.key;
-    if (entry.lead) {
-      const lead = document.createElement("div");
-      lead.className = "kc-sub-agent-lead";
-      lead.textContent = entry.agent.task
-        ? `${entry.agent.name} · ${entry.agent.task}`
-        : entry.agent.name;
-      row.append(lead);
-    }
-  }
+  if (entry.agent) row.dataset.subAgent = agentDisplayName(entry.agent);
 
   const glyph = document.createElement("span");
   glyph.className = "kc-glyph";
@@ -727,14 +910,44 @@ function renderEntry(entry) {
   return row;
 }
 
+/** Identity for remembering whether one tool entry is open across re-renders. */
+function toolKey(item) {
+  return item.tool_call_id || item.toolCallId || `seq:${item.seq}`;
+}
+
 function renderToolBody(item) {
   const wrapper = document.createDocumentFragment();
+  const preview = item.editPreview || item.edit_preview;
+  const refs = item.artifacts || [];
+  // An image is the result someone wants to look at, and it is already compact.
+  // Only the wall of text hides behind the toggle.
+  const images = refs.filter((ref) => String(ref.media_type || "").startsWith("image/"));
+  const others = refs.filter((ref) => !String(ref.media_type || "").startsWith("image/"));
+  const hasDetail = Boolean(item.text || (preview && preview.diff) || others.length);
+  const key = toolKey(item);
+  const open = expandedTools.has(key);
+
   const head = document.createElement("div");
   head.className = "kc-tool-head";
-  const name = document.createElement("span");
-  name.className = "kc-tool-name";
-  name.textContent = item.tool_name || item.toolName || "tool";
-  head.append(name);
+
+  // A tool result is usually a wall of output, and a transcript of them is
+  // unreadable — you scroll past screens of JSON looking for the sentence
+  // between two calls. Collapsed, the head alone says what ran and how it went.
+  const toggle = document.createElement(hasDetail ? "button" : "span");
+  toggle.className = "kc-tool-name";
+  toggle.textContent = item.tool_name || item.toolName || "tool";
+  if (hasDetail) {
+    toggle.type = "button";
+    toggle.dataset.toolKey = key;
+    toggle.setAttribute("aria-expanded", open ? "true" : "false");
+    const caret = document.createElement("span");
+    caret.className = "kc-tool-caret";
+    caret.setAttribute("aria-hidden", "true");
+    caret.textContent = open ? "▾" : "▸";
+    toggle.prepend(caret);
+  }
+  head.append(toggle);
+
   const status = document.createElement("span");
   status.className = "kc-tool-status";
   status.dataset.status = item.status || "running";
@@ -743,19 +956,20 @@ function renderToolBody(item) {
   if (item.status === "running") head.append(spinnerNode());
   wrapper.append(head);
 
+  for (const ref of images) wrapper.append(renderArtifact(ref));
+
+  if (!hasDetail || !open) return wrapper;
+
   if (item.text) {
     const output = document.createElement("div");
     output.className = "kc-tool-output";
     output.textContent = item.text;
     wrapper.append(output);
   }
-  const preview = item.editPreview || item.edit_preview;
   if (preview && preview.diff) {
     wrapper.append(renderDiff(String(preview.diff)));
   }
-  for (const ref of item.artifacts || []) {
-    wrapper.append(renderArtifact(ref));
-  }
+  for (const ref of others) wrapper.append(renderArtifact(ref));
   return wrapper;
 }
 
@@ -868,12 +1082,39 @@ function renderSubAgents() {
     return;
   }
   dom.subAgents.replaceChildren();
+
+  // A fan-out puts a dozen delegated threads into one merged transcript, which
+  // reads as interleaved noise. Clicking an agent narrows the transcript to just
+  // that agent's work, which is the only way to follow one of them.
+  const all = document.createElement("button");
+  all.type = "button";
+  all.className = "kc-sub-agent-all";
+  all.textContent = focusedAgent === null ? `All agents (${entries.length})` : "← Back to the whole session";
+  all.disabled = focusedAgent === null;
+  all.addEventListener("click", () => focusAgent(null));
+  dom.subAgents.append(all);
+
   for (const activity of entries) {
-    const row = document.createElement("div");
+    const key = agentKeyOf(activity);
+    const row = document.createElement("button");
+    row.type = "button";
     row.className = "kc-sub-agent";
+    row.dataset.agentKey = key;
+    row.dataset.status = activity.status || "running";
+    if (focusedAgent === key) row.dataset.focused = "true";
+    row.setAttribute("aria-pressed", focusedAgent === key ? "true" : "false");
+
     const name = document.createElement("div");
     name.className = "kc-sub-agent-name";
-    name.textContent = `◆ ${activity.name}`;
+    // A workflow labels each agent; without it every agent in a fan-out is
+    // called "general-agent" and they are impossible to tell apart.
+    name.textContent = activity.label ? `◆ ${activity.label}` : `◆ ${activity.name}`;
+    if (activity.phase) {
+      const phase = document.createElement("span");
+      phase.className = "kc-sub-agent-phase";
+      phase.textContent = activity.phase;
+      name.append(phase);
+    }
     const task = document.createElement("div");
     task.className = "kc-sub-agent-task";
     task.textContent = activity.task || activity.lastText || "";

@@ -204,6 +204,113 @@ body::after {
   color: var(--kc-text-muted);
 }
 
+/* A dispatch, standing in for its agent's whole thread until you open it. */
+.kc-entry[data-kind="agent"] .kc-glyph {
+  color: var(--kc-tool);
+}
+.kc-agent-card {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--kc-hairline-strong);
+  border-radius: var(--kc-radius);
+  background: color-mix(in srgb, var(--kc-panel) 45%, transparent);
+  color: inherit;
+  cursor: pointer;
+}
+.kc-agent-card:hover,
+.kc-agent-card:focus-visible {
+  border-color: var(--kc-tool);
+  background: color-mix(in srgb, var(--kc-tool) 10%, transparent);
+  outline: none;
+}
+.kc-agent-card[data-status="failed"] {
+  border-color: color-mix(in srgb, var(--kc-error) 55%, transparent);
+}
+.kc-agent-card-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.kc-agent-card-name {
+  color: var(--kc-tool);
+  font-weight: 600;
+}
+.kc-agent-card-steps {
+  margin-left: auto;
+  font-size: 0.7rem;
+  color: var(--kc-text-muted);
+}
+.kc-agent-card-task {
+  margin-top: 0.2rem;
+  font-size: 0.8rem;
+  color: color-mix(in srgb, var(--kc-foreground) 68%, var(--kc-text-muted));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Whose thread you are looking at, while one agent is open. */
+.kc-agent-header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 1rem;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--kc-tool);
+  border-radius: var(--kc-radius);
+  background: var(--kc-background);
+}
+.kc-agent-header-title {
+  font-weight: 600;
+  color: var(--kc-tool);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kc-agent-back {
+  font: inherit;
+  font-size: 0.74rem;
+  padding: 0.2rem 0.45rem;
+  border: 1px solid var(--kc-hairline-strong);
+  border-radius: 4px;
+  background: none;
+  color: var(--kc-text-muted);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.kc-agent-back:hover {
+  color: var(--kc-foreground);
+  border-color: var(--kc-tool);
+}
+
+/* A gigacode run's own lifecycle: its name, each phase, and how it ended. */
+.kc-entry[data-kind="workflow"] .kc-glyph {
+  color: var(--kc-secondary);
+}
+.kc-entry[data-kind="workflow"] .kc-body {
+  color: var(--kc-secondary);
+  font-size: 0.8rem;
+  letter-spacing: 0.02em;
+}
+.kc-entry[data-kind="workflow"][data-tone="start"] .kc-body,
+.kc-entry[data-kind="workflow"][data-tone="end"] .kc-body {
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+}
+.kc-entry[data-kind="workflow"][data-tone="phase"] .kc-body {
+  padding-left: 0.85rem;
+  border-left: 2px solid color-mix(in srgb, var(--kc-secondary) 55%, transparent);
+}
+
 .kc-entry[data-tone="warning"] .kc-body {
   color: var(--kc-warning);
 }
@@ -240,6 +347,28 @@ body::after {
 .kc-tool-name {
   color: var(--kc-tool);
   font-weight: 600;
+}
+
+/* Tool output is collapsed by default, so the head is the control that opens it. */
+button.kc-tool-name {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.3rem;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-weight: 600;
+  color: var(--kc-tool);
+  cursor: pointer;
+}
+button.kc-tool-name:hover,
+button.kc-tool-name:focus-visible {
+  text-decoration: underline;
+}
+.kc-tool-caret {
+  font-size: 0.6rem;
+  opacity: 0.75;
 }
 
 .kc-tool-status {
@@ -329,9 +458,12 @@ body::after {
   border-radius: var(--kc-radius);
   background: color-mix(in srgb, var(--kc-panel) 55%, transparent);
   padding: 0.65rem 0.8rem;
-  /* Without this a flex child refuses to shrink below its content, so long
-     terminal output escapes the panel's rounded border instead of scrolling
-     inside it. */
+  /* Size to content and let the rail scroll. As flexible children these were
+     squeezed to share the rail's height and then clipped by overflow, so a
+     workflow's agent list, the turn list, and the token count were all cut off
+     mid-line with nothing to indicate more existed. Anything that can grow
+     without bound scrolls inside its own panel instead — see the caps below. */
+  flex: 0 0 auto;
   min-height: 0;
   overflow: hidden;
 }
@@ -422,16 +554,95 @@ body::after {
   color: var(--kc-accent);
 }
 
+/* A fan-out can dispatch dozens of agents and a long session runs to dozens of
+   turns. Both lists scroll within a bounded height so every panel — including
+   the terminal at the bottom — still fits a laptop viewport instead of being
+   pushed below the fold. */
+#subAgents,
+#turns {
+  max-height: 11rem;
+  overflow-y: auto;
+}
+
 .kc-sub-agent {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font: inherit;
   font-size: 0.76rem;
-  padding: 0.3rem 0;
+  padding: 0.3rem 0.35rem;
+  border: 0;
   border-bottom: 1px solid var(--kc-hairline);
+  border-radius: 4px;
+  background: none;
+  color: inherit;
+  cursor: pointer;
 }
 .kc-sub-agent:last-child {
   border-bottom: 0;
 }
+.kc-sub-agent:hover,
+.kc-sub-agent:focus-visible {
+  background: color-mix(in srgb, var(--kc-secondary) 10%, transparent);
+  outline: none;
+}
+/* Selection has to be unmistakable next to hover: pointing at one agent while
+   another is filtered in reads as the wrong one being selected. */
+.kc-sub-agent[data-focused="true"] {
+  background: color-mix(in srgb, var(--kc-secondary) 30%, transparent);
+  box-shadow: inset 3px 0 0 var(--kc-secondary);
+}
+.kc-sub-agent[data-focused="true"] .kc-sub-agent-name {
+  color: var(--kc-foreground);
+  font-weight: 600;
+}
+.kc-sub-agent[data-focused="true"] .kc-sub-agent-name::after {
+  content: "filtering";
+  margin-left: auto;
+  font-size: 0.6rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--kc-secondary);
+}
+.kc-sub-agent[data-status="failed"] .kc-sub-agent-name {
+  color: var(--kc-error);
+}
 .kc-sub-agent-name {
   color: var(--kc-secondary);
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+}
+.kc-sub-agent-phase {
+  font-size: 0.62rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 0.02rem 0.3rem;
+  border-radius: 999px;
+  border: 1px solid var(--kc-hairline-strong);
+  color: var(--kc-text-muted);
+}
+.kc-sub-agent-all {
+  display: block;
+  width: 100%;
+  margin-bottom: 0.35rem;
+  padding: 0.25rem 0.35rem;
+  font: inherit;
+  font-size: 0.72rem;
+  text-align: left;
+  border: 1px solid var(--kc-hairline-strong);
+  border-radius: 4px;
+  background: none;
+  color: var(--kc-text-muted);
+  cursor: pointer;
+}
+.kc-sub-agent-all:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+.kc-sub-agent-all:not(:disabled):hover {
+  color: var(--kc-foreground);
+  border-color: var(--kc-secondary);
 }
 .kc-sub-agent-task {
   color: color-mix(in srgb, var(--kc-foreground) 62%, var(--kc-text-muted));

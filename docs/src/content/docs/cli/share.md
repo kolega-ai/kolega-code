@@ -54,6 +54,16 @@ default — it has nothing to fetch.
 
 - The full transcript: prompts, assistant responses, reasoning, tool calls and
   their results, rendered diffs, and any images captured during the session.
+- Tool output is collapsed to a one-line header — the tool and how it ended —
+  and opens when clicked, so a wall of command output never buries the
+  conversation around it.
+- Each delegated agent appears as one card saying who it is, what it was asked,
+  whether it is still running, and how many steps it took. Click it, or its
+  entry in the Sub-agents panel, to read that agent's thread on its own and then
+  come back. Parallel agents interleave line by line, so a merged stream is
+  unreadable once more than one is running.
+- A gigacode run shows its own name, each phase as it starts, and how it
+  finished, with its agents' cards in between.
 - Play, pause, and 1x / 2x / 4x / max playback. Long idle gaps are compressed, so
   a session with a 45-minute break does not replay a 45-minute break.
 - A scrubber with a tick per turn, plus a turn list for jumping straight to a
