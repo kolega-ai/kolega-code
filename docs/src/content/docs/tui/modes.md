@@ -37,7 +37,8 @@ While planning, the agent can:
 - Read and search the codebase.
 - Run shell commands to investigate (e.g. `git log`, `grep`, running tests) —
   subject to the current permission mode, so commands prompt for approval in `ask`.
-- Maintain a shared **task list** (visible in the Planning tab).
+- Read the shared **task list** to see what an in-progress build session already
+  completed. Plan mode cannot change the list — Build mode owns it.
 - Write a structured plan, which appears in the **Planning** tab.
 
 When the planning agent submits a **complete plan**, you're prompted to decide what

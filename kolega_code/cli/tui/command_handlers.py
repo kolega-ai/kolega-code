@@ -66,6 +66,7 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
             "/logout": self._command_logout,
             "/gigacode": self._command_gigacode,
             "/goal": self._command_goal,
+            "/tasks": self._command_tasks,
             "/prompts": self._command_prompts,
             "/queue-clear": self._command_queue_clear,
             "/rewind": self._command_rewind,
@@ -434,6 +435,23 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
         self._add_conversation_entry(tui_state.ConversationEntry(kind="system", content=content))
         if command == "validate" and catalog.has_errors():
             self._notify_user("Some custom-agent definitions are invalid.", severity="error")
+
+    async def _command_tasks(self, args: str) -> None:
+        """Show the shared task list in the transcript.
+
+        Reads session state directly and never starts an agent turn, so it works
+        in both interaction modes and before an agent exists. Build mode owns the
+        list; plan mode can only read it.
+        """
+        if args.strip():
+            self._add_conversation_entry(tui_state.ConversationEntry(kind="system", content="Usage: /tasks"))
+            return
+
+        content = self.session.task_list_markdown.strip() or messages.TASK_LIST_EMPTY_MESSAGE
+        self._add_conversation_entry(
+            tui_state.ConversationEntry(kind="system", content=f"{messages.TASK_LIST_HEADER}\n\n{content}")
+        )
+        self._refresh_planning_sidebar()
 
     async def _command_sidebar(self, args: str) -> None:
         await self.action_toggle_sidebar()

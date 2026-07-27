@@ -882,3 +882,96 @@ async def test_textual_app_cancel_restores_only_undelivered(tmp_path: Path, monk
         second_entries = [entry for entry in app.conversation_entries if entry.content == "second"]
         assert [entry.kind for entry in second_entries] == ["user"]
         assert not [entry for entry in app.conversation_entries if entry.content == "third"]
+
+
+@pytest.mark.asyncio
+async def test_tasks_command_shows_task_list_locally_in_both_modes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`/tasks` renders the shared list without involving the model.
+
+    It is a TUI command, so it must never reach the agent: the regression it
+    replaces was an unrecognized `/tasks` being sent as a user message, which the
+    model answered with a failed get_task_list call.
+    """
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.widgets import ChatComposer
+
+    class FakePlanningAgent(FakeCoderAgent):
+        pass
+
+    install_fake_agents(monkeypatch, planning_cls=FakePlanningAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    def last_system_entry() -> str:
+        return next(entry.content for entry in reversed(app.conversation_entries) if entry.kind == "system")
+
+    async with app.run_test() as pilot:
+        composer = app.query_one("#composer", ChatComposer)
+
+        # Empty state, before anything has written a list.
+        composer.load_text("/tasks")
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+        assert messages.TASK_LIST_EMPTY_MESSAGE in last_system_entry()
+        assert messages.TASK_LIST_HEADER in last_system_entry()
+        # Purely local: no turn started and the agent never saw the text.
+        assert app.agent_worker is None
+        assert getattr(app.agent, "messages") == []
+        assert composer.text == ""
+
+        # Build mode owns the list; write one through the real tool extension.
+        assert isinstance(app.agent, FakeCoderAgent)
+        task_list_tools = extension_by_name(app.agent.kwargs["tool_extensions"], "cli-shared-task-list").tools
+        await task_list_tools["update_task_list"]("- [x] inspect\n- [ ] ship")
+
+        composer.load_text("/tasks")
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+        assert "- [x] inspect\n- [ ] ship" in last_system_entry()
+        assert app.agent_worker is None
+
+        # The same command works in plan mode, where the list is read-only.
+        await pilot.press("shift+tab")
+        assert app.interaction_mode == "plan"
+
+        composer.load_text("/tasks")
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+        assert "- [x] inspect\n- [ ] ship" in last_system_entry()
+        assert app.agent_worker is None
+        assert getattr(app.agent, "messages") == []
+        # Reading the list never mutates it.
+        assert app.session.task_list_markdown == "- [x] inspect\n- [ ] ship"
+
+
+@pytest.mark.asyncio
+async def test_tasks_command_rejects_arguments(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.widgets import ChatComposer
+
+    install_fake_agents(monkeypatch)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test():
+        composer = app.query_one("#composer", ChatComposer)
+        composer.load_text("/tasks add something")
+        await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
+
+        content = next(entry.content for entry in reversed(app.conversation_entries) if entry.kind == "system")
+        assert content == "Usage: /tasks"
+        assert app.agent_worker is None
+        assert getattr(app.agent, "messages") == []
