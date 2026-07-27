@@ -27,8 +27,10 @@ forced a release of this package for every new event type and prevented hosts fr
 emitting their own. Every consumer must treat an unrecognized type as inert rather
 than an error.
 
-**`AgentEvent.timestamp` is now timezone-aware UTC.** It was naive local time,
-which cannot be ordered across machines or used for replay.
+**`AgentEvent.timestamp` is now UTC.** It was naive local time, which cannot be
+ordered across machines or used for replay. It is an ISO-8601 *string* carrying a
+`+00:00` offset, not a `datetime`, so it sorts lexicographically and survives a
+round trip through JSON unchanged.
 
 **New event types.** Assistant prose and reasoning previously reached the terminal
 UI only through `process_message_stream`'s generator, so the event stream carried
@@ -56,6 +58,23 @@ own. Without attribution they were indistinguishable from session turns, so the
 sub-agent's task folded into the main transcript as a message the user never sent,
 and its `turn_ended` reported the session idle while the main agent was still
 working.
+
+**A `chat_message` can carry image artifacts.** A tool that produces a picture —
+reading an image, a browser screenshot — now passes the bytes to
+`AgentEventEmitter.chat(images=[(media_type, base64_data)])`. The recording
+wrapper turns them into `image` artifacts on the event and removes the payload
+from the body, so nothing base64 is ever persisted inline. Previously the bytes
+reached only the provider-facing history record, which no presentation client
+reads, and a replay could not show a screenshot at all. A host that renders
+`event.artifacts` gains images with no change; one that ignores artifacts is
+unaffected. The text payload of the event is identical either way.
+
+**`elapsed_ms` is now non-decreasing along the log.** Streaming segments are
+coalesced into one record per run, and runs do not finish in the order they
+began, so a record could carry a timestamp earlier than one already written.
+Consumers treat `elapsed_ms` as a timeline and binary-search it, so the recorder
+now writes runs in the order they started and clamps the value. Sessions recorded
+before this change can still step backwards; clamp on read if that matters to you.
 
 ### Upgrading
 
@@ -187,11 +206,30 @@ running UI hand out a link without a second terminal. It binds a port the OS
 picks, always mints an access token, and leaves the host's signal handlers alone.
 
 ```python
-server = ShareServer(store)                 # or bind=ALL_INTERFACES to reach a LAN
+server = ShareServer(store, session_id=session_id)   # bind=ALL_INTERFACES to reach a LAN
 await server.start()
-link = server.session_url(session_id)       # carries ?token=...
-await server.stop()                         # request_stop() from sync teardown
+link = server.session_url(session_id)                # carries ?token=...
+await server.stop()                                  # request_stop() from sync teardown
 ```
+
+**Pass `session_id` for anything you hand to another person.** The token gates
+routes, not sessions. Without a scope, the link you gave one person reads every
+session in the store, including ones recorded for unrelated projects. With it,
+every other session answers 404 — not 403, which would confirm they exist.
+
+The same scope is available on the app directly, as
+`ServerConfig(store=..., session_ids=frozenset({...}))`. It defaults to `None`,
+meaning unrestricted, so a host serving its own sessions needs no change:
+
+```python
+create_app(ServerConfig(store=store))                       # every session, as before
+create_app(ServerConfig(store=store, session_ids=allowed))  # only these
+```
+
+**A served session is not redacted.** `export_bundle` scrubs every string it
+writes; this serves recorded events as they are. Anything the agent printed —
+credentials, file contents, command output — is visible to whoever holds the
+link. Export a bundle instead when the recipient should not see raw output.
 
 A link is only useful if it opens in a browser, so a correct `?token=` is now
 handed to that tab as a cookie and accepted on later same-origin requests,
@@ -206,9 +244,17 @@ query token is rejected rather than falling back to a cookie.
 static replay. Redaction is **allowlist-based**: only `tool_result` and `image`
 artifacts are ever shared, because the other four purposes are opaque provider
 state — reasoning signatures and encrypted reasoning — with no display value.
-Every exported string is scrubbed for secrets and local filesystem paths are
-stripped. If you build your own export path, reuse `redact_event` rather than
-writing events directly.
+Every exported string is scrubbed for secrets, the home directory is rewritten to
+`~`, and local paths are dropped from artifact references. If you build your own
+export path, reuse `redact_event` rather than writing events directly.
+
+Secret detection is pattern matching, and plenty of real credentials match no
+pattern at all. **Pass every secret you know about** as `extra_secrets` rather
+than relying on the patterns:
+
+```python
+await export_bundle(events, destination, session_id=..., extra_secrets=my_api_keys)
+```
 
 `export_bundle(..., single_file=True)` writes the entire replay as one HTML
 document — assets, manifest, gzipped events and any images embedded — instead of

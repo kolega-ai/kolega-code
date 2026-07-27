@@ -23,8 +23,11 @@ needs no server, no unzipping, and nothing installed.
 
 Find session IDs with [`kolega-code sessions list`](/cli/sessions/).
 
-The event log is the bulk of the file and is compressed before embedding, so a
-long session usually lands well under a megabyte.
+The event log is the bulk of the file and is compressed before embedding. A short
+session is a hundred kilobytes or so; a long one full of command output runs to a
+megabyte or two. Images are embedded too, and very large ones are left out and
+shown as a badge rather than making the file too big to email — the command says
+when that happens.
 
 ### Options
 
@@ -32,7 +35,7 @@ long session usually lands well under a megabyte.
 | --- | --- |
 | `--out PATH` | Write somewhere other than the default. |
 | `--dir` | Write a directory of separate files instead of one HTML file. |
-| `--zip` | Write a `.zip` of the directory form. Implies `--dir`. |
+| `--zip` | Write a `.zip` of the directory form. Implies `--dir`. `.zip` is appended unless your path already ends in it. |
 | `--title TEXT` | Title shown in the player. Defaults to the session title. |
 | `--theme SLUG` | Theme the replay opens with. Defaults to your active theme. |
 | `--state-dir DIR` | Read sessions from a different state directory. |
@@ -71,16 +74,19 @@ Export is filtered on the assumption that the file will leave your machine.
   included. Reasoning signatures and encrypted reasoning exist solely so a
   conversation can be replayed to the model that produced it, carry no display
   value, and are never shared.
-- **Local filesystem paths are stripped** from artifact references, so a replay
-  does not disclose your directory layout.
+- **Your home directory is rewritten to `~`** everywhere it appears, and local
+  paths are dropped from artifact references, so a replay does not disclose your
+  directory layout.
 
 The command prints a summary of exactly what was redacted and dropped. Read it
 before sending a replay to someone else.
 
 :::caution
-Redaction is thorough but it cannot know what is sensitive in *your* project. A
-replay contains real file contents, real command output, and real prompts. Review
-one before sharing it outside your team.
+Secret detection is **pattern matching**, not proof. It knows the common
+credential shapes and every API key you have configured in Kolega Code, but a
+secret in a shape nobody anticipated can still get through. A replay also
+contains real file contents, real command output, and real prompts. Review one
+before sharing it outside your team.
 :::
 
 ## Sharing a session that is still running
@@ -93,7 +99,17 @@ to re-read something and the view stays where you put it; the badge becomes **JU
 TO LIVE** to return to the edge.
 
 Watching is **read-only**. A viewer cannot type, approve a permission prompt, or
-interrupt a turn.
+interrupt a turn. A link reaches only the session you shared it from; every other
+session on your machine is invisible to it.
+
+:::danger
+**A live link is not redacted.** `share export` scrubs secrets and rewrites your
+home directory; `/share` serves the session exactly as recorded, because it is
+showing you what is happening rather than producing an artefact. Whatever the
+agent printed — including credentials it read or echoed — is visible to anyone
+holding the link. Send an exported replay instead when the recipient should not
+see raw output, and run `/share stop` when you are done.
+:::
 
 ### Letting someone off your machine watch
 
