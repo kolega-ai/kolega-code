@@ -230,3 +230,135 @@ async def test_elapsed_offset_continues_from_prior_recording() -> None:
 
     events = await store.read(SESSION_ID)
     assert events[-1].elapsed_ms >= events[0].elapsed_ms, "a resumed recording must not rewind the replay clock"
+
+
+def _delta(event_type: str, uuid: str, text: str, *, streaming: bool) -> AgentEvent:
+    event = AgentEvent(
+        sender="coder",
+        event_type=event_type,
+        content={"text": text, "complete": not streaming},
+        is_streaming=streaming,
+    )
+    event.uuid = uuid
+    return event
+
+
+@pytest.mark.asyncio
+async def test_interleaved_reasoning_and_prose_keep_chronological_order() -> None:
+    """Reasoning that began first must be recorded first, however it ends.
+
+    Reasoning and prose stream as two concurrent segments and the prose one
+    reliably completes first. Writing buffers as they close therefore recorded
+    the reply ahead of the thinking that produced it, and every consumer places
+    a segment where its first record lands — so the exported replay showed the
+    two swapped relative to the terminal, which renders from the generator.
+    """
+    manager, _, store = _manager()
+
+    for event_type, uuid, text, streaming in (
+        ("thinking_delta", "think", "The user wants me to ", True),
+        ("assistant_delta", "prose", "I'll read the file.", True),
+        ("assistant_delta", "prose", "", False),
+        ("thinking_delta", "think", "read the file.", False),
+    ):
+        await manager.broadcast_event(_delta(event_type, uuid, text, streaming=streaming), "w", "t")
+    await manager.flush()
+
+    stored = await store.read(SESSION_ID)
+    assert [event.event_type for event in stored] == [
+        "thinking_delta",
+        "assistant_delta",
+        "thinking_delta",
+    ], "the run that began first has to be written first, or a replay reorders the transcript"
+
+    from kolega_code.session.projection import replay
+
+    assert [(item.kind, item.text) for item in replay(stored).conversation] == [
+        ("thinking", "The user wants me to read the file."),
+        ("assistant", "I'll read the file."),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_elapsed_ms_never_runs_backwards_across_stored_events() -> None:
+    """The replay timeline is binary-searched, so it must be non-decreasing.
+
+    A coalesced record carries the elapsed_ms of the delta it was built from,
+    which can predate a record already written because buffers do not close in
+    the order they opened.
+    """
+    manager, _, store = _manager()
+
+    await manager.broadcast_event(_delta("thinking_delta", "think", "a" * 40, streaming=True), "w", "t")
+    await manager.broadcast_event(_delta("assistant_delta", "prose", "b" * 40, streaming=True), "w", "t")
+    # Reach into the buffers to force the pathological case deterministically:
+    # the younger run now claims to have started long after the older one.
+    for state in manager._streams.values():  # pyright: ignore[reportPrivateUsage]
+        state.template.elapsed_ms = 9_000 if state.open_index == 2 else 1_000
+    await manager.broadcast_event(_delta("assistant_delta", "prose", "", streaming=False), "w", "t")
+    await manager.broadcast_event(_delta("thinking_delta", "think", "", streaming=False), "w", "t")
+    await manager.flush()
+
+    stored = await store.read(SESSION_ID)
+    elapsed = [event.elapsed_ms for event in stored]
+    assert elapsed == sorted(elapsed), f"elapsed_ms must never step backwards along the log, got {elapsed}"
+
+
+@pytest.mark.asyncio
+async def test_a_stalled_stream_is_checkpointed_without_another_delta() -> None:
+    """A run that goes quiet must still reach the store.
+
+    The size and time checkpoints are only evaluated when the next delta of a
+    run arrives, so a model that thinks for twenty seconds left the whole
+    segment buffered and anyone watching a shared link saw nothing at all.
+    """
+    import asyncio
+
+    manager, _, store = _manager(policy=RetentionPolicy(stream_checkpoint_ms=20))
+
+    await manager.broadcast_event(_delta("thinking_delta", "think", "still working", streaming=True), "w", "t")
+    assert await store.read(SESSION_ID) == [], "a fresh buffer should not have been written yet"
+
+    for _ in range(50):
+        await asyncio.sleep(0.02)
+        if await store.read(SESSION_ID):
+            break
+    await manager.flush()
+
+    stored = await store.read(SESSION_ID)
+    assert stored, "an idle streaming buffer must be checkpointed on its own"
+    assert stored[0].content["text"] == "still working"
+
+
+@pytest.mark.asyncio
+async def test_tool_images_become_artifacts_and_leave_the_event_body() -> None:
+    """Images ride a presentation event, which is what lets a replay show them.
+
+    Image bytes otherwise exist only on the provider-facing history record, and
+    no presentation client reads those, so a shared replay could never render a
+    screenshot however large it was.
+    """
+    import base64
+
+    from kolega_code.events import ArtifactPurpose
+
+    artifacts = InMemoryArtifactStore()
+    manager, _, store = _manager(artifacts=artifacts)
+    raw = b"\x89PNG\r\n\x1a\nnot-really-a-png"
+
+    await manager.broadcast_event(
+        _event(
+            KnownEventType.CHAT_MESSAGE,
+            message_type="tool_result",
+            text="# marker.png",
+            images=[{"media_type": "image/png", "data": base64.b64encode(raw).decode("ascii")}],
+        ),
+        "w",
+        "t",
+    )
+
+    (stored,) = await store.read(SESSION_ID)
+    assert "images" not in stored.content, "base64 must not be persisted inline in the event body"
+    assert [ref.purpose for ref in stored.artifacts] == [ArtifactPurpose.IMAGE]
+    assert await artifacts.open(stored.artifacts[0]) == raw
+    assert stored.content["text"] == "# marker.png", "the text payload is unchanged by carrying an image"

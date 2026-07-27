@@ -12,16 +12,28 @@ last seq I saw" would skip an event.
 
 from __future__ import annotations
 
+import asyncio
+import base64
 import time
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-from kolega_code.events import AgentConnectionManager, AgentEvent, ArtifactRef, KnownEventType
+from kolega_code.events import (
+    AgentConnectionManager,
+    AgentEvent,
+    ArtifactPurpose,
+    ArtifactRef,
+    KnownEventType,
+)
 
 from .store import ArtifactStore, SessionEventStore
 
 #: Content keys that may hold large text. Checked for artifact offload.
 _TEXT_KEYS = ("text", "output", "content", "message", "summary", "diff")
+
+#: Content key carrying images a tool produced, as ``{"media_type", "data"}``
+#: entries with base64 ``data``. Consumed here and never persisted inline.
+IMAGE_PAYLOAD_KEY = "images"
 
 
 @dataclass(frozen=True)
@@ -74,6 +86,10 @@ class _StreamState:
     #: non-streaming event terminate the run; otherwise (terminal output) every
     #: event is non-streaming and would end the run immediately.
     streaming: bool = False
+    #: Monotonic order in which this buffer was opened. A consumer places a
+    #: segment in the transcript where its *first* record lands, so records have
+    #: to be written in the order their runs began; see ``_flush_older_than``.
+    open_index: int = 0
 
 
 class RecordingConnectionManager(AgentConnectionManager):
@@ -98,6 +114,13 @@ class RecordingConnectionManager(AgentConnectionManager):
         self._origin_offset_ms = 0
         self._events_written = 0
         self._bytes_written = 0
+        self._open_counter = 0
+        self._last_persisted_elapsed_ms = 0
+        # Buffers are mutated by the broadcast path and by the idle checkpoint
+        # ticker, and two writers interleaving would reorder or duplicate a
+        # record. Everything that touches _streams or appends holds this.
+        self._write_lock = asyncio.Lock()
+        self._ticker: Optional[asyncio.Task[None]] = None
         self._retention_exceeded = False
 
     # -- AgentConnectionManager passthrough --------------------------------
@@ -123,7 +146,8 @@ class RecordingConnectionManager(AgentConnectionManager):
     async def broadcast_event(self, event: AgentEvent, workspace_id: str, thread_id: str) -> None:
         self._stamp(event, workspace_id, thread_id)
         try:
-            await self._record(event)
+            async with self._write_lock:
+                await self._record(event)
         except Exception:
             # Recording is an enhancement to live delivery, never a precondition
             # for it. A failed store must not silence the running session's UI.
@@ -204,12 +228,15 @@ class RecordingConnectionManager(AgentConnectionManager):
     async def _accumulate(self, key: tuple[str, str], event: AgentEvent) -> None:
         state = self._streams.get(key)
         if state is None:
+            self._open_counter += 1
             state = _StreamState(
                 template=event,
                 last_flush_ms=event.elapsed_ms,
                 streaming=event.is_streaming,
+                open_index=self._open_counter,
             )
             self._streams[key] = state
+            self._ensure_ticker()
         else:
             state.template = event
 
@@ -234,7 +261,35 @@ class RecordingConnectionManager(AgentConnectionManager):
             await self._flush(key, keep_open=True)
 
     async def _flush(self, key: tuple[str, str], *, keep_open: bool = False) -> None:
-        """Persist one buffer's accumulated text as a single record."""
+        """Persist one buffer's accumulated text, after anything that began earlier.
+
+        Reasoning and prose stream concurrently and the prose segment reliably
+        ends first, so writing this buffer straight away would put the reply
+        ahead of the thinking that led to it: a consumer positions a segment
+        where its *first* record lands, and both the exported replay and any live
+        client then show the two swapped.
+        """
+        state = self._streams.get(key)
+        if state is None:
+            return
+        for older_key in self._keys_opened_before(state.open_index):
+            # keep_open matters: closing a run here would end the segment as far
+            # as a consumer is concerned, and its remaining deltas would open a
+            # second transcript entry instead of continuing the first.
+            await self._write_checkpoint(older_key, keep_open=True)
+        await self._write_checkpoint(key, keep_open=keep_open)
+
+    def _keys_opened_before(self, open_index: int) -> list[tuple[str, str]]:
+        """Buffer keys for runs that began before ``open_index``, oldest first."""
+        return [
+            key
+            for _, key in sorted(
+                (state.open_index, key) for key, state in self._streams.items() if state.open_index < open_index
+            )
+        ]
+
+    async def _write_checkpoint(self, key: tuple[str, str], *, keep_open: bool) -> None:
+        """Write one buffer's accumulated text, with no regard for ordering."""
         state = self._streams.get(key)
         if state is None:
             return
@@ -249,13 +304,66 @@ class RecordingConnectionManager(AgentConnectionManager):
         await self._persist(self._with_text(state.template, checkpoint))
 
     async def _flush_all(self) -> None:
+        # Insertion order is open order, so a run that began first is written
+        # first; _write_checkpoint skips the per-flush ordering pass that would
+        # otherwise re-walk the whole map for every buffer.
         for key in list(self._streams):
-            await self._flush(key)
+            await self._write_checkpoint(key, keep_open=False)
+
+    def _ensure_ticker(self) -> None:
+        """Start the idle checkpoint loop if it is not already running.
+
+        ``due_by_time`` is only ever evaluated when the *next* delta of a run
+        arrives, so a segment that stalls — a model thinking for twenty seconds,
+        a command producing nothing — stays buffered and invisible. Anyone
+        watching a shared link sees a frozen transcript for that whole time.
+        """
+        if self._ticker is not None and not self._ticker.done():
+            return
+        try:
+            self._ticker = asyncio.get_running_loop().create_task(self._checkpoint_idle_buffers())
+        except RuntimeError:
+            # No loop (synchronous test harness): checkpoints still happen on
+            # the next delta, which is the behaviour without this loop at all.
+            self._ticker = None
+
+    async def _checkpoint_idle_buffers(self) -> None:
+        interval = max(self.policy.stream_checkpoint_ms, 1) / 1000
+        try:
+            while True:
+                await asyncio.sleep(interval)
+                async with self._write_lock:
+                    if not self._streams:
+                        return
+                    now = self._elapsed_ms()
+                    stale = [
+                        key
+                        for key, state in self._streams.items()
+                        if (state.pending or state.latest is not None)
+                        and now - state.last_flush_ms >= self.policy.stream_checkpoint_ms
+                    ]
+                    # _flush, not _write_checkpoint: a stalled younger run must
+                    # not overtake an older one that simply has not gone stale.
+                    for key in stale:
+                        await self._flush(key, keep_open=True)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # A recording loop must never take the session down with it.
+            return
+
+    def _stop_ticker(self) -> None:
+        ticker = self._ticker
+        self._ticker = None
+        if ticker is not None and not ticker.done():
+            ticker.cancel()
 
     async def flush(self) -> None:
         """Persist every buffered run. Call before shutdown so no tail is lost."""
+        self._stop_ticker()
         try:
-            await self._flush_all()
+            async with self._write_lock:
+                await self._flush_all()
         except Exception:
             pass
 
@@ -280,6 +388,14 @@ class RecordingConnectionManager(AgentConnectionManager):
 
     async def _persist(self, event: AgentEvent) -> None:
         stored = await self._offload_large_payloads(event)
+        # A coalesced record carries the elapsed_ms of the delta it was built
+        # from, which can predate a record already written — buffers do not end
+        # in the order they began. Every consumer treats elapsed_ms as a
+        # non-decreasing timeline (the player binary-searches it), so clamp
+        # rather than hand them a clock that runs backwards.
+        if stored.elapsed_ms < self._last_persisted_elapsed_ms:
+            stored.elapsed_ms = self._last_persisted_elapsed_ms
+        self._last_persisted_elapsed_ms = stored.elapsed_ms
         size = len(stored.model_dump_json())
         if self._events_written + 1 > self.policy.max_events or self._bytes_written + size > self.policy.max_bytes:
             await self._record_truncation()
@@ -315,17 +431,26 @@ class RecordingConnectionManager(AgentConnectionManager):
             pass
 
     async def _offload_large_payloads(self, event: AgentEvent) -> AgentEvent:
-        """Move oversized text out of the event body into the artifact store."""
+        """Move oversized text and image payloads out of the event body.
+
+        Images are why a replay can show a screenshot at all. They reach the
+        model as content blocks on a history record, which no presentation
+        client reads, so a tool that returns one has to hand the bytes over here
+        as well; this is where they become an artifact the event can point at.
+        """
         if self.artifact_store is None:
             return event
+        images = event.content.get(IMAGE_PAYLOAD_KEY)
         oversized = {
             key: value
             for key, value in event.content.items()
             if isinstance(value, str) and len(value) > self.policy.inline_payload_chars
         }
-        if not oversized:
+        if not oversized and not images:
             return event
         clone = event.model_copy(deep=True)
+        if images:
+            await self._offload_images(clone)
         refs: list[ArtifactRef] = list(clone.artifacts)
         for key, value in oversized.items():
             try:
@@ -342,6 +467,41 @@ class RecordingConnectionManager(AgentConnectionManager):
             refs.append(ref)
         clone.artifacts = refs
         return clone
+
+    async def _offload_images(self, clone: AgentEvent) -> None:
+        """Turn ``content['images']`` into image artifacts and drop the payload.
+
+        The base64 never reaches the store inline: it would bloat every read of
+        the event stream for bytes that only the artifact endpoint serves.
+        """
+        assert self.artifact_store is not None
+        payload = clone.content.pop(IMAGE_PAYLOAD_KEY, None)
+        if not isinstance(payload, list):
+            return
+        refs: list[ArtifactRef] = list(clone.artifacts)
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            encoded = item.get("data")
+            if not isinstance(encoded, str) or not encoded:
+                continue
+            try:
+                data = base64.b64decode(encoded, validate=True)
+            except Exception:
+                # A malformed image must not cost the event its text.
+                continue
+            try:
+                refs.append(
+                    await self.artifact_store.put(
+                        data,
+                        media_type=str(item.get("media_type") or "application/octet-stream"),
+                        purpose=ArtifactPurpose.IMAGE,
+                        encoding="base64",
+                    )
+                )
+            except Exception:
+                continue
+        clone.artifacts = refs
 
 
 def _preview(value: str, budget: int, ref: ArtifactRef) -> str:
