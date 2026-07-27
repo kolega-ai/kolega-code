@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from kolega_code.memory.identity import resolve_git_common_dir
-from kolega_code.worktrees import WORKTREE_EXCLUDE_RULE, ensure_worktree_dir_ignored
+from kolega_code.worktrees import WORKTREE_EXCLUDE_RULE, ensure_worktree_dir_ignored, list_worktrees
 
 
 def _git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -92,6 +92,51 @@ def test_linked_worktree_updates_shared_common_exclude(tmp_path: Path) -> None:
 def test_non_git_path_is_unchanged(tmp_path: Path) -> None:
     assert ensure_worktree_dir_ignored(tmp_path) is False
     assert list(tmp_path.iterdir()) == []
+
+
+def test_list_worktrees_reports_main_checkout_first_with_branches(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _git_init(repo)
+    _git(repo, "config", "user.email", "test@example.invalid")
+    _git(repo, "config", "user.name", "Test User")
+    (repo / "tracked.txt").write_text("tracked\n", encoding="utf-8")
+    _git(repo, "add", "tracked.txt")
+    _git(repo, "commit", "-qm", "initial")
+    nested = repo / ".kolega" / "worktrees" / "a"
+    _git(repo, "worktree", "add", "-qb", "feat-a", str(nested))
+
+    from_main = list_worktrees(repo)
+    from_linked = list_worktrees(nested)
+
+    assert [info.path for info in from_main] == [repo.resolve(), nested.resolve()]
+    assert [info.branch for info in from_main] == ["main", "feat-a"] or [info.branch for info in from_main] == [
+        "master",
+        "feat-a",
+    ]
+    assert all(info.head for info in from_main)
+    # Every worktree of a repository sees the same list.
+    assert from_linked == from_main
+
+
+def test_list_worktrees_handles_detached_heads(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _git_init(repo)
+    _git(repo, "config", "user.email", "test@example.invalid")
+    _git(repo, "config", "user.name", "Test User")
+    (repo / "tracked.txt").write_text("tracked\n", encoding="utf-8")
+    _git(repo, "add", "tracked.txt")
+    _git(repo, "commit", "-qm", "initial")
+    detached = tmp_path / "detached"
+    _git(repo, "worktree", "add", "-q", "--detach", str(detached))
+
+    infos = {info.path: info for info in list_worktrees(repo)}
+
+    assert infos[detached.resolve()].branch == ""
+    assert infos[detached.resolve()].head
+
+
+def test_list_worktrees_on_a_non_repository_is_empty(tmp_path: Path) -> None:
+    assert list_worktrees(tmp_path) == []
 
 
 def test_git_common_directory_resolution_failure_is_non_fatal(tmp_path: Path, monkeypatch) -> None:

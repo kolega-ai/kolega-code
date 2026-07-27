@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from subprocess import run as run_subprocess
 
+from kolega_code.git_env import git_env
+
 
 @dataclass(frozen=True, slots=True)
 class ProjectIdentity:
@@ -55,6 +57,7 @@ def resolve_git_worktree_root(path: Path | str) -> Path | None:
                 capture_output=True,
                 text=True,
                 timeout=3,
+                env=git_env(),
             )
         except (OSError, subprocess.SubprocessError):
             return None
@@ -85,6 +88,7 @@ def resolve_git_common_dir(path: Path | str) -> Path | None:
                 capture_output=True,
                 text=True,
                 timeout=3,
+                env=git_env(),
             )
         except (OSError, subprocess.SubprocessError):
             return None

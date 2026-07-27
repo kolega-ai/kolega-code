@@ -7,6 +7,7 @@ import os
 import platform
 import subprocess
 import sys
+import threading
 import time
 import traceback
 from collections.abc import Sequence
@@ -238,6 +239,10 @@ class KolegaCodeApp(
         self._session_file_changes: list[tui_state.SessionFileChange] = []
         self._session_diff_tracker: Optional[tui_session_diff.SessionDiffTrackerBase] = None
         self._session_diff_files: list[tui_session_diff.SessionDiffFile] = []
+        self._session_diff_scope: Optional[tui_session_diff.DiffScope] = None
+        # Trackers are not safe for concurrent use; this serializes the refresh
+        # worker against the one-shot scope probe.
+        self._session_diff_lock = threading.Lock()
         self._session_diff_dirty = False
         self._session_diff_refresh_running = False
         self._session_diff_timer: Optional[Timer] = None
@@ -1215,6 +1220,7 @@ class KolegaCodeApp(
         """Set up git-only net diff tracking for the Changes inspector."""
         self._session_diff_tracker = tui_session_diff.GitSessionDiffTracker.create(self.project_path)
         self._session_diff_files = []
+        self._session_diff_scope = None
         if self._session_diff_tracker is None:
             return
         try:
@@ -1222,6 +1228,79 @@ class KolegaCodeApp(
         except Exception:
             self._session_diff_tracker = None
             self._session_diff_files = []
+            return
+        self._start_scope_probe()
+
+    def _start_scope_probe(self) -> None:
+        """Resolve the diff scope once so the dashboard can name the worktree.
+
+        The scope shells out to git, and waiting for the Changes screen to be
+        opened would leave sibling-worktree sessions indistinguishable.
+        """
+        tracker = self._session_diff_tracker
+        if tracker is None:
+            return
+        try:
+            self.run_worker(
+                self._scope_probe_worker(tracker),
+                name="kolega-diff-scope",
+                group="session-diff-scope",
+            )
+        except Exception:
+            pass
+
+    async def _scope_probe_worker(self, tracker: tui_session_diff.SessionDiffTrackerBase) -> None:
+        try:
+            scope = await asyncio.to_thread(self._tracker_scope, tracker)
+        except Exception:
+            return
+        if scope is None:
+            return
+        self._session_diff_scope = scope
+        self._refresh_status_dashboard()
+
+    def _tracker_scope(
+        self, tracker: tui_session_diff.SessionDiffTrackerBase, baseline_id: Optional[int] = None
+    ) -> Optional[tui_session_diff.DiffScope]:
+        """Read the tracker scope under the tracker lock. Worker threads only."""
+        with self._session_diff_lock:
+            return tracker.scope(checkpoint_id=baseline_id)
+
+    def _tracker_refresh(
+        self,
+        tracker: tui_session_diff.SessionDiffTrackerBase,
+        event_paths: list[str],
+        baseline_id: Optional[int],
+    ) -> list[tui_session_diff.SessionDiffFile]:
+        """Collect net changes under the tracker lock. Worker threads only."""
+        with self._session_diff_lock:
+            return tracker.refresh(event_paths, checkpoint_id=baseline_id)
+
+    def _changes_scope_label(self) -> str:
+        """Pre-rendered worktree/branch prefix for the Changes screen, or ""."""
+        scope = self._session_diff_scope
+        if scope is None:
+            return ""
+        if scope.linked_worktree and scope.root_label:
+            label = messages.CHANGES_SCOPE_WORKTREE.format(name=scope.root_label)
+            return f"{label} ({scope.branch})" if scope.branch else label
+        if scope.branch:
+            return messages.CHANGES_SCOPE_BRANCH.format(branch=scope.branch)
+        return ""
+
+    def _changes_history_note(self) -> str:
+        """One-line note about history the Changes screen deliberately omits."""
+        scope = self._session_diff_scope
+        if scope is None:
+            return ""
+        # A non-git project has no commits to report on; branch/worktree
+        # presence is what identifies a git-backed scope.
+        git_backed = bool(scope.branch or scope.linked_worktree)
+        if git_backed and not scope.history_tracked:
+            return messages.CHANGES_HISTORY_UNTRACKED
+        if scope.history_moved:
+            return messages.CHANGES_HISTORY_MOVED
+        return ""
 
     def _initialize_ledger_diff_tracker(self) -> None:
         """Non-git fallback: track agent-recorded edits once the snapshot service exists."""
@@ -1236,6 +1315,7 @@ class KolegaCodeApp(
         except Exception:
             return
         self._session_diff_tracker = tracker
+        self._start_scope_probe()
 
     def _changes_available(self) -> bool:
         return self._session_diff_tracker is not None
@@ -1471,13 +1551,20 @@ class KolegaCodeApp(
                 self._session_diff_baseline_id = None  # the selected checkpoint was evicted
             if tracker is None:
                 diffs = []
+                scope = None
             else:
                 try:
-                    diffs = await asyncio.to_thread(lambda: tracker.refresh(event_paths, checkpoint_id=baseline_id))
+                    # Both shell out to git, so they must stay off the UI thread.
+                    diffs = await asyncio.to_thread(lambda: self._tracker_refresh(tracker, event_paths, baseline_id))
+                    scope = await asyncio.to_thread(self._tracker_scope, tracker, baseline_id)
                 except Exception:
                     diffs = []
+                    scope = None
             self._session_diff_files = diffs
+            if scope is not None:
+                self._session_diff_scope = scope
             self._invalidate_changes_detail()
+            self._refresh_status_dashboard()
         finally:
             self._session_diff_refresh_running = False
         if self._session_diff_dirty and self._changes_inspector is not None:

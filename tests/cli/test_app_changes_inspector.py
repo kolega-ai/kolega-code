@@ -230,6 +230,90 @@ async def test_non_git_project_disables_changes_inspector(tmp_path: Path, monkey
         assert app._changes_inspector is None
 
 
+def _scope(**overrides):
+    from kolega_code.cli.tui.session_diff import DiffScope
+
+    fields = {
+        "root_label": "a",
+        "root_path": "/repo/.kolega/worktrees/a",
+        "branch": "feat-a",
+        "linked_worktree": True,
+    }
+    fields.update(overrides)
+    return DiffScope(**fields)
+
+
+@pytest.mark.asyncio
+async def test_changes_scope_line_reports_branch_and_baseline(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from kolega_code.cli import messages as cli_messages
+    from textual.widgets import Static
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+    _init_git_project(app.project_path)
+
+    async with app.run_test() as pilot:
+        (app.project_path / "src" / "a.py").write_text("new a\n", encoding="utf-8")
+        app.action_open_changes()
+        await settle_changes_inspector(app, pilot)
+
+        screen = app._changes_inspector
+        assert screen is not None
+        scope = app._session_diff_scope
+        assert scope is not None
+        assert scope.branch in {"main", "master"}
+        assert scope.linked_worktree is False
+
+        text = str(screen.query_one("#changes_scope", Static).render())
+        assert cli_messages.CHANGES_SCOPE_BRANCH.format(branch=scope.branch) in text
+        assert f"Baseline: {cli_messages.CHANGES_BASELINE_SESSION_START}" in text
+        # Nothing was hidden, so neither history note should appear.
+        assert cli_messages.CHANGES_HISTORY_MOVED not in text
+        assert cli_messages.CHANGES_HISTORY_UNTRACKED not in text
+
+
+@pytest.mark.asyncio
+async def test_changes_scope_line_reports_worktree_and_history_note(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from kolega_code.cli import messages as cli_messages
+    from textual.widgets import Static
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+    _init_git_project(app.project_path)
+
+    async with app.run_test() as pilot:
+        (app.project_path / "src" / "a.py").write_text("new a\n", encoding="utf-8")
+        app.action_open_changes()
+        await settle_changes_inspector(app, pilot)
+
+        screen = app._changes_inspector
+        assert screen is not None
+        app._session_diff_scope = _scope(history_moved=True)
+        screen._refresh_scope()
+
+        text = str(screen.query_one("#changes_scope", Static).render())
+        assert "Worktree: a (feat-a)" in text
+        assert cli_messages.CHANGES_HISTORY_MOVED in text
+
+
+@pytest.mark.asyncio
+async def test_history_untracked_note_only_for_git_backed_scopes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from kolega_code.cli import messages as cli_messages
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        app._session_diff_scope = _scope(history_tracked=False)
+        assert app._changes_history_note() == cli_messages.CHANGES_HISTORY_UNTRACKED
+
+        # A non-git project has no commits to report on at all.
+        app._session_diff_scope = _scope(root_label="project", branch="", linked_worktree=False, history_tracked=False)
+        assert app._changes_history_note() == ""
+        assert app._changes_scope_label() == ""
+
+
 @pytest.mark.asyncio
 async def test_copy_selected_changes_includes_net_diff_lines(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
@@ -256,3 +340,24 @@ async def test_copy_selected_changes_includes_net_diff_lines(tmp_path: Path, mon
         assert "+new a" in text
         assert "Captured edit events:" not in text
         assert "#1 Agent · edit · a1" not in text
+
+
+@pytest.mark.asyncio
+async def test_copy_selected_changes_identifies_the_worktree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+    _init_git_project(app.project_path)
+    copied: list[str] = []
+    monkeypatch.setattr(app, "copy_to_clipboard", lambda text: copied.append(text))
+
+    async with app.run_test() as pilot:
+        (app.project_path / "src" / "a.py").write_text("new a\n", encoding="utf-8")
+        app.action_open_changes("src/a.py")
+        await settle_changes_inspector(app, pilot)
+
+        screen = app._changes_inspector
+        assert screen is not None
+        app._session_diff_scope = _scope()
+        screen.action_copy_changes()
+
+        assert copied
+        assert "Worktree: a (feat-a)" in copied[0]

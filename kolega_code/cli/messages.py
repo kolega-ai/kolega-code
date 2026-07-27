@@ -80,6 +80,10 @@ CHANGES_INSPECTOR_EMPTY_VS = "No file changes since {label}."
 CHANGES_INSPECTOR_NO_SELECTION = "No file selected."
 CHANGES_COPIED = "Copied file changes to the clipboard."
 CHANGES_BASELINE_SESSION_START = "Session start"
+CHANGES_SCOPE_WORKTREE = "Worktree: {name}"
+CHANGES_SCOPE_BRANCH = "Branch: {branch}"
+CHANGES_HISTORY_MOVED = "Commits merged, pulled, or rebased in since the baseline are not shown."
+CHANGES_HISTORY_UNTRACKED = "Committed changes are not tracked in this repository."
 
 # Rewind
 REWIND_BLOCKED_TURN = "Stop the current turn (Esc) before rewinding."
@@ -96,6 +100,10 @@ REWIND_CONFIRM_CONVERSATION = (
     " The conversation also rewinds to that point, and the rewound request is loaded into the composer."
 )
 REWIND_CONFIRM_FILES_ONLY = " The conversation is not changed."
+REWIND_HISTORY_MOVED_WARNING = (
+    " History moved since this baseline (merge, rebase, or pull). Restoring writes session-start content "
+    "and can revert commits that came from outside this session."
+)
 REWIND_FILE_CONFIRM_TITLE = "Restore file?"
 REWIND_FILE_CONFIRM_COPY = (
     "Restore {path} to its state at {label}, discarding +{adds} -{dels}. The conversation is not changed."
@@ -218,6 +226,7 @@ BROWSER_MODEL_PROVIDER_NO_VISION = (
 
 # Status dashboard
 STATUS_TOKENS_UNKNOWN = "Token counts unavailable."
+STATUS_WORKTREE_LABEL = "Worktree"
 COMPACTING = "Compacting conversation…"
 COMPACTION_SUMMARY_TITLE = "Conversation compacted — summary"
 

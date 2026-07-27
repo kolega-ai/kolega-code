@@ -950,7 +950,8 @@ ChangesInspectorScreen .change-preview {
 }
 
 ChangesInspectorScreen #changes_scope {
-    height: 1;
+    /* auto so the optional history note can occupy a second line */
+    height: auto;
     padding: 0 1;
     background: $surface;
     color: $text-muted;
