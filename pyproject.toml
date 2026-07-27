@@ -36,7 +36,7 @@ dependencies = [
     # the first two, firecrawl-py and google-genai pull websockets); they are
     # pinned directly because the server must not depend on an unrelated package
     # continuing to require them.
-    "fastapi==0.129.2",
+    "fastapi==0.139.2",
     "firecrawl-py==4.28.2",
     # Project memory needs a persistent Unix lock file; unlink-on-release can split cooperating waiters.
     "filelock==3.20.3",
