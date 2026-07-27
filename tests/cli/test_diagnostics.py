@@ -154,3 +154,127 @@ def test_assemble_bug_bundle_scrubs_secrets_keeps_content(tmp_path: Path):
     assert "fix my bug" in session
     assert "session-sess5.jsonl" in names
     assert "session-artifacts.json" in names
+
+
+# ---------------------------------------------------------------------------
+# JSON payloads must survive redaction intact
+# ---------------------------------------------------------------------------
+
+_FAKE_TOKEN = "apify_api_9RtQv3LmZx8KpWn2Yc7BdF4HsJ6Tg1Ae0Nu5"
+_SOURCE_LINE = f'api_url = f"https://api.example.com/v2/runs?token={_FAKE_TOKEN}"'
+
+
+def test_log_line_stays_parseable_when_a_secret_precedes_an_escaped_quote(tmp_path: Path):
+    """Scrubbing the serialized form used to splice across the \\" escape and break the line."""
+    diag = DiagnosticsLog(tmp_path, "sess-escape")
+    diag.record("tool", name="read_entire_file", output=_SOURCE_LINE)
+
+    records = _read(diag.path)
+
+    assert len(records) == 1
+    assert _FAKE_TOKEN not in records[0]["output"]
+    assert SECRET_PLACEHOLDER in records[0]["output"]
+
+
+def test_log_record_redacts_values_reached_only_via_str_coercion(tmp_path: Path):
+    """json.dumps(default=str) stringified after scrubbing, so these leaked."""
+
+    class Failure:
+        def __str__(self) -> str:
+            return f"boom token={_FAKE_TOKEN}"
+
+    diag = DiagnosticsLog(tmp_path, "sess-coerce")
+    diag.record("llm_error", error=Failure())
+
+    records = _read(diag.path)
+
+    assert _FAKE_TOKEN not in json.dumps(records[0])
+
+
+def test_bundle_session_json_stays_parseable_with_adversarial_content(tmp_path: Path):
+    diag = DiagnosticsLog(tmp_path, "sess-bundle-json")
+    session_export = SessionBugExport(
+        session_json=json.dumps({"history": [{"role": "assistant", "content": _SOURCE_LINE}]}),
+        events_jsonl=json.dumps({"type": "turn.started", "payload": {"text": _SOURCE_LINE}}) + "\n",
+        artifact_manifest_json=json.dumps({"artifacts_included": False, "artifacts": []}),
+    )
+
+    bundle = assemble_bug_bundle(diag, summary="kolega diag", session_export=session_export)
+
+    assert bundle is not None
+    with zipfile.ZipFile(bundle) as zf:
+        session = zf.read("session.json").decode("utf-8")
+        events = zf.read("session-events.jsonl").decode("utf-8")
+
+    parsed = json.loads(session)  # would raise before the fix
+    assert _FAKE_TOKEN not in session
+    assert SECRET_PLACEHOLDER in parsed["history"][0]["content"]
+    for line in events.splitlines():
+        assert json.loads(line)
+    assert _FAKE_TOKEN not in events
+
+
+def test_bundle_falls_back_to_text_scrubbing_for_unparseable_json(tmp_path: Path):
+    diag = DiagnosticsLog(tmp_path, "sess-bundle-bad")
+    session_export = SessionBugExport(
+        session_json="{not json at all, token=" + _FAKE_TOKEN,
+        events_jsonl="",
+        artifact_manifest_json="{}",
+    )
+
+    bundle = assemble_bug_bundle(diag, summary="kolega diag", session_export=session_export)
+
+    assert bundle is not None
+    with zipfile.ZipFile(bundle) as zf:
+        session = zf.read("session.json").decode("utf-8")
+
+    # Entry is still present and still scrubbed, just not reformatted.
+    assert _FAKE_TOKEN not in session
+    assert "not json at all" in session
+
+
+def test_bundle_keeps_good_jsonl_lines_when_one_line_is_malformed(tmp_path: Path):
+    diag = DiagnosticsLog(tmp_path, "sess-bundle-mixed")
+    session_export = SessionBugExport(
+        session_json="{}",
+        events_jsonl="\n".join(
+            [
+                json.dumps({"seq": 1, "text": "fine"}),
+                "{broken",
+                json.dumps({"seq": 3, "text": _SOURCE_LINE}),
+            ]
+        )
+        + "\n",
+        artifact_manifest_json="{}",
+    )
+
+    bundle = assemble_bug_bundle(diag, summary="kolega diag", session_export=session_export)
+
+    assert bundle is not None
+    with zipfile.ZipFile(bundle) as zf:
+        lines = zf.read("session-events.jsonl").decode("utf-8").splitlines()
+
+    assert len(lines) == 3
+    assert json.loads(lines[0])["seq"] == 1
+    assert json.loads(lines[2])["seq"] == 3
+    assert _FAKE_TOKEN not in "\n".join(lines)
+
+
+def test_bundle_preserves_readable_json_formatting(tmp_path: Path):
+    """SessionStore writes these with indent=2/sort_keys=True; redaction must not flatten them."""
+    diag = DiagnosticsLog(tmp_path, "sess-bundle-fmt")
+    session_export = SessionBugExport(
+        session_json=json.dumps({"b": 1, "a": {"nested": True}}, indent=2, sort_keys=True) + "\n",
+        events_jsonl="",
+        artifact_manifest_json=json.dumps({"artifacts_included": False}, indent=2, sort_keys=True) + "\n",
+    )
+
+    bundle = assemble_bug_bundle(diag, summary="kolega diag", session_export=session_export)
+
+    assert bundle is not None
+    with zipfile.ZipFile(bundle) as zf:
+        session = zf.read("session.json").decode("utf-8")
+
+    assert session.startswith("{\n")
+    assert '\n  "a": {' in session  # indented and key-sorted
+    assert session.endswith("\n")

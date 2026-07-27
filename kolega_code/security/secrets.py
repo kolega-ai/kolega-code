@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass
-from typing import Iterable
+from typing import Any, Iterable
 
 SECRET_PLACEHOLDER = "‹secret›"
 
@@ -42,10 +42,16 @@ _PATTERNS: tuple[tuple[str, re.Pattern[str], str | None], ...] = (
     ("api-key-header", re.compile(r"(?i)x-api-key\s*[:=]\s*(?P<value>\S+)"), "value"),
     (
         "credential-assignment",
+        # The unquoted alternative excludes backslash as well as quotes. Without
+        # that, a secret sitting inside already-serialized JSON absorbs the
+        # leading backslash of the following \" escape; replacing the span then
+        # leaves a bare quote that terminates the JSON string and corrupts the
+        # document. Real credentials do not contain backslashes, so excluding it
+        # only ever shortens a match.
         re.compile(
             r"(?im)\b[A-Za-z0-9_]*(?:API_?KEY|ACCESS_?KEY|TOKEN|SECRET|"
             r"PASSWORD|PASSWD|PRIVATE_?KEY|CLIENT_?SECRET)[A-Za-z0-9_]*\s*[=:]\s*"
-            r"(?P<value>[^\s\"']+|\"[^\"]+\"|'[^']+')"
+            r"(?P<value>[^\s\"'\\]+|\"[^\"]+\"|'[^']+')"
         ),
         "value",
     ),
@@ -110,3 +116,39 @@ def redact_secrets(
     for finding in reversed(findings):
         text = text[: finding.start] + SECRET_PLACEHOLDER + text[finding.end :]
     return text
+
+
+def redact_secrets_in_obj(
+    obj: Any,
+    extra_values: Iterable[str] | None = None,
+    *,
+    include_environment: bool = False,
+) -> Any:
+    """Redact string leaves of a JSON-compatible structure, preserving its shape.
+
+    Prefer this over running ``redact_secrets`` on serialized JSON. Redacting the
+    encoded form can splice a replacement across an escape sequence and produce a
+    document that no longer parses; redacting the decoded leaves and re-serializing
+    is valid by construction, and the patterns match real text rather than escaped
+    text.
+
+    Leaves that are not JSON-native are coerced with ``str()`` and *then* redacted.
+    That closes a hole in the ``json.dumps(..., default=str)`` pattern, where an
+    object stringified during serialization would otherwise never be scrubbed.
+    Dict keys are left alone: they are structural, and rewriting them risks
+    collisions.
+    """
+    values = list(extra_values or [])
+
+    def walk(node: Any) -> Any:
+        if isinstance(node, str):
+            return redact_secrets(node, values, include_environment=include_environment)
+        if isinstance(node, bool) or node is None or isinstance(node, (int, float)):
+            return node
+        if isinstance(node, dict):
+            return {key: walk(value) for key, value in node.items()}
+        if isinstance(node, (list, tuple)):
+            return [walk(item) for item in node]
+        return redact_secrets(str(node), values, include_environment=include_environment)
+
+    return walk(obj)
