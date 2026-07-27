@@ -183,19 +183,31 @@ async def test_reaching_the_lan_without_a_network_fails_instead_of_opening_up(
     assert "local network address" in str(failure.value)
 
 
-@pytest.mark.asyncio
-async def test_an_unspecified_bind_address_is_refused_outright(store: SessionStore) -> None:
+@pytest.mark.parametrize("wildcard", ["0.0.0.0", "::", "::0"])
+def test_an_unspecified_bind_address_is_refused_outright(wildcard: str) -> None:
     """The last gate before bind, wherever the address came from.
 
-    ``ALL_INTERFACES`` is how a caller *asks* for reach and is resolved to a
-    real address long before this point, so any other wildcard arriving at the
-    socket is a mistake rather than a choice — and listening on every interface
-    is never what a share link means.
+    ``LOCAL_NETWORK`` is how a caller *asks* for reach and is resolved to a real
+    address long before this point, so a wildcard arriving at the socket is a
+    mistake rather than a choice — and listening on every interface is never
+    what a share link means.
+
+    Exercised against the guard rather than through ``start()`` on purpose. A
+    test that hands a wildcard to the server gives dataflow analysis a path from
+    a literal all the way to ``bind()``; it cannot see the guard raise in
+    between, so the negative test would report itself as the vulnerability it
+    exists to disprove.
     """
     with pytest.raises(ShareServerError) as refused:
-        await ShareServer(store, bind="::").start()
+        hosting._specific_address(wildcard)  # pyright: ignore[reportPrivateUsage]
 
     assert "every interface" in str(refused.value)
+    assert "LOCAL_NETWORK" in str(refused.value), "the refusal should name the right way to ask"
+
+
+def test_a_real_address_passes_the_guard_unchanged() -> None:
+    for host in (LOOPBACK, "192.168.1.20", "example.internal"):
+        assert hosting._specific_address(host) == host  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.mark.asyncio
@@ -213,8 +225,7 @@ async def test_asking_for_all_interfaces_is_a_request_not_an_address(
         await server.stop()
 
 
-@pytest.mark.asyncio
-async def test_the_wildcard_is_no_longer_a_way_to_ask_for_reach(store: SessionStore) -> None:
+def test_the_wildcard_is_no_longer_a_way_to_ask_for_reach() -> None:
     """The reach request is a request, not an address.
 
     It used to be the wildcard itself, which both misdescribed the behaviour and
@@ -222,8 +233,3 @@ async def test_the_wildcard_is_no_longer_a_way_to_ask_for_reach(store: SessionSt
     """
     assert "0.0.0.0" not in {LOCAL_NETWORK, ALL_INTERFACES}
     assert ALL_INTERFACES == LOCAL_NETWORK, "the exported name has to keep working"
-
-    with pytest.raises(ShareServerError) as refused:
-        await ShareServer(store, bind="0.0.0.0").start()
-
-    assert "LOCAL_NETWORK" in str(refused.value), "the refusal should name the right way to ask"
