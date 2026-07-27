@@ -119,7 +119,10 @@ async function main() {
   } else {
     seek(0);
   }
-  if (manifest.stream) attachStream();
+  if (manifest.stream) {
+    watchConnectivity();
+    attachStream();
+  }
   renderLive();
   requestAnimationFrame(frame);
 }
@@ -316,6 +319,30 @@ function attachStream() {
   socket.addEventListener("error", () => socket && socket.close());
 }
 
+/**
+ * Treat losing the network as losing the socket.
+ *
+ * A dropped connection does not close a WebSocket: the browser keeps it OPEN
+ * until TCP gives up, which can take minutes. For that whole time the badge
+ * would read "LIVE" over a transcript that stopped growing, which is the one
+ * thing it must never do. The browser tells us the moment connectivity goes, so
+ * use it and let the existing backoff handle coming back.
+ */
+function watchConnectivity() {
+  addEventListener("offline", () => {
+    if (socket) socket.close();
+    renderLive();
+  });
+  addEventListener("online", () => {
+    if (reconnectTimer !== null) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+    reconnectDelay = RECONNECT_MIN_MS;
+    if (!socket) attachStream();
+  });
+}
+
 function scheduleReconnect() {
   socket = null;
   renderLive();
@@ -387,7 +414,8 @@ function setFollowing(next) {
 
 function renderLive() {
   if (!dom.live) return;
-  const attached = socket !== null && socket.readyState === WebSocket.OPEN;
+  const online = typeof navigator === "undefined" || navigator.onLine !== false;
+  const attached = online && socket !== null && socket.readyState === WebSocket.OPEN;
   // Offering "jump to live" on a session that ended hours ago is a lie: the
   // socket stays attachable forever, so being attached is not evidence of life.
   dom.live.hidden = !manifest.stream || !liveActive;
@@ -439,9 +467,15 @@ function renderTicks() {
 
 /** Nearest playback offset for a session-time value, used for turn seeking. */
 function playbackOffsetForElapsed(elapsedMs) {
-  // elapsed_ms is non-decreasing along the log, so this is a binary search.
-  // It runs per tick per appended event while following a live session, and a
-  // linear scan there made redrawing the ticks quadratic in session length.
+  // The recorder guarantees elapsed_ms is non-decreasing along the log, so this
+  // is a binary search. It runs per tick per appended event while following a
+  // live session, and a linear scan there made redrawing the ticks quadratic in
+  // session length.
+  //
+  // Recordings made before that guarantee existed can step backwards where two
+  // streamed segments overlapped, and a turn seek there may land a few events
+  // off. It stays a seek, never a crash: extendTimeline clamps a negative gap to
+  // zero, so the timeline itself is monotonic whatever the log says.
   let low = 0;
   let high = events.length;
   while (low < high) {
@@ -728,9 +762,11 @@ function renderToolBody(item) {
 /**
  * Where an artifact's bytes can be read from, or null if they are not reachable.
  *
- * A single-file export carries them inline. A directory bundle writes them to
- * `artifacts/<sha256>` beside the player. The served player has no such path, so
- * it keeps the text badge rather than drawing a broken image.
+ * Three shapes, three answers. A single-file export carries them inline. A
+ * directory bundle writes them to `artifacts/<sha256>` beside the player. A
+ * served session has neither, but it does have the session API, so it reads
+ * them from the artifact endpoint — which is gated on the same token and the
+ * same shareable-purpose allowlist as everything else.
  */
 function artifactSource(ref) {
   const inlined = globalThis.__KC_REPLAY__;
@@ -740,7 +776,10 @@ function artifactSource(ref) {
   // A single-file export has no sibling files, so an artifact missing from the
   // inline map above is simply unreachable — never a relative path that 404s.
   if (manifest.artifacts_inline) return null;
-  if (!manifest.stream && manifest.artifact_count) return `artifacts/${ref.sha256}`;
+  if (manifest.stream) {
+    return manifest.session_id ? `/api/sessions/${manifest.session_id}/artifacts/${ref.sha256}` : null;
+  }
+  if (manifest.artifact_count) return `artifacts/${ref.sha256}`;
   return null;
 }
 
