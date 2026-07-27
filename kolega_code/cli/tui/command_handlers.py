@@ -1058,48 +1058,84 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
         self._refresh_status_dashboard()
 
     async def _command_share(self, args: str) -> None:
-        """Start, stop, or re-show a live link to this session."""
-        from kolega_code.web.hosting import ALL_INTERFACES, LOOPBACK, ShareServer, ShareServerError
+        """Start, stop, or re-show a live link to this session.
 
-        action = args.strip().lower()
-        if action == "stop":
-            if self._share_server is None:
-                self._notify_user(messages.SHARE_NOT_RUNNING, severity="warning")
+        ``/share`` | ``/share lan`` | ``/share [lan] <port>`` | ``/share stop``.
+        Naming a port matters when a tunnel is forwarding it: the OS-picked
+        default changes on every share, which would mean re-pointing the tunnel.
+        """
+        from kolega_code.web.hosting import (
+            ALL_INTERFACES,
+            DEFAULT_PORT,
+            LOOPBACK,
+            ShareServer,
+            ShareServerError,
+        )
+
+        words = args.split()
+        if words and words[0].lower() == "stop":
+            if len(words) > 1 or self._share_server is None:
+                message = messages.SHARE_USAGE if len(words) > 1 else messages.SHARE_NOT_RUNNING
+                self._notify_user(message, severity="warning")
                 return
             await self._stop_share_server()
             self._notify_user(messages.SHARE_STOPPED)
             return
-        if action not in ("", "lan"):
-            self._notify_user(messages.SHARE_USAGE, severity="warning")
-            return
 
-        bind = ALL_INTERFACES if action == "lan" else LOOPBACK
+        exposed = bool(words) and words[0].lower() == "lan"
+        if exposed:
+            words = words[1:]
+        port = 0
+        if words:
+            if len(words) > 1 or not words[0].isdigit() or not 1 <= int(words[0]) <= 65535:
+                self._notify_user(messages.SHARE_USAGE, severity="warning")
+                return
+            port = int(words[0])
+
+        bind = ALL_INTERFACES if exposed else LOOPBACK
+        wanted = port or DEFAULT_PORT
         server = self._share_server
-        # Switching between loopback and the network means a different bind, so
-        # the old server has to go rather than silently keeping the old reach.
-        if server is not None and server.exposed != (bind != LOOPBACK):
+        # A different reach or a different port is a different server, so the old
+        # one has to go rather than silently keeping the old address.
+        stale_reach = server is not None and server.exposed != exposed
+        stale_port = server is not None and port and server.handle is not None and server.handle.port != port
+        if stale_reach or stale_port:
             await self._stop_share_server()
             server = None
 
         already = server is not None
+        moved = False
         if server is None:
-            server = ShareServer(self.store, bind=bind)
+            server = ShareServer(self.store, bind=bind, port=wanted)
             try:
                 await server.start()
             except (ShareServerError, OSError) as exc:
-                self._notify_user(messages.SHARE_FAILED.format(error=exc), severity="error")
-                return
+                # A port the user named is a requirement — a tunnel is probably
+                # pointed at it. The default is only a convenience, so another
+                # share already holding it just moves this one out of the way.
+                if port:
+                    self._notify_user(messages.SHARE_FAILED.format(error=exc), severity="error")
+                    return
+                server = ShareServer(self.store, bind=bind, port=0)
+                try:
+                    await server.start()
+                except (ShareServerError, OSError) as fallback_error:
+                    self._notify_user(messages.SHARE_FAILED.format(error=fallback_error), severity="error")
+                    return
+                moved = True
             self._share_server = server
 
         url = server.session_url(self.session.session_id)
         self.copy_to_clipboard(url)
         lines = [messages.SHARE_LINK_HEADING, url, "", messages.SHARE_READ_ONLY_NOTE]
-        lines.append(messages.SHARE_LAN_WARNING if action == "lan" else messages.SHARE_LOOPBACK_NOTE)
+        if moved:
+            lines.append(messages.SHARE_PORT_TAKEN.format(port=DEFAULT_PORT))
+        lines.append(messages.SHARE_LAN_WARNING if exposed else messages.SHARE_LOOPBACK_NOTE)
         self._add_conversation_entry(
             tui_state.ConversationEntry(
                 kind="system",
                 content="\n".join(lines),
-                tone="warning" if action == "lan" else None,
+                tone="warning" if exposed else None,
             )
         )
         self._notify_user(messages.SHARE_ALREADY if already else messages.SHARE_STARTED)

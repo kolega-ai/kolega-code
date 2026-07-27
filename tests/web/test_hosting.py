@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 from kolega_code.cli.session_store import SessionStore
-from kolega_code.web.hosting import ALL_INTERFACES, LOOPBACK, ShareServer
+from kolega_code.web.hosting import ALL_INTERFACES, LOOPBACK, ShareServer, ShareServerError
 
 
 @pytest.fixture
@@ -91,6 +91,36 @@ async def test_request_stop_is_safe_without_a_loop_turn(store: SessionStore) -> 
     assert server.handle is None
     await asyncio.sleep(0.05)
     assert not server.running
+
+
+@pytest.mark.asyncio
+async def test_a_busy_port_is_an_ordinary_error(store: SessionStore) -> None:
+    """Not a SystemExit, which asyncio re-raises into the host's event loop.
+
+    Left to itself uvicorn binds during startup and reports failure by calling
+    sys.exit. Raised inside a task that does not merely fail the task: asyncio
+    re-raises SystemExit into the loop, so a port collision would take down the
+    application that is only hosting this server.
+    """
+    import socket
+
+    with socket.socket() as taken:
+        taken.bind(("127.0.0.1", 0))
+        taken.listen(1)
+        port = taken.getsockname()[1]
+
+        server = ShareServer(store, port=port)
+        with pytest.raises(ShareServerError) as failure:
+            await server.start()
+
+        assert str(port) in str(failure.value)
+        assert not server.running
+        # The loop is still healthy and the next share still works.
+        await asyncio.sleep(0)
+
+    recovered = ShareServer(store)
+    await recovered.start()
+    await recovered.stop()
 
 
 def test_exposure_is_known_before_starting(store: SessionStore) -> None:

@@ -9,6 +9,7 @@ session that started it.
 from __future__ import annotations
 
 import asyncio
+import socket
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -16,6 +17,7 @@ from pathlib import Path
 import pytest
 
 from kolega_code.cli import messages
+from kolega_code.web import hosting
 from kolega_code.web.hosting import ALL_INTERFACES, LOOPBACK
 
 from ._app_test_utils import _build_sub_agent_test_app
@@ -45,11 +47,20 @@ def _system_text(app) -> str:
     return "\n".join(entry.content for entry in app.conversation_entries if entry.kind == "system")
 
 
+def _free_port() -> int:
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return int(probe.getsockname()[1])
+
+
 @pytest.fixture
 def share_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     app = _build_sub_agent_test_app(tmp_path, monkeypatch)
     app._clipboard: list[str] = []  # type: ignore[attr-defined]
     monkeypatch.setattr(type(app), "copy_to_clipboard", lambda self, text: self._clipboard.append(text))
+    # Take an ephemeral port instead of the real default: a test suite has no
+    # business seizing a well-known port on the machine running it.
+    monkeypatch.setattr("kolega_code.web.hosting.DEFAULT_PORT", 0)
     return app
 
 
@@ -174,3 +185,113 @@ async def test_quitting_stops_sharing(share_app) -> None:
 
 def test_bind_addresses_are_distinct() -> None:
     assert LOOPBACK != ALL_INTERFACES
+
+
+@pytest.mark.asyncio
+async def test_share_uses_the_default_port_so_a_tunnel_rule_keeps_working(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without this the OS picks a new port per share and any tunnel goes stale."""
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+    monkeypatch.setattr(type(app), "copy_to_clipboard", lambda self, text: None)
+    requested: list[object] = []
+
+    real = hosting.ShareServer
+
+    class Recording(real):  # type: ignore[misc, valid-type]
+        def __init__(self, store, **kwargs):
+            requested.append(kwargs.get("port"))
+            super().__init__(store, **{**kwargs, "port": 0})
+
+    monkeypatch.setattr(hosting, "ShareServer", Recording)
+    async with app.run_test():
+        try:
+            await app._command_share("")
+        finally:
+            await app._stop_share_server()
+
+    assert requested == [hosting.DEFAULT_PORT]
+
+
+@pytest.mark.asyncio
+async def test_an_explicit_port_is_honoured(share_app) -> None:
+    port = _free_port()
+    async with share_app.run_test():
+        try:
+            await share_app._command_share(str(port))
+
+            server = share_app._share_server
+            assert server is not None and server.handle is not None
+            assert server.handle.port == port
+            assert f":{port}/" in share_app._clipboard[-1]
+        finally:
+            await share_app._stop_share_server()
+
+
+@pytest.mark.asyncio
+async def test_a_busy_default_port_moves_out_of_the_way(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The default is a convenience, so another share holding it is not fatal."""
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+    app._clipboard: list[str] = []  # type: ignore[attr-defined]
+    monkeypatch.setattr(type(app), "copy_to_clipboard", lambda self, text: self._clipboard.append(text))
+
+    with socket.socket() as taken:
+        taken.bind(("127.0.0.1", 0))
+        taken.listen(1)
+        monkeypatch.setattr("kolega_code.web.hosting.DEFAULT_PORT", taken.getsockname()[1])
+
+        async with app.run_test():
+            try:
+                await app._command_share("")
+
+                server = app._share_server
+                assert server is not None and server.handle is not None
+                assert server.handle.port != taken.getsockname()[1]
+                assert await _get(app._clipboard[-1]) == 200
+                assert messages.SHARE_PORT_TAKEN.format(port=taken.getsockname()[1]) in _system_text(app)
+            finally:
+                await app._stop_share_server()
+
+
+@pytest.mark.asyncio
+async def test_a_busy_explicit_port_is_an_error_not_a_silent_move(share_app) -> None:
+    """A named port is a requirement: a tunnel is probably pointed at it."""
+    notices: list[str] = []
+    with socket.socket() as taken:
+        taken.bind(("127.0.0.1", 0))
+        taken.listen(1)
+        port = taken.getsockname()[1]
+
+        async with share_app.run_test():
+            share_app._notify_user = lambda message, **kwargs: notices.append(message)  # type: ignore[method-assign]
+            await share_app._command_share(str(port))
+
+    assert share_app._share_server is None
+    assert notices and notices[-1].startswith("Could not start sharing")
+
+
+@pytest.mark.asyncio
+async def test_lan_accepts_a_port_too(share_app) -> None:
+    port = _free_port()
+    async with share_app.run_test():
+        try:
+            await share_app._command_share(f"lan {port}")
+
+            server = share_app._share_server
+            assert server is not None and server.handle is not None
+            assert server.exposed
+            assert server.handle.port == port
+        finally:
+            await share_app._stop_share_server()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad", ["public", "70000", "lan lan", "1 2", "stop now"])
+async def test_malformed_arguments_explain_themselves(share_app, bad: str) -> None:
+    notices: list[str] = []
+    async with share_app.run_test():
+        share_app._notify_user = lambda message, **kwargs: notices.append(message)  # type: ignore[method-assign]
+        await share_app._command_share(bad)
+
+    assert notices == [messages.SHARE_USAGE], bad
+    assert share_app._share_server is None

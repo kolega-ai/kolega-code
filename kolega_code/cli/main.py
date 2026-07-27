@@ -322,8 +322,15 @@ def _build_subcommand_parser() -> argparse.ArgumentParser:
     sessions_export.add_argument("--output", type=Path, help="Write JSON to a file instead of stdout.")
     sessions_export.add_argument("--state-dir", type=Path, help="Directory for CLI session state.")
 
+    from kolega_code.web.hosting import DEFAULT_PORT as DEFAULT_SERVE_PORT
+
     serve = subparsers.add_parser("serve", help="Serve recorded sessions over HTTP for browsers and other clients.")
-    serve.add_argument("--port", type=int, default=8765, help="Port to listen on (default: 8765).")
+    serve.add_argument(
+        "--port",
+        type=int,
+        default=DEFAULT_SERVE_PORT,
+        help=f"Port to listen on (default: {DEFAULT_SERVE_PORT}).",
+    )
     serve.add_argument(
         "--bind",
         default="127.0.0.1",

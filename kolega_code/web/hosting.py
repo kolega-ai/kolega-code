@@ -23,11 +23,14 @@ import contextlib
 import secrets
 import socket
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
-from kolega_code.cli.session_store import SessionStore
+if TYPE_CHECKING:
+    from kolega_code.cli.session_store import SessionStore
 
-from .server import ServerConfig, create_app
+# ``.server`` pulls in FastAPI and ``.session_store`` pulls in the CLI, so both
+# are imported where they are used. This module's constants are read while the
+# argument parser is being built, on every invocation of every subcommand.
 
 #: How long to wait for uvicorn to bind before giving up.
 _STARTUP_TIMEOUT_S = 10.0
@@ -36,6 +39,10 @@ _STARTUP_POLL_S = 0.02
 LOOPBACK = "127.0.0.1"
 #: Bind address that accepts connections from other machines.
 ALL_INTERFACES = "0.0.0.0"
+#: The port both ``kolega-code serve`` and ``/share`` use unless told otherwise.
+#: Sharing through a tunnel means forwarding a port, and a forwarding rule is
+#: worth writing down only if the port is the same next time.
+DEFAULT_PORT = 8765
 #: uvicorn's default "auto" still selects the deprecated legacy websockets
 #: implementation, which warns on import. Naming the sans-io one keeps a host
 #: process's log clean and is the implementation uvicorn is moving to.
@@ -103,7 +110,7 @@ class ShareServer:
 
     def __init__(
         self,
-        store: SessionStore,
+        store: "SessionStore",
         *,
         bind: str = LOOPBACK,
         port: int = 0,
@@ -116,6 +123,7 @@ class ShareServer:
         self._server: Any = None
         self._task: Optional[asyncio.Task[Any]] = None
         self._handle: Optional[ShareHandle] = None
+        self._socket: Optional[socket.socket] = None
 
     @property
     def handle(self) -> Optional[ShareHandle]:
@@ -137,6 +145,8 @@ class ShareServer:
 
         import uvicorn
 
+        from .server import ServerConfig, create_app
+
         app = create_app(ServerConfig(store=self._store, token=self._token))
         config = uvicorn.Config(
             app,
@@ -148,8 +158,13 @@ class ShareServer:
             # failures surface as a hang rather than an error.
             lifespan="off",
         )
+        # Bind before handing the socket over. Left to itself uvicorn binds during
+        # startup and reports failure with sys.exit, and a SystemExit raised
+        # inside a task is re-raised into the event loop -- taking the host down
+        # over a port collision. Binding here turns that into an ordinary error.
+        self._socket = self._bind_socket()
         self._server = _build_server(config)
-        self._task = asyncio.create_task(self._server.serve())
+        self._task = asyncio.create_task(self._server.serve(sockets=[self._socket]))
 
         try:
             await self._await_started()
@@ -173,6 +188,18 @@ class ShareServer:
             raise ShareServerError("The share server is not running")
         return f"{self._handle.url}/s/{session_id}?token={self._handle.token}"
 
+    def _bind_socket(self) -> socket.socket:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.bind((self._bind, self._requested_port))
+        except OSError as exc:
+            sock.close()
+            raise ShareServerError(
+                f"could not bind {self._bind}:{self._requested_port} ({exc.strerror or exc})"
+            ) from exc
+        return sock
+
     def request_stop(self) -> None:
         """Ask the server to stop without awaiting it.
 
@@ -180,8 +207,8 @@ class ShareServer:
         The socket closes when the task next runs; the process exiting closes it
         regardless.
         """
-        server, task = self._server, self._task
-        self._server = self._task = self._handle = None
+        server, task, sock = self._server, self._task, self._socket
+        self._server = self._task = self._handle = self._socket = None
         if server is not None:
             server.should_exit = True
             # Close the listeners now rather than waiting for the task to notice.
@@ -190,31 +217,49 @@ class ShareServer:
             for listener in getattr(server, "servers", None) or []:
                 with contextlib.suppress(Exception):
                     listener.close()
+        if sock is not None:
+            with contextlib.suppress(OSError):
+                sock.close()
         if task is not None and not task.done():
             task.cancel()
 
     async def stop(self) -> None:
         """Stop serving and wait for the task to unwind."""
-        server, task = self._server, self._task
-        self._server = self._task = self._handle = None
+        server, task, sock = self._server, self._task, self._socket
+        self._server = self._task = self._handle = self._socket = None
         if server is not None:
             server.should_exit = True
         if task is not None:
-            with contextlib.suppress(asyncio.CancelledError, Exception):
+            # SystemExit from a failed bind is a BaseException, so suppressing
+            # Exception alone would let teardown raise.
+            with contextlib.suppress(asyncio.CancelledError, SystemExit, Exception):
                 await asyncio.wait_for(asyncio.shield(task), timeout=5)
             if not task.done():
                 task.cancel()
-                with contextlib.suppress(asyncio.CancelledError, Exception):
+                with contextlib.suppress(asyncio.CancelledError, SystemExit, Exception):
                     await task
+        if sock is not None:
+            # uvicorn closes the sockets it was handed, but not if it never got
+            # as far as serving them.
+            with contextlib.suppress(OSError):
+                sock.close()
 
     async def _await_started(self) -> None:
         waited = 0.0
         while waited < _STARTUP_TIMEOUT_S:
             task = self._task
             if task is not None and task.done():
-                # serve() returning this early means the bind failed; re-raise it.
-                task.result()
-                raise ShareServerError("The share server stopped before it began serving")
+                # Returning this early means the bind failed. uvicorn reports that
+                # by calling sys.exit, so the failure arrives as SystemExit --
+                # which is not an Exception and would sail past every caller's
+                # handler and out of the host's command loop.
+                try:
+                    task.result()
+                except (SystemExit, OSError) as exc:
+                    raise ShareServerError(
+                        f"could not bind {self._bind}:{self._requested_port} (is it already in use?)"
+                    ) from exc
+                raise ShareServerError("the share server stopped before it began serving")
             if getattr(self._server, "started", False) and self._sockets():
                 return
             await asyncio.sleep(_STARTUP_POLL_S)
@@ -227,7 +272,7 @@ class ShareServer:
 
     def _bound_port(self) -> int:
         """The port actually bound, which is what port 0 was asked to discover."""
-        for sock in self._sockets():
+        for sock in ([self._socket] if self._socket is not None else []) + self._sockets():
             with contextlib.suppress(OSError):
                 return int(sock.getsockname()[1])
-        raise ShareServerError("The share server is not bound to a port")
+        raise ShareServerError("the share server is not bound to a port")
