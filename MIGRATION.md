@@ -210,6 +210,36 @@ Every exported string is scrubbed for secrets and local filesystem paths are
 stripped. If you build your own export path, reuse `redact_event` rather than
 writing events directly.
 
+`export_bundle(..., single_file=True)` writes the entire replay as one HTML
+document — assets, manifest, gzipped events and any images embedded — instead of
+a directory. This is now what `kolega-code share export` produces by default.
+
+The reason is not tidiness. A directory bundle cannot be opened from a `file://`
+URL at all: browsers block ES module imports and `fetch` on that origin, so a
+recipient who double-clicks `index.html` gets a blank page, and not even an error,
+because the script that would report the failure is the one that was blocked. A
+directory therefore requires the recipient to run a web server, which is not a
+sharing story. Pass `single_file=False` when you are publishing to a static host
+and separate cacheable files are the better shape.
+
+The player is not forked for this. It reads `globalThis.__KC_REPLAY__` when
+present and fetches when it is absent, so the served player, the directory bundle
+and the single file are all the same code. If you embed the player yourself, see
+`kolega_code.web.singlefile` for the payload shape.
+
+### Removed: the `kolega-code serve` command
+
+`serve` is gone. It never appeared in a release, so nothing can depend on it.
+
+Everything it did that people actually wanted is covered better elsewhere: `/share`
+in the TUI starts the same server for a running session and hands you the link,
+and `share export` produces a file you can send. Its remaining job — a documented
+public HTTP API with no consumer — would have meant owning that surface's
+compatibility forever.
+
+`kolega_code.web.server.create_app` and `kolega_code.web.hosting.ShareServer` are
+unchanged and remain the supported way to host sessions from your own process.
+
 ### On-disk sessions
 
 The filesystem store is a CLI implementation detail, not the substrate. Nothing

@@ -83,7 +83,7 @@ from .skills import (
 )
 from .updater import check_for_update, run_self_update, update_status_message
 
-SUBCOMMANDS = {"ask", "sessions", "doctor", "update", "prompts", "agents", "mcp", "tui", "serve", "share"}
+SUBCOMMANDS = {"ask", "sessions", "doctor", "update", "prompts", "agents", "mcp", "tui", "share"}
 RESUME_LATEST = "__latest__"
 CLI_AGENT_MODE = AgentMode.CLI.value
 ASK_DEFAULT_PERMISSION_MODE = PermissionMode.AUTO.value
@@ -117,8 +117,6 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
             return _run_sessions(args)
         if args.command == "share":
             return asyncio.run(_run_share(args))
-        if args.command == "serve":
-            return _run_serve(args)
         if args.command == "doctor":
             return _run_doctor(args)
         if args.command == "prompts":
@@ -322,36 +320,24 @@ def _build_subcommand_parser() -> argparse.ArgumentParser:
     sessions_export.add_argument("--output", type=Path, help="Write JSON to a file instead of stdout.")
     sessions_export.add_argument("--state-dir", type=Path, help="Directory for CLI session state.")
 
-    from kolega_code.web.hosting import DEFAULT_PORT as DEFAULT_SERVE_PORT
-
-    serve = subparsers.add_parser("serve", help="Serve recorded sessions over HTTP for browsers and other clients.")
-    serve.add_argument(
-        "--port",
-        type=int,
-        default=DEFAULT_SERVE_PORT,
-        help=f"Port to listen on (default: {DEFAULT_SERVE_PORT}).",
-    )
-    serve.add_argument(
-        "--bind",
-        default="127.0.0.1",
-        help="Address to bind. Defaults to loopback; anything else exposes sessions to your network.",
-    )
-    serve.add_argument("--token", help="Require this bearer token on every request.")
-    serve.add_argument("--state-dir", type=Path, help="Directory for CLI session state.")
-
     share = subparsers.add_parser("share", help="Export a session as a shareable replay.")
     share_sub = share.add_subparsers(dest="share_command", required=True)
     share_export = share_sub.add_parser(
         "export",
-        help="Write a self-contained replay bundle that plays in any browser.",
+        help="Write a self-contained replay file that plays in any browser.",
     )
     share_export.add_argument("session_id")
     share_export.add_argument(
         "--out",
         type=Path,
-        help="Destination directory (default: ./<session-id>-replay).",
+        help="Destination path (default: ./<session-id>-replay.html).",
     )
-    share_export.add_argument("--zip", action="store_true", help="Write a single .zip archive instead of a directory.")
+    share_export.add_argument(
+        "--dir",
+        action="store_true",
+        help="Write a directory of separate files instead of one HTML file, for hosting on a static site.",
+    )
+    share_export.add_argument("--zip", action="store_true", help="Write a .zip of the directory form. Implies --dir.")
     share_export.add_argument("--title", help="Human-readable title shown in the player.")
     share_export.add_argument(
         "--theme",
@@ -1143,37 +1129,6 @@ def _parse_skill_prompt(prompt: str, catalog: SkillCatalog) -> Optional[tuple[st
     return skill_name, rest.strip()
 
 
-def _run_serve(args: argparse.Namespace) -> int:
-    """Run the local session server."""
-    import uvicorn
-
-    from kolega_code.web.server import ServerConfig, create_app
-
-    store = _store_from_args(args)
-    app = create_app(ServerConfig(store=store, token=args.token))
-
-    host = args.bind
-    shown = "localhost" if host in {"127.0.0.1", "::1"} else host
-    _print_styled(f"Serving sessions on http://{shown}:{args.port}", style="success")
-    print(f"  Session list   http://{shown}:{args.port}/")
-    print(f"  API reference  http://{shown}:{args.port}/docs")
-    if host not in {"127.0.0.1", "::1", "localhost"}:
-        _print_styled(
-            "This is bound beyond loopback, so anyone who can reach this address can read your sessions, "
-            "including file contents and command output. Use --token, and prefer a private network such as "
-            "Tailscale or a temporary tunnel over exposing the port directly.",
-            style="warning",
-            stderr=True,
-        )
-    elif not args.token:
-        print("  Loopback only. Add --token before exposing this through a tunnel.")
-
-    from kolega_code.web.hosting import WS_IMPL
-
-    uvicorn.run(app, host=host, port=args.port, log_level="warning", ws=WS_IMPL)
-    return 0
-
-
 async def _run_share(args: argparse.Namespace) -> int:
     """Export a session as a static replay bundle."""
     from kolega_code.cli.session_event_store import FileArtifactStore, FileSessionEventStore
@@ -1197,7 +1152,11 @@ async def _run_share(args: argparse.Namespace) -> int:
         )
         return 1
 
-    destination = args.out or Path.cwd() / f"{record.session_id}-replay"
+    # One HTML file unless a directory was asked for, because the common case is
+    # sending a replay to someone and a folder cannot be opened by double-click.
+    as_directory = args.dir or args.zip
+    default_name = f"{record.session_id}-replay" + ("" if as_directory else ".html")
+    destination = args.out or Path.cwd() / default_name
     settings = SettingsStore().load()
     result = await export_bundle(
         events,
@@ -1207,13 +1166,18 @@ async def _run_share(args: argparse.Namespace) -> int:
         theme_slug=args.theme or textual_theme_name(settings.active_theme),
         artifact_store=FileArtifactStore(journal),
         as_zip=args.zip,
+        single_file=not as_directory,
     )
 
-    _print_styled(f"Wrote replay bundle to {result.path}", style="success")
+    _print_styled(f"Wrote replay to {result.path}", style="success")
     for line in result.report.summary_lines():
         print(f"  {line}")
-    if not args.zip:
-        print(f"\nOpen {result.path / 'index.html'} in a browser, or serve the directory over HTTP.")
+    if result.single_file:
+        size_mb = result.path.stat().st_size / (1024 * 1024)
+        print(f"\nOne file, {size_mb:.1f} MB. Open it in a browser, or send it to someone and they can too.")
+    elif not args.zip:
+        print(f"\nServe {result.path} over HTTP. Opening index.html directly will not work — browsers block")
+        print("module scripts on file:// URLs. Drop --dir for a single file that does open by double-click.")
     return 0
 
 

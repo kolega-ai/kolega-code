@@ -95,7 +95,7 @@ command output.
 
 To let someone watch from outside your network, leave the share on loopback and
 forward the port through a tunnel you control. There is no built-in relay. See
-[Sharing beyond your machine](/cli/serve/#sharing-beyond-your-machine) for verified
+[Letting someone off your machine watch](/cli/share/#letting-someone-off-your-machine-watch) for verified
 Tailscale, ngrok, and SSH recipes, and for how to turn the link `/share` gave you
 into the one you send.
 

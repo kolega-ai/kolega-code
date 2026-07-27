@@ -23,6 +23,13 @@
  *    scrub back to look at something without being yanked forward again, and
  *    returns with the LIVE button. A static bundle has no stream key, which is
  *    what makes an exported replay strictly a replay.
+ *
+ * 4. **The same player also runs from a single inlined file.** A folder of ten
+ *    files cannot be opened from `file://` — browsers block module imports and
+ *    `fetch` on that origin, so a recipient who double-clicks gets a blank page.
+ *    `share export` therefore embeds the assets, manifest and gzipped events in
+ *    one HTML document. When `globalThis.__KC_REPLAY__` is present the player
+ *    reads it instead of fetching, so there is one player rather than two.
  */
 
 import { emptyState, fold } from "./fold.js";
@@ -80,8 +87,11 @@ let spinnerTick = 0;
 async function main() {
   cacheDom();
   try {
-    manifest = await fetchJson("manifest.json");
-    events = await fetchEvents("events.jsonl");
+    // A single-file export injects everything ahead of this script; a served
+    // player or a directory bundle fetches it alongside.
+    const inlined = globalThis.__KC_REPLAY__;
+    manifest = inlined ? inlined.manifest : await fetchJson("manifest.json");
+    events = inlined ? await decodeInlinedEvents(inlined.events) : await fetchEvents("events.jsonl");
   } catch (error) {
     showError(
       `Could not load this recording: ${error.message}. ` +
@@ -148,11 +158,32 @@ async function fetchJson(path) {
 async function fetchEvents(path) {
   const response = await fetch(path);
   if (!response.ok) throw new Error(`${path} returned ${response.status}`);
-  const text = await response.text();
+  return parseEventLines(await response.text());
+}
+
+function parseEventLines(text) {
   return text
     .split("\n")
     .filter((line) => line.trim().length > 0)
     .map((line) => JSON.parse(line));
+}
+
+/**
+ * Decode the events embedded in a single-file export.
+ *
+ * They are gzipped before base64 because the log is the bulk of the document and
+ * compresses about eight-fold, which is the difference between a file you can
+ * email and one you cannot.
+ */
+async function decodeInlinedEvents(payload) {
+  if (Array.isArray(payload)) return payload;
+  const binary = atob(payload);
+  const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  if (typeof DecompressionStream !== "function") {
+    throw new Error("this browser cannot decompress an embedded recording (needs DecompressionStream)");
+  }
+  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
+  return parseEventLines(await new Response(stream).text());
 }
 
 function showError(message) {
@@ -689,13 +720,45 @@ function renderToolBody(item) {
     wrapper.append(renderDiff(String(preview.diff)));
   }
   for (const ref of item.artifacts || []) {
-    const badge = document.createElement("span");
-    badge.className = "kc-artifact";
-    const size = ref.chars ? `${ref.chars.toLocaleString()} chars` : `${ref.bytes} bytes`;
-    badge.textContent = `artifact · ${size}`;
-    wrapper.append(badge);
+    wrapper.append(renderArtifact(ref));
   }
   return wrapper;
+}
+
+/**
+ * Where an artifact's bytes can be read from, or null if they are not reachable.
+ *
+ * A single-file export carries them inline. A directory bundle writes them to
+ * `artifacts/<sha256>` beside the player. The served player has no such path, so
+ * it keeps the text badge rather than drawing a broken image.
+ */
+function artifactSource(ref) {
+  const inlined = globalThis.__KC_REPLAY__;
+  if (inlined && inlined.artifacts && inlined.artifacts[ref.sha256]) {
+    return inlined.artifacts[ref.sha256];
+  }
+  // A single-file export has no sibling files, so an artifact missing from the
+  // inline map above is simply unreachable — never a relative path that 404s.
+  if (manifest.artifacts_inline) return null;
+  if (!manifest.stream && manifest.artifact_count) return `artifacts/${ref.sha256}`;
+  return null;
+}
+
+function renderArtifact(ref) {
+  const source = artifactSource(ref);
+  if (source && String(ref.media_type || "").startsWith("image/")) {
+    const image = document.createElement("img");
+    image.className = "kc-artifact-image";
+    image.src = source;
+    image.alt = "Image captured during this session";
+    image.loading = "lazy";
+    return image;
+  }
+  const badge = document.createElement("span");
+  badge.className = "kc-artifact";
+  const size = ref.chars ? `${ref.chars.toLocaleString()} chars` : `${ref.bytes} bytes`;
+  badge.textContent = `artifact · ${size}`;
+  return badge;
 }
 
 function renderDiff(diff) {

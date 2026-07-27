@@ -293,6 +293,18 @@ body::after {
   padding: 0.05rem 0.4rem;
 }
 
+/* Screenshots are usually far wider than the transcript column, so they are
+   bounded rather than allowed to set the layout's width. */
+.kc-artifact-image {
+  display: block;
+  margin-top: 0.4rem;
+  max-width: 100%;
+  max-height: 26rem;
+  border: 1px solid var(--kc-hairline-strong);
+  border-radius: 4px;
+  object-fit: contain;
+}
+
 .kc-spinner {
   color: var(--kc-accent);
   display: inline-block;
