@@ -47,6 +47,8 @@ let playing = false;
 let speedIndex = 0;
 let lastFrame = 0;
 let renderedCount = 0;
+/** Per-index snapshot of the mutable fields renderEntry draws, for change detection. */
+let renderedEntries = [];
 let spinnerTick = 0;
 
 // ---------------------------------------------------------------- bootstrap ---
@@ -157,6 +159,7 @@ function applyCount(target) {
     state = emptyState();
     appliedCount = 0;
     renderedCount = 0;
+    renderedEntries = [];
     dom.transcript.replaceChildren();
   }
   for (let index = appliedCount; index < target; index += 1) {
@@ -329,21 +332,58 @@ function render() {
   syncTransport();
 }
 
+/**
+ * Snapshot the fields renderEntry draws that the fold can still mutate.
+ *
+ * Every fold mutation installs a fresh value or reference (`text` is rebuilt by
+ * concatenation, `artifacts` and the edit preview are reassigned), so comparing
+ * a snapshot is exact and costs a handful of identity checks per entry.
+ */
+function entrySnapshot(item) {
+  return {
+    text: item.text,
+    complete: item.complete,
+    status: item.status,
+    toolName: item.tool_name || item.toolName,
+    artifacts: item.artifacts,
+    preview: item.editPreview || item.edit_preview,
+  };
+}
+
+function entryChanged(previous, item) {
+  return (
+    previous === undefined ||
+    previous.text !== item.text ||
+    previous.complete !== item.complete ||
+    previous.status !== item.status ||
+    previous.toolName !== (item.tool_name || item.toolName) ||
+    previous.artifacts !== item.artifacts ||
+    previous.preview !== (item.editPreview || item.edit_preview)
+  );
+}
+
 function renderTranscript() {
-  // Existing entries are stable; only the newest can still be growing, so
-  // re-render just that one and append whatever is new.
+  // An entry that is no longer the newest can still change. Streaming segments
+  // are keyed by uuid, so reasoning keeps accumulating after the assistant prose
+  // that interrupted it was appended — every turn interleaves them — and a tool
+  // entry resolves long after later entries exist. Re-rendering only the newest
+  // entry left those frozen mid-stream, spinner and all.
   const items = state.conversation;
   if (renderedCount > items.length) {
     dom.transcript.replaceChildren();
     renderedCount = 0;
+    renderedEntries = [];
   }
-  if (renderedCount > 0) {
-    const lastIndex = renderedCount - 1;
-    const replacement = renderEntry(items[lastIndex]);
-    dom.transcript.children[lastIndex]?.replaceWith(replacement);
+  for (let index = 0; index < renderedCount; index += 1) {
+    const item = items[index];
+    if (!entryChanged(renderedEntries[index], item)) continue;
+    dom.transcript.children[index]?.replaceWith(renderEntry(item));
+    renderedEntries[index] = entrySnapshot(item);
   }
   for (let index = renderedCount; index < items.length; index += 1) {
-    dom.transcript.append(renderEntry(items[index]));
+    const item = items[index];
+    dom.transcript.append(renderEntry(item));
+    renderedEntries[index] = entrySnapshot(item);
   }
   renderedCount = items.length;
   const atEnd = dom.transcript.parentElement;

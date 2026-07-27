@@ -156,6 +156,15 @@ def _fixture_events() -> list[AgentEvent]:
         ),
         _event(KnownEventType.STREAM_TRUNCATED, 25, elapsed_ms=800, reason="retention_limit"),
         _event(KnownEventType.TURN_ENDED, 26, elapsed_ms=900, turn_id="t1", status="completed"),
+        # A turn whose reasoning and prose interleave. Segments are keyed by uuid,
+        # so each stays open across the other's deltas; a fold that keyed on
+        # recency instead would agree on the turn above and diverge here.
+        _event(KnownEventType.TURN_STARTED, 27, elapsed_ms=1000, turn_id="t2", user_text="again"),
+        _event(KnownEventType.THINKING_DELTA, 28, elapsed_ms=1010, uuid="th2", text="Weighing ", complete=False),
+        _event(KnownEventType.ASSISTANT_DELTA, 29, elapsed_ms=1020, uuid="as2", text="Doing ", complete=False),
+        _event(KnownEventType.THINKING_DELTA, 30, elapsed_ms=1030, uuid="th2", text="the options.", complete=True),
+        _event(KnownEventType.ASSISTANT_DELTA, 31, elapsed_ms=1040, uuid="as2", text="it now.", complete=True),
+        _event(KnownEventType.TURN_ENDED, 32, elapsed_ms=1050, turn_id="t2", status="completed"),
     ]
 
 
@@ -198,7 +207,7 @@ def test_folds_agree_at_every_prefix(tmp_path: Path) -> None:
     """Seeking must agree too, not just the final state."""
     events = _fixture_events()
     serialized = [event.model_dump(mode="json") for event in events]
-    for cut in (1, 5, 11, 18, 22, len(events)):
+    for cut in (1, 5, 11, 18, 22, 30, len(events)):
         expected = replay(events[:cut]).to_dict()
         actual = _run_js_fold(serialized[:cut], tmp_path)
         assert actual == expected, f"folds diverged after {cut} events"
