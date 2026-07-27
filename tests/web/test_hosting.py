@@ -16,7 +16,7 @@ import pytest
 
 from kolega_code.cli.session_store import SessionStore
 from kolega_code.web import hosting
-from kolega_code.web.hosting import ALL_INTERFACES, LOOPBACK, ShareServer, ShareServerError
+from kolega_code.web.hosting import ALL_INTERFACES, LOCAL_NETWORK, LOOPBACK, ShareServer, ShareServerError
 
 
 @pytest.fixture
@@ -211,3 +211,19 @@ async def test_asking_for_all_interfaces_is_a_request_not_an_address(
         assert handle.host == LOOPBACK
     finally:
         await server.stop()
+
+
+@pytest.mark.asyncio
+async def test_the_wildcard_is_no_longer_a_way_to_ask_for_reach(store: SessionStore) -> None:
+    """The reach request is a request, not an address.
+
+    It used to be the wildcard itself, which both misdescribed the behaviour and
+    left a literal that any caller could route straight to bind().
+    """
+    assert "0.0.0.0" not in {LOCAL_NETWORK, ALL_INTERFACES}
+    assert ALL_INTERFACES == LOCAL_NETWORK, "the exported name has to keep working"
+
+    with pytest.raises(ShareServerError) as refused:
+        await ShareServer(store, bind="0.0.0.0").start()
+
+    assert "LOCAL_NETWORK" in str(refused.value), "the refusal should name the right way to ask"

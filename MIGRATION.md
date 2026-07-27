@@ -206,17 +206,26 @@ running UI hand out a link without a second terminal. It binds a port the OS
 picks, always mints an access token, and leaves the host's signal handlers alone.
 
 ```python
-server = ShareServer(store, session_id=session_id)   # bind=ALL_INTERFACES to reach a LAN
+server = ShareServer(store, session_id=session_id)   # bind=LOCAL_NETWORK to reach a LAN
 await server.start()
 link = server.session_url(session_id)                # carries ?token=...
 await server.stop()                                  # request_stop() from sync teardown
 ```
 
-`ALL_INTERFACES` is a request for "reachable on this machine's local network",
-not the address bound. It resolves to the single local-network address the link
-advertises, so a session is not also served on every other interface the host
-happens to have — a VPN, a tether, a cloud NIC. With no such address, `start()`
-raises rather than falling back to the wildcard.
+**`ALL_INTERFACES` is now `LOCAL_NETWORK`, and it is a request rather than an
+address.** The old name still resolves to the same value, so `bind=ALL_INTERFACES`
+keeps working; what changed is the value and the behaviour. It used to be
+`"0.0.0.0"` and bound the wildcard, which listens on every interface the host
+happens to have — a VPN, a tether, a cloud NIC — while the link advertised only
+one of them. It now resolves to that single local-network address, so what is
+bound is what is advertised.
+
+Two consequences for a host:
+
+- Passing the literal `"0.0.0.0"` is refused with an error naming `LOCAL_NETWORK`.
+  Bind a specific address if you need one.
+- When no local-network address can be determined, `start()` raises instead of
+  falling back to the wildcard.
 
 **Pass `session_id` for anything you hand to another person.** The token gates
 routes, not sessions. Without a scope, the link you gave one person reads every

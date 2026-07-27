@@ -44,14 +44,16 @@ _STARTUP_TIMEOUT_S = 10.0
 _STARTUP_POLL_S = 0.02
 
 LOOPBACK = "127.0.0.1"
-#: Ask for a bind that other machines on this network can reach.
+#: Ask to be reachable by other machines on this network.
 #:
-#: A request, not the address finally bound. Binding the wildcard would listen on
-#: every interface the machine happens to have — a VPN, a tether, a cloud NIC —
-#: which is more than "reachable on your local network" promises and more than
-#: the link handed out advertises. ``_resolve_bind_host`` turns this into the
-#: single local-network address that link points at.
-ALL_INTERFACES = "0.0.0.0"
+#: A request for reach, deliberately not an address. It used to be the wildcard,
+#: which was both misleading and more exposure than it promised: the wildcard
+#: listens on every interface the machine happens to have — a VPN, a tether, a
+#: cloud NIC — while the link handed out advertises exactly one.
+#: ``_resolve_bind_host`` turns this into that one address.
+LOCAL_NETWORK = "local-network"
+#: The name this request has always been exported under.
+ALL_INTERFACES = LOCAL_NETWORK
 #: The port both ``kolega-code serve`` and ``/share`` use unless told otherwise.
 #: Sharing through a tunnel means forwarding a port, and a forwarding rule is
 #: worth writing down only if the port is the same next time.
@@ -112,8 +114,8 @@ def _specific_address(host: str) -> str:
         return host
     if parsed.is_unspecified:
         raise ShareServerError(
-            f"refusing to bind {host}, which listens on every interface. Bind the loopback "
-            "address, or pass ALL_INTERFACES to be reachable on your local network."
+            f"refusing to bind {host}, which listens on every interface. Bind a specific "
+            "address, or pass LOCAL_NETWORK to be reachable on your local network."
         )
     return host
 
@@ -153,11 +155,10 @@ class ShareServer:
         session_id: Optional[str] = None,
     ) -> None:
         self._store = store
-        # The wildcard is a request for reach, and it is turned into one here
-        # rather than carried around as an address. Nothing downstream can then
-        # pass it to bind() by accident, and a reader does not have to trace a
-        # guard to see that the server never listens on every interface.
-        self._expose_on_lan = bind == ALL_INTERFACES
+        # Reach is resolved to an address at start, so nothing downstream can
+        # pass a request to bind() by accident and a reader does not have to
+        # trace a guard to see the server never listens on every interface.
+        self._expose_on_lan = bind == LOCAL_NETWORK
         self._bind = LOOPBACK if self._expose_on_lan else bind
         self._requested_port = port
         self._token = token or secrets.token_urlsafe(16)
