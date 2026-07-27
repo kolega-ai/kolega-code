@@ -3,7 +3,14 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from kolega_code.cli.tui.session_diff import GitSessionDiffTracker
+
+
+# These tests name the initial branch, merge it, and rebase onto it, so they must
+# not inherit whatever the developer's ~/.gitconfig says about git's behaviour.
+pytestmark = pytest.mark.usefixtures("hermetic_git_config")
 
 
 def _git(project: Path, *args: str) -> None:
@@ -11,7 +18,9 @@ def _git(project: Path, *args: str) -> None:
 
 
 def _init_repo(project: Path) -> None:
-    _git(project, "init")
+    # Pin the initial branch: without a global init.defaultBranch (as on CI) git
+    # would name it "master" and every reference to "main" below would fail.
+    _git(project, "init", "-b", "main")
     _git(project, "config", "user.email", "test@example.com")
     _git(project, "config", "user.name", "Test User")
 
@@ -19,6 +28,18 @@ def _init_repo(project: Path) -> None:
 def _commit_all(project: Path, message: str = "initial") -> None:
     _git(project, "add", ".")
     _git(project, "commit", "-m", message)
+
+
+def _add_worktree(project: Path, name: str, branch: str, *, ignore: bool = True) -> Path:
+    """Create a linked worktree under ``.kolega/worktrees/<name>`` and return its root."""
+    if ignore:
+        exclude = project / ".git" / "info" / "exclude"
+        exclude.parent.mkdir(parents=True, exist_ok=True)
+        with exclude.open("a", encoding="utf-8") as handle:
+            handle.write("/.kolega/worktrees/\n")
+    relative = f".kolega/worktrees/{name}"
+    _git(project, "worktree", "add", "-b", branch, relative)
+    return project / relative
 
 
 def _by_path(changes):
@@ -307,3 +328,283 @@ def test_non_git_create_returns_none(tmp_path: Path) -> None:
     project.mkdir()
 
     assert GitSessionDiffTracker.create(project) is None
+
+
+# ---- worktree and history scoping -------------------------------------------
+#
+# Several Kolega Code instances routinely work in sibling worktrees of one
+# repository. Whatever another instance committed must never be attributed to
+# this session: it would be shown as our change and, worse, a rewind would
+# revert it. Only commits created in this worktree during this session count.
+
+
+def _repo_with_sibling_work(tmp_path: Path) -> tuple[Path, Path]:
+    """A repo whose `feat-b` branch holds another agent's committed work.
+
+    Returns (main checkout, worktree tracked by this session).
+    """
+    project = tmp_path / "repo"
+    project.mkdir()
+    _init_repo(project)
+    (project / "shared.txt").write_text("base\n", encoding="utf-8")
+    _commit_all(project)
+
+    worktree_b = _add_worktree(project, "b", "feat-b")
+    (worktree_b / "b_only.py").write_text("b\n", encoding="utf-8")
+    (worktree_b / "shared.txt").write_text("base\nfrom b\n", encoding="utf-8")
+    _commit_all(worktree_b, "b work")
+
+    worktree_a = _add_worktree(project, "a", "feat-a", ignore=False)
+    return project, worktree_a
+
+
+def test_merged_branch_files_are_not_session_changes(tmp_path: Path) -> None:
+    project, worktree_a = _repo_with_sibling_work(tmp_path)
+    tracker = GitSessionDiffTracker.create(worktree_a)
+    assert tracker is not None
+    tracker.capture_baseline()
+
+    (worktree_a / "a_only.py").write_text("a\n", encoding="utf-8")
+    _commit_all(worktree_a, "a work")
+    _git(project, "merge", "--no-edit", "feat-b")
+    _git(worktree_a, "merge", "--no-edit", "main")
+
+    changes = _by_path(tracker.refresh())
+
+    assert "a_only.py" in changes  # our own committed work stays visible
+    assert "b_only.py" not in changes  # the other agent's file must not appear
+    assert "shared.txt" not in changes  # nor their edit to a shared file
+    assert tracker.scope().history_moved is True
+
+
+def test_fast_forward_merge_brings_no_session_changes(tmp_path: Path) -> None:
+    project, worktree_a = _repo_with_sibling_work(tmp_path)
+    tracker = GitSessionDiffTracker.create(worktree_a)
+    assert tracker is not None
+    tracker.capture_baseline()
+
+    # This session changed nothing; it only brought the branch up to date.
+    _git(project, "merge", "--no-edit", "feat-b")
+    _git(worktree_a, "merge", "--no-edit", "main")
+
+    assert tracker.refresh() == []
+    assert tracker.scope().history_moved is True
+
+
+def test_rebase_onto_updated_base_keeps_only_own_commits(tmp_path: Path) -> None:
+    project, worktree_a = _repo_with_sibling_work(tmp_path)
+    tracker = GitSessionDiffTracker.create(worktree_a)
+    assert tracker is not None
+    tracker.capture_baseline()
+
+    (worktree_a / "a_only.py").write_text("a\n", encoding="utf-8")
+    _commit_all(worktree_a, "a work")
+    _git(project, "merge", "--no-edit", "feat-b")
+    _git(worktree_a, "rebase", "main")
+
+    changes = _by_path(tracker.refresh())
+
+    assert set(changes) == {"a_only.py"}
+
+
+def test_conflicted_merge_reports_only_resolved_files(tmp_path: Path) -> None:
+    project, worktree_a = _repo_with_sibling_work(tmp_path)
+    tracker = GitSessionDiffTracker.create(worktree_a)
+    assert tracker is not None
+    tracker.capture_baseline()
+
+    (worktree_a / "shared.txt").write_text("base\nfrom a\n", encoding="utf-8")
+    _commit_all(worktree_a, "a work")
+    _git(project, "merge", "--no-edit", "feat-b")
+    conflict = subprocess.run(
+        ["git", "merge", "--no-edit", "main"],
+        cwd=worktree_a,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    assert conflict.returncode != 0  # the merge really did conflict
+    (worktree_a / "shared.txt").write_text("base\nfrom a\nfrom b\n", encoding="utf-8")
+    _commit_all(worktree_a, "resolve")
+
+    changes = _by_path(tracker.refresh())
+
+    # The conflict resolution was authored here; b_only.py merely arrived.
+    assert set(changes) == {"shared.txt"}
+
+
+def test_restore_plan_excludes_merged_in_files(tmp_path: Path) -> None:
+    project, worktree_a = _repo_with_sibling_work(tmp_path)
+    tracker = GitSessionDiffTracker.create(worktree_a)
+    assert tracker is not None
+    tracker.capture_baseline()
+
+    (worktree_a / "a_only.py").write_text("a\n", encoding="utf-8")
+    _commit_all(worktree_a, "a work")
+    _git(project, "merge", "--no-edit", "feat-b")
+    _git(worktree_a, "merge", "--no-edit", "main")
+
+    plan = tracker.build_restore_plan()
+
+    # A rewind must never delete or revert another agent's committed work.
+    assert {item.display_path for item in plan} == {"a_only.py"}
+
+
+def test_amend_and_cherry_pick_stay_visible(tmp_path: Path) -> None:
+    project = tmp_path / "repo"
+    project.mkdir()
+    _init_repo(project)
+    (project / "base.txt").write_text("base\n", encoding="utf-8")
+    _commit_all(project)
+    # A commit on a side branch that this session will cherry-pick.
+    _git(project, "checkout", "-q", "-b", "side")
+    (project / "picked.py").write_text("picked\n", encoding="utf-8")
+    _commit_all(project, "side work")
+    _git(project, "checkout", "-q", "-")
+
+    tracker = GitSessionDiffTracker.create(project)
+    assert tracker is not None
+    tracker.capture_baseline()
+
+    (project / "amended.py").write_text("one\n", encoding="utf-8")
+    _commit_all(project, "amend me")
+    (project / "amended.py").write_text("one\ntwo\n", encoding="utf-8")
+    _git(project, "add", ".")
+    _git(project, "commit", "--amend", "--no-edit")
+    _git(project, "cherry-pick", "side")
+
+    changes = _by_path(tracker.refresh())
+
+    assert set(changes) == {"amended.py", "picked.py"}
+    assert changes["amended.py"].adds == 2
+
+
+def test_initial_commit_mid_session_is_visible(tmp_path: Path) -> None:
+    project = tmp_path / "repo"
+    project.mkdir()
+    _init_repo(project)
+
+    tracker = GitSessionDiffTracker.create(project)
+    assert tracker is not None
+    tracker.capture_baseline()
+
+    (project / "first.py").write_text("first\n", encoding="utf-8")
+    _commit_all(project, "initial commit")
+
+    changes = _by_path(tracker.refresh())
+
+    assert set(changes) == {"first.py"}
+    # Regression guard: `git diff-tree --root` without --no-commit-id emits the
+    # commit sha as a bogus path.
+    assert not any(len(path) == 40 and all(c in "0123456789abcdef" for c in path) for path in changes)
+
+
+def test_git_dir_env_does_not_retarget_tracker(tmp_path: Path, monkeypatch) -> None:
+    project = tmp_path / "repo"
+    project.mkdir()
+    _init_repo(project)
+    (project / "shared.txt").write_text("base\n", encoding="utf-8")
+    _commit_all(project)
+    worktree_a = _add_worktree(project, "a", "feat-a")
+
+    # An exported GIT_DIR/GIT_WORK_TREE makes git ignore the working directory.
+    monkeypatch.setenv("GIT_DIR", str(project / ".git"))
+    monkeypatch.setenv("GIT_WORK_TREE", str(project))
+
+    tracker = GitSessionDiffTracker.create(worktree_a)
+    assert tracker is not None
+    assert tracker.git_root == worktree_a.resolve()
+    tracker.capture_baseline()
+
+    (project / "main_only.py").write_text("main\n", encoding="utf-8")
+    (worktree_a / "a_only.py").write_text("a\n", encoding="utf-8")
+
+    assert set(_by_path(tracker.refresh())) == {"a_only.py"}
+
+
+def test_sibling_worktree_paths_are_never_candidates(tmp_path: Path) -> None:
+    project = tmp_path / "repo"
+    project.mkdir()
+    _init_repo(project)
+    (project / "shared.txt").write_text("base\n", encoding="utf-8")
+    _commit_all(project)
+    # No exclude rule: the nested worktree is visible to the parent's git status.
+    worktree_b = _add_worktree(project, "b", "feat-b", ignore=False)
+
+    tracker = GitSessionDiffTracker.create(project)
+    assert tracker is not None
+    tracker.capture_baseline()
+
+    (worktree_b / "b_only.py").write_text("b\n", encoding="utf-8")
+    (worktree_b / "shared.txt").write_text("base\nfrom b\n", encoding="utf-8")
+    (project / "mine.py").write_text("mine\n", encoding="utf-8")
+
+    changes = _by_path(tracker.refresh(event_paths=[".kolega/worktrees/b/b_only.py"]))
+
+    assert set(changes) == {"mine.py"}
+
+
+def test_scope_reports_worktree_branch_and_history(tmp_path: Path) -> None:
+    project = tmp_path / "repo"
+    project.mkdir()
+    _init_repo(project)
+    (project / "shared.txt").write_text("base\n", encoding="utf-8")
+    _commit_all(project)
+    worktree_a = _add_worktree(project, "a", "feat-a")
+
+    main_tracker = GitSessionDiffTracker.create(project)
+    assert main_tracker is not None
+    main_tracker.capture_baseline()
+    main_scope = main_tracker.scope()
+
+    assert main_scope.linked_worktree is False
+    assert main_scope.root_label == ""
+    assert main_scope.branch == "main"
+    assert main_scope.history_moved is False
+    assert main_scope.history_tracked is True
+
+    tracker = GitSessionDiffTracker.create(worktree_a)
+    assert tracker is not None
+    tracker.capture_baseline()
+    scope = tracker.scope()
+
+    assert scope.linked_worktree is True
+    assert scope.root_label == "a"
+    assert scope.branch == "feat-a"
+    assert scope.root_path == str(worktree_a.resolve())
+    assert scope.history_moved is False
+
+    # A plain commit is our own work, so the history did not "move".
+    (worktree_a / "a_only.py").write_text("a\n", encoding="utf-8")
+    _commit_all(worktree_a, "a work")
+    assert tracker.scope().history_moved is False
+
+    # Checking out somebody else's commit did not come from this session.
+    (project / "foreign.py").write_text("foreign\n", encoding="utf-8")
+    _commit_all(project, "foreign work")
+    _git(worktree_a, "checkout", "-q", "--detach", "main")
+    scope = tracker.scope()
+
+    assert scope.history_moved is True
+    assert scope.branch.startswith("detached at ")
+    assert "foreign.py" not in _by_path(tracker.refresh())
+
+
+def test_returning_head_to_the_baseline_hides_nothing(tmp_path: Path) -> None:
+    project = tmp_path / "repo"
+    project.mkdir()
+    _init_repo(project)
+    (project / "shared.txt").write_text("base\n", encoding="utf-8")
+    _commit_all(project)
+
+    tracker = GitSessionDiffTracker.create(project)
+    assert tracker is not None
+    tracker.capture_baseline()
+
+    (project / "scratch.py").write_text("scratch\n", encoding="utf-8")
+    _commit_all(project, "work")
+    _git(project, "reset", "--hard", "HEAD~1")
+
+    # HEAD and the tree are back at the baseline, so nothing is omitted and the
+    # UI must not claim otherwise.
+    assert tracker.refresh() == []
+    assert tracker.scope().history_moved is False

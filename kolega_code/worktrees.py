@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import subprocess
+from dataclasses import dataclass
 from pathlib import Path
+from subprocess import run as run_subprocess
 
 from filelock import FileLock, Timeout
 
+from kolega_code.git_env import git_env
 from kolega_code.memory.identity import resolve_git_common_dir
 
 WORKTREE_RELATIVE_DIR = Path(".kolega") / "worktrees"
@@ -13,6 +17,7 @@ WORKTREE_EXCLUDE_RULE = "/.kolega/worktrees/"
 
 _EXCLUDE_MARKER = "# kolega-code-runtime"
 _LOCK_TIMEOUT_SECONDS = 3
+_LIST_TIMEOUT_SECONDS = 5
 
 
 def ensure_worktree_dir_ignored(project_path: Path | str) -> bool:
@@ -61,3 +66,67 @@ def ensure_worktree_dir_ignored(project_path: Path | str) -> bool:
             return True
     except (OSError, Timeout):
         return False
+
+
+@dataclass(frozen=True)
+class WorktreeInfo:
+    """One checkout registered with ``git worktree``."""
+
+    path: Path  # absolute, resolved
+    branch: str  # short branch name, "" when detached
+    head: str  # commit sha, "" when unborn
+
+
+def list_worktrees(cwd: Path | str) -> list[WorktreeInfo]:
+    """Return every worktree of the repository containing ``cwd``, main checkout first.
+
+    Returns an empty list when ``cwd`` is not a Git repository or Git cannot be
+    run; callers treat the empty list as "no sibling worktrees are known".
+    """
+    try:
+        completed = run_subprocess(
+            ["git", "worktree", "list", "--porcelain"],
+            cwd=str(cwd),
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=_LIST_TIMEOUT_SECONDS,
+            env=git_env(),
+        )
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return []
+    if completed.returncode:
+        return []
+    return _parse_worktree_porcelain(completed.stdout)
+
+
+def _parse_worktree_porcelain(output: str) -> list[WorktreeInfo]:
+    """Parse ``git worktree list --porcelain`` blocks separated by blank lines."""
+    worktrees: list[WorktreeInfo] = []
+    path = ""
+    branch = ""
+    head = ""
+
+    def flush() -> None:
+        nonlocal path, branch, head
+        if path:
+            worktrees.append(
+                WorktreeInfo(path=Path(path).resolve(strict=False), branch=branch, head=head),
+            )
+        path, branch, head = "", "", ""
+
+    for raw_line in output.splitlines():
+        line = raw_line.rstrip("\n")
+        if not line.strip():
+            flush()
+            continue
+        key, _, value = line.partition(" ")
+        if key == "worktree":
+            flush()
+            path = value
+        elif key == "HEAD":
+            head = value
+        elif key == "branch":
+            branch = value.removeprefix("refs/heads/")
+    flush()
+    return worktrees

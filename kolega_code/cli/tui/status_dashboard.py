@@ -84,6 +84,10 @@ class StatusDashboardMixin(tui_app_base.KolegaAppBase):
             f"{label('Turn')} [{turn_style}]{theme.g(Glyph.STATUS)}[/{turn_style}] "
             f"[bold]{escape(state.turn_state.value)}[/bold]"
         )
+        worktree_line = ""
+        worktree = self._worktree_summary()
+        if worktree:
+            worktree_line = f"{label(messages.STATUS_WORKTREE_LABEL)} [bold]{escape(worktree)}[/bold]\n"
         return (
             f"{label('Model')}\n[bold]{escape(provider_model)}[/bold]\n\n"
             f"{label('Thinking effort')} [bold]{escape(effort)}[/bold]\n"
@@ -91,12 +95,25 @@ class StatusDashboardMixin(tui_app_base.KolegaAppBase):
             f"{label('Permissions')} [bold]{permission_mode}[/bold]\n"
             f"{label('Gigacode')} [bold]{gigacode}[/bold]\n"
             f"{goal_line}"
+            f"{worktree_line}"
             f"{turn_line}\n\n"
             f"{label('Context')}\n"
             f"{context_lines}\n\n"
             f"{label('Activity')}\n"
             f"{escape(messages.DISCONNECTED_ACTIVITY if disconnected else state.activity)}"
         )
+
+    def _worktree_summary(self) -> str:
+        """``name (branch)`` when this session runs in a linked worktree, else "".
+
+        Several instances working in sibling worktrees are otherwise
+        indistinguishable in the dashboard. Reads only the cached diff scope,
+        so it never shells out on the UI thread.
+        """
+        scope = self._session_diff_scope
+        if scope is None or not scope.linked_worktree or not scope.root_label:
+            return ""
+        return f"{scope.root_label} ({scope.branch})" if scope.branch else scope.root_label
 
     def _context_bar(self, usage_percentage: float) -> str:
         return theme.context_bar(usage_percentage)

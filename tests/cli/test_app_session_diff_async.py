@@ -11,6 +11,9 @@ from ._app_test_utils import _build_sub_agent_test_app, settle_changes_inspector
 from .test_app_changes_inspector import _file_edit_preview_event, _init_git_project
 
 
+pytestmark = pytest.mark.usefixtures("hermetic_git_config")
+
+
 def _terminal_output_event(text: str) -> AgentEvent:
     return AgentEvent(event_type="terminal_output", sender="coder", content={"output": text})
 
@@ -186,6 +189,53 @@ async def test_session_diff_refresh_exception_resets_running_and_can_retry(
         assert calls == 2
         assert {change.path for change in app._session_diff_files} == {"src/a.py"}
         assert app._session_diff_refresh_running is False
+
+
+@pytest.mark.asyncio
+async def test_diff_scope_is_resolved_off_the_ui_thread(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """scope() shells out to git, so it must never run on the event loop."""
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+    _init_git_project(app.project_path)
+    ui_thread = threading.get_ident()
+
+    async with app.run_test() as pilot:
+        tracker = app._session_diff_tracker
+        assert tracker is not None
+        original_scope = tracker.scope
+        scope_threads: list[int] = []
+
+        def scope(*, checkpoint_id=None):
+            scope_threads.append(threading.get_ident())
+            return original_scope(checkpoint_id=checkpoint_id)
+
+        monkeypatch.setattr(tracker, "scope", scope)
+
+        (app.project_path / "src" / "a.py").write_text("new a\n", encoding="utf-8")
+        app.action_open_changes()
+        await settle_changes_inspector(app, pilot)
+
+        assert scope_threads
+        assert ui_thread not in scope_threads
+        assert app._session_diff_scope is not None
+        assert app._session_diff_scope.branch == "main"
+
+
+@pytest.mark.asyncio
+async def test_startup_scope_probe_populates_scope_without_opening_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+    _init_git_project(app.project_path)
+
+    async with app.run_test() as pilot:
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline and app._session_diff_scope is None:
+            await pilot.pause(0.01)
+
+        assert app._changes_inspector is None
+        assert app._session_diff_scope is not None
+        assert app._session_diff_scope.branch == "main"
+        assert app._session_diff_scope.linked_worktree is False
 
 
 @pytest.mark.asyncio

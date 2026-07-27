@@ -316,7 +316,18 @@ class ChangesInspectorScreen(ModalScreen):
         except Exception:
             return
         sep = theme.g(Glyph.BULLET_SEP)
-        scope.update(f"Baseline: {self._owner._changes_baseline_label()}  {sep}  [ older  ] newer")
+        segments = [
+            segment
+            for segment in (
+                self._owner._changes_scope_label(),
+                f"Baseline: {self._owner._changes_baseline_label()}",
+                "[ older  ] newer",
+            )
+            if segment
+        ]
+        line = f"  {sep}  ".join(segments)
+        note = self._owner._changes_history_note()
+        scope.update(f"{line}\n{note}" if note else line)
 
     def _refresh_footer(self) -> None:
         try:
@@ -367,6 +378,7 @@ class ChangesInspectorScreen(ModalScreen):
             copy += messages.REWIND_CONFIRM_CONVERSATION
         else:
             copy += messages.REWIND_CONFIRM_FILES_ONLY
+        copy += self._history_moved_warning()
         self.app.push_screen(
             ConfirmSettingsActionScreen(
                 messages.REWIND_CONFIRM_TITLE, copy, messages.REWIND_CONFIRM_LABEL, danger=True
@@ -397,6 +409,7 @@ class ChangesInspectorScreen(ModalScreen):
         copy = messages.REWIND_FILE_CONFIRM_COPY.format(
             path=change.path, label=label, adds=change.adds, dels=change.dels
         )
+        copy += self._history_moved_warning()
         self.app.push_screen(
             ConfirmSettingsActionScreen(
                 messages.REWIND_FILE_CONFIRM_TITLE, copy, messages.REWIND_FILE_CONFIRM_LABEL, danger=True
@@ -431,8 +444,19 @@ class ChangesInspectorScreen(ModalScreen):
         except Exception:
             pass
 
+    def _history_moved_warning(self) -> str:
+        """Warn before a restore when outside commits landed since the baseline."""
+        scope = self._owner._session_diff_scope
+        if scope is None or not scope.history_moved:
+            return ""
+        return messages.REWIND_HISTORY_MOVED_WARNING
+
     def _changes_text(self, change: SessionDiffFile) -> str:
-        lines = [f"Changes for {change.path}", f"Status: {change.status}", ""]
+        scope_label = self._owner._changes_scope_label()
+        lines = [f"Changes for {change.path}"]
+        if scope_label:
+            lines.append(scope_label)
+        lines.extend([f"Status: {change.status}", ""])
         if change.message:
             lines.append(change.message)
             lines.append("")

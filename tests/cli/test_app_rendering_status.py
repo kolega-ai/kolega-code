@@ -418,3 +418,30 @@ async def test_repeated_progress_updates_refresh_status_once(tmp_path: Path, mon
         app._update_progress("Reading response", complete=False, state=TurnState.THINKING)
 
         assert refresh_count == 2
+
+
+@pytest.mark.asyncio
+async def test_status_dashboard_names_the_worktree_only_when_linked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sibling-worktree sessions are otherwise indistinguishable in the dashboard."""
+    pytest.importorskip("textual")
+
+    from kolega_code.cli import messages as cli_messages
+    from kolega_code.cli.tui.session_diff import DiffScope
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        # Unknown scope, and an ordinary single checkout, stay uncluttered.
+        app._session_diff_scope = None
+        assert cli_messages.STATUS_WORKTREE_LABEL not in app._format_status_dashboard()
+
+        app._session_diff_scope = DiffScope(branch="main")
+        assert cli_messages.STATUS_WORKTREE_LABEL not in app._format_status_dashboard()
+
+        app._session_diff_scope = DiffScope(root_label="a", branch="feat-a", linked_worktree=True)
+        dashboard = app._format_status_dashboard()
+
+        assert cli_messages.STATUS_WORKTREE_LABEL in dashboard
+        assert "a (feat-a)" in dashboard

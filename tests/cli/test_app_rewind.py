@@ -9,6 +9,9 @@ from ._app_test_utils import _build_sub_agent_test_app, settle_changes_inspector
 from .test_app_changes_inspector import _init_git_project
 
 
+pytestmark = pytest.mark.usefixtures("hermetic_git_config")
+
+
 def _record_turn(recorder, user_text: str) -> None:
     recorder.start_turn(Message(role="user", content=[TextBlock(user_text)]))
     recorder.record_assistant(Message(role="assistant", content=[TextBlock("done")], stop_reason="end_turn"))
@@ -126,6 +129,39 @@ async def test_rewind_worker_restores_files_and_conversation(tmp_path: Path, mon
         assert any(messages.REWOUND_MARKER.format(excerpt="turn two") in content for content in contents)
         composer = app.query_one("#composer")
         assert "turn two" in getattr(composer, "text", "")
+
+
+@pytest.mark.asyncio
+async def test_rewind_confirmation_warns_when_history_moved(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from kolega_code.cli.tui.session_diff import DiffScope
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+    _init_git_project(app.project_path)
+
+    async with app.run_test() as pilot:
+        (app.project_path / "src" / "a.py").write_text("edited\n", encoding="utf-8")
+        app.action_open_changes("src/a.py")
+        await settle_changes_inspector(app, pilot)
+        screen = app._changes_inspector
+        assert screen is not None
+
+        copies: list[str] = []
+        monkeypatch.setattr(app, "push_screen", lambda screen_, **kwargs: copies.append(screen_.action_copy))
+
+        # A quiet history must not scare the user.
+        app._session_diff_scope = DiffScope(branch="main")
+        screen.action_rewind()
+        screen.action_restore_file()
+        assert len(copies) == 2
+        assert all(messages.REWIND_HISTORY_MOVED_WARNING not in copy for copy in copies)
+
+        # Once outside commits landed, both confirmations must say so.
+        copies.clear()
+        app._session_diff_scope = DiffScope(branch="main", history_moved=True)
+        screen.action_rewind()
+        screen.action_restore_file()
+        assert len(copies) == 2
+        assert all(messages.REWIND_HISTORY_MOVED_WARNING in copy for copy in copies)
 
 
 @pytest.mark.asyncio

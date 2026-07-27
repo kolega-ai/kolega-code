@@ -1,11 +1,18 @@
 """Net session diff tracking and turn checkpoints for the CLI TUI Changes inspector.
 
 Two trackers share one currency (checkpoints, ``SessionDiffFile`` diffs, restore
-plans): ``GitSessionDiffTracker`` for git repos (sees every working-tree change,
-including shell-driven ones) and ``SnapshotLedgerDiffTracker`` for non-git
-projects (sees only edits recorded by the agent's snapshot service). The diff a
-checkpoint displays and the restore plan for that checkpoint are built from the
-same collected change records, so rewind always reverts exactly what is shown.
+plans): ``GitSessionDiffTracker`` for git repos (sees every working-tree change
+in the tracked worktree, including shell-driven ones) and
+``SnapshotLedgerDiffTracker`` for non-git projects (sees only edits recorded by
+the agent's snapshot service). The diff a checkpoint displays and the restore
+plan for that checkpoint are built from the same collected change records, so
+rewind always reverts exactly what is shown.
+
+Scope is per-worktree and per-session. Content that merely *arrived* in HEAD —
+merge second parents, fast-forwarded commits, rebase base moves, checkouts —
+belongs to whoever authored it (often another agent working in a sibling
+worktree), so it is neither shown nor restorable. See
+``GitSessionDiffTracker._session_committed_paths``.
 """
 
 from __future__ import annotations
@@ -16,10 +23,12 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
-from subprocess import DEVNULL, PIPE, run as subprocess_run
-from typing import TYPE_CHECKING, Iterable, Literal, Optional
+from subprocess import DEVNULL, PIPE, CompletedProcess, run as subprocess_run
+from typing import TYPE_CHECKING, Iterable, Literal, Optional, Sequence
 
 from kolega_code.agent.tool_backend.edit_preview import build_diff_preview
+from kolega_code.git_env import git_env
+from kolega_code.worktrees import list_worktrees
 
 if TYPE_CHECKING:
     from kolega_code.services.snapshots import FileState, SnapshotService
@@ -33,6 +42,33 @@ REWIND_MAX_CHECKPOINTS = 50
 # The Changes screen renders from the same collection, so a truncated view
 # still matches what a rewind would restore.
 MAX_COMMITTED_CANDIDATES = 500
+# HEAD reflog entries inspected per refresh when attributing commits.
+MAX_REFLOG_ENTRIES = 200
+
+# Reflog subjects for transitions that created a commit in this worktree. Git
+# writes these unlocalised, and anything unrecognised is treated as
+# non-attributable, so an unknown subject hides changes rather than leaking
+# another worktree's work.
+_COMMIT_REFLOG_KINDS = frozenset(
+    {
+        "commit",
+        "commit (initial)",
+        "commit (amend)",
+        "cherry-pick",
+        "revert",
+        "am",
+        "apply",
+        "rebase (pick)",
+        "rebase (reword)",
+        "rebase (squash)",
+        "rebase (fixup)",
+        "rebase (continue)",
+    }
+)
+# Reflog subjects for transitions that can bring in outside history. Only the
+# combined diff of a real merge commit (the conflict resolution authored here)
+# is attributed; a fast-forward contributes nothing.
+_MERGE_REFLOG_KINDS = frozenset({"merge", "pull", "commit (merge)", "rebase (merge)"})
 
 
 @dataclass
@@ -81,6 +117,28 @@ class ChangeRecord:
     baseline: FileBaseline
     sig: Optional[tuple[int, int]]
     diff: SessionDiffFile
+
+
+@dataclass(frozen=True)
+class _ReflogEntry:
+    """One HEAD reflog record for the tracked worktree."""
+
+    sha: str  # the commit HEAD moved to
+    parents: tuple[str, ...]
+    timestamp: int  # unix seconds, 0 when unparsable
+    subject: str  # reflog message, e.g. "commit: fix parser"
+
+
+@dataclass(frozen=True)
+class DiffScope:
+    """What the current diff view covers, for display and rewind warnings."""
+
+    root_label: str = ""  # "" for the main checkout, else the worktree directory name
+    root_path: str = ""  # absolute tracker root
+    branch: str = ""  # short branch name, "detached at <sha>", or ""
+    linked_worktree: bool = False
+    history_moved: bool = False  # a non-attributed HEAD move happened since the baseline
+    history_tracked: bool = True  # the HEAD reflog could be read
 
 
 @dataclass
@@ -230,6 +288,17 @@ class SessionDiffTrackerBase:
         if baseline is not None:
             return baseline
         return self._fallback_baseline(checkpoint, repo_path)
+
+    # ---- scope ---------------------------------------------------------------
+
+    def scope(self, *, checkpoint_id: Optional[int] = None) -> DiffScope:
+        """Describe what the diff covers. May shell out; call it off the UI thread."""
+        del checkpoint_id
+        return DiffScope(
+            root_label=self.project_path.name,
+            root_path=str(self.project_path),
+            history_tracked=False,
+        )
 
     # ---- restore -------------------------------------------------------------
 
@@ -419,7 +488,13 @@ class GitSessionDiffTracker(SessionDiffTrackerBase):
         super().__init__(project_path)
         self.git_root = git_root.resolve()
         self._commit_cache: dict[tuple[str, str], FileBaseline] = {}
-        self._committed_paths_cache: dict[tuple[str, str], set[str]] = {}
+        # (old_sha, new_sha) -> paths that transition changed. Immutable by
+        # construction, so entries never need invalidating.
+        self._transition_paths_cache: dict[tuple[str, str], frozenset[str]] = {}
+        # Recorded by the last _session_committed_paths walk, for scope().
+        self._history_moved = False
+        self._history_tracked = True
+        self._history_state: Optional[tuple[int, str]] = None  # (checkpoint_id, head) the flags describe
 
     @classmethod
     def create(cls, project_path: Path) -> "GitSessionDiffTracker | None":
@@ -438,6 +513,9 @@ class GitSessionDiffTracker(SessionDiffTrackerBase):
                 stderr=DEVNULL,
                 text=True,
                 check=False,
+                # Without this, an exported GIT_DIR/GIT_WORK_TREE resolves to
+                # another worktree and the whole tracker targets the wrong tree.
+                env=git_env(),
             )
         except (OSError, ValueError):
             return None
@@ -445,6 +523,36 @@ class GitSessionDiffTracker(SessionDiffTrackerBase):
             return None
         root = completed.stdout.strip()
         return Path(root).resolve() if root else None
+
+    # ---- git plumbing --------------------------------------------------------
+
+    def _git(self, args: Sequence[str], *, text: bool = False) -> Optional[CompletedProcess]:
+        """Run git in the tracked worktree with a sanitized environment.
+
+        Returns ``None`` when git could not be run or exited non-zero, so every
+        caller degrades to "no information" instead of raising.
+        """
+        try:
+            completed = subprocess_run(
+                ["git", *args],
+                cwd=str(self.git_root),
+                stdout=PIPE,
+                stderr=DEVNULL,
+                text=text,
+                check=False,
+                env=git_env(),
+            )
+        except (OSError, ValueError):
+            return None
+        return completed if completed.returncode == 0 else None
+
+    def _git_names(self, args: Sequence[str]) -> set[str]:
+        """Run a NUL-separated name-only git command and return its paths."""
+        completed = self._git(args)
+        if completed is None:
+            return set()
+        raw: bytes = completed.stdout
+        return {name for name in raw.decode("utf-8", errors="surrogateescape").split("\0") if name}
 
     # ---- provider hooks ------------------------------------------------------
 
@@ -457,8 +565,39 @@ class GitSessionDiffTracker(SessionDiffTrackerBase):
     def _candidate_paths(self, checkpoint: TurnCheckpoint, event_paths: Iterable[str]) -> set[str]:
         candidates = self._git_status_paths() | set(checkpoint.dirty)
         candidates.update(self._repo_paths_from_event_paths(event_paths))
-        candidates.update(self._committed_paths_since(checkpoint.head_sha))
-        return candidates
+        candidates.update(self._session_committed_paths(checkpoint))
+        return self._without_sibling_worktrees(candidates)
+
+    def _without_sibling_worktrees(self, candidates: set[str]) -> set[str]:
+        """Drop paths that live inside another worktree nested in this one.
+
+        Sibling worktrees are normally kept out of git status by the shared
+        ``info/exclude`` rule, but that rule is best-effort. Filtering by the
+        registered worktree roots makes the isolation guarantee unconditional.
+        """
+        prefixes = self._nested_worktree_prefixes()
+        if not prefixes:
+            return candidates
+        return {
+            path
+            for path in candidates
+            if not any(path == prefix or path.startswith(f"{prefix}/") for prefix in prefixes)
+        }
+
+    def _nested_worktree_prefixes(self) -> list[str]:
+        """Repo-relative prefixes of other worktrees nested inside this one."""
+        prefixes: list[str] = []
+        for worktree in list_worktrees(self.git_root):
+            if worktree.path == self.git_root:
+                continue
+            try:
+                rel = worktree.path.relative_to(self.git_root)
+            except ValueError:
+                continue  # a sibling elsewhere on disk cannot collide with our paths
+            prefix = self._posix(rel)
+            if prefix:
+                prefixes.append(prefix)
+        return prefixes
 
     def _fallback_baseline(self, checkpoint: TurnCheckpoint, repo_path: str) -> FileBaseline:
         key = (checkpoint.head_sha, repo_path)
@@ -475,6 +614,37 @@ class GitSessionDiffTracker(SessionDiffTrackerBase):
         if self._is_ignored(repo_path):
             return "gitignored file kept"
         return None
+
+    def scope(self, *, checkpoint_id: Optional[int] = None) -> DiffScope:
+        """Describe the tracked worktree. Shells out; call it off the UI thread."""
+        checkpoint = self._resolve_checkpoint(checkpoint_id)
+        # The history flags come from the reflog walk. Reuse the ones a refresh
+        # for this same checkpoint and HEAD already produced.
+        if self._history_state != (checkpoint.checkpoint_id, self._current_head_sha()):
+            self._session_committed_paths(checkpoint)
+        worktrees = list_worktrees(self.git_root)
+        main_root = worktrees[0].path if worktrees else self.git_root
+        linked = bool(worktrees) and self.git_root != main_root
+        # A repository that has never had a commit has no reflog to read; that
+        # is not a degraded state worth reporting.
+        history_tracked = self._history_tracked or not (checkpoint.head_sha or self._current_head_sha())
+        return DiffScope(
+            root_label=self.git_root.name if linked else "",
+            root_path=str(self.git_root),
+            branch=self._branch_label(),
+            linked_worktree=linked,
+            history_moved=self._history_moved,
+            history_tracked=history_tracked,
+        )
+
+    def _branch_label(self) -> str:
+        completed = self._git(["symbolic-ref", "--quiet", "--short", "HEAD"], text=True)
+        if completed is not None:
+            branch = str(completed.stdout).strip()
+            if branch:
+                return branch
+        head = self._current_head_sha()
+        return f"detached at {head[:7]}" if head else ""
 
     def _abs_path(self, repo_path: str) -> Path:
         return self.git_root / repo_path
@@ -496,19 +666,20 @@ class GitSessionDiffTracker(SessionDiffTrackerBase):
     # ---- git helpers ---------------------------------------------------------
 
     def _git_status_paths(self) -> set[str]:
-        try:
-            completed = subprocess_run(
+        completed = self._git(
+            [
+                "--no-optional-locks",  # never contend on index.lock with the agent's own git
+                "-c",
+                "core.quotePath=false",
+                "status",
+                "--porcelain",
+                "-z",
                 # -uall lists files inside untracked directories individually;
                 # the default would report only "dir/" and hide the files.
-                ["git", "-c", "core.quotePath=false", "status", "--porcelain", "-z", "-uall"],
-                cwd=str(self.git_root),
-                stdout=PIPE,
-                stderr=DEVNULL,
-                check=False,
-            )
-        except (OSError, ValueError):
-            return set()
-        if completed.returncode != 0:
+                "-uall",
+            ]
+        )
+        if completed is None:
             return set()
         return self._parse_porcelain_z(completed.stdout)
 
@@ -537,67 +708,152 @@ class GitSessionDiffTracker(SessionDiffTrackerBase):
     def _commit_baseline(self, commit_sha: str, repo_path: str) -> FileBaseline:
         if not commit_sha:
             return FileBaseline(path=repo_path, exists=False)
-        try:
-            completed = subprocess_run(
-                ["git", "show", f"{commit_sha}:{repo_path}"],
-                cwd=str(self.git_root),
-                stdout=PIPE,
-                stderr=DEVNULL,
-                check=False,
-            )
-        except (OSError, ValueError):
-            return FileBaseline(path=repo_path, exists=False)
-        if completed.returncode != 0:
+        completed = self._git(["show", f"{commit_sha}:{repo_path}"])
+        if completed is None:
             return FileBaseline(path=repo_path, exists=False)
         return self._baseline_from_bytes(repo_path, completed.stdout, exists=True)
 
     def _current_head_sha(self) -> str:
-        try:
-            completed = subprocess_run(
-                ["git", "rev-parse", "HEAD"],
-                cwd=str(self.git_root),
-                stdout=PIPE,
-                stderr=DEVNULL,
-                text=True,
-                check=False,
-            )
-        except (OSError, ValueError):
+        completed = self._git(["rev-parse", "HEAD"], text=True)
+        if completed is None:
             return ""
-        if completed.returncode != 0:
-            return ""
-        return completed.stdout.strip()
+        return str(completed.stdout).strip()
 
-    def _committed_paths_since(self, checkpoint_sha: str) -> set[str]:
-        """Paths changed by commits made after the checkpoint.
+    # ---- committed-change attribution ----------------------------------------
+
+    def _session_committed_paths(self, checkpoint: TurnCheckpoint) -> set[str]:
+        """Paths changed by commits this session created in this worktree.
 
         Without this, a change that gets committed (and is then clean in git
         status) would vanish from both the diff view and the restore plan.
-        A repo that gained its first commit mid-session has no checkpoint sha
-        to diff from and is not covered.
+
+        A plain ``git diff checkpoint..HEAD`` cannot be used: any merge, pull,
+        or rebase would attribute every incoming file — typically the work of
+        another agent in a sibling worktree — to this session, and the restore
+        plan would then offer to revert it. Instead this walks the worktree's
+        own HEAD reflog (``logs/HEAD`` lives in the linked worktree's gitdir)
+        and credits only transitions that created a commit here.
         """
+        self._history_moved = False
+        self._history_tracked = True
+
         head = self._current_head_sha()
-        if not checkpoint_sha or not head or head == checkpoint_sha:
+        self._history_state = (checkpoint.checkpoint_id, head)
+        if checkpoint.head_sha and head and head == checkpoint.head_sha:
             return set()
-        key = (checkpoint_sha, head)
-        cached = self._committed_paths_cache.get(key)
+
+        entries = self._reflog_entries()
+        if entries is None:
+            self._history_tracked = False
+            return set()
+
+        paths: set[str] = set()
+        floor = int(checkpoint.created_at) - 1  # reflog timestamps have 1s granularity
+        for index, entry in enumerate(entries):
+            if entry.sha == checkpoint.head_sha:
+                break  # HEAD was in this state at capture; everything older is pre-session
+            if entry.timestamp and entry.timestamp < floor:
+                break
+            old = entries[index + 1].sha if index + 1 < len(entries) else checkpoint.head_sha
+            if old == entry.sha:
+                continue  # a no-op move such as "rebase (finish)"
+            paths.update(self._attributed_paths(entry, old))
+        return set(sorted(paths)[:MAX_COMMITTED_CANDIDATES])
+
+    def _attributed_paths(self, entry: _ReflogEntry, old: str) -> frozenset[str]:
+        """Paths this reflog transition contributed, crediting only local work."""
+        kind = entry.subject.split(":", 1)[0].strip()
+        merge_commit = len(entry.parents) >= 2
+        if kind in _COMMIT_REFLOG_KINDS:
+            if merge_commit:
+                # A merge finished by `git commit`: credit only the conflict
+                # resolution authored here, not the incoming branch.
+                self._history_moved = True
+                return self._combined_diff_names(entry.sha)
+            return self._transition_diff_names(old, entry.sha)
+        if kind in _MERGE_REFLOG_KINDS or kind.startswith(("merge ", "pull ")):
+            self._history_moved = True
+            return self._combined_diff_names(entry.sha) if merge_commit else frozenset()
+        # checkout, reset, rebase (start)/(finish), clone, branch, unknown: the
+        # content came from elsewhere, so it is not this session's change.
+        self._history_moved = True
+        return frozenset()
+
+    def _reflog_entries(self) -> Optional[list[_ReflogEntry]]:
+        """This worktree's HEAD reflog, newest first, or None when unreadable."""
+        completed = self._git(
+            [
+                "log",
+                "-g",
+                "-z",
+                "--date=unix",
+                "-n",
+                str(MAX_REFLOG_ENTRIES),
+                "--format=%H%x1f%P%x1f%gd%x1f%gs",
+                "HEAD",
+            ]
+        )
+        if completed is None:
+            return None
+        raw: bytes = completed.stdout
+        entries: list[_ReflogEntry] = []
+        for record in raw.decode("utf-8", errors="surrogateescape").split("\0"):
+            record = record.strip("\n")
+            if not record:
+                continue
+            fields = record.split("\x1f")
+            fields.extend([""] * (4 - len(fields)))
+            entries.append(
+                _ReflogEntry(
+                    sha=fields[0],
+                    parents=tuple(fields[1].split()),
+                    timestamp=self._reflog_timestamp(fields[2]),
+                    subject=fields[3],
+                )
+            )
+        return entries
+
+    @staticmethod
+    def _reflog_timestamp(selector: str) -> int:
+        """Seconds from a ``HEAD@{<unix>}`` selector; 0 when it cannot be parsed."""
+        start = selector.find("{")
+        if start < 0 or not selector.endswith("}"):
+            return 0
+        try:
+            return int(selector[start + 1 : -1])
+        except ValueError:
+            return 0
+
+    def _transition_diff_names(self, old: str, new: str) -> frozenset[str]:
+        key = (old, new)
+        cached = self._transition_paths_cache.get(key)
         if cached is not None:
             return cached
-        try:
-            completed = subprocess_run(
-                ["git", "diff", "--name-only", "-z", checkpoint_sha, head],
-                cwd=str(self.git_root),
-                stdout=PIPE,
-                stderr=DEVNULL,
-                check=False,
-            )
-        except (OSError, ValueError):
-            return set()
-        if completed.returncode != 0:
-            return set()
-        names = [name for name in completed.stdout.decode("utf-8", errors="surrogateescape").split("\0") if name]
-        paths = set(sorted(names)[:MAX_COMMITTED_CANDIDATES])
-        self._committed_paths_cache[key] = paths
-        return paths
+        if old:
+            names = self._git_names(["diff", "--name-only", "-z", old, new])
+        else:
+            # An initial commit made mid-session has no predecessor to diff
+            # against. --no-commit-id is required or the sha is emitted as a path.
+            names = self._git_names(["diff-tree", "--root", "--no-commit-id", "--name-only", "-z", "-r", new])
+        result = frozenset(names)
+        self._transition_paths_cache[key] = result
+        return result
+
+    def _combined_diff_names(self, merge_sha: str) -> frozenset[str]:
+        """Files a merge commit changed relative to *every* parent.
+
+        That is exactly the conflict resolution authored in this worktree; a
+        clean automatic merge contributes nothing.
+        """
+        key = ("--cc", merge_sha)
+        cached = self._transition_paths_cache.get(key)
+        if cached is not None:
+            return cached
+        result = frozenset(
+            self._git_names(["diff-tree", "--cc", "--no-commit-id", "--name-only", "-z", "-r", merge_sha])
+        )
+        self._transition_paths_cache[key] = result
+        return result
 
     def _is_ignored(self, repo_path: str) -> bool:
         try:
@@ -607,6 +863,7 @@ class GitSessionDiffTracker(SessionDiffTrackerBase):
                 stdout=DEVNULL,
                 stderr=DEVNULL,
                 check=False,
+                env=git_env(),
             )
         except (OSError, ValueError):
             return False
