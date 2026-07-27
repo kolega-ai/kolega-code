@@ -42,6 +42,7 @@ SHELL_COMPRESSION_SYSTEM_PROMPT = render_prompt_template("auxiliary/terminal/out
 SHARED_TASK_LIST_PROMPT = render_prompt_template("extensions/cli/shared_task_list.md")
 SHARED_TASK_LIST_READONLY_PROMPT = render_prompt_template("extensions/cli/shared_task_list_readonly.md")
 PLANNING_QUESTION_PROMPT = render_prompt_template("extensions/cli/planning_questions.md")
+BUILD_QUESTION_PROMPT = render_prompt_template("extensions/cli/build_questions.md")
 
 # Compatibility templates for callers/tests that still use ``str.format`` or
 # ``replace`` style placeholders.

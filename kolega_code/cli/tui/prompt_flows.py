@@ -12,6 +12,7 @@ from textual.widgets.option_list import Option
 from kolega_code.agent import PromptExtension, ToolExtension
 from kolega_code.agent.prompt_provider import AgentMode
 from kolega_code.agent.prompts import (
+    BUILD_QUESTION_PROMPT,
     PLANNING_QUESTION_PROMPT,
     SHARED_TASK_LIST_PROMPT,
     SHARED_TASK_LIST_READONLY_PROMPT,
@@ -29,7 +30,7 @@ from kolega_code.tools import ASK_USER_CHOICE_INPUT_SCHEMA, ASK_USER_CHOICE_SHAP
 
 from .. import messages, theme
 from . import app_base as tui_app_base
-from .constants import APPROVAL_OPTION_ID_PREFIX, PLAN_INTERACTION_MODE, QUESTION_OPTION_ID_PREFIX, QUESTION_TOOL_NAME
+from .constants import APPROVAL_OPTION_ID_PREFIX, QUESTION_OPTION_ID_PREFIX, QUESTION_TOOL_NAME
 from .state import ConversationEntry, PendingApproval, PendingQuestion, TurnState
 from .widgets import PromptPanel
 
@@ -148,23 +149,35 @@ class PromptFlowMixin(tui_app_base.KolegaAppBase):
             propagate_to_sub_agents=False,
         )
 
+    def _build_question_prompt_extension(self) -> PromptExtension:
+        """Build-mode framing for the same tool.
+
+        Plan mode is a conversation, so asking is cheap there. Implementation is not:
+        the guidance has to push toward deciding and stating the assumption, and
+        reserve a prompt for choices that are expensive to get wrong.
+        """
+        return PromptExtension(
+            id="cli-build-questions",
+            title="Asking the User",
+            markdown=BUILD_QUESTION_PROMPT,
+            modes=[AgentMode.CLI],
+            propagate_to_sub_agents=False,
+        )
+
     def _planning_question_tool_extension(self) -> ToolExtension:
         async def ask_user_choice(questions: list[dict]) -> str:
             """
-            Ask the user one or more multiple-choice planning questions and wait for their answers.
+            Ask the user one or more multiple-choice questions and wait for their answers.
 
-            Use this only for planning decisions that materially affect the final plan. Each question has a
-            short `header`, the `question` text, a `multiSelect` flag, and an `options` array of
-            `{label, description}` choices. The user selects one option per question or types a custom
-            free-text answer. Questions are asked one at a time, in order.
+            Use this only for decisions that materially affect the outcome and cannot be settled from the
+            repository. Each question has a short `header`, the `question` text, a `multiSelect` flag, and an
+            `options` array of `{label, description}` choices. The user selects one option per question or
+            types a custom free-text answer. Questions are asked one at a time, in order.
 
             Returns:
                 A JSON object mapping each question's header (or its text) to the chosen option label
                 or the user's custom answer.
             """
-            if self.interaction_mode != PLAN_INTERACTION_MODE:
-                raise ToolError("ask_user_choice is only available in planning mode.")
-
             normalized = self._normalize_choice_questions(questions)
             if self._pending_question is not None:
                 raise ToolError("A planning question is already waiting for an answer.")
@@ -179,7 +192,13 @@ class PromptFlowMixin(tui_app_base.KolegaAppBase):
             name="cli-planning-questions",
             tools={QUESTION_TOOL_NAME: ask_user_choice},
             tool_schemas={QUESTION_TOOL_NAME: ASK_USER_CHOICE_INPUT_SCHEMA},
-            tool_groups={"planning_tools": [QUESTION_TOOL_NAME]},
+            # Both top-level agents expose it: PlanningAgent allows planning_tools,
+            # CoderAgent allows coder_agent_tools. Sub-agents get neither group from
+            # a non-propagating extension, so only the agent talking to the user asks.
+            tool_groups={
+                "planning_tools": [QUESTION_TOOL_NAME],
+                "coder_agent_tools": [QUESTION_TOOL_NAME],
+            },
             propagate_to_sub_agents=False,
         )
 

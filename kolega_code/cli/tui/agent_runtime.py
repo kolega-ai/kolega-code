@@ -853,9 +853,14 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             prompt_extensions.append(skill_prompt_extension)
         if skill_tool_extension is not None:
             tool_extensions.append(skill_tool_extension)
+        # Both modes can ask the user; only the framing differs. Plan mode treats a
+        # question as cheap, build mode reserves it for decisions that are expensive
+        # to get wrong.
         if self.interaction_mode == tui_constants.PLAN_INTERACTION_MODE:
             prompt_extensions.append(self._planning_question_prompt_extension())
-            tool_extensions.append(self._planning_question_tool_extension())
+        else:
+            prompt_extensions.append(self._build_question_prompt_extension())
+        tool_extensions.append(self._planning_question_tool_extension())
 
         mcp_config = getattr(config, "mcp_config", None)
         if mcp_config is not None:
