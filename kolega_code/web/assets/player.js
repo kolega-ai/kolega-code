@@ -16,11 +16,21 @@
  * 2. **Folding is incremental forward, restarted backward.** Advancing folds only
  *    the newly reached events, which keeps normal playback linear in session
  *    length. Seeking backwards cannot un-fold, so it rebuilds from the start.
+ *
+ * 3. **A recording may still be growing.** When the manifest names a stream, the
+ *    player follows it over a WebSocket and the timeline extends as events
+ *    arrive. Following the live edge is a mode, not a position: the viewer can
+ *    scrub back to look at something without being yanked forward again, and
+ *    returns with the LIVE button. A static bundle has no stream key, which is
+ *    what makes an exported replay strictly a replay.
  */
 
 import { emptyState, fold } from "./fold.js";
 
 const IDLE_CAP_MS = 2000;
+//: Backoff bounds for reattaching after the stream drops.
+const RECONNECT_MIN_MS = 500;
+const RECONNECT_MAX_MS = 10000;
 const SPEEDS = [1, 2, 4, 0]; // 0 renders the remainder instantly
 const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const GLYPHS = {
@@ -44,6 +54,18 @@ let state = emptyState();
 let appliedCount = 0;
 let position = 0;
 let playing = false;
+/** Running total of capped playback time, so the timeline can be extended. */
+let timelineCursor = 0;
+/** Open socket to a live session, if this recording has one. */
+let socket = null;
+/** Highest seq applied, so a reconnect resumes without a gap or a duplicate. */
+let liveSeq = 0;
+/** Whether new events should pull the view forward to the live edge. */
+let following = false;
+/** Whether this session has actually shown signs of life, so the badge is honest. */
+let liveActive = false;
+let reconnectDelay = RECONNECT_MIN_MS;
+let reconnectTimer = null;
 let speedIndex = 0;
 let lastFrame = 0;
 let renderedCount = 0;
@@ -73,10 +95,22 @@ async function main() {
   }
 
   applyTheme(manifest.theme);
+  liveSeq = manifest.last_seq || (events.length ? events[events.length - 1].seq || 0 : 0);
   buildTimeline();
   populateChrome();
   wireControls();
-  seek(0);
+  // A running session opens at its live edge: someone who follows a share link
+  // wants what is happening now, not the beginning of a session already in
+  // progress. A finished recording still opens at the start.
+  liveActive = manifest.status === "open";
+  if (manifest.stream && liveActive) {
+    seek(totalPlaybackMs);
+    following = true;
+  } else {
+    seek(0);
+  }
+  if (manifest.stream) attachStream();
+  renderLive();
   requestAnimationFrame(frame);
 }
 
@@ -99,6 +133,7 @@ function cacheDom() {
     "clock",
     "theme",
     "error",
+    "live",
   ]) {
     dom[id] = document.getElementById(id);
   }
@@ -131,15 +166,19 @@ function showError(message) {
 /** Map each event onto a playback offset, capping idle gaps. */
 function buildTimeline() {
   playbackAt = [];
-  let cursor = 0;
-  let previous = events.length ? (events[0].elapsed_ms || 0) : 0;
-  for (const event of events) {
-    const elapsed = event.elapsed_ms || 0;
-    cursor += Math.min(Math.max(elapsed - previous, 0), IDLE_CAP_MS);
-    previous = elapsed;
-    playbackAt.push(cursor);
+  timelineCursor = 0;
+  extendTimeline(0);
+}
+
+/** Extend the timeline over events appended since ``from``. */
+function extendTimeline(from) {
+  for (let index = from; index < events.length; index += 1) {
+    const elapsed = events[index].elapsed_ms || 0;
+    const previous = index === 0 ? elapsed : events[index - 1].elapsed_ms || 0;
+    timelineCursor += Math.min(Math.max(elapsed - previous, 0), IDLE_CAP_MS);
+    playbackAt.push(timelineCursor);
   }
-  totalPlaybackMs = cursor;
+  totalPlaybackMs = timelineCursor;
 }
 
 /** Number of events that have occurred at playback offset ``ms``. */
@@ -204,15 +243,133 @@ function setPlaying(next) {
   dom.play.setAttribute("aria-label", playing ? "Pause" : "Play");
 }
 
+// --------------------------------------------------------------------- live ---
+
+/**
+ * Follow a running session.
+ *
+ * The socket replays everything after ``last_seq`` and then stays open, so the
+ * one-shot event log this page already fetched joins up with live appends
+ * without a gap. Seq is the join: the server orders on it, and dropping anything
+ * we have already applied makes a reconnect idempotent.
+ */
+function attachStream() {
+  if (!manifest.stream) return;
+  const url = new URL(manifest.stream, location.href);
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  url.searchParams.set("from_seq", String(liveSeq + 1));
+  // The cookie the server set covers same-origin subresources, but a link that
+  // was opened with a token in the query is the only proof this tab has.
+  const token = new URLSearchParams(location.search).get("token");
+  if (token) url.searchParams.set("token", token);
+
+  socket = new WebSocket(url);
+  socket.addEventListener("open", () => {
+    reconnectDelay = RECONNECT_MIN_MS;
+    // Attaching is not a reason to move the viewer. Whether to sit at the live
+    // edge was decided when the page opened, or by the viewer since; a reconnect
+    // restores that intent rather than overriding it.
+    renderLive();
+    if (following) seek(totalPlaybackMs);
+  });
+  socket.addEventListener("message", (message) => {
+    let event = null;
+    try {
+      event = JSON.parse(message.data);
+    } catch {
+      return; // A malformed frame must not take down a live view.
+    }
+    absorbLiveEvent(event);
+  });
+  socket.addEventListener("close", scheduleReconnect);
+  socket.addEventListener("error", () => socket && socket.close());
+}
+
+function scheduleReconnect() {
+  socket = null;
+  renderLive();
+  if (reconnectTimer !== null) return;
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    attachStream();
+  }, reconnectDelay);
+  reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX_MS);
+}
+
+function absorbLiveEvent(event) {
+  const seq = event.seq ?? null;
+  if (seq !== null) {
+    if (seq <= liveSeq) return; // already applied; a resumed socket overlaps
+    liveSeq = seq;
+  }
+  events.push(event);
+  liveActive = true; // something arrived over the socket: it is live after all
+  extendTimeline(events.length - 1);
+  absorbLiveChrome(event);
+  // The chrome describes the whole recording, which just got longer, so it is
+  // refreshed whether or not the viewer is watching the edge. Tick positions are
+  // a fraction of the total and therefore move on every append.
+  renderMeta();
+  renderTicks();
+  renderTurns();
+  if (following) seek(totalPlaybackMs);
+  else syncTransport();
+}
+
+/** Keep the header, tick marks, and turn rail current as the session grows. */
+function absorbLiveChrome(event) {
+  manifest.event_count = (manifest.event_count || 0) + 1;
+  manifest.duration_ms = Math.max(manifest.duration_ms || 0, event.elapsed_ms || 0);
+  if (event.sub_agent_info) return; // delegated turns are not session turns
+  const content = event.content || {};
+  const turnId = String(content.turn_id || "");
+  if (event.event_type === "turn_started") {
+    manifest.turns = manifest.turns || [];
+    manifest.turns.push({
+      turn_id: turnId,
+      user_text: String(content.user_text || ""),
+      elapsed_ms: event.elapsed_ms || 0,
+      seq: event.seq ?? null,
+      status: "open",
+      ended_ms: null,
+    });
+    return;
+  }
+  if (event.event_type !== "turn_ended") return;
+  for (let index = (manifest.turns || []).length - 1; index >= 0; index -= 1) {
+    if (manifest.turns[index].turn_id === turnId) {
+      manifest.turns[index].status = String(content.status || "completed");
+      manifest.turns[index].ended_ms = event.elapsed_ms || 0;
+      break;
+    }
+  }
+}
+
+function setFollowing(next) {
+  following = next;
+  if (following) {
+    setPlaying(false);
+    seek(totalPlaybackMs);
+  }
+  renderLive();
+}
+
+function renderLive() {
+  if (!dom.live) return;
+  const attached = socket !== null && socket.readyState === WebSocket.OPEN;
+  // Offering "jump to live" on a session that ended hours ago is a lie: the
+  // socket stays attachable forever, so being attached is not evidence of life.
+  dom.live.hidden = !manifest.stream || !liveActive;
+  dom.live.dataset.state = attached ? (following ? "following" : "behind") : "detached";
+  dom.live.textContent = attached ? (following ? "● LIVE" : "↓ JUMP TO LIVE") : "reconnecting…";
+  dom.live.disabled = !attached || following;
+}
+
 // -------------------------------------------------------------------- chrome ---
 
 function populateChrome() {
   dom.title.textContent = manifest.title || manifest.session_id || "Session replay";
-  const parts = [];
-  if (manifest.event_count) parts.push(`${manifest.event_count} events`);
-  if (manifest.turns && manifest.turns.length) parts.push(`${manifest.turns.length} turns`);
-  parts.push(formatDuration(manifest.duration_ms || 0));
-  dom.meta.textContent = parts.join("  ·  ");
+  renderMeta();
   // The truncation badge reflects folded state, not the manifest, so it appears
   // at the point in the replay where recording actually stopped.
   dom.truncated.hidden = true;
@@ -225,6 +382,19 @@ function populateChrome() {
   }
   dom.theme.value = manifest.theme || "kolega-dark";
 
+  renderTicks();
+  renderTurns();
+}
+
+function renderMeta() {
+  const parts = [];
+  if (manifest.event_count) parts.push(`${manifest.event_count} events`);
+  if (manifest.turns && manifest.turns.length) parts.push(`${manifest.turns.length} turns`);
+  parts.push(formatDuration(manifest.duration_ms || 0));
+  dom.meta.textContent = parts.join("  ·  ");
+}
+
+function renderTicks() {
   dom.ticks.replaceChildren();
   for (const turn of manifest.turns || []) {
     const offset = playbackOffsetForElapsed(turn.elapsed_ms || 0);
@@ -234,15 +404,21 @@ function populateChrome() {
     tick.title = turn.user_text || turn.turn_id;
     dom.ticks.append(tick);
   }
-  renderTurns();
 }
 
 /** Nearest playback offset for a session-time value, used for turn seeking. */
 function playbackOffsetForElapsed(elapsedMs) {
-  for (let index = 0; index < events.length; index += 1) {
-    if ((events[index].elapsed_ms || 0) >= elapsedMs) return playbackAt[index];
+  // elapsed_ms is non-decreasing along the log, so this is a binary search.
+  // It runs per tick per appended event while following a live session, and a
+  // linear scan there made redrawing the ticks quadratic in session length.
+  let low = 0;
+  let high = events.length;
+  while (low < high) {
+    const mid = (low + high) >> 1;
+    if ((events[mid].elapsed_ms || 0) >= elapsedMs) high = mid;
+    else low = mid + 1;
   }
-  return totalPlaybackMs;
+  return low < playbackAt.length ? playbackAt[low] : totalPlaybackMs;
 }
 
 function renderTurns() {
@@ -279,31 +455,39 @@ function renderTurns() {
 }
 
 function wireControls() {
-  dom.play.addEventListener("click", () => setPlaying(!playing));
+  // Any deliberate move through the recording means the viewer wants to read
+  // something rather than watch the edge, so it releases the live follow.
+  const scrubbed = (to) => {
+    setFollowing(false);
+    setPlaying(false);
+    seek(to);
+  };
+  dom.play.addEventListener("click", () => {
+    setFollowing(false);
+    setPlaying(!playing);
+  });
   dom.speed.addEventListener("click", () => {
     speedIndex = (speedIndex + 1) % SPEEDS.length;
     dom.speed.textContent = SPEEDS[speedIndex] === 0 ? "max" : `${SPEEDS[speedIndex]}x`;
   });
-  dom.scrub.addEventListener("input", () => {
-    setPlaying(false);
-    seek((Number(dom.scrub.value) / 1000) * totalPlaybackMs);
-  });
+  dom.scrub.addEventListener("input", () => scrubbed((Number(dom.scrub.value) / 1000) * totalPlaybackMs));
+  dom.live.addEventListener("click", () => setFollowing(true));
   dom.theme.addEventListener("change", () => applyTheme(dom.theme.value));
   document.addEventListener("keydown", (event) => {
     if (event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement) return;
     if (event.code === "Space") {
       event.preventDefault();
+      setFollowing(false);
       setPlaying(!playing);
     } else if (event.code === "ArrowRight") {
-      setPlaying(false);
-      seek(position + 5000);
+      scrubbed(position + 5000);
     } else if (event.code === "ArrowLeft") {
-      setPlaying(false);
-      seek(position - 5000);
+      scrubbed(position - 5000);
     } else if (event.code === "Home") {
-      seek(0);
+      scrubbed(0);
     } else if (event.code === "End") {
-      seek(totalPlaybackMs);
+      if (manifest.stream) setFollowing(true);
+      else seek(totalPlaybackMs);
     }
   });
 }

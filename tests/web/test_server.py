@@ -233,6 +233,63 @@ async def test_token_gates_every_route(store: SessionStore, tmp_path: Path) -> N
 
 
 @pytest.mark.asyncio
+async def test_a_link_with_a_token_can_load_the_players_own_files(store: SessionStore, tmp_path: Path) -> None:
+    """A shared link is the only place the token can live, and it is a query string.
+
+    The browser then resolves the player's script, stylesheet, manifest, and event
+    log as plain relative URLs with no query, so without carrying the grant
+    forward every one of them is unauthorized and the page renders blank.
+    """
+    record = await _seed(store, tmp_path)
+
+    with _client(store, token="s3cret") as client:
+        page = client.get(f"/s/{record.session_id}", params={"token": "s3cret"})
+        assert page.status_code == 200
+
+        # The client keeps the cookie the page handed back, as a browser would.
+        for path in ("player.js", "player.css", "fold.js", "manifest.json", "events.jsonl"):
+            assert client.get(f"/s/{record.session_id}/{path}").status_code == 200, path
+
+    # A visitor without the link still gets nothing.
+    with _client(store, token="s3cret") as bare:
+        assert bare.get(f"/s/{record.session_id}/manifest.json").status_code == 401
+        assert bare.get(f"/s/{record.session_id}", params={"token": "wrong"}).status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_player_manifest_advertises_a_live_session(store: SessionStore, tmp_path: Path) -> None:
+    """The player only follows when the manifest tells it there is something to follow."""
+    record = await _seed(store, tmp_path)
+
+    with _client(store) as client:
+        manifest = client.get(f"/s/{record.session_id}/manifest.json").json()
+
+    assert manifest["stream"] == f"/api/sessions/{record.session_id}/stream"
+    assert manifest["last_seq"] > 0, "the player resumes the stream from here"
+    assert manifest["status"] == "idle", "the seeded session's turn is closed"
+
+
+@pytest.mark.asyncio
+async def test_player_manifest_reports_an_open_turn_as_open(store: SessionStore, tmp_path: Path) -> None:
+    record = await _seed(store, tmp_path)
+    events = FileSessionEventStore(store.journal(record.session_id))
+    await events.append(
+        AgentEvent(
+            session_id=record.session_id,
+            sender="agent",
+            event_type=KnownEventType.TURN_STARTED,
+            content={"turn_id": "t2", "user_text": "still going"},
+            elapsed_ms=1000,
+        )
+    )
+
+    with _client(store) as client:
+        manifest = client.get(f"/s/{record.session_id}/manifest.json").json()
+
+    assert manifest["status"] == "open"
+
+
+@pytest.mark.asyncio
 async def test_artifact_read_is_scoped_to_shareable_purposes(store: SessionStore, tmp_path: Path) -> None:
     """Opaque provider payloads must not be readable through the artifact route."""
     record = await _seed(store, tmp_path)

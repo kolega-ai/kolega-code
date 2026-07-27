@@ -1161,7 +1161,9 @@ def _run_serve(args: argparse.Namespace) -> int:
     elif not args.token:
         print("  Loopback only. Add --token before exposing this through a tunnel.")
 
-    uvicorn.run(app, host=host, port=args.port, log_level="warning")
+    from kolega_code.web.hosting import WS_IMPL
+
+    uvicorn.run(app, host=host, port=args.port, log_level="warning", ws=WS_IMPL)
     return 0
 
 

@@ -147,6 +147,25 @@ PERMISSIONS_STATUS = "Permissions are in {mode} mode."
 PERMISSIONS_SWITCH_HINT = "Switch with /permissions auto, /permissions ask, /permissions toggle, or Ctrl+P."
 COPY_LAST_RESPONSE = "Copied the last response to the clipboard."
 COPY_NOTHING = "No response to copy yet."
+
+# Live sharing
+SHARE_STARTED = "Sharing this session. The link is on your clipboard."
+SHARE_ALREADY = "Already sharing. The link is on your clipboard."
+SHARE_STOPPED = "Stopped sharing this session."
+SHARE_NOT_RUNNING = "This session is not being shared."
+SHARE_FAILED = "Could not start sharing: {error}"
+SHARE_USAGE = "Usage: /share (this machine), /share lan (local network), or /share stop."
+SHARE_LINK_HEADING = "Live session link"
+SHARE_LOOPBACK_NOTE = (
+    "Reachable from this machine only. Use /share lan for your local network, "
+    "or forward the port through a tunnel you control."
+)
+SHARE_LAN_WARNING = (
+    "Bound to every interface: anyone who can reach this machine on your network and has this "
+    "link can read the whole session, including file contents and command output. The link's "
+    "token is the only thing gating it. Run /share stop when you are done."
+)
+SHARE_READ_ONLY_NOTE = "Viewers watch live and can read; they cannot type, approve, or interrupt."
 VERSION_INFO = "Kolega Code version {version}."
 UPDATE_STARTED = "Updating Kolega Code…"
 UPDATE_COMPLETED = "Kolega Code update completed. Restart this TUI to use the updated version."

@@ -202,6 +202,8 @@ class KolegaCodeApp(
             artifact_store=FileArtifactStore(_journal),
         )
         self._recording_primed = False
+        # Started on demand by /share; nothing listens until the user asks.
+        self._share_server = None
         # Interactions that need a human answer go through the control channel, so
         # this client answers prompts exactly the way a browser or a remote client
         # would. The channel announces on the recording transport, which is what
@@ -1528,6 +1530,11 @@ class KolegaCodeApp(
         # Stop the watchdog thread on shutdown (also keeps test apps from leaking threads).
         if self._watchdog is not None:
             self._watchdog.stop()
+        # Backstop for teardown paths that never reach action_quit; this hook is
+        # sync, so the socket closes when the serve task next runs.
+        if self._share_server is not None:
+            self._share_server.request_stop()
+            self._share_server = None
         self._close_memory_manager()
 
     def on_worker_state_changed(self, event) -> None:
@@ -1556,6 +1563,8 @@ class KolegaCodeApp(
             # Persist any streaming tail still buffered for coalescing, so a
             # session quit mid-stream still replays what was on screen.
             await self.recording_connection_manager.flush()
+            # Never leave a port listening on someone's network after they quit.
+            await self._stop_share_server()
             if self.agent is not None:
                 fire = getattr(self.agent, "fire_hook", None)
                 if fire is not None:

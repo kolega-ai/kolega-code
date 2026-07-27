@@ -78,9 +78,27 @@ def create_app(config: ServerConfig) -> FastAPI:
 
     @app.middleware("http")
     async def require_token(request: Request, call_next):
-        if not _authorized(config, request.headers.get("authorization"), request.query_params.get("token")):
+        query_token = request.query_params.get("token")
+        if not _authorized(
+            config,
+            request.headers.get("authorization"),
+            query_token,
+            request.cookies.get(TOKEN_COOKIE),
+        ):
             return JSONResponse({"detail": "Not authorized"}, status_code=401)
-        return await call_next(request)
+        response = await call_next(request)
+        if config.token and query_token == config.token and request.cookies.get(TOKEN_COOKIE) != config.token:
+            # Hand the link's token to the browser so the page's own subresources
+            # load. Host-only, not readable from script, and not sent on
+            # cross-site requests.
+            response.set_cookie(
+                TOKEN_COOKIE,
+                config.token,
+                httponly=True,
+                samesite="strict",
+                path="/",
+            )
+        return response
 
     # -- Discovery ---------------------------------------------------------
 
@@ -182,7 +200,12 @@ def create_app(config: ServerConfig) -> FastAPI:
     async def stream(websocket: WebSocket, session_id: str) -> None:
         """Replay the backlog from ``from_seq``, then follow live appends."""
         token = websocket.query_params.get("token")
-        if not _authorized(config, websocket.headers.get("authorization"), token):
+        if not _authorized(
+            config,
+            websocket.headers.get("authorization"),
+            token,
+            websocket.cookies.get(TOKEN_COOKIE),
+        ):
             await websocket.close(code=4401)
             return
         try:
@@ -264,12 +287,19 @@ def create_app(config: ServerConfig) -> FastAPI:
         record = _record(config, session_id)
         events = await _events(config, record.session_id)
         state = replay(events)
+        meta = await _head(config, record.session_id)
         return {
             "format": 1,
             "session_id": record.session_id,
             "title": record.title or record.session_id,
             "event_count": len(events),
             "duration_ms": max((event.elapsed_ms for event in events), default=0),
+            # A served session may still be running. The player follows the
+            # stream endpoint from last_seq when it is, and a static bundle omits
+            # both keys, which is what makes a bundle strictly a replay.
+            "status": meta.status if meta else "empty",
+            "last_seq": (events[-1].seq or 0) if events else 0,
+            "stream": f"/api/sessions/{record.session_id}/stream",
             "theme": cli_theme.default_theme_slug(),
             "themes": list(cli_theme.all_web_tokens().keys()),
             "turns": [
@@ -356,12 +386,34 @@ def _normalized_project(value: Optional[str]) -> Optional[str]:
     return trimmed or "/"
 
 
-def _authorized(config: ServerConfig, header: Optional[str], query_token: Optional[str]) -> bool:
+#: Name of the cookie that carries a query-string token across subresource loads.
+TOKEN_COOKIE = "kc_session_token"
+
+
+def _authorized(
+    config: ServerConfig,
+    header: Optional[str],
+    query_token: Optional[str],
+    cookie_token: Optional[str] = None,
+) -> bool:
+    """Accept the token from a header, the query string, or the handshake cookie.
+
+    A shared link can only carry the token in its query string, but the browser
+    resolves the player's script, stylesheet, manifest, and event log as plain
+    relative URLs with no query. Without the cookie those subresources are all
+    unauthorized and the page renders blank, so a token-protected server is only
+    usable by API clients.
+    """
     if not config.token:
         return True
-    if header and header.startswith("Bearer ") and header[7:] == config.token:
-        return True
-    return query_token == config.token
+    # An explicitly presented credential has to be the right one. Falling back to
+    # the cookie when a caller sent a wrong header or query token would report
+    # success for a credential the caller actually got wrong.
+    if header is not None:
+        return header.startswith("Bearer ") and header[7:] == config.token
+    if query_token is not None:
+        return query_token == config.token
+    return cookie_token == config.token
 
 
 def _record(config: ServerConfig, session_id: str):

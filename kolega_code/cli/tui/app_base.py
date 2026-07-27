@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     import asyncio
 
     from pathlib import Path
+    from typing import Awaitable
 
     from textual.screen import Screen
     from textual.timer import Timer
@@ -39,6 +40,7 @@ if TYPE_CHECKING:
     from kolega_code.session.control import ControlChannel
     from kolega_code.session.recording import RecordingConnectionManager
     from kolega_code.session.runtime import SessionRuntime
+    from kolega_code.web.hosting import ShareServer
 
     from ..connection import CliConnectionManager
     from ..diagnostics import DiagnosticsLog, ResponsivenessWatchdog
@@ -103,6 +105,9 @@ class KolegaAppBase(App):
         #: Agents are built against this one so their output is replayable.
         recording_connection_manager: RecordingConnectionManager
         _recording_primed: bool
+        #: Serves this session over HTTP while /share is active, on this event
+        #: loop. None until the user asks to share.
+        _share_server: ShareServer | None
         #: Owns the agent for control purposes and holds permission policy.
         session_runtime: SessionRuntime
         #: Carries prompts to this client and answers back, the same way any
@@ -358,6 +363,7 @@ class KolegaAppBase(App):
         def _note_sub_agent_tool_stream(self, event: AgentEvent) -> None: ...
         def _record_file_change_event(self, event: AgentEvent) -> tui_state.SessionFileChange | None: ...
         def _render_conversation(self) -> None: ...
+        def _stop_share_server(self) -> Awaitable[None]: ...
         def _render_sub_agent_delta(self, event: AgentEvent) -> None: ...
         def _render_sub_agent_event(self, event: AgentEvent) -> None: ...
         def _restore_conversation_history(self, history: list[dict]) -> None: ...

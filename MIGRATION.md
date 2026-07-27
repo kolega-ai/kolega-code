@@ -179,6 +179,27 @@ folds; use `replay(events)` to build state from scratch.
 A JavaScript port ships at `kolega_code/web/assets/fold.js` and is held to
 byte-equality with the Python implementation by a shared-fixture test.
 
+### Hosting a session from inside a host application
+
+`kolega_code.web.hosting.ShareServer` runs the read-only session server as a task
+on the caller's event loop rather than owning the process, which is what lets a
+running UI hand out a link without a second terminal. It binds a port the OS
+picks, always mints an access token, and leaves the host's signal handlers alone.
+
+```python
+server = ShareServer(store)                 # or bind=ALL_INTERFACES to reach a LAN
+await server.start()
+link = server.session_url(session_id)       # carries ?token=...
+await server.stop()                         # request_stop() from sync teardown
+```
+
+A link is only useful if it opens in a browser, so a correct `?token=` is now
+handed to that tab as a cookie and accepted on later same-origin requests,
+including the WebSocket handshake. Without it every relative subresource the
+player loads was unauthorized and a token-protected server rendered a blank page.
+An explicitly presented credential still has to be correct: a wrong header or
+query token is rejected rather than falling back to a cookie.
+
 ### Sharing and export
 
 `kolega_code.web.redaction` and `kolega_code.web.bundle` export a session as a

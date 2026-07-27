@@ -561,6 +561,38 @@ body::after {
   font-size: 0.9rem;
 }
 
+/* Following the live edge is a state, not an action, so the button reads as a
+   status while it is on and only becomes inviting once the viewer falls behind. */
+.kc-live[data-state="following"] {
+  color: var(--kc-error);
+  border-color: color-mix(in srgb, var(--kc-error) 45%, transparent);
+  cursor: default;
+  animation: kc-pulse 2s ease-in-out infinite;
+}
+
+.kc-live[data-state="behind"] {
+  color: var(--kc-background);
+  background: var(--kc-error);
+  border-color: var(--kc-error);
+}
+
+.kc-live[data-state="detached"] {
+  color: var(--kc-text-muted);
+  cursor: default;
+}
+
+@keyframes kc-pulse {
+  50% {
+    opacity: 0.55;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .kc-live[data-state="following"] {
+    animation: none;
+  }
+}
+
 .kc-clock {
   color: var(--kc-text-muted);
   font-size: 0.76rem;

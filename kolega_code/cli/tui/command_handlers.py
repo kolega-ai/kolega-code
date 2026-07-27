@@ -71,6 +71,7 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
             "/queue-clear": self._command_queue_clear,
             "/rewind": self._command_rewind,
             "/theme": self._command_theme,
+            "/share": self._command_share,
             "/copy": self._command_copy,
             "/diagnostics": self._command_diagnostics,
             "/bug": self._command_bug,
@@ -1055,6 +1056,64 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
         # the conversation and dashboard so they pick up the new palette.
         self._render_conversation()
         self._refresh_status_dashboard()
+
+    async def _command_share(self, args: str) -> None:
+        """Start, stop, or re-show a live link to this session."""
+        from kolega_code.web.hosting import ALL_INTERFACES, LOOPBACK, ShareServer, ShareServerError
+
+        action = args.strip().lower()
+        if action == "stop":
+            if self._share_server is None:
+                self._notify_user(messages.SHARE_NOT_RUNNING, severity="warning")
+                return
+            await self._stop_share_server()
+            self._notify_user(messages.SHARE_STOPPED)
+            return
+        if action not in ("", "lan"):
+            self._notify_user(messages.SHARE_USAGE, severity="warning")
+            return
+
+        bind = ALL_INTERFACES if action == "lan" else LOOPBACK
+        server = self._share_server
+        # Switching between loopback and the network means a different bind, so
+        # the old server has to go rather than silently keeping the old reach.
+        if server is not None and server.exposed != (bind != LOOPBACK):
+            await self._stop_share_server()
+            server = None
+
+        already = server is not None
+        if server is None:
+            server = ShareServer(self.store, bind=bind)
+            try:
+                await server.start()
+            except (ShareServerError, OSError) as exc:
+                self._notify_user(messages.SHARE_FAILED.format(error=exc), severity="error")
+                return
+            self._share_server = server
+
+        url = server.session_url(self.session.session_id)
+        self.copy_to_clipboard(url)
+        lines = [messages.SHARE_LINK_HEADING, url, "", messages.SHARE_READ_ONLY_NOTE]
+        lines.append(messages.SHARE_LAN_WARNING if action == "lan" else messages.SHARE_LOOPBACK_NOTE)
+        self._add_conversation_entry(
+            tui_state.ConversationEntry(
+                kind="system",
+                content="\n".join(lines),
+                tone="warning" if action == "lan" else None,
+            )
+        )
+        self._notify_user(messages.SHARE_ALREADY if already else messages.SHARE_STARTED)
+
+    async def _stop_share_server(self) -> None:
+        """Shut the share server down. Never raises; used on quit too."""
+        server = self._share_server
+        self._share_server = None
+        if server is None:
+            return
+        try:
+            await server.stop()
+        except Exception:
+            pass
 
     async def _command_copy(self, args: str) -> None:
         entry = next(

@@ -30,8 +30,18 @@ giving other frontends a stable API to build against.
 
 ## Following a live session
 
-The WebSocket endpoint replays a session's backlog and then follows new events, so
-a browser can watch a session that is still running:
+Open `/s/<session-id>` for a session that is still running and the player follows
+it: reasoning, output, and tool calls appear as they happen, with a **LIVE** badge
+in the transport bar. Scrub back to re-read something and the view stays where you
+put it; the badge becomes **JUMP TO LIVE** to return to the edge. If the connection
+drops it reattaches and resumes where it left off.
+
+To share a session you are in the middle of, you do not need this command at all —
+run [`/share`](/tui/slash-commands/#sharing-a-live-session) in the TUI and it starts
+a server and hands you the link.
+
+Building your own client? The same WebSocket the player uses replays a session's
+backlog and then follows new events:
 
 ```
 ws://localhost:8765/api/sessions/<session-id>/stream?from_seq=1
@@ -58,7 +68,13 @@ Full generated reference at `/docs`.
 | `GET /s/{id}` | The replay player. |
 
 The server is **read-only**. It does not send messages to an agent, cancel a turn,
-or answer permission prompts.
+or answer permission prompts. Someone watching a live session can read everything
+in it and change nothing.
+
+When a token is set, a link carrying `?token=...` works in a browser: the server
+hands the token to that tab as a cookie so the player's own files and its
+WebSocket load. A wrong token is rejected outright rather than falling back to any
+cookie already held.
 
 ## Sharing beyond your machine
 

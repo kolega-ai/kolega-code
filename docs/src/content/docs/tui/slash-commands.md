@@ -51,6 +51,7 @@ These control the app and your session.
 | `/goal` | Set, show, or clear an autonomous completion goal |
 | `/tasks` | Show the shared task list |
 | `/queue-clear` | Clear queued follow-up messages |
+| `/share` | Share a live link to this session (`/share lan`, `/share stop`) |
 | `/copy` | Copy the last response to the clipboard |
 | `/diagnostics` | Show version, model/endpoint, and the local diagnostics log path |
 | `/bug` | Package local diagnostics into a shareable zip for a bug report |
@@ -58,6 +59,37 @@ These control the app and your session.
 | `/update` | Update Kolega Code to the latest version |
 | `/quit` | Save the session and exit |
 | `/exit` | Save the session and exit |
+
+## Sharing a live session
+
+`/share` starts a server for the session you are in and copies the link to your
+clipboard. Whoever opens it watches the session as it happens — reasoning, tool
+calls, terminal output — with a **LIVE** badge and the option to scrub back through
+what already happened.
+
+```
+/share        # reachable from this machine
+/share lan    # reachable from your local network
+/share stop   # stop sharing
+```
+
+The link carries a token that is generated per share and is the only thing gating
+access, so treat it as the secret it is. Sharing stops when you run `/share stop`
+or leave the session; nothing keeps listening afterwards.
+
+Viewers are **read-only**: they cannot type, approve a permission prompt, or
+interrupt a turn.
+
+:::caution
+`/share lan` binds every interface, so anyone who can reach your machine on that
+network and has the link can read the whole session, including file contents and
+command output. For anything wider, forward the loopback port through a tunnel you
+control — see [`kolega-code serve`](/cli/serve/#sharing-beyond-your-machine).
+:::
+
+To send someone a recording rather than live access,
+[`kolega-code share export`](/cli/share/) writes a static bundle with secrets
+scrubbed.
 
 Run `/goal <condition>` to set an autonomous completion goal the agent works
 toward, verifying its own progress after each turn until the goal is met, the turn
