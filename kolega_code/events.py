@@ -15,7 +15,7 @@ import abc
 import uuid
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional, Sequence, Tuple
 
 from pydantic import BaseModel, Field
 
@@ -249,20 +249,31 @@ class AgentEventEmitter:
         is_streaming: bool = False,
         tool_description: Optional[str] = None,
         tool_call_id: Optional[str] = None,
+        images: Optional[Sequence[Tuple[str, str]]] = None,
     ) -> None:
-        """Send a chat_message event (responses, tool calls/results/errors)."""
+        """Send a chat_message event (responses, tool calls/results/errors).
+
+        ``images`` carries ``(media_type, base64_data)`` pairs for a tool that
+        produced pictures. They travel as content here and are turned into image
+        artifacts by the recording layer, which then drops the payload — without
+        this the bytes only ever reach the model, on a history record no
+        presentation client reads, and a replay could never show a screenshot.
+        """
         sub_agent_info = self._sub_agent_info_provider() if self._sub_agent_info_provider else None
+        payload: Dict[str, Any] = {
+            "message_type": message_type,
+            "text": content,
+            "tool_description": tool_description,
+            "tool_call_id": tool_call_id,
+        }
+        if images:
+            payload["images"] = [{"media_type": media_type, "data": data} for media_type, data in images]
 
         await self.emit(
             AgentEvent(
                 sender=self.sender,
                 event_type="chat_message",
-                content={
-                    "message_type": message_type,
-                    "text": content,
-                    "tool_description": tool_description,
-                    "tool_call_id": tool_call_id,
-                },
+                content=payload,
                 is_streaming=is_streaming,
                 sub_agent_info=sub_agent_info,
             )

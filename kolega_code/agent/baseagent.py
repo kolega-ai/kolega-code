@@ -11,7 +11,7 @@ import uuid
 from email.utils import parsedate_to_datetime
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, AsyncGenerator, Awaitable, Callable, Dict, List, Optional, cast
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Awaitable, Callable, Dict, List, Optional, Sequence, Tuple, cast
 from contextlib import AbstractAsyncContextManager
 from collections.abc import Coroutine
 
@@ -85,6 +85,23 @@ HOOK_DECISION_SYSTEM_PROMPT = (
 class QueuedUserInput:
     text: str
     attachments: Optional[List[Dict[str, Any]]] = None
+
+
+def _image_payloads(blocks: List[Any]) -> List[Tuple[str, str]]:
+    """``(media_type, base64_data)`` for the base64 images among ``blocks``.
+
+    A tool that returns pictures — reading an image, a browser screenshot —
+    describes them in markdown for the transcript, but the bytes themselves
+    otherwise reach only the model. Lifting them out here is what lets the event
+    stream carry the picture, and therefore what lets a replay show it.
+    """
+    payloads: List[Tuple[str, str]] = []
+    for block in blocks:
+        if not isinstance(block, ImageBlock) or block.image_type != "base64":
+            continue
+        if block.media_type and block.data:
+            payloads.append((block.media_type, block.data))
+    return payloads
 
 
 class BaseAgent(LogMixin):
@@ -1077,8 +1094,10 @@ class BaseAgent(LogMixin):
 
             # Handle the case where the output is a list of ContentBlock objects
             chat_message_content = output
+            images: List[Tuple[str, str]] = []
             if isinstance(output, list):
                 chat_message_content = "\n\n".join(item.to_markdown() for item in output)
+                images = _image_payloads(output)
 
             # Send tool_result message for successful execution
             await self.send_chat_message(
@@ -1087,6 +1106,7 @@ class BaseAgent(LogMixin):
                 is_streaming=False,
                 tool_description=tool_name,
                 tool_call_id=tool_execution_id,
+                images=images,
             )
 
             return ToolResult(
@@ -1391,7 +1411,13 @@ class BaseAgent(LogMixin):
         return None
 
     async def send_chat_message(
-        self, message_type: str, content: str, is_streaming: bool = False, tool_description=None, tool_call_id=None
+        self,
+        message_type: str,
+        content: str,
+        is_streaming: bool = False,
+        tool_description=None,
+        tool_call_id=None,
+        images: Optional[Sequence[Tuple[str, str]]] = None,
     ) -> None:
         """
         Send a message to the chat interface.
@@ -1399,6 +1425,8 @@ class BaseAgent(LogMixin):
         Args:
             content: The message content to send
             is_streaming: Whether this is part of a streaming message
+            images: ``(media_type, base64_data)`` pairs a tool produced, so a
+                frontend can show the picture rather than a description of one
         """
         await self.emitter.chat(
             message_type,
@@ -1406,6 +1434,7 @@ class BaseAgent(LogMixin):
             is_streaming=is_streaming,
             tool_description=tool_description,
             tool_call_id=tool_call_id,
+            images=images,
         )
 
     @staticmethod
