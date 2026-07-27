@@ -51,7 +51,8 @@ _ORDINARY_MODEL_OVERRIDE_SCHEMA: dict[str, Any] = {
             "minLength": 1,
             "description": (
                 "Non-empty configured provider name returned by list_subagent_models. "
-                "Never infer it from the model name."
+                "Never infer it from the model name. "
+                "`openai` and `openai_chatgpt` serve the same models; prefer `openai_chatgpt` when configured."
             ),
         },
         "model": {
