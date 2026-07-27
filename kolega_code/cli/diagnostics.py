@@ -27,7 +27,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterable, Optional
 
 from kolega_code.local_state import ensure_private_dir, ensure_private_file
-from kolega_code.security import SECRET_PLACEHOLDER as SECRET_PLACEHOLDER, redact_secrets
+from kolega_code.security import (
+    SECRET_PLACEHOLDER as SECRET_PLACEHOLDER,
+    redact_secrets,
+    redact_secrets_in_obj,
+)
 
 if TYPE_CHECKING:
     from .session_store import SessionBugExport
@@ -43,6 +47,48 @@ def scrub_secrets(text: str, extra_values: Optional[Iterable[str]] = None) -> st
     x-api-key, ``*_API_KEY=``, and ``sk-``/``xai-``/``AIza`` token shapes).
     """
     return redact_secrets(text, extra_values, include_environment=True)
+
+
+def scrub_secrets_in_obj(obj: Any, extra_values: Optional[Iterable[str]] = None) -> Any:
+    """Structural companion to ``scrub_secrets`` for JSON-compatible payloads.
+
+    Redacting serialized JSON can splice a replacement across an escape sequence
+    and leave a document that no longer parses, which is how a bug bundle's
+    ``session.json`` ended up unreadable. Redacting the decoded leaves and
+    re-serializing cannot do that.
+    """
+    return redact_secrets_in_obj(obj, extra_values, include_environment=True)
+
+
+def _scrub_json_document(
+    text: str,
+    extra_values: Optional[Iterable[str]] = None,
+    *,
+    indent: Optional[int] = None,
+    sort_keys: bool = False,
+) -> str:
+    """Redact one JSON document structurally, falling back to text scrubbing.
+
+    ``indent``/``sort_keys`` mirror how the document was written so re-serializing
+    does not flatten a human-readable export.
+    """
+    try:
+        parsed = json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        return scrub_secrets(text, extra_values)
+    scrubbed = scrub_secrets_in_obj(parsed, extra_values)
+    rendered = json.dumps(scrubbed, indent=indent, sort_keys=sort_keys, default=str)
+    return rendered + "\n" if text.endswith("\n") else rendered
+
+
+def _scrub_jsonl_document(text: str, extra_values: Optional[Iterable[str]] = None) -> str:
+    """Redact JSON Lines structurally, per line, so one bad line cannot poison the rest."""
+    out: list[str] = []
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        out.append(_scrub_json_document(line, extra_values))
+    return "\n".join(out) + ("\n" if out else "")
 
 
 def _now_iso() -> str:
@@ -97,7 +143,9 @@ class DiagnosticsLog:
             if value is not None:
                 payload[key] = self._bound(value)
         try:
-            line = scrub_secrets(json.dumps(payload, default=str), self._secret_values)
+            # Redact before serializing: scrubbing the encoded form can splice a
+            # replacement across a \" escape and emit a line that will not parse.
+            line = json.dumps(scrub_secrets_in_obj(payload, self._secret_values), default=str)
             with self._lock:
                 self._rotate_if_large()
                 # Write via os.open/os.write: Path/handle.write is modeled by CodeQL as a
@@ -285,14 +333,23 @@ def assemble_bug_bundle(
                 except OSError:
                     pass
             if session_export is not None:
-                zf.writestr("session.json", scrub_secrets(session_export.session_json, diag._secret_values))
+                # Structural redaction keeps these parseable; a document that does
+                # not parse to begin with degrades to plain-text scrubbing.
+                # SessionStore writes these two with indent=2/sort_keys=True; keep
+                # that so the bundle stays readable after redaction.
+                zf.writestr(
+                    "session.json",
+                    _scrub_json_document(session_export.session_json, diag._secret_values, indent=2, sort_keys=True),
+                )
                 zf.writestr(
                     "session-events.jsonl",
-                    scrub_secrets(session_export.events_jsonl, diag._secret_values),
+                    _scrub_jsonl_document(session_export.events_jsonl, diag._secret_values),
                 )
                 zf.writestr(
                     "session-artifacts.json",
-                    scrub_secrets(session_export.artifact_manifest_json, diag._secret_values),
+                    _scrub_json_document(
+                        session_export.artifact_manifest_json, diag._secret_values, indent=2, sort_keys=True
+                    ),
                 )
         ensure_private_file(zip_path)
         return zip_path

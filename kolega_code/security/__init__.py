@@ -5,6 +5,7 @@ from .secrets import (
     SecretFinding,
     detect_secrets,
     redact_secrets,
+    redact_secrets_in_obj,
 )
 
 __all__ = [
@@ -12,4 +13,5 @@ __all__ = [
     "SecretFinding",
     "detect_secrets",
     "redact_secrets",
+    "redact_secrets_in_obj",
 ]
