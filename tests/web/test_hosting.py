@@ -181,3 +181,33 @@ async def test_reaching_the_lan_without_a_network_fails_instead_of_opening_up(
         await ShareServer(store, bind=ALL_INTERFACES).start()
 
     assert "local network address" in str(failure.value)
+
+
+@pytest.mark.asyncio
+async def test_an_unspecified_bind_address_is_refused_outright(store: SessionStore) -> None:
+    """The last gate before bind, wherever the address came from.
+
+    ``ALL_INTERFACES`` is how a caller *asks* for reach and is resolved to a
+    real address long before this point, so any other wildcard arriving at the
+    socket is a mistake rather than a choice — and listening on every interface
+    is never what a share link means.
+    """
+    with pytest.raises(ShareServerError) as refused:
+        await ShareServer(store, bind="::").start()
+
+    assert "every interface" in str(refused.value)
+
+
+@pytest.mark.asyncio
+async def test_asking_for_all_interfaces_is_a_request_not_an_address(
+    store: SessionStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The documented spelling still works, and resolves rather than binding."""
+    monkeypatch.setattr(hosting, "local_network_address", lambda: LOOPBACK)
+    server = ShareServer(store, bind=ALL_INTERFACES)
+
+    handle = await server.start()
+    try:
+        assert handle.host == LOOPBACK
+    finally:
+        await server.stop()

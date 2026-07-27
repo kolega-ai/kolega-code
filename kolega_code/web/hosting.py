@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import ipaddress
 import secrets
 import socket
 from dataclasses import dataclass
@@ -93,6 +94,28 @@ def local_network_address() -> Optional[str]:
     finally:
         probe.close()
     return str(address) if address and not str(address).startswith("127.") else None
+
+
+def _specific_address(host: str) -> str:
+    """Return ``host``, refusing anything that means "every interface".
+
+    The last gate before ``bind``. Reach is chosen well above this, so an
+    unspecified address arriving here is a mistake rather than a choice, and
+    listening on every interface the machine has — a VPN, a tether, a cloud NIC
+    — is never what a share link means. Checked at the point of use so it holds
+    for whatever path produced the value.
+    """
+    try:
+        parsed = ipaddress.ip_address(host)
+    except ValueError:
+        # A hostname rather than a literal; what it resolves to is the OS's call.
+        return host
+    if parsed.is_unspecified:
+        raise ShareServerError(
+            f"refusing to bind {host}, which listens on every interface. Bind the loopback "
+            "address, or pass ALL_INTERFACES to be reachable on your local network."
+        )
+    return host
 
 
 def _build_server(config: Any) -> Any:
@@ -221,15 +244,16 @@ class ShareServer:
         Binding the wildcard would additionally expose the session on every
         other interface the machine has.
         """
-        if not self._expose_on_lan:
-            return self._bind
-        address = local_network_address()
-        if address is None:
-            raise ShareServerError(
-                "could not determine this machine's local network address, so there is nothing "
-                "for /share lan to bind to. Share on loopback and forward the port through a tunnel instead."
-            )
-        return address
+        if self._expose_on_lan:
+            address = local_network_address()
+            if address is None:
+                raise ShareServerError(
+                    "could not determine this machine's local network address, so there is nothing "
+                    "for /share lan to bind to. Share on loopback and forward the port through a tunnel instead."
+                )
+        else:
+            address = self._bind
+        return _specific_address(address)
 
     def _bind_socket(self, host: str) -> socket.socket:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
