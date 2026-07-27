@@ -48,6 +48,14 @@ MAX_EVENTS_PER_READ = 5_000
 class ServerConfig:
     store: SessionStore
     token: Optional[str] = None
+    #: Sessions this server is allowed to expose. ``None`` means every session in
+    #: the store, which is right for a host serving its own sessions.
+    #:
+    #: A share link is the other case. Its token gates *routes*, so without a
+    #: scope the link handed to one person reads every session on the machine —
+    #: including ones recorded for unrelated projects. ``ShareServer`` sets this
+    #: to the single session being shared.
+    session_ids: Optional[frozenset[str]] = None
 
 
 def _digest_ok(digest: str) -> bool:
@@ -119,6 +127,8 @@ def create_app(config: ServerConfig) -> FastAPI:
         wanted = _normalized_project(project)
         summaries: list[dict[str, Any]] = []
         for record in config.store.list():
+            if not _in_scope(config, record.session_id):
+                continue
             if wanted is not None and _normalized_project(record.project_path) != wanted:
                 continue
             meta = await _head(config, record.session_id)
@@ -326,6 +336,10 @@ def create_app(config: ServerConfig) -> FastAPI:
 
     @app.get("/s/{session_id}/{asset}", include_in_schema=False)
     async def player_asset(session_id: str, asset: str) -> Response:
+        # Deliberately not scoped to a session: these are the player's own static
+        # files, identical for every session and carrying no session data. The id
+        # is in the path only because the player resolves them relative to its
+        # own URL, and answering for an unknown id reveals nothing.
         if asset not in {"player.js", "fold.js", "player.css", "player.html"}:
             raise HTTPException(status_code=404, detail="Unknown asset")
         media = "text/javascript" if asset.endswith(".js") else "text/css" if asset.endswith(".css") else "text/html"
@@ -333,7 +347,7 @@ def create_app(config: ServerConfig) -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse, include_in_schema=False)
     async def index() -> Response:
-        records = config.store.list()
+        records = [record for record in config.store.list() if _in_scope(config, record.session_id)]
         rows = []
         for record in records:
             meta = await _head(config, record.session_id)
@@ -416,11 +430,28 @@ def _authorized(
     return cookie_token == config.token
 
 
+def _in_scope(config: ServerConfig, session_id: str) -> bool:
+    return config.session_ids is None or session_id in config.session_ids
+
+
 def _record(config: ServerConfig, session_id: str):
+    """Resolve a session, refusing anything this server is not scoped to.
+
+    The scope check runs on the *resolved* id, because this accepts a thread id
+    as well as a session id and a caller must not be able to reach an
+    out-of-scope session by naming its thread instead.
+
+    Out of scope is reported as 404 rather than 403: distinguishing "exists but
+    not yours" from "does not exist" would confirm which other sessions this
+    machine has recorded, which is exactly what the scope is for.
+    """
     try:
-        return config.store.load_session_or_thread(session_id)
+        record = config.store.load_session_or_thread(session_id)
     except CliSessionStoreError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if not _in_scope(config, record.session_id):
+        raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+    return record
 
 
 def _event_store(config: ServerConfig, session_id: str) -> FileSessionEventStore:

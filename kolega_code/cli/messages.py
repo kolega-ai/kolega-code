@@ -163,10 +163,14 @@ SHARE_LOOPBACK_NOTE = (
 )
 SHARE_LAN_WARNING = (
     "Bound to every interface: anyone who can reach this machine on your network and has this "
-    "link can read the whole session, including file contents and command output. The link's "
+    "link can read this whole session, including file contents and command output. The link's "
     "token is the only thing gating it. Run /share stop when you are done."
 )
 SHARE_READ_ONLY_NOTE = "Viewers watch live and can read; they cannot type, approve, or interrupt."
+SHARE_UNREDACTED_NOTE = (
+    "A live link is not redacted: whatever the agent printed, including secrets, is visible to "
+    "anyone holding it. Use kolega-code share export for a copy with secrets scrubbed."
+)
 VERSION_INFO = "Kolega Code version {version}."
 UPDATE_STARTED = "Updating Kolega Code…"
 UPDATE_COMPLETED = "Kolega Code update completed. Restart this TUI to use the updated version."

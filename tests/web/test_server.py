@@ -382,3 +382,68 @@ async def test_openapi_schema_is_available_for_frontend_authors(store: SessionSt
     assert "/api/sessions" in paths
     assert "/api/sessions/{session_id}/events" in paths
     assert "/api/themes" in paths
+
+
+@pytest.mark.asyncio
+async def test_a_scoped_server_serves_only_the_session_it_was_given(store: SessionStore, tmp_path: Path) -> None:
+    """A share link must not be a key to the whole machine.
+
+    The token gates routes, not sessions, so an unscoped server handed the link
+    for one session let the holder read every other session in the store —
+    including ones recorded for unrelated projects, in the clear.
+    """
+    from starlette.websockets import WebSocketDisconnect
+
+    shared = await _seed(store, tmp_path / "shared")
+    private = await _seed(store, tmp_path / "private")
+
+    app = create_app(ServerConfig(store=store, session_ids=frozenset({shared.session_id})))
+    with TestClient(app) as client:
+        assert client.get(f"/api/sessions/{shared.session_id}/events").status_code == 200
+
+        for path in (
+            f"/api/sessions/{private.session_id}",
+            f"/api/sessions/{private.session_id}/events",
+            f"/api/sessions/{private.session_id}/state",
+            f"/api/sessions/{private.session_id}/artifacts/{'a' * 64}",
+            f"/s/{private.session_id}",
+            f"/s/{private.session_id}/manifest.json",
+            f"/s/{private.session_id}/events.jsonl",
+        ):
+            assert client.get(path).status_code == 404, f"{path} leaked an out-of-scope session"
+
+        listed = [item["session_id"] for item in client.get("/api/sessions").json()]
+        assert listed == [shared.session_id]
+        assert private.session_id not in client.get("/").text
+
+        with pytest.raises(WebSocketDisconnect) as closed:
+            with client.websocket_connect(f"/api/sessions/{private.session_id}/stream"):
+                pass
+        assert closed.value.code == 4404
+
+
+@pytest.mark.asyncio
+async def test_an_unscoped_server_still_serves_every_session(store: SessionStore, tmp_path: Path) -> None:
+    """Hosts embedding create_app serve their own sessions and must keep working."""
+    first = await _seed(store, tmp_path / "one")
+    second = await _seed(store, tmp_path / "two")
+
+    with _client(store) as client:
+        assert client.get(f"/api/sessions/{first.session_id}/events").status_code == 200
+        assert client.get(f"/api/sessions/{second.session_id}/events").status_code == 200
+        listed = {item["session_id"] for item in client.get("/api/sessions").json()}
+        assert {first.session_id, second.session_id} <= listed
+
+
+@pytest.mark.asyncio
+async def test_scope_is_checked_after_a_thread_id_is_resolved(store: SessionStore, tmp_path: Path) -> None:
+    """Naming a session by its thread must not route around the scope."""
+    shared = await _seed(store, tmp_path / "shared")
+    private = await _seed(store, tmp_path / "private")
+    thread_id = getattr(private, "thread_id", None)
+    if not thread_id:
+        pytest.skip("sessions in this store are not addressable by thread id")
+
+    app = create_app(ServerConfig(store=store, session_ids=frozenset({shared.session_id})))
+    with TestClient(app) as client:
+        assert client.get(f"/api/sessions/{thread_id}/events").status_code == 404

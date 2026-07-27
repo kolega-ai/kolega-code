@@ -1,19 +1,25 @@
 """Run the session server inside a host process.
 
-``kolega-code serve`` owns its process and blocks, which is right for a terminal
-but useless to a running TUI: sharing a session should not mean opening a second
-terminal, finding the session id, and constructing a URL by hand. This runs the
-same ASGI app as a task on the caller's event loop, on a port the OS picks, and
-hands back the link.
+Sharing a session should not mean opening a second terminal, finding the session
+id, and constructing a URL by hand. This runs the session ASGI app as a task on
+the caller's event loop and hands back the link.
 
-Two things differ from the standalone command:
+Three things matter for a link that is meant to be given away:
 
-* **A token is always minted.** The standalone server defaults to loopback with
-  no token because it is aimed at the machine's owner. A share link exists to be
-  given away, so it must carry proof of access even before anyone decides to
-  expose it beyond loopback.
+* **A token is always minted.** ``create_app`` allows no token at all, which is
+  fine for a server aimed at the machine's owner. A share link exists to be
+  handed to someone else, so it must carry proof of access even before anyone
+  decides to expose it beyond loopback.
+* **The link is scoped to one session.** The token gates routes, not sessions,
+  so an unscoped server would let the person you shared one session with read
+  every session in the store. Pass ``session_id`` and everything else 404s.
 * **Signal handlers are left alone.** ``uvicorn.Server.serve`` installs its own
   SIGINT/SIGTERM handlers, which would take the host's Ctrl-C out from under it.
+
+What a link exposes is *not* redacted. An exported bundle runs every string
+through :mod:`kolega_code.web.redaction`; this serves the recorded events as
+they are, so anything the agent printed — credentials included — is visible to
+whoever holds the link.
 """
 
 from __future__ import annotations
@@ -115,11 +121,15 @@ class ShareServer:
         bind: str = LOOPBACK,
         port: int = 0,
         token: Optional[str] = None,
+        session_id: Optional[str] = None,
     ) -> None:
         self._store = store
         self._bind = bind
         self._requested_port = port
         self._token = token or secrets.token_urlsafe(16)
+        # None keeps every session reachable, which only makes sense for a host
+        # serving its own. A share link should always name its session.
+        self._session_ids = None if session_id is None else frozenset({session_id})
         self._server: Any = None
         self._task: Optional[asyncio.Task[Any]] = None
         self._handle: Optional[ShareHandle] = None
@@ -147,7 +157,7 @@ class ShareServer:
 
         from .server import ServerConfig, create_app
 
-        app = create_app(ServerConfig(store=self._store, token=self._token))
+        app = create_app(ServerConfig(store=self._store, token=self._token, session_ids=self._session_ids))
         config = uvicorn.Config(
             app,
             host=self._bind,

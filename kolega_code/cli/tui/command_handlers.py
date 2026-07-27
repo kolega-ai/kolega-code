@@ -1106,7 +1106,7 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
         already = server is not None
         moved = False
         if server is None:
-            server = ShareServer(self.store, bind=bind, port=wanted)
+            server = ShareServer(self.store, bind=bind, port=wanted, session_id=self.session.session_id)
             try:
                 await server.start()
             except (ShareServerError, OSError) as exc:
@@ -1116,7 +1116,7 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
                 if port:
                     self._notify_user(messages.SHARE_FAILED.format(error=exc), severity="error")
                     return
-                server = ShareServer(self.store, bind=bind, port=0)
+                server = ShareServer(self.store, bind=bind, port=0, session_id=self.session.session_id)
                 try:
                     await server.start()
                 except (ShareServerError, OSError) as fallback_error:
@@ -1127,7 +1127,7 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
 
         url = server.session_url(self.session.session_id)
         self.copy_to_clipboard(url)
-        lines = [messages.SHARE_LINK_HEADING, url, "", messages.SHARE_READ_ONLY_NOTE]
+        lines = [messages.SHARE_LINK_HEADING, url, "", messages.SHARE_READ_ONLY_NOTE, messages.SHARE_UNREDACTED_NOTE]
         if moved:
             lines.append(messages.SHARE_PORT_TAKEN.format(port=DEFAULT_PORT))
         lines.append(messages.SHARE_LAN_WARNING if exposed else messages.SHARE_LOOPBACK_NOTE)

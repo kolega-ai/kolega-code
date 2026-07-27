@@ -295,3 +295,54 @@ async def test_malformed_arguments_explain_themselves(share_app, bad: str) -> No
 
     assert notices == [messages.SHARE_USAGE], bad
     assert share_app._share_server is None
+
+
+@pytest.mark.asyncio
+async def test_a_share_link_reaches_only_the_session_it_was_made_for(share_app) -> None:
+    """Sharing one session must not hand over every session on the machine.
+
+    The token gates routes rather than sessions, so before the server was scoped
+    the link given to one person read any other session in the same store — a
+    different project's transcript, in the clear, over the same token.
+    """
+    other = share_app.store.create(share_app.project_path, "code", {"model": "test"}, title="not shared")
+
+    async with share_app.run_test():
+        try:
+            await share_app._command_share("")
+            url = share_app._clipboard[-1]
+            base, _, query = url.partition("?")
+            root = base.rsplit("/s/", 1)[0]
+
+            assert await _get(url) == 200
+
+            for path in (
+                f"/s/{other.session_id}",
+                f"/api/sessions/{other.session_id}",
+                f"/api/sessions/{other.session_id}/events",
+            ):
+                with pytest.raises(urllib.error.HTTPError) as blocked:
+                    await _get(f"{root}{path}?{query}")
+                assert blocked.value.code == 404, f"{path} was reachable from another session's link"
+        finally:
+            await share_app._stop_share_server()
+
+
+@pytest.mark.asyncio
+async def test_share_says_plainly_that_a_live_link_is_not_redacted(share_app) -> None:
+    """A live view serves raw events; only an export is scrubbed.
+
+    The read-only note used to be the whole story, which reads as "safe to hand
+    out". It is not: whatever the agent printed is visible to whoever holds it.
+    """
+    async with share_app.run_test():
+        try:
+            await share_app._command_share("")
+
+            transcript = _system_text(share_app)
+            assert messages.SHARE_UNREDACTED_NOTE in transcript
+            assert "share export" in messages.SHARE_UNREDACTED_NOTE, (
+                "the warning has to point at the alternative, not just state the risk"
+            )
+        finally:
+            await share_app._stop_share_server()
