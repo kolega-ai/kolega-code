@@ -51,6 +51,7 @@ class SessionRecord:
     permission_mode: str = "ask"
     gigacode_enabled: bool = False
     goal: dict[str, Any] = field(default_factory=dict)
+    loop: dict[str, Any] = field(default_factory=dict)
     schema_version: int = SCHEMA_VERSION
 
     @classmethod
@@ -106,6 +107,7 @@ class SessionRecord:
             permission_mode=data.get("permission_mode") or "ask",
             gigacode_enabled=bool(data.get("gigacode_enabled", False)),
             goal=data.get("goal") or {},
+            loop=data.get("loop") or {},
         )
 
     def to_metadata_dict(self) -> dict[str, Any]:
@@ -128,6 +130,7 @@ class SessionRecord:
             "permission_mode": self.permission_mode,
             "gigacode_enabled": self.gigacode_enabled,
             "goal": self.goal,
+            "loop": self.loop,
         }
 
     def to_dict(self) -> dict[str, Any]:

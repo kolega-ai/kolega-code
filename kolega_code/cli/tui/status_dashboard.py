@@ -34,6 +34,7 @@ class StatusDashboardMixin(tui_app_base.KolegaAppBase):
         self._status_state.permission_mode = self.permission_mode.value
         self._status_state.gigacode_enabled = self._gigacode_enabled
         self._status_state.goal = self._goal_summary()
+        self._status_state.loop = self._loop_summary()
         try:
             self._status_dashboard.update(self._format_status_dashboard())
         except Exception:
@@ -60,6 +61,9 @@ class StatusDashboardMixin(tui_app_base.KolegaAppBase):
         goal_line = ""
         if state.goal:
             goal_line = f"{label('Goal')} [bold]{escape(state.goal)}[/bold]\n"
+        loop_line = ""
+        if state.loop:
+            loop_line = f"{label('Loop')} [bold]{escape(state.loop)}[/bold]\n"
         if state.usage_percentage is None:
             context_lines = theme.styled("Waiting for first context count", Color.MUTED)
         else:
@@ -95,6 +99,7 @@ class StatusDashboardMixin(tui_app_base.KolegaAppBase):
             f"{label('Permissions')} [bold]{permission_mode}[/bold]\n"
             f"{label('Gigacode')} [bold]{gigacode}[/bold]\n"
             f"{goal_line}"
+            f"{loop_line}"
             f"{worktree_line}"
             f"{turn_line}\n\n"
             f"{label('Context')}\n"

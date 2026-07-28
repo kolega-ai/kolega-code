@@ -121,6 +121,10 @@ export default defineConfig({
           items: [{ label: "Goal-Conditioned Work", slug: "goal" }],
         },
         {
+          label: "Scheduled Loops",
+          items: [{ label: "Recurring Prompts", slug: "loop" }],
+        },
+        {
           label: "Troubleshooting",
           items: [
             {

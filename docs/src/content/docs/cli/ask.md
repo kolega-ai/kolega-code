@@ -95,6 +95,32 @@ kolega-code ask "start by fixing the parser" --goal "all tests pass" --project .
 See [Goal-Conditioned Work](../../goal/) for the loop behavior, safety model, and
 JSON event details.
 
+## Scheduled loops
+
+Pass `--loop <interval>` or `--loop-cron "<expr>"` to re-run the prompt on a
+schedule until a cap or expiry is reached:
+
+```bash
+kolega-code ask "check the deploy and report" --loop 10m --loop-max-iterations 12
+kolega-code ask "summarize new PRs" --loop-cron "0 9 * * 1-5" --project .
+```
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--loop <interval>` | — | Fixed interval: `30s`, `5m`, `2h`, `1d`, `every 2 hours` |
+| `--loop-cron "<expr>"` | — | 5-field cron schedule (mutually exclusive with `--loop`) |
+| `--loop-max-iterations <n>` | `100` | Stop after this many iterations |
+| `--loop-expires <duration>` | `7d` | Stop this long after the loop starts |
+| `--loop-fresh` | off | Clear conversation history before each iteration after the first |
+
+Interval loops run the first iteration immediately and then wait; cron loops wait
+for the first matching local time. The positional `prompt` is optional — without
+one the CLI reads `.kolega/loop.md`. Progress lines go to stderr so piped stdout
+stays the answers, and the command exits `0` when the loop ends at its cap or
+expiry. `--loop` cannot be combined with `--goal`.
+
+See [Scheduled Loops](../../loop/) for the full interval and cron syntax.
+
 ## JSON output
 
 With `--json`, the command streams newline-delimited JSON objects, each tagged with
@@ -113,6 +139,9 @@ The stream includes:
 | `skill` | Skill activation metadata |
 | `goal_eval` | Emitted after each goal evaluation (with `--goal`): `met`, `turns`, `reason` |
 | `goal_result` | Final goal outcome (with `--goal`): `met`, `turns`, `reason` |
+| `loop_iteration` | Emitted before each loop iteration (with `--loop`): `iteration`, `scheduled_at`, `prompt_source` |
+| `loop_sleep` | Emitted before waiting for the next fire: `seconds`, `next_fire_at` |
+| `loop_result` | Final loop outcome: `iterations`, `reason` |
 | `summary` | A final object with the chunk count and `session_id` |
 
 In plain (non-JSON) mode, the answer is written to **stdout** while sub-agent and
@@ -130,7 +159,7 @@ the project at `.kolega/permissions.json`.
 
 | Code | Meaning |
 | --- | --- |
-| `0` | Success (or: the goal was met when using `--goal`) |
+| `0` | Success (or: the goal was met with `--goal`; a loop reached its cap or expiry with `--loop`) |
 | `1` | With `--goal`: the turn cap was reached without meeting the goal |
-| `2` | Configuration / usage error (e.g. invalid provider, missing API key) |
+| `2` | Configuration / usage error (e.g. invalid provider, missing API key, invalid loop schedule) |
 | `130` | Interrupted (`Ctrl+C`) |

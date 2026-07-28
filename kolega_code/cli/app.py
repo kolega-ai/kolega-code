@@ -59,6 +59,7 @@ from .config import CliConfigOverrides, active_model_override_message, key_statu
 from .connection import CliConnectionManager
 from .session_event_store import FileArtifactStore, FileSessionEventStore
 from .goal import GoalState
+from .loop import LOOP_TICK_SECONDS, LoopState
 from .diagnostics import DiagnosticsLog, ResponsivenessWatchdog
 from .file_index import WorkspaceFileIndex
 from .mentions import build_file_attachments
@@ -82,6 +83,7 @@ from .tui import constants as tui_constants
 from .tui import agent_runtime as tui_agent_runtime
 from .tui import changes_screen as tui_changes
 from .tui import command_handlers as tui_command_handlers
+from .tui import loop_runtime as tui_loop_runtime
 from .tui import memory_screen as tui_memory
 from .tui import prompt_flows as tui_prompt_flows
 from .tui import onboarding_screen as tui_onboarding
@@ -110,6 +112,7 @@ class KolegaCodeApp(
     tui_settings_panel.SettingsPanelMixin,
     tui_command_handlers.CommandHandlersMixin,
     tui_agent_runtime.AgentRuntimeMixin,
+    tui_loop_runtime.LoopRuntimeMixin,
     tui_status_dashboard.StatusDashboardMixin,
     tui_prompt_flows.PromptFlowMixin,
     tui_transcript.TranscriptRenderingMixin,
@@ -263,6 +266,11 @@ class KolegaCodeApp(
         self._plan_decision_active = False
         self._gigacode_enabled = bool(self.session.gigacode_enabled)
         self._goal: Optional[GoalState] = GoalState.from_dict(self.session.goal) if self.session.goal else None
+        self._scheduled_loop: Optional[LoopState] = (
+            LoopState.from_dict(self.session.loop) if self.session.loop else None
+        )
+        self._loop_iteration_active = False
+        self._loop_scheduler_timer: Optional[Timer] = None
         self._pending_question: Optional[tui_state.PendingQuestion] = None
         self._pending_approval: Optional[tui_state.PendingApproval] = None
         self._pending_image_attachments: list[dict] = []
@@ -482,12 +490,16 @@ class KolegaCodeApp(
         self._maybe_refresh_file_index()
         self._schedule_conversation_bottom_anchor()
         self.run_worker(self._consume_events(), name="kolega-events", group="events")
+        # Always-on scheduler tick. It is a cheap no-op with no loop armed, and
+        # only re-renders the dashboard when the coarse countdown label changes.
+        self._loop_scheduler_timer = self.set_interval(LOOP_TICK_SECONDS, self._loop_tick, name="loop-scheduler")
         if self.config is not None:
             await self._build_agent(self.config)
             self._set_chat_enabled(True)
             self._schedule_primary_focus_restore()
         else:
             await self._ensure_agent_from_settings()
+        await self._restore_loop_on_startup()
         if self.config is None and not self._onboarding_skipped:
             self.call_after_refresh(self.action_open_onboarding)
 
@@ -741,6 +753,7 @@ class KolegaCodeApp(
             permission_mode=record.permission_mode,
             gigacode_enabled=record.gigacode_enabled,
             goal=dict(record.goal),
+            loop=dict(record.loop),
         )
 
     async def _save_session_async(self) -> None:
@@ -1495,6 +1508,8 @@ class KolegaCodeApp(
         )
         if self._goal is not None and self._goal.is_active:
             await self._pause_goal(messages.REWIND_GOAL_PAUSED)
+        if self._scheduled_loop is not None and self._scheduled_loop.is_active:
+            await self._stop_loop(messages.REWIND_LOOP_STOPPED, notify=False)
         try:
             composer = self.query_one("#composer", tui_widgets.ChatComposer)
             composer.load_text(outcome.user_message_text)
@@ -2140,7 +2155,13 @@ class KolegaCodeApp(
         self.session.compaction = {}
         self._clear_queued_messages()
 
-    async def _reset_current_thread(self) -> None:
+    async def _reset_current_thread(self, *, preserve_loop: bool = False) -> None:
+        """Clear the conversation thread.
+
+        ``preserve_loop`` keeps the active scheduled loop and its session state
+        so a ``/loop --fresh`` iteration can start from a clean context without
+        cancelling the loop that asked for it.
+        """
         self._close_sub_agent_inspector()
         await asyncio.to_thread(self._session_recorder.start_epoch, "thread_reset")
         if self.agent is not None:
@@ -2171,6 +2192,17 @@ class KolegaCodeApp(
         self.session.goal = {}
         if self.agent is not None:
             self.agent.apply_goal(None)
+        if preserve_loop:
+            # A --fresh iteration cleared the thread on the loop's behalf; keep
+            # the loop and re-apply its prompt extension, which the agent still
+            # carries but which _build_agent-free resets would otherwise drop.
+            self._sync_loop_to_session()
+        else:
+            self._scheduled_loop = None
+            self.session.loop = {}
+            self._loop_iteration_active = False
+            if self.agent is not None:
+                self.agent.apply_loop(False)
         self._clear_runtime_output()
         await self._save_session_async()
         self._set_plan_actions_visible(False)
