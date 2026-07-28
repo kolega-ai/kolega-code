@@ -48,6 +48,7 @@ def _adapt_image_block_for_provider(
     target_provider: str,
     target_model: str,
     supports_vision: bool,
+    max_image_dimension: Optional[int],
 ) -> tuple[ContentBlock, bool]:
     """Return a request-safe image block without mutating stored history."""
     if not supports_vision:
@@ -60,6 +61,7 @@ def _adapt_image_block_for_provider(
         block.data,
         block.media_type,
         max_base64_bytes=image_utils.ANTHROPIC_MAX_IMAGE_BASE64_BYTES,
+        max_dimension=max_image_dimension,
     )
     if not result.succeeded:
         logger.warning(
@@ -260,6 +262,7 @@ def _adapt_content_blocks_for_provider(
     target_provider: str,
     target_model: str,
     supports_vision: bool,
+    max_image_dimension: Optional[int] = None,
     target_edit_protocol: Optional[str] = None,
     tool_call_providers: Optional[Dict[str, str]] = None,
     tool_call_protocols: Optional[Dict[str, Optional[str]]] = None,
@@ -276,6 +279,7 @@ def _adapt_content_blocks_for_provider(
                 target_provider=target_provider,
                 target_model=target_model,
                 supports_vision=supports_vision,
+                max_image_dimension=max_image_dimension,
             )
             adapted.append(adapted_block)
             changed = changed or image_changed
@@ -314,6 +318,7 @@ def _adapt_content_blocks_for_provider(
                         target_provider=target_provider,
                         target_model=target_model,
                         supports_vision=supports_vision,
+                        max_image_dimension=max_image_dimension,
                         target_edit_protocol=target_edit_protocol,
                         tool_call_providers=tool_call_providers,
                         tool_call_protocols=tool_call_protocols,
@@ -355,6 +360,7 @@ def _adapt_content_blocks_for_provider(
                 target_provider=target_provider,
                 target_model=target_model,
                 supports_vision=supports_vision,
+                max_image_dimension=max_image_dimension,
                 target_edit_protocol=target_edit_protocol,
                 tool_call_providers=tool_call_providers,
                 tool_call_protocols=tool_call_protocols,
@@ -412,6 +418,14 @@ def adapt_history_for_provider(
     target_provider = _provider_value(target_provider)
     if target_edit_protocol is not None:
         target_edit_protocol = _provider_value(target_edit_protocol)
+    max_image_dimension: Optional[int] = None
+    if target_provider == "anthropic" and supports_vision:
+        image_count = count_image_blocks(messages)
+        max_image_dimension = (
+            image_utils.ANTHROPIC_MANY_IMAGE_MAX_DIMENSION
+            if image_count > image_utils.ANTHROPIC_MANY_IMAGE_THRESHOLD
+            else image_utils.ANTHROPIC_MAX_IMAGE_DIMENSION
+        )
     result: List[Message] = []
     changed_any = False
     tool_call_providers: Dict[str, str] = {}
@@ -436,6 +450,7 @@ def adapt_history_for_provider(
             target_provider=target_provider,
             target_model=target_model,
             supports_vision=supports_vision,
+            max_image_dimension=max_image_dimension,
             target_edit_protocol=target_edit_protocol,
             tool_call_providers=tool_call_providers,
             tool_call_protocols=tool_call_protocols,

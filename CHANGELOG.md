@@ -6,6 +6,12 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+### Fixed
+
+- Downscaled outbound image copies in Anthropic conversations with more than 20
+  accumulated images to the provider's stricter dimension limit, preventing
+  later turns from failing while preserving full-resolution history and artifacts.
+
 ## 0.25.1 - 2026-07-28
 
 ### Fixed

@@ -7,6 +7,11 @@ request copy (stored history is never mutated), and the compaction-aware detecto
 only reports images that would actually be sent.
 """
 
+import base64
+import io
+
+from PIL import Image
+
 from kolega_code.agent.conversation import (
     Conversation,
     adapt_history_for_provider,
@@ -26,7 +31,15 @@ from kolega_code.llm.models import (
 
 
 def _image(media_type: str = "image/png") -> ImageBlock:
-    return ImageBlock(image_type="base64", media_type=media_type, data="ZmFrZQ==")
+    image_format = "JPEG" if media_type == "image/jpeg" else "PNG"
+    image = Image.new("RGB", (1, 1), "navy")
+    output = io.BytesIO()
+    image.save(output, format=image_format)
+    return ImageBlock(
+        image_type="base64",
+        media_type=media_type,
+        data=base64.b64encode(output.getvalue()).decode("ascii"),
+    )
 
 
 def _user(*blocks) -> Message:

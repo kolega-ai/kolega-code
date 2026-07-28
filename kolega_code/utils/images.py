@@ -40,6 +40,12 @@ MAX_IMAGE_BYTES = 20 * 1024 * 1024
 # decoded image size. A raw image just under 10 MiB may therefore exceed this
 # limit after base64's 4/3 expansion.
 ANTHROPIC_MAX_IMAGE_BASE64_BYTES = 10 * 1024 * 1024
+# Anthropic accepts images up to 8,000 px on either axis for ordinary
+# requests. Once the request contains more than 20 images, every image must
+# instead fit within 2,000 x 2,000 px.
+ANTHROPIC_MAX_IMAGE_DIMENSION = 8_000
+ANTHROPIC_MANY_IMAGE_THRESHOLD = 20
+ANTHROPIC_MANY_IMAGE_MAX_DIMENSION = 2_000
 
 # Leave headroom below the provider's hard boundary when producing a
 # derivative. This avoids repeatedly re-encoding an image for tiny accounting
@@ -88,23 +94,30 @@ def resize_base64_image_to_limit(
     media_type: str,
     *,
     max_base64_bytes: int,
+    max_dimension: Optional[int] = None,
 ) -> ImageResizeResult:
     """Return a non-mutating provider-safe derivative of a base64 image.
 
-    Images already within the hard limit are returned byte-for-byte unchanged.
-    Oversized images are decoded and re-encoded as PNG when transparency must
-    be retained, or optimized JPEG otherwise. Dimensions are reduced
+    Images already within the byte and optional dimension limits are returned
+    byte-for-byte unchanged. Oversized images are decoded and re-encoded as PNG
+    when transparency must be retained, or optimized JPEG otherwise.
+    Dimensions are reduced proportionally to the requested maximum first, then
     iteratively until the payload has a safety margin below the provider limit.
     Animated images use their first frame for the ephemeral provider copy.
     """
     if max_base64_bytes <= 0:
         raise ValueError("max_base64_bytes must be positive")
+    if max_dimension is not None and max_dimension <= 0:
+        raise ValueError("max_dimension must be positive")
 
     if not data.isascii():
         return ImageResizeResult(None, None, resized=False, error="Image payload is not ASCII base64")
     encoded_size = len(data)
 
-    if encoded_size <= max_base64_bytes:
+    # Existing byte-only callers keep the cheap path and never decode a valid
+    # image that already fits. A dimension constraint requires reading the
+    # image header before the same unchanged decision can be made.
+    if encoded_size <= max_base64_bytes and max_dimension is None:
         return ImageResizeResult(data, media_type, resized=False)
 
     try:
@@ -112,6 +125,9 @@ def resize_base64_image_to_limit(
         with Image.open(io.BytesIO(raw)) as opened:
             opened.seek(0)
             width, height = opened.size
+            dimensions_fit = max_dimension is None or (width <= max_dimension and height <= max_dimension)
+            if encoded_size <= max_base64_bytes and dimensions_fit:
+                return ImageResizeResult(data, media_type, resized=False)
             if width * height > _IMAGE_RESIZE_MAX_PIXELS:
                 return ImageResizeResult(
                     None,
@@ -124,6 +140,9 @@ def resize_base64_image_to_limit(
         return ImageResizeResult(None, None, resized=False, error=f"Could not decode image: {exc}")
 
     has_transparency = "A" in image.getbands() or "transparency" in image.info
+    if max_dimension is not None and (image.width > max_dimension or image.height > max_dimension):
+        image.thumbnail((max_dimension, max_dimension), Image.Resampling.LANCZOS)
+
     if has_transparency:
         image = image.convert("RGBA")
         output_format = "PNG"
