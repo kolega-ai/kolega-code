@@ -6,6 +6,8 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.25.2 - 2026-07-28
+
 ### Fixed
 
 - Downscaled outbound image copies to satisfy Anthropic's per-image dimensions
