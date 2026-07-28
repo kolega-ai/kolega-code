@@ -215,6 +215,26 @@ def test_fireworks_openai_reasoning_effort_serialization() -> None:
     }
 
 
+def test_fireworks_kimi_k3_reasoning_effort_serialization() -> None:
+    provider = OpenAIProvider(api_key="test-key", provider_name="fireworks")
+    params = {"model": "accounts/fireworks/models/kimi-k3"}
+
+    provider._apply_thinking_params(params, GenerationParams(thinking="max"))
+
+    assert params == {
+        "model": "accounts/fireworks/models/kimi-k3",
+        "reasoning_effort": "max",
+    }
+
+
+@pytest.mark.parametrize("effort", ["none", "high"])
+def test_fireworks_kimi_k3_rejects_unsupported_thinking_effort(effort: str) -> None:
+    client = LLMClient(provider="fireworks", api_key="test-key")
+
+    with pytest.raises(ValueError, match="Unsupported thinking effort"):
+        client._prepare_thinking_param(effort, model="accounts/fireworks/models/kimi-k3")
+
+
 def test_google_gemini_3_pro_uses_thinking_level() -> None:
     provider = GoogleProvider(api_key="test-key")
 

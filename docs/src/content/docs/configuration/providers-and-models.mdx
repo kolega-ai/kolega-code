@@ -66,10 +66,11 @@ model catalog should be refreshed periodically from Ollama's model library/API.
 **Fireworks.ai.** The `fireworks` provider targets Fireworks' OpenAI-compatible
 serverless endpoint (`https://api.fireworks.ai/inference/v1`) with `FIREWORKS_API_KEY`.
 Fireworks model IDs use resource names such as `accounts/fireworks/models/glm-5p2`.
-Kolega Code exposes GLM-5.2, GLM-5.1, Kimi K2.7 Code, DeepSeek V4 Pro/Flash,
-MiniMax M3, and Qwen 3.7 Plus through the Settings UI and CLI. Fireworks reasoning
-models return `reasoning_content`; Kolega Code exposes `none`, `low`, `medium`,
-`high`, and `max` as `reasoning_effort` values for these models.
+Kolega Code exposes Kimi K3, GLM-5.2, GLM-5.1, Kimi K2.7 Code, DeepSeek V4
+Pro/Flash, MiniMax M3, and Qwen 3.7 Plus through the Settings UI and CLI.
+Fireworks reasoning models return `reasoning_content`. Kimi K3 always reasons and
+uses `max` effort; the other listed Fireworks models expose `none`, `low`, `medium`,
+`high`, and `max` as `reasoning_effort` values.
 </Aside>
 
 <Aside type="note">

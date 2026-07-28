@@ -86,6 +86,7 @@ MODEL_LABELS: dict[str, str] = {
     # Fireworks
     "accounts/fireworks/models/glm-5p2": "GLM-5.2",
     "accounts/fireworks/models/glm-5p1": "GLM-5.1",
+    "accounts/fireworks/models/kimi-k3": "Kimi K3",
     "accounts/fireworks/models/kimi-k2p7-code": "Kimi K2.7 Code",
     "accounts/fireworks/models/deepseek-v4-pro": "DeepSeek V4 Pro",
     "accounts/fireworks/models/deepseek-v4-flash": "DeepSeek V4 Flash",

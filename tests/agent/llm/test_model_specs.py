@@ -155,6 +155,18 @@ def test_fireworks_serverless_model_specs():
         assert specs["thinking_effort"].default == "medium"
 
 
+def test_fireworks_kimi_k3_model_specs():
+    specs = get_model_specs("fireworks", "accounts/fireworks/models/kimi-k3")
+
+    assert specs["context_length"] == 1048576
+    assert specs["max_completion_tokens"] == 131072
+    assert specs["default_temperature"] == 1.0
+    assert specs["supports_vision"] is True
+    assert specs["thinking_effort"].options == ("max",)
+    assert specs["thinking_effort"].default == "max"
+    assert specs["thinking_effort"].mode == "openai_reasoning_effort"
+
+
 def test_claude_fable_5_model_specs():
     specs = get_model_specs("anthropic", "claude-fable-5")
 

@@ -94,6 +94,7 @@ def test_new_google_models_are_selectable_without_changing_default() -> None:
 def test_fireworks_ui_model_options_include_serverless_catalog():
     options = dict(ui_model_options("fireworks"))
 
+    assert options["Kimi K3"] == "accounts/fireworks/models/kimi-k3"
     assert options["GLM-5.2"] == "accounts/fireworks/models/glm-5p2"
     assert options["GLM-5.1"] == "accounts/fireworks/models/glm-5p1"
     assert options["Kimi K2.7 Code"] == "accounts/fireworks/models/kimi-k2p7-code"
@@ -112,6 +113,7 @@ def test_vision_only_model_options_follow_catalog_capabilities():
     fireworks = dict(ui_model_options("fireworks", vision_only=True))
 
     assert fireworks == {
+        "Kimi K3": "accounts/fireworks/models/kimi-k3",
         "Kimi K2.7 Code": "accounts/fireworks/models/kimi-k2p7-code",
         "MiniMax M3": "accounts/fireworks/models/minimax-m3",
     }

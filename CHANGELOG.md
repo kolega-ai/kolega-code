@@ -43,6 +43,9 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 - Added Anthropic Claude Opus 5 (`claude-opus-5`) with a 1M-token context
   window, 128K max output, vision input, and adaptive thinking with
   `low`/`medium`/`high`/`xhigh`/`max` effort levels.
+- Added Fireworks Kimi K3 (`accounts/fireworks/models/kimi-k3`) with a 1M-token
+  context window, 131K configured output, vision and tool-calling support, and
+  max reasoning effort.
 
 ### Changed
 
