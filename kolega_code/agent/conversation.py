@@ -23,6 +23,7 @@ from kolega_code.llm.models import (
     ToolCall,
     ToolResult,
 )
+from kolega_code.utils import images as image_utils
 from kolega_code.agent.tool_backend.hashline_v2 import strip_hashline_read_output
 
 logger = logging.getLogger(__name__)
@@ -31,6 +32,66 @@ logger = logging.getLogger(__name__)
 def _image_placeholder(media_type: str, model_name: str) -> str:
     """Text substituted for an image block when the active model can't see images."""
     return f"[An image ({media_type}) was shared earlier in this thread but is not visible to {model_name}.]"
+
+
+def _oversized_image_placeholder(media_type: str, model_name: str) -> str:
+    """Text substituted when a provider-safe image derivative cannot be made."""
+    return (
+        f"[An earlier image ({media_type}) exceeded {model_name}'s request limit and could not be resized safely, "
+        "so it was omitted from this request.]"
+    )
+
+
+def _adapt_image_block_for_provider(
+    block: ImageBlock,
+    *,
+    target_provider: str,
+    target_model: str,
+    supports_vision: bool,
+) -> tuple[ContentBlock, bool]:
+    """Return a request-safe image block without mutating stored history."""
+    if not supports_vision:
+        return TextBlock(text=_image_placeholder(block.media_type, target_model)), True
+
+    if target_provider != "anthropic" or block.image_type != "base64":
+        return block, False
+
+    result = image_utils.resize_base64_image_to_limit(
+        block.data,
+        block.media_type,
+        max_base64_bytes=image_utils.ANTHROPIC_MAX_IMAGE_BASE64_BYTES,
+    )
+    if not result.succeeded:
+        logger.warning(
+            "Omitting oversized Anthropic history image that could not be resized: %s",
+            result.error or "unknown image conversion error",
+        )
+        return (
+            TextBlock(
+                text=_oversized_image_placeholder(block.media_type, target_model),
+                cache_checkpoint=block.cache_checkpoint,
+            ),
+            True,
+        )
+    if not result.resized:
+        return block, False
+
+    assert result.data is not None
+    assert result.media_type is not None
+    logger.info(
+        "Resized Anthropic history image from %d to %d base64 bytes",
+        len(block.data),
+        len(result.data),
+    )
+    return (
+        ImageBlock(
+            image_type="base64",
+            media_type=result.media_type,
+            data=result.data,
+            cache_checkpoint=block.cache_checkpoint,
+        ),
+        True,
+    )
 
 
 def count_image_blocks(messages: List[Message]) -> int:
@@ -209,9 +270,15 @@ def _adapt_content_blocks_for_provider(
     changed = False
 
     for block in blocks:
-        if isinstance(block, ImageBlock) and not supports_vision:
-            adapted.append(TextBlock(text=_image_placeholder(block.media_type, target_model)))
-            changed = True
+        if isinstance(block, ImageBlock):
+            adapted_block, image_changed = _adapt_image_block_for_provider(
+                block,
+                target_provider=target_provider,
+                target_model=target_model,
+                supports_vision=supports_vision,
+            )
+            adapted.append(adapted_block)
+            changed = changed or image_changed
         elif isinstance(block, (ThinkingBlock, RedactedThinkingBlock, ResponsesReasoningBlock)):
             if _preserve_reasoning_block(block, source_provider=source_provider, target_provider=target_provider):
                 adapted.append(block)
@@ -240,7 +307,24 @@ def _adapt_content_blocks_for_provider(
                 source_edit_protocol=call_protocol,
                 target_edit_protocol=target_edit_protocol,
             ):
-                adapted.append(block)
+                if isinstance(block.content, list):
+                    inner, inner_changed = _adapt_content_blocks_for_provider(
+                        block.content,
+                        source_provider=source_provider,
+                        target_provider=target_provider,
+                        target_model=target_model,
+                        supports_vision=supports_vision,
+                        target_edit_protocol=target_edit_protocol,
+                        tool_call_providers=tool_call_providers,
+                        tool_call_protocols=tool_call_protocols,
+                        source_usage_metadata=source_usage_metadata,
+                        # Nested tool-result content is tool output, never assistant prose.
+                        message_role=None,
+                    )
+                    adapted.append(_tool_result_with_content(block, inner) if inner_changed else block)
+                    changed = changed or inner_changed
+                else:
+                    adapted.append(block)
             else:
                 adapted.append(_freeform_result_placeholder(block, call_source))
                 changed = True
@@ -315,8 +399,9 @@ def adapt_history_for_provider(
     blocks — substituting model-visible text there gets echoed back by the model
     and then persisted as real history. Assistant text carrying placeholders
     echoed by earlier builds is scrubbed for the same reason. Image blocks are
-    preserved for vision models and replaced with placeholders for non-vision
-    models, matching the previous image compatibility behavior.
+    preserved for vision models, except that oversized base64 images get an
+    ephemeral provider-safe derivative for Anthropic. Non-vision models receive
+    placeholders, matching the previous image compatibility behavior.
 
     An assistant message left with no content blocks is omitted from the returned
     history. That orphans nothing: tool calls are never dropped by this pass, so

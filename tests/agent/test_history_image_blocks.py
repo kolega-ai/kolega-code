@@ -7,6 +7,12 @@ request copy (stored history is never mutated), and the compaction-aware detecto
 only reports images that would actually be sent.
 """
 
+import base64
+import io
+
+import pytest
+from PIL import Image
+
 from kolega_code.agent.conversation import (
     Conversation,
     adapt_history_for_provider,
@@ -27,6 +33,17 @@ from kolega_code.llm.models import (
 
 def _image(media_type: str = "image/png") -> ImageBlock:
     return ImageBlock(image_type="base64", media_type=media_type, data="ZmFrZQ==")
+
+
+def _noise_jpeg() -> ImageBlock:
+    image = Image.effect_noise((160, 120), 80).convert("RGB")
+    output = io.BytesIO()
+    image.save(output, format="JPEG")
+    return ImageBlock(
+        image_type="base64",
+        media_type="image/jpeg",
+        data=base64.b64encode(output.getvalue()).decode("ascii"),
+    )
 
 
 def _user(*blocks) -> Message:
@@ -219,3 +236,149 @@ def test_replace_preserves_cache_checkpoint_on_tool_result():
     new_tr = out[0].content[0]
     assert isinstance(new_tr, ToolResult)
     assert new_tr.cache_checkpoint is True
+
+
+def test_adapt_resizes_top_level_and_nested_anthropic_images_without_mutating_history(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import kolega_code.utils.images as image_utils
+
+    limit = 1_600
+    monkeypatch.setattr(image_utils, "ANTHROPIC_MAX_IMAGE_BASE64_BYTES", limit)
+    top_level = _noise_jpeg()
+    nested = _noise_jpeg()
+    result = ToolResult(
+        tool_use_id="image-call",
+        name="read_image",
+        content=[nested, TextBlock(text="caption")],
+        is_error=False,
+        cache_checkpoint=True,
+        execution_id="image-exec",
+    )
+    history = [_user(TextBlock(text="look"), top_level), _user(result)]
+
+    adapted = adapt_history_for_provider(
+        history,
+        target_provider="anthropic",
+        target_model="claude-opus-5",
+        supports_vision=True,
+    )
+
+    adapted_top = adapted[0].content[1]
+    assert isinstance(adapted_top, ImageBlock)
+    assert adapted_top is not top_level
+    assert adapted_top.media_type == "image/jpeg"
+    assert len(adapted_top.data) < limit
+    assert adapted_top.data != top_level.data
+
+    adapted_result = adapted[1].content[0]
+    assert isinstance(adapted_result, ToolResult)
+    assert adapted_result is not result
+    assert adapted_result.tool_use_id == "image-call"
+    assert adapted_result.name == "read_image"
+    assert adapted_result.is_error is False
+    assert adapted_result.cache_checkpoint is True
+    assert adapted_result.execution_id == "image-exec"
+    adapted_nested = adapted_result.content[0]
+    assert isinstance(adapted_nested, ImageBlock)
+    assert adapted_nested is not nested
+    assert len(adapted_nested.data) < limit
+    assert isinstance(adapted_result.content[1], TextBlock)
+    assert adapted_result.content[1].text == "caption"
+
+    # The canonical stored history remains full-resolution and untouched.
+    assert history[0].content[1] is top_level
+    assert history[1].content[0] is result
+    assert result.content[0] is nested
+
+
+def test_adapt_resizes_image_nested_in_compatible_freeform_tool_result(monkeypatch: pytest.MonkeyPatch) -> None:
+    import kolega_code.utils.images as image_utils
+
+    limit = 1_600
+    monkeypatch.setattr(image_utils, "ANTHROPIC_MAX_IMAGE_BASE64_BYTES", limit)
+    nested = _noise_jpeg()
+    result = ToolResult(
+        tool_use_id="freeform-image-call",
+        name="read_image",
+        content=[nested],
+        is_error=False,
+        input_kind="freeform",
+    )
+    history = [
+        Message(
+            role="user",
+            content=[result],
+            usage_metadata={"provider": "anthropic"},
+        )
+    ]
+
+    adapted = adapt_history_for_provider(
+        history,
+        target_provider="anthropic",
+        target_model="claude-opus-5",
+        supports_vision=True,
+    )
+
+    adapted_result = adapted[0].content[0]
+    assert isinstance(adapted_result, ToolResult)
+    assert isinstance(adapted_result.content, list)
+    adapted_image = adapted_result.content[0]
+    assert isinstance(adapted_image, ImageBlock)
+    assert len(adapted_image.data) < limit
+    assert adapted_image.data != nested.data
+    assert result.content[0] is nested
+
+
+def test_adapt_leaves_valid_url_and_non_anthropic_images_unchanged(monkeypatch: pytest.MonkeyPatch) -> None:
+    import kolega_code.utils.images as image_utils
+
+    monkeypatch.setattr(image_utils, "ANTHROPIC_MAX_IMAGE_BASE64_BYTES", 64)
+    valid = _image()
+    url = ImageBlock(image_type="url", media_type="image/png", data="https://example.com/image.png")
+    oversized = _noise_jpeg()
+    history = [_user(valid, url, oversized)]
+
+    anthropic = adapt_history_for_provider(
+        history,
+        target_provider="anthropic",
+        target_model="claude-opus-5",
+        supports_vision=True,
+    )
+    assert anthropic[0].content[0] is valid
+    assert anthropic[0].content[1] is url
+
+    openai = adapt_history_for_provider(
+        history,
+        target_provider="openai",
+        target_model="gpt-5.4",
+        supports_vision=True,
+    )
+    assert openai is history
+    assert openai[0].content[2] is oversized
+
+
+def test_adapt_omits_oversized_anthropic_image_when_resize_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    import kolega_code.utils.images as image_utils
+
+    monkeypatch.setattr(image_utils, "ANTHROPIC_MAX_IMAGE_BASE64_BYTES", 64)
+    invalid = ImageBlock(
+        image_type="base64",
+        media_type="image/png",
+        data=base64.b64encode(b"not-an-image" * 100).decode("ascii"),
+        cache_checkpoint=True,
+    )
+    history = [_user(invalid)]
+
+    adapted = adapt_history_for_provider(
+        history,
+        target_provider="anthropic",
+        target_model="claude-opus-5",
+        supports_vision=True,
+    )
+
+    placeholder = adapted[0].content[0]
+    assert isinstance(placeholder, TextBlock)
+    assert "could not be resized safely" in placeholder.text
+    assert placeholder.cache_checkpoint is True
+    assert history[0].content[0] is invalid

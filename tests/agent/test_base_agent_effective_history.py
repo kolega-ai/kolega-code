@@ -1,4 +1,6 @@
 # ruff: noqa: F401,F811,E402
+import base64
+import io
 import os
 import uuid
 from types import SimpleNamespace
@@ -6,9 +8,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from dotenv import load_dotenv
+from PIL import Image
 
 from kolega_code.agent.baseagent import BaseAgent
 from kolega_code.agent.errors import MaxAgentIterationsExceeded
+from kolega_code.cli.session_store import SessionStore
 from kolega_code.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
 from kolega_code.events import AgentConnectionManager
 from kolega_code.llm.exceptions import (
@@ -146,6 +150,58 @@ class TestBaseAgent:
 
         assert history[0].content[1] is image
         assert history[1].content[0].content[0] is nested_image
+
+    def test_anthropic_history_resize_preserves_hydrated_history_and_artifact(
+        self,
+        base_agent,
+        tmp_path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        import kolega_code.utils.images as image_utils
+
+        image = Image.effect_noise((160, 120), 80).convert("RGB")
+        output = io.BytesIO()
+        image.save(output, format="JPEG")
+        original_bytes = output.getvalue()
+        original_base64 = base64.b64encode(original_bytes).decode("ascii")
+        limit = 1_600
+        assert len(original_base64) > limit
+
+        project = tmp_path / "project"
+        project.mkdir()
+        store = SessionStore(tmp_path / "state")
+        record = store.create(project, "code", {})
+        store.recorder(record.session_id).record_context_message(
+            Message(
+                role="user",
+                content=[ImageBlock(image_type="base64", media_type="image/jpeg", data=original_base64)],
+            )
+        )
+        journal = store.journal(record.session_id)
+        event = next(event for event in journal.read_events() if event.artifacts)
+        artifact_ref = event.artifacts[0]
+        artifact_before = journal.read_artifact(artifact_ref)
+        assert artifact_before == original_bytes
+
+        loaded = store.load(record.session_id)
+        base_agent.restore_message_history(loaded.history)
+        restored_image = base_agent.history[0].content[0]
+        assert isinstance(restored_image, ImageBlock)
+        assert restored_image.data == original_base64
+
+        monkeypatch.setattr(image_utils, "ANTHROPIC_MAX_IMAGE_BASE64_BYTES", limit)
+        base_agent.primary_model_config.provider = ModelProvider.ANTHROPIC
+        base_agent.primary_model_config.model = "claude-opus-4-8"
+        base_agent.supports_vision = True
+
+        outbound = base_agent._history_for_llm()
+
+        outbound_image = outbound[0].content[0]
+        assert isinstance(outbound_image, ImageBlock)
+        assert outbound_image.data != original_base64
+        assert len(outbound_image.data) < limit
+        assert restored_image.data == original_base64
+        assert journal.read_artifact(artifact_ref) == artifact_before
 
     def test_get_effective_history_falls_back_when_no_compression(self, base_agent):
         # With no compression, effective == full history
