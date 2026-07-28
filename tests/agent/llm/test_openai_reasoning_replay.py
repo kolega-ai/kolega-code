@@ -20,6 +20,7 @@ from kolega_code.llm.specs.thinking import reasoning_replay_field
 
 DEEPSEEK_MODEL = "deepseek-v4-pro"
 FIREWORKS_MODEL = "accounts/fireworks/models/glm-5p2"
+FIREWORKS_KIMI_K3_MODEL = "accounts/fireworks/models/kimi-k3"
 OLLAMA_MODEL = "deepseek-v3.2"
 
 
@@ -33,6 +34,7 @@ def _assistant(*blocks, provider):
 def test_reasoning_replay_field_deepseek_fireworks_xai_use_reasoning_content():
     assert reasoning_replay_field("deepseek", DEEPSEEK_MODEL) == "reasoning_content"
     assert reasoning_replay_field("fireworks", FIREWORKS_MODEL) == "reasoning_content"
+    assert reasoning_replay_field("fireworks", FIREWORKS_KIMI_K3_MODEL) == "reasoning_content"
     # xAI's Chat Completions endpoint returns/accepts reasoning_content (verified live).
     assert reasoning_replay_field("xai", "grok-4.3") == "reasoning_content"
     assert reasoning_replay_field("xai", "grok-4.5") == "reasoning_content"
