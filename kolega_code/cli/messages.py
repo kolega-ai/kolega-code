@@ -118,6 +118,7 @@ REWIND_SKIPPED_NOTE = " Skipped: {detail}."
 REWIND_SAFETY_NOTE = " Undo with the snapshot tool (id {snapshot_id})."
 REWOUND_MARKER = "⤺ Rewound to before: {excerpt}"
 REWIND_GOAL_PAUSED = "Goal paused by rewind. Send a message to resume it."
+REWIND_LOOP_STOPPED = "Loop stopped by rewind. Start a new one with /loop <interval> <prompt>."
 
 # Confirmations
 SWITCHED_MODE = "Switched to {mode} mode."
@@ -265,3 +266,43 @@ GOAL_RUN_TO_COMPLETION = "Running to completion (no pauses until the goal is met
 GOAL_RESUMED_NOTE = "Goal still active: {condition}  Send a message to continue, or /goal clear."
 GOAL_BLOCK_STOP_FIRST = "Stop the current turn before changing the goal."
 GOAL_BLOCK_SETTINGS = "Configure a provider/model and API key before setting a goal."
+GOAL_BLOCK_LOOP_ACTIVE = "A scheduled loop is running. Stop it with /loop stop before setting a goal."
+
+# Loop (/loop scheduled recurring prompts)
+LOOP_USAGE = (
+    'Usage: /loop <interval> <prompt>  |  /loop --cron "<expr>" <prompt>  |  '
+    "/loop status  |  /loop stop\n"
+    "Intervals look like 30s, 5m, 2h, 1d or 'every 2 hours'. Options: --fresh, "
+    "--max-iterations <n>, --expires <duration>.\n"
+    "With no prompt, /loop reads .kolega/loop.md."
+)
+LOOP_NONE_ACTIVE = "No scheduled loop. Start one with /loop <interval> <prompt>."
+LOOP_STARTED = "Loop started: {schedule}. Next iteration {when}. Press Esc or run /loop stop to end it."
+LOOP_REPLACED = "Replaced the previous loop. New schedule: {schedule}. Next iteration {when}."
+LOOP_ITERATION_STARTED = "Loop iteration {iteration}/{max_iterations} ({schedule})."
+LOOP_ITERATION_FRESH = "Fresh thread for this iteration — prior conversation context was cleared."
+LOOP_STOPPED = "Loop stopped after {iterations} iteration(s)."
+LOOP_STOPPED_BY_USER = "Loop stopped by user after {iterations} iteration(s)."
+LOOP_MAX_ITERATIONS = "Loop finished: reached the {max_iterations}-iteration cap."
+LOOP_EXPIRED = "Loop expired after {iterations} iteration(s). Start a new one with /loop <interval> <prompt>."
+LOOP_RESTORED = "Loop restored: {schedule}. Next iteration {when}."
+LOOP_MD_MISSING = "No prompt given and no .kolega/loop.md in this project."
+LOOP_MD_GONE = "Loop stopped: .kolega/loop.md is no longer readable."
+LOOP_MD_SYMLINK = "Refusing to read {path}: it (or its directory) is a symlink."
+LOOP_MD_EMPTY = "{path} has no prompt body."
+LOOP_MD_TRUNCATED = "The .kolega/loop.md prompt was truncated to 25,000 bytes."
+LOOP_SCHEDULE_MISSING = "No schedule given. Add one to the command or a 'schedule:' line in .kolega/loop.md."
+LOOP_SCHEDULE_EMPTY = "A loop schedule must not be empty."
+LOOP_SCHEDULE_UNREADABLE = "The saved loop schedule could not be read."
+LOOP_BAD_DURATION = "Could not read {value!r} as a duration. Use forms like 30s, 5m, 2h, 1d or 'every 2 hours'."
+LOOP_BAD_MAX_ITERATIONS = "--max-iterations needs a positive whole number."
+LOOP_UNKNOWN_OPTION = "Unknown option {option}."
+LOOP_INTERVAL_TOO_SHORT = "The loop interval must be at least {minimum}s."
+LOOP_SUB_MINUTE_ADVISORY = "This loop runs more than once a minute — watch token spend."
+LOOP_ASK_PERMISSION_ADVISORY = (
+    "Permissions are set to ask. An unattended iteration will stop at the first approval prompt — "
+    "switch with /permissions if you plan to leave this running."
+)
+LOOP_BLOCK_STOP_FIRST = "Stop the current turn before changing the loop."
+LOOP_BLOCK_SETTINGS = "Configure a provider/model and API key before starting a loop."
+LOOP_BLOCK_GOAL_ACTIVE = "A goal is active. Clear it with /goal clear before starting a loop."

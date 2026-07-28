@@ -49,6 +49,7 @@ These control the app and your session.
 | `/logout` | Sign out of a provider, e.g. `/logout chatgpt` |
 | `/gigacode` | Toggle [gigacode](../../gigacode/) workflow orchestration on or off |
 | `/goal` | Set, show, or clear an autonomous completion goal |
+| `/loop` | Run a prompt on a repeating schedule |
 | `/tasks` | Show the shared task list |
 | `/queue-clear` | Clear queued follow-up messages |
 | `/share` | Share a live link to this session (`/share lan`, `/share <port>`, `/share stop`) |
@@ -111,6 +112,15 @@ cap is hit, or you pause it. `/goal` (no args) shows the goal status; `/goal cle
 (aliases: `stop`, `off`, `reset`, `none`, `cancel`) removes it. See
 [Goal-Conditioned Work](../../goal/) for the full loop behavior, safety model, and
 examples.
+
+Run `/loop <interval> <prompt>` to re-run a prompt on a schedule — for example
+`/loop 5m check whether CI went green`. Cron works too, via
+`/loop --cron "0 9 * * 1-5" <prompt>`. Iterations only start when the session is
+idle, missed windows never pile up, and your typed messages always take priority.
+`/loop status` shows the schedule and next fire; `/loop stop` (aliases: `clear`,
+`off`, `cancel`, `none`, `reset`) or `Esc` ends it. With no prompt, `/loop` reads
+`.kolega/loop.md`. See [Scheduled Loops](../../loop/) for the interval and cron
+syntax, `--fresh`, caps and expiry, and the unattended-run caveats.
 
 Run `/model` to open a selectable list of supported models for the current
 provider. You can also switch directly with `/model <name>`.

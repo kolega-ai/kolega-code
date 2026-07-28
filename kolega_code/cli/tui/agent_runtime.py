@@ -273,15 +273,22 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
 
     async def _process_message(
         self, message: str, attachments: list[dict] | None = None, *, turn_label: str | None = None
-    ) -> None:
+    ) -> bool:
+        """Run one turn. Returns whether the user cancelled it.
+
+        ``_run_turn_stream`` absorbs ``CancelledError`` so the transcript can be
+        finalized, which means callers that need to react to a cancel — the
+        scheduled-loop driver, for one — have to learn about it from this return
+        value rather than from an exception.
+        """
         try:
             if self.agent is None:
-                return
+                return False
             await self._record_turn_checkpoint(turn_label or message)
             cancelled_by_user = await self._run_turn_stream(lambda: self._agent_turn_stream(message, attachments))
             if cancelled_by_user:
                 self._schedule_maybe_start_queued_message()
-                return
+                return True
             # Un-pause a paused goal on any user-initiated turn so the loop resumes.
             if self._goal is not None and self._goal.paused and not self._goal.met:
                 self._goal.paused = False
@@ -291,6 +298,7 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
                 await self._run_goal_loop()
             else:
                 self._schedule_maybe_start_queued_message()
+            return False
         finally:
             # The turn worker owns ``agent_worker`` for its whole lifetime — including
             # the goal loop's verifier phase, which runs between work turns. Clear it
@@ -355,6 +363,11 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             clean_condition = condition.strip()
             if not clean_condition:
                 raise ToolError("'condition' must be a non-empty goal condition.")
+            if self._scheduled_loop is not None and self._scheduled_loop.is_active:
+                # A scheduled loop and a goal both drive the exclusive turn
+                # worker; running them together makes iteration ownership
+                # ambiguous, so the user has to pick one.
+                return messages.GOAL_BLOCK_LOOP_ACTIVE
 
             replacing = await self._activate_goal(clean_condition)
             confirmation = messages.GOAL_REPLACED if replacing else messages.GOAL_SET
@@ -850,6 +863,12 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             self._restore_queued_messages_to_composer()
             self.agent_worker.cancel()
             self._notify_user(messages.CANCEL_REQUESTED, severity="warning")
+            return
+        # Nothing is running: clear a pending scheduled-loop wakeup, the way Esc
+        # clears any other pending action. With no turn and no loop this stays a
+        # no-op.
+        if self._scheduled_loop is not None and self._scheduled_loop.is_active:
+            self._request_loop_stop(messages.LOOP_STOPPED_BY_USER.format(iterations=self._scheduled_loop.iterations))
 
     async def _ensure_agent_from_settings(self, rebuild: bool = False) -> None:
         try:

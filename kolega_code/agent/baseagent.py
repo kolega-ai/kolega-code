@@ -363,6 +363,11 @@ class BaseAgent(LogMixin):
         # and the system prompt can stay goal-aware across turns.
         self.active_goal_condition: Optional[str] = None
 
+        # Whether a scheduled ``/loop`` iteration drives the current turns (set by
+        # the host via apply_loop). Mirrors ``active_goal_condition``: it exists so
+        # the system prompt can tell the model the user is probably away.
+        self.loop_active: bool = False
+
         self.prompt_override_errors: List[str] = []
 
         self.available_ports = "9001-9999"
@@ -577,6 +582,22 @@ class BaseAgent(LogMixin):
         self.active_goal_condition = condition
         extensions = [ext for ext in (self.prompt_extensions or []) if getattr(ext, "id", None) != "cli-active-goal"]
         if condition and prompt_extension is not None:
+            extensions.append(prompt_extension)
+        self.prompt_extensions = extensions
+        initialize = getattr(self, "_initialize_system_prompt", None)
+        if callable(initialize):
+            initialize()
+
+    def apply_loop(self, active: bool, prompt_extension: Optional["PromptExtension"] = None) -> None:
+        """Start or stop scheduled-loop awareness for this session.
+
+        Mirrors :meth:`apply_goal`: swaps the ``cli-active-loop`` prompt extension
+        and refreshes the system prompt so the next turn knows it was started by a
+        timer rather than a person. Safe to call mid-session.
+        """
+        self.loop_active = active
+        extensions = [ext for ext in (self.prompt_extensions or []) if getattr(ext, "id", None) != "cli-active-loop"]
+        if active and prompt_extension is not None:
             extensions.append(prompt_extension)
         self.prompt_extensions = extensions
         initialize = getattr(self, "_initialize_system_prompt", None)

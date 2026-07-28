@@ -8,6 +8,17 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ### Added
 
+- **Scheduled loops.** `/loop 5m check whether CI went green` re-runs a prompt on
+  a fixed interval or a 5-field cron schedule (`/loop --cron "0 9 * * 1-5" ...`)
+  inside the current session. Iterations run only between turns while the session
+  is idle, messages you type always take priority, and missed windows never pile
+  up — one iteration runs when the agent goes idle, not one per skipped window.
+  Loops are capped (100 iterations, 7 days by default), shown live in the status
+  dashboard, saved with the session and restored on resume, and stopped by `Esc`,
+  `/loop stop`, `/clear`, or a rewind. `--fresh` starts each iteration from a
+  clean thread for long-running watchdogs, and `.kolega/loop.md` can commit a
+  project's standard loop prompt and schedule. Also available headless via
+  `kolega-code ask --loop`/`--loop-cron`.
 - **Shareable session replay.** `kolega-code share export <session-id>` writes a
   self-contained bundle that plays a session back in any browser with pause,
   seek, turn-by-turn jumping, and 1x/2x/4x/max playback. Long idle gaps are

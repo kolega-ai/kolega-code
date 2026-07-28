@@ -55,5 +55,9 @@ kolega-code sessions delete <session_id>
 All CLI sessions use the CLI-specific coding-agent prompt, including resumed ones.
 Resuming restores the conversation history so the agent picks up with full context.
 An active [goal](../../goal/) is also saved with the session and restored on resume,
-so the autonomous loop continues where it left off.
+so the autonomous loop continues where it left off. An active
+[scheduled loop](../../loop/) is restored the same way, keeping its schedule,
+iteration count, and expiry — a loop that expired while the session was closed is
+retired instead of fired, and a fire time that passed triggers exactly one
+iteration once the session is idle.
 :::

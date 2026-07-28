@@ -42,6 +42,7 @@ def test_agent_command_names_match_command_processor():
     # /tasks is handled by the TUI: an unrecognized /tasks used to be forwarded to
     # the model, which answered it with a failed get_task_list call.
     assert "/tasks" in TUI_COMMAND_NAMES
+    assert "/loop" in TUI_COMMAND_NAMES
     assert "/exit" in TUI_COMMAND_NAMES
 
 

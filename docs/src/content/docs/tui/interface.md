@@ -31,7 +31,7 @@ conversation and the Planning tab's task list.
 
 | Tab | What it shows |
 | --- | --- |
-| **Status** | The active provider/model and thinking effort, the current interaction mode (Build/Plan), permission mode, the agent's turn state (idle, generating, thinking, running a tool, running sub-agents, waiting for input, …), token usage, context warnings, and the active [goal](../../goal/) status when a goal is set. |
+| **Status** | The active provider/model and thinking effort, the current interaction mode (Build/Plan), permission mode, the agent's turn state (idle, generating, thinking, running a tool, running sub-agents, waiting for input, …), token usage, context warnings, the active [goal](../../goal/) status when a goal is set, and the active [scheduled loop](../../loop/) with its schedule, countdown to the next iteration, and iteration count when a loop is running. |
 | **Logs** | Optional. Launch with `--show-logs` to show a timestamped, color-coded diagnostic activity log. New entries preserve manual scrollback and an indicator flags unseen entries when you're on another tab. |
 | **Terminal** | Live output from commands the agent runs. |
 | **Planning** | The current **Plan** (markdown from the planning agent) and the shared **Task List** that both modes can edit. |

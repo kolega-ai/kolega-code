@@ -29,6 +29,11 @@ from ..goal import (
     build_goal_task_prompt,
     format_goal_status,
 )
+from ..loop import (
+    LoopError,
+    format_loop_status,
+    parse_loop_command,
+)
 from ..provider_registry import (
     UI_DEFAULT_PROVIDER,
     default_ui_thinking_effort,
@@ -66,6 +71,7 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
             "/logout": self._command_logout,
             "/gigacode": self._command_gigacode,
             "/goal": self._command_goal,
+            "/loop": self._command_loop,
             "/tasks": self._command_tasks,
             "/prompts": self._command_prompts,
             "/queue-clear": self._command_queue_clear,
@@ -301,6 +307,11 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
             self._show_composer_hint(messages.GOAL_BLOCK_STOP_FIRST)
             self._notify_user(messages.GOAL_BLOCK_STOP_FIRST, severity="warning")
             return
+        if self._scheduled_loop is not None and self._scheduled_loop.is_active:
+            # Both drive the exclusive turn worker; see _command_loop.
+            self._show_composer_hint(messages.GOAL_BLOCK_LOOP_ACTIVE)
+            self._notify_user(messages.GOAL_BLOCK_LOOP_ACTIVE, severity="warning")
+            return
 
         # /goal -p <condition> | /goal --print <condition> -> run to completion
         run_to_completion = False
@@ -335,6 +346,75 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
             group="turns",
             exclusive=True,
         )
+
+    async def _command_loop(self, args: str) -> None:
+        command = parse_loop_command(args)
+
+        if command.action == "status":
+            content = (
+                messages.LOOP_NONE_ACTIVE if self._scheduled_loop is None else format_loop_status(self._scheduled_loop)
+            )
+            self._add_conversation_entry(tui_state.ConversationEntry(kind="system", content=content))
+            return
+
+        if command.action == "stop":
+            if self._scheduled_loop is None or self._scheduled_loop.stopped:
+                self._add_conversation_entry(
+                    tui_state.ConversationEntry(kind="system", content=messages.LOOP_NONE_ACTIVE)
+                )
+                return
+            await self._stop_loop(
+                messages.LOOP_STOPPED.format(iterations=self._scheduled_loop.iterations), tone="info", notify=False
+            )
+            return
+
+        if command.action == "usage" or command.spec is None:
+            reason = f"{command.reason}\n\n" if command.reason else ""
+            self._add_conversation_entry(
+                tui_state.ConversationEntry(kind="system", content=f"{reason}{messages.LOOP_USAGE}", tone="warning")
+            )
+            return
+
+        # Starting a loop requires a connected agent and an idle turn.
+        if self.agent is None:
+            self._set_settings_status(messages.LOOP_BLOCK_SETTINGS, tone="warning")
+            return
+        if self._turn_active or self.agent_worker is not None:
+            self._show_composer_hint(messages.LOOP_BLOCK_STOP_FIRST)
+            self._notify_user(messages.LOOP_BLOCK_STOP_FIRST, severity="warning")
+            return
+        # A goal loop and a scheduled loop both drive the exclusive ``turns``
+        # worker, so letting the goal's evaluate-and-continue cycle consume a
+        # scheduled iteration would make ownership of the turn ambiguous.
+        if self._goal is not None and self._goal.is_active:
+            self._show_composer_hint(messages.LOOP_BLOCK_GOAL_ACTIVE)
+            self._notify_user(messages.LOOP_BLOCK_GOAL_ACTIVE, severity="warning")
+            return
+
+        self._add_conversation_entry(tui_state.ConversationEntry(kind="user", content=f"/loop {args}".rstrip()))
+        try:
+            replacing = await self._activate_loop(command.spec)
+        except LoopError as exc:
+            self._add_conversation_entry(
+                tui_state.ConversationEntry(kind="system", content=f"{exc}\n\n{messages.LOOP_USAGE}", tone="warning")
+            )
+            return
+
+        assert self._scheduled_loop is not None
+        template = messages.LOOP_REPLACED if replacing else messages.LOOP_STARTED
+        self._add_conversation_entry(
+            tui_state.ConversationEntry(
+                kind="system",
+                content=template.format(
+                    schedule=self._scheduled_loop.schedule_label(), when=self._loop_when_text(self._scheduled_loop)
+                ),
+            )
+        )
+
+        # Interval loops run the first iteration right away; cron loops wait for
+        # the first matching wall-clock time.
+        if self._scheduled_loop.is_due():
+            self._launch_loop_iteration()
 
     async def _command_prompts(self, args: str) -> None:
         clean_args = args.strip()

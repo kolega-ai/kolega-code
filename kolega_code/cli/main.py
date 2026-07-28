@@ -51,6 +51,7 @@ from kolega_code.permissions import (
 from kolega_code.services.browser import PlaywrightBrowserManager
 from kolega_code.utils.images import encode_image_file
 
+from . import messages
 from .diagnostics import write_crash_log
 from .config import (
     DEPRECATED_THINKING_TOKENS_MESSAGE,
@@ -71,6 +72,20 @@ from .goal import (
     build_goal_prompt_extension_markdown,
     build_goal_task_prompt,
     now_iso,
+)
+from .loop import (
+    DEFAULT_LOOP_EXPIRY_DAYS,
+    DEFAULT_LOOP_MAX_ITERATIONS,
+    PROMPT_SOURCE_INLINE,
+    PROMPT_SOURCE_LOOP_MD,
+    LoopError,
+    LoopState,
+    build_loop_iteration_prompt,
+    build_loop_prompt_extension_markdown,
+    format_duration_short,
+    parse_duration,
+    parse_schedule_text,
+    read_loop_md,
 )
 from .slash_commands import SKILLS_LIST_COMMAND, agent_command_names
 from .skills import (
@@ -269,6 +284,36 @@ def _build_subcommand_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="Maximum evaluation turns before an unmet --goal gives up (default: 50).",
+    )
+    loop_schedule_group = ask.add_mutually_exclusive_group()
+    loop_schedule_group.add_argument(
+        "--loop",
+        default=None,
+        metavar="INTERVAL",
+        help="Re-run the prompt on a fixed interval, e.g. 5m, 2h, 1d. Cannot be combined with --goal.",
+    )
+    loop_schedule_group.add_argument(
+        "--loop-cron",
+        default=None,
+        metavar="EXPR",
+        help='Re-run the prompt on a 5-field cron schedule, e.g. "0 9 * * 1-5".',
+    )
+    ask.add_argument(
+        "--loop-max-iterations",
+        type=int,
+        default=None,
+        help=f"Maximum loop iterations before stopping (default: {DEFAULT_LOOP_MAX_ITERATIONS}).",
+    )
+    ask.add_argument(
+        "--loop-expires",
+        default=None,
+        metavar="DURATION",
+        help=f"Stop the loop this long after it starts (default: {DEFAULT_LOOP_EXPIRY_DAYS}d).",
+    )
+    ask.add_argument(
+        "--loop-fresh",
+        action="store_true",
+        help="Clear the conversation history before every loop iteration after the first.",
     )
     ask.add_argument(
         "--mode", choices=[mode.value for mode in AgentMode], default=CLI_AGENT_MODE, help=argparse.SUPPRESS
@@ -776,14 +821,101 @@ def _extract_last_turn_tokens(agent: CoderAgent) -> int:
     return 0
 
 
+async def _sleep_until_loop_fire(state: LoopState, json_mode: bool) -> None:
+    """Wait until the loop's next fire time, in slices so Ctrl-C stays responsive."""
+    remaining = state.seconds_until()
+    if remaining <= 0:
+        return
+    if json_mode:
+        print(
+            json.dumps(
+                {
+                    "kind": "loop_sleep",
+                    "data": {"seconds": round(remaining, 3), "next_fire_at": state.next_fire_at},
+                }
+            )
+        )
+    else:
+        print(
+            f"[loop] sleeping {format_duration_short(remaining)} until {state.next_fire_at}",
+            file=sys.stderr,
+        )
+    while remaining > 0:
+        slice_seconds = min(1.0, remaining)
+        await asyncio.sleep(slice_seconds)
+        remaining -= slice_seconds
+
+
+def _emit_loop_iteration(state: LoopState, json_mode: bool) -> None:
+    if json_mode:
+        print(
+            json.dumps(
+                {
+                    "kind": "loop_iteration",
+                    "data": {
+                        "iteration": state.iterations,
+                        "scheduled_at": state.last_fired_at,
+                        "prompt_source": state.prompt_source,
+                    },
+                }
+            )
+        )
+    else:
+        print(
+            f"[loop] iteration {state.iterations}/{state.max_iterations} ({state.schedule_label()})",
+            file=sys.stderr,
+        )
+
+
+def _emit_loop_finished(state: LoopState, json_mode: bool) -> None:
+    reason = "expired" if state.is_expired() else "reached the iteration cap"
+    if json_mode:
+        print(json.dumps({"kind": "loop_result", "data": {"iterations": state.iterations, "reason": reason}}))
+    else:
+        print(f"[loop] finished after {state.iterations} iteration(s): {reason}", file=sys.stderr)
+
+
 async def _run_ask(args: argparse.Namespace) -> int:
     project_path = _validate_project(args.project)
     skill_catalog = discover_skills(project_path)
     goal_condition = getattr(args, "goal", None)
+    loop_interval = getattr(args, "loop", None)
+    loop_cron = getattr(args, "loop_cron", None)
+    looping = bool(loop_interval or loop_cron)
     raw_prompt = args.prompt
+
+    if looping and goal_condition:
+        print("Error: --loop cannot be combined with --goal.", file=sys.stderr)
+        return 2
+
+    # Validate the schedule up front so a typo fails before an agent is built.
+    loop_schedule = None
+    loop_expires_seconds = DEFAULT_LOOP_EXPIRY_DAYS * 86400
+    if looping:
+        try:
+            loop_schedule = parse_schedule_text(loop_cron if loop_cron else str(loop_interval))
+            if getattr(args, "loop_expires", None):
+                loop_expires_seconds = parse_duration(args.loop_expires)
+        except LoopError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 2
+
+    # A loop may take its prompt from .kolega/loop.md instead of the command line.
+    loop_md_prompt: Optional[str] = None
+    if looping and raw_prompt is None:
+        try:
+            loop_md = read_loop_md(project_path)
+        except LoopError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 2
+        if loop_md is None:
+            print(f"Error: {messages.LOOP_MD_MISSING}", file=sys.stderr)
+            return 2
+        loop_md_prompt = loop_md.prompt
+
     # --goal can run without a prompt (it synthesises one from the condition).
-    if raw_prompt is None and not goal_condition:
-        print("Error: prompt is required (or use --goal <condition>).", file=sys.stderr)
+    if raw_prompt is None and not goal_condition and loop_md_prompt is None:
+        print("Error: prompt is required (or use --goal <condition> or --loop).", file=sys.stderr)
         return 2
     skill_command = _parse_skill_prompt(raw_prompt, skill_catalog) if raw_prompt else None
 
@@ -985,6 +1117,31 @@ async def _run_ask(args: argparse.Namespace) -> int:
         if not prompt:
             prompt = build_goal_task_prompt(goal_condition)
 
+    # --loop / --loop-cron: arm the schedule and apply the loop-aware prompt
+    # extension. The prompt itself is sent verbatim on every iteration.
+    loop_state: Optional[LoopState] = None
+    if loop_schedule is not None:
+        loop_prompt = loop_md_prompt if loop_md_prompt is not None else (prompt or "")
+        loop_state = LoopState.create(
+            loop_schedule,
+            loop_prompt,
+            prompt_source=PROMPT_SOURCE_LOOP_MD if loop_md_prompt is not None else PROMPT_SOURCE_INLINE,
+            fresh=bool(getattr(args, "loop_fresh", False)),
+            max_iterations=getattr(args, "loop_max_iterations", None) or DEFAULT_LOOP_MAX_ITERATIONS,
+            expires_seconds=loop_expires_seconds,
+        )
+        prompt = loop_prompt
+        agent.apply_loop(
+            True,
+            PromptExtension(
+                id="cli-active-loop",
+                title="Scheduled loop",
+                markdown=build_loop_prompt_extension_markdown(loop_state),
+                modes=None,
+                propagate_to_sub_agents=True,
+            ),
+        )
+
     attachments, unresolved_mentions = build_file_attachments(prompt or "", project_path)
     for mention in unresolved_mentions:
         print(f"Note: @{mention} not found, sent as plain text", file=sys.stderr)
@@ -1004,8 +1161,24 @@ async def _run_ask(args: argparse.Namespace) -> int:
     # reported in real time instead of all at once after streaming finishes.
     pump_task = asyncio.create_task(_pump_ask_events(manager, args.json))
     try:
+        turn_prompt = prompt
+        if loop_state is not None:
+            # Interval schedules fire immediately; cron schedules wait for the
+            # first matching wall-clock time.
+            await _sleep_until_loop_fire(loop_state, args.json)
+            loop_state.mark_fired()
+            _emit_loop_iteration(loop_state, args.json)
+            turn_prompt = build_loop_iteration_prompt(
+                prompt or "",
+                iteration=loop_state.iterations,
+                max_iterations=loop_state.max_iterations,
+                fresh=loop_state.fresh,
+            )
+
         stream = (
-            agent.process_message_stream(prompt, attachments) if attachments else agent.process_message_stream(prompt)
+            agent.process_message_stream(turn_prompt, attachments)
+            if attachments
+            else agent.process_message_stream(turn_prompt)
         )
         async for chunk in stream:
             response_chunks.append(chunk)
@@ -1013,6 +1186,37 @@ async def _run_ask(args: argparse.Namespace) -> int:
                 print(json.dumps({"kind": "chunk", "data": chunk}, default=str))
             elif chunk.get("type") == "response" and chunk.get("content"):
                 print(chunk["content"], end="" if not chunk.get("complete") else "\n")
+
+        # --loop: keep re-running the prompt until the cap or the expiry is hit.
+        if loop_state is not None:
+            loop_state.advance_after_completion()
+            while loop_state.is_active:
+                await _sleep_until_loop_fire(loop_state, args.json)
+                if not loop_state.is_active:
+                    break
+                loop_state.mark_fired()
+                if loop_state.fresh:
+                    agent.clear_history()
+                _emit_loop_iteration(loop_state, args.json)
+                turn_prompt = build_loop_iteration_prompt(
+                    prompt or "",
+                    iteration=loop_state.iterations,
+                    max_iterations=loop_state.max_iterations,
+                    fresh=loop_state.fresh,
+                )
+                stream = (
+                    agent.process_message_stream(turn_prompt, attachments)
+                    if attachments
+                    else agent.process_message_stream(turn_prompt)
+                )
+                async for chunk in stream:
+                    response_chunks.append(chunk)
+                    if args.json:
+                        print(json.dumps({"kind": "chunk", "data": chunk}, default=str))
+                    elif chunk.get("type") == "response" and chunk.get("content"):
+                        print(chunk["content"], end="" if not chunk.get("complete") else "\n")
+                loop_state.advance_after_completion()
+            _emit_loop_finished(loop_state, args.json)
 
         # --goal: evaluate and auto-continue until the goal is met or the cap is hit.
         if goal_state is not None:
