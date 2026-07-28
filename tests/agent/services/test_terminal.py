@@ -131,19 +131,42 @@ async def test_run_command_convenience_accumulates_output(manager):
 
 @pytest.mark.asyncio
 async def test_workdir_is_respected(manager, tmp_path):
-    result = await manager.exec_command("pwd", workdir=str(tmp_path), yield_time_ms=3000)
+    explicit_workdir = tmp_path / "subdir"
+    explicit_workdir.mkdir()
+    result = await manager.exec_command("pwd", workdir=str(explicit_workdir / ".." / "subdir"), yield_time_ms=3000)
     assert result.status == "exited"
-    # macOS resolves symlinks (/var -> /private/var); the leaf dir is enough.
-    assert result.output.strip().endswith(tmp_path.name)
+    command_event = next(event for event in manager.connection_manager.events if event.event_type == "terminal_command")
+    assert command_event.content == {
+        "command": "pwd",
+        "terminal_id": "s_1",
+        "session_id": "s_1",
+        "workdir": str(explicit_workdir.resolve()),
+    }
+    assert result.output.strip() == str(explicit_workdir.resolve())
 
 
 @pytest.mark.asyncio
 async def test_constructed_default_workdir_is_used_when_workdir_omitted(tmp_path):
-    manager = LocalTerminalManager("workspace", "thread", _RecordingConnectionManager(), default_workdir=tmp_path)
+    default_workdir = tmp_path / "default"
+    default_workdir.mkdir()
+    connection_manager = _RecordingConnectionManager()
+    manager = LocalTerminalManager(
+        "workspace",
+        "thread",
+        connection_manager,
+        default_workdir=default_workdir / ".." / "default",
+    )
     result = await manager.exec_command("pwd", yield_time_ms=3000)
     assert result.status == "exited"
+    command_event = next(event for event in connection_manager.events if event.event_type == "terminal_command")
+    assert command_event.content == {
+        "command": "pwd",
+        "terminal_id": "s_1",
+        "session_id": "s_1",
+        "workdir": str(default_workdir.resolve()),
+    }
     # Commands must run in the configured project root, not the process cwd.
-    assert result.output.strip().endswith(tmp_path.name)
+    assert result.output.strip() == str(default_workdir.resolve())
 
 
 @pytest.mark.asyncio

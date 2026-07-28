@@ -311,6 +311,47 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
     # Autonomous goal loop
     # ------------------------------------------------------------------
 
+    def _worktree_control_prompt_extension(self) -> PromptExtension:
+        return PromptExtension(
+            id="cli-worktree-control",
+            title="Active worktree",
+            markdown=(
+                "The TUI owns the active workspace for this session. If you create a linked checkout with "
+                "`git worktree add`, call `switch_worktree` immediately afterward, by itself, and before running "
+                "any command, edit, search, or delegated agent in that checkout. The tool switches the complete "
+                "workspace and resets the Changes/Rewind baseline; it does not create a worktree."
+            ),
+            modes=[AgentMode.CLI],
+            propagate_to_sub_agents=False,
+        )
+
+    def _worktree_control_tool_extension(self) -> ToolExtension:
+        async def switch_worktree(path: str) -> str:
+            """Switch the complete active workspace to a registered worktree.
+
+            Call this immediately after creating a worktree and before using
+            tools in it. It must be the only tool call in the model response.
+
+            Args:
+                path: Registered worktree path (or nested path), resolved
+                    relative to the immutable session launch checkout.
+            """
+            clean_path = path.strip()
+            if not clean_path:
+                raise ToolError("'path' must identify a registered worktree.")
+            return await self._switch_active_worktree(clean_path)
+
+        return ToolExtension(
+            name="cli-worktree-control",
+            tools={"switch_worktree": switch_worktree},
+            tool_groups={
+                "planning_tools": ["switch_worktree"],
+                "cli_worktree_tools": ["switch_worktree"],
+            },
+            propagate_to_sub_agents=False,
+            exclusive_tools=frozenset({"switch_worktree"}),
+        )
+
     def _goal_prompt_extension(self) -> PromptExtension:
         condition = self._goal.condition if self._goal else ""
         return PromptExtension(
@@ -980,9 +1021,9 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             browser_visible=self.browser_visible,
         )
         agent_class = PlanningAgent if self.interaction_mode == tui_constants.PLAN_INTERACTION_MODE else CoderAgent
-        self.skill_catalog = discover_skills(self.project_path)
+        self.skill_catalog = discover_skills(self.active_project_path)
         self.custom_agent_catalog = validate_custom_agent_models(
-            discover_custom_agents(self.project_path, self.settings_store.root),
+            discover_custom_agents(self.active_project_path, self.settings_store.root),
             config,
         ).for_mode(self.interaction_mode)
         prompt_extensions: list[PromptExtension] = []
@@ -1001,6 +1042,8 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             tool_extensions.append(self._shared_task_list_readonly_tool_extension())
         # Both TUI interaction modes can set autonomous goals. The policy and
         # callback stay on the top-level agent and are never inherited by delegates.
+        prompt_extensions.append(self._worktree_control_prompt_extension())
+        tool_extensions.append(self._worktree_control_tool_extension())
         prompt_extensions.append(self._goal_control_prompt_extension())
         tool_extensions.append(self._goal_control_tool_extension())
         # Both interaction modes get the scratchpad: plan-mode research and
@@ -1036,14 +1079,14 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         if mcp_config is not None:
             for diagnostic in getattr(mcp_config, "diagnostics", []) or []:
                 self._log_status(f"mcp: {diagnostic}", level="warn")
-            mcp_extension = build_mcp_tool_extension(
-                self.project_path,
-                self.settings_store.root,
-                project_trusted=self.settings.is_mcp_project_trusted(self.project_path),
-                loaded_config=mcp_config,
-            )
-            if mcp_extension is not None:
-                tool_extensions.append(mcp_extension)
+        mcp_extension = build_mcp_tool_extension(
+            self.active_project_path,
+            self.settings_store.root,
+            project_trusted=self.settings.is_mcp_project_trusted(self.project_path),
+            loaded_config=mcp_config if self.active_project_path == self.project_path else None,
+        )
+        if mcp_extension is not None:
+            tool_extensions.append(mcp_extension)
 
         # gigacode applies to any top-level agent and is carried across rebuilds.
         # In plan mode the orchestrating agent is read-only, so its workflow
@@ -1058,7 +1101,7 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             prompt_extensions.append(self._goal_prompt_extension())
 
         self.agent = agent_class(
-            project_path=self.project_path,
+            project_path=self.active_project_path,
             workspace_id=self.session.workspace_id,
             thread_id=self.session.thread_id,
             connection_manager=self.recording_connection_manager,

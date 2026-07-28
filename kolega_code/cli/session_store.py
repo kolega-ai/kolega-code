@@ -53,6 +53,7 @@ class SessionRecord:
     goal: dict[str, Any] = field(default_factory=dict)
     loop: dict[str, Any] = field(default_factory=dict)
     schema_version: int = SCHEMA_VERSION
+    active_project_path: Optional[str] = None
 
     @classmethod
     def create(
@@ -108,6 +109,7 @@ class SessionRecord:
             gigacode_enabled=bool(data.get("gigacode_enabled", False)),
             goal=data.get("goal") or {},
             loop=data.get("loop") or {},
+            active_project_path=data.get("active_project_path") or None,
         )
 
     def to_metadata_dict(self) -> dict[str, Any]:
@@ -131,6 +133,7 @@ class SessionRecord:
             "gigacode_enabled": self.gigacode_enabled,
             "goal": self.goal,
             "loop": self.loop,
+            "active_project_path": self.active_project_path,
         }
 
     def to_dict(self) -> dict[str, Any]:
@@ -250,6 +253,7 @@ class SessionStore:
             except SessionStoreError:
                 events = self.journal(record.session_id).read_events(repair_tail=True)
                 current = self._metadata_projection(record.session_id, events)
+            self._validate_immutable_project_path(record, current)
             record.updated_at = _now()
             updated = record.to_metadata_dict()
             patch = {key: copy.deepcopy(value) for key, value in updated.items() if current.get(key) != value}
@@ -260,6 +264,68 @@ class SessionStore:
                     payload={"patch": patch},
                 )
             self._write_metadata(updated)
+
+    def save_workspace_switch(
+        self,
+        record: SessionRecord,
+        recorder: SessionRecorder,
+        *,
+        old_root: str,
+        new_root: str,
+        old_label: str = "",
+        new_label: str = "",
+        old_branch: str = "",
+        new_branch: str = "",
+    ) -> None:
+        """Commit switch metadata and its boundary atomically, then refresh the projection."""
+        self.ensure_dirs()
+        self._ensure_migrated(record.session_id)
+        if not self.session_dir_for(record.session_id).exists():
+            raise SessionStoreError(f"Session not found: {record.session_id}")
+        # Recorder methods conventionally acquire their lock before the
+        # journal/store lock. Preserve that order to avoid deadlocking a
+        # concurrent semantic event append.
+        with recorder.transaction():
+            with self._lock_for(record.session_id):
+                journal = self.journal(record.session_id)
+                events = journal.read_events(repair_tail=True)
+                # Compare against canonical event state, not metadata.json:
+                # a prior post-commit projection write may have failed.
+                current = self._metadata_projection(record.session_id, events)
+                self._validate_immutable_project_path(record, current)
+                record.updated_at = _now()
+                updated = record.to_metadata_dict()
+                patch = {key: copy.deepcopy(value) for key, value in updated.items() if current.get(key) != value}
+                with journal.transaction():
+                    if patch:
+                        journal.append(
+                            "session.metadata_updated",
+                            actor="system",
+                            payload={"patch": patch},
+                        )
+                    recorder.record_workspace_switched(
+                        old_root=old_root,
+                        new_root=new_root,
+                        old_label=old_label,
+                        new_label=new_label,
+                        old_branch=old_branch,
+                        new_branch=new_branch,
+                    )
+
+                # Events are canonical. Publish the rebuildable metadata
+                # projection only after their atomic journal batch commits.
+                try:
+                    self._write_metadata(updated)
+                except OSError:
+                    pass
+
+    @staticmethod
+    def _validate_immutable_project_path(record: SessionRecord, current: dict[str, Any]) -> None:
+        stored_project_path = current.get("project_path")
+        if stored_project_path is not None and record.project_path != stored_project_path:
+            raise SessionStoreError(
+                f"Session project_path is immutable: expected {stored_project_path!r}, got {record.project_path!r}"
+            )
 
     def load(self, session_id: str) -> SessionRecord:
         self._ensure_migrated(session_id)

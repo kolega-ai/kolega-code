@@ -9,10 +9,11 @@ import json
 import os
 import threading
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Optional, cast
+from typing import Any, Generator, Iterable, Optional, cast
 
 from kolega_code.llm.models import ContentBlock, Message, ToolResult
 from kolega_code.local_state import ensure_private_dir, ensure_private_file, write_private_bytes
@@ -185,6 +186,7 @@ class SessionJournal:
         self._loaded = False
         self._next_seq = 1
         self._epoch_id: Optional[str] = None
+        self._transaction_events: Optional[list[SessionEvent]] = None
 
     @property
     def epoch_id(self) -> str:
@@ -235,30 +237,69 @@ class SessionJournal:
                 payload=payload or {},
                 artifacts=artifacts or [],
             )
-            line = (json.dumps(event.to_dict(), separators=(",", ":"), ensure_ascii=False) + "\n").encode("utf-8")
-            try:
-                ensure_private_dir(self.session_dir)
-                fd = os.open(self.events_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
-                try:
-                    written = os.write(fd, line)
-                    if written != len(line):
-                        raise SessionJournalError(
-                            f"Short event write for session {self.session_id}: wrote {written} of {len(line)} bytes"
-                        )
-                finally:
-                    os.close(fd)
-                ensure_private_file(self.events_path)
-            except Exception as exc:
-                # A short/failed append may have left a trailing fragment. Force the
-                # next operation to validate and repair it before assigning a sequence.
-                self._loaded = False
-                if isinstance(exc, SessionJournalError):
-                    raise
-                raise SessionJournalError(f"Could not append session event: {self.events_path}") from exc
+            if self._transaction_events is None:
+                self._write_events_locked([event])
+            else:
+                self._transaction_events.append(event)
             self._next_seq += 1
             if event_type == "context.epoch_started":
                 self._epoch_id = resolved_epoch
             return event
+
+    @contextmanager
+    def transaction(self) -> Generator[None, None, None]:
+        """Buffer journal appends and commit them as one rollback-safe write."""
+        with self._lock:
+            self._ensure_loaded_locked()
+            if self._transaction_events is not None:
+                raise SessionJournalError("Nested session journal transactions are not supported")
+            original_next_seq = self._next_seq
+            original_epoch_id = self._epoch_id
+            self._transaction_events = []
+            try:
+                yield
+                events = self._transaction_events
+                if events:
+                    self._write_events_locked(events)
+            except Exception:
+                self._next_seq = original_next_seq
+                self._epoch_id = original_epoch_id
+                raise
+            finally:
+                self._transaction_events = None
+
+    def _write_events_locked(self, events: list[SessionEvent]) -> None:
+        """Append one or more complete events, truncating any failed batch."""
+        data = b"".join(
+            (json.dumps(event.to_dict(), separators=(",", ":"), ensure_ascii=False) + "\n").encode("utf-8")
+            for event in events
+        )
+        fd: Optional[int] = None
+        original_size = 0
+        try:
+            ensure_private_dir(self.session_dir)
+            fd = os.open(self.events_path, os.O_RDWR | os.O_CREAT | os.O_APPEND, 0o600)
+            ensure_private_file(self.events_path)
+            original_size = os.fstat(fd).st_size
+            written = os.write(fd, data)
+            if written != len(data):
+                raise SessionJournalError(
+                    f"Short event write for session {self.session_id}: wrote {written} of {len(data)} bytes"
+                )
+        except Exception as exc:
+            if fd is not None:
+                try:
+                    os.ftruncate(fd, original_size)
+                except OSError:
+                    # Force the next operation to validate and repair any tail.
+                    pass
+            self._loaded = False
+            if isinstance(exc, SessionJournalError):
+                raise
+            raise SessionJournalError(f"Could not append session event: {self.events_path}") from exc
+        finally:
+            if fd is not None:
+                os.close(fd)
 
     def start_epoch(self, reason: str) -> str:
         epoch_id = str(uuid.uuid4())
@@ -493,6 +534,12 @@ class SessionRecorder:
         if recover:
             self.recover_interrupted_turn()
 
+    @contextmanager
+    def transaction(self) -> Generator[None, None, None]:
+        """Serialize a multi-step store operation with ordinary recorder writes."""
+        with self._lock:
+            yield
+
     def start_turn(self, message: Message) -> str:
         with self._lock:
             if self.current_turn_id is not None:
@@ -549,6 +596,32 @@ class SessionRecorder:
                 payload={"message": stored},
                 turn_id=self.current_turn_id,
                 artifacts=artifacts,
+            )
+
+    def record_workspace_switched(
+        self,
+        *,
+        old_root: str,
+        new_root: str,
+        old_label: str = "",
+        new_label: str = "",
+        old_branch: str = "",
+        new_branch: str = "",
+    ) -> None:
+        """Record a durable, additive active-workspace boundary."""
+        with self._lock:
+            self.journal.append(
+                "session.workspace_switched",
+                actor="system",
+                payload={
+                    "old_root": old_root,
+                    "new_root": new_root,
+                    "old_label": old_label,
+                    "new_label": new_label,
+                    "old_branch": old_branch,
+                    "new_branch": new_branch,
+                },
+                turn_id=self.current_turn_id,
             )
 
     def record_compaction(self, compaction: dict[str, Any]) -> None:

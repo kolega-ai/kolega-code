@@ -56,7 +56,7 @@ from .prompt_provider import PromptProvider, AgentMode, AgentType, PromptContext
 from .prompt_overrides import ProjectPromptOverrides, format_prompt_override_error, render_prompt_override_source
 from kolega_code.services.base import TerminalManager, BrowserManager
 from kolega_code.services.file_system import FileSystem, LocalFileSystem
-from .tools import ToolCollection  # noqa: F401 - kept for tests and downstream monkeypatch compatibility
+from .tools import ToolCollection, ToolExtension  # noqa: F401 - ToolCollection kept for downstream monkeypatching
 from kolega_code.tools import ToolError
 from .utils.commands import CommandProcessor
 
@@ -158,7 +158,7 @@ class BaseAgent(LogMixin):
         workspace_memories: Optional[List[str]] = None,
         prompt_provider: Optional[PromptProvider] = None,
         prompt_extensions: Optional[List[PromptExtension]] = None,
-        tool_extensions: Optional[List[Any]] = None,
+        tool_extensions: Optional[List[ToolExtension]] = None,
         permission_mode: Optional[PermissionMode | str] = None,
         permission_callback: Optional[Any] = None,
         usage_recorder: Optional[Any] = None,
@@ -169,6 +169,7 @@ class BaseAgent(LogMixin):
         max_iterations: Optional[int] = None,
         custom_agent_catalog: Optional[Any] = None,
         memory_manager: Optional[Any] = None,
+        memory_project_path: Optional[Path] = None,
     ) -> None:
         """
         Initialize a new BaseAgent instance.
@@ -312,7 +313,10 @@ class BaseAgent(LogMixin):
             from kolega_code.cli.session_store import default_state_dir
             from kolega_code.memory import ProjectMemoryManager
 
-            self.memory_manager = ProjectMemoryManager(self.project_path, default_state_dir())
+            self.memory_manager = ProjectMemoryManager(
+                memory_project_path if memory_project_path is not None else self.project_path,
+                default_state_dir(),
+            )
             self.context.services.memory_manager = self.memory_manager
             self._owns_memory_manager = True
 
@@ -623,6 +627,71 @@ class BaseAgent(LogMixin):
         initialize = getattr(self, "_initialize_system_prompt", None)
         if callable(initialize):
             initialize()
+
+    def replace_workspace_extensions(
+        self,
+        *,
+        prompt_extensions: List[PromptExtension],
+        tool_extensions: List[ToolExtension],
+        custom_agent_catalog: Any,
+    ) -> None:
+        """Install root-scoped host catalogs and callbacks as one reversible update."""
+        if self.tool_collection is None:
+            raise RuntimeError("Agent tools are not initialized.")
+
+        previous_prompt_extensions = list(self.prompt_extensions or [])
+        previous_tool_extensions = list(self.tool_extensions or [])
+        previous_custom_agent_catalog = self.custom_agent_catalog
+        initialize = getattr(self, "_initialize_system_prompt", None)
+
+        try:
+            self.tool_collection.replace_tool_extensions(tool_extensions)
+            self.prompt_extensions = list(prompt_extensions)
+            self.tool_extensions = list(tool_extensions)
+            self.custom_agent_catalog = custom_agent_catalog
+            self.context.prompt_extensions = self.prompt_extensions
+            self.context.tool_extensions = self.tool_extensions
+            if callable(initialize):
+                initialize()
+        except Exception:
+            self.tool_collection.replace_tool_extensions(previous_tool_extensions)
+            self.prompt_extensions = previous_prompt_extensions
+            self.tool_extensions = previous_tool_extensions
+            self.custom_agent_catalog = previous_custom_agent_catalog
+            self.context.prompt_extensions = self.prompt_extensions
+            self.context.tool_extensions = self.tool_extensions
+            if callable(initialize):
+                initialize()
+            raise
+
+    async def switch_project_path(self, new_root: str | Path) -> None:
+        """Retarget this agent's complete local workspace for future work."""
+        candidate = Path(new_root).resolve()
+        old_root = Path(self.project_path).resolve()
+        if candidate == old_root:
+            return
+        if self.tool_collection is None:
+            raise RuntimeError("Agent tools are not initialized.")
+
+        await self.tool_collection.switch_project_path(candidate)
+        self.project_path = candidate
+        self.context.workspace.project_path = candidate
+        self.filesystem = self.context.services.filesystem
+        self.terminal_manager = self.context.services.terminal_manager
+
+        initialize = getattr(self, "_initialize_system_prompt", None)
+        try:
+            if callable(initialize):
+                initialize()
+        except Exception:
+            await self.tool_collection.switch_project_path(old_root)
+            self.project_path = old_root
+            self.context.workspace.project_path = old_root
+            self.filesystem = self.context.services.filesystem
+            self.terminal_manager = self.context.services.terminal_manager
+            if callable(initialize):
+                initialize()
+            raise
 
     def restore_message_history(self, serialized_history: List[Dict[str, Any]]) -> None:
         """Restores the message history from a list of dictionaries using custom methods."""
@@ -1237,6 +1306,42 @@ class BaseAgent(LogMixin):
         Returns:
             List of tool responses with metadata
         """
+        # Exclusive session-control tools must run in their own model round.
+        # Reject the complete batch before hooks or handlers run so another
+        # call cannot mutate state before the control operation.
+        if len(tool_use_blocks) > 1:
+            assert self.tool_collection is not None, "tool_collection must be initialized before processing tool calls"
+            exclusive_tools = getattr(self.tool_collection, "exclusive_tools", frozenset())
+            batched_exclusive = sorted({block.name for block in tool_use_blocks if block.name in exclusive_tools})
+            if batched_exclusive:
+                names = ", ".join(f"`{name}`" for name in batched_exclusive)
+                error_message = (
+                    f"Exclusive tool {names} must be called by itself. No tools in this batch were executed. "
+                    "Call the exclusive tool in a separate tool round, then make any other calls afterward."
+                )
+                await self.log_warning(error_message, sender=self.agent_name)
+                results: list[ToolResult] = []
+                for block in tool_use_blocks:
+                    execution_id = block.execution_id or f"tool_{block.id}"
+                    await self.send_chat_message(
+                        message_type="tool_error",
+                        content=error_message,
+                        is_streaming=False,
+                        tool_description=block.name,
+                        tool_call_id=execution_id,
+                    )
+                    results.append(
+                        ToolResult(
+                            tool_use_id=block.id,
+                            content=error_message,
+                            name=block.name,
+                            is_error=True,
+                            execution_id=execution_id,
+                            input_kind=block.input_kind,
+                        )
+                    )
+                return results
+
         # If only one tool call, just execute it directly
         if len(tool_use_blocks) == 1:
             result = await self.execute_single_tool(tool_use_blocks[0])

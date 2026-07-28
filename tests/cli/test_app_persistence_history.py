@@ -320,6 +320,31 @@ async def test_textual_app_overlapping_saves_preserve_later_state(
     assert loaded.history == saved_history
 
 
+def test_textual_app_session_snapshot_preserves_active_project_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.app import KolegaCodeApp
+
+    install_fake_agents(monkeypatch)
+    project = tmp_path / "project"
+    project.mkdir()
+    active_project = tmp_path / "worktree"
+    active_project.mkdir()
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+    app.session.active_project_path = str(active_project.resolve())
+
+    snapshot = app._session_snapshot_locked()
+
+    assert snapshot is not session
+    assert snapshot.project_path == str(project.resolve())
+    assert snapshot.active_project_path == str(active_project.resolve())
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("command", ["/clear", "/reset"])
 async def test_textual_app_reset_command_clears_current_thread(

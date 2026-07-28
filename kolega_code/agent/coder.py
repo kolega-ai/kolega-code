@@ -52,6 +52,7 @@ class CoderAgent(BaseAgent, LogMixin):
         max_iterations: Optional[int] = None,
         custom_agent_catalog: Optional[Any] = None,
         memory_manager: Optional[Any] = None,
+        memory_project_path: Optional[Path] = None,
     ) -> None:
         """
         Initialize a new CoderAgent instance.
@@ -115,6 +116,7 @@ class CoderAgent(BaseAgent, LogMixin):
             max_iterations=max_iterations,
             custom_agent_catalog=custom_agent_catalog,
             memory_manager=memory_manager,
+            memory_project_path=memory_project_path,
         )
 
         # Configure tool collection with custom coder agent tools

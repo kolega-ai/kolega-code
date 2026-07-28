@@ -46,6 +46,13 @@ class BaseTool(LogMixin):
         self.terminal_manager = terminal_manager
         self.browser_manager = browser_manager
 
+    def switch_project_path(self, new_root: Union[str, Path]) -> None:
+        """Retarget this backend after its shared filesystem has been rerooted."""
+        self.project_path = Path(new_root).resolve()
+        # Gitignore matchers are root-specific and must be rebuilt lazily.
+        if hasattr(self, "_gitignore_spec"):
+            del self._gitignore_spec
+
     def _is_binary_file(self, file_path: Path) -> bool:
         """
         Determine if a file is binary.
@@ -267,7 +274,12 @@ class BaseTool(LogMixin):
         event = AgentEvent(
             sender=self.caller.agent_name,
             event_type="file_edit_preview",
-            content={"tool_call_id": tool_call_id, "tool_name": tool_name, **preview},
+            content={
+                "tool_call_id": tool_call_id,
+                "tool_name": tool_name,
+                "workspace_root": str(self.project_path.resolve()),
+                **preview,
+            },
             is_streaming=False,
             sub_agent_info=sub_agent_info,
         )

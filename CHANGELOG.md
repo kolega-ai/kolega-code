@@ -8,6 +8,16 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ### Added
 
+- **Worktree-aware startup and workspace switching.** Interactive and headless
+  launches can select a registered checkout with `--worktree`, or create one
+  safely with `--create-worktree` plus optional `--from` and
+  `--worktree-path`. In the TUI, the top-level agent can explicitly switch its
+  complete active workspace between registered sibling worktrees; terminal,
+  filesystem, LSP, snapshots, skills, autocomplete, and Changes/Rewind scope
+  move together, while session identity and sibling-checkout isolation remain
+  unchanged. Active workspace selection persists across resume.
+- The public `ToolExtension` API now accepts additive `exclusive_tools`
+  metadata for tools that must run alone in a model tool-call batch.
 - `browser_scroll` on both browser backends, taking exactly one of a target, a
   count of viewports, or an absolute offset. On a page too large to snapshot in
   one call, scrolling is how the rest is reached, and until now nothing could
@@ -104,7 +114,6 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 - Resized oversized images only in outbound Anthropic request history while
   preserving full originals in session artifacts and replay, preventing one
   large image from breaking every later turn in a resumed conversation.
-
 ## 0.25.0 - 2026-07-28
 
 ### Added

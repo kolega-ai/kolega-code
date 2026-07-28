@@ -413,7 +413,7 @@ class PromptFlowMixin(tui_app_base.KolegaAppBase):
             rule = pending.rule_options[rule_index].rule
             chosen_label = pending.rule_options[rule_index].label
             try:
-                ProjectPermissionStore(self.project_path).add_rule(rule)
+                ProjectPermissionStore(self.session_runtime.project_path).add_rule(rule)
             except PermissionStoreError as exc:
                 self._notify_user(str(exc), severity="warning")
                 decision = PermissionDecision(allowed=True, reason="Allowed once because the rule could not be saved.")

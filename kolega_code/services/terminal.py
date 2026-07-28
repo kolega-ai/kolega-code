@@ -20,6 +20,7 @@ import struct
 import sys
 import termios
 import time
+from pathlib import Path
 from typing import Any, Dict, Optional, Union
 
 from ..events import AgentConnectionManager
@@ -429,7 +430,19 @@ class LocalTerminalManager(TerminalManager):
         self._counter += 1
         return f"s_{self._counter}"
 
-    async def _emit_command(self, session_id: str, command: str) -> None:
+    @property
+    def has_running_sessions(self) -> bool:
+        """Whether a retained PTY could still mutate its original workdir."""
+        return any(session.running for session in self.sessions.values())
+
+    def switch_default_workdir(self, workdir: Union[str, os.PathLike]) -> None:
+        """Retarget future commands that do not provide an explicit workdir."""
+        candidate = Path(workdir).resolve()
+        if not candidate.is_dir():
+            raise ValueError(f"Terminal working directory is not a directory: {candidate}")
+        self.default_workdir = str(candidate)
+
+    async def _emit_command(self, session_id: str, command: str, workdir: str) -> None:
         if not self.connection_manager:
             return
         try:
@@ -437,7 +450,12 @@ class LocalTerminalManager(TerminalManager):
                 AgentEvent(
                     event_type="terminal_command",
                     sender="agent",
-                    content={"command": command, "terminal_id": session_id, "session_id": session_id},
+                    content={
+                        "command": command,
+                        "terminal_id": session_id,
+                        "session_id": session_id,
+                        "workdir": workdir,
+                    },
                 ),
                 self.workspace_id,
                 self.thread_id,
@@ -506,10 +524,10 @@ class LocalTerminalManager(TerminalManager):
         yield_ms = clamp_yield(yield_time_ms, poll=False)
         # workdir should be absolute; a relative path would chdir relative to
         # this process's cwd, not default_workdir.
-        wd = workdir or self.default_workdir
+        wd = os.path.realpath(os.path.abspath(workdir or self.default_workdir))
         session_id = self._next_session_id()
 
-        await self._emit_command(session_id, command)
+        await self._emit_command(session_id, command, wd)
         session = PtySession(
             session_id,
             command,

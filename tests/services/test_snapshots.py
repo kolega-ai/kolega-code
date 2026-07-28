@@ -43,6 +43,32 @@ def test_record_mutation_and_restore(snapshot_service, tmp_path):
     assert path.read_text(encoding="utf-8") == "before\n"
 
 
+def test_restore_rejects_snapshot_from_previous_project(snapshot_service, tmp_path):
+    project = tmp_path / "project"
+    path = project / "a.txt"
+    path.write_text("before\n", encoding="utf-8")
+    result = snapshot_service.record_mutation(
+        tool_name="edit",
+        tool_call_id="call-1",
+        reason="test edit",
+        paths=["a.txt"],
+        mutate=lambda: path.write_text("after\n", encoding="utf-8"),
+    )
+    assert result.snapshot is not None
+
+    other = tmp_path / "other-worktree"
+    other.mkdir()
+    snapshot_service.filesystem.switch_root(other)
+    snapshot_service.switch_project_path(other)
+
+    with pytest.raises(SnapshotError, match="belongs to"):
+        snapshot_service.load_snapshot(result.snapshot.snapshot_id)
+    with pytest.raises(SnapshotError, match="belongs to"):
+        snapshot_service.restore_snapshot(result.snapshot.snapshot_id, force=True)
+
+    assert path.read_text(encoding="utf-8") == "after\n"
+
+
 def test_restore_refuses_when_current_state_changed(snapshot_service, tmp_path):
     project = tmp_path / "project"
     path = project / "a.txt"

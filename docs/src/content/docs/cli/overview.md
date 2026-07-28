@@ -50,6 +50,39 @@ kolega-code [PROJECT_PATH]
 See [Sessions & Resuming](../../tui/sessions-and-resume/) for the full session
 workflow.
 
+## Starting in a Git worktree
+
+A registered worktree can be used directly as `PROJECT_PATH`, or selected from
+another checkout in the same repository:
+
+```bash
+kolega-code /repo --worktree fix/image-history
+kolega-code /repo --worktree .kolega/worktrees/fix-image-history
+```
+
+Create a new managed worktree and start a new session there with:
+
+```bash
+kolega-code /repo --create-worktree fix/image-history
+kolega-code /repo --create-worktree fix/image-history --from origin/main
+kolega-code /repo --create-worktree fix/image-history --worktree-path /other/destination
+```
+
+`--worktree` accepts an exact registered branch name or a path (including a
+nested path) inside a registered worktree. `--create-worktree` creates or checks
+out the named local branch without force-moving, deleting, or reusing an
+occupied destination. `--from` and `--worktree-path` are valid only with
+`--create-worktree`; creation cannot be combined with `--resume` or `--session`.
+The same options are available on `kolega-code ask`.
+
+During a TUI session, the top-level agent can explicitly call
+`switch_worktree`. This reroots filesystem, terminal, search/edit, LSP, snapshot,
+skill, custom-agent, and future sub-agent work to that registered checkout. It
+also starts a fresh **Workspace switched** Changes/Rewind baseline, so
+checkpoints from the previous workspace are no longer displayed. The switch is
+durable session state and is not undone by conversation rewind. It must run
+alone, and it is refused while background terminal sessions are active.
+
 ## Global model options
 
 These options are accepted by the TUI launch, `ask`, and `doctor`. They override

@@ -146,6 +146,27 @@ async def test_sub_agent_preview_is_recorded_and_attached_to_trajectory(
 
 
 @pytest.mark.asyncio
+async def test_preview_paths_are_active_root_relative_and_delayed_old_root_events_are_ignored(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        app._render_event(_file_edit_preview_event(str(app.active_project_path / "src" / "absolute.py")))
+        delayed_content = _preview("src/delayed.py", tool_call_id="t2")
+        delayed_content["workspace_root"] = str(tmp_path / "old-worktree")
+        app._render_event(
+            AgentEvent(
+                event_type="file_edit_preview",
+                sender="coder",
+                content=delayed_content,
+            )
+        )
+
+        assert [change.path for change in app._session_file_changes] == ["src/absolute.py"]
+
+
+@pytest.mark.asyncio
 async def test_changes_inspector_opens_and_renders_git_shell_changes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

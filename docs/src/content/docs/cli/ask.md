@@ -25,6 +25,10 @@ kolega-code ask "<prompt>" [options]
 | `--permission-mode <auto\|ask>` | Shell/edit permission mode (default `auto`) |
 | `--session <ID>` | Resume or create a specific session |
 | `--state-dir <PATH>` | Directory for CLI session state |
+| `--worktree <PATH_OR_BRANCH>` | Start in an existing registered worktree |
+| `--create-worktree <BRANCH>` | Create a worktree and start a new session there |
+| `--from <REF>` | Commit start point for a new branch (requires `--create-worktree`) |
+| `--worktree-path <PATH>` | Explicit checkout destination (requires `--create-worktree`) |
 
 All the [global model options](../overview/#global-model-options)
 (`--provider`, `--model`, `--fast-model`, …) are also accepted.
