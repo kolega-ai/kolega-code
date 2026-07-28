@@ -6,6 +6,8 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.25.0 - 2026-07-28
+
 ### Added
 
 - **Scheduled loops.** `/loop 5m check whether CI went green` re-runs a prompt on
@@ -54,8 +56,6 @@ This project uses GitHub Releases for detailed generated release notes. This fil
   string rather than a closed literal, and `timestamp` is timezone-aware UTC.
   `fastapi`, `uvicorn`, `websockets`, and `pygments` are now direct dependencies.
   See `MIGRATION.md` for host applications embedding this package.
-
-### Changed
 
 - Made Claude Opus 5 the default Anthropic long-context and thinking model.
 
