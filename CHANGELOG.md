@@ -6,6 +6,14 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.25.1 - 2026-07-28
+
+### Fixed
+
+- Resized oversized images only in outbound Anthropic request history while
+  preserving full originals in session artifacts and replay, preventing one
+  large image from breaking every later turn in a resumed conversation.
+
 ## 0.25.0 - 2026-07-28
 
 ### Added
