@@ -357,11 +357,12 @@ def _anthropic_config() -> AgentConfig:
 
 def _image_history_message() -> Message:
     """A user message carrying a text block and an image block from an earlier turn."""
+    one_pixel_png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
     return Message(
         role="user",
         content=[
             TextBlock(text="what is in this image?"),
-            ImageBlock(image_type="base64", media_type="image/png", data="ZmFrZQ=="),
+            ImageBlock(image_type="base64", media_type="image/png", data=one_pixel_png),
         ],
     )
 

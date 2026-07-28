@@ -6,6 +6,12 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+### Fixed
+
+- Downscaled outbound image copies to satisfy Anthropic's per-image dimensions
+  and aggregate request-size limit, preventing image-heavy conversations from
+  failing later turns while preserving full-resolution history and artifacts.
+
 ## 0.25.1 - 2026-07-28
 
 ### Fixed

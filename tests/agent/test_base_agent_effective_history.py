@@ -124,8 +124,20 @@ class TestBaseAgent:
         assert history[0].content[1].text == "final answer"
 
     def test_history_for_llm_preserves_images_when_target_anthropic_supports_vision(self, base_agent):
-        image = ImageBlock(image_type="base64", media_type="image/png", data="BASE64")
-        nested_image = ImageBlock(image_type="base64", media_type="image/jpeg", data="BASE642")
+        png_output = io.BytesIO()
+        Image.new("RGB", (1, 1), "navy").save(png_output, format="PNG")
+        jpeg_output = io.BytesIO()
+        Image.new("RGB", (1, 1), "navy").save(jpeg_output, format="JPEG")
+        image = ImageBlock(
+            image_type="base64",
+            media_type="image/png",
+            data=base64.b64encode(png_output.getvalue()).decode("ascii"),
+        )
+        nested_image = ImageBlock(
+            image_type="base64",
+            media_type="image/jpeg",
+            data=base64.b64encode(jpeg_output.getvalue()).decode("ascii"),
+        )
         base_agent.primary_model_config.provider = ModelProvider.ANTHROPIC
         base_agent.primary_model_config.model = "claude-opus-4-8"
         base_agent.supports_vision = True
@@ -151,7 +163,7 @@ class TestBaseAgent:
         assert history[0].content[1] is image
         assert history[1].content[0].content[0] is nested_image
 
-    def test_anthropic_history_resize_preserves_hydrated_history_and_artifact(
+    def test_anthropic_many_image_resize_preserves_hydrated_history_and_artifact(
         self,
         base_agent,
         tmp_path,
@@ -159,13 +171,11 @@ class TestBaseAgent:
     ):
         import kolega_code.utils.images as image_utils
 
-        image = Image.effect_noise((160, 120), 80).convert("RGB")
+        image = Image.new("RGB", (2_001, 100), "navy")
         output = io.BytesIO()
         image.save(output, format="JPEG")
         original_bytes = output.getvalue()
         original_base64 = base64.b64encode(original_bytes).decode("ascii")
-        limit = 1_600
-        assert len(original_base64) > limit
 
         project = tmp_path / "project"
         project.mkdir()
@@ -174,7 +184,9 @@ class TestBaseAgent:
         store.recorder(record.session_id).record_context_message(
             Message(
                 role="user",
-                content=[ImageBlock(image_type="base64", media_type="image/jpeg", data=original_base64)],
+                content=[
+                    ImageBlock(image_type="base64", media_type="image/jpeg", data=original_base64) for _ in range(21)
+                ],
             )
         )
         journal = store.journal(record.session_id)
@@ -185,22 +197,27 @@ class TestBaseAgent:
 
         loaded = store.load(record.session_id)
         base_agent.restore_message_history(loaded.history)
-        restored_image = base_agent.history[0].content[0]
-        assert isinstance(restored_image, ImageBlock)
-        assert restored_image.data == original_base64
+        restored_images = base_agent.history[0].content
+        assert len(restored_images) == 21
+        assert all(isinstance(block, ImageBlock) and block.data == original_base64 for block in restored_images)
 
-        monkeypatch.setattr(image_utils, "ANTHROPIC_MAX_IMAGE_BASE64_BYTES", limit)
         base_agent.primary_model_config.provider = ModelProvider.ANTHROPIC
-        base_agent.primary_model_config.model = "claude-opus-4-8"
+        base_agent.primary_model_config.model = "claude-opus-5"
         base_agent.supports_vision = True
+        aggregate_limit = 60_000
+        monkeypatch.setattr(image_utils, "ANTHROPIC_MAX_REQUEST_IMAGE_BASE64_BYTES", aggregate_limit)
 
         outbound = base_agent._history_for_llm()
 
-        outbound_image = outbound[0].content[0]
-        assert isinstance(outbound_image, ImageBlock)
-        assert outbound_image.data != original_base64
-        assert len(outbound_image.data) < limit
-        assert restored_image.data == original_base64
+        outbound_images = outbound[0].content
+        assert len(outbound_images) == 21
+        assert sum(len(block.data) for block in outbound_images if isinstance(block, ImageBlock)) <= aggregate_limit
+        for outbound_image in outbound_images:
+            assert isinstance(outbound_image, ImageBlock)
+            assert outbound_image.data != original_base64
+            with Image.open(io.BytesIO(base64.b64decode(outbound_image.data))) as resized:
+                assert max(resized.size) <= 2_000
+        assert all(isinstance(block, ImageBlock) and block.data == original_base64 for block in restored_images)
         assert journal.read_artifact(artifact_ref) == artifact_before
 
     def test_get_effective_history_falls_back_when_no_compression(self, base_agent):

@@ -4,6 +4,7 @@ import base64
 import io
 from pathlib import Path
 
+import pytest
 from PIL import Image
 
 from kolega_code.utils.images import (
@@ -128,6 +129,64 @@ def test_resize_base64_image_returns_fitting_image_unchanged() -> None:
     assert result.resized is False
     assert result.data == data
     assert result.media_type == "image/png"
+
+
+def test_resize_base64_image_constrains_byte_small_image_dimensions() -> None:
+    data = _encoded_image(Image.new("RGB", (2_001, 100), "navy"), "PNG")
+    assert len(data) < ANTHROPIC_MAX_IMAGE_BASE64_BYTES
+
+    result = resize_base64_image_to_limit(
+        data,
+        "image/png",
+        max_base64_bytes=ANTHROPIC_MAX_IMAGE_BASE64_BYTES,
+        max_dimension=2_000,
+    )
+
+    assert result.succeeded is True
+    assert result.resized is True
+    assert result.data is not None
+    with Image.open(io.BytesIO(base64.b64decode(result.data))) as derivative:
+        assert derivative.width <= 2_000
+        assert derivative.height <= 2_000
+        assert derivative.width / derivative.height == pytest.approx(2_001 / 100, rel=0.02)
+
+
+def test_resize_base64_image_returns_dimension_boundary_unchanged() -> None:
+    data = _encoded_image(Image.new("RGB", (2_000, 100), "navy"), "PNG")
+
+    result = resize_base64_image_to_limit(
+        data,
+        "image/png",
+        max_base64_bytes=ANTHROPIC_MAX_IMAGE_BASE64_BYTES,
+        max_dimension=2_000,
+    )
+
+    assert result.succeeded is True
+    assert result.resized is False
+    assert result.data == data
+    assert result.media_type == "image/png"
+
+
+def test_resize_base64_image_satisfies_dimension_and_payload_limits() -> None:
+    image = Image.effect_noise((400, 300), 80).convert("RGB")
+    data = _encoded_image(image, "JPEG")
+    limit = 4_000
+    assert len(data) > limit
+
+    result = resize_base64_image_to_limit(
+        data,
+        "image/jpeg",
+        max_base64_bytes=limit,
+        max_dimension=200,
+    )
+
+    assert result.succeeded is True
+    assert result.resized is True
+    assert result.data is not None
+    assert len(result.data) < limit
+    with Image.open(io.BytesIO(base64.b64decode(result.data))) as derivative:
+        assert derivative.width <= 200
+        assert derivative.height <= 200
 
 
 def test_resize_base64_jpeg_produces_decodable_derivative_below_limit() -> None:

@@ -32,7 +32,31 @@ from kolega_code.llm.models import (
 
 
 def _image(media_type: str = "image/png") -> ImageBlock:
-    return ImageBlock(image_type="base64", media_type=media_type, data="ZmFrZQ==")
+    image_format = "JPEG" if media_type == "image/jpeg" else "PNG"
+    image = Image.new("RGB", (1, 1), "navy")
+    output = io.BytesIO()
+    image.save(output, format=image_format)
+    return ImageBlock(
+        image_type="base64",
+        media_type=media_type,
+        data=base64.b64encode(output.getvalue()).decode("ascii"),
+    )
+
+
+def _solid_png(width: int, height: int) -> ImageBlock:
+    image = Image.new("RGB", (width, height), "navy")
+    output = io.BytesIO()
+    image.save(output, format="PNG")
+    return ImageBlock(
+        image_type="base64",
+        media_type="image/png",
+        data=base64.b64encode(output.getvalue()).decode("ascii"),
+    )
+
+
+def _image_dimensions(block: ImageBlock) -> tuple[int, int]:
+    with Image.open(io.BytesIO(base64.b64decode(block.data))) as image:
+        return image.size
 
 
 def _noise_jpeg() -> ImageBlock:
@@ -238,6 +262,138 @@ def test_replace_preserves_cache_checkpoint_on_tool_result():
     assert new_tr.cache_checkpoint is True
 
 
+def test_adapt_keeps_normal_anthropic_dimensions_at_exactly_twenty_images() -> None:
+    large = _solid_png(2_001, 100)
+    history = [_user(large, *[_image() for _ in range(19)])]
+
+    adapted = adapt_history_for_provider(
+        history,
+        target_provider="anthropic",
+        target_model="claude-opus-5",
+        supports_vision=True,
+    )
+
+    assert count_image_blocks(adapted) == 20
+    assert adapted is history
+    assert adapted[0].content[0] is large
+    assert _image_dimensions(large) == (2_001, 100)
+
+
+def test_adapt_constrains_direct_and_nested_images_when_request_has_more_than_twenty() -> None:
+    top_level = _solid_png(2_001, 100)
+    nested = _solid_png(100, 2_001)
+    valid = [_image() for _ in range(19)]
+    result = ToolResult(
+        tool_use_id="many-image-call",
+        name="browser_take_screenshot",
+        content=[nested, TextBlock(text="caption")],
+        is_error=False,
+        cache_checkpoint=True,
+        execution_id="many-image-exec",
+    )
+    history = [_user(top_level, *valid), _user(result)]
+
+    adapted = adapt_history_for_provider(
+        history,
+        target_provider="anthropic",
+        target_model="claude-opus-5",
+        supports_vision=True,
+    )
+
+    assert count_image_blocks(adapted) == 21
+    adapted_top = adapted[0].content[0]
+    assert isinstance(adapted_top, ImageBlock)
+    assert adapted_top is not top_level
+    assert max(_image_dimensions(adapted_top)) <= 2_000
+    assert all(adapted[0].content[index + 1] is block for index, block in enumerate(valid))
+
+    adapted_result = adapted[1].content[0]
+    assert isinstance(adapted_result, ToolResult)
+    assert adapted_result is not result
+    assert adapted_result.tool_use_id == "many-image-call"
+    assert adapted_result.name == "browser_take_screenshot"
+    assert adapted_result.cache_checkpoint is True
+    assert adapted_result.execution_id == "many-image-exec"
+    adapted_nested = adapted_result.content[0]
+    assert isinstance(adapted_nested, ImageBlock)
+    assert adapted_nested is not nested
+    assert max(_image_dimensions(adapted_nested)) <= 2_000
+    assert isinstance(adapted_result.content[1], TextBlock)
+    assert adapted_result.content[1].text == "caption"
+
+    # Only the outbound request receives derivatives.
+    assert history[0].content[0] is top_level
+    assert history[1].content[0] is result
+    assert result.content[0] is nested
+    assert _image_dimensions(top_level) == (2_001, 100)
+    assert _image_dimensions(nested) == (100, 2_001)
+
+
+def test_adapt_constrains_single_anthropic_image_to_normal_dimension_limit() -> None:
+    oversized = _solid_png(8_001, 2)
+    history = [_user(oversized)]
+
+    adapted = adapt_history_for_provider(
+        history,
+        target_provider="anthropic",
+        target_model="claude-opus-5",
+        supports_vision=True,
+    )
+
+    adapted_image = adapted[0].content[0]
+    assert isinstance(adapted_image, ImageBlock)
+    assert adapted_image is not oversized
+    assert max(_image_dimensions(adapted_image)) <= 8_000
+    assert history[0].content[0] is oversized
+    assert _image_dimensions(oversized) == (8_001, 2)
+
+
+def test_adapt_caps_aggregate_anthropic_image_payload_without_mutating_history(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import kolega_code.utils.images as image_utils
+
+    aggregate_limit = 60_000
+    monkeypatch.setattr(image_utils, "ANTHROPIC_MAX_REQUEST_IMAGE_BASE64_BYTES", aggregate_limit)
+    valid = _image()
+    nested_images = [_noise_jpeg() for _ in range(14)]
+    results = [
+        ToolResult(
+            tool_use_id=f"aggregate-image-call-{index}",
+            name="read_image",
+            content=[image],
+            is_error=False,
+            cache_checkpoint=True,
+        )
+        for index, image in enumerate(nested_images)
+    ]
+    history = [_user(valid, *results)]
+    assert len(valid.data) + sum(len(image.data) for image in nested_images) > aggregate_limit
+
+    adapted = adapt_history_for_provider(
+        history,
+        target_provider="anthropic",
+        target_model="claude-opus-5",
+        supports_vision=True,
+    )
+
+    assert adapted is not history
+    assert adapted[0].content[0] is valid
+    adapted_results = adapted[0].content[1:]
+    adapted_images = []
+    for adapted_result in adapted_results:
+        assert isinstance(adapted_result, ToolResult)
+        assert adapted_result.cache_checkpoint is True
+        adapted_image = adapted_result.content[0]
+        assert isinstance(adapted_image, ImageBlock)
+        assert _image_dimensions(adapted_image)[0] > 0
+        adapted_images.append(adapted_image)
+    assert len(valid.data) + sum(len(image.data) for image in adapted_images) <= aggregate_limit
+
+    for original_result, original_image in zip(results, nested_images, strict=True):
+        assert original_result.content[0] is original_image
+
+
 def test_adapt_resizes_top_level_and_nested_anthropic_images_without_mutating_history(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -330,10 +486,44 @@ def test_adapt_resizes_image_nested_in_compatible_freeform_tool_result(monkeypat
     assert result.content[0] is nested
 
 
+def test_adapt_applies_many_image_dimension_to_compatible_freeform_tool_result() -> None:
+    nested = _solid_png(2_001, 100)
+    result = ToolResult(
+        tool_use_id="freeform-many-image-call",
+        name="browser_take_screenshot",
+        content=[nested],
+        is_error=False,
+        input_kind="freeform",
+    )
+    history = [
+        Message(
+            role="user",
+            content=[*[_image() for _ in range(20)], result],
+            usage_metadata={"provider": "anthropic"},
+        )
+    ]
+
+    adapted = adapt_history_for_provider(
+        history,
+        target_provider="anthropic",
+        target_model="claude-opus-5",
+        supports_vision=True,
+    )
+
+    adapted_result = adapted[0].content[-1]
+    assert isinstance(adapted_result, ToolResult)
+    assert isinstance(adapted_result.content, list)
+    adapted_image = adapted_result.content[0]
+    assert isinstance(adapted_image, ImageBlock)
+    assert max(_image_dimensions(adapted_image)) <= 2_000
+    assert result.content[0] is nested
+    assert _image_dimensions(nested) == (2_001, 100)
+
+
 def test_adapt_leaves_valid_url_and_non_anthropic_images_unchanged(monkeypatch: pytest.MonkeyPatch) -> None:
     import kolega_code.utils.images as image_utils
 
-    monkeypatch.setattr(image_utils, "ANTHROPIC_MAX_IMAGE_BASE64_BYTES", 64)
+    monkeypatch.setattr(image_utils, "ANTHROPIC_MAX_IMAGE_BASE64_BYTES", 128)
     valid = _image()
     url = ImageBlock(image_type="url", media_type="image/png", data="https://example.com/image.png")
     oversized = _noise_jpeg()
