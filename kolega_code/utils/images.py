@@ -46,6 +46,10 @@ ANTHROPIC_MAX_IMAGE_BASE64_BYTES = 10 * 1024 * 1024
 ANTHROPIC_MAX_IMAGE_DIMENSION = 8_000
 ANTHROPIC_MANY_IMAGE_THRESHOLD = 20
 ANTHROPIC_MANY_IMAGE_MAX_DIMENSION = 2_000
+# Anthropic rejects standard API requests above 32 MB. Keep aggregate base64
+# image data at 24 MiB so JSON, system prompts, tools, and text history retain
+# substantial request headroom.
+ANTHROPIC_MAX_REQUEST_IMAGE_BASE64_BYTES = 24 * 1024 * 1024
 
 # Leave headroom below the provider's hard boundary when producing a
 # derivative. This avoids repeatedly re-encoding an image for tiny accounting

@@ -49,6 +49,7 @@ def _adapt_image_block_for_provider(
     target_model: str,
     supports_vision: bool,
     max_image_dimension: Optional[int],
+    max_image_base64_bytes: int,
 ) -> tuple[ContentBlock, bool]:
     """Return a request-safe image block without mutating stored history."""
     if not supports_vision:
@@ -60,7 +61,7 @@ def _adapt_image_block_for_provider(
     result = image_utils.resize_base64_image_to_limit(
         block.data,
         block.media_type,
-        max_base64_bytes=image_utils.ANTHROPIC_MAX_IMAGE_BASE64_BYTES,
+        max_base64_bytes=max_image_base64_bytes,
         max_dimension=max_image_dimension,
     )
     if not result.succeeded:
@@ -96,18 +97,54 @@ def _adapt_image_block_for_provider(
     )
 
 
-def count_image_blocks(messages: List[Message]) -> int:
-    """Count ``ImageBlock`` instances across messages, including ones nested in tool results."""
+def _image_block_stats(messages: List[Message]) -> tuple[int, List[int]]:
+    """Return total image count and base64 lengths, including nested tool results."""
     count = 0
+    base64_sizes: List[int] = []
     for message in messages:
         if not isinstance(message.content, list):
             continue
         for block in message.content:
             if isinstance(block, ImageBlock):
                 count += 1
+                if block.image_type == "base64":
+                    base64_sizes.append(len(block.data))
             elif isinstance(block, ToolResult) and isinstance(block.content, list):
-                count += sum(1 for inner in block.content if isinstance(inner, ImageBlock))
-    return count
+                for inner in block.content:
+                    if isinstance(inner, ImageBlock):
+                        count += 1
+                        if inner.image_type == "base64":
+                            base64_sizes.append(len(inner.data))
+    return count, base64_sizes
+
+
+def count_image_blocks(messages: List[Message]) -> int:
+    """Count ``ImageBlock`` instances across messages, including ones nested in tool results."""
+    return _image_block_stats(messages)[0]
+
+
+def _anthropic_image_base64_limit(base64_sizes: List[int]) -> int:
+    """Return a shared per-image cap that keeps aggregate image data request-safe.
+
+    Images already below the shared cap remain byte-for-byte unchanged. Larger
+    images divide the remaining aggregate budget evenly after accounting for
+    those smaller images, avoiding unnecessary reductions when the request
+    already fits.
+    """
+    per_image_limit = image_utils.ANTHROPIC_MAX_IMAGE_BASE64_BYTES
+    aggregate_limit = image_utils.ANTHROPIC_MAX_REQUEST_IMAGE_BASE64_BYTES
+    projected_sizes = sorted(min(size, per_image_limit) for size in base64_sizes)
+    if sum(projected_sizes) <= aggregate_limit:
+        return per_image_limit
+
+    remaining_budget = aggregate_limit
+    for index, size in enumerate(projected_sizes):
+        remaining_images = len(projected_sizes) - index
+        shared_limit = remaining_budget // remaining_images
+        if size > shared_limit:
+            return max(4, min(per_image_limit, shared_limit))
+        remaining_budget -= size
+    return per_image_limit
 
 
 def _provider_value(provider: Any) -> str:
@@ -263,6 +300,7 @@ def _adapt_content_blocks_for_provider(
     target_model: str,
     supports_vision: bool,
     max_image_dimension: Optional[int] = None,
+    max_image_base64_bytes: int = image_utils.ANTHROPIC_MAX_IMAGE_BASE64_BYTES,
     target_edit_protocol: Optional[str] = None,
     tool_call_providers: Optional[Dict[str, str]] = None,
     tool_call_protocols: Optional[Dict[str, Optional[str]]] = None,
@@ -280,6 +318,7 @@ def _adapt_content_blocks_for_provider(
                 target_model=target_model,
                 supports_vision=supports_vision,
                 max_image_dimension=max_image_dimension,
+                max_image_base64_bytes=max_image_base64_bytes,
             )
             adapted.append(adapted_block)
             changed = changed or image_changed
@@ -319,6 +358,7 @@ def _adapt_content_blocks_for_provider(
                         target_model=target_model,
                         supports_vision=supports_vision,
                         max_image_dimension=max_image_dimension,
+                        max_image_base64_bytes=max_image_base64_bytes,
                         target_edit_protocol=target_edit_protocol,
                         tool_call_providers=tool_call_providers,
                         tool_call_protocols=tool_call_protocols,
@@ -361,6 +401,7 @@ def _adapt_content_blocks_for_provider(
                 target_model=target_model,
                 supports_vision=supports_vision,
                 max_image_dimension=max_image_dimension,
+                max_image_base64_bytes=max_image_base64_bytes,
                 target_edit_protocol=target_edit_protocol,
                 tool_call_providers=tool_call_providers,
                 tool_call_protocols=tool_call_protocols,
@@ -419,13 +460,15 @@ def adapt_history_for_provider(
     if target_edit_protocol is not None:
         target_edit_protocol = _provider_value(target_edit_protocol)
     max_image_dimension: Optional[int] = None
+    max_image_base64_bytes = image_utils.ANTHROPIC_MAX_IMAGE_BASE64_BYTES
     if target_provider == "anthropic" and supports_vision:
-        image_count = count_image_blocks(messages)
+        image_count, base64_sizes = _image_block_stats(messages)
         max_image_dimension = (
             image_utils.ANTHROPIC_MANY_IMAGE_MAX_DIMENSION
             if image_count > image_utils.ANTHROPIC_MANY_IMAGE_THRESHOLD
             else image_utils.ANTHROPIC_MAX_IMAGE_DIMENSION
         )
+        max_image_base64_bytes = _anthropic_image_base64_limit(base64_sizes)
     result: List[Message] = []
     changed_any = False
     tool_call_providers: Dict[str, str] = {}
@@ -451,6 +494,7 @@ def adapt_history_for_provider(
             target_model=target_model,
             supports_vision=supports_vision,
             max_image_dimension=max_image_dimension,
+            max_image_base64_bytes=max_image_base64_bytes,
             target_edit_protocol=target_edit_protocol,
             tool_call_providers=tool_call_providers,
             tool_call_protocols=tool_call_protocols,

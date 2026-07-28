@@ -167,7 +167,10 @@ class TestBaseAgent:
         self,
         base_agent,
         tmp_path,
+        monkeypatch: pytest.MonkeyPatch,
     ):
+        import kolega_code.utils.images as image_utils
+
         image = Image.new("RGB", (2_001, 100), "navy")
         output = io.BytesIO()
         image.save(output, format="JPEG")
@@ -201,11 +204,14 @@ class TestBaseAgent:
         base_agent.primary_model_config.provider = ModelProvider.ANTHROPIC
         base_agent.primary_model_config.model = "claude-opus-5"
         base_agent.supports_vision = True
+        aggregate_limit = 60_000
+        monkeypatch.setattr(image_utils, "ANTHROPIC_MAX_REQUEST_IMAGE_BASE64_BYTES", aggregate_limit)
 
         outbound = base_agent._history_for_llm()
 
         outbound_images = outbound[0].content
         assert len(outbound_images) == 21
+        assert sum(len(block.data) for block in outbound_images if isinstance(block, ImageBlock)) <= aggregate_limit
         for outbound_image in outbound_images:
             assert isinstance(outbound_image, ImageBlock)
             assert outbound_image.data != original_base64

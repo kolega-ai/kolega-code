@@ -348,6 +348,52 @@ def test_adapt_constrains_single_anthropic_image_to_normal_dimension_limit() -> 
     assert _image_dimensions(oversized) == (8_001, 2)
 
 
+def test_adapt_caps_aggregate_anthropic_image_payload_without_mutating_history(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import kolega_code.utils.images as image_utils
+
+    aggregate_limit = 60_000
+    monkeypatch.setattr(image_utils, "ANTHROPIC_MAX_REQUEST_IMAGE_BASE64_BYTES", aggregate_limit)
+    valid = _image()
+    nested_images = [_noise_jpeg() for _ in range(14)]
+    results = [
+        ToolResult(
+            tool_use_id=f"aggregate-image-call-{index}",
+            name="read_image",
+            content=[image],
+            is_error=False,
+            cache_checkpoint=True,
+        )
+        for index, image in enumerate(nested_images)
+    ]
+    history = [_user(valid, *results)]
+    assert len(valid.data) + sum(len(image.data) for image in nested_images) > aggregate_limit
+
+    adapted = adapt_history_for_provider(
+        history,
+        target_provider="anthropic",
+        target_model="claude-opus-5",
+        supports_vision=True,
+    )
+
+    assert adapted is not history
+    assert adapted[0].content[0] is valid
+    adapted_results = adapted[0].content[1:]
+    adapted_images = []
+    for adapted_result in adapted_results:
+        assert isinstance(adapted_result, ToolResult)
+        assert adapted_result.cache_checkpoint is True
+        adapted_image = adapted_result.content[0]
+        assert isinstance(adapted_image, ImageBlock)
+        assert _image_dimensions(adapted_image)[0] > 0
+        adapted_images.append(adapted_image)
+    assert len(valid.data) + sum(len(image.data) for image in adapted_images) <= aggregate_limit
+
+    for original_result, original_image in zip(results, nested_images, strict=True):
+        assert original_result.content[0] is original_image
+
+
 def test_adapt_resizes_top_level_and_nested_anthropic_images_without_mutating_history(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
