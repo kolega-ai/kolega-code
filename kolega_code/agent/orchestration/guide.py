@@ -114,14 +114,17 @@ fail with a migration error rather than running with partially inherited routing
 
 ### Primitives (all available as globals in the script)
 
-- `await agent(prompt, *, label=None, phase=None, schema=None, model_override=None, agent_type=None)`
+- `await agent(prompt, *, label=None, phase=None, schema=None, model_override=None, agent_type=None, browser_target=None)`
   Dispatch one sub-agent. Returns its report text, or a validated dict when `schema`
   (a JSON Schema) is given, or `None` if the agent failed/was skipped (so you can
   filter it out). `agent_type` is one of "general" (default, full toolset), "investigation"
   (read-only), "browser", or "coder". Omit `model_override` to inherit the requested
   role's configured defaults; otherwise supply the complete atomic object documented
-  above. In plan mode every sub-agent is forced read-only regardless of `agent_type`,
-  so use workflows there for parallel research and synthesis, not edits.
+  above. `browser_target` applies only to browser agents; omit it for isolated
+  Playwright, or use `"chrome"` only when the user directs the workflow to use the
+  configured Chrome extension. In plan mode every sub-agent is forced read-only
+  regardless of `agent_type`, so use workflows there for parallel research and
+  synthesis, not edits.
 - `await parallel(thunks)` — run zero-arg thunks concurrently and wait for ALL (a barrier).
   A thunk that raises resolves to `None`; the call never rejects. Filter `None` before use.
 - `await pipeline(items, *stages)` — run each item through all stages independently, with

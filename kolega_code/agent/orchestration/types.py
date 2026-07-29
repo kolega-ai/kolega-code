@@ -26,6 +26,7 @@ class AgentRunSpec:
     schema: Optional[dict] = None
     model_override: Optional[AtomicModelOverride] = None
     agent_type: Optional[str] = None
+    browser_target: Optional[str] = None
     # Secret-free identity of inherited role routing. It participates in cache
     # identity only when model_override is absent.
     routing_fingerprint: Optional[str] = None
@@ -51,6 +52,7 @@ class AgentRunSpec:
             "model_override": (self.model_override.as_dict() if self.model_override is not None else None),
             "routing_fingerprint": (self.routing_fingerprint if self.model_override is None else None),
             "agent_type": self.agent_type,
+            "browser_target": self.browser_target,
             "actual_agent_type": self.actual_agent_type,
             "read_only_mode": self.read_only_mode,
             "max_agent_depth": self.max_agent_depth,

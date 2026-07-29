@@ -71,7 +71,11 @@ _ORDINARY_MODEL_OVERRIDE_SCHEMA: dict[str, Any] = {
 }
 
 
-def _dispatch_input_schema(*, custom: bool = False) -> dict[str, Any]:
+def _dispatch_input_schema(
+    *,
+    custom: bool = False,
+    browser_targets: tuple[str, ...] = (),
+) -> dict[str, Any]:
     properties: dict[str, Any] = {
         "task": {
             "type": "string",
@@ -88,6 +92,15 @@ def _dispatch_input_schema(*, custom: bool = False) -> dict[str, Any]:
         },
     }
     required = ["task"]
+    if browser_targets:
+        properties["browser_target"] = {
+            "type": "string",
+            "enum": list(browser_targets),
+            "description": (
+                "Browser backend for this task. Omit for Playwright; choose Chrome only when the user directs you "
+                "to use their configured Chrome browser."
+            ),
+        }
     if custom:
         properties = {
             "agent": {"type": "string", "description": "Name of the custom agent to run."},
@@ -914,6 +927,9 @@ class ToolCollection(LogMixin):
         self.extension_schemas["resolve"] = _RESOLVE_INPUT_SCHEMA
         self.extension_schemas.update(BROWSER_TOOL_SCHEMAS)
         self.extension_schemas.update(_AGENT_DISPATCH_INPUT_SCHEMAS)
+        browser_targets = tuple(getattr(self.browser_manager, "browser_targets", ()))
+        if len(browser_targets) > 1:
+            self.extension_schemas["dispatch_browser_agent"] = _dispatch_input_schema(browser_targets=browser_targets)
         self.browser_tool = BrowserTool(
             self.project_path,
             self.workspace_id,
@@ -992,7 +1008,15 @@ class ToolCollection(LogMixin):
 
         Args:
             text: Case-insensitive text to find.
-            regex: Regular expression to find.
+            regex: Regular expression to find. The Chrome backend accepts a
+                restricted, linear-time subset: literals, '.', character classes,
+                anchors, escapes, and the quantifiers ?, *, + and {n,m} applied to
+                a single character or class, with at most 4 quantifiers and
+                repetition counts up to 1000. Groups '(' ')', alternation '|', and
+                backreferences are rejected, so write [0-9]{4} rather than
+                (\\d{4}|\\d{2}). The Playwright backend accepts full Python
+                regular expressions, so a pattern that works there may be
+                rejected on Chrome.
         """
         return await self.browser_tool.browser_find(text, regex)
 
@@ -1102,10 +1126,14 @@ class ToolCollection(LogMixin):
     async def browser_tabs(self, action: str, index: Optional[int] = None, url: Optional[str] = None) -> str:
         """List, create, close, or select browser tabs.
 
+        Pass inapplicable parameters as null, never as 0 or an empty string:
+        list needs neither index nor url, new takes url with index null, and
+        select and close take index with url null.
+
         Args:
             action: One of list, new, close, or select.
-            index: Tab index for close or select.
-            url: Optional URL for a new tab.
+            index: Tab index for close or select; must be null for list and new.
+            url: URL for a new tab; must be null for every other action.
         """
         return await self.browser_tool.browser_tabs(action, index, url)
 
@@ -1273,7 +1301,12 @@ class ToolCollection(LogMixin):
         """
         return await self.agent_tool.dispatch_investigation_agent(task, model_override)
 
-    async def dispatch_browser_agent(self, task: str, model_override: Any = None) -> str:
+    async def dispatch_browser_agent(
+        self,
+        task: str,
+        model_override: Any = None,
+        browser_target: Optional[str] = None,
+    ) -> str:
         """
         Dispatch a browser agent to perform web-based tasks and interactions.
 
@@ -1310,11 +1343,13 @@ class ToolCollection(LogMixin):
             task: A detailed description of the browser task to perform
             model_override: Optional complete provider/model/thinking_effort route. Call
                 list_subagent_models before selecting one; the model must support vision.
+            browser_target: Optional configured browser backend. Omit for Playwright;
+                choose Chrome only when the user asks to use their Chrome browser.
 
         Returns:
             A comprehensive report of the browser agent's findings and actions
         """
-        return await self.agent_tool.dispatch_browser_agent(task, model_override)
+        return await self.agent_tool.dispatch_browser_agent(task, model_override, browser_target)
 
     async def dispatch_coding_agent(self, task: str, model_override: Any = None) -> str:
         """
@@ -2465,7 +2500,9 @@ class ToolCollection(LogMixin):
             validated_workflow_depth(context) is not None or has_workflow_context_marker(context)
         )
         ordinary_parallel_dispatch = (
-            method_name in self.agent_dispatch_tools and method_name not in self._legacy_only_extension_dispatch_tools
+            method_name in self.agent_dispatch_tools
+            and method_name not in self._legacy_only_extension_dispatch_tools
+            and method_name != "dispatch_browser_agent"
         )
         return Tool(
             name=method_name,
@@ -2549,6 +2586,11 @@ class ToolCollection(LogMixin):
         # Strict `is False` so Mock configs in tests keep the default (enabled).
         if method_name == "eval" and getattr(self.config, "eval_enabled", True) is False:
             return False
+
+        if method_name in self.browser_tools:
+            supported_tools = getattr(self.browser_manager, "supported_tools", None)
+            if supported_tools is not None and method_name not in supported_tools:
+                return False
 
         # Check custom tool groups first
         if self.tool_config.custom_tool_groups:

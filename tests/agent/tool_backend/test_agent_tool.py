@@ -2,7 +2,7 @@
 
 import pytest
 from typing import Any, ClassVar, Optional
-from unittest.mock import AsyncMock, Mock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, Mock, MagicMock, patch
 import uuid
 import builtins
 
@@ -490,8 +490,22 @@ class TestAgentTool:
                 agent_class_import="kolega_code.agent.browseragent.BrowserAgent",
                 task="Browse the web",
                 model_override=None,
+                browser_manager_override=ANY,
             )
+            assert agent_tool.browser_manager is mock_dispatch.call_args.kwargs["browser_manager_override"]
             assert result == "Browser task completed"
+
+    async def test_workflow_agent_receives_concrete_browser_manager(self, agent_tool):
+        browser_manager = Mock()
+
+        agent = agent_tool._construct_workflow_sub_agent(
+            MockAgent,
+            config=None,
+            extra_tool_extensions=None,
+            browser_manager_override=browser_manager,
+        )
+
+        assert agent.init_kwargs["browser_manager"] is browser_manager
 
     async def test_dispatch_coding_agent(self, agent_tool):
         """Test coding agent dispatch."""

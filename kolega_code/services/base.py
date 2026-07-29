@@ -1,3 +1,4 @@
+import asyncio
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
@@ -99,6 +100,10 @@ class TerminalManager(ABC):
 class BrowserManager(ABC):
     """Abstract single-session browser interface used by the browser agent."""
 
+    # ``None`` preserves the complete legacy browser tool surface. Backends with
+    # a fixed subset advertise model-facing tool names here.
+    supported_tools: frozenset[str] | None = None
+
     @abstractmethod
     async def navigate(self, url: str) -> Dict[str, Any]: ...
 
@@ -197,3 +202,12 @@ class BrowserManager(ABC):
     async def cleanup_all_browsers(self) -> None:
         """Close the current browser session during agent teardown."""
         await self.close()
+
+
+def browser_manager_agent_lock(manager: BrowserManager) -> asyncio.Lock:
+    """Return the manager-scoped lock used to serialize whole browser-agent runs."""
+    lock = getattr(manager, "_kolega_browser_agent_lock", None)
+    if not isinstance(lock, asyncio.Lock):
+        lock = asyncio.Lock()
+        setattr(manager, "_kolega_browser_agent_lock", lock)
+    return lock

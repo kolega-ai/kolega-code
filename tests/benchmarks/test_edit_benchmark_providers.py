@@ -141,4 +141,4 @@ def test_benchmark_is_not_part_of_installed_package_or_console_scripts() -> None
     pyproject = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
 
     assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == ["kolega_code"]
-    assert set(pyproject["project"]["scripts"]) == {"kolega-code"}
+    assert set(pyproject["project"]["scripts"]) == {"kolega-code", "kolega-code-browser-host"}

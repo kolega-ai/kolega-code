@@ -224,3 +224,64 @@ def test_browser_schema_enums_serialize_for_google():
         "Meta",
         "Shift",
     ]
+
+
+@pytest.mark.asyncio
+async def test_network_requests_report_resource_type(browser_tool, browser_manager):
+    """The Chrome and Playwright backends both supply resource_type; the shared
+    formatter used to drop it, so callers could not tell a fetch from a stylesheet."""
+    browser_manager.network_requests = AsyncMock(
+        return_value={
+            "requests": [
+                {
+                    "index": 1,
+                    "method": "GET",
+                    "url": "http://127.0.0.1:8931/api/ping",
+                    "status": 200,
+                    "failure": None,
+                    "resource_type": "xmlhttprequest",
+                },
+                {
+                    "index": 2,
+                    "method": "GET",
+                    "url": "http://127.0.0.1:8931/fixture.css",
+                    "status": 200,
+                    "failure": None,
+                    "resource_type": "stylesheet",
+                },
+            ]
+        }
+    )
+
+    output = await browser_tool.browser_network_requests(include_static=True)
+
+    assert "1: GET http://127.0.0.1:8931/api/ping [xmlhttprequest] => 200" in output
+    assert "2: GET http://127.0.0.1:8931/fixture.css [stylesheet] => 200" in output
+
+
+@pytest.mark.asyncio
+async def test_network_requests_omit_missing_resource_type(browser_tool, browser_manager):
+    """A backend that omits the field must still produce a clean line."""
+    browser_manager.network_requests = AsyncMock(
+        return_value={
+            "requests": [
+                {"index": 1, "method": "POST", "url": "https://example.com/x", "status": None, "failure": "blocked"}
+            ]
+        }
+    )
+
+    output = await browser_tool.browser_network_requests()
+
+    assert "1: POST https://example.com/x => blocked" in output
+    assert "[" not in output.split("\n")[-1]
+
+
+def test_regex_and_tabs_schemas_document_their_constraints():
+    """Two different models sent index=0/url="" because the schema never said otherwise."""
+    find_regex = BROWSER_TOOL_SCHEMAS["browser_find"]["properties"]["regex"]["description"]
+    assert "alternation" in find_regex
+    assert "{n,m}" in find_regex
+
+    tabs = BROWSER_TOOL_SCHEMAS["browser_tabs"]["properties"]
+    assert "null" in tabs["index"]["description"]
+    assert "null" in tabs["url"]["description"]
