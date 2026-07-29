@@ -6,6 +6,15 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+### Fixed
+
+- Stopped image-heavy sessions from freezing the TUI. Building request history
+  re-encoded every screenshot in history on every LLM request, on the event
+  loop — dozens of multi-second stalls per session, multiplied by each running
+  sub-agent. Resized copies are now memoized per image and dimension cap
+  (surviving the small byte-budget shifts a newly captured screenshot causes),
+  and the repair/adapt pass runs in a worker thread.
+
 ## 0.25.2 - 2026-07-28
 
 ### Fixed

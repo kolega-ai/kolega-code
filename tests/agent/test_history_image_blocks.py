@@ -572,3 +572,72 @@ def test_adapt_omits_oversized_anthropic_image_when_resize_fails(monkeypatch: py
     assert "could not be resized safely" in placeholder.text
     assert placeholder.cache_checkpoint is True
     assert history[0].content[0] is invalid
+
+
+@pytest.fixture(autouse=True)
+def _fresh_resize_cache():
+    import kolega_code.utils.images as image_utils
+
+    image_utils._clear_resize_cache()
+    yield
+    image_utils._clear_resize_cache()
+
+
+def test_adapt_reuses_cached_derivatives_when_new_images_shrink_the_shared_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A screenshot landing in history must not re-encode the ones already there.
+
+    The shared Anthropic byte cap shrinks a little with every additional image;
+    the resize memo must keep serving previously produced derivatives across
+    those shifts (the affected session re-encoded its entire screenshot history
+    on every request, freezing the TUI for the PIL time each time).
+    """
+    import kolega_code.utils.images as image_utils
+
+    def _noise_png(seed: int) -> ImageBlock:
+        import random
+
+        rng = random.Random(seed)
+        image = Image.new("RGB", (64, 64))
+        image.putdata([(rng.randrange(256), rng.randrange(256), rng.randrange(256)) for _ in range(64 * 64)])
+        output = io.BytesIO()
+        image.save(output, format="PNG")
+        return ImageBlock(
+            image_type="base64",
+            media_type="image/png",
+            data=base64.b64encode(output.getvalue()).decode("ascii"),
+        )
+
+    blocks = [_noise_png(seed) for seed in range(4)]
+    # Aggregate budget forces the shared per-image cap below every image's size,
+    # and the cap shrinks again when the fifth image lands.
+    per_image = max(len(block.data) for block in blocks)
+    monkeypatch.setattr(image_utils, "ANTHROPIC_MAX_IMAGE_BASE64_BYTES", per_image)
+    monkeypatch.setattr(image_utils, "ANTHROPIC_MAX_REQUEST_IMAGE_BASE64_BYTES", per_image * 3)
+
+    encodes = []
+    inner = image_utils.resize_base64_image_to_limit
+
+    def counting(*args, **kwargs):
+        encodes.append(1)
+        return inner(*args, **kwargs)
+
+    monkeypatch.setattr(image_utils, "resize_base64_image_to_limit", counting)
+
+    history = [_user(block) for block in blocks]
+    adapt_history_for_provider(history, target_provider="anthropic", target_model="claude-opus-5", supports_vision=True)
+    cold_encodes = len(encodes)
+    assert cold_encodes == len(blocks)
+
+    # Same request again: fully served from the memo.
+    adapt_history_for_provider(history, target_provider="anthropic", target_model="claude-opus-5", supports_vision=True)
+    assert len(encodes) == cold_encodes
+
+    # A new image landing shrinks the shared cap for everyone. Only the new
+    # image may pay for a resize call; the shifted cap must keep serving the
+    # existing derivatives. (Kept small so the shift stays within the reuse
+    # hysteresis, like one screenshot among dozens in a real session.)
+    history.append(_user(_image()))
+    adapt_history_for_provider(history, target_provider="anthropic", target_model="claude-opus-5", supports_vision=True)
+    assert len(encodes) == cold_encodes + 1
