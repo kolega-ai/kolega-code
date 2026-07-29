@@ -58,7 +58,16 @@ BROWSER_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     "browser_find": _schema(
         {
             "text": {"type": "string", "description": "Case-insensitive text to find in the snapshot."},
-            "regex": {"type": "string", "description": "Regular expression to find in the snapshot."},
+            "regex": {
+                "type": "string",
+                "description": (
+                    "Regular expression to find in the snapshot. On the Chrome backend a restricted, "
+                    "linear-time subset applies: literals, '.', character classes, anchors, escapes, and the "
+                    "quantifiers ?, *, + and {n,m} on a single character or class. Groups '(' ')', "
+                    "alternation '|', and backreferences are rejected; at most 4 quantifiers and repetition "
+                    "counts up to 1000."
+                ),
+            },
         }
     ),
     "browser_wait_for": _schema(
@@ -149,8 +158,20 @@ BROWSER_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     "browser_tabs": _schema(
         {
             "action": {"type": "string", "enum": ["list", "new", "close", "select"]},
-            "index": {"type": "integer", "description": "Tab index for close or select."},
-            "url": {"type": "string", "description": "Optional URL for a new tab."},
+            "index": {
+                "type": "integer",
+                "description": (
+                    "Tab index for close or select. Required for select. Must be null for list and new; "
+                    "0 is a real tab index, not a stand-in for 'unset'."
+                ),
+            },
+            "url": {
+                "type": "string",
+                "description": (
+                    "URL for a new tab. Accepted only with the new action; must be null otherwise. "
+                    "An empty string is rejected — use null."
+                ),
+            },
         },
         ["action"],
     ),
@@ -183,7 +204,14 @@ BROWSER_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     "browser_network_requests": _schema(
         {
             "include_static": {"type": "boolean", "description": "Include images, fonts, scripts, and styles."},
-            "filter_pattern": {"type": "string", "description": "Regular expression matched against request URLs."},
+            "filter_pattern": {
+                "type": "string",
+                "description": (
+                    "Regular expression matched against request URLs. On the Chrome backend the same "
+                    "restricted subset as browser_find applies: no groups, no alternation, at most 4 "
+                    "quantifiers."
+                ),
+            },
         }
     ),
     "browser_network_request": _schema(
@@ -386,7 +414,9 @@ class BrowserTool(BaseTool):
         lines = ["## Network requests"]
         for request in result["requests"]:
             status = request["status"] if request["status"] is not None else request["failure"] or "pending"
-            lines.append(f"- {request['index']}: {request['method']} {request['url']} => {status}")
+            resource_type = request.get("resource_type")
+            kind = f" [{resource_type}]" if resource_type else ""
+            lines.append(f"- {request['index']}: {request['method']} {request['url']}{kind} => {status}")
         return "\n".join(lines)
 
     async def browser_network_request(self, index: int, part: Optional[str] = None) -> str:

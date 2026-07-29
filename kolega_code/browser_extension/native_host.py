@@ -24,6 +24,7 @@ from .protocol import (
     MessageDirection,
     MessageType,
     ProtocolValidationError,
+    runtimes_changed_notification,
     validate_discovery_request,
     validate_operation_request,
 )
@@ -39,6 +40,7 @@ from .runtime import (
 MAX_HOST_CONFIG_BYTES = 65_536
 DEFAULT_MAX_RUNTIMES = 16
 DEFAULT_MAX_RELAY_PENDING = 256
+RUNTIME_WATCH_INTERVAL_SECONDS = 1.0
 DEFAULT_MAX_NATIVE_PENDING_WRITES = 256
 DEFAULT_MAX_NATIVE_PENDING_WRITE_BYTES = 8 * MAX_NATIVE_MESSAGE_BYTES
 DEFAULT_NATIVE_WRITE_SHUTDOWN_SECONDS = 1.0
@@ -414,12 +416,46 @@ class NativeHostBroker:
         self._pending: dict[tuple[MessageDirection, str, str], _RelayPending] = {}
         self._close_lock = asyncio.Lock()
         self._closed = False
+        self._watch_task: asyncio.Task[None] | None = None
+        self._advertised: frozenset[str] | None = None
 
     @property
     def pending_count(self) -> int:
         return len(self._pending)
 
+    def _advertised_runtime_ids(self) -> frozenset[str]:
+        try:
+            return frozenset(
+                descriptor.runtime_id
+                for descriptor in self.registry.list_active()
+                if descriptor.accepts_origin(self.extension_origin)
+            )
+        except OSError:
+            return self._advertised or frozenset()
+
+    async def _watch_runtimes(self) -> None:
+        """Tell Chrome to re-enumerate runtimes whenever the live set changes.
+
+        Compares runtime ids rather than file mtimes: each runtime rewrites its
+        descriptor every TTL/3 to extend the lease, so mtime-based watching would
+        notify continuously.
+        """
+        while True:
+            await asyncio.sleep(RUNTIME_WATCH_INTERVAL_SECONDS)
+            if self._closed:
+                return
+            current = self._advertised_runtime_ids()
+            if current == self._advertised:
+                continue
+            self._advertised = current
+            try:
+                await self.endpoint.write_mapping(runtimes_changed_notification())
+            except (NativeHostError, RuntimeTransportError, OSError):
+                return
+
     async def run(self) -> None:
+        self._advertised = self._advertised_runtime_ids()
+        self._watch_task = asyncio.create_task(self._watch_runtimes(), name="kolega-browser-runtime-watch")
         try:
             while True:
                 raw = await self.endpoint.read()
@@ -473,6 +509,12 @@ class NativeHostBroker:
             if self._closed:
                 return
             self._closed = True
+            watch = self._watch_task
+            self._watch_task = None
+            if watch is not None and watch is not asyncio.current_task():
+                watch.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await watch
             pending = tuple(self._pending.values())
             self._pending.clear()
             for item in pending:

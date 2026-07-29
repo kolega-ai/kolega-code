@@ -15,6 +15,7 @@ from kolega_code.browser_extension.manager import (
 )
 from kolega_code.browser_extension.multiplex import MultiplexedPeer
 from kolega_code.browser_extension.protocol import Envelope, MessageDirection
+from kolega_code.browser_extension.registry import RuntimeDescriptor
 from kolega_code.browser_extension.runtime import RuntimeServer
 
 ORIGIN = f"chrome-extension://{'a' * 32}/"
@@ -84,7 +85,7 @@ async def test_manager_waits_for_session_ready_then_serializes_calls(tmp_path: P
     browser._server = cast(RuntimeServer, server)
     await browser._handle_peer(cast(MultiplexedPeer, peer))
 
-    with pytest.raises(ChromeExtensionUnavailableError, match="not ready"):
+    with pytest.raises(ChromeExtensionUnavailableError, match="connected but has not confirmed a session"):
         await browser.navigate("https://example.com")
     await browser._handle_event(ready_event("browser.other"))
     assert browser.session_id is None
@@ -153,3 +154,129 @@ async def test_manager_preserves_browser_result_shapes(tmp_path: Path) -> None:
         {"target": None, "image_type": "png", "full_page": True, "scale": "device"},
     )
     await browser.cleanup_all_browsers()
+
+
+def _descriptor(runtime_id: str, session_id: str, pid: int = 4321) -> RuntimeDescriptor:
+    """Build an advertised runtime, as a second Kolega session would publish."""
+    now_ms = int(time.time() * 1000)
+    return RuntimeDescriptor(
+        runtime_id=runtime_id,
+        session_id=session_id,
+        transport="unix",
+        endpoint=f"/tmp/{runtime_id}.sock",
+        token="t" * 43,
+        pid=pid,
+        created_at_ms=now_ms,
+        expires_at_ms=now_ms + 60_000,
+        extension_origin=ORIGIN,
+    )
+
+
+def _advertise(
+    browser: ChromeExtensionBrowserManager,
+    monkeypatch: pytest.MonkeyPatch,
+    descriptors: list[RuntimeDescriptor],
+) -> None:
+    """Inject the advertised runtime list.
+
+    The registry's own liveness rules (TTL, live pid, owner-private socket) are
+    covered by the registry tests; here we only care about how the manager
+    reports pairing state.
+    """
+    monkeypatch.setattr(browser, "_live_runtimes", lambda: descriptors)
+
+
+@pytest.mark.asyncio
+async def test_probe_reports_unreachable_without_a_connection(tmp_path: Path) -> None:
+    browser = manager(tmp_path)
+    browser._server = cast(RuntimeServer, FakeServer())
+
+    result = await browser.probe()
+
+    assert result["state"] == "unreachable"
+    assert result["connected"] is False
+    assert result["ready"] is False
+    assert "did not connect" in result["detail"]
+
+
+@pytest.mark.asyncio
+async def test_probe_reports_awaiting_selection_and_names_competing_runtimes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A connected-but-unselected companion is a different problem from an absent
+    one, and the operator needs to know which picker entry is theirs."""
+    browser = manager(tmp_path)
+    browser._server = cast(RuntimeServer, FakeServer())
+    await browser._handle_peer(cast(MultiplexedPeer, FakePeer()))
+    _advertise(
+        browser,
+        monkeypatch,
+        [_descriptor("runtime_1", "session_1"), _descriptor("runtime_2", "session_2")],
+    )
+
+    result = await browser.probe()
+
+    assert result["state"] == "awaiting_selection"
+    assert result["connected"] is True
+    assert result["ready"] is False
+    assert {entry["runtime_id"] for entry in result["runtimes"]} == {"runtime_1", "runtime_2"}
+    assert [entry for entry in result["runtimes"] if entry["current"]][0]["runtime_id"] == "runtime_1"
+    assert "waiting for you to choose" in result["detail"]
+    assert "session_2" in result["detail"]
+    assert "this session" in result["detail"]
+
+
+@pytest.mark.asyncio
+async def test_probe_reports_awaiting_selection_without_any_peer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The realistic pending-choice case has no peer at all.
+
+    The extension only dials a runtime's socket once that runtime is selected, so
+    keying "awaiting selection" off a connected peer made the state unreachable in
+    practice and every pending choice looked like a dead connection.
+    """
+    browser = manager(tmp_path)
+    browser._server = cast(RuntimeServer, FakeServer())
+    _advertise(
+        browser,
+        monkeypatch,
+        [_descriptor("runtime_1", "session_1"), _descriptor("runtime_2", "session_2")],
+    )
+
+    result = await browser.probe()
+
+    assert result["state"] == "awaiting_selection"
+    assert result["connected"] is False
+    assert "waiting for you to choose" in result["detail"]
+
+
+@pytest.mark.asyncio
+async def test_probe_reports_paired_once_the_session_is_ready(tmp_path: Path) -> None:
+    browser = manager(tmp_path)
+    browser._server = cast(RuntimeServer, FakeServer())
+    await browser._handle_peer(cast(MultiplexedPeer, FakePeer()))
+    await browser._handle_event(ready_event())
+
+    result = await browser.probe()
+
+    assert result["state"] == "paired"
+    assert result["connected"] is True
+    assert result["ready"] is True
+    assert result["runtime_id"] == "runtime_1"
+
+
+@pytest.mark.asyncio
+async def test_unavailable_error_names_competing_runtimes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The operation error, not just doctor, must explain a blocked selection."""
+    browser = manager(tmp_path)
+    browser._server = cast(RuntimeServer, FakeServer())
+    await browser._handle_peer(cast(MultiplexedPeer, FakePeer()))
+    _advertise(
+        browser,
+        monkeypatch,
+        [_descriptor("runtime_1", "session_1"), _descriptor("runtime_2", "session_2")],
+    )
+
+    with pytest.raises(ChromeExtensionUnavailableError, match="waiting for you to choose"):
+        await browser.navigate("https://example.com")

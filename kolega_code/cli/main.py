@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import faulthandler
 import importlib.util
 import json
@@ -53,6 +54,7 @@ from kolega_code.browser_extension.installer import (
     BROWSER_EXTENSION_CHANNELS,
     DEFAULT_BROWSER_EXTENSION_CHANNEL,
     channel_web_store_url,
+    default_state_dir,
     install_native_host,
     native_host_status,
     uninstall_native_host,
@@ -649,6 +651,34 @@ def _run_update() -> int:
     return result.returncode
 
 
+def _probe_chrome_extension(state_dir: Path | None, extension_id: str) -> dict[str, Any]:
+    """Attempt a real attach so `doctor` cannot report green while unreachable."""
+    from kolega_code.browser_extension.manager import (
+        ChromeExtensionBrowserManager,
+        ChromeExtensionUnavailableError,
+    )
+
+    resolved_state_dir = state_dir or default_state_dir()
+
+    async def run() -> dict[str, Any]:
+        manager = ChromeExtensionBrowserManager(
+            state_dir=resolved_state_dir,
+            kolega_session_id="browser-doctor",
+            extension_origin=f"chrome-extension://{extension_id}/",
+            connection_timeout=5.0,
+        )
+        try:
+            return await manager.probe()
+        finally:
+            with contextlib.suppress(Exception):
+                await manager.cleanup_all_browsers()
+
+    try:
+        return asyncio.run(run())
+    except ChromeExtensionUnavailableError as exc:
+        return {"state": "unreachable", "connected": False, "ready": False, "runtimes": [], "detail": str(exc)}
+
+
 def _run_browser(args: argparse.Namespace) -> int:
     command = args.browser_command
     common = {
@@ -687,13 +717,43 @@ def _run_browser(args: argparse.Namespace) -> int:
         if command == "doctor" and not status.valid:
             payload["remediation"] = "Run `kolega-code browser install` with the same channel and extension ID."
 
+        # `status` is a cheap manifest check; only `doctor` attempts a real
+        # attach, because a valid manifest says nothing about whether the
+        # extension is installed, enabled, or paired with this session.
+        probe: dict[str, Any] | None = None
+        if command == "doctor" and status.valid:
+            probe = _probe_chrome_extension(args.state_dir, status.extension_id)
+            payload["extension"] = probe
+            if probe["state"] != "paired":
+                payload["remediation"] = probe["detail"]
+            if probe["state"] == "awaiting_selection":
+                # doctor publishes its own temporary runtime, so with another Kolega
+                # session already running there are two and Chrome must be told which
+                # one may drive the browser. Say so rather than implying a fault.
+                payload["remediation"] = (
+                    f"{probe['detail']} This check publishes its own temporary runtime, so a choice is "
+                    "expected whenever another Kolega session is running; stop the other session to test "
+                    "pairing unattended."
+                )
+
         if args.json:
             print(json.dumps(payload, sort_keys=True))
         else:
             print(status.detail)
+            if command == "status":
+                print("Checked the native-host manifest only; run `kolega-code browser doctor` to test the extension.")
             print(f"Manifest: {status.manifest_path}")
             if status.host_path is not None:
                 print(f"Native host: {status.host_path}")
+            if probe is not None:
+                print(f"Extension: {probe['state']}")
+                if probe.get("runtime_id"):
+                    print(f"This session's runtime: {probe['runtime_id']}")
+                for runtime in probe["runtimes"]:
+                    marker = " (this session)" if runtime["current"] else ""
+                    print(
+                        f"  - {runtime['session_id']} — runtime {runtime['runtime_id']}, pid {runtime['pid']}{marker}"
+                    )
             if payload.get("remediation"):
                 print(payload["remediation"])
             if store_url:
@@ -701,6 +761,8 @@ def _run_browser(args: argparse.Namespace) -> int:
 
         if command == "install" and store_url:
             webbrowser.open(store_url)
+        if probe is not None and probe["state"] != "paired":
+            return 1
         return 0 if status.valid else 1
     except (RuntimeError, OSError) as exc:
         if getattr(args, "json", False):

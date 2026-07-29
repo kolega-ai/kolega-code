@@ -33,11 +33,24 @@ Chrome before checking the connection.
 | Command | What it does |
 | --- | --- |
 | `kolega-code browser install` | Register or refresh the Kolega native host and open the production Web Store listing |
-| `kolega-code browser status` | Show whether the native host and Chrome extension configuration are installed and valid |
-| `kolega-code browser doctor` | Run detailed checks for manifest, executable, registration, and connection problems |
+| `kolega-code browser status` | Check the native-host manifest only — a fast, offline configuration check |
+| `kolega-code browser doctor` | Everything `status` checks, plus a real connection attempt to the extension |
 | `kolega-code browser uninstall` | Remove Kolega-owned native-host registration and configuration files |
 
-Once `browser status` reports a valid configuration, the Chrome integration is
+`status` deliberately does not talk to Chrome, so a valid manifest there does not
+mean the extension is reachable. Use `doctor` to test the connection; it reports
+one of:
+
+| `doctor` extension state | Meaning |
+| --- | --- |
+| `paired` | The extension is connected and this session may drive the browser |
+| `awaiting_selection` | Connected, but several Kolega sessions are advertised and you must pick one |
+| `connected_not_selected` | Connected, but no session is confirmed yet |
+| `unreachable` | No connection — check the extension is installed and enabled, and Chrome is running |
+
+`doctor` exits non-zero unless the state is `paired`.
+
+Once `browser doctor` reports `paired`, the Chrome integration is
 available to the browser agent. Playwright is still selected by default; direct
 the agent in your prompt when you want it to use Chrome, for example:
 
@@ -63,6 +76,45 @@ The Chrome integration exposes only these fixed protocol operations:
 This list is exhaustive. The integration does not expose arbitrary JavaScript,
 raw Chrome DevTools Protocol (CDP), cookies or browser storage, request or
 response headers or bodies, file uploads or file/data drop, or console messages.
+
+### Choosing which session controls the browser
+
+The extension connects to the native host on its own; you do not need to open it
+in normal use. When exactly one Kolega session is running it is selected
+automatically.
+
+When two or more sessions are running, the extension will not guess which one
+may drive your browser, because selecting a session grants a local process
+access to pages in your ordinary profile. The toolbar badge shows `!` while a
+choice is pending — click the extension and pick a session. Run
+`kolega-code browser doctor` to see the competing sessions and which runtime id
+belongs to the session you are using.
+
+Your choice is remembered for as long as Chrome stays open, including across
+service-worker restarts, and is cleared when Chrome restarts.
+
+### Regular expressions
+
+`browser.find` and the `filter_pattern` of `browser.network_requests` accept a
+restricted, linear-time subset of regular-expression syntax: literals, `.`,
+character classes, anchors, escapes, and the quantifiers `?`, `*`, `+` and
+`{n,m}` applied to a single character or class. At most four quantifiers are
+allowed and repetition counts may not exceed 1000.
+
+Groups `(` `)`, alternation `|`, and backreferences are rejected, which is what
+makes the quantifiers safe: with no grouping or alternation a quantifier can only
+ever repeat one atom, so catastrophic backtracking is impossible. Write
+`[0-9]{4}` rather than `(\d{4}|\d{2})`.
+
+The Playwright backend accepts full Python regular expressions, so a pattern that
+works there may be rejected on Chrome.
+
+### Screenshots
+
+`browser.screenshot` returns the image inline. Neither the Chrome nor the
+Playwright backend writes screenshots to disk, so there is no artifact file path
+to report. Capture only the region you need: a full-page screenshot of a long
+page produces a large inline image.
 
 ## Native-host manifest location
 

@@ -11,7 +11,7 @@ from kolega_code.services.base import BrowserManager
 
 from .multiplex import ConnectionClosedError, MultiplexedPeer, RemoteRequestError, RequestTimeoutError
 from .protocol import JSONValue, Envelope, ProtocolValidationError, validate_operation_request
-from .registry import RuntimeDescriptorRegistry, validate_extension_origin
+from .registry import RuntimeDescriptor, RuntimeDescriptorRegistry, validate_extension_origin
 from .runtime import RuntimeServer, RuntimeTransportError, UnsupportedRuntimeTransportError
 
 CHROME_EXTENSION_SUPPORTED_TOOLS = frozenset(
@@ -144,6 +144,52 @@ class ChromeExtensionBrowserManager(BrowserManager):
         self._ready = False
         self._browser_session_id = None
 
+    def _live_runtimes(self) -> list[RuntimeDescriptor]:
+        """List every runtime currently advertised to the extension picker."""
+        registry = RuntimeDescriptorRegistry(self.state_dir / "browser-extension" / "runtimes")
+        try:
+            return registry.list_active()
+        except OSError:
+            return []
+
+    def _unavailable_detail(self) -> str:
+        """Explain *why* the companion is not ready, naming competing runtimes.
+
+        The extension connects automatically, but it will not guess which local
+        runtime may drive the browser when several are advertised. Distinguish
+        "nothing connected" from "awaiting your choice", because the remedies are
+        completely different. Note the choice is detected from the advertised
+        runtime count, not from having a peer: the extension only dials a
+        runtime's socket *after* it is selected, so a pending choice never has a
+        peer to observe.
+        """
+        connected = self._peer is not None and not self._peer.closed
+        mine = self.runtime_id
+        runtimes = self._live_runtimes()
+        if len(runtimes) > 1:
+            listed = ", ".join(
+                f"{descriptor.session_id} (runtime {descriptor.runtime_id}, pid {descriptor.pid})"
+                + (" <- this session" if descriptor.runtime_id == mine else "")
+                for descriptor in runtimes
+            )
+            return (
+                "Kolega Browser Companion is connected but waiting for you to choose which Kolega session "
+                f"may control the browser. {len(runtimes)} sessions are advertised: {listed}. Click the "
+                "extension and select this session"
+                + (f" (runtime {mine})" if mine else "")
+                + ". The extension badge shows '!' while a choice is required."
+            )
+        if connected:
+            return (
+                "Kolega Browser Companion is connected but has not confirmed a session. Open the extension "
+                "and select this Kolega session, then retry."
+            )
+        return (
+            "Kolega Browser Companion did not connect. Confirm the extension is installed and enabled in "
+            "Chrome, that Chrome is running, and that `kolega-code browser status` reports a valid native "
+            "host, then retry."
+        )
+
     async def _connected_peer(self) -> MultiplexedPeer:
         await self._ensure_server()
         loop = asyncio.get_running_loop()
@@ -163,10 +209,52 @@ class ChromeExtensionBrowserManager(BrowserManager):
                 await asyncio.wait_for(self._state_changed.wait(), timeout=remaining)
             except TimeoutError:
                 break
-        raise ChromeExtensionUnavailableError(
-            "Kolega Browser Companion is not ready. Open Chrome, select this Kolega runtime in the extension, "
-            "and retry."
-        )
+        raise ChromeExtensionUnavailableError(self._unavailable_detail())
+
+    async def probe(self) -> dict[str, Any]:
+        """Attempt an attach and report the pairing state without raising.
+
+        Used by `kolega-code browser doctor`, which must distinguish a valid
+        native-host manifest from an extension that is actually reachable.
+        """
+        result: dict[str, Any] = {
+            "state": "unreachable",
+            "connected": False,
+            "ready": False,
+            "runtime_id": None,
+            "runtimes": [],
+            "detail": "",
+        }
+        try:
+            await self._ensure_server()
+        except ChromeExtensionUnavailableError as exc:
+            result["detail"] = str(exc)
+            return result
+        result["runtime_id"] = self.runtime_id
+        try:
+            await self._connected_peer()
+        except ChromeExtensionUnavailableError as exc:
+            result["detail"] = str(exc)
+        else:
+            result["state"] = "paired"
+            result["detail"] = "Kolega Browser Companion is connected and this session is selected."
+        result["connected"] = self._peer is not None and not self._peer.closed
+        result["ready"] = self._ready
+        result["runtimes"] = [
+            {
+                "runtime_id": descriptor.runtime_id,
+                "session_id": descriptor.session_id,
+                "pid": descriptor.pid,
+                "current": descriptor.runtime_id == self.runtime_id,
+            }
+            for descriptor in self._live_runtimes()
+        ]
+        if result["state"] != "paired":
+            if len(result["runtimes"]) > 1:
+                result["state"] = "awaiting_selection"
+            elif result["connected"]:
+                result["state"] = "connected_not_selected"
+        return result
 
     async def _request(self, operation: str, params: Mapping[str, JSONValue]) -> dict[str, Any]:
         async with self._operation_lock:

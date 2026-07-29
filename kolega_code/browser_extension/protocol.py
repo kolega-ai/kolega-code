@@ -42,6 +42,7 @@ _ENVELOPE_KEYS = frozenset(
 _DISCOVERY_REQUEST_KEYS = frozenset({"kind", "protocol_version", "request_id"})
 _DISCOVERY_RESPONSE_KEYS = frozenset({"kind", "protocol_version", "request_id", "runtimes"})
 _DISCOVERY_RUNTIME_KEYS = frozenset({"runtime_id", "session_id", "created_at_ms", "expires_at_ms"})
+_RUNTIMES_CHANGED_KEYS = frozenset({"kind", "protocol_version"})
 
 
 class MessageDirection(str, Enum):
@@ -155,8 +156,19 @@ def _params_error(message: str) -> ProtocolValidationError:
 
 
 def _exact_params(params: dict[str, Any], keys: frozenset[str]) -> None:
-    if set(params) != keys:
-        raise _params_error("Operation parameters have an invalid schema")
+    present = set(params)
+    if present == keys:
+        return
+    # Name the offending keys: every parameter must be present, with inapplicable
+    # ones passed as JSON null rather than omitted or defaulted to 0 / "".
+    missing = sorted(keys - present)
+    unexpected = sorted(present - keys)
+    details: list[str] = []
+    if missing:
+        details.append(f"missing {', '.join(missing)} (pass null when not applicable)")
+    if unexpected:
+        details.append(f"unexpected {', '.join(unexpected)}")
+    raise _params_error(f"Operation parameters have an invalid schema: {'; '.join(details)}")
 
 
 def _utf16_length(value: str) -> int:
@@ -188,8 +200,13 @@ def _target(value: object, name: str = "target", *, nullable: bool = False) -> s
 
 
 def _nullable_integer(value: object, name: str, minimum: int, maximum: int) -> None:
-    if value is not None and (not _is_int(value) or not minimum <= cast(int, value) <= maximum):
-        raise _params_error(f"{name} is invalid")
+    if value is None or (_is_int(value) and minimum <= cast(int, value) <= maximum):
+        return
+    # A string "null" is a common serialization slip; say so rather than leaving
+    # the caller to guess what "invalid" means.
+    if isinstance(value, str):
+        raise _params_error(f"{name} must be an integer or JSON null, not the string {value!r}")
+    raise _params_error(f"{name} must be an integer between {minimum} and {maximum}, or JSON null")
 
 
 def _nullable_number(value: object, name: str, minimum: float, maximum: float) -> None:
@@ -255,7 +272,26 @@ def _normalize_http_url(value: object, *, nullable: bool = False) -> str | None:
     return urlunsplit((scheme, ascii_hostname, path, query, fragment))
 
 
+_MAX_PATTERN_QUANTIFIERS = 4
+_MAX_PATTERN_REPETITION = 1_000
+_HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
+_PATTERN_SUBSET_HINT = (
+    "supported: literals, '.', character classes, anchors, escapes, and the quantifiers ?, *, + and "
+    "{n,m} applied to a single character or class; not supported: groups, alternation, backreferences"
+)
+
+
 def _validate_safe_pattern(value: object, name: str = "regex") -> None:
+    """Validate a pattern against the restricted, linear-time regex subset.
+
+    Grouping and alternation stay forbidden, so a quantifier can only ever apply
+    to a single atom (a literal, ``.``, an escape, or a character class). That
+    makes catastrophic exponential backtracking impossible by construction, and
+    the quantifier-count and repetition-bound caps below bound the remaining
+    polynomial cost. This grammar is mirrored character-for-character by
+    ``validateSafeRegex`` in the Chrome extension's ``src/operations.js``; change
+    both together or the two backends will accept different languages.
+    """
     expression = _string_param(value, name, maximum=200)
     assert expression is not None
     source = expression
@@ -265,49 +301,102 @@ def _validate_safe_pattern(value: object, name: str = "regex") -> None:
         source, flags = literal.groups()
     if flags and (not re.fullmatch(r"[imu]*", flags) or len(set(flags)) != len(flags)):
         raise _params_error(f"{name} has unsupported flags")
-    in_class = False
-    escaped = False
     unicode_mode = "u" in flags
     simple_escapes = frozenset("bBdfnrsStvwW0")
     syntax_escapes = frozenset("^$\\.*+?()[]{}|/")
-    for index, character in enumerate(source):
-        if escaped:
-            if re.fullmatch(r"[1-9kpP]", character) or (
-                character == "0" and index + 1 < len(source) and source[index + 1].isdigit()
-            ):
-                raise _params_error(f"{name} uses an unsafe expression")
-            if character == "x" and (
-                index + 2 >= len(source)
-                or not all(item in "0123456789abcdefABCDEF" for item in source[index + 1 : index + 3])
-            ):
-                raise _params_error(f"{name} uses an unsafe expression")
-            if character == "u" and (
-                index + 4 >= len(source)
-                or not all(item in "0123456789abcdefABCDEF" for item in source[index + 1 : index + 5])
-            ):
-                raise _params_error(f"{name} uses an unsafe expression")
-            if unicode_mode and (
-                character not in simple_escapes
-                and character not in syntax_escapes
-                and not (character == "-" and in_class)
-                and character not in {"x", "u"}
-            ):
-                raise _params_error(f"{name} uses an unsafe expression")
-            escaped = False
-        elif character == "\\":
-            escaped = True
-        elif character == "[":
-            if in_class:
-                raise _params_error(f"{name} uses an unsafe expression")
-            in_class = True
-        elif character == "]":
-            if not in_class:
-                raise _params_error(f"{name} uses an unsafe expression")
-            in_class = False
-        elif not in_class and character in "*+?{}()|":
-            raise _params_error(f"{name} uses an unsafe expression")
-    if escaped or in_class:
-        raise _params_error(f"{name} is invalid")
+
+    def unsupported() -> ProtocolValidationError:
+        return _params_error(f"{name} uses unsupported syntax; {_PATTERN_SUBSET_HINT}")
+
+    def read_escape(position: int, in_class: bool) -> int:
+        if position + 1 >= len(source):
+            raise _params_error(f"{name} is invalid")
+        character = source[position + 1]
+        if re.fullmatch(r"[1-9kpP]", character) or (
+            character == "0" and position + 2 < len(source) and source[position + 2].isdigit()
+        ):
+            raise _params_error(f"{name} does not support backreferences or unicode property escapes")
+        if character == "x":
+            digits = source[position + 2 : position + 4]
+            if len(digits) != 2 or not all(item in _HEX_DIGITS for item in digits):
+                raise unsupported()
+            return position + 4
+        if character == "u":
+            digits = source[position + 2 : position + 6]
+            if len(digits) != 4 or not all(item in _HEX_DIGITS for item in digits):
+                raise unsupported()
+            return position + 6
+        if unicode_mode and (
+            character not in simple_escapes and character not in syntax_escapes and not (character == "-" and in_class)
+        ):
+            raise unsupported()
+        return position + 2
+
+    quantifiers = 0
+    quantifiable = False
+    index = 0
+    while index < len(source):
+        character = source[index]
+        if character == "\\":
+            index = read_escape(index, False)
+            quantifiable = True
+            continue
+        if character == "[":
+            index += 1
+            closed = False
+            while index < len(source):
+                inner = source[index]
+                if inner == "\\":
+                    index = read_escape(index, True)
+                    continue
+                if inner == "[":
+                    raise unsupported()
+                if inner == "]":
+                    closed = True
+                    index += 1
+                    break
+                index += 1
+            if not closed:
+                raise _params_error(f"{name} is invalid")
+            quantifiable = True
+            continue
+        if character in "()":
+            raise _params_error(f"{name} does not support groups; remove '(' and ')'")
+        if character == "|":
+            raise _params_error(f"{name} does not support alternation; remove '|'")
+        if character in "*+?":
+            if not quantifiable:
+                raise _params_error(f"{name} has a quantifier with nothing to repeat")
+            quantifiers += 1
+            quantifiable = False
+            index += 1
+            continue
+        if character == "{":
+            closing = source.find("}", index + 1)
+            if closing < 0:
+                raise _params_error(f"{name} has an unterminated repetition bound")
+            bound = re.fullmatch(r"(\d{1,4})(?:,(\d{0,4}))?", source[index + 1 : closing])
+            if bound is None:
+                raise _params_error(f"{name} has an invalid repetition bound")
+            if not quantifiable:
+                raise _params_error(f"{name} has a quantifier with nothing to repeat")
+            minimum = int(bound.group(1))
+            maximum_text = bound.group(2)
+            maximum = minimum if maximum_text is None else (None if maximum_text == "" else int(maximum_text))
+            if maximum is not None and maximum < minimum:
+                raise _params_error(f"{name} has an invalid repetition bound")
+            if max(minimum, maximum or 0) > _MAX_PATTERN_REPETITION:
+                raise _params_error(f"{name} allows repetition counts up to {_MAX_PATTERN_REPETITION}")
+            quantifiers += 1
+            quantifiable = False
+            index = closing + 1
+            continue
+        if character in "]}":
+            raise unsupported()
+        quantifiable = character not in "^$"
+        index += 1
+    if quantifiers > _MAX_PATTERN_QUANTIFIERS:
+        raise _params_error(f"{name} allows at most {_MAX_PATTERN_QUANTIFIERS} quantifiers")
 
 
 def validate_operation_request(operation: object, params: object) -> dict[str, JSONValue]:
@@ -408,11 +497,11 @@ def validate_operation_request(operation: object, params: object) -> dict[str, J
         _nullable_integer(values["index"], "index", 0, 1_000)
         values["url"] = _normalize_http_url(values["url"], nullable=True)
         if action == "select" and values["index"] is None:
-            raise _params_error("index is required when selecting a tab")
+            raise _params_error("index is required when selecting a tab; pass index: <tab index>, url: null")
         if action in {"list", "new"} and values["index"] is not None:
-            raise _params_error("index is not accepted for this tab action")
+            raise _params_error(f"index is not accepted for the {action} tab action; pass index: null")
         if action != "new" and values["url"] is not None:
-            raise _params_error("url is only accepted when creating a tab")
+            raise _params_error(f"url is only accepted when creating a tab; pass url: null for the {action} action")
     elif operation == "browser.network_requests":
         _exact_params(values, frozenset({"filter_pattern", "include_static"}))
         if not isinstance(values["include_static"], bool):
@@ -491,6 +580,25 @@ def validate_discovery_request(value: object) -> dict[str, JSONValue]:
         raise _invalid("invalid_discovery", "runtime discovery request is invalid")
     _identifier(request["request_id"], "request_id")
     return cast(dict[str, JSONValue], request)
+
+
+def runtimes_changed_notification() -> dict[str, JSONValue]:
+    """Build the unsolicited host-to-extension "rediscover runtimes" notification.
+
+    The extension only enumerates runtimes when it opens the native port, when the
+    popup is used, or on install. Without this notification a Kolega session that
+    starts later stays invisible until the operator clicks the extension, which is
+    exactly the behaviour this notification removes.
+    """
+    return {"kind": "runtimes_changed", "protocol_version": PROTOCOL_VERSION}
+
+
+def validate_runtimes_changed(value: object) -> dict[str, JSONValue]:
+    """Validate the exact host-to-extension runtime-change notification."""
+    message = _exact_mapping(value, _RUNTIMES_CHANGED_KEYS, "runtime change notification")
+    if message["kind"] != "runtimes_changed" or message["protocol_version"] != PROTOCOL_VERSION:
+        raise _invalid("invalid_discovery", "runtime change notification is invalid")
+    return cast(dict[str, JSONValue], message)
 
 
 def validate_discovery_response(value: object, *, expected_request_id: str) -> dict[str, JSONValue]:

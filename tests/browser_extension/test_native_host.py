@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import io
 import json
 import os
@@ -366,3 +367,79 @@ def test_broker_revalidates_fixed_operation_requests() -> None:
     with pytest.raises(ProtocolValidationError) as error:
         NativeHostBroker._validate_request(envelope)
     assert error.value.code == "unsupported_operation"
+
+
+@pytest.mark.asyncio
+async def test_broker_notifies_chrome_when_the_live_runtime_set_changes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Chrome only enumerates runtimes when it is prompted.
+
+    Without this notification a Kolega session that starts after the native port
+    opened stays invisible until the operator clicks the extension.
+    """
+    monkeypatch.setattr(
+        "kolega_code.browser_extension.native_host.RUNTIME_WATCH_INTERVAL_SECONDS",
+        0.01,
+    )
+    endpoint = FakeEndpoint()
+    registry = FakeRegistry([descriptor("runtime_1")])
+    broker = NativeHostBroker(
+        endpoint=cast(NativeMessageEndpoint, endpoint),
+        registry=cast(RuntimeDescriptorRegistry, registry),
+        extension_origin=ORIGIN,
+    )
+    broker._advertised = broker._advertised_runtime_ids()
+    watch = asyncio.create_task(broker._watch_runtimes())
+    try:
+        # A steady set must stay quiet, including across descriptor lease renewals
+        # that only advance expires_at_ms.
+        await asyncio.sleep(0.05)
+        assert endpoint.messages == []
+        renewed = descriptor("runtime_1")
+        object.__setattr__(renewed, "expires_at_ms", renewed.expires_at_ms + 30_000)
+        registry.descriptors["runtime_1"] = renewed
+        await asyncio.sleep(0.05)
+        assert endpoint.messages == []
+
+        # A newly registered runtime must prompt exactly one rediscovery.
+        registry.descriptors["runtime_2"] = descriptor("runtime_2")
+        for _ in range(200):
+            if endpoint.messages:
+                break
+            await asyncio.sleep(0.01)
+        assert endpoint.messages == [{"kind": "runtimes_changed", "protocol_version": 1}]
+
+        # A runtime going away also changes the set.
+        del registry.descriptors["runtime_1"]
+        for _ in range(200):
+            if len(endpoint.messages) > 1:
+                break
+            await asyncio.sleep(0.01)
+        assert endpoint.messages[-1] == {"kind": "runtimes_changed", "protocol_version": 1}
+        assert len(endpoint.messages) == 2
+    finally:
+        watch.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await watch
+        await broker.close()
+
+
+@pytest.mark.asyncio
+async def test_broker_close_stops_the_runtime_watcher(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "kolega_code.browser_extension.native_host.RUNTIME_WATCH_INTERVAL_SECONDS",
+        0.01,
+    )
+    endpoint = FakeEndpoint()
+    broker = NativeHostBroker(
+        endpoint=cast(NativeMessageEndpoint, endpoint),
+        registry=cast(RuntimeDescriptorRegistry, FakeRegistry([descriptor("runtime_1")])),
+        extension_origin=ORIGIN,
+    )
+    broker._watch_task = asyncio.create_task(broker._watch_runtimes())
+    await asyncio.sleep(0.02)
+
+    await broker.close()
+
+    assert broker._watch_task is None

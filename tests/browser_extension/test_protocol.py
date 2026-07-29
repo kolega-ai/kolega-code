@@ -202,11 +202,124 @@ def test_url_normalization_and_regex_escapes_match_the_extension_contract() -> N
         with pytest.raises(ProtocolValidationError, match="restricted"):
             validate_operation_request("browser.navigate", {"url": f"https://{hostname}/detail/example"})
     for expression in (r"\xGG", r"\x0", r"\u123", r"\uZZZZ"):
-        with pytest.raises(ProtocolValidationError, match="unsafe expression"):
+        with pytest.raises(ProtocolValidationError, match="unsupported syntax"):
             validate_operation_request("browser.find", {"text": None, "regex": expression})
     for expression in (r"/\q/u", r"/\c/u", r"/\_/u"):
-        with pytest.raises(ProtocolValidationError, match="unsafe expression"):
+        with pytest.raises(ProtocolValidationError, match="unsupported syntax"):
             validate_operation_request("browser.find", {"text": None, "regex": expression})
+
+
+# Mirrors tests/operations.test.js in kolega-chrome-extension. The grammar is
+# duplicated across the two repos, so these cases must stay in lockstep or the
+# backends will accept different regex languages.
+ACCEPTED_PATTERNS = (
+    "QX-[0-9]{4}-ZT",
+    r"QX-\d{4}-ZT",
+    "QX-[0-9]+-ZT",
+    "QX-48.1-ZT",
+    "QX-[0-9][0-9][0-9][0-9]-ZT",
+    "a?b",
+    "a*b",
+    "[a-z]{2,5}",
+    "x{3,}",
+    "^abc$",
+    r"\x41+",
+    "/abc[0-9]+/i",
+    "a{1000}",
+    "a.{1,3}b",
+    "[0-9]{4}[a-z]{2}x*y+",
+    r"[a\-z]+",
+    "/x{2}/u",
+    r"\u0041{2}",
+)
+
+REJECTED_PATTERNS = (
+    ("(abc)+", "does not support groups"),
+    ("(?=a)", "does not support groups"),
+    ("(a+)+$", "does not support groups"),
+    ("[a](?:b)", "does not support groups"),
+    (r"(a)\1", "does not support groups"),
+    ("a|b", "does not support alternation"),
+    (r"\p{L}", "backreferences or unicode property escapes"),
+    (r"\k<x>", "backreferences or unicode property escapes"),
+    ("a*b*c*d*e*", "at most 4 quantifiers"),
+    ("a{1001}", "repetition counts up to 1000"),
+    ("*abc", "nothing to repeat"),
+    ("^*", "nothing to repeat"),
+    ("a**", "nothing to repeat"),
+    ("a{2,1}", "invalid repetition bound"),
+    ("a{abc}", "invalid repetition bound"),
+    ("a{", "unterminated repetition bound"),
+    ("[[a]]", "unsupported syntax"),
+    ("]", "unsupported syntax"),
+    ("}", "unsupported syntax"),
+    ("[abc", "is invalid"),
+    ("abc\\", "is invalid"),
+    ("/abc/z", "unsupported flags"),
+    ("/abc/ii", "unsupported flags"),
+)
+
+
+@pytest.mark.parametrize("expression", ACCEPTED_PATTERNS)
+def test_find_accepts_single_atom_quantifiers(expression: str) -> None:
+    """Quantifiers bound to one atom are linear-time, so they are supported."""
+    validated = validate_operation_request("browser.find", {"text": None, "regex": expression})
+    assert validated["regex"] == expression
+
+
+@pytest.mark.parametrize(("expression", "message"), REJECTED_PATTERNS)
+def test_find_rejects_unsupported_regex_constructs(expression: str, message: str) -> None:
+    """Grouping and alternation stay banned: they are what make backtracking blow up."""
+    with pytest.raises(ProtocolValidationError, match=message):
+        validate_operation_request("browser.find", {"text": None, "regex": expression})
+
+
+def test_network_filter_pattern_shares_the_find_grammar() -> None:
+    validated = validate_operation_request(
+        "browser.network_requests",
+        {"include_static": False, "filter_pattern": "/api/v[0-9]{1,2}/"},
+    )
+    assert validated["filter_pattern"] == "/api/v[0-9]{1,2}/"
+    with pytest.raises(ProtocolValidationError, match="does not support alternation"):
+        validate_operation_request(
+            "browser.network_requests",
+            {"include_static": False, "filter_pattern": "api|cdn"},
+        )
+
+
+def test_wait_for_accepts_text_and_text_gone_conditions() -> None:
+    """The text branches had no coverage, which is how a null deref shipped."""
+    for params in (
+        {"time": None, "text": "Ready", "text_gone": None},
+        {"time": None, "text": None, "text_gone": "Loading"},
+        {"time": None, "text": "Ready", "text_gone": "Loading"},
+        {"time": 1.5, "text": "Ready", "text_gone": "Loading"},
+    ):
+        assert validate_operation_request("browser.wait_for", dict(params)) == params
+    with pytest.raises(ProtocolValidationError, match="Provide time, text, or text_gone"):
+        validate_operation_request("browser.wait_for", {"time": None, "text": None, "text_gone": None})
+
+
+def test_tabs_parameter_errors_name_the_correct_shape() -> None:
+    """A bare 0 or "" for an inapplicable field burned a whole acceptance run."""
+    with pytest.raises(ProtocolValidationError, match=r"index is not accepted for the list tab action"):
+        validate_operation_request("browser.tabs", {"action": "list", "index": 0, "url": None})
+    with pytest.raises(ProtocolValidationError, match="pass index: null"):
+        validate_operation_request("browser.tabs", {"action": "new", "index": 0, "url": "https://example.com/"})
+    with pytest.raises(ProtocolValidationError, match="url is invalid"):
+        validate_operation_request("browser.tabs", {"action": "list", "index": None, "url": ""})
+    with pytest.raises(ProtocolValidationError, match="index is required when selecting a tab"):
+        validate_operation_request("browser.tabs", {"action": "select", "index": None, "url": None})
+    with pytest.raises(ProtocolValidationError, match="url is only accepted when creating a tab"):
+        validate_operation_request("browser.tabs", {"action": "select", "index": 2, "url": "https://example.com/"})
+    # A missing key must name itself rather than say "invalid schema".
+    with pytest.raises(ProtocolValidationError, match=r"missing index, url \(pass null when not applicable\)"):
+        validate_operation_request("browser.tabs", {"action": "list"})
+    with pytest.raises(ProtocolValidationError, match="unexpected extra"):
+        validate_operation_request(
+            "browser.tabs",
+            {"action": "list", "index": None, "url": None, "extra": 1},
+        )
 
 
 def test_discovery_messages_are_exact_v1_shapes() -> None:

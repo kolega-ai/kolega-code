@@ -1008,7 +1008,15 @@ class ToolCollection(LogMixin):
 
         Args:
             text: Case-insensitive text to find.
-            regex: Regular expression to find.
+            regex: Regular expression to find. The Chrome backend accepts a
+                restricted, linear-time subset: literals, '.', character classes,
+                anchors, escapes, and the quantifiers ?, *, + and {n,m} applied to
+                a single character or class, with at most 4 quantifiers and
+                repetition counts up to 1000. Groups '(' ')', alternation '|', and
+                backreferences are rejected, so write [0-9]{4} rather than
+                (\\d{4}|\\d{2}). The Playwright backend accepts full Python
+                regular expressions, so a pattern that works there may be
+                rejected on Chrome.
         """
         return await self.browser_tool.browser_find(text, regex)
 
@@ -1118,10 +1126,14 @@ class ToolCollection(LogMixin):
     async def browser_tabs(self, action: str, index: Optional[int] = None, url: Optional[str] = None) -> str:
         """List, create, close, or select browser tabs.
 
+        Pass inapplicable parameters as null, never as 0 or an empty string:
+        list needs neither index nor url, new takes url with index null, and
+        select and close take index with url null.
+
         Args:
             action: One of list, new, close, or select.
-            index: Tab index for close or select.
-            url: Optional URL for a new tab.
+            index: Tab index for close or select; must be null for list and new.
+            url: URL for a new tab; must be null for every other action.
         """
         return await self.browser_tool.browser_tabs(action, index, url)
 
