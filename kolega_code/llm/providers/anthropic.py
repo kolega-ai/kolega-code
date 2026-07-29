@@ -204,8 +204,9 @@ class AnthropicProvider(BaseLLMProvider):
             # system message is supplied (the local branch tolerates None).
             assert system is not None
             await self.rate_limiter.acquire()
+            payload = await asyncio.to_thread(messages.to_anthropic)
             count = await self.async_client.messages.count_tokens(
-                messages=messages.to_anthropic(),
+                messages=payload,
                 system=cast(Any, [c.to_anthropic() for c in cast(List[ContentBlock], system.content)]),
                 model=cast(Any, model),
                 tools=cast(Any, [t.to_anthropic() for t in tools]),
@@ -458,18 +459,32 @@ class AnthropicProvider(BaseLLMProvider):
 
         await self.rate_limiter.acquire()
 
-        # Return the stream context manager. A per-request streaming timeout bounds the
-        # inter-chunk read wait (see kolega_code/llm/timeouts.py) so a stalled connection
-        # fails in minutes and is retried, instead of hanging on the SDK's 600s default.
-        return AnthropicStreamWrapper(
-            self.async_client.messages.stream(
+        system_blocks = [c.to_anthropic() for c in cast(List[ContentBlock], system.content)]
+
+        def open_stream():
+            # A per-request streaming timeout bounds the inter-chunk read wait (see
+            # kolega_code/llm/timeouts.py) so a stalled connection fails in minutes and
+            # is retried, instead of hanging on the SDK's 600s default.
+            return self.async_client.messages.stream(
                 messages=messages.to_anthropic(),
-                system=cast(Any, [c.to_anthropic() for c in cast(List[ContentBlock], system.content)]),
+                system=cast(Any, system_blocks),
                 timeout=streaming_timeout(),
                 **generation_params,
-            ),
-            provider_name=self.provider_name,
-        )
+            )
+
+        # `messages.stream()` is a *synchronous* SDK call: it builds the request body and
+        # runs the SDK's parameter transform over it, then returns a manager whose HTTP
+        # request is only awaited on `__aenter__`. That transform walks every node of the
+        # payload with per-node typing introspection — 0.4s of blocked event loop for a
+        # 24 MiB image history, per request and per concurrently running sub-agent — so
+        # build the manager in a worker thread. Sending the request, and every chunk
+        # after it, still happens on the loop.
+        #
+        # A turn cancelled inside this window drops the manager before it is entered: no
+        # request has been sent, and the SDK's unawaited request coroutine only logs a
+        # RuntimeWarning.
+        manager = await asyncio.to_thread(open_stream)
+        return AnthropicStreamWrapper(manager, provider_name=self.provider_name)
 
     async def generate(
         self,
@@ -485,8 +500,11 @@ class AnthropicProvider(BaseLLMProvider):
         generation_params = self._sanitize_generation_params(generation_params)
 
         await self.rate_limiter.acquire()
+        # `messages.create()` is async, so unlike the streaming path its parameter
+        # transform cannot be moved off the loop; only our own payload construction can.
+        payload = await asyncio.to_thread(messages.to_anthropic)
         response = await self.async_client.messages.create(
-            messages=messages.to_anthropic(),
+            messages=payload,
             system=cast(Any, [c.to_anthropic() for c in cast(List[ContentBlock], system.content)]),
             # Passing the configured timeout explicitly bypasses the Anthropic
             # SDK's Claude-specific max_tokens heuristic, which otherwise
