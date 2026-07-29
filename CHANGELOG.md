@@ -6,6 +6,14 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+### Changed
+
+- The responsiveness watchdog now captures stacks for event-loop stalls from ~1
+  second (was 5) and counts shorter gaps into a periodic `loop_gap_histogram`
+  diagnostics entry, so choppy-but-not-frozen UI leaves evidence instead of
+  nothing. Stack dumps are capped per session so a pathological session cannot
+  fill the timeline.
+
 ### Fixed
 
 - Stopped image-heavy sessions from freezing the TUI. Building request history

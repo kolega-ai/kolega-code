@@ -5,6 +5,7 @@ import json
 import time
 import zipfile
 from pathlib import Path
+from unittest.mock import patch
 
 from kolega_code.cli.diagnostics import (
     SECRET_PLACEHOLDER,
@@ -100,6 +101,56 @@ def test_watchdog_captures_loop_stall_with_blocking_stack(tmp_path: Path):
     assert recovered, "watchdog did not record recovery"
     # The stall dump is also written to a sidecar for the bug bundle.
     assert (diag.dir / "stalls.log").exists()
+
+
+def test_watchdog_histograms_sub_second_gaps(tmp_path: Path):
+    """Chop below the stack-capture threshold has to leave *some* trace."""
+    diag = DiagnosticsLog(tmp_path, "sess5")
+    watchdog = ResponsivenessWatchdog(diag, beat_interval=0.0, histogram_interval=3600.0)
+
+    # Drive beat() with controlled lateness instead of real sleeps.
+    now = [1000.0]
+    with patch("kolega_code.cli.diagnostics.time.monotonic", lambda: now[0]):
+        watchdog._last_beat = now[0]
+        for gap in (0.01, 0.15, 0.3, 2.0, 7.0):
+            now[0] += gap
+            watchdog.beat()
+        watchdog.flush_histogram("test")
+
+    rows = [r for r in _read(diag.path) if r["kind"] == "loop_gap_histogram"]
+    assert len(rows) == 1
+    assert rows[0]["buckets"] == {"0.1-0.25s": 1, "0.25-1.0s": 1, "1.0-5.0s": 1, ">=5.0s": 1}
+    assert rows[0]["beats"] == 5  # the 10ms gap is counted as a beat but bucketed nowhere
+    assert rows[0]["max_gap_s"] == 7.0
+
+    # Counters reset per window, and an empty window writes nothing.
+    watchdog.flush_histogram("test")
+    assert len([r for r in _read(diag.path) if r["kind"] == "loop_gap_histogram"]) == 1
+
+
+def test_watchdog_caps_stack_captures_but_keeps_recording_stalls(tmp_path: Path):
+    diag = DiagnosticsLog(tmp_path, "sess6")
+    watchdog = ResponsivenessWatchdog(diag, max_stall_captures=1)
+
+    watchdog._record_stall(2.0)
+    watchdog._record_stall(3.0)
+
+    stalls = [r for r in _read(diag.path) if r["kind"] == "event_loop_stalled"]
+    assert len(stalls) == 2
+    assert "stacks" in stalls[0] and "stacks_omitted" not in stalls[0]
+    assert stalls[1]["stacks_omitted"] is True and "stacks" not in stalls[1]
+
+
+def test_watchdog_stop_flushes_the_final_histogram(tmp_path: Path):
+    diag = DiagnosticsLog(tmp_path, "sess7")
+    watchdog = ResponsivenessWatchdog(diag, beat_interval=0.0, histogram_interval=3600.0)
+    watchdog._last_beat = time.monotonic() - 0.4
+    watchdog.beat()
+    watchdog.stop()
+
+    rows = [r for r in _read(diag.path) if r["kind"] == "loop_gap_histogram"]
+    assert len(rows) == 1
+    assert rows[0]["reason"] == "session_end"
 
 
 def test_write_crash_log_captures_scrubbed_traceback(tmp_path: Path):

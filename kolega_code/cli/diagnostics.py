@@ -205,34 +205,84 @@ class DiagnosticsLog:
 class ResponsivenessWatchdog:
     """Detect event-loop stalls from an off-loop thread and capture the blocking stack.
 
-    The Textual app calls :meth:`beat` on a ~1 s loop timer. If beats stop (the loop is
-    blocked by synchronous work), this daemon thread notices within ``check_interval`` and
-    records an ``event_loop_stalled`` line plus a full thread-stack dump — the main
-    thread's frame is exactly what is blocking the loop. When beats resume it records
-    ``event_loop_recovered``. (A blocked loop can't run the on-loop timer, so the
-    staleness *is* the signal; this thread keeps running regardless.)
+    The Textual app calls :meth:`beat` on a :attr:`beat_interval` loop timer. Two tiers
+    of evidence come out of that:
+
+    * **Stalls.** If beats stop (the loop is blocked by synchronous work), this daemon
+      thread notices within ``check_interval`` and records an ``event_loop_stalled``
+      line plus a full thread-stack dump — the main thread's frame is exactly what is
+      blocking the loop. When beats resume it records ``event_loop_recovered``. (A
+      blocked loop can't run the on-loop timer, so the staleness *is* the signal; this
+      thread keeps running regardless.) Stack capture is capped per session so a
+      pathological session cannot grow the diagnostics file without bound.
+    * **Sub-second chop.** Beats are late by exactly as much as the loop was blocked, so
+      :meth:`beat` histograms its own lateness. "Scrolling feels choppy" is produced by
+      stalls well under the stack-capture threshold, which would otherwise leave no
+      trace at all; the aggregate ``loop_gap_histogram`` line costs a few bytes and no
+      stacks, and says immediately whether the chop is real and how big it is.
+
+    Thresholds are constructor parameters for tests only — there is no user decision here.
     """
+
+    # Excess-over-nominal beat lateness, in seconds. The first edge is the floor of
+    # human-visible chop; the last is the stack-capture threshold.
+    _BUCKET_EDGES: tuple[float, ...] = (0.1, 0.25, 1.0, 5.0)
 
     def __init__(
         self,
         diag: DiagnosticsLog,
         *,
-        stall_seconds: float = 5.0,
-        check_interval: float = 1.0,
+        stall_seconds: float = 1.0,
+        check_interval: float = 0.25,
+        beat_interval: float = 0.2,
+        histogram_interval: float = 300.0,
+        max_stall_captures: int = 200,
     ) -> None:
         self._diag = diag
         self._stall = stall_seconds
         self._interval = check_interval
+        self.beat_interval = beat_interval
+        self._histogram_interval = histogram_interval
+        self._max_captures = max_stall_captures
+        self._captures = 0
         self._last_beat = time.monotonic()
         self._beat_lock = threading.Lock()
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
         self._stalled_since: Optional[float] = None
         self._sig_file = None
+        self._beats = 0
+        self._max_excess = 0.0
+        self._labels = self._bucket_labels()
+        self._buckets: dict[str, int] = {label: 0 for label in self._labels}
+        self._window_start = time.monotonic()
+
+    @classmethod
+    def _bucket_labels(cls) -> list[str]:
+        edges = cls._BUCKET_EDGES
+        labels = [f"{edges[i]}-{edges[i + 1]}s" for i in range(len(edges) - 1)]
+        labels.append(f">={edges[-1]}s")
+        return labels
 
     def beat(self) -> None:
+        """Called on the event loop. Must stay O(1): it runs several times a second.
+
+        Lateness is measured against the nominal interval, so a stall shorter than
+        ``beat_interval`` can be under-reported by up to one interval (part of it is
+        absorbed by the beat's own wait). Bucket edges are therefore lower bounds.
+        """
+        now = time.monotonic()
         with self._beat_lock:
-            self._last_beat = time.monotonic()
+            excess = (now - self._last_beat) - self.beat_interval
+            self._last_beat = now
+            self._beats += 1
+            if excess < self._BUCKET_EDGES[0]:
+                return
+            self._max_excess = max(self._max_excess, excess)
+            for index in range(len(self._BUCKET_EDGES) - 1, -1, -1):
+                if excess >= self._BUCKET_EDGES[index]:
+                    self._buckets[self._labels[index]] += 1
+                    return
 
     def start(self) -> None:
         if not self._diag.enabled or self._thread is not None:
@@ -243,21 +293,56 @@ class ResponsivenessWatchdog:
 
     def stop(self) -> None:
         self._stop.set()
+        self.flush_histogram("session_end")
+
+    def flush_histogram(self, reason: str) -> None:
+        """Emit one aggregate line for the gaps seen since the last flush (no stacks)."""
+        with self._beat_lock:
+            counted = sum(self._buckets.values())
+            payload = {
+                "reason": reason,
+                "window_s": round(time.monotonic() - self._window_start, 1),
+                "beats": self._beats,
+                "max_gap_s": round(self._max_excess, 3),
+                "buckets": dict(self._buckets),
+            }
+            self._window_start = time.monotonic()
+            self._beats = 0
+            self._max_excess = 0.0
+            for label in self._buckets:
+                self._buckets[label] = 0
+        if counted:
+            self._diag.record("loop_gap_histogram", **payload)
 
     def _run(self) -> None:
+        last_flush = time.monotonic()
         while not self._stop.wait(self._interval):
             with self._beat_lock:
                 gap = time.monotonic() - self._last_beat
             if gap > self._stall and self._stalled_since is None:
                 self._stalled_since = time.monotonic()
-                stacks = format_all_thread_stacks()
-                self._diag.record("event_loop_stalled", stalled_for_s=round(gap, 1), stacks=stacks)
-                self._diag.write_sidecar("stalls.log", f"# stall at {_now_iso()} (gap {gap:.1f}s)\n{stacks}\n")
+                self._record_stall(gap)
             elif gap <= self._stall and self._stalled_since is not None:
                 self._diag.record(
                     "event_loop_recovered", stalled_for_s=round(time.monotonic() - self._stalled_since, 1)
                 )
                 self._stalled_since = None
+            now = time.monotonic()
+            if now - last_flush >= self._histogram_interval:
+                last_flush = now
+                self.flush_histogram("interval")
+
+    def _record_stall(self, gap: float) -> None:
+        # Stacks are the expensive part, and they only ever get written while the loop
+        # is already stalled — but cap them so one pathological session cannot fill the
+        # timeline. Past the cap the stall itself is still recorded, without stacks.
+        if self._captures >= self._max_captures:
+            self._diag.record("event_loop_stalled", stalled_for_s=round(gap, 1), stacks_omitted=True)
+            return
+        self._captures += 1
+        stacks = format_all_thread_stacks()
+        self._diag.record("event_loop_stalled", stalled_for_s=round(gap, 1), stacks=stacks)
+        self._diag.write_sidecar("stalls.log", f"# stall at {_now_iso()} (gap {gap:.1f}s)\n{stacks}\n")
 
     def _enable_faulthandler(self) -> None:
         # Hard-fault dumps + a manual escape hatch (`kill -USR1 <pid>`) for a wedged process.
