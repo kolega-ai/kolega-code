@@ -1,9 +1,10 @@
+import asyncio
 import base64
 from typing import List
 
 from .base_tool import BaseTool
 from kolega_code.llm.models import ContentBlock, ImageBlock
-from kolega_code.utils.images import IMAGE_MIME_TYPES
+from kolega_code.utils.images import IMAGE_MIME_TYPES, MAX_IMAGE_BYTES
 
 
 class ReadImageTool(BaseTool):
@@ -29,5 +30,18 @@ class ReadImageTool(BaseTool):
         media_type = IMAGE_MIME_TYPES.get(suffix)
         if media_type is None:
             raise ValueError(f"Unsupported image format '{suffix}'. Supported: " + ", ".join(sorted(IMAGE_MIME_TYPES)))
-        data = base64.b64encode(self.filesystem.read_bytes(path)).decode("ascii")
+        # Off the event loop: the read, the base64 encode, and the ASCII decode
+        # are each a full pass over the file, and this runs once per screenshot
+        # in a review loop. The size gate lives in the same hop so an oversized
+        # file is rejected before it is read rather than after.
+        data = await asyncio.to_thread(self._read_encoded, path)
         return [ImageBlock(image_type="base64", media_type=media_type, data=data)]
+
+    def _read_encoded(self, path: str) -> str:
+        size = self.filesystem.get_size(path)
+        if size > MAX_IMAGE_BYTES:
+            raise ValueError(
+                f"Image is too large to read: {size / (1024 * 1024):.1f} MB exceeds the "
+                f"{MAX_IMAGE_BYTES // (1024 * 1024)} MB limit. Resize or crop it first."
+            )
+        return base64.b64encode(self.filesystem.read_bytes(path)).decode("ascii")

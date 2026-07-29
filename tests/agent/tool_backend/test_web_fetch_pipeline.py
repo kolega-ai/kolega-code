@@ -9,7 +9,11 @@ from pptx import Presentation
 from pptx.util import Inches
 
 from kolega_code.agent.tool_backend.web_fetch.documents import DocumentConverter
-from kolega_code.agent.tool_backend.web_fetch.extractors import extract_html, quality_score
+from kolega_code.agent.tool_backend.web_fetch.extractors import (
+    extract_html,
+    html_signals,
+    quality_score,
+)
 from kolega_code.agent.tool_backend.web_fetch.pipeline import LocalWebContentPipeline, WebContentError
 from kolega_code.agent.tool_backend.web_fetch.retrieval import (
     TEXT_MAX_BYTES,
@@ -129,9 +133,53 @@ async def test_spa_shell_is_detected_without_browser_fallback() -> None:
 
 def test_quality_gate_accepts_legitimate_short_page() -> None:
     html = "<html><body><main><p>Small but complete answer.</p></main></body></html>"
-    score, usable = quality_score("Small but complete answer with useful context for the reader.", html)
+    signals = html_signals(html)
+    score, usable = quality_score(
+        "Small but complete answer with useful context for the reader.", signals.raw_visible_len
+    )
     assert usable is True
     assert score > 8
+
+
+@pytest.mark.asyncio
+async def test_extract_html_measures_the_document_once_per_fetch() -> None:
+    """Scoring and SPA detection share one off-loop measurement pass.
+
+    Re-parsing the raw HTML per extractor attempt (plus once more for SPA
+    detection) on the event loop froze the TUI for seconds on large pages.
+    """
+    html = "<html><body><div><p>" + ("Short. " * 5) + "</p></div></body></html>"
+    calls: list[int] = []
+    real_signals = html_signals
+
+    def counting(source: str):
+        calls.append(len(source))
+        return real_signals(source)
+
+    with patch("kolega_code.agent.tool_backend.web_fetch.extractors.html_signals", counting):
+        result = await extract_html(html, "https://example.com")
+
+    # Four extractor attempts (none reaches HIGH_QUALITY_SCORE) plus SPA detection.
+    assert len(result.attempts) == 4
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_extract_html_survives_a_soup_parser_failure() -> None:
+    """A bs4 failure degrades the measurement instead of failing the whole fetch.
+
+    Trafilatura and Readability do not go through bs4, so they must still be
+    able to produce content.
+    """
+    html = "<html><body><main><h1>Title</h1><p>" + ("Useful article text. " * 40) + "</p></main></body></html>"
+    with patch(
+        "kolega_code.agent.tool_backend.web_fetch.extractors.BeautifulSoup",
+        side_effect=ValueError("parser exploded"),
+    ):
+        result = await extract_html(html, "https://example.com")
+
+    assert result.content
+    assert result.method in {"trafilatura", "readability"}
 
 
 @pytest.mark.asyncio

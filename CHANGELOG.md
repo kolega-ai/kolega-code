@@ -13,6 +13,9 @@ This project uses GitHub Releases for detailed generated release notes. This fil
   diagnostics entry, so choppy-but-not-frozen UI leaves evidence instead of
   nothing. Stack dumps are capped per session so a pathological session cannot
   fill the timeline.
+- `read_image` now refuses files above 20 MB (the limit image encoding already
+  applied elsewhere) instead of reading them and having the provider reject the
+  request.
 
 ### Fixed
 
@@ -28,6 +31,13 @@ This project uses GitHub Releases for detailed generated release notes. This fil
   by every concurrently running sub-agent. The worst event-loop gap per request
   drops from 111 ms to 19 ms with 6 MiB of images in history, and from 425 ms to
   69 ms at 24 MiB.
+- Stopped `web_fetch` from freezing the UI on large pages. Scoring an extraction
+  re-parsed the entire raw document on the event loop, once per extractor
+  attempt plus once more for single-page-app detection; the document is now
+  measured once per fetch in a worker thread. On an 11.6 MB page the worst
+  event-loop gap drops from 774 ms to 219 ms, and on a pathological 13.8 MB page
+  from 48 s to 0.5 s.
+- Moved `read_image`'s file read and base64 encode off the event loop.
 
 ## 0.25.2 - 2026-07-28
 
