@@ -514,7 +514,21 @@ class BaseAgent(LogMixin):
         request copy only — the stored history is never mutated, so switching
         back to a vision-capable model restores the images.
         """
+        return self._finalize_history_for_llm(self.get_effective_history_for_llm())
+
+    async def _history_for_llm_async(self) -> MessageHistory:
+        """``_history_for_llm`` with the repair+adapt pass off the event loop.
+
+        Adapting history images for Anthropic decodes and re-encodes
+        screenshots with PIL. Run inline on the event loop this froze the TUI
+        for seconds per request, once per concurrently running (sub-)agent.
+        The effective-history snapshot is taken on the loop so the worker
+        thread never observes a concurrent history mutation.
+        """
         effective = self.get_effective_history_for_llm()
+        return await asyncio.to_thread(self._finalize_history_for_llm, effective)
+
+    def _finalize_history_for_llm(self, effective: MessageHistory) -> MessageHistory:
         fixed = self.fix_incomplete_tool_calls(list(effective))
         provider = getattr(self.primary_model_config.provider, "value", self.primary_model_config.provider)
         fixed = adapt_history_for_provider(
@@ -835,7 +849,7 @@ class BaseAgent(LogMixin):
             self._sanitize_oversized_tool_results()
             # History sent to the LLM (and to token counting): tool-call-repaired and,
             # for non-vision models, stripped of image blocks from earlier turns.
-            fixed_history = self._history_for_llm()
+            fixed_history = await self._history_for_llm_async()
         assert self.tool_collection is not None, "tool_collection must be initialized before counting context"
         token_count = await self.llm.count_tokens(
             system=self.system_prompt,
@@ -1793,7 +1807,7 @@ class BaseAgent(LogMixin):
                 # count and the request below — the repair+adapt+image-strip pass is
                 # O(history) and ran twice per iteration before.
                 self._sanitize_oversized_tool_results()
-                fixed_history = self._history_for_llm()
+                fixed_history = await self._history_for_llm_async()
                 token_count = await self.count_current_context(fixed_history)
                 logger.debug("Input token count: %s", token_count)
 
@@ -1813,7 +1827,7 @@ class BaseAgent(LogMixin):
                     # checkpoint before re-counting so the reused history reflects it.
                     self.mark_cache_checkpoint()
                     self._sanitize_oversized_tool_results()
-                    fixed_history = self._history_for_llm()
+                    fixed_history = await self._history_for_llm_async()
                     token_count = await self.count_current_context(fixed_history)
 
                     # PostCompact hooks (advisory): observe the outcome. There is no

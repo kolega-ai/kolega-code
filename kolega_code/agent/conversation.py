@@ -58,7 +58,7 @@ def _adapt_image_block_for_provider(
     if target_provider != "anthropic" or block.image_type != "base64":
         return block, False
 
-    result = image_utils.resize_base64_image_to_limit(
+    result = image_utils.resize_base64_image_to_limit_cached(
         block.data,
         block.media_type,
         max_base64_bytes=max_image_base64_bytes,
@@ -81,7 +81,9 @@ def _adapt_image_block_for_provider(
 
     assert result.data is not None
     assert result.media_type is not None
-    logger.info(
+    # Debug, not info: with the resize memo this fires on every request that
+    # replays the image, not just when the conversion work actually ran.
+    logger.debug(
         "Resized Anthropic history image from %d to %d base64 bytes",
         len(block.data),
         len(result.data),

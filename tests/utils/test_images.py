@@ -300,3 +300,146 @@ def test_resize_base64_image_returns_safe_failure_when_limit_cannot_hold_base64(
     assert result.succeeded is False
     assert result.data is None
     assert result.error is not None
+
+
+@pytest.fixture(autouse=True)
+def _fresh_resize_cache():
+    import kolega_code.utils.images as images_mod
+
+    images_mod._clear_resize_cache()
+    yield
+    images_mod._clear_resize_cache()
+
+
+def test_resize_cached_computes_once_per_image_and_limits(monkeypatch) -> None:
+    import kolega_code.utils.images as images_mod
+
+    calls = []
+    inner = images_mod.resize_base64_image_to_limit
+
+    def counting(*args, **kwargs):
+        calls.append(1)
+        return inner(*args, **kwargs)
+
+    monkeypatch.setattr(images_mod, "resize_base64_image_to_limit", counting)
+    data = _encoded_image(Image.new("RGB", (2_001, 100), "navy"), "PNG")
+
+    first = images_mod.resize_base64_image_to_limit_cached(
+        data, "image/png", max_base64_bytes=ANTHROPIC_MAX_IMAGE_BASE64_BYTES, max_dimension=2_000
+    )
+    second = images_mod.resize_base64_image_to_limit_cached(
+        data, "image/png", max_base64_bytes=ANTHROPIC_MAX_IMAGE_BASE64_BYTES, max_dimension=2_000
+    )
+
+    assert len(calls) == 1
+    assert first.resized is True and second.resized is True
+    assert first.data == second.data
+    assert first.media_type == second.media_type
+
+    # A different dimension cap is a different key and recomputes.
+    images_mod.resize_base64_image_to_limit_cached(
+        data, "image/png", max_base64_bytes=ANTHROPIC_MAX_IMAGE_BASE64_BYTES, max_dimension=1_000
+    )
+    assert len(calls) == 2
+
+
+def test_resize_cached_reuses_derivative_across_smaller_byte_caps(monkeypatch) -> None:
+    import kolega_code.utils.images as images_mod
+
+    calls = []
+    inner = images_mod.resize_base64_image_to_limit
+
+    def counting(*args, **kwargs):
+        calls.append(1)
+        return inner(*args, **kwargs)
+
+    monkeypatch.setattr(images_mod, "resize_base64_image_to_limit", counting)
+    data = _encoded_image(Image.new("RGB", (2_001, 100), "navy"), "PNG")
+
+    first = images_mod.resize_base64_image_to_limit_cached(
+        data, "image/png", max_base64_bytes=ANTHROPIC_MAX_IMAGE_BASE64_BYTES, max_dimension=2_000
+    )
+    assert first.resized is True and first.data is not None
+    assert len(calls) == 1
+
+    # The shared Anthropic cap shrinks slightly as history grows; the stored
+    # derivative keeps serving every cap it still fits under.
+    smaller_cap = ANTHROPIC_MAX_IMAGE_BASE64_BYTES // 2
+    assert len(first.data) <= images_mod._derivative_target_size(smaller_cap)
+    reused = images_mod.resize_base64_image_to_limit_cached(
+        data, "image/png", max_base64_bytes=smaller_cap, max_dimension=2_000
+    )
+    assert reused.resized is True
+    assert reused.data == first.data
+    assert len(calls) == 1
+
+    # A cap the derivative genuinely exceeds forces one re-encode, whose
+    # smaller derivative replaces the stored one.
+    tiny_cap = len(first.data) // 2
+    recomputed = images_mod.resize_base64_image_to_limit_cached(
+        data, "image/png", max_base64_bytes=tiny_cap, max_dimension=2_000
+    )
+    assert len(calls) == 2
+    assert recomputed.resized is True and recomputed.data is not None
+    assert len(recomputed.data) < len(first.data)
+
+
+def test_resize_cached_unchanged_hit_returns_caller_payload_object() -> None:
+    import kolega_code.utils.images as images_mod
+
+    data = _encoded_image(Image.new("RGB", (4, 4), "navy"), "PNG")
+    first = images_mod.resize_base64_image_to_limit_cached(
+        data, "image/png", max_base64_bytes=len(data), max_dimension=2_000
+    )
+    assert first.resized is False
+
+    # A hit must hand back the caller's own string, not a pinned stale copy —
+    # session reloads rebuild history blocks with fresh string objects.
+    reloaded = "".join(data)
+    assert reloaded is not data
+    second = images_mod.resize_base64_image_to_limit_cached(
+        reloaded, "image/png", max_base64_bytes=len(data), max_dimension=2_000
+    )
+    assert second.resized is False
+    assert second.data is reloaded
+
+
+def test_resize_cached_failure_verdicts_are_memoized(monkeypatch) -> None:
+    import kolega_code.utils.images as images_mod
+
+    calls = []
+    inner = images_mod.resize_base64_image_to_limit
+
+    def counting(*args, **kwargs):
+        calls.append(1)
+        return inner(*args, **kwargs)
+
+    monkeypatch.setattr(images_mod, "resize_base64_image_to_limit", counting)
+    data = base64.b64encode(b"not-an-image" * 100).decode("ascii")
+
+    for _ in range(2):
+        result = images_mod.resize_base64_image_to_limit_cached(data, "image/png", max_base64_bytes=64)
+        assert result.succeeded is False
+        assert result.error is not None
+
+    assert len(calls) == 1
+
+
+def test_resize_cached_evicts_oldest_and_keeps_byte_accounting(monkeypatch) -> None:
+    import kolega_code.utils.images as images_mod
+
+    monkeypatch.setattr(images_mod, "_RESIZE_CACHE_MAX_ENTRIES", 1)
+    a = _encoded_image(Image.new("RGB", (2_001, 100), "navy"), "PNG")
+    b = _encoded_image(Image.new("RGB", (2_001, 100), "maroon"), "PNG")
+
+    images_mod.resize_base64_image_to_limit_cached(
+        a, "image/png", max_base64_bytes=ANTHROPIC_MAX_IMAGE_BASE64_BYTES, max_dimension=2_000
+    )
+    images_mod.resize_base64_image_to_limit_cached(
+        b, "image/png", max_base64_bytes=ANTHROPIC_MAX_IMAGE_BASE64_BYTES, max_dimension=2_000
+    )
+
+    assert len(images_mod._resize_cache) == 1
+    (memo,) = images_mod._resize_cache.values()
+    assert memo.derivative_data is not None
+    assert images_mod._resize_cache_bytes == len(memo.derivative_data)

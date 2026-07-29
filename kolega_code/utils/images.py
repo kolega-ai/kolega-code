@@ -13,11 +13,14 @@ shows a small ASCII-art preview instead of a wall of base64.
 from __future__ import annotations
 
 import base64
+import hashlib
 import io
 import math
+import threading
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, Optional, Tuple, Union
 
 from PIL import Image, ImageOps
 
@@ -203,6 +206,117 @@ def resize_base64_image_to_limit(
         resized=False,
         error=f"Could not fit image below the {max_base64_bytes}-byte base64 limit",
     )
+
+
+# History images are re-fitted for the provider on every LLM request, so the
+# same screenshot would otherwise be decoded and re-encoded once per request
+# for the rest of the session (multiplied by concurrent sub-agents). Memoize
+# per (content, dimension cap) rather than per exact byte cap: the shared
+# Anthropic byte cap shrinks a few percent every time a new screenshot lands
+# in history, and an exact-cap key would re-encode the entire history on each
+# shift. A stored derivative keeps serving every cap it still fits under (the
+# resize safety ratio provides the hysteresis); byte-fit of unchanged images
+# is a plain length check against the memoized dimensions-fit verdict. The
+# byte budget only counts stored derivatives; the entry cap bounds the rest.
+_RESIZE_CACHE_MAX_ENTRIES = 1024
+_RESIZE_CACHE_MAX_BYTES = 128 * 1024 * 1024
+
+_resize_cache: "OrderedDict[Tuple[str, str, Optional[int]], _ResizeMemo]" = OrderedDict()
+_resize_cache_bytes = 0
+_resize_cache_lock = threading.Lock()
+
+
+@dataclass
+class _ResizeMemo:
+    """Accumulated knowledge about one image under one dimension cap."""
+
+    # True once the original was seen to fit the dimension cap; None = unknown.
+    dims_fit: Optional[bool] = None
+    # Smallest derivative produced so far, reusable for any byte cap it fits.
+    derivative_data: Optional[str] = None
+    derivative_media_type: Optional[str] = None
+    # A failure verdict, valid for byte caps at or below the recorded limit
+    # (fit failures are monotone: what cannot fit N bytes cannot fit fewer).
+    error: Optional[str] = None
+    error_limit: int = 0
+
+
+def _derivative_target_size(max_base64_bytes: int) -> int:
+    """The byte target :func:`resize_base64_image_to_limit` fits derivatives to."""
+    target = int(max_base64_bytes * _IMAGE_RESIZE_SAFETY_RATIO)
+    return target - target % 4
+
+
+def _clear_resize_cache() -> None:
+    """Reset the resize memo (test isolation)."""
+    global _resize_cache_bytes
+    with _resize_cache_lock:
+        _resize_cache.clear()
+        _resize_cache_bytes = 0
+
+
+def resize_base64_image_to_limit_cached(
+    data: str,
+    media_type: str,
+    *,
+    max_base64_bytes: int,
+    max_dimension: Optional[int] = None,
+) -> ImageResizeResult:
+    """Memoized :func:`resize_base64_image_to_limit`.
+
+    The unchanged verdict hands back the caller's own payload so a cache entry
+    never pins a stale copy of the input string across session reloads.
+    Concurrent misses for the same image may duplicate work; the last result
+    wins.
+    """
+    key = (
+        hashlib.sha256(data.encode("utf-8", "surrogatepass")).hexdigest(),
+        media_type,
+        max_dimension,
+    )
+    with _resize_cache_lock:
+        memo = _resize_cache.get(key)
+        if memo is not None:
+            _resize_cache.move_to_end(key)
+            if memo.error is not None and max_base64_bytes <= memo.error_limit:
+                return ImageResizeResult(None, None, resized=False, error=memo.error)
+            if memo.dims_fit and len(data) <= max_base64_bytes:
+                return ImageResizeResult(data, media_type, resized=False)
+            if memo.derivative_data is not None and len(memo.derivative_data) <= _derivative_target_size(
+                max_base64_bytes
+            ):
+                return ImageResizeResult(memo.derivative_data, memo.derivative_media_type, resized=True)
+
+    result = resize_base64_image_to_limit(
+        data, media_type, max_base64_bytes=max_base64_bytes, max_dimension=max_dimension
+    )
+
+    global _resize_cache_bytes
+    with _resize_cache_lock:
+        memo = _resize_cache.get(key)
+        if memo is None:
+            memo = _ResizeMemo()
+            _resize_cache[key] = memo
+        _resize_cache.move_to_end(key)
+        if not result.succeeded:
+            memo.error = result.error
+            memo.error_limit = max(memo.error_limit, max_base64_bytes)
+        elif not result.resized:
+            memo.dims_fit = True
+        else:
+            assert result.data is not None
+            if memo.derivative_data is not None:
+                _resize_cache_bytes -= len(memo.derivative_data)
+            memo.derivative_data = result.data
+            memo.derivative_media_type = result.media_type
+            _resize_cache_bytes += len(result.data)
+        while _resize_cache and (
+            len(_resize_cache) > _RESIZE_CACHE_MAX_ENTRIES or _resize_cache_bytes > _RESIZE_CACHE_MAX_BYTES
+        ):
+            _, evicted = _resize_cache.popitem(last=False)
+            if evicted.derivative_data is not None:
+                _resize_cache_bytes -= len(evicted.derivative_data)
+    return result
 
 
 def image_media_type(path_or_suffix: Union[str, Path]) -> Optional[str]:
