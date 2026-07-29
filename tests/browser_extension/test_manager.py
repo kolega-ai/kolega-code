@@ -1,0 +1,155 @@
+from __future__ import annotations
+
+import asyncio
+import time
+from pathlib import Path
+from typing import Any, cast
+
+import pytest
+
+from kolega_code.browser_extension.manager import (
+    CHROME_EXTENSION_SUPPORTED_TOOLS,
+    ChromeExtensionBrowserManager,
+    ChromeExtensionProtocolError,
+    ChromeExtensionUnavailableError,
+)
+from kolega_code.browser_extension.multiplex import MultiplexedPeer
+from kolega_code.browser_extension.protocol import Envelope, MessageDirection
+from kolega_code.browser_extension.runtime import RuntimeServer
+
+ORIGIN = f"chrome-extension://{'a' * 32}/"
+
+
+class FakePeer:
+    def __init__(self) -> None:
+        self.closed = False
+        self.closed_event = asyncio.Event()
+        self.requests: list[tuple[str, dict[str, Any]]] = []
+        self.active = 0
+        self.max_active = 0
+
+    async def request(self, operation: str, params: dict[str, Any], *, timeout: float) -> dict[str, Any]:
+        self.requests.append((operation, params))
+        self.active += 1
+        self.max_active = max(self.max_active, self.active)
+        await asyncio.sleep(0.005)
+        self.active -= 1
+        return {"url": "https://example.com", "title": "Example", "result": {"operation": operation}}
+
+    async def close(self, reason: str = "") -> None:
+        self.closed = True
+        self.closed_event.set()
+
+    async def wait_closed(self) -> None:
+        await self.closed_event.wait()
+
+
+class FakeServer:
+    runtime_id = "runtime_1"
+
+    def __init__(self) -> None:
+        self.close_count = 0
+
+    async def close(self) -> None:
+        self.close_count += 1
+
+
+def manager(tmp_path: Path) -> ChromeExtensionBrowserManager:
+    return ChromeExtensionBrowserManager(
+        state_dir=tmp_path,
+        kolega_session_id="session_1",
+        extension_origin=ORIGIN,
+        connection_timeout=0.02,
+        operation_timeout=1,
+    )
+
+
+def ready_event(name: str = "browser.session_ready") -> Envelope:
+    return Envelope.event(
+        direction=MessageDirection.EXTENSION_TO_RUNTIME,
+        request_id="event_1",
+        runtime_id="runtime_1",
+        session_id="session_1",
+        deadline_ms=int(time.time() * 1000) + 1_000,
+        event=name,
+        data={},
+    )
+
+
+@pytest.mark.asyncio
+async def test_manager_waits_for_session_ready_then_serializes_calls(tmp_path: Path) -> None:
+    browser = manager(tmp_path)
+    server = FakeServer()
+    peer = FakePeer()
+    browser._server = cast(RuntimeServer, server)
+    await browser._handle_peer(cast(MultiplexedPeer, peer))
+
+    with pytest.raises(ChromeExtensionUnavailableError, match="not ready"):
+        await browser.navigate("https://example.com")
+    await browser._handle_event(ready_event("browser.other"))
+    assert browser.session_id is None
+    await browser._handle_event(ready_event())
+    assert browser.session_id == "chrome:runtime_1"
+
+    first, second = await asyncio.gather(
+        browser.navigate("https://example.com"),
+        browser.press_key("A"),
+    )
+    assert first["result"] == {"operation": "browser.navigate"}
+    assert second["result"] == {"operation": "browser.press_key"}
+    assert first["session_id"] == "chrome:runtime_1"
+    assert peer.max_active == 1
+    assert peer.requests[:2] == [
+        ("browser.navigate", {"url": "https://example.com/"}),
+        ("browser.press_key", {"key": "A"}),
+    ]
+
+    closed_id = await browser.close()
+    assert closed_id == "chrome:runtime_1"
+    assert peer.requests[-1] == ("browser.detach", {})
+    assert browser.session_id is None
+    await browser.cleanup_all_browsers()
+    await browser.cleanup_all_browsers()
+    assert server.close_count == 1
+
+
+@pytest.mark.asyncio
+async def test_manager_validates_locally_and_fails_fast_for_unsupported_methods(tmp_path: Path) -> None:
+    browser = manager(tmp_path)
+    assert browser.browser_target == "chrome"
+    assert browser.supported_tools == CHROME_EXTENSION_SUPPORTED_TOOLS
+    with pytest.raises(ChromeExtensionProtocolError, match="index is required"):
+        await browser.tabs("select")
+    with pytest.raises(ChromeExtensionProtocolError, match="exactly one"):
+        await browser.find(text="x", regex="x")
+
+    unsupported = [
+        browser.resize(800, 600),
+        browser.drop("e1", data={"text/plain": "x"}),
+        browser.handle_dialog(True),
+        browser.file_upload([]),
+        browser.console_messages(),
+        browser.network_request(1),
+        browser.evaluate("() => 1"),
+    ]
+    for call in unsupported:
+        with pytest.raises(ChromeExtensionProtocolError):
+            await call
+    assert browser._server is None
+
+
+@pytest.mark.asyncio
+async def test_manager_preserves_browser_result_shapes(tmp_path: Path) -> None:
+    browser = manager(tmp_path)
+    browser._server = cast(RuntimeServer, FakeServer())
+    peer = FakePeer()
+    await browser._handle_peer(cast(MultiplexedPeer, peer))
+    await browser._handle_event(ready_event())
+    result = await browser.screenshot(target=None, image_type="png", full_page=True, scale="device")
+    assert result["url"] == "https://example.com"
+    assert result["result"] == {"operation": "browser.screenshot"}
+    assert peer.requests[-1] == (
+        "browser.screenshot",
+        {"target": None, "image_type": "png", "full_page": True, "scale": "device"},
+    )
+    await browser.cleanup_all_browsers()

@@ -456,6 +456,30 @@ def test_cache_key_includes_actual_execution_class_and_read_only_mode() -> None:
     assert writable.cache_key() != forced_plan.cache_key()
 
 
+def test_cache_key_includes_browser_target() -> None:
+    playwright = AgentRunSpec(prompt="same", agent_type="browser")
+    chrome = AgentRunSpec(prompt="same", agent_type="browser", browser_target="chrome")
+
+    assert playwright.cache_key() != chrome.cache_key()
+
+
+@pytest.mark.asyncio
+async def test_runtime_passes_browser_target_to_dispatch(tmp_path: Path) -> None:
+    runtime, calls, _, _ = make_runtime(tmp_path)
+
+    await runtime.agent("browse", agent_type="browser", browser_target="chrome")
+
+    assert calls[0].browser_target == "chrome"
+
+
+@pytest.mark.asyncio
+async def test_runtime_rejects_browser_target_for_non_browser_agent(tmp_path: Path) -> None:
+    runtime, _, _, _ = make_runtime(tmp_path)
+
+    with pytest.raises(WorkflowScriptError, match="only valid"):
+        await runtime.agent("investigate", agent_type="investigation", browser_target="chrome")
+
+
 @pytest.mark.asyncio
 async def test_runtime_records_dispatch_routing_metadata(tmp_path: Path) -> None:
     async def dispatch(_spec: AgentRunSpec) -> AgentRunResult:

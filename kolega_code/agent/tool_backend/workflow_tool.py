@@ -17,6 +17,7 @@ from typing import Any, Optional
 
 from kolega_code.events import AgentEvent
 from kolega_code.llm.specs import supports_vision
+from kolega_code.services.base import browser_manager_agent_lock
 
 from ..model_routing import model_routing_fingerprint, resolve_subagent_model
 from ..orchestration import (
@@ -323,6 +324,7 @@ class WorkflowTool(BaseTool):
                 "requested_routing": requested_routing,
                 "effective_routing": effective_routing,
                 "actual_agent_type": actual_agent_type,
+                "browser_target": spec.browser_target,
             }
             label_for_path = spec.label or spec.agent_type or agent_class.__name__
             artifact_paths = journal.agent_artifact_paths(spec.call_index, label_for_path)
@@ -333,23 +335,37 @@ class WorkflowTool(BaseTool):
                 "agent_type": actual_agent_type,
                 "requested_agent_type": spec.agent_type,
                 "actual_agent_type": actual_agent_type,
+                "browser_target": spec.browser_target,
                 "agent_name": agent_name,
                 "max_agent_depth": spec.max_agent_depth,
                 "requested_routing": requested_routing,
                 "effective_routing": effective_routing,
             }
             try:
-                recap, tokens, structured = await self._agent_tool.dispatch_workflow_agent(
-                    agent_class,
-                    spec.prompt,
-                    workflow_accounting=accounting,
-                    reservation=reservation,
-                    config=config,
-                    schema=spec.schema,
-                    sub_agent_info_extra=sub_info_extra,
-                    artifact_paths=artifact_paths,
-                    artifact_metadata=artifact_metadata,
-                )
+                dispatch_kwargs = {
+                    "workflow_accounting": accounting,
+                    "reservation": reservation,
+                    "config": config,
+                    "schema": spec.schema,
+                    "sub_agent_info_extra": sub_info_extra,
+                    "artifact_paths": artifact_paths,
+                    "artifact_metadata": artifact_metadata,
+                }
+                if agent_name == "browser-agent":
+                    browser_manager = self._agent_tool._resolve_browser_manager(spec.browser_target)
+                    async with browser_manager_agent_lock(browser_manager):
+                        recap, tokens, structured = await self._agent_tool.dispatch_workflow_agent(
+                            agent_class,
+                            spec.prompt,
+                            browser_manager_override=browser_manager,
+                            **dispatch_kwargs,
+                        )
+                else:
+                    recap, tokens, structured = await self._agent_tool.dispatch_workflow_agent(
+                        agent_class,
+                        spec.prompt,
+                        **dispatch_kwargs,
+                    )
             except Exception as exc:  # noqa: BLE001 - a dead agent becomes a None result, not a crash
                 return AgentRunResult(
                     tokens=reservation.reported_tokens,

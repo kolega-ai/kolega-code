@@ -140,6 +140,7 @@ class WorkflowRuntime:
         schema: Optional[dict] = None,
         model_override: Any = None,
         agent_type: Optional[str] = None,
+        browser_target: Optional[str] = None,
         **legacy_kwargs: Any,
     ) -> Any:
         """Dispatch one sub-agent. Returns its recap text, or the validated dict
@@ -157,6 +158,10 @@ class WorkflowRuntime:
             raise WorkflowScriptError(f"agent() got unexpected keyword argument(s): {names}")
         if not isinstance(prompt, str) or not prompt.strip():
             raise WorkflowScriptError("agent() requires a non-empty prompt string")
+        if browser_target is not None and (not isinstance(browser_target, str) or not browser_target.strip()):
+            raise WorkflowScriptError("agent() browser_target must be a non-empty string when provided")
+        if browser_target is not None and (agent_type or "").lower() != "browser":
+            raise WorkflowScriptError("agent() browser_target is only valid with agent_type='browser'")
         try:
             parsed_override: Optional[AtomicModelOverride] = parse_atomic_model_override(
                 model_override,
@@ -176,6 +181,7 @@ class WorkflowRuntime:
             schema=schema,
             model_override=parsed_override,
             agent_type=agent_type,
+            browser_target=browser_target,
             routing_fingerprint=self._routing_fingerprint,
             actual_agent_type=(
                 self._actual_agent_type_resolver(agent_type) if self._actual_agent_type_resolver is not None else None

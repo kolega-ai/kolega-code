@@ -3,6 +3,7 @@ from pathlib import Path
 import asyncio
 import json
 import time
+from unittest.mock import Mock
 
 import pytest
 
@@ -47,6 +48,47 @@ from ._app_test_utils import (
 
 class FakePlanningAgent(FakeCoderAgent):
     pass
+
+
+@pytest.mark.asyncio
+async def test_textual_app_builds_the_configured_browser_manager(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.app import KolegaCodeApp
+
+    install_fake_agents(monkeypatch, planning_cls=FakePlanningAgent)
+    browser_manager = Mock()
+    build_browser_manager = Mock(return_value=browser_manager)
+    monkeypatch.setattr(
+        "kolega_code.cli.tui.agent_runtime.build_browser_manager",
+        build_browser_manager,
+    )
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(
+        project_path=project,
+        config=config,
+        mode="code",
+        store=store,
+        session=session,
+        browser_visible=True,
+    )
+
+    async with app.run_test():
+        assert isinstance(app.agent, FakeCoderAgent)
+        assert app.agent.kwargs["browser_manager"] is browser_manager
+        build_browser_manager.assert_called_once_with(
+            store.root,
+            session.session_id,
+            browser_visible=True,
+        )
 
 
 @pytest.mark.asyncio

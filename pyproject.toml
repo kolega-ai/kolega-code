@@ -42,6 +42,8 @@ dependencies = [
     "filelock==3.20.3",
     "google-genai==2.12.1",
     "httpx==0.28.1",
+    # Protocol-v1 URLs follow WHATWG-compatible non-transitional UTS-46 host normalization.
+    "idna==3.18",
     "jinja2==3.1.6",
     "langfuse==3.14.5",
     "lxml-html-clean==0.4.5",
@@ -98,9 +100,24 @@ dev = [
 
 [project.scripts]
 kolega-code = "kolega_code.cli.main:main"
+kolega-code-browser-host = "kolega_code.browser_extension.native_host:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["kolega_code"]
+
+[tool.hatch.build.targets.sdist]
+exclude = ["/.kolega/worktrees/**"]
+include = [
+    "/CHANGELOG.md",
+    "/CONTRIBUTING.md",
+    "/LICENSE",
+    "/MIGRATION.md",
+    "/README.md",
+    "/RELEASING.md",
+    "/kolega_code/**",
+    "/pyproject.toml",
+]
+skip-excluded-dirs = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

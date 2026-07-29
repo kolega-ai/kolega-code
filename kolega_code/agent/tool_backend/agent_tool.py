@@ -11,6 +11,7 @@ from kolega_code.events import AgentEvent
 from kolega_code.hooks import HookDispatcher, HookEvent
 from kolega_code.llm.specs import supports_vision
 from kolega_code.permissions import PermissionMode, auto_allow_permission_callback
+from kolega_code.services.base import BrowserManager, browser_manager_agent_lock
 from ..model_routing import render_subagent_model_catalog, resolve_subagent_model, subagent_model_catalog
 from ..orchestration.accounting import AgentReservation, WorkflowRunAccounting
 from ..orchestration.context import has_workflow_context_marker, validated_workflow_depth
@@ -188,6 +189,7 @@ class AgentTool(BaseTool):
         model_override: Any = None,
         routing_agent_name: Optional[str] = None,
         inherited_model: Optional[ModelConfig] = None,
+        browser_manager_override: BrowserManager | None = None,
     ) -> str:
         """
         Generic method to dispatch any agent type.
@@ -329,7 +331,9 @@ class AgentTool(BaseTool):
                 sub_agent=True,
                 filesystem=self.filesystem,
                 terminal_manager=self.terminal_manager,
-                browser_manager=self.browser_manager,
+                browser_manager=(
+                    browser_manager_override if browser_manager_override is not None else self.browser_manager
+                ),
                 langfuse_client=self.langfuse_client,
                 user_id=getattr(self.caller, "user_id", None) if self.caller else None,
                 user_email=getattr(self.caller, "user_email", None) if self.caller else None,
@@ -552,7 +556,26 @@ class AgentTool(BaseTool):
             model_override=model_override,
         )
 
-    async def dispatch_browser_agent(self, task: str, model_override: Any = None) -> str:
+    def _resolve_browser_manager(self, browser_target: Optional[str]) -> BrowserManager:
+        if self.browser_manager is None:
+            from kolega_code.services.browser import PlaywrightBrowserManager
+
+            self.browser_manager = PlaywrightBrowserManager()
+        resolver = getattr(self.browser_manager, "resolve_browser_target", None)
+        if browser_target is None:
+            if callable(resolver):
+                return cast(BrowserManager, resolver())
+            return cast(BrowserManager, self.browser_manager)
+        if not callable(resolver):
+            raise ValueError("browser_target is not available for this browser manager")
+        return cast(BrowserManager, resolver(browser_target))
+
+    async def dispatch_browser_agent(
+        self,
+        task: str,
+        model_override: Any = None,
+        browser_target: Optional[str] = None,
+    ) -> str:
         """
         Dispatch a browser agent to perform web-based tasks and interactions.
 
@@ -562,15 +585,20 @@ class AgentTool(BaseTool):
                 route from list_subagent_models. The selected catalog entry
                 must have supports_vision=true. All fields are required when
                 present, and invalid routes fail without fallback.
+            browser_target: Optional configured browser backend. Omit for
+                Playwright; choose Chrome only when directed by the user.
 
         Returns:
             A comprehensive report of the browser agent's findings and actions
         """
-        return await self._dispatch_agent(
-            agent_class_import="kolega_code.agent.browseragent.BrowserAgent",
-            task=task,
-            model_override=model_override,
-        )
+        browser_manager = self._resolve_browser_manager(browser_target)
+        async with browser_manager_agent_lock(browser_manager):
+            return await self._dispatch_agent(
+                agent_class_import="kolega_code.agent.browseragent.BrowserAgent",
+                task=task,
+                model_override=model_override,
+                browser_manager_override=browser_manager,
+            )
 
     async def dispatch_coding_agent(self, task: str, model_override: Any = None) -> str:
         """
@@ -735,7 +763,13 @@ class AgentTool(BaseTool):
             propagate_to_sub_agents=False,
         )
 
-    def _construct_workflow_sub_agent(self, agent_class, config, extra_tool_extensions):
+    def _construct_workflow_sub_agent(
+        self,
+        agent_class,
+        config,
+        extra_tool_extensions,
+        browser_manager_override: Optional[BrowserManager] = None,
+    ):
         """Construct a sub-agent the same way _dispatch_agent does, but allowing a
         config override and additional tool extensions.
         """
@@ -751,7 +785,9 @@ class AgentTool(BaseTool):
             sub_agent=True,
             filesystem=self.filesystem,
             terminal_manager=self.terminal_manager,
-            browser_manager=self.browser_manager,
+            browser_manager=(
+                browser_manager_override if browser_manager_override is not None else self.browser_manager
+            ),
             langfuse_client=self.langfuse_client,
             user_id=getattr(self.caller, "user_id", None) if self.caller else None,
             user_email=getattr(self.caller, "user_email", None) if self.caller else None,
@@ -903,6 +939,7 @@ class AgentTool(BaseTool):
         sub_agent_info_extra: Optional[dict] = None,
         artifact_paths: Optional[dict] = None,
         artifact_metadata: Optional[dict] = None,
+        browser_manager_override: Optional[BrowserManager] = None,
     ):
         """Dispatch one sub-agent for a gigacode workflow.
 
@@ -967,7 +1004,12 @@ class AgentTool(BaseTool):
         agent = None
 
         try:
-            agent = self._construct_workflow_sub_agent(agent_class, config, extra_extensions)
+            agent = self._construct_workflow_sub_agent(
+                agent_class,
+                config,
+                extra_extensions,
+                browser_manager_override=browser_manager_override,
+            )
             self.agents[agent_id] = agent
             agent.parent_tool_call_id = tool_call_id
             agent.conversation_id = conversation_id

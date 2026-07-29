@@ -23,11 +23,11 @@ from kolega_code.llm.exceptions import LLMError, llm_error_message
 from kolega_code.mcp.tools import build_mcp_tool_extension
 from kolega_code.permissions import PermissionDecision
 from kolega_code.session.runtime import deserialize_permission_request
-from kolega_code.services.browser import PlaywrightBrowserManager
 from kolega_code.tools import ToolError
 from textual.widgets import Static
 
 from .. import messages
+from ..browser_backend import build_browser_manager
 from ..config import CliConfigError, build_agent_config, config_summary
 from ..goal import (
     GoalState,
@@ -974,8 +974,11 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             if rebuild:
                 await self.agent.cleanup()
 
-        browser_manager = PlaywrightBrowserManager()
-        browser_manager.headless = not self.browser_visible
+        browser_manager = build_browser_manager(
+            self.store.root,
+            self.session.session_id,
+            browser_visible=self.browser_visible,
+        )
         agent_class = PlanningAgent if self.interaction_mode == tui_constants.PLAN_INTERACTION_MODE else CoderAgent
         self.skill_catalog = discover_skills(self.project_path)
         self.custom_agent_catalog = validate_custom_agent_models(

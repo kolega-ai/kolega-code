@@ -8,6 +8,7 @@ import faulthandler
 import importlib.util
 import json
 import sys
+import webbrowser
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
@@ -48,10 +49,18 @@ from kolega_code.permissions import (
     allow_rule_options,
     normalize_permission_mode,
 )
-from kolega_code.services.browser import PlaywrightBrowserManager
+from kolega_code.browser_extension.installer import (
+    BROWSER_EXTENSION_CHANNELS,
+    DEFAULT_BROWSER_EXTENSION_CHANNEL,
+    channel_web_store_url,
+    install_native_host,
+    native_host_status,
+    uninstall_native_host,
+)
 from kolega_code.utils.images import encode_image_file
 
 from . import messages
+from .browser_backend import build_browser_manager
 from .diagnostics import write_crash_log
 from .config import (
     DEPRECATED_THINKING_TOKENS_MESSAGE,
@@ -98,7 +107,7 @@ from .skills import (
 )
 from .updater import check_for_update, run_self_update, update_status_message
 
-SUBCOMMANDS = {"ask", "sessions", "doctor", "update", "prompts", "agents", "mcp", "tui", "share"}
+SUBCOMMANDS = {"ask", "sessions", "doctor", "update", "prompts", "agents", "browser", "mcp", "tui", "share"}
 RESUME_LATEST = "__latest__"
 CLI_AGENT_MODE = AgentMode.CLI.value
 ASK_DEFAULT_PERMISSION_MODE = PermissionMode.AUTO.value
@@ -138,6 +147,8 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
             return _run_prompts(args)
         if args.command == "agents":
             return _run_agents(args)
+        if args.command == "browser":
+            return _run_browser(args)
         if args.command == "mcp":
             return asyncio.run(_run_mcp(args))
         if args.command == "update":
@@ -420,6 +431,31 @@ def _build_subcommand_parser() -> argparse.ArgumentParser:
     agents_validate.add_argument("--project", default=".", type=Path, help="Project directory to inspect.")
     agents_validate.add_argument("--state-dir", type=Path, help="Directory containing user-level custom agents.")
 
+    browser = subparsers.add_parser("browser", help="Manage the Chrome native-messaging integration.")
+    browser_sub = browser.add_subparsers(dest="browser_command", required=True)
+
+    def add_browser_registration_args(command: argparse.ArgumentParser, *, include_host_path: bool = False) -> None:
+        command.add_argument(
+            "--channel",
+            choices=BROWSER_EXTENSION_CHANNELS,
+            default=DEFAULT_BROWSER_EXTENSION_CHANNEL,
+            help="Extension release channel.",
+        )
+        command.add_argument("--extension-id", help="Required explicit extension ID for beta and dev channels.")
+        command.add_argument("--state-dir", type=Path, help="Directory for CLI and browser runtime state.")
+        command.add_argument("--json", action="store_true", help="Print machine-readable status.")
+        if include_host_path:
+            command.add_argument("--host-path", type=Path, help="Explicit native-host executable path.")
+
+    browser_install = browser_sub.add_parser("install", help="Install or refresh the Chrome native host.")
+    add_browser_registration_args(browser_install, include_host_path=True)
+    browser_status = browser_sub.add_parser("status", help="Check the Chrome native-host configuration.")
+    add_browser_registration_args(browser_status)
+    browser_doctor = browser_sub.add_parser("doctor", help="Diagnose the Chrome native-host configuration.")
+    add_browser_registration_args(browser_doctor)
+    browser_uninstall = browser_sub.add_parser("uninstall", help="Remove the Chrome native host.")
+    add_browser_registration_args(browser_uninstall)
+
     mcp = subparsers.add_parser("mcp", help="Manage MCP servers and verification state.")
     mcp.add_argument(
         "--project", default=".", type=Path, help="Project directory to use for trusted project MCP config."
@@ -611,6 +647,67 @@ def _run_update() -> int:
     elif not result.error:
         _print_styled("Kolega Code update failed.", style="error", stderr=True)
     return result.returncode
+
+
+def _run_browser(args: argparse.Namespace) -> int:
+    command = args.browser_command
+    common = {
+        "channel": args.channel,
+        "extension_id": args.extension_id,
+    }
+    try:
+        if command == "uninstall":
+            removed = uninstall_native_host(**common)
+            payload = {
+                "command": command,
+                "removed": removed,
+                "detail": "Chrome native host removed." if removed else "Chrome native host was not installed.",
+            }
+            if args.json:
+                print(json.dumps(payload, sort_keys=True))
+            else:
+                print(payload["detail"])
+            return 0
+
+        status_kwargs = {
+            **common,
+            "state_dir": args.state_dir,
+        }
+        if command == "install":
+            status = install_native_host(host_path=args.host_path, **status_kwargs)
+        else:
+            status = native_host_status(**status_kwargs)
+
+        store_url = channel_web_store_url(status.channel)
+        payload = {
+            "command": command,
+            **status.to_dict(),
+            "web_store_url": store_url,
+        }
+        if command == "doctor" and not status.valid:
+            payload["remediation"] = "Run `kolega-code browser install` with the same channel and extension ID."
+
+        if args.json:
+            print(json.dumps(payload, sort_keys=True))
+        else:
+            print(status.detail)
+            print(f"Manifest: {status.manifest_path}")
+            if status.host_path is not None:
+                print(f"Native host: {status.host_path}")
+            if payload.get("remediation"):
+                print(payload["remediation"])
+            if store_url:
+                print(f"Chrome Web Store: {store_url}")
+
+        if command == "install" and store_url:
+            webbrowser.open(store_url)
+        return 0 if status.valid else 1
+    except (RuntimeError, OSError) as exc:
+        if getattr(args, "json", False):
+            print(json.dumps({"command": command, "error": str(exc)}, sort_keys=True))
+        else:
+            _print_styled(f"kolega-code browser: {exc}", style="error", stderr=True)
+        return 2
 
 
 def _run_tui(args: argparse.Namespace) -> int:
@@ -992,8 +1089,11 @@ async def _run_ask(args: argparse.Namespace) -> int:
         session = store.load(session.session_id)
 
     manager = CliConnectionManager()
-    browser_manager = PlaywrightBrowserManager()
-    browser_manager.headless = not args.browser_visible
+    browser_manager = build_browser_manager(
+        store.root,
+        session.session_id,
+        browser_visible=args.browser_visible,
+    )
     agent_ref: dict[str, CoderAgent] = {}
     prompt_extensions = []
     tool_extensions = []

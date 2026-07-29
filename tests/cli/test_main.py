@@ -1,6 +1,7 @@
 import asyncio
 import json
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 
@@ -437,6 +438,9 @@ def test_ask_skill_with_prompt_activates_before_dispatch(
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     monkeypatch.setenv("KOLEGA_CODE_PROVIDER", "anthropic")
     monkeypatch.setattr(main_module, "CoderAgent", FakeCoderAgent)
+    browser_manager = object()
+    build_browser_manager = Mock(return_value=browser_manager)
+    monkeypatch.setattr(main_module, "build_browser_manager", build_browser_manager)
 
     exit_code = main_module.main(["ask", "/demo-skill do the task", "--project", str(project)])
 
@@ -444,6 +448,8 @@ def test_ask_skill_with_prompt_activates_before_dispatch(
     output = capsys.readouterr().out
     assert "ok" in output
     agent = FakeCoderAgent.instances[0]
+    assert agent.kwargs["browser_manager"] is browser_manager
+    assert build_browser_manager.call_args.kwargs["browser_visible"] is False
     assert agent.messages == ["do the task"]
     assert '<skill_content name="demo-skill">' in agent.history[0].get_text_content()
     assert any(extension.name == "cli-agent-skills" for extension in agent.kwargs["tool_extensions"])

@@ -4,6 +4,7 @@ The sub-agent dispatch is stubbed, so these run without the LLM stack but exerci
 the real run_workflow code path (state-dir resolution, journal, emit, summary).
 """
 
+import asyncio
 import json
 from pathlib import Path
 from typing import Any
@@ -73,6 +74,7 @@ def _stub_dispatch() -> tuple[Any, list[tuple[Any, ...]]]:
         sub_agent_info_extra: Any = None,
         artifact_paths: Any = None,
         artifact_metadata: Any = None,
+        browser_manager_override: Any = None,
     ) -> tuple[str, int, Any]:
         calls.append((task, schema, sub_agent_info_extra, artifact_paths, artifact_metadata))
         if artifact_paths:
@@ -83,6 +85,72 @@ def _stub_dispatch() -> tuple[Any, list[tuple[Any, ...]]]:
         return (f"recap:{task}", 3, None)
 
     return dispatch_workflow_agent, calls
+
+
+@pytest.mark.asyncio
+async def test_browser_workflow_resolves_target_and_injects_concrete_manager(workflow_tool) -> None:
+    tool, _ = workflow_tool
+    concrete_manager = Mock()
+    selector = Mock()
+    selector.resolve_browser_target.return_value = concrete_manager
+    tool._agent_tool.browser_manager = selector
+    captured: list[Any] = []
+
+    async def stub(
+        agent_class: type[Any],
+        task: str,
+        *,
+        browser_manager_override: Any = None,
+        **kwargs: Any,
+    ) -> tuple[str, int, Any]:
+        captured.append((agent_class, task, browser_manager_override, kwargs))
+        return ("done", 1, None)
+
+    tool._agent_tool.dispatch_workflow_agent = stub
+    script = (
+        'meta = {"name": "browser-target", "description": "d"}\n'
+        'return await agent("browse", agent_type="browser", browser_target="chrome")\n'
+    )
+
+    await tool.run_workflow(script=script)
+
+    selector.resolve_browser_target.assert_called_once_with("chrome")
+    agent_class, task, browser_manager, kwargs = captured[0]
+    assert agent_class.__name__ == "BrowserAgent"
+    assert task == "browse"
+    assert browser_manager is concrete_manager
+    assert kwargs["sub_agent_info_extra"]["browser_target"] == "chrome"
+    assert kwargs["artifact_metadata"]["browser_target"] == "chrome"
+
+
+@pytest.mark.asyncio
+async def test_browser_workflow_serializes_runs_on_the_concrete_manager(workflow_tool) -> None:
+    tool, _ = workflow_tool
+    concrete_manager = Mock()
+    selector = Mock()
+    selector.resolve_browser_target.return_value = concrete_manager
+    tool._agent_tool.browser_manager = selector
+    running = 0
+    max_running = 0
+
+    async def stub(*args: Any, **kwargs: Any) -> tuple[str, int, Any]:
+        nonlocal running, max_running
+        assert kwargs["browser_manager_override"] is concrete_manager
+        running += 1
+        max_running = max(max_running, running)
+        await asyncio.sleep(0.01)
+        running -= 1
+        return ("done", 1, None)
+
+    tool._agent_tool.dispatch_workflow_agent = stub
+    script = (
+        'meta = {"name": "browser-lock", "description": "d"}\n'
+        'return await parallel([(lambda: agent("browse", agent_type="browser")) for _ in range(2)])\n'
+    )
+
+    await tool.run_workflow(script=script)
+
+    assert max_running == 1
 
 
 SCRIPT = """\
