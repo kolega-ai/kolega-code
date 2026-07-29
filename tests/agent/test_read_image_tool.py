@@ -1,4 +1,5 @@
 import base64
+import threading
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -88,6 +89,45 @@ class TestReadImageToolBackend:
         tool = _make_tool(tmp_path)
         with pytest.raises(ValueError):
             await tool.read_image(str(path))
+
+    @pytest.mark.asyncio
+    async def test_oversized_image_is_rejected_before_it_is_read(self, tmp_path, monkeypatch):
+        import kolega_code.agent.tool_backend.read_image_tool as module
+
+        monkeypatch.setattr(module, "MAX_IMAGE_BYTES", 16)
+        path = tmp_path / "huge.png"
+        path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 64)
+
+        tool = _make_tool(tmp_path)
+        reads: list[str] = []
+
+        def refuse_to_read(target: str) -> bytes:
+            reads.append(target)
+            return b""
+
+        monkeypatch.setattr(tool.filesystem, "read_bytes", refuse_to_read)
+        with pytest.raises(ValueError, match="too large"):
+            await tool.read_image(str(path))
+        assert reads == []
+
+    @pytest.mark.asyncio
+    async def test_read_runs_off_the_event_loop(self, tmp_path):
+        """The read + base64 + ASCII decode are three full passes over the file."""
+        path = tmp_path / "shot.png"
+        path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 32)
+
+        tool = _make_tool(tmp_path)
+        loop_thread = threading.get_ident()
+        seen: dict[str, int] = {}
+        original = tool._read_encoded
+
+        def tracking(target: str) -> str:
+            seen["thread"] = threading.get_ident()
+            return original(target)
+
+        tool._read_encoded = tracking  # type: ignore[method-assign]
+        await tool.read_image(str(path))
+        assert seen["thread"] != loop_thread
 
 
 class TestReadImageWrapper:

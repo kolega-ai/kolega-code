@@ -60,6 +60,38 @@ class ExtractedPage:
     attempts: tuple[ExtractorAttempt, ...] = field(default_factory=tuple)
 
 
+@dataclass(frozen=True)
+class HtmlSignals:
+    """Whole-document measurements shared by scoring and SPA detection.
+
+    Every field is O(len(html)) to compute — a full lxml parse plus regex
+    scans — and none of it changes between extractor attempts, so it is
+    computed exactly once per fetch, in a worker thread.
+    """
+
+    raw_visible_len: int
+    js_marker: bool
+    app_shell: bool
+    script_count: int
+
+
+def html_signals(html: str) -> HtmlSignals:
+    """Measure a document once. Call off the event loop: multi-MB pages take seconds."""
+    lower = html.lower()
+    try:
+        raw_visible_len = len(BeautifulSoup(html, "lxml").get_text(" ", strip=True))
+    except Exception:
+        # Trafilatura and Readability do not go through bs4, so a parser
+        # failure here must not fail the whole fetch. Strip tags instead.
+        raw_visible_len = len(re.sub(r"<[^>]+>", " ", html))
+    return HtmlSignals(
+        raw_visible_len=raw_visible_len,
+        js_marker=any(marker in lower for marker in _JS_MARKERS),
+        app_shell=any(re.search(pattern, html, re.IGNORECASE) for pattern in _APP_ROOT_PATTERNS),
+        script_count=len(re.findall(r"<script\b", html, re.IGNORECASE)),
+    )
+
+
 def _clean_markdown(value: str) -> str:
     lines = [line.rstrip() for line in (value or "").replace("\x00", "").splitlines()]
     cleaned = "\n".join(lines)
@@ -72,8 +104,13 @@ def _normalized_lines(content: str) -> list[str]:
     return [re.sub(r"\s+", " ", line).strip() for line in content.splitlines() if line.strip()]
 
 
-def quality_score(content: str, html: str) -> tuple[float, bool]:
-    """Score usefulness without making short-but-legitimate pages impossible."""
+def quality_score(content: str, raw_visible_len: int) -> tuple[float, bool]:
+    """Score usefulness without making short-but-legitimate pages impossible.
+
+    ``raw_visible_len`` is ``HtmlSignals.raw_visible_len`` for the source
+    document; it is passed in rather than measured here so the document is
+    parsed once per fetch instead of once per extractor attempt.
+    """
     cleaned = _clean_markdown(content)
     if not cleaned:
         return -100.0, False
@@ -99,10 +136,9 @@ def quality_score(content: str, html: str) -> tuple[float, bool]:
     if link_count / word_count > 0.18:
         score -= 12.0
 
-    raw_visible = BeautifulSoup(html, "lxml").get_text(" ", strip=True)
-    if chars < 80 and len(raw_visible) > 500:
+    if chars < 80 and raw_visible_len > 500:
         score -= 20.0
-    elif chars < 80 and len(raw_visible) <= 500:
+    elif chars < 80 and raw_visible_len <= 500:
         score += 8.0
 
     usable = chars >= 40 and score >= 8.0
@@ -201,14 +237,18 @@ def extractor_names() -> list[str]:
     return [DEFAULT_EXTRACTOR, *_EXTRACTORS]
 
 
-def _looks_like_spa(html: str, attempts: list[ExtractorAttempt]) -> bool:
-    lower = html.lower()
-    marker = any(marker in lower for marker in _JS_MARKERS)
-    app_shell = any(re.search(pattern, html, re.IGNORECASE) for pattern in _APP_ROOT_PATTERNS)
-    scripts = len(re.findall(r"<script\b", html, re.IGNORECASE))
-    visible = BeautifulSoup(html, "lxml").get_text(" ", strip=True)
+def _looks_like_spa(signals: HtmlSignals, attempts: list[ExtractorAttempt]) -> bool:
     unusable = not attempts or all(not attempt.usable for attempt in attempts)
-    return marker or (unusable and app_shell and (scripts >= 3 or len(visible) < 300))
+    return signals.js_marker or (
+        unusable and signals.app_shell and (signals.script_count >= 3 or signals.raw_visible_len < 300)
+    )
+
+
+def _extract_and_score(extractor: HtmlExtractor, html: str, url: str, raw_visible_len: int) -> tuple[str, float, bool]:
+    """Extract and score in one worker-thread hop (both passes are O(len(html)))."""
+    content = extractor.extract(html, url)
+    score, usable = quality_score(content, raw_visible_len)
+    return content, score, usable
 
 
 async def extract_html(html: str, url: str, preference: str = DEFAULT_EXTRACTOR) -> ExtractedPage:
@@ -221,13 +261,20 @@ async def extract_html(html: str, url: str, preference: str = DEFAULT_EXTRACTOR)
         else [preference, *[x for x in default_order if x != preference]]
     )
 
+    # One measurement pass for the whole fetch, off the event loop: parsing a
+    # multi-MB document here used to happen per attempt (and once more for SPA
+    # detection) on the loop, freezing the TUI for the duration.
+    signals = await asyncio.to_thread(html_signals, html)
+
     candidates: list[tuple[str, str, float, bool]] = []
     attempts: list[ExtractorAttempt] = []
     for name in order:
         extractor = _EXTRACTORS[name]
         try:
-            content = await asyncio.wait_for(asyncio.to_thread(extractor.extract, html, url), timeout=10.0)
-            score, usable = quality_score(content, html)
+            content, score, usable = await asyncio.wait_for(
+                asyncio.to_thread(_extract_and_score, extractor, html, url, signals.raw_visible_len),
+                timeout=10.0,
+            )
             attempts.append(ExtractorAttempt(name, score, len(content), usable))
             candidates.append((name, content, score, usable))
             if usable and score >= HIGH_QUALITY_SCORE:
@@ -237,7 +284,7 @@ async def extract_html(html: str, url: str, preference: str = DEFAULT_EXTRACTOR)
 
     usable_candidates = [candidate for candidate in candidates if candidate[3]]
     selected = max(usable_candidates or candidates, key=lambda item: item[2], default=None)
-    spa_detected = _looks_like_spa(html, attempts)
+    spa_detected = _looks_like_spa(signals, attempts)
     warnings: list[str] = []
     if spa_detected:
         warnings.append(
