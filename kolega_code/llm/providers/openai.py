@@ -542,9 +542,16 @@ class OpenAIProvider(BaseLLMProvider):
         # Per-request streaming timeout bounds the inter-chunk read wait (see
         # kolega_code/llm/timeouts.py): a stalled connection fails in minutes and is
         # retried, instead of hanging on the SDK's 600s default.
+        # Only our own payload construction can leave the loop here: the SDK's
+        # `chat.completions.create()` is async, so its parameter transform (which walks
+        # every node of the request body) runs inline on the loop. See the Anthropic
+        # provider, whose `messages.stream()` is synchronous and can be built off-loop.
+        payload = await asyncio.to_thread(
+            messages.to_openai, provider=self.provider_name, model=generation_params["model"]
+        )
         return OpenAIStreamWrapper(
             await self.async_client.chat.completions.create(
-                messages=messages.to_openai(provider=self.provider_name, model=generation_params["model"]),
+                messages=payload,
                 timeout=streaming_timeout(),
                 **generation_params,
             ),
@@ -576,8 +583,11 @@ class OpenAIProvider(BaseLLMProvider):
             messages = MessageHistory([system] + messages)
 
         await self.rate_limiter.acquire()
+        payload = await asyncio.to_thread(
+            messages.to_openai, provider=self.provider_name, model=generation_params["model"]
+        )
         response = await self.async_client.chat.completions.create(
-            messages=messages.to_openai(provider=self.provider_name, model=generation_params["model"]),
+            messages=payload,
             **generation_params,
         )
 

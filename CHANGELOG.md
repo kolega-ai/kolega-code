@@ -14,6 +14,12 @@ This project uses GitHub Releases for detailed generated release notes. This fil
   sub-agent. Resized copies are now memoized per image and dimension cap
   (surviving the small byte-budget shifts a newly captured screenshot causes),
   and the repair/adapt pass runs in a worker thread.
+- Moved LLM request preparation off the event loop. Building a request body is
+  proportional to conversation size, and on the Anthropic streaming path it
+  blocked the UI for 0.4 s per request with an image-heavy history — multiplied
+  by every concurrently running sub-agent. The worst event-loop gap per request
+  drops from 111 ms to 19 ms with 6 MiB of images in history, and from 425 ms to
+  69 ms at 24 MiB.
 
 ## 0.25.2 - 2026-07-28
 
