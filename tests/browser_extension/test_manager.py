@@ -187,6 +187,52 @@ def _advertise(
 
 
 @pytest.mark.asyncio
+async def test_readiness_survives_a_relay_peer_reconnecting(tmp_path: Path) -> None:
+    """A reconnecting relay peer must not strand the session unconfirmed.
+
+    The extension announces browser.session_ready once per native connection, so
+    clearing readiness whenever the relay peer churned left the runtime stuck at
+    "connected but has not confirmed a session" with no way to recover short of
+    re-selecting in the popup. The native host only dials a runtime's socket to
+    relay a message the extension addressed to that runtime, so a peer existing at
+    all already proves this runtime is selected.
+    """
+    browser = manager(tmp_path)
+    browser._server = cast(RuntimeServer, FakeServer())
+    first = FakePeer()
+    await browser._handle_peer(cast(MultiplexedPeer, first))
+    await browser._handle_event(ready_event())
+    assert browser.session_id == "chrome:runtime_1"
+
+    # The relay drops; work must block, but the confirmation must not be lost.
+    await first.close()
+    await asyncio.sleep(0)
+    assert browser._peer is None
+    assert browser._ready is True
+
+    # A fresh relay peer, with no repeated session_ready, must be usable at once.
+    second = FakePeer()
+    await browser._handle_peer(cast(MultiplexedPeer, second))
+    result = await browser.navigate("https://example.com")
+    assert result["session_id"] == "chrome:runtime_1"
+    assert second.requests == [("browser.navigate", {"url": "https://example.com/"})]
+
+
+@pytest.mark.asyncio
+async def test_detach_still_clears_readiness(tmp_path: Path) -> None:
+    """Holding readiness across peer churn must not survive an explicit detach."""
+    browser = manager(tmp_path)
+    browser._server = cast(RuntimeServer, FakeServer())
+    await browser._handle_peer(cast(MultiplexedPeer, FakePeer()))
+    await browser._handle_event(ready_event())
+
+    await browser.close()
+
+    assert browser.session_id is None
+    assert browser._ready is False
+
+
+@pytest.mark.asyncio
 async def test_probe_reports_unreachable_without_a_connection(tmp_path: Path) -> None:
     browser = manager(tmp_path)
     browser._server = cast(RuntimeServer, FakeServer())

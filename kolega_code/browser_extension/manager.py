@@ -113,7 +113,14 @@ class ChromeExtensionBrowserManager(BrowserManager):
             await peer.close("Chrome integration is closed for this agent session.")
             return
         previous = self._peer
-        self._clear_ready()
+        # Readiness belongs to this runtime session, not to a relay peer. The
+        # native host connects to a runtime's socket only to relay a message the
+        # extension addressed to that runtime, and the extension refuses to route
+        # anywhere but the selected runtime — so a peer existing at all already
+        # proves this runtime is selected. Clearing readiness on peer churn used to
+        # deadlock: the extension announces browser.session_ready once per native
+        # connection, so a reconnecting relay left the runtime permanently
+        # "connected but not confirmed" with no way to recover.
         self._peer = peer
         self._state_changed.set()
         watcher = asyncio.create_task(self._watch_peer(peer), name="chrome-extension-peer-lifecycle")
@@ -125,8 +132,10 @@ class ChromeExtensionBrowserManager(BrowserManager):
     async def _watch_peer(self, peer: MultiplexedPeer) -> None:
         await peer.wait_closed()
         if self._peer is peer:
+            # Keep readiness (see _handle_peer): operations still require a live
+            # peer, so losing one correctly blocks work without making recovery
+            # depend on a handshake the extension will not repeat.
             self._peer = None
-            self._clear_ready()
             self._state_changed.set()
 
     async def _handle_event(self, envelope: Envelope) -> None:
