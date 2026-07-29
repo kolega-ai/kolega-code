@@ -457,7 +457,10 @@ class KolegaCodeApp(
             self._diag.record("session_start", **self._diagnostics_header())
             self._watchdog = ResponsivenessWatchdog(self._diag)
             self._watchdog.start()
-            self.set_interval(1.0, self._watchdog.beat)
+            # The beat doubles as the loop-latency probe, so it ticks several times a
+            # second: chop below the stack-capture threshold is only visible if a beat
+            # lands inside the stalled window. The callback is O(1).
+            self.set_interval(self._watchdog.beat_interval, self._watchdog.beat)
         except Exception:
             self._diag, self._watchdog = None, None
         # Register all themes and apply the persisted one before the first paint,

@@ -42,11 +42,17 @@ loop being blocked, and there are two very different reasons it can happen. The
 watchdog tells them apart:
 
 - **Blocked by synchronous work (a true hang).** A background thread expects a
-  heartbeat roughly every second. If the heartbeat stops for ~5 seconds, the loop is
+  heartbeat several times a second. If the heartbeat stops for ~1 second, the loop is
   stuck inside some synchronous call — the watchdog records an `event_loop_stalled`
   entry and **dumps every thread's stack** to `stalls.log`. The main thread's frame
   in that dump is *exactly* the code that was blocking. When the heartbeat resumes it
-  records `event_loop_recovered` with how long the stall lasted.
+  records `event_loop_recovered` with how long the stall lasted. Stack dumps are
+  capped per session so a pathological session cannot fill the timeline; past the cap
+  the stall is still recorded, without stacks.
+- **Choppy rather than frozen.** Stalls too short to dump stacks for are counted into
+  a `loop_gap_histogram` entry (buckets from 100 ms up), written periodically and at
+  session end. It carries no stacks and costs a few bytes, but it answers the first
+  question about a "feels sluggish" report: whether the chop is real, and how big.
 - **Waiting on the network.** Here the loop is *not* blocked, so the watchdog stays
   quiet — but the timeline shows an LLM request that started and never finished. A
   request open for minutes with no matching completion points at a stalled network
