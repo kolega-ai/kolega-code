@@ -64,10 +64,16 @@ class ToolRegistry:
         Provider-facing definitions, with the prompt-cache checkpoint on the
         last definition (and cleared everywhere else, since definitions may
         be shared between registry views).
+
+        The tool list renders first and is byte-stable for the session, so this breakpoint gets
+        the 1h TTL: it is the one entry that should still be warm when a user comes back from a
+        coffee break, and re-writing the whole tool list is the most expensive miss available.
         """
         definitions = [tool.definition for tool in self]
         for definition in definitions:
             definition.cache_checkpoint = False
+            definition.cache_ttl = None
         if definitions:
             definitions[-1].cache_checkpoint = True
+            definitions[-1].cache_ttl = "1h"
         return definitions

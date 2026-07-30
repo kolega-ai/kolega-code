@@ -119,7 +119,11 @@ def test_coder_override_replaces_base_prompt_and_keeps_dynamic_sections(tmp_path
     assert "Matching Extension" in prompt
     assert "Extra matching context." in prompt
     assert "Browser Only" not in prompt
-    assert "Project guidance" in prompt
+    # Repository guidance is injected into the conversation on change rather than rendered into
+    # the prompt, so an AGENTS.md edit no longer invalidates the cached prefix. The prompt still
+    # explains the channel that delivers it.
+    assert "Project guidance" not in prompt
+    assert "## Context Updates" in prompt
     assert "Workspace fact" in prompt
 
 
@@ -291,4 +295,5 @@ def test_planning_override_uses_dynamic_sections(tmp_path):
     assert f"# Custom planning prompt for {tmp_path}" in prompt
     assert "Planning Context" in prompt
     assert "Plan carefully." in prompt
-    assert "Planning guidance" in prompt
+    assert "Planning guidance" not in prompt
+    assert "## Context Updates" in prompt

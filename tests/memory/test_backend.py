@@ -296,19 +296,26 @@ def test_index_write_over_prompt_budget_warns(tmp_path: Path) -> None:
     assert topic_result.warnings == ()
 
 
-def test_recall_guidance_only_when_index_present(tmp_path: Path) -> None:
+def test_recall_guidance_is_constant_whether_or_not_an_index_exists(tmp_path: Path) -> None:
+    """Recall guidance is policy, and policy has to be byte-stable to stay cacheable.
+
+    It rides in the system prompt while the index itself is injected into the conversation, so
+    emitting it only once an index exists would change the prompt on a project's first memory
+    write — invalidating the cached prefix for the entire conversation.
+    """
+    expected = (
+        "The MEMORY.md index is a table of contents, not the full memory. Read any linked "
+        "topic relevant to the current task with read_memory before acting on it; use "
+        "list_memory to search memory the index does not surface.\n"
+    )
     store = backend(tmp_path)
-    assert store.prepare_prompt_context().recall_guidance == ""
+    assert store.prepare_prompt_context().recall_guidance == expected
     assert store.write_entry("topics/build.md", "# Build").ok
-    assert store.prepare_prompt_context().recall_guidance == ""
+    assert store.prepare_prompt_context().recall_guidance == expected
 
     assert store.write_entry("MEMORY.md", "- [Build](topics/build.md)").ok
 
-    assert store.prepare_prompt_context().recall_guidance == (
-        "The MEMORY.md index below is a table of contents, not the full memory. Read any linked "
-        "topic relevant to the current task with read_memory before acting on it; use list_memory "
-        "to search memory the index does not surface.\n"
-    )
+    assert store.prepare_prompt_context().recall_guidance == expected
 
 
 def test_count_and_total_limits_leave_existing_content(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -203,15 +203,21 @@ class TestBaseAgent:
         chunks = [chunk async for chunk in base_agent.process_message_stream("finish")]
 
         assert chunks[-1]["complete"] is True
-        assert [event.event_type for event in store.journal(session.session_id).read_events()][-3:] == [
+        # The volatile-context update is journalled inside the turn, after turn.started, so it is
+        # attributed to the turn rather than dangling outside one. See agent/volatile_context.py.
+        assert [event.event_type for event in store.journal(session.session_id).read_events()][-4:] == [
             "turn.started",
+            "context.message",
             "assistant.message",
             "turn.completed",
         ]
-        assert [Message.from_dict(item).get_text_content() for item in store.load(session.session_id).history] == [
-            "finish",
-            "done",
-        ]
+        # In-memory history and the replayed journal must agree, or a resumed session sends a
+        # different prefix than the live one did.
+        replayed = [Message.from_dict(item).get_text_content() for item in store.load(session.session_id).history]
+        assert replayed[0] == "finish"
+        assert "<system-reminder source=" in replayed[1]
+        assert replayed[2] == "done"
+        assert [message.get_text_content() for message in base_agent.history] == replayed
 
     @pytest.mark.asyncio
     async def test_persistence_failure_before_turn_stops_before_model_request(self, base_agent):
@@ -241,6 +247,9 @@ class TestBaseAgent:
 
             def start_turn(self, message):
                 self.current_turn_id = "turn"
+
+            def record_context_message(self, message, *, actor=None):
+                pass
 
             def record_assistant(self, message):
                 raise OSError("assistant event failed")
@@ -280,6 +289,9 @@ class TestBaseAgent:
 
             def start_turn(self, message):
                 self.current_turn_id = "turn"
+
+            def record_context_message(self, message, *, actor=None):
+                pass
 
             def record_assistant(self, message):
                 return None

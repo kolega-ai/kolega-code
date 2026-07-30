@@ -4,7 +4,6 @@ from typing import Any, Dict, List, Optional
 from .baseagent import BaseAgent
 from kolega_code.config import AgentConfig
 from kolega_code.events import AgentConnectionManager
-from kolega_code.llm.models import Message, TextBlock
 from .prompt_provider import AgentMode, AgentType, PromptExtension, PromptProvider
 from .tools import ToolCollection, ToolCollectionConfig
 
@@ -127,4 +126,4 @@ class InvestigationAgent(BaseAgent):
     def _initialize_system_prompt(self):
         """Initialize system prompt using PromptProvider and project overrides."""
         prompt_text = self.build_agent_system_prompt(AgentType.INVESTIGATION, self.agent_mode)
-        self.system_prompt = Message(role="system", content=[TextBlock(text=prompt_text)])
+        self.system_prompt = self.system_prompt_message(prompt_text)

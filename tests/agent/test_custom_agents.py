@@ -215,7 +215,11 @@ def test_custom_agent_applies_prompt_model_tools_permissions_and_dynamic_context
     system_block = agent.system_prompt.content[0]
     assert isinstance(system_block, TextBlock)
     assert "You are the project reviewer." in system_block.text
-    assert "Always run the focused tests." in system_block.text
+    # Repository guidance is injected into the conversation on change rather than rendered into the
+    # prompt, so editing AGENTS.md no longer invalidates the cached prefix. The prompt describes
+    # the channel that delivers it instead. See agent/volatile_context.py.
+    assert "Always run the focused tests." not in system_block.text
+    assert "## Context Updates" in system_block.text
     assert agent.tool_collection is not None
     tool_names = {tool.name for tool in agent.tool_collection.get_tool_list()}
     assert tool_names == {"read_entire_file"}

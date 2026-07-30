@@ -4,7 +4,6 @@ from typing import Any, Dict, List, Optional
 from .baseagent import BaseAgent
 from kolega_code.config import AgentConfig
 from kolega_code.events import AgentConnectionManager
-from kolega_code.llm.models import Message, TextBlock
 from .prompt_provider import AgentMode, AgentType, PromptExtension, PromptProvider
 from .tools import ToolCollection, ToolCollectionConfig, ToolExtension
 from .utils.commands import CommandProcessor
@@ -121,7 +120,7 @@ class PlanningAgent(BaseAgent):
 
     def _initialize_system_prompt(self) -> None:
         prompt = self.build_agent_system_prompt(AgentType.PLANNING, self.agent_mode)
-        self.system_prompt = Message(role="system", content=[TextBlock(text=prompt)])
+        self.system_prompt = self.system_prompt_message(prompt)
 
     async def write_plan(self, plan_markdown: str) -> str:
         """

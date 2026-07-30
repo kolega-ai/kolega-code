@@ -8,6 +8,21 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ### Changed
 
+- Project memory, repository guidance (`AGENTS.md`/`KOLEGA.md`), and the current
+  date are no longer rendered into the system prompt. They now reach the agent as
+  `<system-reminder>` context updates, sent once each time they change. Because
+  providers cache on a prefix match and the system prompt is processed ahead of
+  every message, a single `edit_memory` call previously invalidated the cached
+  prefix for the whole conversation and re-billed it on the next turn — on the
+  order of a dollar per write in a long session, and worse on providers whose
+  prefix caching is automatic and offers no way to compensate. The system prompt
+  is now byte-stable for the life of a session.
+- Prompt-cache breakpoints are placed more deliberately: the tool list and the
+  system prompt each get one with a 1-hour TTL, and the conversation carries two
+  rolling breakpoints a turn apart rather than one. A single trailing breakpoint
+  could fail to match after a turn with many parallel tool calls, which discarded
+  the whole conversation's cache; the second one bounds that loss to one turn.
+
 - The responsiveness watchdog now captures stacks for event-loop stalls from ~1
   second (was 5) and counts shorter gaps into a periodic `loop_gap_histogram`
   diagnostics entry, so choppy-but-not-frozen UI leaves evidence instead of

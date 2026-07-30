@@ -330,6 +330,8 @@ async def test_coder_agent_file_attachment_added_to_history(tmp_path):
     chunks = [chunk async for chunk in agent.process_message_stream("see the notes", attachments)]
 
     assert chunks[-1]["complete"] is True
+    # history[1] is the volatile-context update, which trails the user's message; see
+    # agent/volatile_context.py.
     user_message = agent.history[0]
     texts = [block.text for block in user_message.content if isinstance(block, TextBlock)]
     assert texts[0] == "see the notes"

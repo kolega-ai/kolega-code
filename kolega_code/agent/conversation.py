@@ -536,6 +536,9 @@ class Conversation:
         self.compacted_through: int = 0
         self.compacted_history_length: int = 0
         self.max_tool_result_chars = max_tool_result_chars
+        # The block ``mark_cache_checkpoint`` marked last time; it keeps its breakpoint on the
+        # next call so there are always two, one turn apart. See ``mark_cache_checkpoint``.
+        self._previous_checkpoint: Any = None
 
     # ------------------------------------------------------------------
     # History access (compaction-aware)
@@ -913,22 +916,55 @@ class Conversation:
     # ------------------------------------------------------------------
 
     def mark_cache_checkpoint(self) -> None:
+        """Place two rolling cache breakpoints at the end of the history.
+
+        A breakpoint is matched by walking back a bounded number of content blocks, so a single
+        marker at the very end can fail to find the previous turn's entry — one iteration with
+        many parallel tool calls easily adds more blocks than that window. When it fails, the
+        whole conversation is re-billed. Keeping the previous turn's marker as well guarantees a
+        hit there, bounding the loss to a single turn's delta.
+
+        Two rolling markers plus the tool-list and system-prompt breakpoints is exactly the four
+        Anthropic allows, so this must never place more than two.
         """
-        Mark only the last content block of the last message for prompt caching,
-        clearing the marker everywhere else (Anthropic allows max 4 cache blocks).
-        """
+        latest = self._last_cacheable_block()
+
+        # One pass clears every marker and, for free, reports whether the block marked on the
+        # previous call is still in the history: compaction and restore replace blocks wholesale,
+        # and a stale reference would silently cost one of the two breakpoints.
+        previous_still_present = False
         for message in self.history:
-            if hasattr(message, "content") and isinstance(message.content, list):
+            if isinstance(message.content, list):
                 for content_block in message.content:
+                    if content_block is self._previous_checkpoint:
+                        previous_still_present = True
                     if hasattr(content_block, "cache_checkpoint"):
                         content_block.cache_checkpoint = False
 
-        if self.history:
-            last_message = self.history[-1]
-            if hasattr(last_message, "content") and isinstance(last_message.content, list) and last_message.content:
-                last_content_block = last_message.content[-1]
-                if hasattr(last_content_block, "cache_checkpoint"):
-                    last_content_block.cache_checkpoint = True
+        # Deliberately the marker from the *previous call*, not the second-to-last block: the two
+        # have to be a turn apart to help. Two adjacent tool results in one message would fall
+        # inside the same lookback window and fail together.
+        previous = self._previous_checkpoint if previous_still_present else None
+        for block in (previous, latest):
+            if block is not None:
+                block.cache_checkpoint = True
+        if latest is not None:
+            self._previous_checkpoint = latest
+
+    def _last_cacheable_block(self) -> Any:
+        """The last block that may carry a breakpoint, or ``None``.
+
+        Thinking and reasoning blocks are skipped via ``ContentBlock.SUPPORTS_CACHE_CONTROL``:
+        Anthropic rejects a breakpoint on them, and marking one anyway would silently spend the
+        marker on a block that never serializes it.
+        """
+        for message in reversed(self.history):
+            if not isinstance(message.content, list):
+                continue
+            for block in reversed(message.content):
+                if getattr(block, "SUPPORTS_CACHE_CONTROL", False):
+                    return block
+        return None
 
     def sanitize_oversized_tool_results(self) -> int:
         """Replace tool results above the size cap with an explanatory placeholder."""

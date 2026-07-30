@@ -131,9 +131,25 @@ class ContentBlock:
 
     TYPE_NAME = "base"  # Should be overridden by subclasses
 
-    def __init__(self, type: str, cache_checkpoint: bool = False):
+    # Anthropic accepts a cache breakpoint on text, image, document, tool_use and tool_result
+    # blocks, and rejects one on a thinking/reasoning block. This flag is the single source of
+    # truth: it gates emission here, and ``Conversation._last_cacheable_block`` reads it when
+    # choosing where to place a marker, so the two cannot drift apart.
+    SUPPORTS_CACHE_CONTROL = False
+
+    def __init__(self, type: str, cache_checkpoint: bool = False, cache_ttl: Optional[str] = None):
         self.type = type
+        # Request-shaping state, deliberately absent from to_dict/from_dict: breakpoints are
+        # recomputed from scratch on every turn by ``Conversation.mark_cache_checkpoint``, and
+        # caches are per-model and short-lived, so a marker persisted from an earlier session is
+        # meaningless by the time it is read back. ``from_dict`` ignores the key if an older
+        # session file still carries it.
         self._cache_checkpoint = cache_checkpoint
+        # Anthropic accepts "5m" (the default when omitted) or "1h". The longer TTL costs more to
+        # write and is worth it only for a breakpoint on content that stays byte-identical for the
+        # whole session — the tool list and the system prompt — where an interactive session that
+        # idles past five minutes would otherwise re-bill the entire prefix.
+        self.cache_ttl = cache_ttl
 
     @property
     def cache_checkpoint(self) -> bool:
@@ -142,6 +158,15 @@ class ContentBlock:
     @cache_checkpoint.setter
     def cache_checkpoint(self, value: bool):
         self._cache_checkpoint = value
+
+    def _cache_control(self) -> Optional[Dict[str, str]]:
+        """The ``cache_control`` value for this block, or ``None`` if it is not a breakpoint."""
+        if not self._cache_checkpoint or not self.SUPPORTS_CACHE_CONTROL:
+            return None
+        control: Dict[str, str] = {"type": "ephemeral"}
+        if self.cache_ttl:
+            control["ttl"] = self.cache_ttl
+        return control
 
     def to_dict(self) -> Dict[str, Any]:
         """Serializes the content block to a dictionary."""
@@ -185,20 +210,21 @@ class TextBlock(ContentBlock):
 
     TYPE_NAME = "text"
 
-    def __init__(self, text: str, cache_checkpoint: bool = False):
-        super().__init__(type=self.TYPE_NAME, cache_checkpoint=cache_checkpoint)
+    SUPPORTS_CACHE_CONTROL = True
+
+    def __init__(self, text: str, cache_checkpoint: bool = False, cache_ttl: Optional[str] = None):
+        super().__init__(type=self.TYPE_NAME, cache_checkpoint=cache_checkpoint, cache_ttl=cache_ttl)
         self.text = text
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "type": self.type,
             "text": self.text,
-            "cache_checkpoint": self.cache_checkpoint,
         }
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "TextBlock":
-        return cls(text=data["text"], cache_checkpoint=data.get("cache_checkpoint", False))
+        return cls(text=data["text"])
 
     def to_anthropic(self) -> Dict[str, Any]:
         """
@@ -209,8 +235,9 @@ class TextBlock(ContentBlock):
         """
         result: Dict[str, Any] = {"type": "text", "text": self.text}
 
-        if self.cache_checkpoint:
-            result["cache_control"] = {"type": "ephemeral"}
+        cache_control = self._cache_control()
+        if cache_control is not None:
+            result["cache_control"] = cache_control
 
         return result
 
@@ -240,6 +267,8 @@ class TextBlock(ContentBlock):
 class ImageBlock(ContentBlock):
     TYPE_NAME = "image_url"  # Consistent with OpenAI type for simplicity
 
+    SUPPORTS_CACHE_CONTROL = True
+
     def __init__(self, image_type: str, media_type: str, data: str, cache_checkpoint: bool = False):
         super().__init__(type=self.TYPE_NAME, cache_checkpoint=cache_checkpoint)
 
@@ -253,7 +282,6 @@ class ImageBlock(ContentBlock):
             "image_type": self.image_type,
             "media_type": self.media_type,
             "data": self.data,
-            "cache_checkpoint": self.cache_checkpoint,
         }
 
     @classmethod
@@ -262,7 +290,6 @@ class ImageBlock(ContentBlock):
             image_type=data["image_type"],
             media_type=data["media_type"],
             data=data["data"],
-            cache_checkpoint=data.get("cache_checkpoint", False),
         )
 
     def to_anthropic(self) -> Dict[str, Any]:
@@ -281,8 +308,9 @@ class ImageBlock(ContentBlock):
             "source": {"type": self.image_type, "media_type": self.media_type, "data": self.data},
         }
 
-        if self.cache_checkpoint:
-            result["cache_control"] = {"type": "ephemeral"}
+        cache_control = self._cache_control()
+        if cache_control is not None:
+            result["cache_control"] = cache_control
 
         return result
 
@@ -339,7 +367,6 @@ class ThinkingBlock(ContentBlock):
         result = {
             "type": self.type,
             "thinking": self.thinking,
-            "cache_checkpoint": self.cache_checkpoint,
         }
         if self.signature:
             result["signature"] = self.signature
@@ -349,13 +376,15 @@ class ThinkingBlock(ContentBlock):
     def from_dict(cls, data: Dict[str, Any]) -> "ThinkingBlock":
         return cls(
             thinking=data["thinking"],
-            cache_checkpoint=data.get("cache_checkpoint", False),
             signature=data.get("signature"),
         )
 
     def to_anthropic(self) -> Dict[str, Any]:
         """
-        Converts the text block into the Anthropic format.
+        Converts the thinking block into the Anthropic format.
+
+        No ``cache_control`` is emitted even if this block is marked: ``SUPPORTS_CACHE_CONTROL``
+        is False for thinking blocks, which Anthropic rejects a breakpoint on.
 
         Returns:
             Dict[str, Any]: A dictionary with the structure expected by Anthropic API
@@ -364,8 +393,9 @@ class ThinkingBlock(ContentBlock):
         if self.signature:
             result["signature"] = self.signature
 
-        if self.cache_checkpoint:
-            result["cache_control"] = {"type": "ephemeral"}
+        cache_control = self._cache_control()
+        if cache_control is not None:
+            result["cache_control"] = cache_control
 
         return result
 
@@ -407,12 +437,11 @@ class RedactedThinkingBlock(ContentBlock):
         return {
             "type": self.type,
             "data": self.data,
-            "cache_checkpoint": self.cache_checkpoint,
         }
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "RedactedThinkingBlock":
-        return cls(data=data["data"], cache_checkpoint=data.get("cache_checkpoint", False))
+        return cls(data=data["data"])
 
     def to_anthropic(self) -> Dict[str, Any]:
         return {"type": "redacted_thinking", "data": self.data}
@@ -463,7 +492,6 @@ class ResponsesReasoningBlock(ContentBlock):
             "type": self.type,
             "encrypted_content": self.encrypted_content,
             "summary": list(self.summary),
-            "cache_checkpoint": self.cache_checkpoint,
         }
         if self.item_id:
             result["item_id"] = self.item_id
@@ -475,7 +503,6 @@ class ResponsesReasoningBlock(ContentBlock):
             encrypted_content=data["encrypted_content"],
             summary=data.get("summary") or [],
             item_id=data.get("item_id"),
-            cache_checkpoint=data.get("cache_checkpoint", False),
         )
 
     def to_responses_item(self) -> Dict[str, Any]:
@@ -518,6 +545,8 @@ class ToolParameter:
 class ToolDefinition(ContentBlock):
     """Unified representation of a tool definition across providers"""
 
+    SUPPORTS_CACHE_CONTROL = True
+
     def __init__(
         self,
         name: str,
@@ -527,8 +556,9 @@ class ToolDefinition(ContentBlock):
         input_schema: Optional[Dict[str, Any]] = None,
         input_kind: ToolInputKind = "json",
         freeform_format: Optional[Dict[str, str]] = None,
+        cache_ttl: Optional[str] = None,
     ):
-        super().__init__(type="tool_definition", cache_checkpoint=cache_checkpoint)
+        super().__init__(type="tool_definition", cache_checkpoint=cache_checkpoint, cache_ttl=cache_ttl)
         self.name = name
         self.description = description
         self.parameters = parameters
@@ -629,8 +659,9 @@ class ToolDefinition(ContentBlock):
             "input_schema": self._fallback_object_schema(),
         }
 
-        if self.cache_checkpoint:
-            result["cache_control"] = {"type": "ephemeral"}
+        cache_control = self._cache_control()
+        if cache_control is not None:
+            result["cache_control"] = cache_control
 
         return result
 
@@ -681,6 +712,8 @@ class ToolCall(ContentBlock):
 
     TYPE_NAME = "tool_call"  # Changed from 'tool_use' (Anthropic specific)
 
+    SUPPORTS_CACHE_CONTROL = True
+
     def __init__(
         self,
         id: str,
@@ -707,7 +740,6 @@ class ToolCall(ContentBlock):
             "id": self.id,
             "name": self.name,
             "input": self.input,
-            "cache_checkpoint": self.cache_checkpoint,
             "execution_id": self.execution_id,
             "input_kind": self.input_kind,
         }
@@ -723,7 +755,6 @@ class ToolCall(ContentBlock):
             id=data["id"],
             name=data["name"],
             input=data["input"],
-            cache_checkpoint=data.get("cache_checkpoint", False),
             execution_id=data.get("execution_id"),
             thought_signature=base64.b64decode(encoded_signature) if encoded_signature else None,
             input_kind=data.get("input_kind", "json"),
@@ -739,8 +770,9 @@ class ToolCall(ContentBlock):
         provider_input = {"input": self.input} if self.input_kind == "freeform" else self.input
         result = {"type": "tool_use", "id": self.id, "name": self.name, "input": provider_input}
 
-        if self.cache_checkpoint:
-            result["cache_control"] = {"type": "ephemeral"}
+        cache_control = self._cache_control()
+        if cache_control is not None:
+            result["cache_control"] = cache_control
 
         return result
 
@@ -790,6 +822,8 @@ class ToolResult(ContentBlock):
 
     TYPE_NAME = "tool_result"
 
+    SUPPORTS_CACHE_CONTROL = True
+
     def __init__(
         self,
         tool_use_id: str,
@@ -825,7 +859,6 @@ class ToolResult(ContentBlock):
             "content": serialized_content,
             "name": self.name,
             "is_error": self.is_error,
-            "cache_checkpoint": self.cache_checkpoint,
             "input_kind": self.input_kind,
         }
         if self.execution_id:
@@ -851,7 +884,6 @@ class ToolResult(ContentBlock):
             content=deserialized_content,
             name=data["name"],
             is_error=data["is_error"],
-            cache_checkpoint=data.get("cache_checkpoint", False),
             execution_id=data.get("execution_id"),
             input_kind=data.get("input_kind", "json"),
         )
@@ -879,8 +911,9 @@ class ToolResult(ContentBlock):
             "is_error": self.is_error,
         }
 
-        if self.cache_checkpoint:
-            result["cache_control"] = {"type": "ephemeral"}
+        cache_control = self._cache_control()
+        if cache_control is not None:
+            result["cache_control"] = cache_control
 
         return result
 

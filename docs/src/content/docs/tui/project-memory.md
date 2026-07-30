@@ -131,8 +131,13 @@ explicit action. Creating the first entry in a new disabled bank asks you to
 confirm enablement first.
 
 Configuration changes are unavailable or deferred while an agent turn is
-running. After a successful edit or enablement change, the idle agent prompt is
-refreshed. Failed writes do not refresh it.
+running.
+
+Memory reaches the agent in two parts. How to treat memory sits in the system
+prompt and does not change during a session. The memory itself is delivered as a
+`<system-reminder>` context update at the start of the next turn after it changes,
+rather than being rebuilt into the prompt — editing one line would otherwise
+invalidate the cached prefix for the entire conversation and re-bill it.
 
 ## Slash commands
 

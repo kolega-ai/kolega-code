@@ -23,6 +23,7 @@ from kolega_code.config import AgentConfig, EditProtocol, ModelProvider
 from kolega_code.events import AgentConnectionManager
 from .context import AgentContext, AgentServices, Telemetry, WorkspaceInfo
 from .conversation import Conversation, adapt_history_for_provider
+from .volatile_context import VolatileContextTracker, VolatileSection
 from kolega_code.events import AgentEventEmitter
 from kolega_code.hooks import (
     NO_OP_DISPATCHER,
@@ -381,6 +382,11 @@ class BaseAgent(LogMixin):
         self.prompt_provider = context.prompt_provider or PromptProvider()
         self.prompt_overrides = ProjectPromptOverrides(self.filesystem)
 
+        # Memory, repository guidance, and the date are injected into the conversation when they
+        # change instead of being rendered into the system prompt, which keeps the cached prefix
+        # stable for the whole session. See agent/volatile_context.py.
+        self._volatile_context = VolatileContextTracker()
+
         self.conversation = Conversation(max_tool_result_chars=self.max_tool_result_chars_in_history)
         self.conversation.skill_content_pattern = self.skill_content_pattern
         # Counts consecutive transient LLM failures (rate-limit / overload) so the turn loop
@@ -670,13 +676,21 @@ class BaseAgent(LogMixin):
         is_git_repo = self.filesystem.exists(".git") and self.filesystem.is_dir(".git")
 
         project_guidance_file, project_guidance = self._load_project_guidance()
+        # ``private_memory`` (policy + the memory itself) is still populated for callers that
+        # render their own prompts, but the system prompt renders only ``memory_policy``: the
+        # memory body changes as the agent writes, and volatile content in the system prompt
+        # invalidates the whole conversation's cached prefix. See agent/volatile_context.py.
         private_memory = ""
+        memory_policy = ""
         if self.memory_manager is not None:
             try:
-                private_memory = self.memory_manager.prompt_context().text
+                memory_context = self.memory_manager.prompt_context()
+                private_memory = memory_context.text
+                memory_policy = memory_context.policy
             except Exception:
                 # Disabled/unavailable memory is intentionally invisible to the model.
                 private_memory = ""
+                memory_policy = ""
 
         return PromptContext(
             system_name=os.getenv("KOLEGA_CODE_SYSTEM_NAME", "Kolega Code"),
@@ -694,6 +708,7 @@ class BaseAgent(LogMixin):
             workspace_environment_variables=self.workspace_env_var_descriptions,
             memories=self.workspace_memories,
             private_memory=private_memory,
+            memory_policy=memory_policy,
         )
 
     def _prompt_override_error_message(self, path: str, detail: object) -> str:
@@ -779,6 +794,18 @@ class BaseAgent(LogMixin):
         initialize = getattr(self, "_initialize_system_prompt", None)
         if callable(initialize):
             initialize()
+
+    @staticmethod
+    def system_prompt_message(text: str) -> Message:
+        """Wrap system prompt text with a long-lived cache breakpoint.
+
+        The prompt is byte-stable for the whole session now that volatile content is injected
+        into the conversation instead, which makes a breakpoint of its own worth placing: it
+        renders after the tools and before every message, so without one the prompt is re-billed
+        on any miss further down. The 1h TTL matches the tool list — an interactive session
+        routinely idles longer than the default five minutes.
+        """
+        return Message(role="system", content=[TextBlock(text=text, cache_checkpoint=True, cache_ttl="1h")])
 
     def _initialize_system_prompt(self) -> None:
         """Rebuild ``self.system_prompt`` from the current prompt configuration.
@@ -1737,11 +1764,35 @@ class BaseAgent(LogMixin):
         await asyncio.to_thread(recorder.finish_turn, status, error=error)
 
     def refresh_memory_context(self) -> None:
-        """Refresh private memory and rebuild the system prompt without a full agent rebuild."""
+        """Re-read project memory so the next turn picks up any change.
+
+        There is no system prompt to rebuild: the memory body is injected into the conversation
+        when it changes rather than rendered into the prompt, so a write costs one appended block
+        instead of invalidating the whole conversation's cached prefix.
+        """
         if self.memory_manager is None:
             return
         self.memory_manager.refresh()
-        self._initialize_system_prompt()
+
+    def _volatile_context_sections(self) -> List[VolatileSection]:
+        """Snapshot the context that changes mid-session and is injected rather than rendered."""
+        guidance_file, guidance = self._load_project_guidance()
+        memory_body = ""
+        if self.memory_manager is not None:
+            try:
+                memory_body = self.memory_manager.prompt_context().body
+            except Exception:
+                # Disabled/unavailable memory is intentionally invisible to the model.
+                memory_body = ""
+        return [
+            VolatileSection("memory", memory_body),
+            VolatileSection("guidance", guidance, guidance_file),
+            VolatileSection("date", f"Today's date: {datetime.now().strftime('%Y-%m-%d')}"),
+        ]
+
+    def pending_volatile_context(self) -> Optional[TextBlock]:
+        """Volatile context the model has not been shown yet, or ``None`` if nothing changed."""
+        return self._volatile_context.pending_block(self._volatile_context_sections())
 
     async def _process_message_stream_impl(
         self, message: str, attachments: Optional[List[Dict[str, Any]]] = None
@@ -1787,7 +1838,28 @@ class BaseAgent(LogMixin):
                 self.session_recorder.start_turn,
                 Message(role="user", content=content_blocks),
             )
+
         self.append_user_message(content_blocks)
+
+        # Volatile context is its own user turn rather than extra blocks on the user's message: it
+        # is operator context, not something the user said, and keeping it separate leaves the
+        # recorded turn showing only what the user actually typed.
+        #
+        # It follows the user's message, and is journalled after ``start_turn``, so that the
+        # in-memory history and the journal agree — a resumed session then replays the same order
+        # the live session sent. Journalling it before ``start_turn`` would instead attribute it to
+        # the *previous* turn, since ``record_context_message`` stamps the current turn id.
+        #
+        # Deliberately not gated on ``sub_agent``: sub-agent prompts no longer carry memory or
+        # repository guidance either, so gating it would silently starve them of both.
+        volatile_context = self.pending_volatile_context()
+        if volatile_context is not None:
+            if self.session_recorder is not None:
+                await asyncio.to_thread(
+                    self.session_recorder.record_context_message,
+                    Message(role="user", content=[volatile_context]),
+                )
+            self.append_user_message([volatile_context])
 
         stop_reason = None
         stop_overrides = 0
@@ -1823,6 +1895,10 @@ class BaseAgent(LogMixin):
                         },
                     )
                     result = await self.compress_history()
+                    # Compaction summarizes the injected volatile-context blocks along with
+                    # everything else, so the memory and guidance the model was given may
+                    # survive only in lossy summary form. Re-send them on the next turn.
+                    self._volatile_context.forget()
                     # Rebuild after compaction (history changed) and re-mark the cache
                     # checkpoint before re-counting so the reused history reflects it.
                     self.mark_cache_checkpoint()

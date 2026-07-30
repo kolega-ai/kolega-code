@@ -59,6 +59,10 @@ class PromptContext:
     project_guidance: str = ""
     project_guidance_file: str = ""
     private_memory: str = ""
+    # How to treat project memory (stable for a session) as opposed to the memory itself,
+    # which changes as the agent writes and is injected into the conversation rather than
+    # rendered here — see kolega_code/agent/volatile_context.py.
+    memory_policy: str = ""
     kolega_md: str = ""
     workspace_id: str = ""
     workspace_environment_variables: Dict[str, str] = field(default_factory=dict)
@@ -206,20 +210,26 @@ class PromptProvider:
                 body_parts.append(f"### {extension.title}\n\n{extension.markdown}")
             sections.append("\n\n".join(body_parts))
 
-        if context.project_guidance:
-            sections.append(
-                "## Project Instructions\n\n"
-                f"The project directory contains `{context.project_guidance_file}`. "
-                "Treat it as local project guidance:\n\n"
-                "```markdown\n"
-                f"{context.project_guidance}\n"
-                "```"
-            )
+        # Repository guidance and the memory body itself are deliberately absent here: both
+        # change during a session, and anything in the system prompt is hashed ahead of every
+        # message, so rendering them would invalidate the whole conversation's cached prefix on
+        # each edit. They are injected into the conversation instead — see
+        # kolega_code/agent/volatile_context.py. Only the stable memory policy stays.
+        if context.memory_policy:
+            sections.append(context.memory_policy)
 
-        if context.private_memory:
-            sections.append(context.private_memory)
+        sections.append(self.render_context_updates())
 
         return "\n\n".join(section.strip() for section in sections if section.strip())
+
+    def render_context_updates(self) -> str:
+        """Render the static description of the ``<system-reminder>`` channel.
+
+        Bundled agent templates include this file directly; override prompts and the planning
+        template receive it through ``render_dynamic_sections`` so every agent is told how to
+        read injected context.
+        """
+        return self._jinja_env.get_template("system/includes/context_updates.md").render()
 
     def _filter_prompt_extensions(
         self,

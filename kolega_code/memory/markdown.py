@@ -121,10 +121,20 @@ class MarkdownMemoryBackend:
             "MEMORY.md well under its 200-line prompt budget. Never store secrets, guesses, transient "
             "progress, plans, transcript summaries, or duplicate user instructions.\n"
         )
+        # Unconditional, and worded without reference to an adjacent index: this guidance is part
+        # of the memory *policy*, which lives in the cached system prompt while the index itself
+        # is delivered as a context update. Emitting it only once an index exists would make the
+        # prompt change on a project's first memory write and invalidate the whole cached prefix.
+        recall = (
+            "The MEMORY.md index is a table of contents, not the full memory. Read any linked "
+            "topic relevant to the current task with read_memory before acting on it; use "
+            "list_memory to search memory the index does not surface.\n"
+        )
         if not entry.present:
             return MemoryPromptContext(
                 "\nMEMORY.md is currently absent or empty.",
                 authoring_guidance=guidance,
+                recall_guidance=recall,
             )
         content = entry.content or ""
         bounded, lines, truncated = _bound_prompt(content)
@@ -145,11 +155,7 @@ class MarkdownMemoryBackend:
             truncated=truncated,
             warnings=warning,
             authoring_guidance=guidance,
-            recall_guidance=(
-                "The MEMORY.md index below is a table of contents, not the full memory. Read any "
-                "linked topic relevant to the current task with read_memory before acting on it; "
-                "use list_memory to search memory the index does not surface.\n"
-            ),
+            recall_guidance=recall,
         )
 
     def list_entries(self, query: str | None = None) -> list[MemoryEntrySummary]:

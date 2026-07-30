@@ -26,7 +26,9 @@ def test_dump_prompt_overrides_creates_all_uppercase_files(tmp_path):
     assert "- Working directory: {{ context.project_path }}" in coder_text
     assert "- Is directory a git repo: {{ context.is_git_repo }}" in coder_text
     assert "- Platform: {{ context.platform }}" in coder_text
-    assert "- Today's date: {{ context.date_today }}" in coder_text
+    # The date is injected into the conversation, not rendered here: it would otherwise change
+    # the system prompt every midnight and invalidate the cached prefix.
+    assert "date_today" not in coder_text
     assert "- Model: {{ context.model_name }}" in coder_text
     assert "- Model supports vision: {{ context.model_supports_vision | lower }}" in coder_text
     assert str(tmp_path) not in coder_text
@@ -58,7 +60,7 @@ def test_prompt_dump_contents_use_placeholders_for_agent_environment(tmp_path):
         assert "{{ context.project_path }}" in text
         assert "{{ context.is_git_repo }}" in text
         assert "{{ context.platform }}" in text
-        assert "{{ context.date_today }}" in text
+        assert "date_today" not in text
         assert "{{ context.model_name }}" in text
         assert "- Model supports vision: {{ context.model_supports_vision | lower }}" in text
         assert str(tmp_path) not in text

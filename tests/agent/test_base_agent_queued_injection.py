@@ -51,19 +51,22 @@ async def test_queued_input_injected_after_tool_batch(base_agent) -> None:
 
     _ = [chunk async for chunk in base_agent.process_message_stream("do X")]
 
+    # history[0] is the volatile-context update injected at the start of the first turn (memory
+    # and date, as its own user turn); the turn's own messages follow. See volatile_context.py.
     assert [message.role for message in base_agent.history] == [
+        "user",
         "user",
         "assistant",
         "user",
         "user",
         "assistant",
     ]
-    assert isinstance(base_agent.history[1].content[0], ToolCall)
-    assert all(isinstance(block, ToolResult) for block in base_agent.history[2].content)
-    assert len(base_agent.history[3].content) == 1
-    assert isinstance(base_agent.history[3].content[0], TextBlock)
-    assert base_agent.history[3].content[0].text == "also do Y"
-    assert base_agent.history[4].stop_reason == "end_turn"
+    assert isinstance(base_agent.history[2].content[0], ToolCall)
+    assert all(isinstance(block, ToolResult) for block in base_agent.history[3].content)
+    assert len(base_agent.history[4].content) == 1
+    assert isinstance(base_agent.history[4].content[0], TextBlock)
+    assert base_agent.history[4].content[0].text == "also do Y"
+    assert base_agent.history[5].stop_reason == "end_turn"
     assert base_agent.conversation.is_valid_for_anthropic() is True
     provider.assert_awaited_once_with()
 
@@ -129,8 +132,11 @@ async def test_injection_journal_ordering_and_replay(base_agent, tmp_path) -> No
     _ = [chunk async for chunk in base_agent.process_message_stream("do X")]
 
     event_types = [event.event_type for event in store.journal(session.session_id).read_events()]
-    assert event_types[-6:] == [
+    # Two context messages now: the volatile-context update at the start of the turn, and the
+    # queued user input delivered mid-turn.
+    assert event_types[-7:] == [
         "turn.started",
+        "context.message",
         "assistant.message",
         "tool.results",
         "context.message",
@@ -139,11 +145,12 @@ async def test_injection_journal_ordering_and_replay(base_agent, tmp_path) -> No
     ]
 
     replayed = [Message.from_dict(item) for item in store.load(session.session_id).history]
-    assert [message.role for message in replayed] == ["user", "assistant", "user", "user", "assistant"]
-    assert all(isinstance(block, ToolResult) for block in replayed[2].content)
-    assert len(replayed[3].content) == 1
-    assert isinstance(replayed[3].content[0], TextBlock)
-    assert replayed[3].content[0].text == "also do Y"
+    # replayed[0] is the injected volatile-context update; the turn's messages follow it.
+    assert [message.role for message in replayed] == ["user", "user", "assistant", "user", "user", "assistant"]
+    assert all(isinstance(block, ToolResult) for block in replayed[3].content)
+    assert len(replayed[4].content) == 1
+    assert isinstance(replayed[4].content[0], TextBlock)
+    assert replayed[4].content[0].text == "also do Y"
 
 
 @pytest.mark.asyncio
@@ -171,7 +178,7 @@ async def test_injection_with_attachments(base_agent) -> None:
 
     _ = [chunk async for chunk in base_agent.process_message_stream("do X")]
 
-    injected = base_agent.history[3]
+    injected = base_agent.history[4]  # [0] is the volatile-context update; see volatile_context.py
     assert len(injected.content) == 2
     assert isinstance(injected.content[0], TextBlock)
     assert injected.content[0].text == "look at this too"

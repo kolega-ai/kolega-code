@@ -11,7 +11,6 @@ import yaml
 
 from kolega_code.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
 from kolega_code.events import AgentConnectionManager
-from kolega_code.llm.models import Message, TextBlock
 from kolega_code.llm.specs import get_model_specs, normalize_thinking_effort
 
 from .baseagent import BaseAgent
@@ -456,4 +455,4 @@ class CustomAgent(BaseAgent):
             context,
         )
         prompt = "\n\n".join(part for part in (self.definition.prompt, dynamic) if part)
-        self.system_prompt = Message(role="system", content=[TextBlock(text=prompt)])
+        self.system_prompt = self.system_prompt_message(prompt)
