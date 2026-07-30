@@ -7,7 +7,13 @@ import json
 import struct
 from typing import Any, BinaryIO, Mapping, cast
 
+# Chrome's Native Messaging limits are asymmetric: a message *from* the host is
+# capped at 1 MB, while a message *to* the host may be far larger. Requests we
+# write toward Chrome must therefore respect the 1 MiB bound, but responses we
+# read back had no reason to share it, and that self-imposed symmetry is why a
+# full-page screenshot had to be downscaled into illegibility before it fitted.
 MAX_NATIVE_MESSAGE_BYTES = 1_048_576
+MAX_NATIVE_INBOUND_MESSAGE_BYTES = 67_108_864
 _HEADER = struct.Struct("<I")
 
 

@@ -13,7 +13,7 @@ from kolega_code.browser_extension.manager import (
     ChromeExtensionProtocolError,
     ChromeExtensionUnavailableError,
 )
-from kolega_code.browser_extension.multiplex import MultiplexedPeer
+from kolega_code.browser_extension.multiplex import MultiplexedPeer, RemoteRequestError
 from kolega_code.browser_extension.protocol import Envelope, MessageDirection
 from kolega_code.browser_extension.registry import RuntimeDescriptor
 from kolega_code.browser_extension.runtime import RuntimeServer
@@ -28,9 +28,12 @@ class FakePeer:
         self.requests: list[tuple[str, dict[str, Any]]] = []
         self.active = 0
         self.max_active = 0
+        self.error: RemoteRequestError | None = None
 
     async def request(self, operation: str, params: dict[str, Any], *, timeout: float) -> dict[str, Any]:
         self.requests.append((operation, params))
+        if self.error is not None:
+            raise self.error
         self.active += 1
         self.max_active = max(self.max_active, self.active)
         await asyncio.sleep(0.005)
@@ -50,6 +53,15 @@ class FakeServer:
 
     def __init__(self) -> None:
         self.close_count = 0
+        self.published = True
+        self.publish_count = 0
+
+    def publish(self) -> None:
+        self.published = True
+        self.publish_count += 1
+
+    def withdraw(self) -> None:
+        self.published = False
 
     async def close(self) -> None:
         self.close_count += 1
@@ -78,17 +90,21 @@ def ready_event(name: str = "browser.session_ready") -> Envelope:
 
 
 @pytest.mark.asyncio
-async def test_manager_waits_for_session_ready_then_serializes_calls(tmp_path: Path) -> None:
+async def test_manager_attaches_on_a_live_peer_then_serializes_calls(tmp_path: Path) -> None:
     browser = manager(tmp_path)
     server = FakeServer()
     peer = FakePeer()
     browser._server = cast(RuntimeServer, server)
-    await browser._handle_peer(cast(MultiplexedPeer, peer))
 
-    with pytest.raises(ChromeExtensionUnavailableError, match="connected but has not confirmed a session"):
+    with pytest.raises(ChromeExtensionUnavailableError, match="did not connect"):
         await browser.navigate("https://example.com")
+
+    # A live authenticated peer is the attachment: the native host dials a
+    # runtime's socket only to relay a message the extension addressed to it, and
+    # the extension only ever addresses the runtime the operator selected.
+    await browser._handle_peer(cast(MultiplexedPeer, peer))
+    assert browser.session_id == "chrome:runtime_1"
     await browser._handle_event(ready_event("browser.other"))
-    assert browser.session_id is None
     await browser._handle_event(ready_event())
     assert browser.session_id == "chrome:runtime_1"
 
@@ -153,6 +169,50 @@ async def test_manager_preserves_browser_result_shapes(tmp_path: Path) -> None:
         "browser.screenshot",
         {"target": None, "image_type": "png", "full_page": True, "scale": "device"},
     )
+    # Inapplicable scroll fields travel as explicit nulls, because the fixed
+    # schema requires every key and rejects 0 or "" as a stand-in for unset.
+    await browser.scroll(by_pages=1.5)
+    assert peer.requests[-1] == (
+        "browser.scroll",
+        {"by_pages": 1.5, "target": None, "x": None, "y": None},
+    )
+    await browser.scroll(target="#main")
+    assert peer.requests[-1] == (
+        "browser.scroll",
+        {"by_pages": None, "target": "#main", "x": None, "y": None},
+    )
+    await browser.cleanup_all_browsers()
+
+
+def test_scroll_is_part_of_the_supported_chrome_tool_surface() -> None:
+    assert "browser_scroll" in CHROME_EXTENSION_SUPPORTED_TOOLS
+
+
+@pytest.mark.asyncio
+async def test_remote_error_codes_survive_and_coverage_codes_gain_a_remedy(tmp_path: Path) -> None:
+    """The remote code was being discarded, leaving callers to string-match prose."""
+    browser = manager(tmp_path)
+    browser._server = cast(RuntimeServer, FakeServer())
+    peer = FakePeer()
+    await browser._handle_peer(cast(MultiplexedPeer, peer))
+    await browser._handle_event(ready_event())
+
+    peer.error = RemoteRequestError(
+        "search_truncated",
+        "Page text search covered only the first 499998 characters.",
+        retryable=True,
+    )
+    with pytest.raises(ChromeExtensionUnavailableError) as truncated:
+        await browser.wait_for(text="anything")
+    assert truncated.value.code == "search_truncated"
+    assert "Scope the search" in str(truncated.value)
+
+    # A code with no coverage remedy keeps its message unchanged.
+    peer.error = RemoteRequestError("tab_closed", "The selected tab was closed", retryable=False)
+    with pytest.raises(ChromeExtensionUnavailableError) as closed:
+        await browser.snapshot()
+    assert closed.value.code == "tab_closed"
+    assert str(closed.value) == "The selected tab was closed"
     await browser.cleanup_all_browsers()
 
 
@@ -187,15 +247,12 @@ def _advertise(
 
 
 @pytest.mark.asyncio
-async def test_readiness_survives_a_relay_peer_reconnecting(tmp_path: Path) -> None:
+async def test_a_reconnecting_relay_peer_is_usable_without_a_repeated_announcement(tmp_path: Path) -> None:
     """A reconnecting relay peer must not strand the session unconfirmed.
 
-    The extension announces browser.session_ready once per native connection, so
-    clearing readiness whenever the relay peer churned left the runtime stuck at
-    "connected but has not confirmed a session" with no way to recover short of
-    re-selecting in the popup. The native host only dials a runtime's socket to
-    relay a message the extension addressed to that runtime, so a peer existing at
-    all already proves this runtime is selected.
+    The extension announces browser.session_ready once per discovery, so anything
+    that requires a *fresh* announcement to work leaves the runtime stuck with no
+    way to recover short of re-selecting in the popup.
     """
     browser = manager(tmp_path)
     browser._server = cast(RuntimeServer, FakeServer())
@@ -204,11 +261,11 @@ async def test_readiness_survives_a_relay_peer_reconnecting(tmp_path: Path) -> N
     await browser._handle_event(ready_event())
     assert browser.session_id == "chrome:runtime_1"
 
-    # The relay drops; work must block, but the confirmation must not be lost.
+    # The relay drops; work must block while nothing is connected.
     await first.close()
     await asyncio.sleep(0)
     assert browser._peer is None
-    assert browser._ready is True
+    assert browser._ready is False
 
     # A fresh relay peer, with no repeated session_ready, must be usable at once.
     second = FakePeer()
@@ -219,17 +276,162 @@ async def test_readiness_survives_a_relay_peer_reconnecting(tmp_path: Path) -> N
 
 
 @pytest.mark.asyncio
-async def test_detach_still_clears_readiness(tmp_path: Path) -> None:
-    """Holding readiness across peer churn must not survive an explicit detach."""
+async def test_detach_leaves_the_session_able_to_drive_the_browser_again(tmp_path: Path) -> None:
+    """browser_close must not brick Chrome for the rest of the Kolega session.
+
+    Detaching means "stop driving the user's Chrome", not "shut it down" — we never
+    owned it — and every browser sub-agent detaches as cleanup at the end of its
+    dispatch. Latching attachment on an announcement the extension makes only once
+    per discovery meant the first detach was terminal: every later operation waited
+    out the connection timeout and then told the operator to reopen the popup.
+    """
     browser = manager(tmp_path)
     browser._server = cast(RuntimeServer, FakeServer())
-    await browser._handle_peer(cast(MultiplexedPeer, FakePeer()))
+    peer = FakePeer()
+    await browser._handle_peer(cast(MultiplexedPeer, peer))
     await browser._handle_event(ready_event())
 
-    await browser.close()
-
+    assert await browser.close() == "chrome:runtime_1"
+    assert peer.requests[-1] == ("browser.detach", {})
+    # The browsing session is over, so the next operation reports a fresh launch.
     assert browser.session_id is None
-    assert browser._ready is False
+    # An advertisement is a claim on the browser, so a finished session stops making
+    # one. Otherwise every other Kolega session had to break the tie by hand in the
+    # extension even though nothing was competing for the browser any more.
+    server = cast(FakeServer, browser._server)
+    assert server.published is False
+
+    result = await browser.navigate("https://example.com")
+
+    assert result["session_id"] == "chrome:runtime_1"
+    assert peer.requests[-1] == ("browser.navigate", {"url": "https://example.com/"})
+    # Browsing again re-asserts the claim, which is how a detached session asks for
+    # the browser back: the native host turns the change into a fresh discovery.
+    assert server.published is True
+    assert server.publish_count == 1
+
+
+@pytest.mark.asyncio
+async def test_an_operation_racing_a_rediscovery_waits_for_it_instead_of_failing(tmp_path: Path) -> None:
+    """Re-publishing a withdrawn claim reaches Chrome only via the host's watcher.
+
+    So the first operation after a detach can arrive before the rediscovery that
+    re-selects this runtime, and the extension refuses it. Observed live: the call
+    failed in under a second with a selection error, and an identical retry succeeded
+    with no operator action at all — a caller that believed the error would have
+    concluded the backend cannot re-attach, and the operator would have been sent to
+    the popup for nothing.
+    """
+    browser = manager(tmp_path)
+    browser._server = cast(RuntimeServer, FakeServer())
+    peer = FakePeer()
+    await browser._handle_peer(cast(MultiplexedPeer, peer))
+    await browser._handle_event(ready_event())
+    await browser.close()
+    peer.requests.clear()
+
+    refusal = RemoteRequestError(
+        "session_selection_required",
+        "Select a Kolega session before using browser operations",
+        retryable=False,
+    )
+    peer.error = refusal
+
+    async def rediscovery_lands() -> None:
+        """Stand in for the rediscovery the host watcher triggers ~1s after the claim
+        is re-published: the extension re-selects this runtime and announces it."""
+        for _ in range(1_000):
+            if peer.requests:
+                break
+            await asyncio.sleep(0)
+        peer.error = None
+        # Announcing after clearing is the point: the epoch comparison in
+        # _await_route_confirmation must cope with this landing either before or
+        # after the wait begins.
+        await browser._handle_event(ready_event())
+
+    rediscovery = asyncio.create_task(rediscovery_lands())
+    result = await browser.navigate("https://example.com")
+    await rediscovery
+
+    assert result["session_id"] == "chrome:runtime_1"
+    # Retried exactly once, and the caller never saw the transient refusal.
+    assert peer.requests == [
+        ("browser.navigate", {"url": "https://example.com/"}),
+        ("browser.navigate", {"url": "https://example.com/"}),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_selection_refused_by_the_extension_is_answered_with_guidance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The extension is the authority on whether this session may drive Chrome.
+
+    Holding a live peer no longer implies the grant cannot have moved: the operator
+    can switch to another Kolega session while our relay stays open. That refusal
+    arrives immediately and by code, which is strictly better than inferring it from
+    an advertised runtime count and waiting out a timeout — but it must still carry
+    the actionable remedy.
+    """
+    browser = manager(tmp_path)
+    browser._server = cast(RuntimeServer, FakeServer())
+    peer = FakePeer()
+    await browser._handle_peer(cast(MultiplexedPeer, peer))
+    _advertise(
+        browser,
+        monkeypatch,
+        [_descriptor("runtime_1", "session_1"), _descriptor("runtime_2", "session_2")],
+    )
+    peer.error = RemoteRequestError(
+        "session_not_selected",
+        "The request is not routed to the selected Kolega session",
+        retryable=False,
+    )
+
+    with pytest.raises(ChromeExtensionUnavailableError) as refused:
+        await browser.navigate("https://example.com")
+
+    assert refused.value.code == "session_not_selected"
+    detail = str(refused.value)
+    assert "Another Kolega session is currently using the browser" in detail
+    assert "session_2" in detail
+    assert "Click the extension and select this session" in detail
+    # The extension's own prose is replaced, not appended: it cannot see how many
+    # sessions are competing, so it tells the operator to make a choice that is
+    # usually not theirs to make.
+    assert "not routed to the selected" not in detail
+
+
+@pytest.mark.asyncio
+async def test_an_uncontested_refusal_never_sends_the_operator_to_the_popup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With no rival claim there is nothing to choose and nothing to click.
+
+    The extension auto-selects a lone runtime on its next enumeration, so this state
+    is transient. Telling the operator to open the popup here is simply wrong, and it
+    was the visible symptom of a claim that outlived its usefulness.
+    """
+    browser = manager(tmp_path)
+    browser._server = cast(RuntimeServer, FakeServer())
+    peer = FakePeer()
+    await browser._handle_peer(cast(MultiplexedPeer, peer))
+    _advertise(browser, monkeypatch, [_descriptor("runtime_1", "session_1")])
+    peer.error = RemoteRequestError(
+        "session_selection_required",
+        "No Kolega session is selected for browser operations yet",
+        retryable=False,
+    )
+
+    with pytest.raises(ChromeExtensionUnavailableError) as refused:
+        await browser.navigate("https://example.com")
+
+    detail = str(refused.value)
+    assert "nothing to select and nothing to click" in detail
+    assert "Retry the operation." in detail
+    for popup_instruction in ("Click the extension", "badge", "choose which"):
+        assert popup_instruction not in detail
 
 
 @pytest.mark.asyncio
@@ -246,14 +448,12 @@ async def test_probe_reports_unreachable_without_a_connection(tmp_path: Path) ->
 
 
 @pytest.mark.asyncio
-async def test_probe_reports_awaiting_selection_and_names_competing_runtimes(
+async def test_probe_names_competing_runtimes_while_a_choice_is_pending(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A connected-but-unselected companion is a different problem from an absent
-    one, and the operator needs to know which picker entry is theirs."""
+    """The operator needs to know which picker entry is theirs."""
     browser = manager(tmp_path)
     browser._server = cast(RuntimeServer, FakeServer())
-    await browser._handle_peer(cast(MultiplexedPeer, FakePeer()))
     _advertise(
         browser,
         monkeypatch,
@@ -263,13 +463,13 @@ async def test_probe_reports_awaiting_selection_and_names_competing_runtimes(
     result = await browser.probe()
 
     assert result["state"] == "awaiting_selection"
-    assert result["connected"] is True
+    assert result["connected"] is False
     assert result["ready"] is False
     assert {entry["runtime_id"] for entry in result["runtimes"]} == {"runtime_1", "runtime_2"}
     assert [entry for entry in result["runtimes"] if entry["current"]][0]["runtime_id"] == "runtime_1"
-    assert "waiting for you to choose" in result["detail"]
+    assert "Another Kolega session is currently using the browser" in result["detail"]
     assert "session_2" in result["detail"]
-    assert "this session" in result["detail"]
+    assert "runtime_1" in result["detail"]
 
 
 @pytest.mark.asyncio
@@ -294,7 +494,7 @@ async def test_probe_reports_awaiting_selection_without_any_peer(
 
     assert result["state"] == "awaiting_selection"
     assert result["connected"] is False
-    assert "waiting for you to choose" in result["detail"]
+    assert "Another Kolega session is currently using the browser" in result["detail"]
 
 
 @pytest.mark.asyncio
@@ -317,12 +517,11 @@ async def test_unavailable_error_names_competing_runtimes(tmp_path: Path, monkey
     """The operation error, not just doctor, must explain a blocked selection."""
     browser = manager(tmp_path)
     browser._server = cast(RuntimeServer, FakeServer())
-    await browser._handle_peer(cast(MultiplexedPeer, FakePeer()))
     _advertise(
         browser,
         monkeypatch,
         [_descriptor("runtime_1", "session_1"), _descriptor("runtime_2", "session_2")],
     )
 
-    with pytest.raises(ChromeExtensionUnavailableError, match="waiting for you to choose"):
+    with pytest.raises(ChromeExtensionUnavailableError, match="Another Kolega session is currently using"):
         await browser.navigate("https://example.com")

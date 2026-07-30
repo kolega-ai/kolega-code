@@ -508,6 +508,7 @@ class ToolCollection(LogMixin):
         "browser_drag",
         "browser_drop",
         "browser_press_key",
+        "browser_scroll",
         "browser_tabs",
         "browser_handle_dialog",
         "browser_file_upload",
@@ -994,9 +995,15 @@ class ToolCollection(LogMixin):
         Prefer this over screenshots when deciding what to interact with. Interactive
         nodes include stable refs such as e12 that can be passed to action tools.
 
+        On a page too large to fit one snapshot, nodes nearest the viewport are shown
+        first and a Coverage line states what was left out. That is an instruction to
+        narrow the scope — pass a target, or browser_scroll and snapshot again — not a
+        sign the page is unreadable.
+
         Args:
             target: Optional snapshot ref or unique selector for a subtree.
-            depth: Optional maximum accessibility-tree depth.
+            depth: Optional maximum accessibility-tree depth. Counts emitted nodes
+                rather than raw DOM nesting.
         """
         return await self.browser_tool.browser_snapshot(target, depth)
 
@@ -1005,6 +1012,10 @@ class ToolCollection(LogMixin):
 
         Provide exactly one of text or regex. This is cheaper than requesting a
         full snapshot when locating a specific element.
+
+        A miss distinguishes three cases: absent from the page, present in the page
+        but outside the region the snapshot covered, and undetermined because the
+        search was truncated. Only the first is a reliable absence.
 
         Args:
             text: Case-insensitive text to find.
@@ -1118,22 +1129,49 @@ class ToolCollection(LogMixin):
     async def browser_press_key(self, key: str) -> str:
         """Press a keyboard key in the current tab.
 
+        PageDown, PageUp, Home, End, ArrowDown, ArrowUp and Space also scroll the
+        page, unless focus is in a text field or select, or the page handles the
+        key itself. Use browser_scroll when you want to move the viewport
+        deliberately rather than as a side effect of a keystroke.
+
         Args:
             key: Key name or character, such as ArrowLeft or a.
         """
         return await self.browser_tool.browser_press_key(key)
 
+    async def browser_scroll(
+        self,
+        target: Optional[str] = None,
+        x: Optional[int] = None,
+        y: Optional[int] = None,
+        by_pages: Optional[float] = None,
+    ) -> str:
+        """Move the viewport, then return the updated page snapshot.
+
+        Supply exactly one movement. On a page too large to snapshot in one call,
+        scroll and re-snapshot: the snapshot prioritises what is near the viewport,
+        so moving the viewport is how you reach the rest.
+
+        Args:
+            target: Scroll this ref or unique selector into view.
+            x: Absolute horizontal offset in CSS pixels.
+            y: Absolute vertical offset in CSS pixels.
+            by_pages: Scroll by this many viewport heights; negative scrolls up.
+        """
+        return await self.browser_tool.browser_scroll(target, x, y, by_pages)
+
     async def browser_tabs(self, action: str, index: Optional[int] = None, url: Optional[str] = None) -> str:
         """List, create, close, or select browser tabs.
 
-        Pass inapplicable parameters as null, never as 0 or an empty string:
-        list needs neither index nor url, new takes url with index null, and
-        select and close take index with url null.
+        The action decides which other argument applies, and anything supplied for
+        the rest is ignored: list uses neither, new uses url, and select and close
+        use index. Tab indices shift after a close, so re-list before acting again.
 
         Args:
             action: One of list, new, close, or select.
-            index: Tab index for close or select; must be null for list and new.
-            url: URL for a new tab; must be null for every other action.
+            index: Tab index, required for select. For close it defaults to the
+                current tab. 0 is a real tab index.
+            url: URL for a new tab; omit it for a blank tab.
         """
         return await self.browser_tool.browser_tabs(action, index, url)
 
@@ -1335,9 +1373,15 @@ class ToolCollection(LogMixin):
         IMPORTANT: The browser agent specializes in these tools:
             - browser_navigate, browser_snapshot, and browser_find
             - browser_click, browser_type, browser_fill_form, and browser_select_option
-            - browser_tabs, browser_wait_for, browser_handle_dialog, and browser_file_upload
+            - browser_scroll, browser_press_key, and browser_wait_for
+            - browser_tabs, browser_handle_dialog, and browser_file_upload
             - browser_console_messages, browser_network_requests, and browser_take_screenshot
             - browser_close
+
+        On a page too large to snapshot in one call the snapshot is truncated and
+        says so, prioritising what is near the viewport. Treat that as an
+        instruction to narrow the scope: pass a target to browser_snapshot, or
+        browser_scroll and snapshot again. It does not mean the page is unreadable.
 
         Args:
             task: A detailed description of the browser task to perform

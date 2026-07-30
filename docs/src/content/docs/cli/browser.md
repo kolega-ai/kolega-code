@@ -68,7 +68,7 @@ The Chrome integration exposes only these fixed protocol operations:
   `browser.wait_for`
 - Interaction: `browser.click`, `browser.type`, `browser.fill_form`,
   `browser.select_option`, `browser.hover`, `browser.drag`,
-  `browser.press_key`
+  `browser.press_key`, `browser.scroll`
 - Tabs and inspection: `browser.tabs`, `browser.network_requests`,
   `browser.screenshot`
 - Disconnect: `browser.detach`
@@ -80,18 +80,25 @@ response headers or bodies, file uploads or file/data drop, or console messages.
 ### Choosing which session controls the browser
 
 The extension connects to the native host on its own; you do not need to open it
-in normal use. When exactly one Kolega session is running it is selected
-automatically.
+in normal use.
 
-When two or more sessions are running, the extension will not guess which one
-may drive your browser, because selecting a session grants a local process
-access to pages in your ordinary profile. The toolbar badge shows `!` while a
-choice is pending — click the extension and pick a session. Run
+A Kolega session asks for the browser when it first runs a browser tool, and
+releases it again when it detaches — when a browser sub-agent finishes, or you run
+`browser_close`. Only sessions that currently want the browser are candidates, so
+having several Kolega sessions open costs you nothing: as long as one is browsing
+at a time it is selected automatically, with no clicking.
+
+The extension only involves you when two sessions want the browser *at the same
+time*. It will not guess between them, because selecting a session grants a local
+process access to pages in your ordinary profile. The toolbar badge shows `!` while
+a choice is pending — click the extension and pick a session. Waiting for the other
+session to finish browsing clears it too, since that releases its claim. Run
 `kolega-code browser doctor` to see the competing sessions and which runtime id
 belongs to the session you are using.
 
 Your choice is remembered for as long as Chrome stays open, including across
-service-worker restarts, and is cleared when Chrome restarts.
+service-worker restarts, and is cleared when Chrome restarts or the extension is
+reloaded. Losing it costs nothing when only one session is browsing.
 
 ### Regular expressions
 
@@ -109,12 +116,39 @@ ever repeat one atom, so catastrophic backtracking is impossible. Write
 The Playwright backend accepts full Python regular expressions, so a pattern that
 works there may be rejected on Chrome.
 
+### Very large pages
+
+A page can be far larger than one snapshot can carry, and the Chrome backend now
+says so instead of pretending otherwise. Snapshots emit the nodes nearest the
+viewport first and attach a `Coverage:` line naming how much was shown, why it
+stopped, and where the viewport sits in the page.
+
+Treat that line as an instruction, not a failure:
+
+- pass `target` to `browser_snapshot` to scope it to one subtree, or
+- `browser_scroll` and snapshot again to walk the page a screenful at a time.
+
+Two related guarantees follow from the same principle. A rendered-text search
+that could not read the whole page reports `search_truncated` rather than
+claiming the text is absent, and `browser_find` distinguishes text that is
+genuinely missing from text that lies outside the region the snapshot covered.
+A negative result you can trust is worth more than one that is merely short.
+
+Page work is bounded by a wall-clock budget rather than by a node count, so
+ordinary large pages are covered completely; only pathological documents run out
+of time, and they too report what they managed.
+
 ### Screenshots
 
 `browser.screenshot` returns the image inline. Neither the Chrome nor the
 Playwright backend writes screenshots to disk, so there is no artifact file path
 to report. Capture only the region you need: a full-page screenshot of a long
 page produces a large inline image.
+
+On Chrome, a page too tall to capture legibly is clipped from the current scroll
+position rather than downscaled, and the result reports what it omitted. Scroll
+and capture again to see the rest. Sticky headers repeat in each stitched band,
+which is inherent to how Chrome captures a visible tab.
 
 ## Native-host manifest location
 

@@ -624,6 +624,61 @@ class PlaywrightBrowserManager(BrowserManager):
 
         return await self._perform_action(session, action)
 
+    async def scroll(
+        self,
+        *,
+        target: Optional[str] = None,
+        x: Optional[int] = None,
+        y: Optional[int] = None,
+        by_pages: Optional[float] = None,
+    ) -> dict[str, Any]:
+        """Move the viewport by target, by whole viewports, or to an absolute offset."""
+        supplied = [target is not None, by_pages is not None, x is not None or y is not None]
+        if sum(1 for mode in supplied if mode) != 1:
+            raise ValueError("Provide exactly one of target, by_pages, or x/y")
+        session = await self._ensure_session()
+        metrics: dict[str, Any] = {}
+
+        async def action(page: Any) -> None:
+            if target is not None:
+                locator = await self._target_locator(page, target)
+                await locator.scroll_into_view_if_needed(timeout=self.action_timeout)
+            elif by_pages is not None:
+                # mouse.wheel dispatches a wheel event without waiting for the
+                # scroll it triggers, so the position read back below raced it and
+                # reported no movement. Scrolling in the page is deterministic and
+                # does not depend on where the pointer happens to be.
+                await page.evaluate(
+                    "(pages) => window.scrollBy({ left: 0, top: pages * window.innerHeight, behavior: 'instant' })",
+                    by_pages,
+                )
+            else:
+                # Absolute positioning has no Playwright API either. Unlike the
+                # Chrome extension backend, this manager drives its own browser
+                # instance and already exposes browser_evaluate, so an in-page
+                # call here widens nothing.
+                await page.evaluate(
+                    "([left, top]) => window.scrollTo({ left, top, behavior: 'instant' })",
+                    [x or 0, y or 0],
+                )
+            metrics.update(
+                await page.evaluate(
+                    """() => ({
+                        content_height: Math.max(
+                            document.documentElement.scrollHeight,
+                            document.body ? document.body.scrollHeight : 0,
+                        ),
+                        scroll_x: window.scrollX,
+                        scroll_y: window.scrollY,
+                        viewport_height: window.innerHeight,
+                    })"""
+                )
+            )
+
+        result = await self._perform_action(session, action)
+        result.update(metrics)
+        return result
+
     async def navigate_back(self) -> dict[str, Any]:
         session = await self._ensure_session()
 

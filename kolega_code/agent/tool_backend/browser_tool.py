@@ -44,6 +44,83 @@ def _schema(properties: dict[str, Any], required: Optional[list[str]] = None) ->
     return result
 
 
+# Several models fill in *every* property a tool schema declares rather than
+# omitting the ones they are not using, so an unused string arrives as "" and an
+# unused number as 0. Neither can express a request, and the backends rightly
+# reject them — but rejecting is a dead end: the model has no way to stop padding,
+# so it retries the identical call until it gives up. (Observed: 13 consecutive
+# `browser_tabs {"action":"list","index":0,"url":""}` calls rejected with "url is
+# invalid", which ended the run at step one.) Treat a value that cannot express a
+# request as the omission it was meant to be, at this agent-facing boundary only:
+# the wire protocol below stays exact.
+def _text_or_none(value: Optional[str]) -> Optional[str]:
+    """Drop a string that carries no request, such as "" or "   "."""
+    if value is None or not value.strip():
+        return None
+    return value
+
+
+def _choice_or_default(value: Optional[str], default: str) -> str:
+    """Fall back to the documented default for an unset enum-valued argument."""
+    return value if value is not None and value.strip() else default
+
+
+def _resolve_scroll(
+    target: Optional[str],
+    x: Optional[int],
+    y: Optional[int],
+    by_pages: Optional[float],
+) -> tuple[Optional[str], Optional[int], Optional[int], Optional[float]]:
+    """Pick the one movement the caller asked for, ignoring padded-out arguments.
+
+    Both backends require exactly one of target, by_pages, or x/y, because three
+    different movements in one call cannot be resolved. Padding is not a fourth
+    movement though: a zero page count moves nothing, and zero offsets alongside a
+    real target say nothing the target does not already say. Only a genuine
+    conflict — two movements that would each go somewhere — is still rejected, and
+    the rejection names what arrived so it can be corrected.
+
+    ``x``/``y`` of 0 stay meaningful on their own: scrolling to the top of a page
+    is an ordinary request.
+    """
+    target = _text_or_none(target)
+    wants_target = target is not None
+    wants_pages = by_pages is not None and by_pages != 0
+    wants_offset = (x is not None and x != 0) or (y is not None and y != 0)
+    requested = sum((wants_target, wants_pages, wants_offset))
+    if requested > 1:
+        supplied = ", ".join(
+            part
+            for part in (
+                f"target={target!r}" if wants_target else "",
+                f"by_pages={by_pages}" if wants_pages else "",
+                f"x={x}, y={y}" if wants_offset else "",
+            )
+            if part
+        )
+        raise ValueError(
+            f"Provide exactly one of target, by_pages, or x/y; received {supplied}. "
+            "Pass only the movement you want and omit the others."
+        )
+    if requested == 1:
+        if wants_target:
+            return target, None, None, None
+        if wants_pages:
+            return None, None, None, by_pages
+        return None, x, y, None
+    # Nothing but zeros and blanks arrived. An explicit x/y still means "go to the
+    # top"; a lone by_pages=0 is a no-op the backends accept. Otherwise there is
+    # genuinely no movement to perform.
+    if x is not None or y is not None:
+        return None, x, y, None
+    if by_pages is not None:
+        return None, None, None, by_pages
+    raise ValueError(
+        "Provide exactly one of target, by_pages, or x/y: a selector or ref to scroll into view, "
+        "a signed number of viewport heights, or an absolute x/y offset in CSS pixels."
+    )
+
+
 BROWSER_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     "browser_navigate": _schema(
         {"url": {"type": "string", "description": "HTTP or HTTPS URL to navigate to."}}, ["url"]
@@ -52,7 +129,13 @@ BROWSER_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     "browser_snapshot": _schema(
         {
             "target": _TARGET,
-            "depth": {"type": "integer", "description": "Optional maximum accessibility-tree depth."},
+            "depth": {
+                "type": "integer",
+                "description": (
+                    "Optional maximum accessibility-tree depth. This counts emitted nodes, not raw DOM "
+                    "nesting, so ordinary deeply nested markup is not pruned."
+                ),
+            },
         }
     ),
     "browser_find": _schema(
@@ -153,7 +236,33 @@ BROWSER_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         ["target"],
     ),
     "browser_press_key": _schema(
-        {"key": {"type": "string", "description": "Key name or character, such as ArrowLeft or a."}}, ["key"]
+        {
+            "key": {
+                "type": "string",
+                "description": (
+                    "Key name or character, such as ArrowLeft or a. PageDown, PageUp, Home, End, "
+                    "ArrowDown, ArrowUp and Space scroll the page unless focus is in a text field or "
+                    "the page handles the key itself."
+                ),
+            }
+        },
+        ["key"],
+    ),
+    "browser_scroll": _schema(
+        {
+            "target": {
+                "type": "string",
+                "description": "Scroll this element into view. Exact ref from browser_snapshot, or a unique selector.",
+            },
+            "x": {"type": "integer", "description": "Absolute horizontal offset in CSS pixels."},
+            "y": {"type": "integer", "description": "Absolute vertical offset in CSS pixels."},
+            "by_pages": {
+                "type": "number",
+                "description": (
+                    "Scroll by this many viewport heights; negative scrolls up. Fractions are allowed, range -10 to 10."
+                ),
+            },
+        }
     ),
     "browser_tabs": _schema(
         {
@@ -161,16 +270,13 @@ BROWSER_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
             "index": {
                 "type": "integer",
                 "description": (
-                    "Tab index for close or select. Required for select. Must be null for list and new; "
-                    "0 is a real tab index, not a stand-in for 'unset'."
+                    "Tab index, required for select and optional for close, where omitting it means the "
+                    "current tab. Ignored by list and new. 0 is a real tab index."
                 ),
             },
             "url": {
                 "type": "string",
-                "description": (
-                    "URL for a new tab. Accepted only with the new action; must be null otherwise. "
-                    "An empty string is rejected — use null."
-                ),
+                "description": "URL for a new tab. Ignored by every other action; omit it for a blank tab.",
             },
         },
         ["action"],
@@ -228,7 +334,14 @@ BROWSER_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         {
             "target": _TARGET,
             "image_type": {"type": "string", "enum": ["png", "jpeg"]},
-            "full_page": {"type": "boolean", "description": "Capture the full scrollable page."},
+            "full_page": {
+                "type": "boolean",
+                "description": (
+                    "Capture the full scrollable page. A page too tall to capture legibly is clipped "
+                    "from the current scroll position and reports what it left out, so scroll and "
+                    "capture again to see the rest."
+                ),
+            },
             "scale": {"type": "string", "enum": ["css", "device"]},
         }
     ),
@@ -282,6 +395,13 @@ class BrowserTool(BaseTool):
     @staticmethod
     def _format_page(result: dict[str, Any]) -> str:
         parts = ["## Page", f"- URL: {result.get('url', 'about:blank')}", f"- Title: {result.get('title', '')}"]
+        scroll_y = result.get("scroll_y")
+        if isinstance(scroll_y, (int, float)):
+            # Where the viewport ended up, so a scroll-then-snapshot loop can tell
+            # progress from a scroll that hit the end of the page.
+            content_height = result.get("content_height")
+            extent = f" of {int(content_height)}" if isinstance(content_height, (int, float)) else ""
+            parts.append(f"- Scroll position: y={int(scroll_y)}{extent} px")
         if result.get("modal"):
             parts.extend(["", "## Modal state", "```json", json.dumps(result["modal"], indent=2), "```"])
         if "result" in result:
@@ -290,7 +410,33 @@ class BrowserTool(BaseTool):
             parts.append("Result truncated by size.")
         if result.get("snapshot") is not None:
             parts.extend(["", "## Snapshot", "```yaml", result["snapshot"], "```"])
+        coverage = BrowserTool._format_coverage(result.get("coverage"))
+        if coverage:
+            parts.extend(["", coverage])
         return "\n".join(parts)
+
+    @staticmethod
+    def _format_coverage(coverage: Any) -> str:
+        """Say what a partial snapshot left out, and what to do about it.
+
+        Only emitted when coverage is genuinely incomplete: a truncated snapshot
+        that looks complete is what made an agent conclude a page was unreadable.
+        """
+        if not isinstance(coverage, dict) or coverage.get("complete") is not False:
+            return ""
+        emitted = coverage.get("emitted")
+        candidates = coverage.get("candidates")
+        reason = coverage.get("reason") or "a size bound"
+        scope = f"Showing {emitted} of {candidates} page nodes" if emitted and candidates else "Snapshot truncated"
+        position = ""
+        scroll_y = coverage.get("scroll_y")
+        content_height = coverage.get("content_height")
+        if isinstance(scroll_y, (int, float)) and isinstance(content_height, (int, float)) and content_height:
+            position = f", at y={int(scroll_y)} of {int(content_height)} px"
+        return (
+            f"Coverage: {scope} ({reason}){position}. Nodes nearest the viewport are shown first. "
+            "Narrow the scope with browser_snapshot target=<selector>, or browser_scroll and snapshot again."
+        )
 
     def _file_payloads(self, paths: list[str]) -> list[dict[str, Any]]:
         payloads = []
@@ -317,22 +463,44 @@ class BrowserTool(BaseTool):
         return self._format_page(await self.browser_manager.navigate_back())
 
     async def browser_snapshot(self, target: Optional[str] = None, depth: Optional[int] = None) -> str:
+        # depth is a positive maximum, so 0 can only be padding.
+        target, depth = _text_or_none(target), depth or None
         previous = self.browser_manager.session_id
         result = await self.browser_manager.snapshot(target=target, depth=depth)
         await self._broadcast_launched(previous, result)
         return self._format_page(result)
 
     async def browser_find(self, text: Optional[str] = None, regex: Optional[str] = None) -> str:
+        text, regex = _text_or_none(text), _text_or_none(regex)
         result = await self.browser_manager.find(text=text, regex=regex)
+        query = result["query"]
+        coverage = self._format_coverage(result.get("snapshot_coverage"))
         if not result["matches"]:
-            return f"No matches found for {result['query']!r}."
-        return f"Found {result['match_count']} matches for {result['query']!r}:\n\n" + "\n\n---\n\n".join(
-            result["matches"]
-        )
+            # A bounded search must never be rendered as an absence. The three
+            # cases are: genuinely absent, present in the page but outside the
+            # region the snapshot covered, and undetermined because the search
+            # itself was truncated.
+            if result.get("page_text_match") is True:
+                return (
+                    f"No snapshot matches for {query!r}, but the page's rendered text does contain it, "
+                    "so it lies outside the region this snapshot covered." + (f"\n\n{coverage}" if coverage else "")
+                )
+            if result.get("page_text_match") is False:
+                return f"No matches found for {query!r}, and the page's rendered text does not contain it either."
+            return f"No matches found for {query!r} in the covered region; coverage was incomplete, so this is " + (
+                "not a reliable absence." + (f"\n\n{coverage}" if coverage else "")
+            )
+        found = f"Found {result['match_count']} matches for {query!r}:\n\n" + "\n\n---\n\n".join(result["matches"])
+        return f"{found}\n\n{coverage}" if coverage else found
 
     async def browser_wait_for(
         self, time: Optional[float] = None, text: Optional[str] = None, text_gone: Optional[str] = None
     ) -> str:
+        text, text_gone = _text_or_none(text), _text_or_none(text_gone)
+        if time == 0 and (text is not None or text_gone is not None):
+            # A zero-second wait alongside a real condition is padding; on its own
+            # it stays a legitimate no-op wait.
+            time = None
         return self._format_page(await self.browser_manager.wait_for(time=time, text=text, text_gone=text_gone))
 
     async def browser_resize(self, width: int, height: int) -> str:
@@ -346,7 +514,12 @@ class BrowserTool(BaseTool):
         modifiers: Optional[list[str]] = None,
     ) -> str:
         return self._format_page(
-            await self.browser_manager.click(target, double_click=double_click, button=button, modifiers=modifiers)
+            await self.browser_manager.click(
+                target,
+                double_click=double_click,
+                button=_choice_or_default(button, "left"),
+                modifiers=modifiers,
+            )
         )
 
     async def browser_type(self, target: str, text: str, submit: bool = False, slowly: bool = False) -> str:
@@ -374,7 +547,24 @@ class BrowserTool(BaseTool):
     async def browser_press_key(self, key: str) -> str:
         return self._format_page(await self.browser_manager.press_key(key))
 
+    async def browser_scroll(
+        self,
+        target: Optional[str] = None,
+        x: Optional[int] = None,
+        y: Optional[int] = None,
+        by_pages: Optional[float] = None,
+    ) -> str:
+        target, x, y, by_pages = _resolve_scroll(target, x, y, by_pages)
+        return self._format_page(await self.browser_manager.scroll(target=target, x=x, y=y, by_pages=by_pages))
+
     async def browser_tabs(self, action: str, index: Optional[int] = None, url: Optional[str] = None) -> str:
+        # The action alone decides which of index and url applies, so anything
+        # supplied for the other one is padding and is dropped rather than
+        # rejected. list takes neither; new takes url ("" means a blank tab);
+        # close and select take index, where 0 is a real tab.
+        if action in {"list", "new"}:
+            index = None
+        url = _text_or_none(url) if action == "new" else None
         previous = self.browser_manager.session_id
         try:
             result = await self.browser_manager.tabs(action, index=index, url=url)
@@ -396,7 +586,9 @@ class BrowserTool(BaseTool):
         return self._format_page(await self.browser_manager.file_upload(self._file_payloads(paths)))
 
     async def browser_console_messages(self, level: str = "info", all_messages: bool = False) -> str:
-        result = await self.browser_manager.console_messages(level, all_messages=all_messages)
+        result = await self.browser_manager.console_messages(
+            _choice_or_default(level, "info"), all_messages=all_messages
+        )
         header = f"Total messages: {result['total']} (Errors: {result['errors']}, Warnings: {result['warnings']})"
         messages = []
         for message in result["messages"]:
@@ -407,7 +599,7 @@ class BrowserTool(BaseTool):
 
     async def browser_network_requests(self, include_static: bool = False, filter_pattern: Optional[str] = None) -> str:
         result = await self.browser_manager.network_requests(
-            include_static=include_static, filter_pattern=filter_pattern
+            include_static=include_static, filter_pattern=_text_or_none(filter_pattern)
         )
         if not result["requests"]:
             return "No matching network requests."
@@ -422,7 +614,7 @@ class BrowserTool(BaseTool):
     async def browser_network_request(self, index: int, part: Optional[str] = None) -> str:
         return (
             "```json\n"
-            + json.dumps(await self.browser_manager.network_request(index, part), indent=2, default=str)
+            + json.dumps(await self.browser_manager.network_request(index, _text_or_none(part)), indent=2, default=str)
             + "\n```"
         )
 
@@ -434,11 +626,14 @@ class BrowserTool(BaseTool):
         scale: str = "css",
     ) -> dict[str, Any]:
         return await self.browser_manager.screenshot(
-            target=target, image_type=image_type, full_page=full_page, scale=scale
+            target=_text_or_none(target),
+            image_type=_choice_or_default(image_type, "png"),
+            full_page=full_page,
+            scale=_choice_or_default(scale, "css"),
         )
 
     async def browser_evaluate(self, function: str, target: Optional[str] = None) -> str:
-        return self._format_page(await self.browser_manager.evaluate(function, target))
+        return self._format_page(await self.browser_manager.evaluate(function, _text_or_none(target)))
 
     async def browser_close(self) -> str:
         session_id = await self.browser_manager.close()

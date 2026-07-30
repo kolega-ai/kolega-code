@@ -727,13 +727,13 @@ def _run_browser(args: argparse.Namespace) -> int:
             if probe["state"] != "paired":
                 payload["remediation"] = probe["detail"]
             if probe["state"] == "awaiting_selection":
-                # doctor publishes its own temporary runtime, so with another Kolega
-                # session already running there are two and Chrome must be told which
-                # one may drive the browser. Say so rather than implying a fault.
+                # doctor publishes its own temporary runtime, so a choice is expected
+                # whenever another Kolega session is *actively* claiming the browser.
+                # Say so rather than implying a fault.
                 payload["remediation"] = (
                     f"{probe['detail']} This check publishes its own temporary runtime, so a choice is "
-                    "expected whenever another Kolega session is running; stop the other session to test "
-                    "pairing unattended."
+                    "expected whenever another Kolega session is currently using the browser; that session "
+                    "releases its claim when it detaches, or stop it to test pairing unattended."
                 )
 
         if args.json:

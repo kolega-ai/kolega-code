@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import struct
 import time
 from typing import Any, cast
@@ -19,6 +20,8 @@ from kolega_code.browser_extension.framing import (
 from kolega_code.browser_extension.protocol import (
     ALLOWED_OPERATIONS,
     MAX_ERROR_MESSAGE_LENGTH,
+    MAX_PROTOCOL_JSON_BYTES,
+    MAX_PROTOCOL_RESPONSE_JSON_BYTES,
     PROTOCOL_VERSION,
     Envelope,
     MessageDirection,
@@ -121,6 +124,7 @@ VALID_PARAMS: dict[str, dict[str, object]] = {
     "browser.hover": {"target": "e1"},
     "browser.drag": {"start_target": "e1", "end_target": "e2"},
     "browser.press_key": {"key": "ControlOrMeta+L"},
+    "browser.scroll": {"by_pages": 2, "target": None, "x": None, "y": None},
     "browser.tabs": {"action": "list", "index": None, "url": None},
     "browser.network_requests": {"include_static": False, "filter_pattern": None},
     "browser.screenshot": {"target": None, "image_type": "png", "full_page": True, "scale": "css"},
@@ -128,9 +132,9 @@ VALID_PARAMS: dict[str, dict[str, object]] = {
 }
 
 
-def test_fixed_operation_surface_has_exactly_sixteen_schemas() -> None:
+def test_fixed_operation_surface_has_exactly_seventeen_schemas() -> None:
     assert ALLOWED_OPERATIONS == frozenset(VALID_PARAMS)
-    assert len(ALLOWED_OPERATIONS) == 16
+    assert len(ALLOWED_OPERATIONS) == 17
 
 
 @pytest.mark.parametrize(("operation", "params"), VALID_PARAMS.items())
@@ -175,6 +179,32 @@ def test_invalid_operation_parameters_are_rejected(operation: str, params: dict[
     with pytest.raises(ProtocolValidationError) as error:
         validate_operation_request(operation, params)
     assert error.value.code == "invalid_params"
+
+
+def test_scroll_accepts_exactly_one_movement() -> None:
+    base: dict[str, object] = {"by_pages": None, "target": None, "x": None, "y": None}
+    for movement in ({"by_pages": 3}, {"by_pages": -1.5}, {"y": 15_000}, {"x": 0, "y": 0}, {"target": "#main"}):
+        params = {**base, **movement}
+        assert validate_operation_request("browser.scroll", params) == params
+
+    ambiguous = "Provide exactly one of target, by_pages, or x/y"
+    for params, expected in (
+        (base, ambiguous),
+        ({**base, "by_pages": 1, "y": 10}, ambiguous),
+        ({**base, "target": "#main", "by_pages": 1}, ambiguous),
+        ({**base, "by_pages": 11}, "by_pages is invalid"),
+        # Message text is mirrored character for character by nullableInteger in
+        # the extension's src/operations.js.
+        ({**base, "y": -1}, "y must be an integer between 0 and 10000000, or JSON null"),
+        ({**base, "y": 1.5}, "y must be an integer between 0 and 10000000, or JSON null"),
+        ({**base, "y": "null"}, "y must be an integer or JSON null, not the string 'null'"),
+        # Inapplicable fields must be null, never omitted.
+        ({"by_pages": 1}, "invalid schema"),
+        ({**base, "by_pages": 1, "extra": True}, "invalid schema"),
+    ):
+        with pytest.raises(ProtocolValidationError, match=re.escape(expected)) as error:
+            validate_operation_request("browser.scroll", params)
+        assert error.value.code == "invalid_params"
 
 
 def test_url_normalization_and_regex_escapes_match_the_extension_contract() -> None:
@@ -382,10 +412,28 @@ def test_native_framing_counts_utf8_bytes_without_ascii_escape_inflation() -> No
         encode_message(value, max_bytes=len(encoded) - 1)
 
 
-def test_generated_envelopes_cannot_exceed_the_protocol_frame_bound() -> None:
+def test_envelope_size_bounds_follow_the_direction_they_travel() -> None:
+    """Chrome caps host->extension at 1 MB but allows far more the other way.
+
+    Requests must respect the conservative bound; responses carry screenshots and
+    would otherwise have to be downscaled into illegibility to fit a limit that
+    was self-imposed rather than Chrome's.
+    """
+    # A response comfortably past the request bound is accepted.
+    large = Envelope.response_for(request(), {"image": "a" * 4_000_000})
+    assert large.direction is MessageDirection.EXTENSION_TO_RUNTIME
+    assert large.size_limit == MAX_PROTOCOL_RESPONSE_JSON_BYTES
+
+    # A request is still held to the limit Chrome actually enforces.
+    assert request().size_limit == MAX_PROTOCOL_JSON_BYTES
     with pytest.raises(ProtocolValidationError) as error:
-        Envelope.response_for(request(), {"text": "é" * 600_000})
-    assert error.value.code == "message_too_large"
+        request("browser.navigate", {"url": f"https://example.com/{'a' * 2_000_000}"})
+    assert error.value.code in {"invalid_params", "message_too_large"}
+
+    # The response bound is generous, not absent.
+    with pytest.raises(ProtocolValidationError) as too_big:
+        Envelope.response_for(request(), {"image": "a" * MAX_PROTOCOL_RESPONSE_JSON_BYTES})
+    assert too_big.value.code == "message_too_large"
 
 
 def test_protocol_json_rejects_non_finite_and_non_object_payloads() -> None:

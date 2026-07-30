@@ -6,6 +6,13 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+### Added
+
+- `browser_scroll` on both browser backends, taking exactly one of a target, a
+  count of viewports, or an absolute offset. On a page too large to snapshot in
+  one call, scrolling is how the rest is reached, and until now nothing could
+  move the viewport on the Chrome backend at all.
+
 ### Changed
 
 - Project memory, repository guidance (`AGENTS.md`/`KOLEGA.md`), and the current
@@ -23,6 +30,34 @@ This project uses GitHub Releases for detailed generated release notes. This fil
   could fail to match after a turn with many parallel tool calls, which discarded
   the whole conversation's cache; the second one bounds that loss to one turn.
 
+- The Chrome browser backend now works on large real-world pages. Selector
+  resolution, snapshots, text search and focus handling previously failed
+  outright on any page over about a thousand DOM nodes, so an ordinary
+  application page returned an empty snapshot and refused every selector. Work
+  is now bounded by a wall-clock budget with the browser's own APIs doing the
+  filtering, and a bound that is reached degrades with a report instead of
+  failing.
+- Snapshots emit the nodes nearest the viewport first and attach a `Coverage:`
+  line naming what was omitted, why, and where the viewport sits in the page, so
+  a partial snapshot reads as "narrow the scope" rather than "the page is
+  unreadable".
+- `browser_find` distinguishes three outcomes: absent from the page, present but
+  outside the region the snapshot covered, and undetermined because the search
+  was truncated. Only the first is a reliable absence.
+- Text waits that could not read the whole page now fail immediately with a
+  `search_truncated` explanation instead of polling to a timeout and implying the
+  text was not there.
+- `browser_press_key` scrolls for `PageDown`, `PageUp`, `Home`, `End`, arrow keys
+  and `Space`, matching the Playwright backend, unless the page handles the key
+  itself or focus is in a text field or select.
+- Chrome snapshot `depth` now counts emitted nodes rather than raw DOM nesting,
+  so it means roughly what it means on the Playwright backend.
+- Tall full-page screenshots on Chrome are clipped from the current scroll
+  position and report the omission, instead of being downscaled until unreadable.
+  Native Messaging envelopes are now bounded per direction, following Chrome's
+  own asymmetric limits.
+- Errors from the Chrome extension keep their error code, and codes that mean
+  "too large to cover in one call" carry the concrete next step.
 - The responsiveness watchdog now captures stacks for event-loop stalls from ~1
   second (was 5) and counts shorter gaps into a periodic `loop_gap_histogram`
   diagnostics entry, so choppy-but-not-frozen UI leaves evidence instead of
