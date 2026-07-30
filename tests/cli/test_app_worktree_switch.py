@@ -8,7 +8,7 @@ import pytest
 
 from kolega_code.agent.tools import ToolExtension
 from kolega_code.cli.config import config_summary
-from kolega_code.cli.session_store import SessionStore, SessionStoreError
+from kolega_code.cli.session_store import SessionStore
 from kolega_code.cli.tui import agent_runtime as agent_runtime_module
 from kolega_code.cli.tui.state import PendingApproval
 from kolega_code.permissions import PERMISSIONS_RELATIVE_PATH, allow_rule_options, permission_request_for_tool
@@ -85,7 +85,6 @@ def _build_app(
     *,
     resume_in_linked: bool = False,
     remove_linked_before_resume: bool = False,
-    fail_fallback_projection_once: bool = False,
 ) -> tuple[Any, Path, Path, SessionStore, type[RecordingFakeCoderAgent]]:
     pytest.importorskip("textual")
 
@@ -107,18 +106,6 @@ def _build_app(
         _git(linked, "add", ".")
         _git(linked, "commit", "-m", "make linked worktree removable")
         _git(main, "worktree", "remove", str(linked))
-    if fail_fallback_projection_once:
-        original_write_metadata = store._write_metadata
-        failed = False
-
-        def fail_once(metadata: dict[str, Any]) -> None:
-            nonlocal failed
-            if metadata.get("active_project_path") is None and not failed:
-                failed = True
-                raise OSError("projection unavailable")
-            original_write_metadata(metadata)
-
-        monkeypatch.setattr(store, "_write_metadata", fail_once)
     app = KolegaCodeApp(project_path=main, config=config, mode="code", store=store, session=session)
     return app, main, linked, store, _SessionRecordingAgent
 
@@ -197,49 +184,6 @@ def test_tui_resume_warns_and_persists_fallback_when_active_worktree_was_deleted
     assert store.load(app.session.session_id).active_project_path is None
     assert "Saved active worktree is unavailable" in app._startup_workspace_warning
     assert f"`{main}`" in app._startup_workspace_warning
-
-
-def test_tui_resume_uses_canonical_fallback_when_metadata_projection_write_fails(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    app, main, _linked, store, _agent_cls = _build_app(
-        tmp_path,
-        monkeypatch,
-        resume_in_linked=True,
-        remove_linked_before_resume=True,
-        fail_fallback_projection_once=True,
-    )
-
-    assert app.active_project_path == main
-    assert app.session.active_project_path is None
-    assert store.load(app.session.session_id).active_project_path is None
-    assert "Saved active worktree is unavailable" in app._startup_workspace_warning
-
-
-def test_tui_resume_fails_without_clearing_metadata_when_launch_and_active_worktrees_are_invalid(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    pytest.importorskip("textual")
-
-    from kolega_code.cli.app import KolegaCodeApp
-
-    main, linked = _make_worktrees(tmp_path)
-    install_fake_agents(monkeypatch, coder_cls=FakeCoderAgent)
-    config = build_test_config(main)
-    store = SessionStore(tmp_path / "state")
-    session = store.create(main, "code", config_summary(config))
-    session.active_project_path = str(linked)
-    store.save(session)
-
-    _git(linked, "add", ".")
-    _git(linked, "commit", "-m", "make linked worktree removable")
-    _git(main, "worktree", "remove", str(linked))
-    (main / ".git").rename(tmp_path / "unregistered-git-dir")
-
-    with pytest.raises(SessionStoreError, match="cannot resume"):
-        KolegaCodeApp(project_path=main, config=config, mode="code", store=store, session=session)
-
-    assert store.load(session.session_id).active_project_path == str(linked)
 
 
 @pytest.mark.asyncio

@@ -107,6 +107,9 @@ def test_resume_fails_when_active_and_launch_checkouts_are_unavailable(tmp_path:
     with pytest.raises(SessionStoreError, match="cannot resume"):
         _active_project_for_resume(session, store)
 
+    # A hard resume failure must not clear the persisted selection.
+    assert store.load(session.session_id).active_project_path == str(linked)
+
 
 def test_ask_resume_uses_active_tools_but_preserves_launch_identity_services(
     tmp_path: Path,
