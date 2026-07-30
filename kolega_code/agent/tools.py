@@ -1163,14 +1163,15 @@ class ToolCollection(LogMixin):
     async def browser_tabs(self, action: str, index: Optional[int] = None, url: Optional[str] = None) -> str:
         """List, create, close, or select browser tabs.
 
-        Pass inapplicable parameters as null, never as 0 or an empty string:
-        list needs neither index nor url, new takes url with index null, and
-        select and close take index with url null.
+        The action decides which other argument applies, and anything supplied for
+        the rest is ignored: list uses neither, new uses url, and select and close
+        use index. Tab indices shift after a close, so re-list before acting again.
 
         Args:
             action: One of list, new, close, or select.
-            index: Tab index for close or select; must be null for list and new.
-            url: URL for a new tab; must be null for every other action.
+            index: Tab index, required for select. For close it defaults to the
+                current tab. 0 is a real tab index.
+            url: URL for a new tab; omit it for a blank tab.
         """
         return await self.browser_tool.browser_tabs(action, index, url)
 

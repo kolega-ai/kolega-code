@@ -407,12 +407,119 @@ async def test_network_requests_omit_missing_resource_type(browser_tool, browser
     assert "[" not in output.split("\n")[-1]
 
 
-def test_regex_and_tabs_schemas_document_their_constraints():
-    """Two different models sent index=0/url="" because the schema never said otherwise."""
+def test_regex_schema_documents_its_constraints():
     find_regex = BROWSER_TOOL_SCHEMAS["browser_find"]["properties"]["regex"]["description"]
     assert "alternation" in find_regex
     assert "{n,m}" in find_regex
 
-    tabs = BROWSER_TOOL_SCHEMAS["browser_tabs"]["properties"]
-    assert "null" in tabs["index"]["description"]
-    assert "null" in tabs["url"]["description"]
+
+class TestPaddedArgumentsAreTreatedAsOmissions:
+    """Models that fill in every declared property must still be able to work.
+
+    Documenting "pass null, never 0 or an empty string" was tried and did not work:
+    a model that pads has no way to stop, so it retries the identical rejected call
+    until it gives up. One run lost its whole first phase to thirteen consecutive
+    `browser_tabs {"action":"list","index":0,"url":""}` calls answered with "url is
+    invalid". Padding that cannot express a request is therefore treated as the
+    omission it was meant to be, here at the agent-facing boundary; the wire
+    protocol stays exact.
+    """
+
+    @pytest.mark.asyncio
+    async def test_listing_tabs_ignores_padded_index_and_url(self, browser_tool, browser_manager):
+        browser_manager.tabs = AsyncMock(return_value={"tabs": []})
+
+        await browser_tool.browser_tabs("list", index=0, url="")
+
+        browser_manager.tabs.assert_awaited_once_with("list", index=None, url=None)
+
+    @pytest.mark.asyncio
+    async def test_a_new_tab_ignores_padded_index_and_reads_an_empty_url_as_blank(self, browser_tool, browser_manager):
+        browser_manager.tabs = AsyncMock(return_value={"tabs": []})
+
+        await browser_tool.browser_tabs("new", index=0, url="   ")
+
+        browser_manager.tabs.assert_awaited_once_with("new", index=None, url=None)
+
+    @pytest.mark.asyncio
+    async def test_selecting_a_tab_keeps_index_zero_and_drops_the_inapplicable_url(self, browser_tool, browser_manager):
+        """0 is a real tab index, so only url is inapplicable to select."""
+        browser_manager.tabs = AsyncMock(return_value={"tabs": []})
+
+        await browser_tool.browser_tabs("select", index=0, url="")
+
+        browser_manager.tabs.assert_awaited_once_with("select", index=0, url=None)
+
+    @pytest.mark.asyncio
+    async def test_scroll_by_pages_ignores_padded_offsets(self, browser_tool, browser_manager):
+        browser_manager.scroll = AsyncMock(return_value={"url": "https://example.com", "title": "Example"})
+
+        await browser_tool.browser_scroll(target="", x=0, y=0, by_pages=2)
+
+        browser_manager.scroll.assert_awaited_once_with(target=None, x=None, y=None, by_pages=2)
+
+    @pytest.mark.asyncio
+    async def test_scroll_to_a_target_ignores_padded_offsets_and_page_count(self, browser_tool, browser_manager):
+        browser_manager.scroll = AsyncMock(return_value={"url": "https://example.com", "title": "Example"})
+
+        await browser_tool.browser_scroll(target="#footer", x=0, y=0, by_pages=0)
+
+        browser_manager.scroll.assert_awaited_once_with(target="#footer", x=None, y=None, by_pages=None)
+
+    @pytest.mark.asyncio
+    async def test_scrolling_to_the_top_stays_a_real_request(self, browser_tool, browser_manager):
+        """x/y of 0 alone means the top of the page, so it must not be dropped."""
+        browser_manager.scroll = AsyncMock(return_value={"url": "https://example.com", "title": "Example"})
+
+        await browser_tool.browser_scroll(x=0, y=0)
+
+        browser_manager.scroll.assert_awaited_once_with(target=None, x=0, y=0, by_pages=None)
+
+    @pytest.mark.asyncio
+    async def test_two_real_movements_are_still_rejected_and_named(self, browser_tool, browser_manager):
+        browser_manager.scroll = AsyncMock()
+
+        with pytest.raises(ValueError, match=r"received target='#footer', by_pages=2"):
+            await browser_tool.browser_scroll(target="#footer", by_pages=2)
+        browser_manager.scroll.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_no_movement_at_all_explains_the_three_shapes(self, browser_tool, browser_manager):
+        browser_manager.scroll = AsyncMock()
+
+        with pytest.raises(ValueError, match="Provide exactly one of target, by_pages, or x/y"):
+            await browser_tool.browser_scroll(target="")
+        browser_manager.scroll.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_find_and_snapshot_drop_padded_strings_and_zero_depth(self, browser_tool, browser_manager):
+        browser_manager.find = AsyncMock(return_value={"query": "Sign in", "matches": [], "match_count": 0})
+        browser_manager.snapshot = AsyncMock(return_value={"url": "https://example.com", "title": "Example"})
+
+        await browser_tool.browser_find(text="Sign in", regex="")
+        await browser_tool.browser_snapshot(target="", depth=0)
+
+        browser_manager.find.assert_awaited_once_with(text="Sign in", regex=None)
+        browser_manager.snapshot.assert_awaited_once_with(target=None, depth=None)
+
+    @pytest.mark.asyncio
+    async def test_wait_for_drops_a_zero_timeout_beside_a_real_condition(self, browser_tool, browser_manager):
+        browser_manager.wait_for = AsyncMock(return_value={"url": "https://example.com", "title": "Example"})
+
+        await browser_tool.browser_wait_for(time=0, text="Ready", text_gone="")
+        browser_manager.wait_for.assert_awaited_once_with(time=None, text="Ready", text_gone=None)
+
+        # On its own a zero wait is a legitimate no-op and stays a request.
+        browser_manager.wait_for.reset_mock()
+        await browser_tool.browser_wait_for(time=0)
+        browser_manager.wait_for.assert_awaited_once_with(time=0, text=None, text_gone=None)
+
+    @pytest.mark.asyncio
+    async def test_screenshot_and_click_fall_back_to_documented_defaults(self, browser_tool, browser_manager):
+        browser_manager.click = AsyncMock(return_value={"url": "https://example.com", "title": "Example"})
+
+        await browser_tool.browser_take_screenshot(target="", image_type="", scale="")
+        await browser_tool.browser_click("e2", button="")
+
+        browser_manager.screenshot.assert_awaited_once_with(target=None, image_type="png", full_page=False, scale="css")
+        browser_manager.click.assert_awaited_once_with("e2", double_click=False, button="left", modifiers=None)
