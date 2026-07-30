@@ -601,7 +601,7 @@ def test_recall_guidance_reaches_subagent_scope(tmp_path: Path) -> None:
 
     context = manager.with_scope(MemoryAccessScope.SUBAGENT).prompt_context().text
 
-    assert "The MEMORY.md index below is a table of contents" in context
+    assert "The MEMORY.md index is a table of contents" in context
     assert "use list_memory to search memory" in context
     assert "read-only access to project memory" in context
     assert "Record stable, reusable facts" not in context

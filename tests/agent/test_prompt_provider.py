@@ -51,8 +51,11 @@ class TestPromptProvider:
         assert "local developer CLI" in prompt
         assert "Kolega Code" in prompt
         assert "/test/project" in prompt
-        assert "Test project documentation" in prompt
-        assert "AGENTS.md" in prompt
+        # Repository guidance is injected into the conversation on change, not rendered into the
+        # prompt, so editing AGENTS.md no longer invalidates the cached prefix for the whole
+        # conversation. The prompt describes the channel that delivers it instead.
+        assert "Test project documentation" not in prompt
+        assert "## Context Updates" in prompt
         assert len(prompt) > 0
 
     def test_coder_agent_cli_mode_keeps_worktrees_project_local(self, prompt_provider, prompt_context):

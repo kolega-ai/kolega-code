@@ -8,7 +8,6 @@ Here is useful information about the environment:
 - Working directory: {{ context.project_path }}
 - Is directory a git repo: {{ context.is_git_repo }}
 - Platform: {{ context.platform }}
-- Today's date: {{ context.date_today }}
 - Model: {{ context.model_name }}
 - Model supports vision: {{ context.model_supports_vision | lower }}
 
@@ -121,19 +120,11 @@ This project was created using a starter template from Kolega. Here is some info
 {% endfor %}
 {% endif %}
 
-{% if context.project_guidance %}
-## Project Instructions
-
-The project directory contains `{{ context.project_guidance_file }}`. Treat it as local project guidance:
-
-```markdown
-{{ context.project_guidance }}
-```
+{% if context.memory_policy %}
+{{ context.memory_policy }}
 {% endif %}
 
-{% if context.private_memory %}
-{{ context.private_memory }}
-{% endif %}
+{% include 'system/includes/context_updates.md' %}
 
 ## Security Guardrails
 

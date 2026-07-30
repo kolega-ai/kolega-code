@@ -94,10 +94,16 @@ Dumped files are editable Markdown templates. Environment values are written as 
 - Working directory: {{ context.project_path }}
 - Is directory a git repo: {{ context.is_git_repo }}
 - Platform: {{ context.platform }}
-- Today's date: {{ context.date_today }}
 - Model: {{ context.model_name }}
 - Model supports vision: {{ context.model_supports_vision | lower }}
 ```
+
+The bundled prompts deliberately omit values that change while a session runs — the
+date, repository guidance, and project memory. Anything in the system prompt is
+processed ahead of every message, so a change there invalidates the cached prefix for
+the whole conversation; those values are delivered to the agent as `<system-reminder>`
+context updates instead, each time they change. The variables remain available to your
+overrides if you want them, at that cost.
 
 ## Template variables
 

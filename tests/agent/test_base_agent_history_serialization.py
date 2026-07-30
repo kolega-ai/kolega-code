@@ -64,7 +64,9 @@ class TestBaseAgent:
         assert isinstance(dumped_history[0]["content"], list)
         assert dumped_history[0]["content"][0]["type"] == "text"
         assert dumped_history[0]["content"][0]["text"] == "Hello"
-        assert dumped_history[0]["content"][0]["cache_checkpoint"] is False  # Verify default
+        # Cache breakpoints are request-shaping state, recomputed each turn and never persisted:
+        # a marker saved from an earlier session is meaningless by the time it is read back.
+        assert "cache_checkpoint" not in dumped_history[0]["content"][0]
 
         assert isinstance(dumped_history[1], dict)
         assert dumped_history[1]["role"] == "assistant"

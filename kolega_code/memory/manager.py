@@ -223,6 +223,8 @@ class ProjectMemoryManager:
             warnings=context.warnings,
             authoring_guidance=context.authoring_guidance,
             recall_guidance=context.recall_guidance,
+            policy=policy,
+            body=context.text,
         )
 
     def tool_bindings(self) -> tuple[MemoryToolBinding, ...]:

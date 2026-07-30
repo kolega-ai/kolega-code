@@ -73,6 +73,13 @@ class MemoryPromptContext:
     warnings: tuple[str, ...] = ()
     authoring_guidance: str = ""
     recall_guidance: str = ""
+    # ``policy`` (how to treat memory) is stable for a session; ``body`` (the memory
+    # itself) changes whenever the agent writes. ``ProjectMemoryManager.prompt_context``
+    # splits its return across the two so the policy can live in the cached system
+    # prompt while the body is injected into the conversation on change. Backends
+    # populate ``text`` alone; on a backend-level context both are empty.
+    policy: str = ""
+    body: str = ""
 
 
 @dataclass(frozen=True, slots=True)
