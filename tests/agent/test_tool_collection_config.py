@@ -276,6 +276,40 @@ class TestToolCollection:
         names_at_limit = set(tool_collection.registry().names())
         assert not names_at_limit.intersection(ToolCollection.agent_dispatch_tools)
 
+    async def test_registration_collects_exclusive_tools_from_extensions(
+        self,
+        project_path: Path,
+        mock_connection_manager: AgentConnectionManager,
+        agent_config: AgentConfig,
+        mock_base_agent: BaseAgent,
+    ) -> None:
+        """The batch-rejection guard reads ``exclusive_tools`` off the live
+        collection; registration must derive it from extension declarations."""
+
+        async def switch_workspace(path: str) -> str:
+            return path
+
+        async def plain_tool(task: str) -> str:
+            return task
+
+        extension = ToolExtension(
+            name="host-session-control",
+            tools={"switch_workspace": switch_workspace, "plain_tool": plain_tool},
+            exclusive_tools=frozenset({"switch_workspace"}),
+        )
+        tool_collection = ToolCollection(
+            project_path,
+            "test_workspace",
+            str(uuid.uuid4()),
+            mock_connection_manager,
+            agent_config,
+            mock_base_agent,
+            tool_extensions=[extension],
+        )
+
+        assert tool_collection.exclusive_tools == frozenset({"switch_workspace"})
+        assert "switch_workspace" in tool_collection.registry()
+
     async def test_model_discovery_is_exposed_to_workflow_authors_but_hidden_from_leaves(
         self,
         project_path: Path,
