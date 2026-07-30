@@ -88,6 +88,7 @@ class ChromeExtensionBrowserManager(BrowserManager):
         self._peer: MultiplexedPeer | None = None
         self._state_changed = asyncio.Event()
         self._browser_session_id: str | None = None
+        self._route_epoch = 0
         self._peer_watch_tasks: set[asyncio.Task[None]] = set()
         self._lifecycle_lock = asyncio.Lock()
         self._operation_lock = asyncio.Lock()
@@ -182,7 +183,9 @@ class ChromeExtensionBrowserManager(BrowserManager):
         # Deliberately independent of peer state: this event is what makes the
         # native host dial the socket in the first place, so requiring a peer here
         # only reintroduces an ordering dependency between two views of the same
-        # fact.
+        # fact. Counting announcements lets a request that raced a rediscovery wait
+        # for the next one instead of failing (see _await_route_confirmation).
+        self._route_epoch += 1
         self._adopt_browser_session()
         self._state_changed.set()
 
@@ -200,25 +203,42 @@ class ChromeExtensionBrowserManager(BrowserManager):
             return []
 
     def _selection_detail(self) -> str:
-        """Ask the operator to grant this session the browser, naming the rivals.
+        """Say what is actually blocking the browser, and only then involve the operator.
 
-        The extension will not guess which local runtime may drive the browser when
-        several are advertised, because selecting one grants a local process access
-        to the operator's real Chrome profile.
+        Two completely different situations produce a selection refusal, and telling
+        the operator to click the extension is right in only one of them:
+
+        - **Contested.** Another Kolega session is claiming the browser at the same
+          time. The extension will not guess which local runtime may drive it,
+          because selecting one grants a local process access to the operator's real
+          Chrome profile, so only the operator can break the tie.
+        - **Uncontested.** This session holds the only claim. Then there is nothing
+          to choose and nothing to click: the extension auto-selects a lone runtime
+          on its next enumeration, which the native host triggers within about a
+          second of the claim appearing. Sending the operator to the popup here is
+          simply wrong, and it is what a claim that outlived its usefulness used to
+          make unavoidable.
         """
         mine = self.runtime_id
         runtimes = self._live_runtimes()
+        rivals = [descriptor for descriptor in runtimes if descriptor.runtime_id != mine]
+        if not rivals:
+            return (
+                "Chrome has not finished picking this session up yet — no other Kolega session is "
+                "competing for the browser, so there is nothing to select and nothing to click. The "
+                "companion enumerates sessions about a second after one asks for the browser, and it "
+                "selects a lone session automatically. Retry the operation."
+            )
         listed = ", ".join(
-            f"{descriptor.session_id} (runtime {descriptor.runtime_id}, pid {descriptor.pid})"
-            + (" <- this session" if descriptor.runtime_id == mine else "")
-            for descriptor in runtimes
+            f"{descriptor.session_id} (runtime {descriptor.runtime_id}, pid {descriptor.pid})" for descriptor in rivals
         )
-        census = f" {len(runtimes)} sessions are advertised: {listed}." if len(runtimes) > 1 else ""
+        plural = "sessions are" if len(rivals) > 1 else "session is"
         return (
-            "Kolega Browser Companion is waiting for you to choose which Kolega session may control the "
-            f"browser.{census} Click the extension and select this session"
+            f"Another Kolega {plural} currently using the browser, so Kolega Browser Companion needs you "
+            f"to choose which one may control it: {listed}. Click the extension and select this session"
             + (f" (runtime {mine})" if mine else "")
-            + ". The extension badge shows '!' while a choice is required."
+            + ". The extension badge shows '!' while a choice is required. A session releases its claim "
+            "when it finishes browsing, so waiting for the other one to finish also clears this."
         )
 
     def _unavailable_detail(self) -> str:
@@ -231,7 +251,8 @@ class ChromeExtensionBrowserManager(BrowserManager):
         count while holding a live connection used to blame the operator for a state
         the session was not actually in.
         """
-        if len(self._live_runtimes()) > 1:
+        mine = self.runtime_id
+        if any(descriptor.runtime_id != mine for descriptor in self._live_runtimes()):
             return self._selection_detail()
         return (
             "Kolega Browser Companion did not connect. Confirm the extension is installed and enabled in "
@@ -311,37 +332,80 @@ class ChromeExtensionBrowserManager(BrowserManager):
             result["state"] = "awaiting_selection"
         return result
 
+    async def _await_route_confirmation(self, since: int) -> bool:
+        """Wait for the extension to re-confirm that this runtime may drive Chrome.
+
+        Re-publishing a withdrawn claim reaches Chrome only through the native
+        host's registry watcher, so an operation issued right after a detach can
+        arrive before the rediscovery that re-selects us. The extension refuses it,
+        but announces ``browser.session_ready`` as soon as the rediscovery lands, so
+        that refusal is transient and worth waiting out once. Compares a
+        confirmation counter rather than clearing a flag, so an announcement that
+        races the refusal still counts.
+        """
+        loop = asyncio.get_running_loop()
+        expires = loop.time() + self.connection_timeout
+        while self._route_epoch == since:
+            self._state_changed.clear()
+            if self._route_epoch != since:
+                break
+            remaining = expires - loop.time()
+            if remaining <= 0:
+                return False
+            try:
+                await asyncio.wait_for(self._state_changed.wait(), timeout=remaining)
+            except TimeoutError:
+                return False
+        return True
+
     async def _request(self, operation: str, params: Mapping[str, JSONValue]) -> dict[str, Any]:
         async with self._operation_lock:
             try:
                 validated = validate_operation_request(operation, dict(params))
             except ProtocolValidationError as exc:
                 raise ChromeExtensionProtocolError(exc.message) from None
-            peer = await self._connected_peer()
-            try:
-                result = await peer.request(operation, validated, timeout=self.operation_timeout)
-            except (ConnectionClosedError, RequestTimeoutError) as exc:
-                if self._peer is peer and peer.closed:
-                    self._peer = None
-                    self._state_changed.set()
-                raise ChromeExtensionUnavailableError(str(exc)) from None
-            except RemoteRequestError as exc:
-                # The remote error code was previously discarded, leaving callers
-                # to string-match prose. Keep it, and append the concrete next
-                # step for the codes that mean "too big to cover in one call" or
-                # "the operator has not granted this session the browser".
-                remedy = _COVERAGE_REMEDIES.get(exc.code or "")
-                if exc.code in _SELECTION_CODES:
-                    remedy = self._selection_detail()
-                message = exc.message
-                if remedy:
-                    message = f"{message.rstrip('.')}. {remedy}"
-                raise ChromeExtensionUnavailableError(message, code=exc.code) from None
+            result = await self._send(operation, validated, allow_route_retry=True)
             if not isinstance(result, dict):
                 raise ChromeExtensionProtocolError("Chrome extension returned a non-object browser result.")
             response = cast(dict[str, Any], result)
             response.setdefault("session_id", self._browser_session_id)
             return response
+
+    async def _send(
+        self,
+        operation: str,
+        validated: dict[str, JSONValue],
+        *,
+        allow_route_retry: bool,
+    ) -> object:
+        epoch = self._route_epoch
+        peer = await self._connected_peer()
+        try:
+            return await peer.request(operation, validated, timeout=self.operation_timeout)
+        except (ConnectionClosedError, RequestTimeoutError) as exc:
+            if self._peer is peer and peer.closed:
+                self._peer = None
+                self._state_changed.set()
+            raise ChromeExtensionUnavailableError(str(exc)) from None
+        except RemoteRequestError as exc:
+            # A selection refusal is checked before the extension touches the page,
+            # so nothing happened and retrying once is safe.
+            if allow_route_retry and exc.code in _SELECTION_CODES and await self._await_route_confirmation(epoch):
+                return await self._send(operation, validated, allow_route_retry=False)
+            # The remote error code was previously discarded, leaving callers to
+            # string-match prose. Keep it, and append the concrete next step for the
+            # codes that mean "too big to cover in one call".
+            if exc.code in _SELECTION_CODES:
+                # Replace rather than append here: the extension cannot see how many
+                # sessions are competing, so its prose tells the operator to make a
+                # choice that usually is not theirs to make. Only this side knows
+                # whether anything is actually contending.
+                raise ChromeExtensionUnavailableError(self._selection_detail(), code=exc.code) from None
+            remedy = _COVERAGE_REMEDIES.get(exc.code or "")
+            message = exc.message
+            if remedy:
+                message = f"{message.rstrip('.')}. {remedy}"
+            raise ChromeExtensionUnavailableError(message, code=exc.code) from None
 
     async def navigate(self, url: str) -> dict[str, Any]:
         return await self._request("browser.navigate", {"url": url})

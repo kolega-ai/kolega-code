@@ -80,18 +80,25 @@ response headers or bodies, file uploads or file/data drop, or console messages.
 ### Choosing which session controls the browser
 
 The extension connects to the native host on its own; you do not need to open it
-in normal use. When exactly one Kolega session is running it is selected
-automatically.
+in normal use.
 
-When two or more sessions are running, the extension will not guess which one
-may drive your browser, because selecting a session grants a local process
-access to pages in your ordinary profile. The toolbar badge shows `!` while a
-choice is pending — click the extension and pick a session. Run
+A Kolega session asks for the browser when it first runs a browser tool, and
+releases it again when it detaches — when a browser sub-agent finishes, or you run
+`browser_close`. Only sessions that currently want the browser are candidates, so
+having several Kolega sessions open costs you nothing: as long as one is browsing
+at a time it is selected automatically, with no clicking.
+
+The extension only involves you when two sessions want the browser *at the same
+time*. It will not guess between them, because selecting a session grants a local
+process access to pages in your ordinary profile. The toolbar badge shows `!` while
+a choice is pending — click the extension and pick a session. Waiting for the other
+session to finish browsing clears it too, since that releases its claim. Run
 `kolega-code browser doctor` to see the competing sessions and which runtime id
 belongs to the session you are using.
 
 Your choice is remembered for as long as Chrome stays open, including across
-service-worker restarts, and is cleared when Chrome restarts.
+service-worker restarts, and is cleared when Chrome restarts or the extension is
+reloaded. Losing it costs nothing when only one session is browsing.
 
 ### Regular expressions
 

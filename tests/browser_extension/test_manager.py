@@ -312,6 +312,57 @@ async def test_detach_leaves_the_session_able_to_drive_the_browser_again(tmp_pat
 
 
 @pytest.mark.asyncio
+async def test_an_operation_racing_a_rediscovery_waits_for_it_instead_of_failing(tmp_path: Path) -> None:
+    """Re-publishing a withdrawn claim reaches Chrome only via the host's watcher.
+
+    So the first operation after a detach can arrive before the rediscovery that
+    re-selects this runtime, and the extension refuses it. Observed live: the call
+    failed in under a second with a selection error, and an identical retry succeeded
+    with no operator action at all — a caller that believed the error would have
+    concluded the backend cannot re-attach, and the operator would have been sent to
+    the popup for nothing.
+    """
+    browser = manager(tmp_path)
+    browser._server = cast(RuntimeServer, FakeServer())
+    peer = FakePeer()
+    await browser._handle_peer(cast(MultiplexedPeer, peer))
+    await browser._handle_event(ready_event())
+    await browser.close()
+    peer.requests.clear()
+
+    refusal = RemoteRequestError(
+        "session_selection_required",
+        "Select a Kolega session before using browser operations",
+        retryable=False,
+    )
+    peer.error = refusal
+
+    async def rediscovery_lands() -> None:
+        """Stand in for the rediscovery the host watcher triggers ~1s after the claim
+        is re-published: the extension re-selects this runtime and announces it."""
+        for _ in range(1_000):
+            if peer.requests:
+                break
+            await asyncio.sleep(0)
+        peer.error = None
+        # Announcing after clearing is the point: the epoch comparison in
+        # _await_route_confirmation must cope with this landing either before or
+        # after the wait begins.
+        await browser._handle_event(ready_event())
+
+    rediscovery = asyncio.create_task(rediscovery_lands())
+    result = await browser.navigate("https://example.com")
+    await rediscovery
+
+    assert result["session_id"] == "chrome:runtime_1"
+    # Retried exactly once, and the caller never saw the transient refusal.
+    assert peer.requests == [
+        ("browser.navigate", {"url": "https://example.com/"}),
+        ("browser.navigate", {"url": "https://example.com/"}),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_a_selection_refused_by_the_extension_is_answered_with_guidance(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -342,9 +393,45 @@ async def test_a_selection_refused_by_the_extension_is_answered_with_guidance(
         await browser.navigate("https://example.com")
 
     assert refused.value.code == "session_not_selected"
-    assert "waiting for you to choose" in str(refused.value)
-    assert "session_2" in str(refused.value)
-    assert "this session" in str(refused.value)
+    detail = str(refused.value)
+    assert "Another Kolega session is currently using the browser" in detail
+    assert "session_2" in detail
+    assert "Click the extension and select this session" in detail
+    # The extension's own prose is replaced, not appended: it cannot see how many
+    # sessions are competing, so it tells the operator to make a choice that is
+    # usually not theirs to make.
+    assert "not routed to the selected" not in detail
+
+
+@pytest.mark.asyncio
+async def test_an_uncontested_refusal_never_sends_the_operator_to_the_popup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With no rival claim there is nothing to choose and nothing to click.
+
+    The extension auto-selects a lone runtime on its next enumeration, so this state
+    is transient. Telling the operator to open the popup here is simply wrong, and it
+    was the visible symptom of a claim that outlived its usefulness.
+    """
+    browser = manager(tmp_path)
+    browser._server = cast(RuntimeServer, FakeServer())
+    peer = FakePeer()
+    await browser._handle_peer(cast(MultiplexedPeer, peer))
+    _advertise(browser, monkeypatch, [_descriptor("runtime_1", "session_1")])
+    peer.error = RemoteRequestError(
+        "session_selection_required",
+        "No Kolega session is selected for browser operations yet",
+        retryable=False,
+    )
+
+    with pytest.raises(ChromeExtensionUnavailableError) as refused:
+        await browser.navigate("https://example.com")
+
+    detail = str(refused.value)
+    assert "nothing to select and nothing to click" in detail
+    assert "Retry the operation." in detail
+    for popup_instruction in ("Click the extension", "badge", "choose which"):
+        assert popup_instruction not in detail
 
 
 @pytest.mark.asyncio
@@ -380,9 +467,9 @@ async def test_probe_names_competing_runtimes_while_a_choice_is_pending(
     assert result["ready"] is False
     assert {entry["runtime_id"] for entry in result["runtimes"]} == {"runtime_1", "runtime_2"}
     assert [entry for entry in result["runtimes"] if entry["current"]][0]["runtime_id"] == "runtime_1"
-    assert "waiting for you to choose" in result["detail"]
+    assert "Another Kolega session is currently using the browser" in result["detail"]
     assert "session_2" in result["detail"]
-    assert "this session" in result["detail"]
+    assert "runtime_1" in result["detail"]
 
 
 @pytest.mark.asyncio
@@ -407,7 +494,7 @@ async def test_probe_reports_awaiting_selection_without_any_peer(
 
     assert result["state"] == "awaiting_selection"
     assert result["connected"] is False
-    assert "waiting for you to choose" in result["detail"]
+    assert "Another Kolega session is currently using the browser" in result["detail"]
 
 
 @pytest.mark.asyncio
@@ -436,5 +523,5 @@ async def test_unavailable_error_names_competing_runtimes(tmp_path: Path, monkey
         [_descriptor("runtime_1", "session_1"), _descriptor("runtime_2", "session_2")],
     )
 
-    with pytest.raises(ChromeExtensionUnavailableError, match="waiting for you to choose"):
+    with pytest.raises(ChromeExtensionUnavailableError, match="Another Kolega session is currently using"):
         await browser.navigate("https://example.com")
