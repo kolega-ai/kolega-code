@@ -90,12 +90,18 @@ Drive a real browser (Playwright) for web tasks:
 
 - `browser_navigate`, `browser_snapshot`, `browser_find`, `browser_close`
 - `browser_click`, `browser_type`, `browser_fill_form`, `browser_select_option`
-- `browser_tabs`, `browser_wait_for`, `browser_handle_dialog`, `browser_file_upload`
+- `browser_scroll`, `browser_press_key`, `browser_wait_for`
+- `browser_tabs`, `browser_handle_dialog`, `browser_file_upload`
 - `browser_console_messages`, `browser_network_requests`, `browser_take_screenshot`
 
 The browser agent uses accessibility snapshots with element refs such as `e12`.
 Actions return an updated snapshot, so the agent can interact deterministically
 without inventing CSS selectors or relying on screenshots.
+
+On a page too large for one snapshot, the nodes nearest the viewport are emitted
+first and a `Coverage:` line states what was left out. Scope it with a `target`,
+or `browser_scroll` and snapshot again; see
+[the browser command reference](/cli/browser/#very-large-pages).
 
 Launch visible browser windows (instead of headless) with `--browser-visible` on
 the [TUI](../../cli/overview/) or [`ask`](../../cli/ask/).

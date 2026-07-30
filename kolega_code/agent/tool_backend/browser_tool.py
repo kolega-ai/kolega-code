@@ -52,7 +52,13 @@ BROWSER_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     "browser_snapshot": _schema(
         {
             "target": _TARGET,
-            "depth": {"type": "integer", "description": "Optional maximum accessibility-tree depth."},
+            "depth": {
+                "type": "integer",
+                "description": (
+                    "Optional maximum accessibility-tree depth. This counts emitted nodes, not raw DOM "
+                    "nesting, so ordinary deeply nested markup is not pruned."
+                ),
+            },
         }
     ),
     "browser_find": _schema(
@@ -254,7 +260,14 @@ BROWSER_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         {
             "target": _TARGET,
             "image_type": {"type": "string", "enum": ["png", "jpeg"]},
-            "full_page": {"type": "boolean", "description": "Capture the full scrollable page."},
+            "full_page": {
+                "type": "boolean",
+                "description": (
+                    "Capture the full scrollable page. A page too tall to capture legibly is clipped "
+                    "from the current scroll position and reports what it left out, so scroll and "
+                    "capture again to see the rest."
+                ),
+            },
             "scale": {"type": "string", "enum": ["css", "device"]},
         }
     ),
@@ -323,7 +336,33 @@ class BrowserTool(BaseTool):
             parts.append("Result truncated by size.")
         if result.get("snapshot") is not None:
             parts.extend(["", "## Snapshot", "```yaml", result["snapshot"], "```"])
+        coverage = BrowserTool._format_coverage(result.get("coverage"))
+        if coverage:
+            parts.extend(["", coverage])
         return "\n".join(parts)
+
+    @staticmethod
+    def _format_coverage(coverage: Any) -> str:
+        """Say what a partial snapshot left out, and what to do about it.
+
+        Only emitted when coverage is genuinely incomplete: a truncated snapshot
+        that looks complete is what made an agent conclude a page was unreadable.
+        """
+        if not isinstance(coverage, dict) or coverage.get("complete") is not False:
+            return ""
+        emitted = coverage.get("emitted")
+        candidates = coverage.get("candidates")
+        reason = coverage.get("reason") or "a size bound"
+        scope = f"Showing {emitted} of {candidates} page nodes" if emitted and candidates else "Snapshot truncated"
+        position = ""
+        scroll_y = coverage.get("scroll_y")
+        content_height = coverage.get("content_height")
+        if isinstance(scroll_y, (int, float)) and isinstance(content_height, (int, float)) and content_height:
+            position = f", at y={int(scroll_y)} of {int(content_height)} px"
+        return (
+            f"Coverage: {scope} ({reason}){position}. Nodes nearest the viewport are shown first. "
+            "Narrow the scope with browser_snapshot target=<selector>, or browser_scroll and snapshot again."
+        )
 
     def _file_payloads(self, paths: list[str]) -> list[dict[str, Any]]:
         payloads = []
@@ -357,11 +396,25 @@ class BrowserTool(BaseTool):
 
     async def browser_find(self, text: Optional[str] = None, regex: Optional[str] = None) -> str:
         result = await self.browser_manager.find(text=text, regex=regex)
+        query = result["query"]
+        coverage = self._format_coverage(result.get("snapshot_coverage"))
         if not result["matches"]:
-            return f"No matches found for {result['query']!r}."
-        return f"Found {result['match_count']} matches for {result['query']!r}:\n\n" + "\n\n---\n\n".join(
-            result["matches"]
-        )
+            # A bounded search must never be rendered as an absence. The three
+            # cases are: genuinely absent, present in the page but outside the
+            # region the snapshot covered, and undetermined because the search
+            # itself was truncated.
+            if result.get("page_text_match") is True:
+                return (
+                    f"No snapshot matches for {query!r}, but the page's rendered text does contain it, "
+                    "so it lies outside the region this snapshot covered." + (f"\n\n{coverage}" if coverage else "")
+                )
+            if result.get("page_text_match") is False:
+                return f"No matches found for {query!r}, and the page's rendered text does not contain it either."
+            return f"No matches found for {query!r} in the covered region; coverage was incomplete, so this is " + (
+                "not a reliable absence." + (f"\n\n{coverage}" if coverage else "")
+            )
+        found = f"Found {result['match_count']} matches for {query!r}:\n\n" + "\n\n---\n\n".join(result["matches"])
+        return f"{found}\n\n{coverage}" if coverage else found
 
     async def browser_wait_for(
         self, time: Optional[float] = None, text: Optional[str] = None, text_gone: Optional[str] = None

@@ -1,6 +1,7 @@
 """Chrome Native Messaging browser backend."""
 
 from .framing import (
+    MAX_NATIVE_INBOUND_MESSAGE_BYTES,
     MAX_NATIVE_MESSAGE_BYTES,
     FramingError,
     MessageTooLargeError,
@@ -46,6 +47,7 @@ __all__ = [
     "ALLOWED_OPERATIONS",
     "CHROME_EXTENSION_CAPABILITIES",
     "CHROME_EXTENSION_SUPPORTED_TOOLS",
+    "MAX_NATIVE_INBOUND_MESSAGE_BYTES",
     "MAX_NATIVE_MESSAGE_BYTES",
     "PROTOCOL_VERSION",
     "ChromeExtensionBrowserManager",

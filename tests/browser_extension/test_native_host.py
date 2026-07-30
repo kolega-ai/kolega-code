@@ -11,7 +11,13 @@ from typing import Any, cast
 
 import pytest
 
-from kolega_code.browser_extension.framing import read_message
+from kolega_code.browser_extension.framing import (
+    MAX_NATIVE_INBOUND_MESSAGE_BYTES,
+    MAX_NATIVE_MESSAGE_BYTES,
+    MessageTooLargeError,
+    encode_message,
+    read_message,
+)
 from kolega_code.browser_extension.native_host import (
     NativeHostBroker,
     NativeHostConfig,
@@ -141,6 +147,41 @@ async def test_native_endpoint_serializes_concurrent_complete_frames() -> None:
     assert second is not None
     assert {first["sequence"], second["sequence"]} == {1, 2}
     assert read_message(stream) is None
+
+
+@pytest.mark.asyncio
+async def test_native_endpoint_bounds_each_direction_by_what_chrome_enforces() -> None:
+    """Reads accept a screenshot-sized frame; writes stay inside Chrome's 1 MB cap.
+
+    Chrome caps a message *from* the host at 1 MB but allows far more *to* it, so
+    sharing one bound made the direction that carries screenshots pay for a limit
+    that never applied to it.
+    """
+    oversized_response = encode_message(
+        {"image": "a" * (MAX_NATIVE_MESSAGE_BYTES + 512_000)},
+        max_bytes=MAX_NATIVE_INBOUND_MESSAGE_BYTES,
+    )
+    endpoint = NativeMessageEndpoint(io.BytesIO(oversized_response), io.BytesIO())
+    inbound = await endpoint.read()
+    assert inbound is not None
+    assert len(inbound["image"]) == MAX_NATIVE_MESSAGE_BYTES + 512_000
+    await endpoint.close()
+
+    # The write direction is still refused past Chrome's hard limit.
+    writer = NativeMessageEndpoint(io.BytesIO(), io.BytesIO())
+    with pytest.raises(MessageTooLargeError):
+        await writer.write_mapping({"image": "a" * (MAX_NATIVE_MESSAGE_BYTES + 1)})
+    await writer.close()
+
+    # And the read direction is generous, not unbounded.
+    beyond = encode_message(
+        {"image": "a" * MAX_NATIVE_INBOUND_MESSAGE_BYTES},
+        max_bytes=MAX_NATIVE_INBOUND_MESSAGE_BYTES * 2,
+    )
+    guarded = NativeMessageEndpoint(io.BytesIO(beyond), io.BytesIO())
+    with pytest.raises(MessageTooLargeError):
+        await guarded.read()
+    await guarded.close()
 
 
 @pytest.mark.asyncio

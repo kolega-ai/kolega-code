@@ -13,7 +13,7 @@ from kolega_code.browser_extension.manager import (
     ChromeExtensionProtocolError,
     ChromeExtensionUnavailableError,
 )
-from kolega_code.browser_extension.multiplex import MultiplexedPeer
+from kolega_code.browser_extension.multiplex import MultiplexedPeer, RemoteRequestError
 from kolega_code.browser_extension.protocol import Envelope, MessageDirection
 from kolega_code.browser_extension.registry import RuntimeDescriptor
 from kolega_code.browser_extension.runtime import RuntimeServer
@@ -28,9 +28,12 @@ class FakePeer:
         self.requests: list[tuple[str, dict[str, Any]]] = []
         self.active = 0
         self.max_active = 0
+        self.error: RemoteRequestError | None = None
 
     async def request(self, operation: str, params: dict[str, Any], *, timeout: float) -> dict[str, Any]:
         self.requests.append((operation, params))
+        if self.error is not None:
+            raise self.error
         self.active += 1
         self.max_active = max(self.max_active, self.active)
         await asyncio.sleep(0.005)
@@ -170,6 +173,34 @@ async def test_manager_preserves_browser_result_shapes(tmp_path: Path) -> None:
 
 def test_scroll_is_part_of_the_supported_chrome_tool_surface() -> None:
     assert "browser_scroll" in CHROME_EXTENSION_SUPPORTED_TOOLS
+
+
+@pytest.mark.asyncio
+async def test_remote_error_codes_survive_and_coverage_codes_gain_a_remedy(tmp_path: Path) -> None:
+    """The remote code was being discarded, leaving callers to string-match prose."""
+    browser = manager(tmp_path)
+    browser._server = cast(RuntimeServer, FakeServer())
+    peer = FakePeer()
+    await browser._handle_peer(cast(MultiplexedPeer, peer))
+    await browser._handle_event(ready_event())
+
+    peer.error = RemoteRequestError(
+        "search_truncated",
+        "Page text search covered only the first 499998 characters.",
+        retryable=True,
+    )
+    with pytest.raises(ChromeExtensionUnavailableError) as truncated:
+        await browser.wait_for(text="anything")
+    assert truncated.value.code == "search_truncated"
+    assert "Scope the search" in str(truncated.value)
+
+    # A code with no coverage remedy keeps its message unchanged.
+    peer.error = RemoteRequestError("tab_closed", "The selected tab was closed", retryable=False)
+    with pytest.raises(ChromeExtensionUnavailableError) as closed:
+        await browser.snapshot()
+    assert closed.value.code == "tab_closed"
+    assert str(closed.value) == "The selected tab was closed"
+    await browser.cleanup_all_browsers()
 
 
 def _descriptor(runtime_id: str, session_id: str, pid: int = 4321) -> RuntimeDescriptor:

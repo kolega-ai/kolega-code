@@ -20,6 +20,8 @@ from kolega_code.browser_extension.framing import (
 from kolega_code.browser_extension.protocol import (
     ALLOWED_OPERATIONS,
     MAX_ERROR_MESSAGE_LENGTH,
+    MAX_PROTOCOL_JSON_BYTES,
+    MAX_PROTOCOL_RESPONSE_JSON_BYTES,
     PROTOCOL_VERSION,
     Envelope,
     MessageDirection,
@@ -410,10 +412,28 @@ def test_native_framing_counts_utf8_bytes_without_ascii_escape_inflation() -> No
         encode_message(value, max_bytes=len(encoded) - 1)
 
 
-def test_generated_envelopes_cannot_exceed_the_protocol_frame_bound() -> None:
+def test_envelope_size_bounds_follow_the_direction_they_travel() -> None:
+    """Chrome caps host->extension at 1 MB but allows far more the other way.
+
+    Requests must respect the conservative bound; responses carry screenshots and
+    would otherwise have to be downscaled into illegibility to fit a limit that
+    was self-imposed rather than Chrome's.
+    """
+    # A response comfortably past the request bound is accepted.
+    large = Envelope.response_for(request(), {"image": "a" * 4_000_000})
+    assert large.direction is MessageDirection.EXTENSION_TO_RUNTIME
+    assert large.size_limit == MAX_PROTOCOL_RESPONSE_JSON_BYTES
+
+    # A request is still held to the limit Chrome actually enforces.
+    assert request().size_limit == MAX_PROTOCOL_JSON_BYTES
     with pytest.raises(ProtocolValidationError) as error:
-        Envelope.response_for(request(), {"text": "é" * 600_000})
-    assert error.value.code == "message_too_large"
+        request("browser.navigate", {"url": f"https://example.com/{'a' * 2_000_000}"})
+    assert error.value.code in {"invalid_params", "message_too_large"}
+
+    # The response bound is generous, not absent.
+    with pytest.raises(ProtocolValidationError) as too_big:
+        Envelope.response_for(request(), {"image": "a" * MAX_PROTOCOL_RESPONSE_JSON_BYTES})
+    assert too_big.value.code == "message_too_large"
 
 
 def test_protocol_json_rejects_non_finite_and_non_object_payloads() -> None:

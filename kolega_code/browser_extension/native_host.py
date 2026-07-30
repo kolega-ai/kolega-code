@@ -16,7 +16,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, BinaryIO, Literal, Mapping, Sequence, TextIO, cast
 
-from .framing import MAX_NATIVE_MESSAGE_BYTES, FramingError, encode_message, read_message
+from .framing import (
+    MAX_NATIVE_INBOUND_MESSAGE_BYTES,
+    MAX_NATIVE_MESSAGE_BYTES,
+    FramingError,
+    encode_message,
+    read_message,
+)
 from .protocol import (
     MAX_DEADLINE_AHEAD_MS,
     PROTOCOL_VERSION,
@@ -42,6 +48,9 @@ DEFAULT_MAX_RUNTIMES = 16
 DEFAULT_MAX_RELAY_PENDING = 256
 RUNTIME_WATCH_INTERVAL_SECONDS = 1.0
 DEFAULT_MAX_NATIVE_PENDING_WRITES = 256
+# Writes toward Chrome stay bounded by its 1 MB message limit, so the backpressure
+# ceiling is expressed against that rather than against the much larger inbound
+# bound: a big response must not multiply into hundreds of megabytes of queue.
 DEFAULT_MAX_NATIVE_PENDING_WRITE_BYTES = 8 * MAX_NATIVE_MESSAGE_BYTES
 DEFAULT_NATIVE_WRITE_SHUTDOWN_SECONDS = 1.0
 _HOST_CONFIG_KEYS = frozenset({"extension_origin", "registry_dir", "max_runtimes", "max_pending_requests"})
@@ -190,15 +199,21 @@ class NativeMessageEndpoint:
         output_stream: BinaryIO,
         *,
         max_message_bytes: int = MAX_NATIVE_MESSAGE_BYTES,
+        max_inbound_message_bytes: int = MAX_NATIVE_INBOUND_MESSAGE_BYTES,
         max_pending_writes: int = DEFAULT_MAX_NATIVE_PENDING_WRITES,
         max_pending_write_bytes: int = DEFAULT_MAX_NATIVE_PENDING_WRITE_BYTES,
         shutdown_timeout: float = DEFAULT_NATIVE_WRITE_SHUTDOWN_SECONDS,
     ) -> None:
         if max_pending_writes <= 0 or max_pending_write_bytes <= 0 or shutdown_timeout <= 0:
             raise ValueError("native endpoint bounds must be positive")
+        if max_inbound_message_bytes <= 0:
+            raise ValueError("native endpoint bounds must be positive")
         self.input_stream = input_stream
         self.output_stream = output_stream
+        # Writes go to Chrome, which enforces a hard 1 MB limit; reads come from
+        # Chrome, which permits far more and carries screenshot payloads.
         self.max_message_bytes = max_message_bytes
+        self.max_inbound_message_bytes = max_inbound_message_bytes
         self.max_pending_writes = max_pending_writes
         self.max_pending_write_bytes = max_pending_write_bytes
         self.shutdown_timeout = shutdown_timeout
@@ -222,7 +237,7 @@ class NativeMessageEndpoint:
         return self._outstanding_write_bytes
 
     async def read(self) -> dict[str, Any] | None:
-        return await asyncio.to_thread(read_message, self.input_stream, max_bytes=self.max_message_bytes)
+        return await asyncio.to_thread(read_message, self.input_stream, max_bytes=self.max_inbound_message_bytes)
 
     async def write(self, envelope: Envelope) -> None:
         await self.write_mapping(envelope.to_mapping())

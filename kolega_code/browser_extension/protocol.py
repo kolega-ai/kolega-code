@@ -18,7 +18,13 @@ PROTOCOL_VERSION = 1
 MAX_SAFE_INTEGER = (1 << 53) - 1
 MAX_IDENTIFIER_LENGTH = 128
 MAX_ERROR_MESSAGE_LENGTH = 240
+# Requests travel runtime -> extension and are bounded by their own parameter
+# schemas anyway, so they keep the conservative limit. Responses travel the other
+# way and carry screenshots; sharing the request bound with them is what forced a
+# full-page capture to be downscaled until it was unreadable. Chrome permits far
+# more in that direction, and every result still has its own explicit bound.
 MAX_PROTOCOL_JSON_BYTES = 1_048_576
+MAX_PROTOCOL_RESPONSE_JSON_BYTES = 67_108_864
 MAX_DISCOVERY_RUNTIMES = 64
 MAX_DEADLINE_AHEAD_MS = 300_000
 
@@ -668,6 +674,13 @@ class Envelope:
         object.__setattr__(self, "payload", validated.payload)
         self.to_json()
 
+    @property
+    def size_limit(self) -> int:
+        """The byte bound that applies to this envelope's direction."""
+        if self.direction is MessageDirection.EXTENSION_TO_RUNTIME:
+            return MAX_PROTOCOL_RESPONSE_JSON_BYTES
+        return MAX_PROTOCOL_JSON_BYTES
+
     @classmethod
     def from_mapping(cls, value: object) -> Envelope:
         envelope = _exact_mapping(value, _ENVELOPE_KEYS, "envelope")
@@ -701,9 +714,12 @@ class Envelope:
         return instance
 
     @classmethod
-    def from_json(cls, raw: str | bytes) -> Envelope:
+    def from_json(cls, raw: str | bytes, *, max_bytes: int = MAX_PROTOCOL_RESPONSE_JSON_BYTES) -> Envelope:
+        # The generous bound is the default here because the direction is only
+        # known after parsing; the per-direction limit is then enforced by
+        # __post_init__ through to_json.
         if isinstance(raw, bytes):
-            if len(raw) > MAX_PROTOCOL_JSON_BYTES:
+            if len(raw) > max_bytes:
                 raise _invalid("message_too_large", "protocol message exceeds the size limit")
             try:
                 text = raw.decode("utf-8")
@@ -715,7 +731,7 @@ class Envelope:
                 encoded_size = len(text.encode("utf-8"))
             except UnicodeEncodeError:
                 raise _invalid("invalid_json", "protocol message is not valid Unicode") from None
-            if encoded_size > MAX_PROTOCOL_JSON_BYTES:
+            if encoded_size > max_bytes:
                 raise _invalid("message_too_large", "protocol message exceeds the size limit")
         try:
             value = json.loads(text, object_pairs_hook=_reject_duplicate_keys, parse_constant=_reject_constant)
@@ -745,7 +761,7 @@ class Envelope:
             separators=(",", ":"),
             sort_keys=True,
         )
-        if len(encoded.encode("utf-8")) > MAX_PROTOCOL_JSON_BYTES:
+        if len(encoded.encode("utf-8")) > self.size_limit:
             raise _invalid("message_too_large", "protocol message exceeds the size limit")
         return encoded
 

@@ -109,6 +109,106 @@ async def test_page_format_omits_scroll_position_when_absent(browser_tool, brows
     assert "Scroll position" not in result
 
 
+def _coverage(**overrides):
+    coverage = {
+        "candidates": 39_501,
+        "complete": False,
+        "content_height": 20_176,
+        "emitted": 639,
+        "reason": "char_cap",
+        "scroll_y": 588,
+        "viewport_height": 767,
+        "visited": 39_501,
+    }
+    coverage.update(overrides)
+    return coverage
+
+
+@pytest.mark.asyncio
+async def test_incomplete_coverage_is_reported_with_a_remedy(browser_tool, browser_manager):
+    browser_manager.navigate.return_value = {
+        "session_id": "session-1",
+        "url": "https://example.com",
+        "title": "Example",
+        "snapshot": '- heading "Example" [ref=e2]',
+        "coverage": _coverage(),
+    }
+
+    result = await browser_tool.browser_navigate("https://example.com")
+
+    assert "Coverage: Showing 639 of 39501 page nodes (char_cap), at y=588 of 20176 px" in result
+    assert "browser_scroll and snapshot again" in result
+
+
+@pytest.mark.asyncio
+async def test_complete_coverage_is_not_reported_at_all(browser_tool, browser_manager):
+    browser_manager.navigate.return_value = {
+        "session_id": "session-1",
+        "url": "https://example.com",
+        "title": "Example",
+        "snapshot": '- heading "Example" [ref=e2]',
+        "coverage": _coverage(complete=True, reason=None),
+    }
+
+    result = await browser_tool.browser_navigate("https://example.com")
+
+    assert "Coverage:" not in result
+
+
+@pytest.mark.asyncio
+async def test_find_distinguishes_absence_from_incomplete_coverage(browser_tool, browser_manager):
+    """A bounded search must never render as a flat absence.
+
+    Reporting "No matches found" for text plainly on the page is the wrong answer,
+    and it cost an earlier session most of its tool calls.
+    """
+    browser_manager.find = AsyncMock()
+
+    browser_manager.find.return_value = {
+        "query": "See more",
+        "match_count": 0,
+        "matches": [],
+        "page_text_match": True,
+        "snapshot_coverage": _coverage(),
+    }
+    outside = await browser_tool.browser_find(text="See more")
+    assert "outside the region this snapshot covered" in outside
+    assert "Coverage:" in outside
+
+    browser_manager.find.return_value = {
+        "query": "Nowhere",
+        "match_count": 0,
+        "matches": [],
+        "page_text_match": False,
+        "snapshot_coverage": _coverage(complete=True, reason=None),
+    }
+    absent = await browser_tool.browser_find(text="Nowhere")
+    assert "does not contain it either" in absent
+    assert "Coverage:" not in absent
+
+    browser_manager.find.return_value = {
+        "query": "Unknown",
+        "match_count": 0,
+        "matches": [],
+        "page_text_match": None,
+        "snapshot_coverage": _coverage(),
+    }
+    undetermined = await browser_tool.browser_find(text="Unknown")
+    assert "not a reliable absence" in undetermined
+
+    browser_manager.find.return_value = {
+        "query": "Save",
+        "match_count": 2,
+        "matches": ['- button "Save" [ref=e4]'],
+        "page_text_match": None,
+        "snapshot_coverage": _coverage(),
+    }
+    hit = await browser_tool.browser_find(text="Save")
+    assert "Found 2 matches" in hit
+    # A hit under partial coverage still warns, because there may be more.
+    assert "Coverage:" in hit
+
+
 @pytest.mark.asyncio
 async def test_file_upload_reads_only_through_workspace_filesystem(browser_tool, browser_manager, tmp_path):
     upload = tmp_path / "avatar.txt"

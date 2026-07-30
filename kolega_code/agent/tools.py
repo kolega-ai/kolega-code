@@ -995,9 +995,15 @@ class ToolCollection(LogMixin):
         Prefer this over screenshots when deciding what to interact with. Interactive
         nodes include stable refs such as e12 that can be passed to action tools.
 
+        On a page too large to fit one snapshot, nodes nearest the viewport are shown
+        first and a Coverage line states what was left out. That is an instruction to
+        narrow the scope — pass a target, or browser_scroll and snapshot again — not a
+        sign the page is unreadable.
+
         Args:
             target: Optional snapshot ref or unique selector for a subtree.
-            depth: Optional maximum accessibility-tree depth.
+            depth: Optional maximum accessibility-tree depth. Counts emitted nodes
+                rather than raw DOM nesting.
         """
         return await self.browser_tool.browser_snapshot(target, depth)
 
@@ -1006,6 +1012,10 @@ class ToolCollection(LogMixin):
 
         Provide exactly one of text or regex. This is cheaper than requesting a
         full snapshot when locating a specific element.
+
+        A miss distinguishes three cases: absent from the page, present in the page
+        but outside the region the snapshot covered, and undetermined because the
+        search was truncated. Only the first is a reliable absence.
 
         Args:
             text: Case-insensitive text to find.

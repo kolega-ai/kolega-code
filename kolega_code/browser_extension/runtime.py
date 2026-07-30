@@ -17,7 +17,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
-from .framing import FramingError, read_message_async, write_message_async
+from .framing import MAX_NATIVE_INBOUND_MESSAGE_BYTES, FramingError, read_message_async, write_message_async
 from .protocol import PROTOCOL_VERSION, Envelope, MessageDirection
 from .registry import (
     RuntimeDescriptor,
@@ -101,7 +101,9 @@ class RuntimeChannel:
     async def read(self) -> Envelope | None:
         if self._closed:
             return None
-        raw = await read_message_async(self._reader)
+        # This is our own local socket, not Chrome's stdio, so Chrome's 1 MB
+        # message limit does not apply to it. Screenshot responses cross here.
+        raw = await read_message_async(self._reader, max_bytes=MAX_NATIVE_INBOUND_MESSAGE_BYTES)
         if raw is None:
             return None
         envelope = Envelope.from_mapping(raw)
@@ -123,7 +125,11 @@ class RuntimeChannel:
                 async with self._write_lock:
                     if self.closed:
                         raise RuntimeDisconnectedError("Runtime channel is disconnected")
-                    await write_message_async(self._writer, envelope.to_mapping())
+                    await write_message_async(
+                        self._writer,
+                        envelope.to_mapping(),
+                        max_bytes=MAX_NATIVE_INBOUND_MESSAGE_BYTES,
+                    )
         except (TimeoutError, ConnectionError, BrokenPipeError, FramingError):
             raise RuntimeDisconnectedError("Runtime channel is disconnected") from None
 

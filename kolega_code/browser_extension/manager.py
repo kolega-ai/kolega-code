@@ -24,8 +24,31 @@ DEFAULT_EXTENSION_CONNECTION_TIMEOUT_SECONDS = 12.0
 DEFAULT_BROWSER_OPERATION_TIMEOUT_SECONDS = 30.0
 
 
+# Codes that mean "this page is larger than one call can cover", as opposed to
+# something being broken. Each one has a concrete next step, and saying so is what
+# stops an agent rediscovering the same wall from six directions.
+_COVERAGE_REMEDIES = {
+    "search_truncated": (
+        "Scope the search: snapshot a subtree with browser_snapshot target=<selector>, or check a "
+        "string that appears earlier in the page."
+    ),
+    "result_too_large": (
+        "The result did not fit its bound. Narrow it: pass a target to capture one element, or "
+        "browser_scroll and capture the region you need."
+    ),
+    "page_too_large": (
+        "The page exceeds what one call can cover. Pass a target to browser_snapshot to scope it, "
+        "or browser_scroll and snapshot again."
+    ),
+}
+
+
 class ChromeExtensionUnavailableError(RuntimeError):
     """Chrome or the selected extension runtime is unavailable."""
+
+    def __init__(self, message: str, *, code: str | None = None) -> None:
+        super().__init__(message)
+        self.code = code
 
 
 class ChromeExtensionProtocolError(RuntimeError):
@@ -281,7 +304,12 @@ class ChromeExtensionBrowserManager(BrowserManager):
                     self._state_changed.set()
                 raise ChromeExtensionUnavailableError(str(exc)) from None
             except RemoteRequestError as exc:
-                raise ChromeExtensionUnavailableError(exc.message) from None
+                # The remote error code was previously discarded, leaving callers
+                # to string-match prose. Keep it, and append the concrete next
+                # step for the codes that mean "too big to cover in one call".
+                remedy = _COVERAGE_REMEDIES.get(exc.code or "")
+                message = f"{exc.message} {remedy}" if remedy else exc.message
+                raise ChromeExtensionUnavailableError(message, code=exc.code) from None
             if not isinstance(result, dict):
                 raise ChromeExtensionProtocolError("Chrome extension returned a non-object browser result.")
             response = cast(dict[str, Any], result)

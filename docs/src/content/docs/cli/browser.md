@@ -68,7 +68,7 @@ The Chrome integration exposes only these fixed protocol operations:
   `browser.wait_for`
 - Interaction: `browser.click`, `browser.type`, `browser.fill_form`,
   `browser.select_option`, `browser.hover`, `browser.drag`,
-  `browser.press_key`
+  `browser.press_key`, `browser.scroll`
 - Tabs and inspection: `browser.tabs`, `browser.network_requests`,
   `browser.screenshot`
 - Disconnect: `browser.detach`
@@ -109,12 +109,39 @@ ever repeat one atom, so catastrophic backtracking is impossible. Write
 The Playwright backend accepts full Python regular expressions, so a pattern that
 works there may be rejected on Chrome.
 
+### Very large pages
+
+A page can be far larger than one snapshot can carry, and the Chrome backend now
+says so instead of pretending otherwise. Snapshots emit the nodes nearest the
+viewport first and attach a `Coverage:` line naming how much was shown, why it
+stopped, and where the viewport sits in the page.
+
+Treat that line as an instruction, not a failure:
+
+- pass `target` to `browser_snapshot` to scope it to one subtree, or
+- `browser_scroll` and snapshot again to walk the page a screenful at a time.
+
+Two related guarantees follow from the same principle. A rendered-text search
+that could not read the whole page reports `search_truncated` rather than
+claiming the text is absent, and `browser_find` distinguishes text that is
+genuinely missing from text that lies outside the region the snapshot covered.
+A negative result you can trust is worth more than one that is merely short.
+
+Page work is bounded by a wall-clock budget rather than by a node count, so
+ordinary large pages are covered completely; only pathological documents run out
+of time, and they too report what they managed.
+
 ### Screenshots
 
 `browser.screenshot` returns the image inline. Neither the Chrome nor the
 Playwright backend writes screenshots to disk, so there is no artifact file path
 to report. Capture only the region you need: a full-page screenshot of a long
 page produces a large inline image.
+
+On Chrome, a page too tall to capture legibly is clipped from the current scroll
+position rather than downscaled, and the result reports what it omitted. Scroll
+and capture again to see the rest. Sticky headers repeat in each stitched band,
+which is inherent to how Chrome captures a visible tab.
 
 ## Native-host manifest location
 
