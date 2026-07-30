@@ -549,13 +549,6 @@ class LocalFileSystem(FileSystem):
         if not self.is_dir("."):
             raise ValueError(f"Project path is not a directory: {self.root_path}")
 
-    def switch_root(self, root_path: Union[str, Path]) -> None:
-        """Retarget relative filesystem operations to an existing directory."""
-        candidate = Path(root_path).resolve()
-        if not candidate.is_dir():
-            raise ValueError(f"Project path is not a directory: {candidate}")
-        self.root_path = candidate
-
     def _resolve_path(self, path: str) -> Path:
         """
         Resolve a potentially relative path against the root path.

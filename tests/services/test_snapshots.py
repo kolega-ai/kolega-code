@@ -56,15 +56,25 @@ def test_restore_rejects_snapshot_from_previous_project(snapshot_service, tmp_pa
     )
     assert result.snapshot is not None
 
+    # A rebuild constructs a fresh SnapshotService at the new root. Reuse the
+    # same workspace/thread/session ids and state root as the fixture so the
+    # new service shares the first service's on-disk snapshot storage.
     other = tmp_path / "other-worktree"
     other.mkdir()
-    snapshot_service.filesystem.switch_root(other)
-    snapshot_service.switch_project_path(other)
+    state = tmp_path / "state"
+    other_service = SnapshotService(
+        other,
+        "workspace",
+        "thread",
+        "session",
+        LocalFileSystem(other),
+        root=state,
+    )
 
     with pytest.raises(SnapshotError, match="belongs to"):
-        snapshot_service.load_snapshot(result.snapshot.snapshot_id)
+        other_service.load_snapshot(result.snapshot.snapshot_id)
     with pytest.raises(SnapshotError, match="belongs to"):
-        snapshot_service.restore_snapshot(result.snapshot.snapshot_id, force=True)
+        other_service.restore_snapshot(result.snapshot.snapshot_id, force=True)
 
     assert path.read_text(encoding="utf-8") == "after\n"
 

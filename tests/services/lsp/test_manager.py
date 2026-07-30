@@ -50,22 +50,6 @@ def manager(tmp_path: Path) -> LspManager:
     return m
 
 
-@pytest.mark.asyncio
-async def test_recreate_for_project_closes_old_manager_and_preserves_base_config(
-    manager: LspManager, tmp_path: Path
-) -> None:
-    new_root = tmp_path / "other-worktree"
-    new_root.mkdir()
-    manager.shutdown = AsyncMock()  # type: ignore[method-assign]
-
-    replacement = await manager.recreate_for_project(new_root)
-
-    manager.shutdown.assert_awaited_once()
-    assert replacement._project_path == new_root.resolve()
-    assert replacement._config is manager._base_config
-    assert replacement._trusted is manager._trusted
-
-
 # ---------------------------------------------------------------------------
 # _resolve_position
 # ---------------------------------------------------------------------------

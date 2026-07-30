@@ -111,7 +111,6 @@ class LspManager:
     ) -> None:
         self._project_path = Path(project_path).resolve()
         self._config = config or LspConfig()
-        self._base_config = self._config
         # Whether the project's .kolega/lsp.json is trusted to define custom
         # language servers. When False, project-level config is never loaded.
         self._trusted = trusted
@@ -956,14 +955,6 @@ class LspManager:
         self._initialized = False
         self.report = None
         return await self.initialize()
-
-    async def recreate_for_project(self, project_path: str | Path) -> "LspManager":
-        """Close this workspace and return a fresh manager for another root."""
-        candidate = Path(project_path).resolve()
-        if not candidate.is_dir():
-            raise ValueError(f"LSP project path is not a directory: {candidate}")
-        await self.shutdown()
-        return type(self)(candidate, config=self._base_config, trusted=self._trusted)
 
     async def shutdown(self) -> None:
         """Send ``shutdown`` + ``exit`` to all language servers and terminate them."""

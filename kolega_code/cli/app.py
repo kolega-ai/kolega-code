@@ -37,8 +37,6 @@ from textual.widgets import (
 from textual.widgets.option_list import Option
 
 from kolega_code.agent import AgentConfig
-from kolega_code.agent.prompt_provider import PromptExtension
-from kolega_code.agent.tools import ToolExtension
 from kolega_code.session.recording import RecordingConnectionManager
 from kolega_code.session.runtime import SessionRuntime, control_channel_for
 from kolega_code.agent.prompt_dump import list_prompt_overrides
@@ -50,7 +48,6 @@ from kolega_code.hooks import HookDispatcher, HookEvent
 from kolega_code.llm.models import MessageHistory
 from kolega_code.memory import ProjectMemoryManager
 from kolega_code.mcp.config import load_mcp_config, mcp_secret_values
-from kolega_code.mcp.tools import build_mcp_tool_extension
 from kolega_code.mcp.state import MCPOAuthTokenStore
 from kolega_code.permissions import (
     PermissionMode,
@@ -70,15 +67,12 @@ from .provider_registry import default_ui_thinking_effort
 from .session_journal import RewindOutcome, TurnSummary
 from .session_store import SessionRecord, SessionStore, SessionStoreError
 from .settings import CliSettings, SettingsStore
-from kolega_code.agent.custom_agents import CustomAgentCatalog, discover_custom_agents, validate_custom_agent_models
+from kolega_code.agent.custom_agents import CustomAgentCatalog, discover_custom_agents
 from kolega_code.services.terminal import LocalTerminalManager
 from kolega_code.tools import ToolError
 from kolega_code.worktrees import WorktreeError, resolve_worktree
 from .skills import (
     SkillCatalog,
-    build_skill_prompt_extension,
-    build_skill_tool_extension,
-    context_window_tokens_for_skill_budget,
     discover_skills,
 )
 from .slash_commands import (
@@ -279,6 +273,7 @@ class KolegaCodeApp(
         self._sub_agent_by_tool_call: dict[str, str] = {}
         self._sub_agent_seq = 0
         self._session_file_changes: list[tui_state.SessionFileChange] = []
+        self._pending_workspace_switch: Optional[tui_state.PendingWorkspaceSwitch] = None
         self._session_diff_tracker: Optional[tui_session_diff.SessionDiffTrackerBase] = None
         self._session_diff_generation = 0
         self._session_diff_files: list[tui_session_diff.SessionDiffFile] = []
@@ -1304,7 +1299,7 @@ class KolegaCodeApp(
         self._push_fullscreen_modal(screen)
         self._start_session_diff_refresh()
 
-    def _initialize_session_diff_tracker(self) -> None:
+    def _initialize_session_diff_tracker(self, baseline_label: str = "") -> None:
         """Set up git-only net diff tracking for the Changes inspector."""
         self._session_diff_generation += 1
         self._session_diff_tracker = tui_session_diff.GitSessionDiffTracker.create(self.active_project_path)
@@ -1313,7 +1308,7 @@ class KolegaCodeApp(
         if self._session_diff_tracker is None:
             return
         try:
-            self._session_diff_tracker.capture_baseline()
+            self._session_diff_tracker.capture_baseline(baseline_label)
         except Exception:
             self._session_diff_tracker = None
             self._session_diff_files = []
@@ -1321,11 +1316,16 @@ class KolegaCodeApp(
         self._start_scope_probe()
 
     async def _switch_active_worktree(self, path: str) -> str:
-        """Transactionally retarget the TUI, agent, and Changes tracker."""
+        """Durably commit a switch of the active workspace; it applies at turn end."""
         agent = self.agent
-        if agent is None or agent.tool_collection is None:
+        if agent is None:
             raise ToolError("The active agent workspace is not ready yet.")
-        tool_collection = agent.tool_collection
+        pending = self._pending_workspace_switch
+        if pending is not None:
+            raise ToolError(
+                f"A workspace switch to `{pending.new_root}` is already committed for this turn. "
+                "End your turn to complete it."
+            )
 
         try:
             target = await asyncio.to_thread(resolve_worktree, self.project_path, path)
@@ -1338,241 +1338,142 @@ class KolegaCodeApp(
             label = f" ({target.branch})" if target.branch else ""
             return f"Workspace is already active at `{new_root}`{label}; the Changes baseline was not reset."
 
-        terminal_manager = agent.terminal_manager
+        terminal_manager = getattr(agent, "terminal_manager", None)
         if isinstance(terminal_manager, LocalTerminalManager) and terminal_manager.has_running_sessions:
             raise ToolError(
                 "Cannot switch worktrees while terminal sessions are running. Stop them with `kill_command`, "
                 "then call `switch_worktree` again by itself."
             )
 
-        # Let any already-running old-tracker refresh finish. Scope probes are
-        # harmless because generation/identity checks discard their results.
-        while self._session_diff_refresh_running:
-            await asyncio.sleep(0.02)
-
-        def prepare_target() -> tuple[
-            tui_session_diff.GitSessionDiffTracker,
-            tui_session_diff.DiffScope,
-            SkillCatalog,
-            CustomAgentCatalog,
-            WorkspaceFileIndex,
-            list[PromptExtension],
-            list[ToolExtension],
-        ]:
-            tracker = tui_session_diff.GitSessionDiffTracker.create(new_root)
-            if tracker is None:
-                raise RuntimeError(f"Could not create a Git Changes tracker for `{new_root}`.")
-            worktree_label = target.branch or new_root.name
-            tracker.capture_baseline(f'Workspace switched · "{worktree_label}"')
-            scope = tracker.scope()
-            skills = discover_skills(new_root)
-            custom_agents = discover_custom_agents(new_root, self.settings_store.root)
-            if self.config is not None:
-                custom_agents = validate_custom_agent_models(custom_agents, self.config).for_mode(self.interaction_mode)
-            skill_prompt_extension = build_skill_prompt_extension(
-                skills,
-                context_window_tokens=context_window_tokens_for_skill_budget(
-                    self.config,
-                    getattr(agent, "agent_name", None),
-                ),
-            )
-            skill_tool_extension = build_skill_tool_extension(
-                skills,
-                lambda: agent.history,
-            )
-            prompt_extensions = [
-                extension
-                for extension in (agent.prompt_extensions or [])
-                if getattr(extension, "id", None) != "cli-agent-skills"
-            ]
-            if skill_prompt_extension is not None:
-                prompt_extensions.append(skill_prompt_extension)
-
-            tool_extensions = [
-                extension
-                for extension in (agent.tool_extensions or [])
-                if getattr(extension, "name", None) not in {"cli-agent-skills", "mcp"}
-            ]
-            if skill_tool_extension is not None:
-                tool_extensions.append(skill_tool_extension)
-            mcp_extension = build_mcp_tool_extension(
-                new_root,
-                self.settings_store.root,
-                project_trusted=self.settings.is_mcp_project_trusted(self.project_path),
-            )
-            if mcp_extension is not None:
-                tool_extensions.append(mcp_extension)
-            return (
-                tracker,
-                scope,
-                skills,
-                custom_agents,
-                WorkspaceFileIndex(new_root),
-                prompt_extensions,
-                tool_extensions,
-            )
-
-        try:
-            (
-                new_tracker,
-                new_scope,
-                new_skills,
-                new_custom_agents,
-                new_file_index,
-                new_prompt_extensions,
-                new_tool_extensions,
-            ) = await asyncio.to_thread(prepare_target)
-        except Exception as exc:
-            raise ToolError(f"Could not prepare worktree `{new_root}`: {exc}") from exc
-
         try:
             old_info = await asyncio.to_thread(resolve_worktree, self.project_path, old_root)
         except WorktreeError:
             old_info = None
+        old_branch = old_info.branch if old_info is not None else ""
 
-        old_tracker = self._session_diff_tracker
-        old_files = self._session_diff_files
-        old_scope = self._session_diff_scope
-        old_changes = self._session_file_changes
-        old_baseline_id = self._session_diff_baseline_id
-        old_diff_dirty = self._session_diff_dirty
-        old_skills = self.skill_catalog
-        old_custom_agents = self.custom_agent_catalog
-        old_file_index = self.file_index
-        old_active_metadata = self.session.active_project_path
-        old_prompt_extensions = list(agent.prompt_extensions or [])
-        old_tool_extensions = list(agent.tool_extensions or [])
-        old_agent_custom_agents = agent.custom_agent_catalog
-
-        async def cleanup_replaced_extensions(
-            candidates: list[ToolExtension],
-            retained: list[ToolExtension],
-        ) -> None:
-            removed = [
-                extension for extension in candidates if not any(extension is installed for installed in retained)
-            ]
-            await tool_collection.cleanup_tool_extensions(removed)
-
+        previous_active_metadata = self.session.active_project_path
+        self.session.active_project_path = None if new_root == self.project_path else str(new_root)
         try:
-            await agent.switch_project_path(new_root)
-            agent.replace_workspace_extensions(
-                prompt_extensions=new_prompt_extensions,
-                tool_extensions=new_tool_extensions,
-                custom_agent_catalog=new_custom_agents,
-            )
-            self.active_project_path = new_root
-            self.session_runtime.project_path = new_root
-            self.skill_catalog = new_skills
-            self.custom_agent_catalog = new_custom_agents
-            self.file_index = new_file_index
-            self._session_diff_generation += 1
-            self._session_diff_tracker = new_tracker
-            self._session_diff_files = []
-            self._session_diff_scope = new_scope
-            self._session_file_changes = []
-            self._session_diff_baseline_id = None
-            self._session_diff_dirty = False
-
-            self.session.active_project_path = None if new_root == self.project_path else str(new_root)
-            # Metadata and the workspace boundary commit as one journal batch.
+            # The boundary is durable before the model is told the switch
+            # happened: a crash between now and the rebuild resumes in the new
+            # workspace, which is what the transcript claims.
             await self._save_workspace_switch_async(
                 old_root=old_root,
                 new_root=new_root,
                 old_label=old_root.name,
                 new_label=new_root.name,
-                old_branch=old_info.branch if old_info is not None else "",
+                old_branch=old_branch,
                 new_branch=target.branch,
             )
         except Exception as exc:
-            # Restore every committed in-memory root and recreate old-root tool
-            # backends. The metadata save is best-effort if persistence itself
-            # was the failing step.
-            rollback_error: Optional[Exception] = None
-            try:
-                await agent.switch_project_path(old_root)
-                agent.replace_workspace_extensions(
-                    prompt_extensions=old_prompt_extensions,
-                    tool_extensions=old_tool_extensions,
-                    custom_agent_catalog=old_agent_custom_agents,
-                )
-            except Exception as rollback_exc:
-                rollback_error = rollback_exc
-
-            if rollback_error is not None:
-                tool_collection.disable_workspace_tools(
-                    f"Workspace switch failed ({exc}) and rollback failed ({rollback_error})."
-                )
-                actual_root = Path(agent.project_path).resolve()
-                self.active_project_path = actual_root
-                self.session_runtime.project_path = actual_root
-                self._update_mode_chrome()
-                if actual_root == old_root:
-                    self.skill_catalog = old_skills
-                    self.custom_agent_catalog = old_custom_agents
-                    self.file_index = old_file_index
-                else:
-                    self.skill_catalog = new_skills
-                    self.custom_agent_catalog = new_custom_agents
-                    self.file_index = new_file_index
-                self._session_diff_generation += 1
-                self._session_diff_tracker = None
-                self._session_diff_files = []
-                self._session_diff_scope = None
-                self._session_file_changes = []
-                self._session_diff_baseline_id = None
-                self._session_diff_dirty = False
-                self._pending_edit_previews = {}
-                if self._session_diff_timer is not None:
-                    self._session_diff_timer.pause()
-                    self._session_diff_timer = None
-                self.session.active_project_path = old_active_metadata
-                await cleanup_replaced_extensions(new_tool_extensions, list(agent.tool_extensions or []))
-                raise ToolError(
-                    "Could not switch the active workspace, and restoring the previous workspace also failed. "
-                    f"All agent tools are disabled to prevent work in the wrong checkout; restart or resume the "
-                    f"session. Switch error: {exc}. Rollback error: {rollback_error}."
-                ) from rollback_error
-
-            self.active_project_path = old_root
-            self.session_runtime.project_path = old_root
-            self.skill_catalog = old_skills
-            self.custom_agent_catalog = old_custom_agents
-            self.file_index = old_file_index
-            self._session_diff_generation += 1
-            self._session_diff_tracker = old_tracker
-            self._session_diff_files = old_files
-            self._session_diff_scope = old_scope
-            self._session_file_changes = old_changes
-            self._session_diff_baseline_id = old_baseline_id
-            self._session_diff_dirty = old_diff_dirty
-            self.session.active_project_path = old_active_metadata
-            try:
-                await self._save_session_async()
-            except Exception:
-                pass
-            await cleanup_replaced_extensions(new_tool_extensions, old_tool_extensions)
+            self.session.active_project_path = previous_active_metadata
             raise ToolError(
-                f"Could not switch the active workspace; the previous workspace was restored: {exc}"
+                f"Could not persist the workspace switch; the active workspace is unchanged: {exc}"
             ) from exc
 
-        await cleanup_replaced_extensions(old_tool_extensions, new_tool_extensions)
-        # Clear old-workspace presentation state only after metadata and the
-        # journal event are both durable, so rollback remains lossless.
+        self._pending_workspace_switch = tui_state.PendingWorkspaceSwitch(
+            new_root=new_root,
+            old_root=old_root,
+            branch=target.branch,
+            old_branch=old_branch,
+            previous_active_metadata=previous_active_metadata,
+        )
+        branch_note = f" on branch `{target.branch}`" if target.branch else ""
+        return (
+            f"Committed a switch of the active workspace to `{new_root}`{branch_note}. It takes effect when "
+            "this turn ends, so end your turn now — further tool calls this turn would still run in the "
+            "previous workspace. You will be prompted to continue in the new workspace."
+        )
+
+    async def _apply_pending_workspace_switch(self) -> Optional[str]:
+        """Rebuild the workspace for a committed switch once the stream is over.
+
+        Returns the agent-facing continuation prompt when a switch was applied,
+        so the turn driver can hand control back in the new workspace.
+        """
+        pending = self._pending_workspace_switch
+        if pending is None:
+            return None
+        self._pending_workspace_switch = None
+        branch_note = f" on branch `{pending.branch}`" if pending.branch else ""
+        worktree_label = pending.branch or pending.new_root.name
+        try:
+            await self._activate_workspace(pending.new_root, baseline_label=f'Workspace switched · "{worktree_label}"')
+        except Exception as exc:
+            await self._restore_previous_workspace(pending, exc)
+            return None
+
+        notice = (
+            f"Workspace switched to `{pending.new_root}`{branch_note}. Changes and Rewind now use a fresh "
+            "“Workspace switched” baseline; prior-workspace checkpoints are no longer shown."
+        )
+        self._add_conversation_entry(tui_state.ConversationEntry(kind="system", content=notice))
+        return (
+            f"The active workspace is now `{pending.new_root}`{branch_note}; the previous turn ended to "
+            "complete the switch. Continue the work that prompted it, or reply briefly if none remains."
+        )
+
+    async def _restore_previous_workspace(self, pending: tui_state.PendingWorkspaceSwitch, error: Exception) -> None:
+        """Recommit and rebuild the pre-switch workspace after a failed rebuild."""
+        self.session.active_project_path = pending.previous_active_metadata
+        try:
+            # Append the reverse boundary so the journal records what actually
+            # happened rather than silently contradicting the earlier event.
+            await self._save_workspace_switch_async(
+                old_root=pending.new_root,
+                new_root=pending.old_root,
+                old_label=pending.new_root.name,
+                new_label=pending.old_root.name,
+                old_branch=pending.branch,
+                new_branch=pending.old_branch,
+            )
+        except Exception:
+            pass
+        try:
+            await self._activate_workspace(pending.old_root, baseline_label="")
+        except Exception as fallback_error:
+            self._set_chat_enabled(False)
+            message = (
+                f"Could not rebuild the workspace at `{pending.new_root}` ({error}), and rebuilding the "
+                f"previous workspace `{pending.old_root}` also failed ({fallback_error}). "
+                "Restart or resume the session."
+            )
+            self._add_conversation_entry(tui_state.ConversationEntry(kind="system", content=message))
+            self._notify_user(message, severity="error")
+            return
+        message = (
+            f"Could not switch the active workspace to `{pending.new_root}` ({error}); "
+            f"continuing in `{pending.old_root}`."
+        )
+        self._add_conversation_entry(tui_state.ConversationEntry(kind="system", content=message))
+        self._notify_user(message, severity="warning")
+
+    async def _activate_workspace(self, root: Path, *, baseline_label: str) -> None:
+        """Point the TUI at ``root`` and rebuild the agent there.
+
+        The rebuild goes through ``_build_agent`` — the same assembly a resume
+        uses — so catalogs, extensions, and tool services cannot drift from
+        what a restart in this workspace would produce.
+        """
+        if self.config is None:
+            raise RuntimeError("Agent configuration is not available.")
+        self.active_project_path = root
+        self.session_runtime.project_path = root
+        self.file_index = WorkspaceFileIndex(root)
         self._file_index_refreshing = False
         self._pending_edit_previews = {}
         if self._session_diff_timer is not None:
             self._session_diff_timer.pause()
             self._session_diff_timer = None
+        self._session_file_changes = []
+        self._session_diff_baseline_id = None
+        self._session_diff_dirty = False
+        self._initialize_session_diff_tracker(baseline_label)
+        await self._build_agent(self.config, rebuild=True, restore_transcript=False, preserve_queued=True)
         self._close_changes_inspector()
         self._maybe_refresh_file_index()
         self._refresh_status_dashboard()
         self._update_mode_chrome()
-        branch_note = f" on branch `{target.branch}`" if target.branch else ""
-        return (
-            f"Switched the complete active workspace to `{new_root}`{branch_note}. "
-            "Changes and Rewind now use a fresh “Workspace switched” baseline; prior-workspace checkpoints "
-            "are no longer shown."
-        )
 
     def _start_scope_probe(self) -> None:
         """Resolve the diff scope once so the dashboard can name the worktree.

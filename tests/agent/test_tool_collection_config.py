@@ -10,8 +10,6 @@ from kolega_code.config import AgentConfig, ModelConfig, ModelProvider, RateLimi
 from kolega_code.events import AgentConnectionManager
 from kolega_code.agent.tool_backend.memory_tool import MemoryTool
 from kolega_code.agent.tools import ToolCollection, ToolDefinition, ToolCollectionConfig, ToolExtension
-from kolega_code.services.file_system import LocalFileSystem
-from kolega_code.services.terminal import LocalTerminalManager
 
 
 INTERNAL_TOOL_NAMES = {
@@ -97,48 +95,6 @@ def tool_collection(
 
 @pytest.mark.asyncio
 class TestToolCollection:
-    async def test_switch_project_path_reroots_shared_services_and_backends(
-        self, tool_collection: ToolCollection, tmp_path: Path
-    ) -> None:
-        new_root = tmp_path / "linked-worktree"
-        new_root.mkdir()
-
-        await tool_collection.switch_project_path(new_root)
-
-        assert tool_collection.project_path == new_root.resolve()
-        assert isinstance(tool_collection.filesystem, LocalFileSystem)
-        assert tool_collection.filesystem.root_path == new_root.resolve()
-        assert isinstance(tool_collection.terminal_manager, LocalTerminalManager)
-        assert Path(tool_collection.terminal_manager.default_workdir) == new_root.resolve()
-        assert tool_collection.edit_tool.project_path == new_root.resolve()
-        assert tool_collection.read_file_tool.project_path == new_root.resolve()
-        assert tool_collection.search_codebase_tool.project_path == new_root.resolve()
-        assert tool_collection.agent_tool.project_path == new_root.resolve()
-        assert tool_collection.snapshot_service.project_path == new_root.resolve()
-
-    async def test_switch_project_path_recreates_old_backends_when_process_shutdown_fails(
-        self, tool_collection: ToolCollection, tmp_path: Path
-    ) -> None:
-        old_root = tool_collection.project_path.resolve()
-        old_lsp = tool_collection.lsp_manager
-        old_eval = tool_collection.eval_tool
-        old_eval.shutdown_if_owner = AsyncMock(side_effect=RuntimeError("eval shutdown failed"))
-        new_root = tmp_path / "linked-worktree"
-        new_root.mkdir()
-
-        with pytest.raises(RuntimeError, match="eval shutdown failed"):
-            await tool_collection.switch_project_path(new_root)
-
-        old_eval.shutdown_if_owner.assert_awaited_once()
-        assert tool_collection.project_path == old_root
-        assert isinstance(tool_collection.filesystem, LocalFileSystem)
-        assert tool_collection.filesystem.root_path == old_root
-        assert isinstance(tool_collection.terminal_manager, LocalTerminalManager)
-        assert Path(tool_collection.terminal_manager.default_workdir) == old_root
-        assert tool_collection.lsp_manager is not old_lsp
-        assert tool_collection.read_file_tool.project_path == old_root
-        assert tool_collection.snapshot_service.project_path == old_root
-
     async def test_get_tool_list(self, tool_collection: AsyncMock) -> None:
         tool_list = tool_collection.get_tool_list()
         assert isinstance(tool_list, list)

@@ -76,12 +76,15 @@ occupied destination. `--from` and `--worktree-path` are valid only with
 The same options are available on `kolega-code ask`.
 
 During a TUI session, the top-level agent can explicitly call
-`switch_worktree`. This reroots filesystem, terminal, search/edit, LSP, snapshot,
-skill, custom-agent, and future sub-agent work to that registered checkout. It
-also starts a fresh **Workspace switched** Changes/Rewind baseline, so
-checkpoints from the previous workspace are no longer displayed. The switch is
-durable session state and is not undone by conversation rewind. It must run
-alone, and it is refused while background terminal sessions are active.
+`switch_worktree`. The switch is committed to the session immediately and
+applied when the agent's turn ends: the workspace is rebuilt in the selected
+checkout — filesystem, terminal, search/edit, LSP, snapshots, skills,
+custom agents, and future sub-agent work all follow — and the agent is then
+prompted to continue there. A fresh **Workspace switched** Changes/Rewind
+baseline starts, so checkpoints from the previous workspace are no longer
+displayed. The switch is durable session state and is not undone by
+conversation rewind. It must run alone, and it is refused while background
+terminal sessions are active.
 
 ## Global model options
 

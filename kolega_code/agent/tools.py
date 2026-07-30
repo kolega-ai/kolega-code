@@ -679,10 +679,8 @@ class ToolCollection(LogMixin):
         self.extension_schemas = {}
         self.exclusive_tools = frozenset()
         self._extension_group_names = set()
-        self._extension_group_bases: dict[str, tuple[bool, list[str]]] = {}
         self._extension_dispatch_tools: set[str] = set()
         self._legacy_only_extension_dispatch_tools: set[str] = set()
-        self._workspace_disabled_reason: Optional[str] = None
         # Extension declarations are per collection. Never mutate the shared
         # class inventories, and keep the legacy alias as the same list object.
         self.agent_dispatch_tools = list(type(self).agent_dispatch_tools)
@@ -702,10 +700,7 @@ class ToolCollection(LogMixin):
             "call",
             "cleanup",
             "initialize",
-            "switch_project_path",
-            "replace_tool_extensions",
             "cleanup_tool_extensions",
-            "disable_workspace_tools",
             "log_error",
             "log_warning",
             "log_info",
@@ -764,50 +759,10 @@ class ToolCollection(LogMixin):
                             self._extension_dispatch_tools.add(tool_name)
                     self._extension_group_names.update({"agent_dispatch_tools", "investigation_agent_tools"})
                     continue
-                if group_name not in self._extension_group_bases:
-                    self._extension_group_bases[group_name] = (
-                        hasattr(self, group_name),
-                        list(getattr(self, group_name, []) or []),
-                    )
                 existing_group = list(getattr(self, group_name, []))
                 merged_group = list(dict.fromkeys(existing_group + list(tool_names)))
                 setattr(self, group_name, merged_group)
                 self._extension_group_names.add(group_name)
-
-    def _clear_registered_tool_extensions(self) -> None:
-        """Remove current extension bindings and restore pre-extension groups."""
-        for tool_name, callback in self.extension_callbacks.items():
-            if getattr(self, tool_name, None) is callback:
-                delattr(self, tool_name)
-
-        for group_name, (existed, base_tools) in self._extension_group_bases.items():
-            if existed:
-                setattr(self, group_name, list(base_tools))
-            elif group_name in self.__dict__:
-                delattr(self, group_name)
-
-        self.agent_dispatch_tools = list(type(self).agent_dispatch_tools)
-        self.investigation_agent_tools = self.agent_dispatch_tools
-        self.extension_callbacks = {}
-        self.extension_schemas = {}
-        self.exclusive_tools = frozenset()
-        self._extension_group_names = set()
-        self._extension_group_bases = {}
-        self._extension_dispatch_tools = set()
-        self._legacy_only_extension_dispatch_tools = set()
-
-    def replace_tool_extensions(self, extensions: List[ToolExtension]) -> None:
-        """Replace host extensions without leaving partial callback registrations."""
-        previous = list(self.tool_extensions)
-        self._clear_registered_tool_extensions()
-        self.tool_extensions = list(extensions)
-        try:
-            self._register_tool_extensions()
-        except Exception:
-            self._clear_registered_tool_extensions()
-            self.tool_extensions = previous
-            self._register_tool_extensions()
-            raise
 
     async def cleanup_tool_extensions(self, extensions: List[ToolExtension]) -> None:
         """Release resources owned by extensions that are no longer installed."""
@@ -825,11 +780,7 @@ class ToolCollection(LogMixin):
                     sender="ToolCollection",
                 )
 
-    def disable_workspace_tools(self, reason: str) -> None:
-        """Fail closed after an unrecoverable workspace rollback."""
-        self._workspace_disabled_reason = reason
-
-    def _initialize_tools(self, *, prepared_lsp_manager: Optional[LspManager] = None):
+    def _initialize_tools(self):
         """Initialize all tool backends based on configuration."""
         # Core tool backends (always available)
 
@@ -837,9 +788,7 @@ class ToolCollection(LogMixin):
         lsp_config = getattr(self.config, "lsp", None)
         from kolega_code.services.lsp import LspConfig as _LspConfig
 
-        if prepared_lsp_manager is not None:
-            self.lsp_manager = prepared_lsp_manager
-        elif isinstance(lsp_config, _LspConfig) and lsp_config.enabled:
+        if isinstance(lsp_config, _LspConfig) and lsp_config.enabled:
             self.lsp_manager = LspManager(
                 self.project_path,
                 config=lsp_config,
@@ -2535,8 +2484,6 @@ class ToolCollection(LogMixin):
         so tools added by subclasses or extensions after construction are seen.
         """
         registry = ToolRegistry()
-        if self._workspace_disabled_reason is not None:
-            return registry
 
         for method_name, method in inspect.getmembers(self, predicate=inspect.ismethod):
             if (
@@ -2813,46 +2760,6 @@ class ToolCollection(LogMixin):
         if self.lsp_manager is not None:
             return await self.lsp_manager.initialize()
         return []
-
-    async def switch_project_path(self, new_root: str | Path) -> None:
-        """Retarget all root-dependent local tool services.
-
-        Repository/session-scoped services such as memory, browser state,
-        credentials, hooks, and extension callbacks are deliberately retained.
-        """
-        candidate = Path(new_root).resolve()
-        if candidate == self.project_path.resolve():
-            return
-        if not candidate.is_dir():
-            raise ValueError(f"Project path is not a directory: {candidate}")
-        if not isinstance(self.filesystem, LocalFileSystem):
-            raise ValueError("Switching project paths requires a local filesystem.")
-
-        old_root = self.project_path.resolve()
-        old_lsp = self.lsp_manager
-        old_eval = self.eval_tool
-
-        prepared_lsp: Optional[LspManager] = None
-        try:
-            # Stop process-backed services that retain the previous workspace.
-            prepared_lsp = await old_lsp.recreate_for_project(candidate) if old_lsp is not None else None
-            await old_eval.shutdown_if_owner()
-            self.filesystem.switch_root(candidate)
-            if isinstance(self.terminal_manager, LocalTerminalManager):
-                self.terminal_manager.switch_default_workdir(candidate)
-            self.project_path = candidate
-            self._initialize_tools(prepared_lsp_manager=prepared_lsp)
-        except Exception:
-            # Recreate usable old-root backends even though process-backed
-            # services were already stopped.
-            if prepared_lsp is not None:
-                await prepared_lsp.shutdown()
-            self.filesystem.switch_root(old_root)
-            if isinstance(self.terminal_manager, LocalTerminalManager):
-                self.terminal_manager.switch_default_workdir(old_root)
-            self.project_path = old_root
-            self._initialize_tools()
-            raise
 
     async def cleanup(self):
         """Clean up all tool resources"""

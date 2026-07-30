@@ -12,10 +12,13 @@ This project uses GitHub Releases for detailed generated release notes. This fil
   launches can select a registered checkout with `--worktree`, or create one
   safely with `--create-worktree` plus optional `--from` and
   `--worktree-path`. In the TUI, the top-level agent can explicitly switch its
-  complete active workspace between registered sibling worktrees; terminal,
-  filesystem, LSP, snapshots, skills, autocomplete, and Changes/Rewind scope
-  move together, while session identity and sibling-checkout isolation remain
-  unchanged. Active workspace selection persists across resume.
+  complete active workspace between registered sibling worktrees: the switch
+  commits immediately and applies at the end of the agent's turn by rebuilding
+  the workspace — terminal, filesystem, LSP, snapshots, skills, autocomplete,
+  and Changes/Rewind scope move together — after which the agent is prompted
+  to continue in the new checkout. Session identity and sibling-checkout
+  isolation remain unchanged, and active workspace selection persists across
+  resume.
 - The public `ToolExtension` API now accepts additive `exclusive_tools`
   metadata for tools that must run alone in a model tool-call batch.
 - `browser_scroll` on both browser backends, taking exactly one of a target, a
@@ -114,6 +117,7 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 - Resized oversized images only in outbound Anthropic request history while
   preserving full originals in session artifacts and replay, preventing one
   large image from breaking every later turn in a resumed conversation.
+
 ## 0.25.0 - 2026-07-28
 
 ### Added

@@ -20,7 +20,6 @@ import struct
 import sys
 import termios
 import time
-from pathlib import Path
 from typing import Any, Dict, Optional, Union
 
 from ..events import AgentConnectionManager
@@ -434,13 +433,6 @@ class LocalTerminalManager(TerminalManager):
     def has_running_sessions(self) -> bool:
         """Whether a retained PTY could still mutate its original workdir."""
         return any(session.running for session in self.sessions.values())
-
-    def switch_default_workdir(self, workdir: Union[str, os.PathLike]) -> None:
-        """Retarget future commands that do not provide an explicit workdir."""
-        candidate = Path(workdir).resolve()
-        if not candidate.is_dir():
-            raise ValueError(f"Terminal working directory is not a directory: {candidate}")
-        self.default_workdir = str(candidate)
 
     async def _emit_command(self, session_id: str, command: str, workdir: str) -> None:
         if not self.connection_manager:

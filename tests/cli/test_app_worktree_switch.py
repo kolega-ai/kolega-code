@@ -1,22 +1,19 @@
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, cast
-from unittest.mock import AsyncMock, Mock
+from typing import Any, ClassVar, cast
+from unittest.mock import Mock
 
 import pytest
 
-from kolega_code.agent.baseagent import BaseAgent
-from kolega_code.agent.tools import ToolCollection, ToolExtension
+from kolega_code.agent.tools import ToolExtension
 from kolega_code.cli.config import config_summary
 from kolega_code.cli.session_store import SessionStore, SessionStoreError
 from kolega_code.cli.tui import agent_runtime as agent_runtime_module
 from kolega_code.cli.tui.state import PendingApproval
 from kolega_code.permissions import PERMISSIONS_RELATIVE_PATH, allow_rule_options, permission_request_for_tool
-from kolega_code.services.file_system import LocalFileSystem
 from kolega_code.services.terminal import LocalTerminalManager
 from kolega_code.tools import ToolError
-from kolega_code.utils import images as image_utils
 
 from ._app_test_utils import FakeCoderAgent, build_test_config, extension_by_name, install_fake_agents
 
@@ -67,55 +64,19 @@ def _make_worktrees(tmp_path: Path) -> tuple[Path, Path]:
     return main.resolve(), linked.resolve()
 
 
-class SwitchingFakeAgent(FakeCoderAgent):
-    """Model-free agent using the production workspace-switching stack."""
+class RecordingFakeCoderAgent(FakeCoderAgent):
+    """Fake agent recording every constructed instance on its class.
 
-    switch_project_path = BaseAgent.switch_project_path
-    replace_workspace_extensions = BaseAgent.replace_workspace_extensions
+    ``_build_app`` mints a fresh subclass per call so the ``instances`` list
+    never leaks across tests; callers can assert a rebuild happened by
+    checking ``len(agent_cls.instances)``.
+    """
+
+    instances: ClassVar[list["RecordingFakeCoderAgent"]] = []
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        root = Path(kwargs["project_path"]).resolve()
-        self.agent_name = "coder"
-        self.project_path = root
-        self.prompt_extensions = list(kwargs["prompt_extensions"] or [])
-        self.tool_extensions = list(kwargs["tool_extensions"] or [])
-        self.custom_agent_catalog = kwargs["custom_agent_catalog"]
-        self.filesystem = LocalFileSystem(root)
-        self.terminal_manager = LocalTerminalManager(
-            kwargs["workspace_id"],
-            kwargs["thread_id"],
-            kwargs["connection_manager"],
-            default_workdir=root,
-        )
-        self.context = SimpleNamespace(
-            workspace=SimpleNamespace(project_path=root),
-            prompt_extensions=self.prompt_extensions,
-            tool_extensions=self.tool_extensions,
-            services=SimpleNamespace(
-                filesystem=self.filesystem,
-                terminal_manager=self.terminal_manager,
-            ),
-        )
-        self.system_prompt_roots: list[Path] = []
-        self.tool_collection = ToolCollection(
-            project_path=root,
-            workspace_id=kwargs["workspace_id"],
-            thread_id=kwargs["thread_id"],
-            connection_manager=kwargs["connection_manager"],
-            config=kwargs["config"],
-            caller=self,
-            filesystem=self.filesystem,
-            terminal_manager=self.terminal_manager,
-            browser_manager=kwargs["browser_manager"],
-            tool_extensions=kwargs["tool_extensions"],
-        )
-
-    def _initialize_system_prompt(self) -> None:
-        self.system_prompt_roots.append(Path(self.project_path).resolve())
-
-    async def cleanup(self) -> None:
-        await self.tool_collection.cleanup()
+        type(self).instances.append(self)
 
 
 def _build_app(
@@ -125,13 +86,17 @@ def _build_app(
     resume_in_linked: bool = False,
     remove_linked_before_resume: bool = False,
     fail_fallback_projection_once: bool = False,
-) -> tuple[Any, Path, Path, SessionStore]:
+) -> tuple[Any, Path, Path, SessionStore, type[RecordingFakeCoderAgent]]:
     pytest.importorskip("textual")
 
     from kolega_code.cli.app import KolegaCodeApp
 
     main, linked = _make_worktrees(tmp_path)
-    install_fake_agents(monkeypatch, coder_cls=SwitchingFakeAgent)
+
+    class _SessionRecordingAgent(RecordingFakeCoderAgent):
+        instances: ClassVar[list[RecordingFakeCoderAgent]] = []
+
+    install_fake_agents(monkeypatch, coder_cls=_SessionRecordingAgent)
     config = build_test_config(main)
     store = SessionStore(tmp_path / "state")
     session = store.create(main, "code", config_summary(config))
@@ -155,7 +120,7 @@ def _build_app(
 
         monkeypatch.setattr(store, "_write_metadata", fail_once)
     app = KolegaCodeApp(project_path=main, config=config, mode="code", store=store, session=session)
-    return app, main, linked, store
+    return app, main, linked, store, _SessionRecordingAgent
 
 
 def _workspace_events(store: SessionStore, session_id: str) -> list[Any]:
@@ -164,33 +129,22 @@ def _workspace_events(store: SessionStore, session_id: str) -> list[Any]:
     ]
 
 
-def _assert_agent_root(agent: SwitchingFakeAgent, root: Path) -> None:
-    collection = agent.tool_collection
-    assert isinstance(collection.filesystem, LocalFileSystem)
-    assert isinstance(collection.terminal_manager, LocalTerminalManager)
-    assert agent.project_path == root
-    assert agent.context.workspace.project_path == root
-    assert agent.filesystem.root_path == root
-    assert collection.project_path == root
-    assert collection.filesystem.root_path == root
-    assert Path(agent.terminal_manager.default_workdir) == root
-    assert Path(collection.terminal_manager.default_workdir) == root
-    assert collection.read_file_tool.project_path == root
-    assert collection.edit_tool.project_path == root
-    assert collection.terminal_tool.project_path == root
-    assert collection.agent_tool.project_path == root
-    assert collection.workflow_tool.project_path == root
-    assert collection.snapshot_service.project_path == root
+def _assert_agent_root(agent: FakeCoderAgent, root: Path) -> None:
+    assert agent.kwargs["project_path"] == root
+
+
+def _switch_tool(app: Any):
+    return extension_by_name(app.agent.kwargs["tool_extensions"], "cli-worktree-control").tools["switch_worktree"]
 
 
 @pytest.mark.asyncio
 async def test_top_level_agent_exposes_exclusive_non_propagating_switch_tool(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    app, _main, _linked, _store = _build_app(tmp_path, monkeypatch)
+    app, _main, _linked, _store, agent_cls = _build_app(tmp_path, monkeypatch)
 
     async with app.run_test():
-        assert isinstance(app.agent, SwitchingFakeAgent)
+        assert isinstance(app.agent, agent_cls)
         extension = extension_by_name(app.agent.kwargs["tool_extensions"], "cli-worktree-control")
         prompt = extension_by_name(app.agent.kwargs["prompt_extensions"], "cli-worktree-control")
 
@@ -199,7 +153,6 @@ async def test_top_level_agent_exposes_exclusive_non_propagating_switch_tool(
         assert extension.exclusive_tools == frozenset({"switch_worktree"})
         assert extension.tool_groups["planning_tools"] == ["switch_worktree"]
         assert prompt.propagate_to_sub_agents is False
-        assert app.agent.tool_collection.exclusive_tools == frozenset({"switch_worktree"})
 
 
 @pytest.mark.asyncio
@@ -212,10 +165,10 @@ async def test_tui_resume_constructs_agent_and_changes_tracker_in_persisted_acti
         "build_mcp_tool_extension",
         lambda project_path, *_args, **_kwargs: mcp_roots.append(Path(project_path).resolve()) or None,
     )
-    app, main, linked, store = _build_app(tmp_path, monkeypatch, resume_in_linked=True)
+    app, main, linked, store, agent_cls = _build_app(tmp_path, monkeypatch, resume_in_linked=True)
 
     async with app.run_test():
-        assert isinstance(app.agent, SwitchingFakeAgent)
+        assert isinstance(app.agent, agent_cls)
         assert app.project_path == main
         assert app.active_project_path == linked
         assert app.session.project_path == str(main)
@@ -231,7 +184,7 @@ async def test_tui_resume_constructs_agent_and_changes_tracker_in_persisted_acti
 def test_tui_resume_warns_and_persists_fallback_when_active_worktree_was_deleted(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    app, main, _linked, store = _build_app(
+    app, main, _linked, store, _agent_cls = _build_app(
         tmp_path,
         monkeypatch,
         resume_in_linked=True,
@@ -249,7 +202,7 @@ def test_tui_resume_warns_and_persists_fallback_when_active_worktree_was_deleted
 def test_tui_resume_uses_canonical_fallback_when_metadata_projection_write_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    app, main, _linked, store = _build_app(
+    app, main, _linked, store, _agent_cls = _build_app(
         tmp_path,
         monkeypatch,
         resume_in_linked=True,
@@ -271,7 +224,7 @@ def test_tui_resume_fails_without_clearing_metadata_when_launch_and_active_workt
     from kolega_code.cli.app import KolegaCodeApp
 
     main, linked = _make_worktrees(tmp_path)
-    install_fake_agents(monkeypatch, coder_cls=SwitchingFakeAgent)
+    install_fake_agents(monkeypatch, coder_cls=FakeCoderAgent)
     config = build_test_config(main)
     store = SessionStore(tmp_path / "state")
     session = store.create(main, "code", config_summary(config))
@@ -290,119 +243,14 @@ def test_tui_resume_fails_without_clearing_metadata_when_launch_and_active_workt
 
 
 @pytest.mark.asyncio
-async def test_switch_worktree_reroots_complete_workspace_and_records_boundary(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    app, main, linked, store = _build_app(tmp_path, monkeypatch)
-    mcp_cleanup = AsyncMock()
-
-    async def linked_mcp_tool() -> str:
-        return "linked MCP"
-
-    linked_mcp_extension = ToolExtension(
-        name="mcp",
-        tools={"linked_mcp_tool": linked_mcp_tool},
-        cleanup=mcp_cleanup,
-    )
-    monkeypatch.setattr(
-        "kolega_code.cli.app.build_mcp_tool_extension",
-        lambda project_path, *_args, **_kwargs: (
-            linked_mcp_extension if Path(project_path).resolve() == linked else None
-        ),
-    )
-
-    async with app.run_test():
-        assert isinstance(app.agent, SwitchingFakeAgent)
-        old_tracker = app._session_diff_tracker
-        app._session_file_changes = [SimpleNamespace(path="old-root.txt")]
-        (main / "same-name.txt").write_text("launch root\n", encoding="utf-8")
-        (linked / "same-name.txt").write_text("active root\n", encoding="utf-8")
-        switch = extension_by_name(app.agent.kwargs["tool_extensions"], "cli-worktree-control").tools["switch_worktree"]
-
-        result = await switch(str(linked / "nested"))
-
-        assert "Switched the complete active workspace" in result
-        assert app.project_path == main
-        assert app.active_project_path == linked
-        assert str(linked) in app._meta_content()
-        assert str(main) not in app._meta_content()
-        assert app.session_runtime.project_path == linked
-        _assert_agent_root(app.agent, linked)
-        assert app.agent.system_prompt_roots[-1] == linked
-        assert app.agent.filesystem.read_text("linked-only.txt") == "linked\n"
-        mention_attachments = app._build_mention_attachments("@same-name.txt")
-        assert mention_attachments is not None
-        assert mention_attachments[0]["content"] == "active root\n"
-
-        attached_paths: list[Path] = []
-        monkeypatch.setattr(
-            image_utils,
-            "encode_image_file",
-            lambda path: attached_paths.append(Path(path)) or None,
-        )
-        await app._command_attach("same-name.txt")
-        assert attached_paths == [linked / "same-name.txt"]
-
-        request = permission_request_for_tool("exec_command", {"command": "npm run test"})
-        assert request is not None
-        app._pending_approval = PendingApproval(
-            request=request,
-            request_id="switched-root-permission",
-            rule_options=allow_rule_options(request),
-        )
-        monkeypatch.setattr(app, "_answer_permission_request", Mock())
-        await app._answer_approval_option(2)
-        assert (linked / PERMISSIONS_RELATIVE_PATH).is_file()
-        assert not (main / PERMISSIONS_RELATIVE_PATH).exists()
-
-        assert app._session_diff_tracker is not old_tracker
-        assert app._session_diff_tracker is not None
-        assert app._session_diff_tracker.project_path == linked
-        checkpoints = app._session_diff_tracker.checkpoints()
-        assert len(checkpoints) == 1
-        assert checkpoints[0].checkpoint_id == 0
-        assert checkpoints[0].label == 'Workspace switched · "feature/switch-test"'
-        assert app._session_file_changes == []
-
-        assert app.file_index.project_path == linked
-        assert "linked-only.txt" in {entry.path for entry in app.file_index.entries()}
-        assert "linked-only-skill" in app.skill_catalog.skills
-        assert "main-only-skill" not in app.skill_catalog.skills
-        assert "linked-only-helper" in app.custom_agent_catalog.agents
-        assert "main-only-helper" not in app.custom_agent_catalog.agents
-        assert app.agent.custom_agent_catalog is app.custom_agent_catalog
-
-        skill_extension = extension_by_name(app.agent.tool_extensions, "cli-agent-skills")
-        skill_listing = await skill_extension.tools["list_skills"]()
-        assert "linked-only-skill" in skill_listing
-        assert "main-only-skill" not in skill_listing
-        assert app.agent.tool_collection.has_tool("linked_mcp_tool")
-        assert await app.agent.tool_collection.call("linked_mcp_tool") == "linked MCP"
-        mcp_cleanup.assert_not_awaited()
-
-        assert app.session.active_project_path == str(linked)
-        assert store.load(app.session.session_id).active_project_path == str(linked)
-        events = _workspace_events(store, app.session.session_id)
-        assert len(events) == 1
-        assert events[0].payload == {
-            "old_root": str(main),
-            "new_root": str(linked),
-            "old_label": main.name,
-            "new_label": linked.name,
-            "old_branch": "main",
-            "new_branch": "feature/switch-test",
-        }
-
-
-@pytest.mark.asyncio
 async def test_switch_worktree_same_root_is_noop(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    app, main, _linked, store = _build_app(tmp_path, monkeypatch)
+    app, main, _linked, store, _agent_cls = _build_app(tmp_path, monkeypatch)
 
     async with app.run_test():
-        assert isinstance(app.agent, SwitchingFakeAgent)
+        first_agent = app.agent
         tracker = app._session_diff_tracker
         generation = app._session_diff_generation
-        switch = extension_by_name(app.agent.kwargs["tool_extensions"], "cli-worktree-control").tools["switch_worktree"]
+        switch = _switch_tool(app)
 
         result = await switch(str(main))
 
@@ -412,6 +260,8 @@ async def test_switch_worktree_same_root_is_noop(tmp_path: Path, monkeypatch: py
         assert app._session_diff_generation == generation
         assert app.session.active_project_path is None
         assert _workspace_events(store, app.session.session_id) == []
+        assert app._pending_workspace_switch is None
+        assert app.agent is first_agent
         _assert_agent_root(app.agent, main)
 
 
@@ -419,14 +269,19 @@ async def test_switch_worktree_same_root_is_noop(tmp_path: Path, monkeypatch: py
 async def test_switch_worktree_is_blocked_by_running_local_terminal(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    app, main, linked, store = _build_app(tmp_path, monkeypatch)
+    app, main, linked, store, _agent_cls = _build_app(tmp_path, monkeypatch)
 
     async with app.run_test():
-        assert isinstance(app.agent, SwitchingFakeAgent)
         tracker = app._session_diff_tracker
-        terminal = app.agent.terminal_manager
+        terminal = LocalTerminalManager(
+            app.agent.kwargs["workspace_id"],
+            app.agent.kwargs["thread_id"],
+            app.agent.kwargs["connection_manager"],
+            default_workdir=main,
+        )
+        app.agent.terminal_manager = terminal
         terminal.sessions["running"] = cast(Any, SimpleNamespace(running=True))
-        switch = extension_by_name(app.agent.kwargs["tool_extensions"], "cli-worktree-control").tools["switch_worktree"]
+        switch = _switch_tool(app)
         try:
             with pytest.raises(ToolError, match="terminal sessions are running"):
                 await switch(str(linked))
@@ -444,15 +299,15 @@ async def test_switch_worktree_is_blocked_by_running_local_terminal(
 async def test_invalid_worktree_target_leaves_workspace_untouched(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    app, main, _linked, store = _build_app(tmp_path, monkeypatch)
+    app, main, _linked, store, _agent_cls = _build_app(tmp_path, monkeypatch)
 
     async with app.run_test():
-        assert isinstance(app.agent, SwitchingFakeAgent)
+        first_agent = app.agent
         tracker = app._session_diff_tracker
         skills = app.skill_catalog
         custom_agents = app.custom_agent_catalog
         file_index = app.file_index
-        switch = extension_by_name(app.agent.kwargs["tool_extensions"], "cli-worktree-control").tools["switch_worktree"]
+        switch = _switch_tool(app)
 
         with pytest.raises(ToolError, match="No registered worktree matches"):
             await switch("missing-worktree")
@@ -464,141 +319,306 @@ async def test_invalid_worktree_target_leaves_workspace_untouched(
         assert app.file_index is file_index
         assert app.session.active_project_path is None
         assert _workspace_events(store, app.session.session_id) == []
+        assert app._pending_workspace_switch is None
+        assert app.agent is first_agent
         _assert_agent_root(app.agent, main)
 
 
 @pytest.mark.asyncio
-async def test_session_save_failure_rolls_back_workspace_and_tracker(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    app, main, linked, store = _build_app(tmp_path, monkeypatch)
-    replacement_cleanup = AsyncMock()
-    replacement_mcp = ToolExtension(
-        name="mcp",
-        tools={"replacement_mcp": AsyncMock(return_value="unused")},
-        cleanup=replacement_cleanup,
-    )
-    monkeypatch.setattr(
-        "kolega_code.cli.app.build_mcp_tool_extension",
-        lambda project_path, *_args, **_kwargs: replacement_mcp if Path(project_path).resolve() == linked else None,
-    )
+async def test_switch_commits_boundary_and_defers_apply(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    app, main, linked, store, _agent_cls = _build_app(tmp_path, monkeypatch)
 
     async with app.run_test():
-        assert isinstance(app.agent, SwitchingFakeAgent)
+        first_agent = app.agent
         tracker = app._session_diff_tracker
-        skills = app.skill_catalog
-        custom_agents = app.custom_agent_catalog
-        file_index = app.file_index
-        pending_previews = {"old-call": [SimpleNamespace(path="old-root.txt")]}
-        timer = Mock()
-        app._pending_edit_previews = pending_previews
-        app._session_diff_dirty = True
-        app._session_diff_timer = timer
-        save_calls = 0
+        switch = _switch_tool(app)
 
-        async def fail_switch_save(**_kwargs: Any) -> None:
-            nonlocal save_calls
-            save_calls += 1
+        result = await switch(str(linked))
+
+        assert result.startswith("Committed a switch")
+        pending = app._pending_workspace_switch
+        assert pending is not None
+        assert pending.new_root == linked
+        assert pending.old_root == main
+        assert pending.branch == "feature/switch-test"
+        assert pending.previous_active_metadata is None
+
+        assert store.load(app.session.session_id).active_project_path == str(linked)
+        events = _workspace_events(store, app.session.session_id)
+        assert len(events) == 1
+        assert events[0].payload == {
+            "old_root": str(main),
+            "new_root": str(linked),
+            "old_label": main.name,
+            "new_label": linked.name,
+            "old_branch": "main",
+            "new_branch": "feature/switch-test",
+        }
+
+        # Nothing about the live workspace moves until the turn ends.
+        assert app.active_project_path == main
+        assert app.agent is first_agent
+        assert app._session_diff_tracker is tracker
+
+
+@pytest.mark.asyncio
+async def test_apply_pending_switch_rebuilds_workspace_and_returns_continuation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mcp_calls: list[Path] = []
+
+    async def linked_mcp_tool() -> str:
+        return "linked MCP"
+
+    linked_mcp_extension = ToolExtension(name="mcp", tools={"linked_mcp_tool": linked_mcp_tool})
+
+    app, main, linked, store, agent_cls = _build_app(tmp_path, monkeypatch)
+
+    def fake_build_mcp(project_path, *_args, **_kwargs):
+        root = Path(project_path).resolve()
+        mcp_calls.append(root)
+        return linked_mcp_extension if root == linked else None
+
+    monkeypatch.setattr(agent_runtime_module, "build_mcp_tool_extension", fake_build_mcp)
+
+    async with app.run_test():
+        first_agent = app.agent
+        tracker_before = app._session_diff_tracker
+        (main / "same-name.txt").write_text("launch root\n", encoding="utf-8")
+        (linked / "same-name.txt").write_text("active root\n", encoding="utf-8")
+
+        switch = _switch_tool(app)
+        result = await switch(str(linked))
+        assert result.startswith("Committed a switch")
+
+        first_agent.append_user_message("before switch")
+
+        continuation = await app._apply_pending_workspace_switch()
+
+        assert continuation is not None
+        assert continuation.startswith(f"The active workspace is now `{linked}`")
+
+        assert len(agent_cls.instances) == 2
+        assert app.agent is agent_cls.instances[1]
+        assert app.agent is not first_agent
+        assert app.agent.kwargs["project_path"] == linked
+
+        # Message history survived the rebuild via the session projection.
+        assert any(getattr(message, "content", None) == "before switch" for message in app.agent.history)
+
+        assert app.active_project_path == linked
+        assert app.session_runtime.project_path == linked
+
+        assert "linked-only-skill" in app.skill_catalog.skills
+        assert "main-only-skill" not in app.skill_catalog.skills
+        assert "linked-only-helper" in app.custom_agent_catalog.agents
+        assert "main-only-helper" not in app.custom_agent_catalog.agents
+        assert app.agent.kwargs["custom_agent_catalog"] is app.custom_agent_catalog
+
+        assert app.file_index.project_path == linked
+        assert "linked-only.txt" in {entry.path for entry in app.file_index.entries()}
+
+        assert app._session_diff_tracker is not tracker_before
+        assert app._session_diff_tracker is not None
+        assert app._session_diff_tracker.project_path == linked
+        checkpoints = app._session_diff_tracker.checkpoints()
+        assert len(checkpoints) == 1
+        assert checkpoints[0].checkpoint_id == 0
+        assert checkpoints[0].label == 'Workspace switched · "feature/switch-test"'
+        assert app._session_file_changes == []
+        assert app._pending_workspace_switch is None
+
+        meta = app._meta_content()
+        assert str(linked) in meta
+        assert str(main) not in meta
+
+        assert any(
+            entry.kind == "system" and "Workspace switched to" in entry.content for entry in app.conversation_entries
+        )
+
+        assert linked in mcp_calls
+        mcp_extension = extension_by_name(app.agent.kwargs["tool_extensions"], "mcp")
+        assert set(mcp_extension.tools) == {"linked_mcp_tool"}
+
+        mention_attachments = app._build_mention_attachments("@same-name.txt")
+        assert mention_attachments is not None
+        assert mention_attachments[0]["content"] == "active root\n"
+
+        request = permission_request_for_tool("exec_command", {"command": "npm run test"})
+        assert request is not None
+        app._pending_approval = PendingApproval(
+            request=request,
+            request_id="switched-root-permission",
+            rule_options=allow_rule_options(request),
+        )
+        monkeypatch.setattr(app, "_answer_permission_request", Mock())
+        await app._answer_approval_option(2)
+        assert (linked / PERMISSIONS_RELATIVE_PATH).is_file()
+        assert not (main / PERMISSIONS_RELATIVE_PATH).exists()
+
+
+@pytest.mark.asyncio
+async def test_process_message_runs_continuation_turn_in_new_workspace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app, main, linked, store, agent_cls = _build_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        first_agent = app.agent
+        switch = _switch_tool(app)
+        await switch(str(linked))
+
+        await app._process_message("original task")
+
+        assert first_agent.messages == ["original task"]
+        assert len(agent_cls.instances) == 2
+        assert app.agent is agent_cls.instances[1]
+        assert app.agent is not first_agent
+        assert len(app.agent.messages) == 1
+        assert "The active workspace is now" in app.agent.messages[0]
+        assert app.active_project_path == linked
+
+
+@pytest.mark.asyncio
+async def test_second_switch_before_turn_end_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    app, main, linked, store, _agent_cls = _build_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        switch = _switch_tool(app)
+        first_result = await switch(str(linked))
+        assert first_result.startswith("Committed a switch")
+
+        with pytest.raises(ToolError, match="already committed"):
+            await switch(str(main))
+
+        assert len(_workspace_events(store, app.session.session_id)) == 1
+
+
+@pytest.mark.asyncio
+async def test_persist_failure_leaves_workspace_unchanged(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    app, main, linked, store, _agent_cls = _build_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        first_agent = app.agent
+
+        async def fail_save(**_kwargs: Any) -> None:
             raise OSError("metadata unavailable")
 
-        switch = extension_by_name(app.agent.kwargs["tool_extensions"], "cli-worktree-control").tools["switch_worktree"]
-        with monkeypatch.context() as save_patch:
-            save_patch.setattr(app, "_save_workspace_switch_async", fail_switch_save)
-            with pytest.raises(ToolError, match="previous workspace was restored.*metadata unavailable"):
-                await switch(str(linked))
+        monkeypatch.setattr(app, "_save_workspace_switch_async", fail_save)
+        switch = _switch_tool(app)
 
-        assert save_calls == 1
-        assert app.active_project_path == main
-        assert app.session_runtime.project_path == main
-        assert app._session_diff_tracker is tracker
-        assert app.skill_catalog is skills
-        assert app.custom_agent_catalog is custom_agents
-        assert app.file_index is file_index
-        assert app._pending_edit_previews is pending_previews
-        assert app._session_diff_dirty is True
-        assert app._session_diff_timer is timer
-        timer.pause.assert_not_called()
+        with pytest.raises(ToolError, match="Could not persist.*metadata unavailable"):
+            await switch(str(linked))
+
+        assert app._pending_workspace_switch is None
         assert app.session.active_project_path is None
         assert store.load(app.session.session_id).active_project_path is None
         assert _workspace_events(store, app.session.session_id) == []
-        _assert_agent_root(app.agent, main)
-        assert linked in app.agent.system_prompt_roots
-        assert app.agent.system_prompt_roots[-1] == main
-        assert app.agent.tool_collection.has_tool("replacement_mcp") is False
-        replacement_cleanup.assert_awaited_once()
+        assert app.agent is first_agent
 
 
 @pytest.mark.asyncio
-async def test_workspace_event_failure_rolls_back_without_phantom_metadata_transition(
+async def test_workspace_event_failure_does_not_publish_phantom_metadata(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    app, main, linked, store = _build_app(tmp_path, monkeypatch)
+    app, main, linked, store, _agent_cls = _build_app(tmp_path, monkeypatch)
 
     async with app.run_test():
-        assert isinstance(app.agent, SwitchingFakeAgent)
-        tracker = app._session_diff_tracker
         recorder = app._session_recorder
         record_switch = Mock(side_effect=OSError("workspace event unavailable"))
         monkeypatch.setattr(recorder, "record_workspace_switched", record_switch)
 
-        switch = extension_by_name(app.agent.kwargs["tool_extensions"], "cli-worktree-control").tools["switch_worktree"]
-        with pytest.raises(ToolError, match="previous workspace was restored.*workspace event unavailable"):
+        switch = _switch_tool(app)
+        with pytest.raises(ToolError, match="Could not persist"):
             await switch(str(linked))
 
-        assert app.active_project_path == main
-        assert app._session_diff_tracker is tracker
-        assert app.session.active_project_path is None
-        assert store.load(app.session.session_id).active_project_path is None
         assert _workspace_events(store, app.session.session_id) == []
         assert not any(
             event.event_type == "session.metadata_updated"
             and event.payload.get("patch", {}).get("active_project_path") == str(linked)
             for event in store.journal(app.session.session_id).read_events()
         )
+        assert store.load(app.session.session_id).active_project_path is None
+        assert app._pending_workspace_switch is None
         record_switch.assert_called_once()
-        _assert_agent_root(app.agent, main)
 
 
 @pytest.mark.asyncio
-async def test_rollback_failure_disables_tools_and_reports_unrestored_workspace(
+async def test_rebuild_failure_falls_back_to_previous_workspace(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    app, main, linked, store = _build_app(tmp_path, monkeypatch)
+    app, main, linked, store, agent_cls = _build_app(tmp_path, monkeypatch)
 
     async with app.run_test():
-        assert isinstance(app.agent, SwitchingFakeAgent)
-        agent = app.agent
-        original_switch = agent.switch_project_path
+        first_agent = app.agent
+        switch = _switch_tool(app)
+        await switch(str(linked))
 
-        async def fail_old_root_rollback(new_root: str | Path) -> None:
-            candidate = Path(new_root).resolve()
-            if candidate == main and agent.project_path == linked:
-                raise RuntimeError("old checkout unavailable")
-            await original_switch(candidate)
+        original_build_agent = app._build_agent
 
-        async def fail_switch_save(**_kwargs: Any) -> None:
-            raise OSError("journal unavailable")
+        async def flaky_build_agent(config, rebuild=False, *, restore_transcript=True, preserve_queued=False):
+            if app.active_project_path == linked:
+                raise RuntimeError("rebuild failed")
+            return await original_build_agent(
+                config, rebuild=rebuild, restore_transcript=restore_transcript, preserve_queued=preserve_queued
+            )
 
-        monkeypatch.setattr(agent, "switch_project_path", fail_old_root_rollback)
-        monkeypatch.setattr(app, "_save_workspace_switch_async", fail_switch_save)
-        switch = extension_by_name(agent.tool_extensions, "cli-worktree-control").tools["switch_worktree"]
+        monkeypatch.setattr(app, "_build_agent", flaky_build_agent)
 
-        with pytest.raises(
-            ToolError,
-            match="restoring the previous workspace also failed.*tools are disabled.*journal unavailable.*old checkout",
-        ):
-            await switch(str(linked))
+        result = await app._apply_pending_workspace_switch()
 
-        assert agent.project_path == linked
-        assert app.active_project_path == linked
-        assert app.session_runtime.project_path == linked
-        assert app._session_diff_tracker is None
-        assert agent.tool_collection._workspace_disabled_reason is not None
-        assert "rollback failed" in agent.tool_collection._workspace_disabled_reason
-        assert agent.tool_collection.get_tool_list() == []
-        assert agent.tool_collection.has_tool("read_file") is False
+        assert result is None
+        assert app.active_project_path == main
+        assert len(agent_cls.instances) == 2
+        assert app.agent is agent_cls.instances[1]
+        assert app.agent is not first_agent
+        assert app.agent.kwargs["project_path"] == main
 
-        # Durable session metadata still names the last committed workspace;
-        # callers must restart/resume before any tools can run again.
-        assert app.session.active_project_path is None
+        events = _workspace_events(store, app.session.session_id)
+        assert len(events) == 2
+        assert events[0].payload == {
+            "old_root": str(main),
+            "new_root": str(linked),
+            "old_label": main.name,
+            "new_label": linked.name,
+            "old_branch": "main",
+            "new_branch": "feature/switch-test",
+        }
+        assert events[1].payload == {
+            "old_root": str(linked),
+            "new_root": str(main),
+            "old_label": linked.name,
+            "new_label": main.name,
+            "old_branch": "feature/switch-test",
+            "new_branch": "main",
+        }
+
         assert store.load(app.session.session_id).active_project_path is None
+        assert any(entry.kind == "system" and "continuing in" in entry.content for entry in app.conversation_entries)
+        assert app._pending_workspace_switch is None
+
+
+@pytest.mark.asyncio
+async def test_rebuild_double_failure_disables_chat(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from kolega_code.cli.tui.widgets import ChatComposer
+
+    app, main, linked, store, _agent_cls = _build_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        switch = _switch_tool(app)
+        await switch(str(linked))
+
+        async def always_fail_build_agent(*_args: Any, **_kwargs: Any) -> None:
+            raise RuntimeError("rebuild failed")
+
+        monkeypatch.setattr(app, "_build_agent", always_fail_build_agent)
+
+        result = await app._apply_pending_workspace_switch()
+
+        assert result is None
+        assert any(
+            entry.kind == "system" and "Restart or resume the session" in entry.content
+            for entry in app.conversation_entries
+        )
+        assert store.load(app.session.session_id).active_project_path is None
+        assert app.query_one("#composer", ChatComposer).disabled is True

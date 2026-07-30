@@ -415,13 +415,6 @@ class SnapshotService:
         self._require_current_project(action.project_path, "Pending action", action.action_id)
         return action
 
-    def switch_project_path(self, new_root: str | Path) -> None:
-        """Retarget future captures while retaining session-level history."""
-        candidate = Path(new_root).resolve()
-        if not candidate.is_dir():
-            raise SnapshotError(f"Snapshot project path is not a directory: {candidate}")
-        self.project_path = candidate
-
     def _require_current_project(self, recorded_path: str, kind: str, record_id: str) -> None:
         try:
             recorded = Path(recorded_path).resolve()

@@ -286,6 +286,18 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
                 return False
             await self._record_turn_checkpoint(turn_label or message)
             cancelled_by_user = await self._run_turn_stream(lambda: self._agent_turn_stream(message, attachments))
+            # A committed workspace switch applies between turns: the agent is
+            # rebuilt in the new checkout, then handed one continuation turn so
+            # the work that prompted the switch resumes there. A cancelled turn
+            # still applies the committed rebuild but stays quiet afterwards.
+            while True:
+                continuation = await self._apply_pending_workspace_switch()
+                if cancelled_by_user or continuation is None:
+                    break
+                await self._record_turn_checkpoint(continuation)
+                cancelled_by_user = await self._run_turn_stream(
+                    lambda prompt=continuation: self._agent_turn_stream(prompt)
+                )
             if cancelled_by_user:
                 self._schedule_maybe_start_queued_message()
                 return True
@@ -300,6 +312,11 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
                 self._schedule_maybe_start_queued_message()
             return False
         finally:
+            # An unexpected stream error must not strand a committed switch:
+            # the journal already names the new workspace, so apply the rebuild
+            # even though no continuation turn will run.
+            if self._pending_workspace_switch is not None:
+                await self._apply_pending_workspace_switch()
             # The turn worker owns ``agent_worker`` for its whole lifetime — including
             # the goal loop's verifier phase, which runs between work turns. Clear it
             # only here so the app stays "busy" during goal evaluation: submissions
@@ -317,9 +334,11 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             title="Active worktree",
             markdown=(
                 "The TUI owns the active workspace for this session. If you create a linked checkout with "
-                "`git worktree add`, call `switch_worktree` immediately afterward, by itself, and before running "
-                "any command, edit, search, or delegated agent in that checkout. The tool switches the complete "
-                "workspace and resets the Changes/Rewind baseline; it does not create a worktree."
+                "`git worktree add`, call `switch_worktree` by itself to move future work there; the tool does "
+                "not create a worktree. The switch is committed immediately but applies when your turn ends: "
+                "end your turn right after calling it — further tool calls this turn would still run in the "
+                "previous workspace — and you will be prompted to continue in the new checkout, where the "
+                "Changes/Rewind baseline starts fresh."
             ),
             modes=[AgentMode.CLI],
             propagate_to_sub_agents=False,
@@ -329,8 +348,10 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         async def switch_worktree(path: str) -> str:
             """Switch the complete active workspace to a registered worktree.
 
-            Call this immediately after creating a worktree and before using
-            tools in it. It must be the only tool call in the model response.
+            Must be the only tool call in the model response. The switch is
+            committed at once but applies when the current turn ends, so end
+            your turn right after calling it; you will be prompted to continue
+            in the new workspace.
 
             Args:
                 path: Registered worktree path (or nested path), resolved
@@ -512,6 +533,9 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
                     )
                 )
                 cancelled = await self._run_turn_stream(lambda: self._agent_turn_stream(nudge))
+                # The goal nudge is itself the continuation, so a switch
+                # committed during this turn only needs the rebuild applied.
+                await self._apply_pending_workspace_switch()
                 if cancelled:
                     await self._pause_goal(messages.GOAL_PAUSED.format(reason="Stopped by user. "))
                     break
@@ -1002,11 +1026,12 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         rebuild: bool = False,
         *,
         restore_transcript: bool = True,
+        preserve_queued: bool = False,
     ) -> None:
         await self._prime_recording_offset()
         history = self.session.history
         compaction = self.session.compaction
-        if rebuild:
+        if rebuild and not preserve_queued:
             self._clear_queued_messages()
         if self.agent is not None:
             await self._save_session_history_async()
