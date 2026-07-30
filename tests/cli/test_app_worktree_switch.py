@@ -407,7 +407,8 @@ async def test_apply_pending_switch_rebuilds_workspace_and_returns_continuation(
         assert any(getattr(message, "content", None) == "before switch" for message in app.agent.history)
 
         assert app.active_project_path == linked
-        assert app.session_runtime.project_path == linked
+        # Permission matching stays launch-scoped, like trust.
+        assert app.session_runtime.project_path == main
 
         assert "linked-only-skill" in app.skill_catalog.skills
         assert "main-only-skill" not in app.skill_catalog.skills
@@ -453,8 +454,10 @@ async def test_apply_pending_switch_rebuilds_workspace_and_returns_continuation(
         )
         monkeypatch.setattr(app, "_answer_permission_request", Mock())
         await app._answer_approval_option(2)
-        assert (linked / PERMISSIONS_RELATIVE_PATH).is_file()
-        assert not (main / PERMISSIONS_RELATIVE_PATH).exists()
+        # Saved rules persist in the enclosing launch checkout, so they
+        # survive the worktree and apply to every workspace in the session.
+        assert (main / PERMISSIONS_RELATIVE_PATH).is_file()
+        assert not (linked / PERMISSIONS_RELATIVE_PATH).exists()
 
 
 @pytest.mark.asyncio

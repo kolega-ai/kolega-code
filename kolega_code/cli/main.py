@@ -1288,7 +1288,7 @@ async def _run_ask(args: argparse.Namespace) -> int:
         prompt_extensions=prompt_extensions,
         tool_extensions=tool_extensions,
         permission_mode=permission_mode,
-        permission_callback=_permission_callback_for_ask(project_path)
+        permission_callback=_permission_callback_for_ask(launch_project_path)
         if permission_mode == PermissionMode.ASK
         else None,
         session_recorder=session_recorder,

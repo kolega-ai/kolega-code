@@ -227,7 +227,11 @@ class KolegaCodeApp(
         )
         self.session_runtime = SessionRuntime(
             session_id=session.session_id,
-            project_path=self.active_project_path,
+            # Saved permission rules are launch-scoped like trust: they are
+            # matched and persisted in the session's immutable launch checkout,
+            # not the active worktree, so they survive worktree removal and
+            # apply across workspace switches.
+            project_path=self.project_path,
             control=self.control_channel,
             permission_mode=self.permission_mode,
             on_notice=lambda text: self._notify_user(text, severity="warning"),
@@ -1432,7 +1436,6 @@ class KolegaCodeApp(
         if self.config is None:
             raise RuntimeError("Agent configuration is not available.")
         self.active_project_path = root
-        self.session_runtime.project_path = root
         self.file_index = WorkspaceFileIndex(root)
         self._file_index_refreshing = False
         self._pending_edit_previews = {}

@@ -80,7 +80,10 @@ During a TUI session, the top-level agent can explicitly call
 applied when the agent's turn ends: the workspace is rebuilt in the selected
 checkout — filesystem, terminal, search/edit, LSP, snapshots, skills,
 custom agents, and future sub-agent work all follow — and the agent is then
-prompted to continue there. A fresh **Workspace switched** Changes/Rewind
+prompted to continue there. Trust, hooks, configuration, private memory, and
+saved permission rules stay scoped to the launch checkout, so a rule saved
+while a worktree is active survives that worktree and applies to the whole
+session. A fresh **Workspace switched** Changes/Rewind
 baseline starts, so checkpoints from the previous workspace are no longer
 displayed. The switch is durable session state and is not undone by
 conversation rewind. It must run alone, and it is refused while background
