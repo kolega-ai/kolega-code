@@ -406,7 +406,12 @@ _HASHLINE_V2_INPUT_SCHEMA: dict[str, Any] = {
 
 @dataclass(frozen=True)
 class ToolExtension:
-    """Host-provided tool callbacks and named groups."""
+    """Host-provided tool callbacks and named groups.
+
+    ``exclusive_tools`` declares session-control callbacks that must be the
+    sole tool call in a model response. If one is batched with another call,
+    the complete batch is rejected before any callback executes.
+    """
 
     name: str
     tools: dict[str, Callable[..., Any]]
@@ -423,6 +428,10 @@ class ToolExtension:
     # single top-level agent only; leaving them on for parallel sub-agents lets
     # them clobber shared state. Default True preserves inheritance.
     propagate_to_sub_agents: bool = True
+    # Tools that may only be called as the sole tool in a model response. If
+    # one appears in a larger batch, BaseAgent rejects the whole batch before
+    # any callback runs.
+    exclusive_tools: frozenset[str] = field(default_factory=frozenset)
 
 
 class ToolCollectionConfig:
@@ -668,6 +677,7 @@ class ToolCollection(LogMixin):
         self.tool_extensions = tool_extensions or []
         self.extension_callbacks = {}
         self.extension_schemas = {}
+        self.exclusive_tools = frozenset()
         self._extension_group_names = set()
         self._extension_dispatch_tools: set[str] = set()
         self._legacy_only_extension_dispatch_tools: set[str] = set()
@@ -690,6 +700,7 @@ class ToolCollection(LogMixin):
             "call",
             "cleanup",
             "initialize",
+            "cleanup_tool_extensions",
             "log_error",
             "log_warning",
             "log_info",
@@ -711,6 +722,9 @@ class ToolCollection(LogMixin):
 
     def _register_tool_extensions(self) -> None:
         """Bind host-provided extension callbacks onto this collection."""
+        self.exclusive_tools = frozenset(
+            tool_name for extension in self.tool_extensions for tool_name in extension.exclusive_tools
+        )
         for extension in self.tool_extensions:
             for tool_name, callback in extension.tools.items():
                 if hasattr(self, tool_name):
@@ -749,6 +763,22 @@ class ToolCollection(LogMixin):
                 merged_group = list(dict.fromkeys(existing_group + list(tool_names)))
                 setattr(self, group_name, merged_group)
                 self._extension_group_names.add(group_name)
+
+    async def cleanup_tool_extensions(self, extensions: List[ToolExtension]) -> None:
+        """Release resources owned by extensions that are no longer installed."""
+        for extension in extensions:
+            cleanup = extension.cleanup
+            if cleanup is None:
+                continue
+            try:
+                result = cleanup()
+                if inspect.isawaitable(result):
+                    await result
+            except Exception as exc:
+                await self.log_warning(
+                    f"Error cleaning up tool extension {extension.name}: {exc}",
+                    sender="ToolCollection",
+                )
 
     def _initialize_tools(self):
         """Initialize all tool backends based on configuration."""
@@ -2768,18 +2798,7 @@ class ToolCollection(LogMixin):
                             )
 
             # Clean up host-provided tool extensions (MCP transports, etc.).
-            for extension in self.tool_extensions:
-                cleanup = getattr(extension, "cleanup", None)
-                if cleanup is None:
-                    continue
-                try:
-                    result = cleanup()
-                    if inspect.isawaitable(result):
-                        await result
-                except Exception as e:
-                    await self.log_warning(
-                        f"Error cleaning up tool extension {extension.name}: {e}", sender="ToolCollection"
-                    )
+            await self.cleanup_tool_extensions(self.tool_extensions)
 
         except Exception as e:
             await self.log_error(f"Error during tool cleanup: {str(e)}", sender="ToolCollection")

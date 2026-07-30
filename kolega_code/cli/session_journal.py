@@ -235,30 +235,41 @@ class SessionJournal:
                 payload=payload or {},
                 artifacts=artifacts or [],
             )
-            line = (json.dumps(event.to_dict(), separators=(",", ":"), ensure_ascii=False) + "\n").encode("utf-8")
-            try:
-                ensure_private_dir(self.session_dir)
-                fd = os.open(self.events_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
-                try:
-                    written = os.write(fd, line)
-                    if written != len(line):
-                        raise SessionJournalError(
-                            f"Short event write for session {self.session_id}: wrote {written} of {len(line)} bytes"
-                        )
-                finally:
-                    os.close(fd)
-                ensure_private_file(self.events_path)
-            except Exception as exc:
-                # A short/failed append may have left a trailing fragment. Force the
-                # next operation to validate and repair it before assigning a sequence.
-                self._loaded = False
-                if isinstance(exc, SessionJournalError):
-                    raise
-                raise SessionJournalError(f"Could not append session event: {self.events_path}") from exc
+            self._write_event_locked(event)
             self._next_seq += 1
             if event_type == "context.epoch_started":
                 self._epoch_id = resolved_epoch
             return event
+
+    def _write_event_locked(self, event: SessionEvent) -> None:
+        """Append one complete event, truncating a failed partial write."""
+        data = (json.dumps(event.to_dict(), separators=(",", ":"), ensure_ascii=False) + "\n").encode("utf-8")
+        fd: Optional[int] = None
+        original_size = 0
+        try:
+            ensure_private_dir(self.session_dir)
+            fd = os.open(self.events_path, os.O_RDWR | os.O_CREAT | os.O_APPEND, 0o600)
+            ensure_private_file(self.events_path)
+            original_size = os.fstat(fd).st_size
+            written = os.write(fd, data)
+            if written != len(data):
+                raise SessionJournalError(
+                    f"Short event write for session {self.session_id}: wrote {written} of {len(data)} bytes"
+                )
+        except Exception as exc:
+            if fd is not None:
+                try:
+                    os.ftruncate(fd, original_size)
+                except OSError:
+                    # Force the next operation to validate and repair any tail.
+                    pass
+            self._loaded = False
+            if isinstance(exc, SessionJournalError):
+                raise
+            raise SessionJournalError(f"Could not append session event: {self.events_path}") from exc
+        finally:
+            if fd is not None:
+                os.close(fd)
 
     def start_epoch(self, reason: str) -> str:
         epoch_id = str(uuid.uuid4())
@@ -549,6 +560,32 @@ class SessionRecorder:
                 payload={"message": stored},
                 turn_id=self.current_turn_id,
                 artifacts=artifacts,
+            )
+
+    def record_workspace_switched(
+        self,
+        *,
+        old_root: str,
+        new_root: str,
+        old_label: str = "",
+        new_label: str = "",
+        old_branch: str = "",
+        new_branch: str = "",
+    ) -> None:
+        """Record a durable, additive active-workspace boundary."""
+        with self._lock:
+            self.journal.append(
+                "session.workspace_switched",
+                actor="system",
+                payload={
+                    "old_root": old_root,
+                    "new_root": new_root,
+                    "old_label": old_label,
+                    "new_label": new_label,
+                    "old_branch": old_branch,
+                    "new_branch": new_branch,
+                },
+                turn_id=self.current_turn_id,
             )
 
     def record_compaction(self, compaction: dict[str, Any]) -> None:

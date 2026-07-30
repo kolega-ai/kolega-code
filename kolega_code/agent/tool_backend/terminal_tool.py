@@ -309,8 +309,11 @@ class TerminalTool(BaseTool):
 
         try:
             # Send command to terminal (show the original command to the user)
+            workdir = str(self.project_path.resolve())
             terminal_command_event = AgentEvent(
-                event_type="terminal_command", sender="agent", content={"command": command}
+                event_type="terminal_command",
+                sender="agent",
+                content={"command": command, "workdir": workdir},
             )
             await self.connection_manager.broadcast_event(terminal_command_event, self.workspace_id, self.thread_id)
 
@@ -319,7 +322,7 @@ class TerminalTool(BaseTool):
                 full_command,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                cwd=str(self.project_path),
+                cwd=workdir,
                 env=build_child_env(),
                 shell=True,
             )

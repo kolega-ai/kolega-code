@@ -267,7 +267,12 @@ class BaseTool(LogMixin):
         event = AgentEvent(
             sender=self.caller.agent_name,
             event_type="file_edit_preview",
-            content={"tool_call_id": tool_call_id, "tool_name": tool_name, **preview},
+            content={
+                "tool_call_id": tool_call_id,
+                "tool_name": tool_name,
+                "workspace_root": str(self.project_path.resolve()),
+                **preview,
+            },
             is_streaming=False,
             sub_agent_info=sub_agent_info,
         )

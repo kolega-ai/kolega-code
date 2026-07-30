@@ -185,14 +185,14 @@ class SessionDiffTrackerBase:
 
     # ---- checkpoints ---------------------------------------------------------
 
-    def capture_baseline(self) -> None:
+    def capture_baseline(self, label: str = "") -> None:
         """Capture checkpoint 0 (session start), resetting the ladder."""
         self._checkpoints = []
         self._next_checkpoint_id = 0
         self._content_intern = {}
         self._diff_cache = {}
         self._diff_cache_checkpoint_id = None
-        self.capture_checkpoint("")
+        self.capture_checkpoint(label)
 
     def capture_checkpoint(self, label: str) -> TurnCheckpoint:
         checkpoint = TurnCheckpoint(

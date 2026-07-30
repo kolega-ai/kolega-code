@@ -6,6 +6,7 @@ import itertools
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 from typing import Any, Optional
 
 from kolega_code.permissions import PermissionMode, PermissionRequest, PermissionRuleOption
@@ -124,6 +125,22 @@ class SessionFileChange:
     agent_name: str = ""
     source_label: str = "Agent"
     created_at: float = 0.0
+
+
+@dataclass(frozen=True)
+class PendingWorkspaceSwitch:
+    """A committed workspace switch waiting for the current turn to end.
+
+    ``switch_worktree`` persists the journal boundary and session metadata
+    mid-turn, but the agent cannot be rebuilt while its own turn is running,
+    so the turn lifecycle applies the rebuild once the stream finishes.
+    """
+
+    new_root: Path
+    old_root: Path
+    branch: str  # new checkout's branch, "" when detached
+    old_branch: str  # previous checkout's branch, "" when detached
+    previous_active_metadata: Optional[str]  # session.active_project_path before the commit
 
 
 @dataclass(frozen=True)

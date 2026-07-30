@@ -53,6 +53,7 @@ class SessionRecord:
     goal: dict[str, Any] = field(default_factory=dict)
     loop: dict[str, Any] = field(default_factory=dict)
     schema_version: int = SCHEMA_VERSION
+    active_project_path: Optional[str] = None
 
     @classmethod
     def create(
@@ -108,6 +109,7 @@ class SessionRecord:
             gigacode_enabled=bool(data.get("gigacode_enabled", False)),
             goal=data.get("goal") or {},
             loop=data.get("loop") or {},
+            active_project_path=data.get("active_project_path") or None,
         )
 
     def to_metadata_dict(self) -> dict[str, Any]:
@@ -131,6 +133,7 @@ class SessionRecord:
             "gigacode_enabled": self.gigacode_enabled,
             "goal": self.goal,
             "loop": self.loop,
+            "active_project_path": self.active_project_path,
         }
 
     def to_dict(self) -> dict[str, Any]:
@@ -250,6 +253,7 @@ class SessionStore:
             except SessionStoreError:
                 events = self.journal(record.session_id).read_events(repair_tail=True)
                 current = self._metadata_projection(record.session_id, events)
+            self._validate_immutable_project_path(record, current)
             record.updated_at = _now()
             updated = record.to_metadata_dict()
             patch = {key: copy.deepcopy(value) for key, value in updated.items() if current.get(key) != value}
@@ -260,6 +264,53 @@ class SessionStore:
                     payload={"patch": patch},
                 )
             self._write_metadata(updated)
+
+    def save_workspace_switch(
+        self,
+        record: SessionRecord,
+        recorder: SessionRecorder,
+        *,
+        old_root: str,
+        new_root: str,
+        old_label: str = "",
+        new_label: str = "",
+        old_branch: str = "",
+        new_branch: str = "",
+    ) -> None:
+        """Append the canonical workspace boundary, then refresh the projection.
+
+        The single ``session.workspace_switched`` event is the durable commit:
+        the metadata projection derives ``active_project_path`` from it, so
+        the snapshot write afterwards is only a best-effort refresh.
+        """
+        self.ensure_dirs()
+        self._ensure_migrated(record.session_id)
+        if not self.session_dir_for(record.session_id).exists():
+            raise SessionStoreError(f"Session not found: {record.session_id}")
+        events = self.journal(record.session_id).read_events(repair_tail=True)
+        self._validate_immutable_project_path(record, self._metadata_projection(record.session_id, events))
+        record.updated_at = _now()
+        recorder.record_workspace_switched(
+            old_root=old_root,
+            new_root=new_root,
+            old_label=old_label,
+            new_label=new_label,
+            old_branch=old_branch,
+            new_branch=new_branch,
+        )
+        with self._lock_for(record.session_id):
+            try:
+                self._write_metadata(record.to_metadata_dict())
+            except OSError:
+                pass
+
+    @staticmethod
+    def _validate_immutable_project_path(record: SessionRecord, current: dict[str, Any]) -> None:
+        stored_project_path = current.get("project_path")
+        if stored_project_path is not None and record.project_path != stored_project_path:
+            raise SessionStoreError(
+                f"Session project_path is immutable: expected {stored_project_path!r}, got {record.project_path!r}"
+            )
 
     def load(self, session_id: str) -> SessionRecord:
         self._ensure_migrated(session_id)
@@ -417,6 +468,11 @@ class SessionStore:
         for event in events:
             if event.event_type == "session.metadata_updated" and isinstance(event.payload.get("patch"), dict):
                 result.update(copy.deepcopy(event.payload["patch"]))
+            elif event.event_type == "session.workspace_switched":
+                # The boundary event is the canonical record of the active
+                # workspace; the launch checkout is stored as None.
+                new_root = str(event.payload.get("new_root") or "")
+                result["active_project_path"] = new_root if new_root != result.get("project_path") else None
         return result
 
     def _metadata_projection(self, session_id: str, events: list[SessionEvent]) -> dict[str, Any]:
@@ -616,3 +672,38 @@ class SessionStore:
                     turn_id=turn_id,
                     artifacts=artifacts,
                 )
+
+
+def resolve_active_project(
+    session: SessionRecord, store: SessionStore, launch_path: Path
+) -> tuple[Path, Optional[str]]:
+    """Validate and return a resumed session's durable active workspace.
+
+    A saved active worktree that no longer resolves falls back to the launch
+    checkout and clears the persisted selection; the returned warning says so.
+    Both checkouts being unavailable is a hard resume error.
+    """
+    from kolega_code.worktrees import WorktreeError, resolve_worktree
+
+    if not session.active_project_path:
+        return launch_path, None
+    try:
+        return resolve_worktree(launch_path, session.active_project_path).path, None
+    except WorktreeError as active_error:
+        try:
+            fallback = resolve_worktree(launch_path, launch_path).path
+        except WorktreeError as launch_error:
+            raise SessionStoreError(
+                f"Session {session.session_id} cannot resume: saved active worktree "
+                f"{session.active_project_path!r} is invalid ({active_error}), and launch checkout "
+                f"{launch_path} is unavailable ({launch_error})."
+            ) from launch_error
+        session.active_project_path = None
+        try:
+            store.save(session)
+        except OSError:
+            # The journal is canonical: continue when only the derived
+            # metadata projection failed to refresh, else surface the error.
+            if store.load(session.session_id).active_project_path is not None:
+                raise
+        return fallback, f"Saved active worktree is unavailable ({active_error}); resuming in `{fallback}`."

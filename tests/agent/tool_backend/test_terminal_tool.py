@@ -87,7 +87,10 @@ class TestTerminalTool:
             # Check command broadcast (second call)
             assert isinstance(calls[1][0][0], AgentEvent)
             assert calls[1][0][0].event_type == "terminal_command"
-            assert calls[1][0][0].content["command"] == 'echo "Hello World"'
+            assert calls[1][0][0].content == {
+                "command": 'echo "Hello World"',
+                "workdir": str(terminal_tool.project_path.resolve()),
+            }
             assert calls[1][0][1] == "test_workspace"
 
             # Check output broadcast (third call)
@@ -171,7 +174,7 @@ class TestTerminalTool:
 
             # Verify the command was executed in the correct directory
             mock_create.assert_called_once()
-            assert mock_create.call_args[1]["cwd"] == str(terminal_tool.project_path)
+            assert mock_create.call_args[1]["cwd"] == str(terminal_tool.project_path.resolve())
 
 
 class TestUnifiedExecTools:

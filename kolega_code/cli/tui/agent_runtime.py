@@ -286,6 +286,18 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
                 return False
             await self._record_turn_checkpoint(turn_label or message)
             cancelled_by_user = await self._run_turn_stream(lambda: self._agent_turn_stream(message, attachments))
+            # A committed workspace switch applies between turns: the agent is
+            # rebuilt in the new checkout, then handed one continuation turn so
+            # the work that prompted the switch resumes there. A cancelled turn
+            # still applies the committed rebuild but stays quiet afterwards.
+            while True:
+                continuation = await self._apply_pending_workspace_switch()
+                if cancelled_by_user or continuation is None:
+                    break
+                await self._record_turn_checkpoint(continuation)
+                cancelled_by_user = await self._run_turn_stream(
+                    lambda prompt=continuation: self._agent_turn_stream(prompt)
+                )
             if cancelled_by_user:
                 self._schedule_maybe_start_queued_message()
                 return True
@@ -300,6 +312,11 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
                 self._schedule_maybe_start_queued_message()
             return False
         finally:
+            # An unexpected stream error must not strand a committed switch:
+            # the journal already names the new workspace, so apply the rebuild
+            # even though no continuation turn will run.
+            if self._pending_workspace_switch is not None:
+                await self._apply_pending_workspace_switch()
             # The turn worker owns ``agent_worker`` for its whole lifetime — including
             # the goal loop's verifier phase, which runs between work turns. Clear it
             # only here so the app stays "busy" during goal evaluation: submissions
@@ -310,6 +327,51 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
     # ------------------------------------------------------------------
     # Autonomous goal loop
     # ------------------------------------------------------------------
+
+    def _worktree_control_prompt_extension(self) -> PromptExtension:
+        return PromptExtension(
+            id="cli-worktree-control",
+            title="Active worktree",
+            markdown=(
+                "The TUI owns the active workspace for this session. If you create a linked checkout with "
+                "`git worktree add`, call `switch_worktree` by itself to move future work there; the tool does "
+                "not create a worktree. The switch is committed immediately but applies when your turn ends: "
+                "end your turn right after calling it — further tool calls this turn would still run in the "
+                "previous workspace — and you will be prompted to continue in the new checkout, where the "
+                "Changes/Rewind baseline starts fresh."
+            ),
+            modes=[AgentMode.CLI],
+            propagate_to_sub_agents=False,
+        )
+
+    def _worktree_control_tool_extension(self) -> ToolExtension:
+        async def switch_worktree(path: str) -> str:
+            """Switch the complete active workspace to a registered worktree.
+
+            Must be the only tool call in the model response. The switch is
+            committed at once but applies when the current turn ends, so end
+            your turn right after calling it; you will be prompted to continue
+            in the new workspace.
+
+            Args:
+                path: Registered worktree path (or nested path), resolved
+                    relative to the immutable session launch checkout.
+            """
+            clean_path = path.strip()
+            if not clean_path:
+                raise ToolError("'path' must identify a registered worktree.")
+            return await self._switch_active_worktree(clean_path)
+
+        return ToolExtension(
+            name="cli-worktree-control",
+            tools={"switch_worktree": switch_worktree},
+            tool_groups={
+                "planning_tools": ["switch_worktree"],
+                "cli_worktree_tools": ["switch_worktree"],
+            },
+            propagate_to_sub_agents=False,
+            exclusive_tools=frozenset({"switch_worktree"}),
+        )
 
     def _goal_prompt_extension(self) -> PromptExtension:
         condition = self._goal.condition if self._goal else ""
@@ -471,6 +533,9 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
                     )
                 )
                 cancelled = await self._run_turn_stream(lambda: self._agent_turn_stream(nudge))
+                # The goal nudge is itself the continuation, so a switch
+                # committed during this turn only needs the rebuild applied.
+                await self._apply_pending_workspace_switch()
                 if cancelled:
                     await self._pause_goal(messages.GOAL_PAUSED.format(reason="Stopped by user. "))
                     break
@@ -961,11 +1026,12 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         rebuild: bool = False,
         *,
         restore_transcript: bool = True,
+        preserve_queued: bool = False,
     ) -> None:
         await self._prime_recording_offset()
         history = self.session.history
         compaction = self.session.compaction
-        if rebuild:
+        if rebuild and not preserve_queued:
             self._clear_queued_messages()
         if self.agent is not None:
             await self._save_session_history_async()
@@ -980,9 +1046,9 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             browser_visible=self.browser_visible,
         )
         agent_class = PlanningAgent if self.interaction_mode == tui_constants.PLAN_INTERACTION_MODE else CoderAgent
-        self.skill_catalog = discover_skills(self.project_path)
+        self.skill_catalog = discover_skills(self.active_project_path)
         self.custom_agent_catalog = validate_custom_agent_models(
-            discover_custom_agents(self.project_path, self.settings_store.root),
+            discover_custom_agents(self.active_project_path, self.settings_store.root),
             config,
         ).for_mode(self.interaction_mode)
         prompt_extensions: list[PromptExtension] = []
@@ -1001,6 +1067,8 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             tool_extensions.append(self._shared_task_list_readonly_tool_extension())
         # Both TUI interaction modes can set autonomous goals. The policy and
         # callback stay on the top-level agent and are never inherited by delegates.
+        prompt_extensions.append(self._worktree_control_prompt_extension())
+        tool_extensions.append(self._worktree_control_tool_extension())
         prompt_extensions.append(self._goal_control_prompt_extension())
         tool_extensions.append(self._goal_control_tool_extension())
         # Both interaction modes get the scratchpad: plan-mode research and
@@ -1036,14 +1104,14 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         if mcp_config is not None:
             for diagnostic in getattr(mcp_config, "diagnostics", []) or []:
                 self._log_status(f"mcp: {diagnostic}", level="warn")
-            mcp_extension = build_mcp_tool_extension(
-                self.project_path,
-                self.settings_store.root,
-                project_trusted=self.settings.is_mcp_project_trusted(self.project_path),
-                loaded_config=mcp_config,
-            )
-            if mcp_extension is not None:
-                tool_extensions.append(mcp_extension)
+        mcp_extension = build_mcp_tool_extension(
+            self.active_project_path,
+            self.settings_store.root,
+            project_trusted=self.settings.is_mcp_project_trusted(self.project_path),
+            loaded_config=mcp_config if self.active_project_path == self.project_path else None,
+        )
+        if mcp_extension is not None:
+            tool_extensions.append(mcp_extension)
 
         # gigacode applies to any top-level agent and is carried across rebuilds.
         # In plan mode the orchestrating agent is read-only, so its workflow
@@ -1058,7 +1126,7 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             prompt_extensions.append(self._goal_prompt_extension())
 
         self.agent = agent_class(
-            project_path=self.project_path,
+            project_path=self.active_project_path,
             workspace_id=self.session.workspace_id,
             thread_id=self.session.thread_id,
             connection_manager=self.recording_connection_manager,

@@ -2,6 +2,7 @@ import json
 import os
 import stat
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 
@@ -94,6 +95,70 @@ def test_session_store_create_load_list_export_delete(tmp_path: Path) -> None:
     assert not store.session_dir_for(record.session_id).exists()
     with pytest.raises(SessionStoreError):
         store.load(record.session_id)
+
+
+def test_session_store_round_trips_active_project_path_without_schema_change(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    active_project = tmp_path / "worktree"
+    active_project.mkdir()
+    store = SessionStore(tmp_path / "state")
+
+    record = store.create(project, "code", {})
+    assert record.active_project_path is None
+    assert (record.active_project_path or record.project_path) == str(project.resolve())
+
+    record.active_project_path = str(active_project.resolve())
+    assert record.to_metadata_dict()["active_project_path"] == str(active_project.resolve())
+    store.save(record)
+
+    loaded = store.load(record.session_id)
+    assert loaded.schema_version == 1
+    assert loaded.active_project_path == str(active_project.resolve())
+    metadata = json.loads(store.path_for(record.session_id).read_text(encoding="utf-8"))
+    assert metadata["active_project_path"] == str(active_project.resolve())
+
+
+@pytest.mark.parametrize("workspace_switch", [False, True])
+def test_session_store_rejects_mutating_immutable_project_path(tmp_path: Path, workspace_switch: bool) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    store = SessionStore(tmp_path / "state")
+    record = store.create(project, "code", {})
+    event_count = len(store.journal(record.session_id).read_events())
+
+    record.project_path = str(tmp_path / "other")
+    with pytest.raises(SessionStoreError, match="project_path is immutable"):
+        if workspace_switch:
+            store.save_workspace_switch(
+                record,
+                store.recorder(record.session_id),
+                old_root=str(project),
+                new_root=str(tmp_path / "worktree"),
+            )
+        else:
+            store.save(record)
+
+    assert len(store.journal(record.session_id).read_events()) == event_count
+    assert store.load(record.session_id).project_path == str(project.resolve())
+
+
+@pytest.mark.parametrize("active_project_path", [None, ""])
+def test_session_record_missing_or_empty_active_project_path_uses_launch_path(
+    tmp_path: Path, active_project_path: str | None
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    metadata = SessionRecord.create(project, "code", {}).to_metadata_dict()
+    if active_project_path is None:
+        metadata.pop("active_project_path")
+    else:
+        metadata["active_project_path"] = active_project_path
+
+    loaded = SessionRecord.from_dict(metadata)
+
+    assert loaded.active_project_path is None
+    assert (loaded.active_project_path or loaded.project_path) == str(project.resolve())
 
 
 def test_save_is_metadata_only(tmp_path: Path) -> None:
@@ -421,6 +486,93 @@ def test_metadata_event_survives_failure_before_projection_update(
 
     assert store.load(record.session_id).title == "new durable title"
     monkeypatch.setattr(store, "_write_metadata", original_write)
+
+
+def test_workspace_switch_event_is_canonical_when_projection_write_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    main = tmp_path / "main"
+    linked = tmp_path / "linked"
+    main.mkdir()
+    linked.mkdir()
+    store = SessionStore(tmp_path / "state")
+    record = store.create(main, "code", {})
+    recorder = store.recorder(record.session_id)
+    journal = store.journal(record.session_id)
+    original_write_event = journal._write_event_locked
+    original_write_metadata = store._write_metadata
+    order: list[str] = []
+
+    def track_journal_write(event) -> None:
+        order.append("journal")
+        original_write_event(event)
+
+    def fail_projection(_metadata) -> None:
+        order.append("metadata")
+        raise OSError("simulated crash before projection")
+
+    monkeypatch.setattr(journal, "_write_event_locked", track_journal_write)
+    monkeypatch.setattr(store, "_write_metadata", fail_projection)
+    record.active_project_path = str(linked.resolve())
+
+    # Projection failure is recoverable once the canonical event commits.
+    store.save_workspace_switch(
+        record,
+        recorder,
+        old_root=str(main.resolve()),
+        new_root=str(linked.resolve()),
+    )
+
+    assert order == ["journal", "metadata"]
+    assert [event.event_type for event in journal.read_events()][-1] == "session.workspace_switched"
+    assert store.load(record.session_id).active_project_path == str(linked.resolve())
+
+    # Switching back derives the launch checkout (stored as None) from the
+    # boundary event alone; no metadata patch event is involved.
+    monkeypatch.setattr(store, "_write_metadata", original_write_metadata)
+    record.active_project_path = None
+    store.save_workspace_switch(
+        record,
+        recorder,
+        old_root=str(linked.resolve()),
+        new_root=str(main.resolve()),
+    )
+    assert store.load(record.session_id).active_project_path is None
+    event_types = [event.event_type for event in journal.read_events()]
+    assert event_types.count("session.workspace_switched") == 2
+    assert "session.metadata_updated" not in event_types
+
+
+def test_workspace_switch_journal_failure_does_not_publish_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    main = tmp_path / "main"
+    linked = tmp_path / "linked"
+    main.mkdir()
+    linked.mkdir()
+    store = SessionStore(tmp_path / "state")
+    record = store.create(main, "code", {})
+    recorder = store.recorder(record.session_id)
+    journal = store.journal(record.session_id)
+    projection_write = Mock()
+    monkeypatch.setattr(store, "_write_metadata", projection_write)
+    monkeypatch.setattr(
+        journal,
+        "_write_event_locked",
+        Mock(side_effect=OSError("journal unavailable")),
+    )
+    record.active_project_path = str(linked.resolve())
+
+    with pytest.raises(OSError, match="journal unavailable"):
+        store.save_workspace_switch(
+            record,
+            recorder,
+            old_root=str(main.resolve()),
+            new_root=str(linked.resolve()),
+        )
+
+    projection_write.assert_not_called()
+    assert store.load(record.session_id).active_project_path is None
 
 
 @pytest.mark.parametrize("damage", ["missing", "invalid"])

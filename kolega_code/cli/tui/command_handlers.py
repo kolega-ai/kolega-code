@@ -173,7 +173,7 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
 
         candidate = _Path(arg)
         if not candidate.is_absolute():
-            candidate = (self.project_path / arg).resolve()
+            candidate = (self.active_project_path / arg).resolve()
         attachment = encode_image_file(candidate)
         if attachment is None:
             self._show_composer_hint(

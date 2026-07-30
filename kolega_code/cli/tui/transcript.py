@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Callable, Optional
 
 from rich.console import Group, RenderableType
@@ -503,6 +504,16 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
         kind = str(content.get("kind") or "").strip()
         if not path or kind not in {"diff", "head"}:
             return None
+        origin_root = Path(str(content.get("workspace_root") or self.active_project_path)).resolve(strict=False)
+        candidate = Path(path)
+        absolute_path = (candidate if candidate.is_absolute() else origin_root / candidate).resolve(strict=False)
+        try:
+            relative_path = absolute_path.relative_to(self.active_project_path)
+        except ValueError:
+            # A delayed preview from a workspace that has already been switched
+            # away must not be reinterpreted beneath the new tracker root.
+            return None
+        path = relative_path.as_posix()
 
         agent_id = ""
         agent_name = ""

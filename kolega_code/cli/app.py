@@ -65,9 +65,12 @@ from .file_index import WorkspaceFileIndex
 from .mentions import build_file_attachments
 from .provider_registry import default_ui_thinking_effort
 from .session_journal import RewindOutcome, TurnSummary
-from .session_store import SessionRecord, SessionStore
+from .session_store import SessionRecord, SessionStore, resolve_active_project
 from .settings import CliSettings, SettingsStore
 from kolega_code.agent.custom_agents import CustomAgentCatalog, discover_custom_agents
+from kolega_code.services.terminal import LocalTerminalManager
+from kolega_code.tools import ToolError
+from kolega_code.worktrees import WorktreeError, resolve_worktree
 from .skills import (
     SkillCatalog,
     discover_skills,
@@ -157,13 +160,17 @@ class KolegaCodeApp(
     ) -> None:
         super().__init__()
         self._terminal_control_filter = tui_terminal_display.TerminalControlFilter()
-        self.project_path = project_path
+        self.project_path = project_path.resolve()
         self.config = config
         self.mode = CLI_AGENT_MODE
         self.store = store
         self._session_recorder = store.recorder(session.session_id)
         self.session = store.load(session.session_id)
         self.session.mode = CLI_AGENT_MODE
+        self.active_project_path, workspace_warning = resolve_active_project(
+            self.session, self.store, self.project_path
+        )
+        self._startup_workspace_warning = workspace_warning or ""
         self.interaction_mode = self._validated_interaction_mode(self.session.interaction_mode)
         self.session.interaction_mode = self.interaction_mode
         self.permission_mode = normalize_permission_mode(
@@ -178,12 +185,12 @@ class KolegaCodeApp(
         )
         self.overrides = overrides or CliConfigOverrides()
         self.settings: CliSettings = CliSettings()
-        self.skill_catalog: SkillCatalog = discover_skills(self.project_path)
+        self.skill_catalog: SkillCatalog = discover_skills(self.active_project_path)
         self.custom_agent_catalog: CustomAgentCatalog = discover_custom_agents(
-            self.project_path,
+            self.active_project_path,
             self.settings_store.root,
         )
-        self.file_index = WorkspaceFileIndex(self.project_path)
+        self.file_index = WorkspaceFileIndex(self.active_project_path)
         self._file_index_refreshing = False
         # Local diagnostics (constructed on mount, once settings/secrets are loaded).
         self._diag: Optional[DiagnosticsLog] = None
@@ -220,6 +227,10 @@ class KolegaCodeApp(
         )
         self.session_runtime = SessionRuntime(
             session_id=session.session_id,
+            # Saved permission rules are launch-scoped like trust: they are
+            # matched and persisted in the session's immutable launch checkout,
+            # not the active worktree, so they survive worktree removal and
+            # apply across workspace switches.
             project_path=self.project_path,
             control=self.control_channel,
             permission_mode=self.permission_mode,
@@ -240,7 +251,9 @@ class KolegaCodeApp(
         self._sub_agent_by_tool_call: dict[str, str] = {}
         self._sub_agent_seq = 0
         self._session_file_changes: list[tui_state.SessionFileChange] = []
+        self._pending_workspace_switch: Optional[tui_state.PendingWorkspaceSwitch] = None
         self._session_diff_tracker: Optional[tui_session_diff.SessionDiffTrackerBase] = None
+        self._session_diff_generation = 0
         self._session_diff_files: list[tui_session_diff.SessionDiffFile] = []
         self._session_diff_scope: Optional[tui_session_diff.DiffScope] = None
         # Trackers are not safe for concurrent use; this serializes the refresh
@@ -476,6 +489,11 @@ class KolegaCodeApp(
         except Exception:
             pass
         self._update_settings_status()
+        if self._startup_workspace_warning:
+            self._add_conversation_entry(
+                tui_state.ConversationEntry(kind="system", content=self._startup_workspace_warning)
+            )
+            self._notify_user(self._startup_workspace_warning, severity="warning")
         self._initialize_session_diff_tracker()
         self._refresh_status_dashboard()
         self._restore_plan_action_visibility()
@@ -757,6 +775,7 @@ class KolegaCodeApp(
             gigacode_enabled=record.gigacode_enabled,
             goal=dict(record.goal),
             loop=dict(record.loop),
+            active_project_path=record.active_project_path,
         )
 
     async def _save_session_async(self) -> None:
@@ -764,6 +783,32 @@ class KolegaCodeApp(
         async with self._persistence_lock:
             snapshot = self._session_snapshot_locked()
             await asyncio.to_thread(self.store.save, snapshot)
+            self.session.updated_at = snapshot.updated_at
+
+    async def _save_workspace_switch_async(
+        self,
+        *,
+        old_root: Path,
+        new_root: Path,
+        old_label: str,
+        new_label: str,
+        old_branch: str,
+        new_branch: str,
+    ) -> None:
+        """Atomically persist switch metadata and its durable journal boundary."""
+        async with self._persistence_lock:
+            snapshot = self._session_snapshot_locked()
+            await asyncio.to_thread(
+                self.store.save_workspace_switch,
+                snapshot,
+                self._session_recorder,
+                old_root=str(old_root),
+                new_root=str(new_root),
+                old_label=old_label,
+                new_label=new_label,
+                old_branch=old_branch,
+                new_branch=new_branch,
+            )
             self.session.updated_at = snapshot.updated_at
 
     async def _save_session_history_async(self) -> None:
@@ -1007,7 +1052,7 @@ class KolegaCodeApp(
     def _build_mention_attachments(self, text: str) -> list[dict] | None:
         """Expand @path mentions in a prompt into file attachments."""
         try:
-            attachments, unresolved = build_file_attachments(text, self.project_path)
+            attachments, unresolved = build_file_attachments(text, self.active_project_path)
         except Exception:
             return None
         if unresolved:
@@ -1232,20 +1277,180 @@ class KolegaCodeApp(
         self._push_fullscreen_modal(screen)
         self._start_session_diff_refresh()
 
-    def _initialize_session_diff_tracker(self) -> None:
+    def _initialize_session_diff_tracker(self, baseline_label: str = "") -> None:
         """Set up git-only net diff tracking for the Changes inspector."""
-        self._session_diff_tracker = tui_session_diff.GitSessionDiffTracker.create(self.project_path)
+        self._session_diff_generation += 1
+        self._session_diff_tracker = tui_session_diff.GitSessionDiffTracker.create(self.active_project_path)
         self._session_diff_files = []
         self._session_diff_scope = None
         if self._session_diff_tracker is None:
             return
         try:
-            self._session_diff_tracker.capture_baseline()
+            self._session_diff_tracker.capture_baseline(baseline_label)
         except Exception:
             self._session_diff_tracker = None
             self._session_diff_files = []
             return
         self._start_scope_probe()
+
+    async def _switch_active_worktree(self, path: str) -> str:
+        """Durably commit a switch of the active workspace; it applies at turn end."""
+        agent = self.agent
+        if agent is None:
+            raise ToolError("The active agent workspace is not ready yet.")
+        pending = self._pending_workspace_switch
+        if pending is not None:
+            raise ToolError(
+                f"A workspace switch to `{pending.new_root}` is already committed for this turn. "
+                "End your turn to complete it."
+            )
+
+        try:
+            target = await asyncio.to_thread(resolve_worktree, self.project_path, path)
+        except WorktreeError as exc:
+            raise ToolError(str(exc)) from exc
+
+        new_root = target.path.resolve()
+        old_root = self.active_project_path.resolve()
+        if new_root == old_root:
+            label = f" ({target.branch})" if target.branch else ""
+            return f"Workspace is already active at `{new_root}`{label}; the Changes baseline was not reset."
+
+        terminal_manager = getattr(agent, "terminal_manager", None)
+        if isinstance(terminal_manager, LocalTerminalManager) and terminal_manager.has_running_sessions:
+            raise ToolError(
+                "Cannot switch worktrees while terminal sessions are running. Stop them with `kill_command`, "
+                "then call `switch_worktree` again by itself."
+            )
+
+        try:
+            old_info = await asyncio.to_thread(resolve_worktree, self.project_path, old_root)
+        except WorktreeError:
+            old_info = None
+        old_branch = old_info.branch if old_info is not None else ""
+
+        previous_active_metadata = self.session.active_project_path
+        self.session.active_project_path = None if new_root == self.project_path else str(new_root)
+        try:
+            # The boundary is durable before the model is told the switch
+            # happened: a crash between now and the rebuild resumes in the new
+            # workspace, which is what the transcript claims.
+            await self._save_workspace_switch_async(
+                old_root=old_root,
+                new_root=new_root,
+                old_label=old_root.name,
+                new_label=new_root.name,
+                old_branch=old_branch,
+                new_branch=target.branch,
+            )
+        except Exception as exc:
+            self.session.active_project_path = previous_active_metadata
+            raise ToolError(
+                f"Could not persist the workspace switch; the active workspace is unchanged: {exc}"
+            ) from exc
+
+        self._pending_workspace_switch = tui_state.PendingWorkspaceSwitch(
+            new_root=new_root,
+            old_root=old_root,
+            branch=target.branch,
+            old_branch=old_branch,
+            previous_active_metadata=previous_active_metadata,
+        )
+        branch_note = f" on branch `{target.branch}`" if target.branch else ""
+        return (
+            f"Committed a switch of the active workspace to `{new_root}`{branch_note}. It takes effect when "
+            "this turn ends, so end your turn now — further tool calls this turn would still run in the "
+            "previous workspace. You will be prompted to continue in the new workspace."
+        )
+
+    async def _apply_pending_workspace_switch(self) -> Optional[str]:
+        """Rebuild the workspace for a committed switch once the stream is over.
+
+        Returns the agent-facing continuation prompt when a switch was applied,
+        so the turn driver can hand control back in the new workspace.
+        """
+        pending = self._pending_workspace_switch
+        if pending is None:
+            return None
+        self._pending_workspace_switch = None
+        branch_note = f" on branch `{pending.branch}`" if pending.branch else ""
+        worktree_label = pending.branch or pending.new_root.name
+        try:
+            await self._activate_workspace(pending.new_root, baseline_label=f'Workspace switched · "{worktree_label}"')
+        except Exception as exc:
+            await self._restore_previous_workspace(pending, exc)
+            return None
+
+        notice = (
+            f"Workspace switched to `{pending.new_root}`{branch_note}. Changes and Rewind now use a fresh "
+            "“Workspace switched” baseline; prior-workspace checkpoints are no longer shown."
+        )
+        self._add_conversation_entry(tui_state.ConversationEntry(kind="system", content=notice))
+        return (
+            f"The active workspace is now `{pending.new_root}`{branch_note}; the previous turn ended to "
+            "complete the switch. Continue the work that prompted it, or reply briefly if none remains."
+        )
+
+    async def _restore_previous_workspace(self, pending: tui_state.PendingWorkspaceSwitch, error: Exception) -> None:
+        """Recommit and rebuild the pre-switch workspace after a failed rebuild."""
+        self.session.active_project_path = pending.previous_active_metadata
+        try:
+            # Append the reverse boundary so the journal records what actually
+            # happened rather than silently contradicting the earlier event.
+            await self._save_workspace_switch_async(
+                old_root=pending.new_root,
+                new_root=pending.old_root,
+                old_label=pending.new_root.name,
+                new_label=pending.old_root.name,
+                old_branch=pending.branch,
+                new_branch=pending.old_branch,
+            )
+        except Exception:
+            pass
+        try:
+            await self._activate_workspace(pending.old_root, baseline_label="")
+        except Exception as fallback_error:
+            self._set_chat_enabled(False)
+            message = (
+                f"Could not rebuild the workspace at `{pending.new_root}` ({error}), and rebuilding the "
+                f"previous workspace `{pending.old_root}` also failed ({fallback_error}). "
+                "Restart or resume the session."
+            )
+            self._add_conversation_entry(tui_state.ConversationEntry(kind="system", content=message))
+            self._notify_user(message, severity="error")
+            return
+        message = (
+            f"Could not switch the active workspace to `{pending.new_root}` ({error}); "
+            f"continuing in `{pending.old_root}`."
+        )
+        self._add_conversation_entry(tui_state.ConversationEntry(kind="system", content=message))
+        self._notify_user(message, severity="warning")
+
+    async def _activate_workspace(self, root: Path, *, baseline_label: str) -> None:
+        """Point the TUI at ``root`` and rebuild the agent there.
+
+        The rebuild goes through ``_build_agent`` — the same assembly a resume
+        uses — so catalogs, extensions, and tool services cannot drift from
+        what a restart in this workspace would produce.
+        """
+        if self.config is None:
+            raise RuntimeError("Agent configuration is not available.")
+        self.active_project_path = root
+        self.file_index = WorkspaceFileIndex(root)
+        self._file_index_refreshing = False
+        self._pending_edit_previews = {}
+        if self._session_diff_timer is not None:
+            self._session_diff_timer.pause()
+            self._session_diff_timer = None
+        self._session_file_changes = []
+        self._session_diff_baseline_id = None
+        self._session_diff_dirty = False
+        self._initialize_session_diff_tracker(baseline_label)
+        await self._build_agent(self.config, rebuild=True, restore_transcript=False, preserve_queued=True)
+        self._close_changes_inspector()
+        self._maybe_refresh_file_index()
+        self._refresh_status_dashboard()
+        self._update_mode_chrome()
 
     def _start_scope_probe(self) -> None:
         """Resolve the diff scope once so the dashboard can name the worktree.
@@ -1256,21 +1461,24 @@ class KolegaCodeApp(
         tracker = self._session_diff_tracker
         if tracker is None:
             return
+        generation = self._session_diff_generation
         try:
             self.run_worker(
-                self._scope_probe_worker(tracker),
+                self._scope_probe_worker(tracker, generation),
                 name="kolega-diff-scope",
                 group="session-diff-scope",
             )
         except Exception:
             pass
 
-    async def _scope_probe_worker(self, tracker: tui_session_diff.SessionDiffTrackerBase) -> None:
+    async def _scope_probe_worker(self, tracker: tui_session_diff.SessionDiffTrackerBase, generation: int) -> None:
         try:
             scope = await asyncio.to_thread(self._tracker_scope, tracker)
         except Exception:
             return
         if scope is None:
+            return
+        if generation != self._session_diff_generation or tracker is not self._session_diff_tracker:
             return
         self._session_diff_scope = scope
         self._refresh_status_dashboard()
@@ -1325,7 +1533,7 @@ class KolegaCodeApp(
         service = getattr(self.agent.tool_collection, "snapshot_service", None)
         if service is None:
             return
-        tracker = tui_session_diff.SnapshotLedgerDiffTracker(self.project_path, service)
+        tracker = tui_session_diff.SnapshotLedgerDiffTracker(self.active_project_path, service)
         try:
             tracker.capture_baseline()
         except Exception:
@@ -1355,8 +1563,14 @@ class KolegaCodeApp(
 
     def _changes_baseline_label(self) -> str:
         checkpoint = self._changes_baseline_checkpoint()
-        if checkpoint is None or checkpoint.checkpoint_id == 0:
+        if checkpoint is None:
             return messages.CHANGES_BASELINE_SESSION_START
+        if checkpoint.checkpoint_id == 0:
+            if not checkpoint.label:
+                return messages.CHANGES_BASELINE_SESSION_START
+            sep = theme.g(Glyph.BULLET_SEP)
+            stamp = time.strftime("%H:%M", time.localtime(checkpoint.created_at))
+            return f"{checkpoint.label} {sep} {stamp}"
         sep = theme.g(Glyph.BULLET_SEP)
         stamp = time.strftime("%H:%M", time.localtime(checkpoint.created_at))
         label = f"Turn {checkpoint.checkpoint_id}"
@@ -1559,9 +1773,10 @@ class KolegaCodeApp(
             self._session_diff_refresh_running = False
 
     async def _session_diff_refresh_worker(self) -> None:
+        tracker = self._session_diff_tracker
+        generation = self._session_diff_generation
         try:
             self._session_diff_dirty = False
-            tracker = self._session_diff_tracker
             event_paths = [change.path for change in self._session_file_changes]
             baseline_id = self._session_diff_baseline_id
             if baseline_id is not None and tracker is not None and tracker.checkpoint_for_id(baseline_id) is None:
@@ -1578,6 +1793,8 @@ class KolegaCodeApp(
                 except Exception:
                     diffs = []
                     scope = None
+            if generation != self._session_diff_generation or tracker is not self._session_diff_tracker:
+                return
             self._session_diff_files = diffs
             if scope is not None:
                 self._session_diff_scope = scope
@@ -2054,7 +2271,7 @@ class KolegaCodeApp(
     def _meta_content(self) -> str:
         gigacode = "on" if self._gigacode_enabled else "off"
         return (
-            f"{self.project_path} | session {self.session.session_id} | "
+            f"{self.active_project_path} | session {self.session.session_id} | "
             f"agent {self.mode} | {self.interaction_mode} | permissions {self.permission_mode.value} | "
             f"gigacode {gigacode}"
         )
@@ -2298,9 +2515,12 @@ class KolegaCodeApp(
                 ]
             )
         bullet = theme.g(Glyph.BULLET_SEP)
+        project_lines = [f"Project: {self.active_project_path}"]
+        if self.active_project_path != self.project_path:
+            project_lines.append(f"Launch project: {self.project_path}")
         startup_lines.extend(
             [
-                f"Project: {self.project_path}",
+                *project_lines,
                 f"Session: {session_id}",
                 f"Mode: {self.mode}",
                 f"Interaction: {self.interaction_mode}",

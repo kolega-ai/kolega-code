@@ -116,6 +116,55 @@ class FakeToolCollection:
 
 class TestParallelToolCalls:
     @pytest.mark.asyncio
+    async def test_exclusive_tool_rejects_entire_batch_before_execution(self, base_agent: BaseAgent) -> None:
+        calls: list[str] = []
+
+        class Tools(FakeToolCollection):
+            exclusive_tools = frozenset({"switch_worktree"})
+
+            def get_tool_list(self) -> list[SimpleNamespace]:
+                return [SimpleNamespace(name="switch_worktree"), SimpleNamespace(name="read_entire_file")]
+
+            async def switch_worktree(self, task: str) -> str:
+                calls.append("switch")
+                return task
+
+            async def read_entire_file(self, task: str) -> str:
+                calls.append("read")
+                return task
+
+        base_agent.tool_collection = cast(Any, Tools())
+        blocks = [make_tool_call("switch_worktree", 0), make_tool_call("read_entire_file", 1)]
+
+        results = await base_agent.process_tool_calls(blocks)
+
+        assert calls == []
+        assert len(results) == 2
+        assert all(result.is_error for result in results)
+        assert all("No tools in this batch were executed" in str(result.content) for result in results)
+
+    @pytest.mark.asyncio
+    async def test_exclusive_tool_executes_when_called_alone(self, base_agent: BaseAgent) -> None:
+        calls: list[str] = []
+
+        class Tools(FakeToolCollection):
+            exclusive_tools = frozenset({"switch_worktree"})
+
+            def get_tool_list(self) -> list[SimpleNamespace]:
+                return [SimpleNamespace(name="switch_worktree")]
+
+            async def switch_worktree(self, task: str) -> str:
+                calls.append(task)
+                return task
+
+        base_agent.tool_collection = cast(Any, Tools())
+
+        results = await base_agent.process_tool_calls([make_tool_call("switch_worktree", 0)])
+
+        assert calls == ["task 0"]
+        assert not results[0].is_error
+
+    @pytest.mark.asyncio
     async def test_workflow_dispatch_batches_run_sequentially(self, base_agent: BaseAgent) -> None:
         tracker = ConcurrencyTracker()
 

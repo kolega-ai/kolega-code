@@ -60,6 +60,7 @@ from kolega_code.browser_extension.installer import (
     uninstall_native_host,
 )
 from kolega_code.utils.images import encode_image_file
+from kolega_code.worktrees import WorktreeError, create_worktree, resolve_worktree
 
 from . import messages
 from .browser_backend import build_browser_manager
@@ -74,7 +75,7 @@ from .config import (
 )
 from .connection import CliConnectionManager
 from .mentions import build_file_attachments
-from .session_store import SessionRecord, SessionStore, SessionStoreError
+from .session_store import SessionRecord, SessionStore, SessionStoreError, resolve_active_project
 from .settings import CliSettings, SettingsStore, SettingsStoreError
 from .goal import (
     DEFAULT_GOAL_MAX_TURNS,
@@ -197,10 +198,14 @@ def _print_styled(text: str, style: Optional[str] = None, stderr: bool = False) 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     if argv and argv[0] in {"--help", "-h"}:
-        return _build_subcommand_parser().parse_args(argv)
-    if argv and argv[0] in SUBCOMMANDS:
-        return _build_subcommand_parser().parse_args(argv)
-    return _build_tui_parser().parse_args(argv)
+        parser = _build_subcommand_parser()
+    elif argv and argv[0] in SUBCOMMANDS:
+        parser = _build_subcommand_parser()
+    else:
+        parser = _build_tui_parser()
+    args = parser.parse_args(argv)
+    _validate_worktree_args(parser, args)
+    return args
 
 
 def _add_common_model_args(parser: argparse.ArgumentParser) -> None:
@@ -223,6 +228,43 @@ def _add_common_model_args(parser: argparse.ArgumentParser) -> None:
 def _add_session_args(parser: argparse.ArgumentParser, session_help: str = "Session ID to resume or create.") -> None:
     parser.add_argument("--state-dir", type=Path, help="Directory for CLI session state.")
     parser.add_argument("--session", help=session_help)
+
+
+def _add_worktree_args(parser: argparse.ArgumentParser) -> None:
+    selection = parser.add_mutually_exclusive_group()
+    selection.add_argument(
+        "--worktree",
+        metavar="PATH_OR_BRANCH",
+        help="Start in an existing registered worktree, selected by path or exact branch name.",
+    )
+    selection.add_argument(
+        "--create-worktree",
+        metavar="BRANCH",
+        help="Create a worktree for BRANCH and start in it.",
+    )
+    parser.add_argument(
+        "--from",
+        dest="worktree_from",
+        metavar="REF",
+        help="Start point for a new --create-worktree branch.",
+    )
+    parser.add_argument(
+        "--worktree-path",
+        type=Path,
+        metavar="PATH",
+        help="Checkout destination for --create-worktree.",
+    )
+
+
+def _validate_worktree_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    create_branch = getattr(args, "create_worktree", None)
+    creating = create_branch is not None
+    if getattr(args, "worktree_from", None) is not None and not creating:
+        parser.error("--from requires --create-worktree")
+    if getattr(args, "worktree_path", None) is not None and not creating:
+        parser.error("--worktree-path requires --create-worktree")
+    if creating and (getattr(args, "resume", None) is not None or getattr(args, "session", None)):
+        parser.error("--create-worktree cannot be combined with --resume or --session")
 
 
 def _add_tui_args(parser: argparse.ArgumentParser) -> None:
@@ -262,6 +304,7 @@ def _add_tui_args(parser: argparse.ArgumentParser) -> None:
         help="Trust and enable this project's .kolega/lsp.json (persisted for future runs).",
     )
     _add_session_args(parser, session_help="Legacy alias for --resume SESSION_ID.")
+    _add_worktree_args(parser)
     _add_common_model_args(parser)
 
 
@@ -363,6 +406,7 @@ def _build_subcommand_parser() -> argparse.ArgumentParser:
         help="Attach an image file to the prompt (repeatable).",
     )
     _add_session_args(ask)
+    _add_worktree_args(ask)
     _add_common_model_args(ask)
 
     sessions = subparsers.add_parser("sessions", help="Manage local CLI sessions.")
@@ -539,6 +583,29 @@ def _validate_project(project_path: Path) -> Path:
     return project_path
 
 
+def _select_startup_project(project_path: Path, args: argparse.Namespace) -> Path:
+    """Resolve the effective startup checkout before project-scoped services are built."""
+    source_path = _validate_project(project_path)
+    try:
+        if getattr(args, "worktree", None) is not None:
+            return resolve_worktree(source_path, args.worktree).path
+        if getattr(args, "create_worktree", None) is not None:
+            created = create_worktree(
+                source_path,
+                args.create_worktree,
+                start_ref=getattr(args, "worktree_from", None),
+                destination=getattr(args, "worktree_path", None),
+            )
+            print(
+                f"Created worktree for {created.branch!r} at {created.path}; it will be retained.",
+                file=sys.stderr,
+            )
+            return created.path
+    except WorktreeError as exc:
+        raise ValueError(str(exc)) from exc
+    return source_path
+
+
 def _get_or_create_session(
     store: SessionStore,
     project_path: Path,
@@ -568,6 +635,15 @@ def _validate_session_project(session: SessionRecord, project_path: Path) -> Ses
             f"Session {session.session_id} belongs to project {session.project_path}, not {resolved_project}"
         )
     return session
+
+
+def _active_project_for_resume(session: SessionRecord, store: SessionStore) -> Path:
+    """Validate and return a resumed session's durable active workspace."""
+    launch_path = Path(session.project_path).expanduser().resolve()
+    active, warning = resolve_active_project(session, store, launch_path)
+    if warning:
+        print(f"Warning: {warning}", file=sys.stderr)
+    return active
 
 
 def _normalize_cli_session_mode(store: SessionStore, session: SessionRecord, *, persist: bool) -> SessionRecord:
@@ -777,7 +853,7 @@ def _run_tui(args: argparse.Namespace) -> int:
         print("Textual is not installed. Reinstall the CLI with: uv tool install --force kolega-code", file=sys.stderr)
         return 2
 
-    project_path = _validate_project(args.project_path)
+    project_path = _select_startup_project(args.project_path, args)
     store = _store_from_args(args)
     settings_store = _settings_store_from_args(args)
     settings = settings_store.load()
@@ -1035,7 +1111,18 @@ def _emit_loop_finished(state: LoopState, json_mode: bool) -> None:
 
 
 async def _run_ask(args: argparse.Namespace) -> int:
-    project_path = _validate_project(args.project)
+    launch_project_path = _select_startup_project(args.project, args)
+    project_path = launch_project_path
+    store = _store_from_args(args)
+    resumed_session: SessionRecord | None = None
+    if args.session:
+        try:
+            resumed_session = store.load(args.session)
+        except SessionStoreError:
+            resumed_session = None
+        if resumed_session is not None:
+            _validate_session_project(resumed_session, launch_project_path)
+            project_path = _active_project_for_resume(resumed_session, store)
     skill_catalog = discover_skills(project_path)
     goal_condition = getattr(args, "goal", None)
     loop_interval = getattr(args, "loop", None)
@@ -1104,24 +1191,23 @@ async def _run_ask(args: argparse.Namespace) -> int:
             print(activation_content)
         return 0
 
-    store = _store_from_args(args)
     settings_store = _settings_store_from_args(args)
     settings = settings_store.load()
     custom_agent_catalog = discover_custom_agents(project_path, settings_store.root)
     settings_changed = False
     if getattr(args, "trust_hooks", False):
-        settings.trust_hook_project(project_path)
+        settings.trust_hook_project(launch_project_path)
         settings_changed = True
     if getattr(args, "trust_mcp", False):
-        settings.trust_mcp_project(project_path)
+        settings.trust_mcp_project(launch_project_path)
         settings_changed = True
     if getattr(args, "trust_lsp", False):
-        settings.trust_lsp_project(project_path)
+        settings.trust_lsp_project(launch_project_path)
         settings_changed = True
     if settings_changed:
         settings_store.save(settings)
     config = build_agent_config(
-        project_path, _overrides_from_args(args), settings=settings, settings_store=settings_store
+        launch_project_path, _overrides_from_args(args), settings=settings, settings_store=settings_store
     )
     custom_agent_catalog = validate_custom_agent_models(custom_agent_catalog, config).for_mode("build")
     if not args.json:
@@ -1130,7 +1216,9 @@ async def _run_ask(args: argparse.Namespace) -> int:
     summary = config_summary(config)
 
     hook_config = load_hook_config(
-        project_path, settings_store.root, project_trusted=settings.is_hook_project_trusted(project_path)
+        launch_project_path,
+        settings_store.root,
+        project_trusted=settings.is_hook_project_trusted(launch_project_path),
     )
     hook_dispatcher = HookDispatcher(hook_config)
     if not args.json:
@@ -1138,7 +1226,9 @@ async def _run_ask(args: argparse.Namespace) -> int:
             print(f"hooks: {diagnostic}", file=sys.stderr)
 
     if args.session:
-        session = _get_or_create_session(store, project_path, CLI_AGENT_MODE, summary, args.session, force_new=False)
+        session = resumed_session or _get_or_create_session(
+            store, project_path, CLI_AGENT_MODE, summary, args.session, force_new=False
+        )
         session = _normalize_cli_session_mode(store, session, persist=True)
     elif args.save:
         session = store.create(project_path, CLI_AGENT_MODE, summary)
@@ -1178,8 +1268,8 @@ async def _run_ask(args: argparse.Namespace) -> int:
     mcp_extension = build_mcp_tool_extension(
         project_path,
         settings_store.root,
-        project_trusted=settings.is_mcp_project_trusted(project_path),
-        loaded_config=mcp_config,
+        project_trusted=settings.is_mcp_project_trusted(launch_project_path),
+        loaded_config=mcp_config if project_path == launch_project_path else None,
     )
     if mcp_extension is not None:
         tool_extensions.append(mcp_extension)
@@ -1198,12 +1288,13 @@ async def _run_ask(args: argparse.Namespace) -> int:
         prompt_extensions=prompt_extensions,
         tool_extensions=tool_extensions,
         permission_mode=permission_mode,
-        permission_callback=_permission_callback_for_ask(project_path)
+        permission_callback=_permission_callback_for_ask(launch_project_path)
         if permission_mode == PermissionMode.ASK
         else None,
         session_recorder=session_recorder,
         hook_dispatcher=hook_dispatcher,
         custom_agent_catalog=custom_agent_catalog,
+        memory_project_path=launch_project_path,
     )
     agent_ref["agent"] = agent
     lsp_messages = await agent.tool_collection.initialize()

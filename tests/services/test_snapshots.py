@@ -43,6 +43,42 @@ def test_record_mutation_and_restore(snapshot_service, tmp_path):
     assert path.read_text(encoding="utf-8") == "before\n"
 
 
+def test_restore_rejects_snapshot_from_previous_project(snapshot_service, tmp_path):
+    project = tmp_path / "project"
+    path = project / "a.txt"
+    path.write_text("before\n", encoding="utf-8")
+    result = snapshot_service.record_mutation(
+        tool_name="edit",
+        tool_call_id="call-1",
+        reason="test edit",
+        paths=["a.txt"],
+        mutate=lambda: path.write_text("after\n", encoding="utf-8"),
+    )
+    assert result.snapshot is not None
+
+    # A rebuild constructs a fresh SnapshotService at the new root. Reuse the
+    # same workspace/thread/session ids and state root as the fixture so the
+    # new service shares the first service's on-disk snapshot storage.
+    other = tmp_path / "other-worktree"
+    other.mkdir()
+    state = tmp_path / "state"
+    other_service = SnapshotService(
+        other,
+        "workspace",
+        "thread",
+        "session",
+        LocalFileSystem(other),
+        root=state,
+    )
+
+    with pytest.raises(SnapshotError, match="belongs to"):
+        other_service.load_snapshot(result.snapshot.snapshot_id)
+    with pytest.raises(SnapshotError, match="belongs to"):
+        other_service.restore_snapshot(result.snapshot.snapshot_id, force=True)
+
+    assert path.read_text(encoding="utf-8") == "after\n"
+
+
 def test_restore_refuses_when_current_state_changed(snapshot_service, tmp_path):
     project = tmp_path / "project"
     path = project / "a.txt"

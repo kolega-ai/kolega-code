@@ -297,6 +297,7 @@ class SnapshotService:
 
     def restore_snapshot(self, snapshot_id: str, *, force: bool = False) -> RestoreResult:
         record = self.load_snapshot(snapshot_id)
+        self._require_current_project(record.project_path, "Snapshot", record.snapshot_id)
         expected = record.after
         if not force and not record.manual:
             mismatches = self.diff_expected_current(expected)
@@ -326,7 +327,9 @@ class SnapshotService:
         records: list[SnapshotRecord] = []
         for path in self.snapshots_dir.glob("*.json"):
             try:
-                records.append(SnapshotRecord.from_dict(json.loads(path.read_text(encoding="utf-8"))))
+                record = SnapshotRecord.from_dict(json.loads(path.read_text(encoding="utf-8")))
+                if self._is_current_project(record.project_path):
+                    records.append(record)
             except Exception:
                 continue
         records.sort(key=lambda item: item.created_at, reverse=True)
@@ -345,7 +348,12 @@ class SnapshotService:
         path = self.snapshots_dir / f"{snapshot_id}.json"
         if not path.exists():
             raise SnapshotError(f"Snapshot not found: {snapshot_id}")
-        return SnapshotRecord.from_dict(json.loads(path.read_text(encoding="utf-8")))
+        record = SnapshotRecord.from_dict(json.loads(path.read_text(encoding="utf-8")))
+        if not self._is_current_project(record.project_path):
+            raise SnapshotError(
+                f"Snapshot {snapshot_id} belongs to project {record.project_path}, not {self.project_path}."
+            )
+        return record
 
     def read_blob(self, state: FileState) -> bytes:
         """Return the stored bytes for a captured file state."""
@@ -394,7 +402,7 @@ class SnapshotService:
                 action = PendingAction.from_dict(json.loads(path.read_text(encoding="utf-8")))
             except Exception:
                 continue
-            if include_resolved or action.status == "pending":
+            if self._is_current_project(action.project_path) and (include_resolved or action.status == "pending"):
                 actions.append(action)
         actions.sort(key=lambda item: item.updated_at, reverse=True)
         return actions[: max(1, limit)]
@@ -403,7 +411,25 @@ class SnapshotService:
         path = self.pending_dir / f"{action_id}.json"
         if not path.exists():
             raise SnapshotError(f"Pending action not found: {action_id}")
-        return PendingAction.from_dict(json.loads(path.read_text(encoding="utf-8")))
+        action = PendingAction.from_dict(json.loads(path.read_text(encoding="utf-8")))
+        self._require_current_project(action.project_path, "Pending action", action.action_id)
+        return action
+
+    def _require_current_project(self, recorded_path: str, kind: str, record_id: str) -> None:
+        try:
+            recorded = Path(recorded_path).resolve()
+        except OSError as exc:
+            raise SnapshotError(f"{kind} `{record_id}` has an invalid recorded project path.") from exc
+        if recorded != self.project_path:
+            raise SnapshotError(
+                f"{kind} `{record_id}` belongs to `{recorded}`, not the active workspace `{self.project_path}`."
+            )
+
+    def _is_current_project(self, recorded_path: str) -> bool:
+        try:
+            return Path(recorded_path).resolve() == self.project_path
+        except OSError:
+            return False
 
     def update_pending_action(
         self,

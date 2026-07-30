@@ -50,6 +50,45 @@ kolega-code [PROJECT_PATH]
 See [Sessions & Resuming](../../tui/sessions-and-resume/) for the full session
 workflow.
 
+## Starting in a Git worktree
+
+A registered worktree can be used directly as `PROJECT_PATH`, or selected from
+another checkout in the same repository:
+
+```bash
+kolega-code /repo --worktree fix/image-history
+kolega-code /repo --worktree .kolega/worktrees/fix-image-history
+```
+
+Create a new managed worktree and start a new session there with:
+
+```bash
+kolega-code /repo --create-worktree fix/image-history
+kolega-code /repo --create-worktree fix/image-history --from origin/main
+kolega-code /repo --create-worktree fix/image-history --worktree-path /other/destination
+```
+
+`--worktree` accepts an exact registered branch name or a path (including a
+nested path) inside a registered worktree. `--create-worktree` creates or checks
+out the named local branch without force-moving, deleting, or reusing an
+occupied destination. `--from` and `--worktree-path` are valid only with
+`--create-worktree`; creation cannot be combined with `--resume` or `--session`.
+The same options are available on `kolega-code ask`.
+
+During a TUI session, the top-level agent can explicitly call
+`switch_worktree`. The switch is committed to the session immediately and
+applied when the agent's turn ends: the workspace is rebuilt in the selected
+checkout — filesystem, terminal, search/edit, LSP, snapshots, skills,
+custom agents, and future sub-agent work all follow — and the agent is then
+prompted to continue there. Trust, hooks, configuration, private memory, and
+saved permission rules stay scoped to the launch checkout, so a rule saved
+while a worktree is active survives that worktree and applies to the whole
+session. A fresh **Workspace switched** Changes/Rewind
+baseline starts, so checkpoints from the previous workspace are no longer
+displayed. The switch is durable session state and is not undone by
+conversation rewind. It must run alone, and it is refused while background
+terminal sessions are active.
+
 ## Global model options
 
 These options are accepted by the TUI launch, `ask`, and `doctor`. They override
