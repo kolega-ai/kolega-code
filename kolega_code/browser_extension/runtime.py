@@ -276,6 +276,7 @@ class RuntimeServer:
         self._refresh_task: asyncio.Task[None] | None = None
         self._close_lock = asyncio.Lock()
         self._closed = False
+        self._published = False
 
     def _select_endpoint(self) -> str:
         preferred = self.registry.root / f"{self.runtime_id}.sock"
@@ -305,6 +306,45 @@ class RuntimeServer:
             raise RuntimeTransportError("Runtime server has not started")
         return self._descriptor
 
+    @property
+    def published(self) -> bool:
+        """Whether this runtime is currently advertised to the extension picker."""
+        return self._published
+
+    def publish(self) -> None:
+        """Advertise this runtime, meaning "this session wants the browser now".
+
+        An advertisement is a claim on the browser, not a fact about the process:
+        the extension will not guess between several claims, so a session that has
+        finished browsing must stop making one. Re-advertising is also how a session
+        asks for the browser back — the native host watches the advertised set and
+        tells Chrome to re-enumerate whenever it changes, which is the only channel
+        a runtime has for speaking first.
+        """
+        descriptor = self._descriptor
+        if descriptor is None:
+            raise RuntimeTransportError("Runtime server has not started")
+        if self._closed:
+            raise RuntimeTransportError("Runtime server is closed")
+        now_ms = int(time.time() * 1000)
+        refreshed = replace(descriptor, expires_at_ms=now_ms + self.ttl_ms)
+        self.registry.register(refreshed)
+        self._descriptor = refreshed
+        self._published = True
+
+    def withdraw(self) -> None:
+        """Stop advertising, without giving up the socket or its connections.
+
+        Keeping the listener means an existing relay connection stays usable, so a
+        session that detaches and then browses again resumes immediately instead of
+        waiting out a fresh discovery.
+        """
+        if not self._published:
+            return
+        self._published = False
+        with contextlib.suppress(Exception):
+            self.registry.unregister(self.runtime_id, token=self.token)
+
     async def start(self) -> RuntimeDescriptor:
         if self._listener is not None:
             return self.descriptor
@@ -333,6 +373,7 @@ class RuntimeServer:
                 extension_origin=self.extension_origin,
             )
             self.registry.register(self._descriptor)
+            self._published = True
             self._refresh_task = asyncio.create_task(
                 self._refresh_descriptor(),
                 name=f"browser-extension-runtime-refresh-{self.runtime_id}",
@@ -359,6 +400,7 @@ class RuntimeServer:
             if self._closed:
                 return
             self._closed = True
+            self._published = False
             refresh = self._refresh_task
             self._refresh_task = None
             if refresh is not None:
@@ -382,13 +424,12 @@ class RuntimeServer:
         interval = max(0.05, self.ttl_ms / 3_000)
         while True:
             await asyncio.sleep(interval)
-            descriptor = self._descriptor
-            if descriptor is None or self._closed:
+            if self._descriptor is None or self._closed:
                 return
-            now_ms = int(time.time() * 1000)
-            refreshed = replace(descriptor, expires_at_ms=now_ms + self.ttl_ms)
-            self.registry.register(refreshed)
-            self._descriptor = refreshed
+            # Never resurrect a withdrawn advertisement: the lease refresh would
+            # otherwise reinstate a claim the session has explicitly given up.
+            if self._published:
+                self.publish()
 
     async def _close_listener(self) -> None:
         listener = self._listener

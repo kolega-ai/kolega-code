@@ -118,6 +118,70 @@ async def test_unix_runtime_auth_multiplex_timeout_disconnect_and_cleanup(tmp_pa
 
 
 @pytest.mark.asyncio
+async def test_withdrawing_drops_the_claim_but_keeps_the_socket_and_its_connections(tmp_path: Path) -> None:
+    """An advertisement is a claim on the browser, not a fact about the process.
+
+    The extension refuses to guess between several claims, so a session that has
+    finished browsing must stop making one — otherwise every other Kolega session
+    has to break the tie by hand in the extension even when nothing is competing.
+    Withdrawing must not cost the live connection though: a session that detaches
+    and then browses again has to resume without waiting out a fresh discovery.
+    """
+    registry = RuntimeDescriptorRegistry(tmp_path / "runtimes")
+    server = RuntimeServer(registry, session_id="session_1", extension_origin=ORIGIN, platform="darwin")
+    descriptor = await server.start()
+    assert server.published is True
+    assert [entry.runtime_id for entry in registry.list_active()] == [descriptor.runtime_id]
+
+    extension_peer = await connect_runtime_peer(descriptor, extension_origin=ORIGIN, platform="darwin")
+    runtime_peer = await server.wait_for_connection(timeout=1)
+
+    server.withdraw()
+    assert server.published is False
+    assert registry.list_active() == []
+    assert Path(descriptor.endpoint).exists()
+    assert runtime_peer.closed is False
+
+    # Re-advertising is how a detached session asks for the browser back, and the
+    # runtime id is unchanged so an operator's existing choice still matches.
+    server.publish()
+    assert server.published is True
+    republished = registry.list_active()
+    assert [entry.runtime_id for entry in republished] == [descriptor.runtime_id]
+    assert republished[0].created_at_ms == descriptor.created_at_ms
+    assert republished[0].expires_at_ms >= descriptor.expires_at_ms
+
+    await extension_peer.close()
+    await server.close()
+    assert registry.list_active() == []
+
+
+@pytest.mark.asyncio
+async def test_the_lease_refresh_never_resurrects_a_withdrawn_claim(tmp_path: Path) -> None:
+    """The refresh rewrites the descriptor to extend the lease, so left unguarded it
+    would reinstate a claim the session explicitly gave up."""
+    registry = RuntimeDescriptorRegistry(tmp_path / "runtimes")
+    # ttl_ms/3000 is the refresh interval, floored at 50ms.
+    server = RuntimeServer(
+        registry,
+        session_id="session_1",
+        extension_origin=ORIGIN,
+        ttl_ms=60_000,
+        platform="darwin",
+    )
+    await server.start()
+    server.withdraw()
+
+    for _ in range(6):
+        await asyncio.sleep(0.02)
+        assert registry.list_active() == []
+
+    server.publish()
+    assert len(registry.list_active()) == 1
+    await server.close()
+
+
+@pytest.mark.asyncio
 async def test_runtime_rejects_wrong_origin_and_registry_permissions(tmp_path: Path) -> None:
     registry = RuntimeDescriptorRegistry(tmp_path / "runtimes")
     server = RuntimeServer(registry, session_id="session_1", extension_origin=ORIGIN, platform="darwin")

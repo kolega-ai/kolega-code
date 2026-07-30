@@ -53,6 +53,15 @@ class FakeServer:
 
     def __init__(self) -> None:
         self.close_count = 0
+        self.published = True
+        self.publish_count = 0
+
+    def publish(self) -> None:
+        self.published = True
+        self.publish_count += 1
+
+    def withdraw(self) -> None:
+        self.published = False
 
     async def close(self) -> None:
         self.close_count += 1
@@ -81,17 +90,21 @@ def ready_event(name: str = "browser.session_ready") -> Envelope:
 
 
 @pytest.mark.asyncio
-async def test_manager_waits_for_session_ready_then_serializes_calls(tmp_path: Path) -> None:
+async def test_manager_attaches_on_a_live_peer_then_serializes_calls(tmp_path: Path) -> None:
     browser = manager(tmp_path)
     server = FakeServer()
     peer = FakePeer()
     browser._server = cast(RuntimeServer, server)
-    await browser._handle_peer(cast(MultiplexedPeer, peer))
 
-    with pytest.raises(ChromeExtensionUnavailableError, match="connected but has not confirmed a session"):
+    with pytest.raises(ChromeExtensionUnavailableError, match="did not connect"):
         await browser.navigate("https://example.com")
+
+    # A live authenticated peer is the attachment: the native host dials a
+    # runtime's socket only to relay a message the extension addressed to it, and
+    # the extension only ever addresses the runtime the operator selected.
+    await browser._handle_peer(cast(MultiplexedPeer, peer))
+    assert browser.session_id == "chrome:runtime_1"
     await browser._handle_event(ready_event("browser.other"))
-    assert browser.session_id is None
     await browser._handle_event(ready_event())
     assert browser.session_id == "chrome:runtime_1"
 
@@ -234,15 +247,12 @@ def _advertise(
 
 
 @pytest.mark.asyncio
-async def test_readiness_survives_a_relay_peer_reconnecting(tmp_path: Path) -> None:
+async def test_a_reconnecting_relay_peer_is_usable_without_a_repeated_announcement(tmp_path: Path) -> None:
     """A reconnecting relay peer must not strand the session unconfirmed.
 
-    The extension announces browser.session_ready once per native connection, so
-    clearing readiness whenever the relay peer churned left the runtime stuck at
-    "connected but has not confirmed a session" with no way to recover short of
-    re-selecting in the popup. The native host only dials a runtime's socket to
-    relay a message the extension addressed to that runtime, so a peer existing at
-    all already proves this runtime is selected.
+    The extension announces browser.session_ready once per discovery, so anything
+    that requires a *fresh* announcement to work leaves the runtime stuck with no
+    way to recover short of re-selecting in the popup.
     """
     browser = manager(tmp_path)
     browser._server = cast(RuntimeServer, FakeServer())
@@ -251,11 +261,11 @@ async def test_readiness_survives_a_relay_peer_reconnecting(tmp_path: Path) -> N
     await browser._handle_event(ready_event())
     assert browser.session_id == "chrome:runtime_1"
 
-    # The relay drops; work must block, but the confirmation must not be lost.
+    # The relay drops; work must block while nothing is connected.
     await first.close()
     await asyncio.sleep(0)
     assert browser._peer is None
-    assert browser._ready is True
+    assert browser._ready is False
 
     # A fresh relay peer, with no repeated session_ready, must be usable at once.
     second = FakePeer()
@@ -266,17 +276,75 @@ async def test_readiness_survives_a_relay_peer_reconnecting(tmp_path: Path) -> N
 
 
 @pytest.mark.asyncio
-async def test_detach_still_clears_readiness(tmp_path: Path) -> None:
-    """Holding readiness across peer churn must not survive an explicit detach."""
+async def test_detach_leaves_the_session_able_to_drive_the_browser_again(tmp_path: Path) -> None:
+    """browser_close must not brick Chrome for the rest of the Kolega session.
+
+    Detaching means "stop driving the user's Chrome", not "shut it down" — we never
+    owned it — and every browser sub-agent detaches as cleanup at the end of its
+    dispatch. Latching attachment on an announcement the extension makes only once
+    per discovery meant the first detach was terminal: every later operation waited
+    out the connection timeout and then told the operator to reopen the popup.
+    """
     browser = manager(tmp_path)
     browser._server = cast(RuntimeServer, FakeServer())
-    await browser._handle_peer(cast(MultiplexedPeer, FakePeer()))
+    peer = FakePeer()
+    await browser._handle_peer(cast(MultiplexedPeer, peer))
     await browser._handle_event(ready_event())
 
-    await browser.close()
-
+    assert await browser.close() == "chrome:runtime_1"
+    assert peer.requests[-1] == ("browser.detach", {})
+    # The browsing session is over, so the next operation reports a fresh launch.
     assert browser.session_id is None
-    assert browser._ready is False
+    # An advertisement is a claim on the browser, so a finished session stops making
+    # one. Otherwise every other Kolega session had to break the tie by hand in the
+    # extension even though nothing was competing for the browser any more.
+    server = cast(FakeServer, browser._server)
+    assert server.published is False
+
+    result = await browser.navigate("https://example.com")
+
+    assert result["session_id"] == "chrome:runtime_1"
+    assert peer.requests[-1] == ("browser.navigate", {"url": "https://example.com/"})
+    # Browsing again re-asserts the claim, which is how a detached session asks for
+    # the browser back: the native host turns the change into a fresh discovery.
+    assert server.published is True
+    assert server.publish_count == 1
+
+
+@pytest.mark.asyncio
+async def test_a_selection_refused_by_the_extension_is_answered_with_guidance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The extension is the authority on whether this session may drive Chrome.
+
+    Holding a live peer no longer implies the grant cannot have moved: the operator
+    can switch to another Kolega session while our relay stays open. That refusal
+    arrives immediately and by code, which is strictly better than inferring it from
+    an advertised runtime count and waiting out a timeout — but it must still carry
+    the actionable remedy.
+    """
+    browser = manager(tmp_path)
+    browser._server = cast(RuntimeServer, FakeServer())
+    peer = FakePeer()
+    await browser._handle_peer(cast(MultiplexedPeer, peer))
+    _advertise(
+        browser,
+        monkeypatch,
+        [_descriptor("runtime_1", "session_1"), _descriptor("runtime_2", "session_2")],
+    )
+    peer.error = RemoteRequestError(
+        "session_not_selected",
+        "The request is not routed to the selected Kolega session",
+        retryable=False,
+    )
+
+    with pytest.raises(ChromeExtensionUnavailableError) as refused:
+        await browser.navigate("https://example.com")
+
+    assert refused.value.code == "session_not_selected"
+    assert "waiting for you to choose" in str(refused.value)
+    assert "session_2" in str(refused.value)
+    assert "this session" in str(refused.value)
 
 
 @pytest.mark.asyncio
@@ -293,14 +361,12 @@ async def test_probe_reports_unreachable_without_a_connection(tmp_path: Path) ->
 
 
 @pytest.mark.asyncio
-async def test_probe_reports_awaiting_selection_and_names_competing_runtimes(
+async def test_probe_names_competing_runtimes_while_a_choice_is_pending(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A connected-but-unselected companion is a different problem from an absent
-    one, and the operator needs to know which picker entry is theirs."""
+    """The operator needs to know which picker entry is theirs."""
     browser = manager(tmp_path)
     browser._server = cast(RuntimeServer, FakeServer())
-    await browser._handle_peer(cast(MultiplexedPeer, FakePeer()))
     _advertise(
         browser,
         monkeypatch,
@@ -310,7 +376,7 @@ async def test_probe_reports_awaiting_selection_and_names_competing_runtimes(
     result = await browser.probe()
 
     assert result["state"] == "awaiting_selection"
-    assert result["connected"] is True
+    assert result["connected"] is False
     assert result["ready"] is False
     assert {entry["runtime_id"] for entry in result["runtimes"]} == {"runtime_1", "runtime_2"}
     assert [entry for entry in result["runtimes"] if entry["current"]][0]["runtime_id"] == "runtime_1"
@@ -364,7 +430,6 @@ async def test_unavailable_error_names_competing_runtimes(tmp_path: Path, monkey
     """The operation error, not just doctor, must explain a blocked selection."""
     browser = manager(tmp_path)
     browser._server = cast(RuntimeServer, FakeServer())
-    await browser._handle_peer(cast(MultiplexedPeer, FakePeer()))
     _advertise(
         browser,
         monkeypatch,
