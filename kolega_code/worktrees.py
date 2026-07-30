@@ -443,7 +443,11 @@ def _git_error_detail(completed: subprocess.CompletedProcess[str]) -> str:
 
 
 def _with_registered(message: str, worktrees: Sequence[WorktreeInfo]) -> str:
-    entries = ", ".join(f"{info.path} [{info.branch or 'detached'}]" for info in worktrees)
+    """Suffix the registered inventory, flagging stale entries with git's own
+    ``prunable`` term so a model is not offered a target that cannot resolve."""
+    entries = ", ".join(
+        f"{info.path} [{info.branch or 'detached'}{'' if info.path.is_dir() else ', prunable'}]" for info in worktrees
+    )
     return f"{message}. Registered worktrees: {entries}"
 
 

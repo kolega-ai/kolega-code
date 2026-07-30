@@ -249,6 +249,9 @@ def test_resolve_rejects_registered_worktree_whose_checkout_is_missing(tmp_path:
 
     assert error.value.code is WorktreeErrorCode.UNKNOWN_WORKTREE
     assert "missing or invalid" in str(error.value)
+    # The registered inventory must not advertise the stale checkout as a
+    # usable target; git's own term marks it.
+    assert f"{linked} [stale-branch, prunable]" in str(error.value)
 
 
 def test_resolve_rejects_ambiguous_branch_and_path(tmp_path: Path) -> None:
