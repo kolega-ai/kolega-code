@@ -9,11 +9,10 @@ import json
 import os
 import threading
 import uuid
-from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Generator, Iterable, Optional, cast
+from typing import Any, Iterable, Optional, cast
 
 from kolega_code.llm.models import ContentBlock, Message, ToolResult
 from kolega_code.local_state import ensure_private_dir, ensure_private_file, write_private_bytes
@@ -186,7 +185,6 @@ class SessionJournal:
         self._loaded = False
         self._next_seq = 1
         self._epoch_id: Optional[str] = None
-        self._transaction_events: Optional[list[SessionEvent]] = None
 
     @property
     def epoch_id(self) -> str:
@@ -237,43 +235,15 @@ class SessionJournal:
                 payload=payload or {},
                 artifacts=artifacts or [],
             )
-            if self._transaction_events is None:
-                self._write_events_locked([event])
-            else:
-                self._transaction_events.append(event)
+            self._write_event_locked(event)
             self._next_seq += 1
             if event_type == "context.epoch_started":
                 self._epoch_id = resolved_epoch
             return event
 
-    @contextmanager
-    def transaction(self) -> Generator[None, None, None]:
-        """Buffer journal appends and commit them as one rollback-safe write."""
-        with self._lock:
-            self._ensure_loaded_locked()
-            if self._transaction_events is not None:
-                raise SessionJournalError("Nested session journal transactions are not supported")
-            original_next_seq = self._next_seq
-            original_epoch_id = self._epoch_id
-            self._transaction_events = []
-            try:
-                yield
-                events = self._transaction_events
-                if events:
-                    self._write_events_locked(events)
-            except Exception:
-                self._next_seq = original_next_seq
-                self._epoch_id = original_epoch_id
-                raise
-            finally:
-                self._transaction_events = None
-
-    def _write_events_locked(self, events: list[SessionEvent]) -> None:
-        """Append one or more complete events, truncating any failed batch."""
-        data = b"".join(
-            (json.dumps(event.to_dict(), separators=(",", ":"), ensure_ascii=False) + "\n").encode("utf-8")
-            for event in events
-        )
+    def _write_event_locked(self, event: SessionEvent) -> None:
+        """Append one complete event, truncating a failed partial write."""
+        data = (json.dumps(event.to_dict(), separators=(",", ":"), ensure_ascii=False) + "\n").encode("utf-8")
         fd: Optional[int] = None
         original_size = 0
         try:
@@ -533,12 +503,6 @@ class SessionRecorder:
         self.current_turn_id: Optional[str] = None
         if recover:
             self.recover_interrupted_turn()
-
-    @contextmanager
-    def transaction(self) -> Generator[None, None, None]:
-        """Serialize a multi-step store operation with ordinary recorder writes."""
-        with self._lock:
-            yield
 
     def start_turn(self, message: Message) -> str:
         with self._lock:

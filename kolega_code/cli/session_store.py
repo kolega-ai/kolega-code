@@ -277,47 +277,32 @@ class SessionStore:
         old_branch: str = "",
         new_branch: str = "",
     ) -> None:
-        """Commit switch metadata and its boundary atomically, then refresh the projection."""
+        """Append the canonical workspace boundary, then refresh the projection.
+
+        The single ``session.workspace_switched`` event is the durable commit:
+        the metadata projection derives ``active_project_path`` from it, so
+        the snapshot write afterwards is only a best-effort refresh.
+        """
         self.ensure_dirs()
         self._ensure_migrated(record.session_id)
         if not self.session_dir_for(record.session_id).exists():
             raise SessionStoreError(f"Session not found: {record.session_id}")
-        # Recorder methods conventionally acquire their lock before the
-        # journal/store lock. Preserve that order to avoid deadlocking a
-        # concurrent semantic event append.
-        with recorder.transaction():
-            with self._lock_for(record.session_id):
-                journal = self.journal(record.session_id)
-                events = journal.read_events(repair_tail=True)
-                # Compare against canonical event state, not metadata.json:
-                # a prior post-commit projection write may have failed.
-                current = self._metadata_projection(record.session_id, events)
-                self._validate_immutable_project_path(record, current)
-                record.updated_at = _now()
-                updated = record.to_metadata_dict()
-                patch = {key: copy.deepcopy(value) for key, value in updated.items() if current.get(key) != value}
-                with journal.transaction():
-                    if patch:
-                        journal.append(
-                            "session.metadata_updated",
-                            actor="system",
-                            payload={"patch": patch},
-                        )
-                    recorder.record_workspace_switched(
-                        old_root=old_root,
-                        new_root=new_root,
-                        old_label=old_label,
-                        new_label=new_label,
-                        old_branch=old_branch,
-                        new_branch=new_branch,
-                    )
-
-                # Events are canonical. Publish the rebuildable metadata
-                # projection only after their atomic journal batch commits.
-                try:
-                    self._write_metadata(updated)
-                except OSError:
-                    pass
+        events = self.journal(record.session_id).read_events(repair_tail=True)
+        self._validate_immutable_project_path(record, self._metadata_projection(record.session_id, events))
+        record.updated_at = _now()
+        recorder.record_workspace_switched(
+            old_root=old_root,
+            new_root=new_root,
+            old_label=old_label,
+            new_label=new_label,
+            old_branch=old_branch,
+            new_branch=new_branch,
+        )
+        with self._lock_for(record.session_id):
+            try:
+                self._write_metadata(record.to_metadata_dict())
+            except OSError:
+                pass
 
     @staticmethod
     def _validate_immutable_project_path(record: SessionRecord, current: dict[str, Any]) -> None:
@@ -483,6 +468,11 @@ class SessionStore:
         for event in events:
             if event.event_type == "session.metadata_updated" and isinstance(event.payload.get("patch"), dict):
                 result.update(copy.deepcopy(event.payload["patch"]))
+            elif event.event_type == "session.workspace_switched":
+                # The boundary event is the canonical record of the active
+                # workspace; the launch checkout is stored as None.
+                new_root = str(event.payload.get("new_root") or "")
+                result["active_project_path"] = new_root if new_root != result.get("project_path") else None
         return result
 
     def _metadata_projection(self, session_id: str, events: list[SessionEvent]) -> dict[str, Any]:

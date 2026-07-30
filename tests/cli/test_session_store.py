@@ -488,7 +488,7 @@ def test_metadata_event_survives_failure_before_projection_update(
     monkeypatch.setattr(store, "_write_metadata", original_write)
 
 
-def test_workspace_switch_commits_journal_before_metadata_projection(
+def test_workspace_switch_event_is_canonical_when_projection_write_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     main = tmp_path / "main"
@@ -499,23 +499,23 @@ def test_workspace_switch_commits_journal_before_metadata_projection(
     record = store.create(main, "code", {})
     recorder = store.recorder(record.session_id)
     journal = store.journal(record.session_id)
-    original_write_events = journal._write_events_locked
+    original_write_event = journal._write_event_locked
     original_write_metadata = store._write_metadata
     order: list[str] = []
 
-    def track_journal_write(events) -> None:
+    def track_journal_write(event) -> None:
         order.append("journal")
-        original_write_events(events)
+        original_write_event(event)
 
     def fail_projection(_metadata) -> None:
         order.append("metadata")
         raise OSError("simulated crash before projection")
 
-    monkeypatch.setattr(journal, "_write_events_locked", track_journal_write)
+    monkeypatch.setattr(journal, "_write_event_locked", track_journal_write)
     monkeypatch.setattr(store, "_write_metadata", fail_projection)
     record.active_project_path = str(linked.resolve())
 
-    # Projection failure is recoverable after the canonical batch commits.
+    # Projection failure is recoverable once the canonical event commits.
     store.save_workspace_switch(
         record,
         recorder,
@@ -524,14 +524,11 @@ def test_workspace_switch_commits_journal_before_metadata_projection(
     )
 
     assert order == ["journal", "metadata"]
+    assert [event.event_type for event in journal.read_events()][-1] == "session.workspace_switched"
     assert store.load(record.session_id).active_project_path == str(linked.resolve())
-    assert [event.event_type for event in journal.read_events()][-2:] == [
-        "session.metadata_updated",
-        "session.workspace_switched",
-    ]
 
-    # A subsequent switch must compare against canonical events rather than
-    # the stale projection, or it would omit the patch clearing this field.
+    # Switching back derives the launch checkout (stored as None) from the
+    # boundary event alone; no metadata patch event is involved.
     monkeypatch.setattr(store, "_write_metadata", original_write_metadata)
     record.active_project_path = None
     store.save_workspace_switch(
@@ -541,8 +538,9 @@ def test_workspace_switch_commits_journal_before_metadata_projection(
         new_root=str(main.resolve()),
     )
     assert store.load(record.session_id).active_project_path is None
-    metadata_events = [event for event in journal.read_events() if event.event_type == "session.metadata_updated"]
-    assert metadata_events[-1].payload["patch"]["active_project_path"] is None
+    event_types = [event.event_type for event in journal.read_events()]
+    assert event_types.count("session.workspace_switched") == 2
+    assert "session.metadata_updated" not in event_types
 
 
 def test_workspace_switch_journal_failure_does_not_publish_metadata(
@@ -560,7 +558,7 @@ def test_workspace_switch_journal_failure_does_not_publish_metadata(
     monkeypatch.setattr(store, "_write_metadata", projection_write)
     monkeypatch.setattr(
         journal,
-        "_write_events_locked",
+        "_write_event_locked",
         Mock(side_effect=OSError("journal unavailable")),
     )
     record.active_project_path = str(linked.resolve())
