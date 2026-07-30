@@ -17,7 +17,7 @@ from .runtime import RuntimeServer, RuntimeTransportError, UnsupportedRuntimeTra
 CHROME_EXTENSION_SUPPORTED_TOOLS = frozenset(
     "browser_navigate browser_navigate_back browser_snapshot browser_find browser_wait_for browser_click "
     "browser_type browser_fill_form browser_select_option browser_hover browser_drag browser_press_key "
-    "browser_tabs browser_network_requests browser_take_screenshot browser_close".split()
+    "browser_scroll browser_tabs browser_network_requests browser_take_screenshot browser_close".split()
 )
 CHROME_EXTENSION_CAPABILITIES = CHROME_EXTENSION_SUPPORTED_TOOLS
 DEFAULT_EXTENSION_CONNECTION_TIMEOUT_SECONDS = 12.0
@@ -357,6 +357,19 @@ class ChromeExtensionBrowserManager(BrowserManager):
 
     async def press_key(self, key: str) -> dict[str, Any]:
         return await self._request("browser.press_key", {"key": key})
+
+    async def scroll(
+        self,
+        *,
+        target: Optional[str] = None,
+        x: Optional[int] = None,
+        y: Optional[int] = None,
+        by_pages: Optional[float] = None,
+    ) -> dict[str, Any]:
+        return await self._request(
+            "browser.scroll",
+            {"by_pages": by_pages, "target": target, "x": x, "y": y},
+        )
 
     async def navigate_back(self) -> dict[str, Any]:
         return await self._request("browser.navigate_back", {})

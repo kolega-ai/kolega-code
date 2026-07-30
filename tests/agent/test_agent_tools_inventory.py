@@ -95,6 +95,7 @@ def test_browser_agent_tools(project_path, mock_connection_manager, agent_config
         "browser_network_requests",
         "browser_press_key",
         "browser_resize",
+        "browser_scroll",
         "browser_select_option",
         "browser_snapshot",
         "browser_tabs",

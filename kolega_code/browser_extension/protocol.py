@@ -140,6 +140,7 @@ ALLOWED_OPERATIONS = frozenset(
         "browser.hover",
         "browser.drag",
         "browser.press_key",
+        "browser.scroll",
         "browser.tabs",
         "browser.network_requests",
         "browser.screenshot",
@@ -489,6 +490,23 @@ def validate_operation_request(operation: object, params: object) -> dict[str, J
         assert key is not None
         if re.search(r"[\x00-\x1f\x7f]", key):
             raise _params_error("key is invalid")
+    elif operation == "browser.scroll":
+        _exact_params(values, frozenset({"by_pages", "target", "x", "y"}))
+        _target(values["target"], nullable=True)
+        _nullable_number(values["by_pages"], "by_pages", -10, 10)
+        _nullable_integer(values["x"], "x", 0, 10_000_000)
+        _nullable_integer(values["y"], "y", 0, 10_000_000)
+        # Exactly one request shape, so a caller can never leave it ambiguous
+        # which of three different movements was intended. Mirrors
+        # validateOperation in the extension's src/operations.js, including the
+        # message text; the two must keep accepting the same language.
+        modes = [
+            values["target"] is not None,
+            values["by_pages"] is not None,
+            values["x"] is not None or values["y"] is not None,
+        ]
+        if sum(1 for mode in modes if mode) != 1:
+            raise _params_error("Provide exactly one of target, by_pages, or x/y")
     elif operation == "browser.tabs":
         _exact_params(values, frozenset({"action", "index", "url"}))
         action = values["action"]

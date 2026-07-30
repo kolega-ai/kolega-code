@@ -79,6 +79,37 @@ async def test_click_forwards_snake_case_options(browser_tool, browser_manager):
 
 
 @pytest.mark.asyncio
+async def test_scroll_forwards_one_movement_and_reports_the_new_position(browser_tool, browser_manager):
+    browser_manager.scroll = AsyncMock(
+        return_value={
+            "session_id": "session-1",
+            "url": "https://example.com",
+            "title": "Example",
+            "snapshot": '- heading "Example" [ref=e2]',
+            "scroll_x": 0,
+            "scroll_y": 4_800,
+            "content_height": 20_176,
+            "viewport_height": 767,
+        }
+    )
+
+    result = await browser_tool.browser_scroll(by_pages=3)
+
+    browser_manager.scroll.assert_awaited_once_with(target=None, x=None, y=None, by_pages=3)
+    # Reporting where the viewport landed is what lets a scroll-then-snapshot
+    # loop tell progress from having reached the end of the page.
+    assert "- Scroll position: y=4800 of 20176 px" in result
+    assert '- heading "Example" [ref=e2]' in result
+
+
+@pytest.mark.asyncio
+async def test_page_format_omits_scroll_position_when_absent(browser_tool, browser_manager):
+    result = await browser_tool.browser_navigate("https://example.com")
+
+    assert "Scroll position" not in result
+
+
+@pytest.mark.asyncio
 async def test_file_upload_reads_only_through_workspace_filesystem(browser_tool, browser_manager, tmp_path):
     upload = tmp_path / "avatar.txt"
     upload.write_text("hello", encoding="utf-8")

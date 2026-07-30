@@ -153,7 +153,33 @@ BROWSER_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         ["target"],
     ),
     "browser_press_key": _schema(
-        {"key": {"type": "string", "description": "Key name or character, such as ArrowLeft or a."}}, ["key"]
+        {
+            "key": {
+                "type": "string",
+                "description": (
+                    "Key name or character, such as ArrowLeft or a. PageDown, PageUp, Home, End, "
+                    "ArrowDown, ArrowUp and Space scroll the page unless focus is in a text field or "
+                    "the page handles the key itself."
+                ),
+            }
+        },
+        ["key"],
+    ),
+    "browser_scroll": _schema(
+        {
+            "target": {
+                "type": "string",
+                "description": "Scroll this element into view. Exact ref from browser_snapshot, or a unique selector.",
+            },
+            "x": {"type": "integer", "description": "Absolute horizontal offset in CSS pixels."},
+            "y": {"type": "integer", "description": "Absolute vertical offset in CSS pixels."},
+            "by_pages": {
+                "type": "number",
+                "description": (
+                    "Scroll by this many viewport heights; negative scrolls up. Fractions are allowed, range -10 to 10."
+                ),
+            },
+        }
     ),
     "browser_tabs": _schema(
         {
@@ -282,6 +308,13 @@ class BrowserTool(BaseTool):
     @staticmethod
     def _format_page(result: dict[str, Any]) -> str:
         parts = ["## Page", f"- URL: {result.get('url', 'about:blank')}", f"- Title: {result.get('title', '')}"]
+        scroll_y = result.get("scroll_y")
+        if isinstance(scroll_y, (int, float)):
+            # Where the viewport ended up, so a scroll-then-snapshot loop can tell
+            # progress from a scroll that hit the end of the page.
+            content_height = result.get("content_height")
+            extent = f" of {int(content_height)}" if isinstance(content_height, (int, float)) else ""
+            parts.append(f"- Scroll position: y={int(scroll_y)}{extent} px")
         if result.get("modal"):
             parts.extend(["", "## Modal state", "```json", json.dumps(result["modal"], indent=2), "```"])
         if "result" in result:
@@ -373,6 +406,15 @@ class BrowserTool(BaseTool):
 
     async def browser_press_key(self, key: str) -> str:
         return self._format_page(await self.browser_manager.press_key(key))
+
+    async def browser_scroll(
+        self,
+        target: Optional[str] = None,
+        x: Optional[int] = None,
+        y: Optional[int] = None,
+        by_pages: Optional[float] = None,
+    ) -> str:
+        return self._format_page(await self.browser_manager.scroll(target=target, x=x, y=y, by_pages=by_pages))
 
     async def browser_tabs(self, action: str, index: Optional[int] = None, url: Optional[str] = None) -> str:
         previous = self.browser_manager.session_id

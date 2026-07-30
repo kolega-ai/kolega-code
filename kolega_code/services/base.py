@@ -153,6 +153,16 @@ class BrowserManager(ABC):
     async def press_key(self, key: str) -> Dict[str, Any]: ...
 
     @abstractmethod
+    async def scroll(
+        self,
+        *,
+        target: Optional[str] = None,
+        x: Optional[int] = None,
+        y: Optional[int] = None,
+        by_pages: Optional[float] = None,
+    ) -> Dict[str, Any]: ...
+
+    @abstractmethod
     async def navigate_back(self) -> Dict[str, Any]: ...
 
     @abstractmethod

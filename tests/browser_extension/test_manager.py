@@ -153,7 +153,23 @@ async def test_manager_preserves_browser_result_shapes(tmp_path: Path) -> None:
         "browser.screenshot",
         {"target": None, "image_type": "png", "full_page": True, "scale": "device"},
     )
+    # Inapplicable scroll fields travel as explicit nulls, because the fixed
+    # schema requires every key and rejects 0 or "" as a stand-in for unset.
+    await browser.scroll(by_pages=1.5)
+    assert peer.requests[-1] == (
+        "browser.scroll",
+        {"by_pages": 1.5, "target": None, "x": None, "y": None},
+    )
+    await browser.scroll(target="#main")
+    assert peer.requests[-1] == (
+        "browser.scroll",
+        {"by_pages": None, "target": "#main", "x": None, "y": None},
+    )
     await browser.cleanup_all_browsers()
+
+
+def test_scroll_is_part_of_the_supported_chrome_tool_surface() -> None:
+    assert "browser_scroll" in CHROME_EXTENSION_SUPPORTED_TOOLS
 
 
 def _descriptor(runtime_id: str, session_id: str, pid: int = 4321) -> RuntimeDescriptor:
