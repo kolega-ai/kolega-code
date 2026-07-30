@@ -61,7 +61,7 @@ def test_resume_falls_back_to_launch_checkout_and_clears_deleted_active_path(
 
     assert active == main
     assert store.load(session.session_id).active_project_path is None
-    assert "saved active worktree is unavailable" in capsys.readouterr().err
+    assert "Saved active worktree is unavailable" in capsys.readouterr().err
 
 
 def test_resume_uses_canonical_fallback_when_metadata_projection_write_fails(
@@ -91,7 +91,7 @@ def test_resume_uses_canonical_fallback_when_metadata_projection_write_fails(
 
     assert active == main
     assert store.load(session.session_id).active_project_path is None
-    assert "saved active worktree is unavailable" in capsys.readouterr().err
+    assert "Saved active worktree is unavailable" in capsys.readouterr().err
 
 
 def test_resume_fails_when_active_and_launch_checkouts_are_unavailable(tmp_path: Path) -> None:

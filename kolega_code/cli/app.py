@@ -65,7 +65,7 @@ from .file_index import WorkspaceFileIndex
 from .mentions import build_file_attachments
 from .provider_registry import default_ui_thinking_effort
 from .session_journal import RewindOutcome, TurnSummary
-from .session_store import SessionRecord, SessionStore, SessionStoreError
+from .session_store import SessionRecord, SessionStore, resolve_active_project
 from .settings import CliSettings, SettingsStore
 from kolega_code.agent.custom_agents import CustomAgentCatalog, discover_custom_agents
 from kolega_code.services.terminal import LocalTerminalManager
@@ -167,36 +167,10 @@ class KolegaCodeApp(
         self._session_recorder = store.recorder(session.session_id)
         self.session = store.load(session.session_id)
         self.session.mode = CLI_AGENT_MODE
-        self.active_project_path = self.project_path
-        self._startup_workspace_warning = ""
-        if self.session.active_project_path:
-            try:
-                self.active_project_path = resolve_worktree(self.project_path, self.session.active_project_path).path
-            except WorktreeError as exc:
-                try:
-                    self.active_project_path = resolve_worktree(self.project_path, self.project_path).path
-                except WorktreeError as launch_error:
-                    raise SessionStoreError(
-                        f"Session {self.session.session_id} cannot resume: saved active worktree "
-                        f"{self.session.active_project_path!r} is invalid ({exc}), and launch checkout "
-                        f"{self.project_path} is unavailable ({launch_error})."
-                    ) from launch_error
-                self.session.active_project_path = None
-                try:
-                    self.store.save(self.session)
-                except OSError:
-                    # The journal is canonical. If only the derived metadata
-                    # projection failed, reload the committed fallback and
-                    # continue; a journal failure leaves the stale root intact
-                    # and must still abort startup.
-                    reloaded = self.store.load(self.session.session_id)
-                    if reloaded.active_project_path is not None:
-                        raise
-                    self.session = reloaded
-                self._startup_workspace_warning = (
-                    f"Saved active worktree is unavailable ({exc}). Resuming in the launch checkout "
-                    f"`{self.project_path}`."
-                )
+        self.active_project_path, workspace_warning = resolve_active_project(
+            self.session, self.store, self.project_path
+        )
+        self._startup_workspace_warning = workspace_warning or ""
         self.interaction_mode = self._validated_interaction_mode(self.session.interaction_mode)
         self.session.interaction_mode = self.interaction_mode
         self.permission_mode = normalize_permission_mode(

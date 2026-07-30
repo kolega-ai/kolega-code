@@ -672,3 +672,38 @@ class SessionStore:
                     turn_id=turn_id,
                     artifacts=artifacts,
                 )
+
+
+def resolve_active_project(
+    session: SessionRecord, store: SessionStore, launch_path: Path
+) -> tuple[Path, Optional[str]]:
+    """Validate and return a resumed session's durable active workspace.
+
+    A saved active worktree that no longer resolves falls back to the launch
+    checkout and clears the persisted selection; the returned warning says so.
+    Both checkouts being unavailable is a hard resume error.
+    """
+    from kolega_code.worktrees import WorktreeError, resolve_worktree
+
+    if not session.active_project_path:
+        return launch_path, None
+    try:
+        return resolve_worktree(launch_path, session.active_project_path).path, None
+    except WorktreeError as active_error:
+        try:
+            fallback = resolve_worktree(launch_path, launch_path).path
+        except WorktreeError as launch_error:
+            raise SessionStoreError(
+                f"Session {session.session_id} cannot resume: saved active worktree "
+                f"{session.active_project_path!r} is invalid ({active_error}), and launch checkout "
+                f"{launch_path} is unavailable ({launch_error})."
+            ) from launch_error
+        session.active_project_path = None
+        try:
+            store.save(session)
+        except OSError:
+            # The journal is canonical: continue when only the derived
+            # metadata projection failed to refresh, else surface the error.
+            if store.load(session.session_id).active_project_path is not None:
+                raise
+        return fallback, f"Saved active worktree is unavailable ({active_error}); resuming in `{fallback}`."

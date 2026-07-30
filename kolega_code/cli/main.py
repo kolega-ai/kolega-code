@@ -75,7 +75,7 @@ from .config import (
 )
 from .connection import CliConnectionManager
 from .mentions import build_file_attachments
-from .session_store import SessionRecord, SessionStore, SessionStoreError
+from .session_store import SessionRecord, SessionStore, SessionStoreError, resolve_active_project
 from .settings import CliSettings, SettingsStore, SettingsStoreError
 from .goal import (
     DEFAULT_GOAL_MAX_TURNS,
@@ -640,34 +640,10 @@ def _validate_session_project(session: SessionRecord, project_path: Path) -> Ses
 def _active_project_for_resume(session: SessionRecord, store: SessionStore) -> Path:
     """Validate and return a resumed session's durable active workspace."""
     launch_path = Path(session.project_path).expanduser().resolve()
-    if not session.active_project_path:
-        return launch_path
-    try:
-        return resolve_worktree(launch_path, session.active_project_path).path
-    except WorktreeError as active_error:
-        try:
-            fallback = resolve_worktree(launch_path, launch_path).path
-        except WorktreeError as launch_error:
-            raise SessionStoreError(
-                f"Session {session.session_id} cannot resume: saved active worktree "
-                f"{session.active_project_path!r} is invalid ({active_error}), and launch checkout "
-                f"{launch_path} is unavailable ({launch_error})."
-            ) from launch_error
-        session.active_project_path = None
-        try:
-            store.save(session)
-        except OSError:
-            # The event journal is canonical. Continue when only the derived
-            # metadata projection failed, but preserve a journal failure as a
-            # hard resume error.
-            reloaded = store.load(session.session_id)
-            if reloaded.active_project_path is not None:
-                raise
-        print(
-            f"Warning: saved active worktree is unavailable ({active_error}); resuming in `{fallback}`.",
-            file=sys.stderr,
-        )
-        return fallback
+    active, warning = resolve_active_project(session, store, launch_path)
+    if warning:
+        print(f"Warning: {warning}", file=sys.stderr)
+    return active
 
 
 def _normalize_cli_session_mode(store: SessionStore, session: SessionRecord, *, persist: bool) -> SessionRecord:
