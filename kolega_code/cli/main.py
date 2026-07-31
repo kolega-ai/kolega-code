@@ -16,6 +16,7 @@ from typing import Any, Iterable, Optional
 from kolega_code.agent import CoderAgent
 from kolega_code.config import EditProtocol
 from kolega_code.agent.custom_agents import discover_custom_agents, validate_custom_agent_models
+from kolega_code.agent.orchestration.guide import gigacode_prompt_extension
 from kolega_code.agent.prompt_provider import PromptExtension
 from kolega_code.agent.prompt_dump import (
     dump_prompt_overrides,
@@ -391,6 +392,11 @@ def _build_subcommand_parser() -> argparse.ArgumentParser:
     )
     ask.add_argument(
         "--mode", choices=[mode.value for mode in AgentMode], default=CLI_AGENT_MODE, help=argparse.SUPPRESS
+    )
+    ask.add_argument(
+        "--gigacode",
+        action="store_true",
+        help="Enable gigacode workflow orchestration (the TUI's /gigacode, for headless runs).",
     )
     ask.add_argument("--save", action="store_true", help="Persist the session after the prompt completes.")
     ask.add_argument("--json", action="store_true", help="Emit response chunks and events as JSON.")
@@ -1339,6 +1345,12 @@ async def _run_ask(args: argparse.Namespace) -> int:
         memory_project_path=launch_project_path,
     )
     agent_ref["agent"] = agent
+    # --gigacode turns orchestration on for this run; a resumed session that had
+    # it on keeps it on, exactly as the TUI's /gigacode toggle persists.
+    gigacode_enabled = bool(getattr(args, "gigacode", False)) or bool(session.gigacode_enabled)
+    if gigacode_enabled:
+        agent.apply_gigacode(True, gigacode_prompt_extension())
+    session.gigacode_enabled = gigacode_enabled
     lsp_messages = await agent.tool_collection.initialize()
     if not args.json:
         for msg in lsp_messages:

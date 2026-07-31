@@ -6,6 +6,21 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+### Added
+
+- `kolega-code ask --gigacode` enables gigacode workflow orchestration in
+  headless runs, matching the TUI's `/gigacode` toggle: the `run_workflow` and
+  `list_workflow_runs` tools are exposed and the authoring guide is injected.
+  The setting persists with the session, so `ask --session <id>` resumes with
+  gigacode still on.
+
+### Changed
+
+- Gigacode's concurrent-worker cap is now a flat 8 instead of being derived from
+  the host's core count. Workers wait on provider responses rather than CPU, so
+  the old formula only made fan-out width vary with the machine — and collapse to
+  a single serial worker on a one-CPU host or container.
+
 ## 0.26.1 - 2026-07-31
 
 ### Fixed

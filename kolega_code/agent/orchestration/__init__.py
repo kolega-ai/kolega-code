@@ -20,7 +20,7 @@ from .errors import (
 )
 from .executor import DEFAULT_MAX_AGENT_DEPTH, MAX_AGENT_DEPTH, extract_meta, run_script, safe_builtins
 from .journal import ResumeCache, RunJournal, saved_workflows_dir, workflows_root
-from .runtime import DEFAULT_AGENT_CAP, MAX_FANOUT, WorkflowRuntime, default_concurrency
+from .runtime import DEFAULT_AGENT_CAP, DEFAULT_WORKFLOW_CONCURRENCY, MAX_FANOUT, WorkflowRuntime
 from .types import AgentRunResult, AgentRunSpec, DispatchFn, EmitFn
 
 __all__ = [
@@ -39,7 +39,7 @@ __all__ = [
     "workflows_root",
     "saved_workflows_dir",
     "WorkflowRuntime",
-    "default_concurrency",
+    "DEFAULT_WORKFLOW_CONCURRENCY",
     "MAX_FANOUT",
     "DEFAULT_AGENT_CAP",
     "AgentRunSpec",

@@ -44,6 +44,8 @@ class FakeCoderAgent:
         self.active_goal_condition = None
         self.loop_active = False
         self.loop_prompt_extension = None
+        self.gigacode_enabled = False
+        self.gigacode_prompt_extension = None
         self.clear_history_calls = 0
         self.session_recorder = kwargs.get("session_recorder")
         self.queued_input_provider = None
@@ -56,6 +58,10 @@ class FakeCoderAgent:
     def apply_loop(self, active, prompt_extension=None):
         self.loop_active = active
         self.loop_prompt_extension = prompt_extension if active else None
+
+    def apply_gigacode(self, enabled, prompt_extension=None):
+        self.gigacode_enabled = enabled
+        self.gigacode_prompt_extension = prompt_extension if enabled else None
 
     def clear_history(self):
         self.clear_history_calls += 1

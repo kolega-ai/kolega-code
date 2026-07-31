@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-import os
 import random
 from typing import Any, Awaitable, Callable, Dict, Iterable, List, Optional
 
@@ -43,14 +42,12 @@ DROPPED_ITEM_LOG_LIMIT = 10
 START_STAGGER_SECONDS = 0.75
 
 
-def default_concurrency() -> int:
-    """Concurrent-agent cap: a few below the core count, clamped to [1, 8].
-
-    Kept modest so a fan-out doesn't burst enough simultaneous LLM requests to trip
-    account-level rate limits; the jittered start-stagger further de-correlates them.
-    """
-    cpus = os.cpu_count() or 4
-    return max(1, min(8, cpus - 2))
+# Concurrent-agent cap for one workflow. A worker spends nearly all its wall-clock
+# waiting on a provider response, so the binding constraint is the account's rate
+# limit, not the host's core count — deriving this from cores only made the fan-out
+# width vary arbitrarily with the machine (and collapse to 1 in a single-CPU
+# container). The jittered start-stagger de-correlates the burst on top of this cap.
+DEFAULT_WORKFLOW_CONCURRENCY = 8
 
 
 def _call_with_arity(fn: Callable[..., Any], *args: Any) -> Any:
@@ -97,7 +94,7 @@ class WorkflowRuntime:
         if self._accounting.budget is not budget:
             raise ValueError("workflow accounting must own the runtime budget")
         self.budget = self._accounting.budget
-        self._sem = asyncio.Semaphore(concurrency or default_concurrency())
+        self._sem = asyncio.Semaphore(concurrency or DEFAULT_WORKFLOW_CONCURRENCY)
         self._max_agent_depth = max_agent_depth
         self._resolver = workflow_resolver
         self._routing_fingerprint = routing_fingerprint

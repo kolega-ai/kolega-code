@@ -55,8 +55,15 @@ Gigacode is **off by default**. Toggle it with the `/gigacode`
 | `/gigacode on` | Enable workflow orchestration for the session |
 | `/gigacode off` | Disable it |
 
+Headless runs use the `--gigacode` flag instead:
+
+```bash
+kolega-code ask "audit every API route for auth gaps" --gigacode
+```
+
 Once on, it stays on for that resumable session — if you quit and resume the same
-session, the setting is restored. New sessions still start with Gigacode off. The
+session, the setting is restored, whether you resume in the TUI or with
+`kolega-code ask --session <id>`. New sessions still start with Gigacode off. The
 agent decides when a task is worth orchestrating. It works in both
 [Build and Plan modes](../tui/modes/) — see [Behavior and safety](#behavior-and-safety)
 for how each differs.

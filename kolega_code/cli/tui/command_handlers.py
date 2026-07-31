@@ -257,18 +257,9 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
         self._update_mode_chrome()
 
     def _gigacode_prompt_extension(self) -> PromptExtension:
-        from kolega_code.agent.orchestration.guide import GIGACODE_AUTHORING_GUIDE
+        from kolega_code.agent.orchestration.guide import gigacode_prompt_extension
 
-        return PromptExtension(
-            id="gigacode",
-            title="gigacode — workflow orchestration",
-            markdown=GIGACODE_AUTHORING_GUIDE,
-            agent_types=None,
-            modes=None,
-            # Sub-agents can't run workflows (run_workflow is gated off for them),
-            # so the authoring guide is just prompt bloat for a sub-agent.
-            propagate_to_sub_agents=False,
-        )
+        return gigacode_prompt_extension()
 
     async def _command_goal(self, args: str) -> None:
         clean = args.strip()
