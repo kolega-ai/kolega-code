@@ -99,6 +99,15 @@ Run the fast test suite before opening a pull request:
 ./run_tests.sh
 ```
 
+The wrapper runs tests in parallel using the available CPU cores. Set
+`PYTEST_WORKERS` to cap concurrency, or set it to `0` for a serial debugging
+run:
+
+```bash
+PYTEST_WORKERS=4 ./run_tests.sh
+PYTEST_WORKERS=0 ./run_tests.sh tests/test_git_env.py
+```
+
 Run slow and integration tests only when you have the required credentials:
 
 ```bash
@@ -108,7 +117,7 @@ Run slow and integration tests only when you have the required credentials:
 You can pass additional pytest arguments through the wrapper:
 
 ```bash
-./run_tests.sh tests/agent/llm/test_client.py -ra
+./run_tests.sh tests/test_git_env.py -ra
 ```
 
 ## Updating bundled skills
