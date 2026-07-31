@@ -100,8 +100,8 @@ def build_worktree_control_prompt(plan_mode: bool = False) -> str:
     """Policy for agent-initiated Git worktree creation and workspace switching.
 
     Plan mode has no ``switch_worktree`` tool (it is filtered out of the
-    planning agent's registry), so its body forbids creating worktrees and
-    points at the user-driven ways to move the session instead.
+    planning agent's registry), but its body teaches the planner to put the
+    build-mode workspace handoff before any work in the target checkout.
     """
     return render_prompt_template("extensions/cli/worktree_control.md.j2", plan_mode=plan_mode)
 

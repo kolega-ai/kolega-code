@@ -144,10 +144,9 @@ def build_goal_prompt_extension_markdown(condition: str) -> str:
     )
 
 
-def build_goal_control_prompt_extension_markdown() -> str:
-    """Policy for the top-level TUI agent's ``set_goal`` tool."""
-    return (
-        "## Setting autonomous goals\n\n"
+def build_goal_control_prompt_extension_markdown(*, plan_mode: bool = False) -> str:
+    """Policy or planning guidance for the top-level TUI's ``set_goal`` tool."""
+    authorization_policy = (
         "Call `set_goal` only when an explicit governing instruction directs you to set or start an autonomous goal "
         "or enter goal mode. Valid directions include a direct user request that explicitly asks to set a goal or "
         "enter goal mode, instructions from an activated Agent Skill, or another host-provided workflow or instruction "
@@ -159,6 +158,17 @@ def build_goal_control_prompt_extension_markdown() -> str:
         '"when the PR merges, release it," "after CI passes, deploy," "wait for approval, then continue," or '
         '"once X finishes, do Y" do not authorize goal mode. Call `set_goal` only when the user explicitly asks to '
         '"set a goal," "start goal mode," "enter autonomous goal mode," or uses the corresponding goal command.'
+    )
+    if not plan_mode:
+        return f"## Setting autonomous goals\n\n{authorization_policy}"
+    return (
+        "## Planning autonomous goals\n\n"
+        "Planning mode cannot call `set_goal`; it is a build-mode session-control tool. Do not attempt to call it "
+        f"now.\n\n{authorization_policy}\n\n"
+        "When an authorized request for autonomous goal mode also needs a plan, include the exact, verifiable "
+        "goal condition and place the `set_goal` call at the intended transition into autonomous work. Required "
+        "setup, workspace changes, dependency provisioning, authentication, or other prerequisites may come first. "
+        "Place `set_goal` before the work that should run under the evaluate-and-continue goal loop."
     )
 
 
