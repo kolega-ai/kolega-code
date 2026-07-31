@@ -345,6 +345,28 @@ async def test_budget_exhaustion_propagates_out_of_fanout(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_budget_threshold_warnings_emitted_once(tmp_path):
+    budget = Budget(total=20)
+    accounting = WorkflowRunAccounting(budget, agent_cap=1000)
+    runtime, _, events, _ = make_runtime(tmp_path, budget=budget, accounting=accounting)
+    # Four sequential agents at 5 tokens each: 25% -> 50% -> 75% -> 100%.
+    script = META + "for i in range(4):\n    await agent(str(i))\nreturn 1"
+    await runtime.execute(script, args=None)
+
+    warnings = [c["message"] for kind, c in events if kind == "workflow_log" and "token budget" in c["message"]]
+    assert len(warnings) == 2
+    assert "75% consumed (15 of 20)" in warnings[0]
+    assert "90% consumed (20 of 20)" in warnings[1]
+
+
+@pytest.mark.asyncio
+async def test_no_budget_warnings_when_unbounded(tmp_path):
+    runtime, _, events, _ = make_runtime(tmp_path)
+    await runtime.execute(META + "for i in range(3):\n    await agent(str(i))\nreturn 1", args=None)
+    assert not any("token budget" in c.get("message", "") for kind, c in events if kind == "workflow_log")
+
+
+@pytest.mark.asyncio
 async def test_agent_cap_exhaustion_propagates_out_of_fanout(tmp_path):
     runtime, calls, _, _ = make_runtime(tmp_path, agent_cap=1)
     script = META + ("await agent('first')\nreturn await parallel([(lambda: agent('over-cap'))])\n")

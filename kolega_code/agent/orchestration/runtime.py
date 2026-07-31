@@ -112,6 +112,7 @@ class WorkflowRuntime:
         self._seen_labels: set[str] = set()
         self._warned_duplicate_labels: set[str] = set()
         self._dropped_items: List[dict] = []
+        self._budget_thresholds_warned: set[int] = set()
 
     @property
     def dropped_items(self) -> List[dict]:
@@ -278,6 +279,7 @@ class WorkflowRuntime:
                 reservation.report_total(result.tokens if result is not None else None)
 
         assert result is not None
+        self._maybe_warn_budget_threshold()
         value = result.value
         self._journal.record(
             index,
@@ -480,6 +482,32 @@ class WorkflowRuntime:
                 "workflow_log",
                 {"message": "further dropped-item reports go to the transcript only"},
             )
+
+    def _maybe_warn_budget_threshold(self) -> None:
+        """Warn once at 75% and 90% budget spend so the hard cap isn't a surprise.
+
+        Models routinely undersize ``token_budget`` (real sub-agent calls median
+        ~8k output tokens); an early signal lets the run's owner react before
+        the cap stops the fan-out.
+        """
+        total = self.budget.total
+        if not total:
+            return
+        spent = self.budget.spent()
+        for threshold in (75, 90):
+            if threshold in self._budget_thresholds_warned:
+                continue
+            if spent * 100 >= total * threshold:
+                self._budget_thresholds_warned.add(threshold)
+                self._emit_soon(
+                    "workflow_log",
+                    {
+                        "message": (
+                            f"token budget {threshold}% consumed ({spent:,} of {total:,}) — the run "
+                            "stops hard at the cap; completed calls replay free on resume"
+                        )
+                    },
+                )
 
     def _maybe_warn_all_dropped(self, where: str, results: List[Any], drops_before: int) -> None:
         """Call out the everything-came-back-None case — almost always a script bug."""

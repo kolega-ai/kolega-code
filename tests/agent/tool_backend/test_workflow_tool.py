@@ -858,6 +858,23 @@ async def test_summary_and_transcript_report_dropped_items(workflow_tool) -> Non
 
 
 @pytest.mark.asyncio
+async def test_budget_exhausted_summary_offers_resume(workflow_tool) -> None:
+    tool, _ = workflow_tool
+    stub, _ = _stub_dispatch()
+    tool._agent_tool.dispatch_workflow_agent = stub
+
+    # First call spends 3 of 3 tokens; the second is refused at admission.
+    script = 'meta = {"name": "starved", "description": "d"}\nawait agent(\'first\')\nreturn await agent(\'second\')\n'
+    summary = await tool.run_workflow(script=script, token_budget=3)
+
+    assert "'starved' failed" in summary
+    assert "token budget exhausted" in summary
+    assert "This run is resumable: 1 completed agent call(s) are journaled" in summary
+    run_id = next(line.split("runId:")[1].strip() for line in summary.splitlines() if "runId:" in line)
+    assert f'resume_from_run_id="{run_id}"' in summary
+
+
+@pytest.mark.asyncio
 async def test_interrupted_run_recovery_end_to_end(workflow_tool) -> None:
     """The headline flow: interrupt -> list_workflow_runs -> resume replays the prefix."""
     tool, _ = workflow_tool

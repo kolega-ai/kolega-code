@@ -144,6 +144,13 @@ fail with a migration error rather than running with partially inherited routing
 - `budget` — token budget: `budget.total`, `budget.spent()`, `budget.remaining()`.
   `agent()` raises once the total is reached. With no `token_budget` set, `remaining()`
   is `inf` — so guard budget loops on `budget.total` being set.
+  SIZING: the ceiling counts EVERY sub-agent's full output including its reasoning
+  tokens. Observed spend per call in real runs: review/investigation median ~6k with
+  p90 ~24k; general ~12k; coder median ~20k with p90 ~80k. Budget roughly
+  review_calls x 15k + coder_calls x 50k, then double it — the budget is a runaway
+  backstop, not a target. When unsure, omit `token_budget` entirely. The run warns at
+  75% and 90% spend, and an exhausted run stops mid-fan-out but is resumable with its
+  completed calls replaying free.
 
 ### Rules that keep workflows correct
 

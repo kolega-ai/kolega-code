@@ -14,6 +14,16 @@ This project uses GitHub Releases for detailed generated release notes. This fil
   had salvaged only 6 of 91 completed calls). Resumed runs also journal what
   they replayed, making a resume of a resume exact, and a duplicate `agent()`
   label now logs a one-time authoring hint. Existing journals work unchanged.
+- Workflow token budgets are harder to undersize by accident. The
+  `token_budget` schema, tool docstrings, and authoring guide now carry
+  evidence-based sizing anchors (measured across real runs: review calls
+  median ~6k/p90 ~24k output tokens, coder calls median ~20k/p90 ~80k,
+  reasoning included — size as review_calls × 15k + coder_calls × 50k,
+  doubled, or omit), the run warns in the progress log at 75% and 90% spend,
+  and a run
+  that dies on budget exhaustion tells the model in its tool result that it is
+  resumable — with the exact `resume_from_run_id` call and the count of
+  journaled calls that will replay free.
 - Workflow fan-out failures are no longer silent. A `pipeline()` stage or
   `parallel()` thunk that raises still drops its item to `None`, but the drop
   is now reported live in the progress log and recorded in the transcript with

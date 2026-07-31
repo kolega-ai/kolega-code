@@ -1544,6 +1544,9 @@ class ToolCollection(LogMixin):
             script: The Python orchestration script source (must define a top-level `meta` literal).
             args: Free-form JSON value exposed to the script as the global `args`.
             token_budget: Optional output-token ceiling for the whole run (0 = unbounded).
+                A hard runaway backstop, not a target — review/investigation calls spend
+                ~6-24k output tokens each and coder calls ~20-80k, so size generously
+                or omit.
             script_path: Path to a script file on disk; takes precedence over `script`.
             resume_from_run_id: Resume a prior run, replaying cached agent() results for
                 calls whose content is unchanged (matched by call content, not position)

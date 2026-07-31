@@ -31,6 +31,7 @@ from ..orchestration import (
     DispatchFn,
     EmitFn,
     RunJournal,
+    WorkflowBudgetExceeded,
     WorkflowRuntime,
     WorkflowScriptError,
     extract_meta,
@@ -68,7 +69,15 @@ RUN_WORKFLOW_INPUT_SCHEMA = {
         },
         "token_budget": {
             "type": "integer",
-            "description": "Optional output-token ceiling for the whole run (0 = unbounded).",
+            "description": (
+                "Optional output-token ceiling for the whole run (0 = unbounded). This is a hard "
+                "runaway backstop, not a target — size it generously. It counts EVERY sub-agent's "
+                "full output including reasoning tokens. Observed spend per call in real runs: "
+                "review/investigation median ~6k, p90 ~24k; coder median ~20k, p90 ~80k. Budget "
+                "roughly review_calls x 15k + coder_calls x 50k, then double it. When unsure, omit "
+                "it. An undersized budget stops the run mid-fan-out (resumable, but wasted "
+                "wall-clock)."
+            ),
         },
         "script_path": {
             "type": "string",
@@ -140,6 +149,9 @@ class WorkflowTool(BaseTool):
                 edited script via script_path, or resuming via resume_from_run_id.
             args: Free-form JSON value exposed to the script as the global `args`.
             token_budget: Optional output-token ceiling for the whole run (0 = unbounded).
+                A hard runaway backstop, not a target — review/investigation calls spend
+                ~6-24k output tokens each and coder calls ~20-80k, so size generously
+                or omit.
             script_path: Path to a script file on disk; takes precedence over `script`.
             resume_from_run_id: Resume from a prior run, replaying cached agent() results
                 for calls whose content is unchanged (matched by call content, not
@@ -220,6 +232,7 @@ class WorkflowTool(BaseTool):
         status = "completed"
         error: Optional[str] = None
         result: Any = None
+        budget_exhausted = False
         try:
             result = await runtime.execute(source, args)
         except asyncio.CancelledError:
@@ -232,6 +245,10 @@ class WorkflowTool(BaseTool):
                 total_tokens=budget.spent(),
             )
             raise
+        except WorkflowBudgetExceeded as exc:
+            status = "failed"
+            error = f"workflow failed: {exc}"
+            budget_exhausted = True
         except WorkflowScriptError as exc:
             status = "failed"
             error = f"workflow script error: {exc}"
@@ -263,7 +280,9 @@ class WorkflowTool(BaseTool):
             },
         )
 
-        return self._summarize(meta, run_id, journal, budget, status, error, result, dropped)
+        return self._summarize(
+            meta, run_id, journal, budget, status, error, result, dropped, budget_exhausted=budget_exhausted
+        )
 
     async def list_workflow_runs(self, limit: int = 20) -> str:
         """List this session's gigacode workflow runs, newest first.
@@ -708,6 +727,8 @@ class WorkflowTool(BaseTool):
         error,
         result,
         dropped: Optional[list[dict]] = None,
+        *,
+        budget_exhausted: bool = False,
     ) -> str:
         lines = [
             f"Workflow {meta.get('name')!r} {status}.",
@@ -719,6 +740,13 @@ class WorkflowTool(BaseTool):
         ]
         if error:
             lines.append(f"error: {error}")
+        if budget_exhausted:
+            journaled = len(journal.load_cache())
+            lines.append(
+                f"This run is resumable: {journaled} completed agent call(s) are journaled. Call "
+                f'run_workflow(resume_from_run_id="{run_id}") with a larger token_budget (or omit '
+                "it) — the journaled calls replay at no token cost and only the remaining work runs."
+            )
         if dropped:
             groups = Counter((d.get("error", ""), d.get("script_line")) for d in dropped)
             (err, line), count = groups.most_common(1)[0]
