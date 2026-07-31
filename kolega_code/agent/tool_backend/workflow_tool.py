@@ -72,7 +72,10 @@ RUN_WORKFLOW_INPUT_SCHEMA = {
         },
         "resume_from_run_id": {
             "type": "string",
-            "description": "Resume from a prior run id, replaying cached agent() results for the unchanged prefix.",
+            "description": (
+                "Resume from a prior run id, replaying cached agent() results for calls whose "
+                "content is unchanged (matched by call content, not position)."
+            ),
         },
     },
     "required": [],
@@ -135,7 +138,8 @@ class WorkflowTool(BaseTool):
             token_budget: Optional output-token ceiling for the whole run (0 = unbounded).
             script_path: Path to a script file on disk; takes precedence over `script`.
             resume_from_run_id: Resume from a prior run, replaying cached agent() results
-                for the unchanged prefix and running new/changed calls live.
+                for calls whose content is unchanged (matched by call content, not
+                position) and running new/changed calls live.
 
         Returns:
             A compact artifact manifest including runId, scriptPath, token count,
@@ -542,6 +546,7 @@ class WorkflowTool(BaseTool):
                     "requested_routing",
                     "effective_routing",
                     "status",
+                    "replayed",
                     "tokens",
                     "error",
                 ):

@@ -1543,8 +1543,9 @@ class ToolCollection(LogMixin):
             args: Free-form JSON value exposed to the script as the global `args`.
             token_budget: Optional output-token ceiling for the whole run (0 = unbounded).
             script_path: Path to a script file on disk; takes precedence over `script`.
-            resume_from_run_id: Resume a prior run, replaying cached agent() results for the
-                unchanged prefix and running new/changed calls live.
+            resume_from_run_id: Resume a prior run, replaying cached agent() results for
+                calls whose content is unchanged (matched by call content, not position)
+                and running new/changed calls live.
 
         Returns:
             A compact artifact manifest: the runId, persisted scriptPath, token count,

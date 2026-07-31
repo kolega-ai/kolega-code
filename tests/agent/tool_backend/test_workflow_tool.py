@@ -440,6 +440,21 @@ async def test_resume_replays_without_redispatch(workflow_tool):
     assert "Cached resume calls" in transcript2
     assert "served from resume cache" in transcript2
 
+    # Replays are re-recorded in the new run's journal, so a resume of the
+    # resumed run replays from run 2's own journal without re-dispatching.
+    journal2_rows = [
+        json.loads(line)
+        for line in (Path(state_dir) / "workflows" / run_id2 / "journal.jsonl").read_text().splitlines()
+    ]
+    assert len(journal2_rows) == 4
+    assert all(row["replayed"] is True for row in journal2_rows)
+    assert all("tokens" not in row for row in journal2_rows)
+
+    calls.clear()
+    summary3 = await tool.run_workflow(script=SCRIPT, resume_from_run_id=run_id2)
+    assert len(calls) == 0
+    assert "completed" in summary3
+
 
 @pytest.mark.asyncio
 async def test_read_only_caller_forces_investigation_agents(workflow_tool, caller):

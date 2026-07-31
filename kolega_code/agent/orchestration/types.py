@@ -37,7 +37,8 @@ class AgentRunSpec:
     # Workflow-wide delegation ceiling. Direct workflow workers are depth 1.
     max_agent_depth: int = 1
     # Position of this call in the run, assigned by the runtime in invocation
-    # order. Combined with ``cache_key`` it drives resume.
+    # order. Names per-agent artifacts and orders the journal; resume matches
+    # on ``cache_key``.
     call_index: int = 0
 
     def cache_key(self) -> str:

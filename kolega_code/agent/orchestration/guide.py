@@ -37,7 +37,8 @@ results = await pipeline(
     DIMENSIONS,
     lambda d: agent(d["prompt"], label=f"review:{d['key']}", schema=FINDINGS_SCHEMA),
     lambda review: parallel([
-        (lambda f=f: agent(f"Adversarially verify: {f['title']}", schema=VERDICT_SCHEMA, phase="Verify"))
+        (lambda f=f: agent(f"Adversarially verify: {f['title']}",
+                           label=f"verify:{f['title'][:40]}", schema=VERDICT_SCHEMA, phase="Verify"))
         for f in (review or {}).get("findings", [])
     ]),
 )
@@ -147,6 +148,17 @@ fail with a migration error rather than running with partially inherited routing
 - Scripts must be DETERMINISTIC: `import`, `open`, `time`, and `random` are unavailable
   (this is what makes resume work). Pass any timestamps/seeds in via `args`. Vary agents
   by index/prompt, not by randomness.
+- Give every `agent()` in a fan-out a label that is unique in the run — include the
+  item's identifying fingerprint (finding id, file, shard AND seat number), e.g.
+  `label=f"verify:{f['id']}#{seat}"`. Labels name transcripts and progress lines;
+  duplicates make agents indistinguishable there.
+- Make each agent's PROMPT self-distinguishing. Two `agent()` calls with identical
+  prompt, schema, and agent_type are the same call to the resume cache: on resume their
+  cached results are interchangeable. When fanning N skeptics over one finding, say so
+  in the prompt ("You are skeptic {i+1} of {n}; take a distinct angle") — this makes
+  resume exact and the votes genuinely independent. If a prompt depends on an earlier
+  call's side effects (files it wrote), embed that call's output or a revision marker
+  in the prompt.
 - Concurrency is capped automatically; you may pass large lists to `parallel`/`pipeline`
   (up to 4096) and they all complete — only a handful active execution chains run
   at once. Nested dispatch within one direct worker is serialized. A lifetime cap
@@ -181,6 +193,8 @@ fail with a migration error rather than running with partially inherited routing
   clusters → fix isolated causes → rerun targeted tests.
 - Adversarial verify: for each finding, spawn N skeptics prompted to REFUTE it; keep it
   only if a majority fail to refute. Prevents plausible-but-wrong findings surviving.
+  Number the seats in each skeptic's prompt (not just the label) so the votes are
+  distinct calls with distinct angles rather than N copies of one prompt.
 - Loop-until-dry: for unknown-size discovery, keep spawning finders until K consecutive
   rounds surface nothing new (dedup against everything seen, not just confirmed items).
 - Judge panel: generate N independent attempts from different angles, score with parallel
@@ -247,6 +261,8 @@ workflow, not as a transcript-recovery mechanism.
 Each run persists its script, full results, a readable transcript, raw JSONL, and a
 resume journal under the state directory and returns a `runId` plus artifact paths.
 To iterate, edit the script and re-run with `script_path`, or pass `resume_from_run_id`
-to replay cached `agent()` results for the unchanged prefix and only re-run new/changed
-calls.
+to replay cached `agent()` results for every call whose content is unchanged (matched
+by call content, not position — reordering or inserting calls doesn't invalidate the
+rest) and only re-run new/changed calls. Resumed runs journal what they replayed, so
+resuming a resumed run replays exactly.
 """

@@ -26,7 +26,7 @@ from .accounting import (
 from .budget import Budget
 from .errors import WorkflowScriptError
 from .executor import DEFAULT_MAX_AGENT_DEPTH, run_script, safe_builtins
-from .journal import RunJournal
+from .journal import ResumeCache, RunJournal
 from .types import AgentRunSpec, DispatchFn, EmitFn, WorkflowResolver
 
 # Largest single parallel()/pipeline() fan-out, and the lifetime agent backstop.
@@ -80,7 +80,7 @@ class WorkflowRuntime:
         agent_cap: int = DEFAULT_AGENT_CAP,
         accounting: Optional[WorkflowRunAccounting] = None,
         max_agent_depth: int = DEFAULT_MAX_AGENT_DEPTH,
-        resume_cache: Optional[Dict[int, Any]] = None,
+        resume_cache: Optional[ResumeCache] = None,
         workflow_resolver: Optional[WorkflowResolver] = None,
         routing_fingerprint: Optional[str] = None,
         actual_agent_type_resolver: Optional[Callable[[Optional[str]], str]] = None,
@@ -103,8 +103,10 @@ class WorkflowRuntime:
         self._call_index = 0
         self._current_phase: Optional[str] = None
         self._nested_depth = 0
-        self._resume_cache: Dict[int, Any] = resume_cache or {}
+        self._resume_cache: ResumeCache = resume_cache if resume_cache is not None else ResumeCache()
         self._pending_emits: "set[asyncio.Task]" = set()
+        self._seen_labels: set[str] = set()
+        self._warned_duplicate_labels: set[str] = set()
 
     # ------------------------------------------------------------------ run
     async def execute(self, source: str, args: Any) -> Any:
@@ -170,8 +172,8 @@ class WorkflowRuntime:
         except (TypeError, ValueError) as exc:
             raise WorkflowScriptError(str(exc)) from exc
 
-        # Index is assigned synchronously (no await before this point), so it is
-        # deterministic across runs for a given script — the basis for resume.
+        # Index is assigned synchronously (no await before this point). It names
+        # per-agent artifacts and orders the journal; resume matches on content.
         index = self._call_index
         self._call_index += 1
         spec = AgentRunSpec(
@@ -192,20 +194,64 @@ class WorkflowRuntime:
         )
         key = spec.cache_key()
 
-        cached = self._resume_cache.get(index)
-        if cached is not None and cached[0] == key:
-            cached_value = cached[1]
-            label = spec.label or prompt[:60]
+        if spec.label is not None:
+            if spec.label in self._seen_labels and spec.label not in self._warned_duplicate_labels:
+                self._warned_duplicate_labels.add(spec.label)
+                self._emit_soon(
+                    "workflow_log",
+                    {
+                        "message": (
+                            f"note: duplicate agent label {spec.label!r} — labels name transcripts "
+                            "and progress lines; give fan-out seats unique labels"
+                        )
+                    },
+                )
+            self._seen_labels.add(spec.label)
+
+        # This branch stays in the synchronous prefix (no awaits), so the FIFO
+        # pop and re-record have no interleaving or cancellation window.
+        replayed = self._resume_cache.take(key)
+        if replayed is not None:
+            cached_value = replayed.get("value")
+            display_label = spec.label or prompt[:60]
+            # Re-record under the new run's index so this journal is
+            # self-contained and a resume of a resume replays exactly. No
+            # ``tokens``: replays spend nothing, and copying the original count
+            # would double-count across transcript renders and chained resumes.
+            carried = {
+                field: replayed.get(field)
+                for field in (
+                    "actual_agent_type",
+                    "effective_routing",
+                    "transcript_path",
+                    "transcript_markdown_path",
+                )
+                if replayed.get(field) is not None
+            }
+            if "requested_routing" in replayed:
+                carried["requested_routing"] = replayed["requested_routing"]
+            self._journal.record(
+                index,
+                key,
+                spec.label,
+                cached_value,
+                status="completed",
+                replayed=True,
+                phase=spec.phase,
+                agent_type=spec.agent_type,
+                max_agent_depth=spec.max_agent_depth,
+                **carried,
+            )
             self._journal.append_transcript_event(
                 {
                     "type": "agent_cached",
                     "index": index,
-                    "label": label,
+                    "label": display_label,
                     "phase": spec.phase,
                     "value": cached_value,
                 }
             )
-            self._emit_soon("workflow_agent_cached", {"label": label, "phase": spec.phase})
+            self._emit_soon("workflow_agent_cached", {"label": display_label, "phase": spec.phase})
             return cached_value
 
         async with self._sem:
