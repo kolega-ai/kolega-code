@@ -6,6 +6,8 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.26.1 - 2026-07-31
+
 ### Fixed
 
 - Gigacode resume now matches cached `agent()` results by call content instead
