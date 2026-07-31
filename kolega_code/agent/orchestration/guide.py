@@ -127,11 +127,15 @@ fail with a migration error rather than running with partially inherited routing
   regardless of `agent_type`, so use workflows there for parallel research and
   synthesis, not edits.
 - `await parallel(thunks)` — run zero-arg thunks concurrently and wait for ALL (a barrier).
-  A thunk that raises resolves to `None`; the call never rejects. Filter `None` before use.
+  A thunk that raises resolves to `None` and the drop is reported in the progress log and
+  transcript with the offending script line — check those reports before trusting a fan-out
+  full of `None`s. Budget/agent-cap exhaustion is never swallowed; it fails the run.
+  Filter `None` before use.
 - `await pipeline(items, *stages)` — run each item through all stages independently, with
   NO barrier between stages (item A can be in stage 3 while item B is still in stage 1).
   Each stage is called with `(prev_result, original_item, index)` — write `lambda r: ...`
-  or `lambda prev, item, i: ...`, both work. A stage that raises drops that item to `None`.
+  or `lambda prev, item, i: ...`, both work. A stage that raises drops that item to `None`,
+  reported the same way as `parallel` drops; budget/agent-cap exhaustion fails the run.
   This is the DEFAULT for multi-stage work; only use a `parallel` barrier when a stage
   genuinely needs ALL prior results at once (dedup/merge, early-exit on zero).
 - `phase(title)` — start a phase; later `agent()` calls group under it in the UI.
@@ -170,7 +174,11 @@ fail with a migration error rather than running with partially inherited routing
 - Run totals and failed-agent artifacts include finalized output from direct and
   built-in nested workers, including usage recorded before a later failure.
 - Use `schema` for anything you'll compute over (counts, filtering, merging). The
-  sub-agent is forced to return data matching the schema instead of prose.
+  sub-agent is forced to return data matching the schema instead of prose. `agent()`
+  returns the FULL object matching the schema — with `{"properties": {"findings": ...}}`
+  you get `{"findings": [...]}` back, not the inner array. Unwrap before iterating:
+  `for f in (result or {}).get("findings") or []`. Iterating the wrapper dict itself
+  yields its string keys and typically crashes the stage, silently dropping that item.
 
 ### Quality patterns to compose
 

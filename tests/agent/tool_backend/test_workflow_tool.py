@@ -826,6 +826,38 @@ async def test_list_workflow_runs_orders_limits_and_reports_fields(workflow_tool
 
 
 @pytest.mark.asyncio
+async def test_summary_and_transcript_report_dropped_items(workflow_tool) -> None:
+    """A rev-1-style script bug (iterating the schema wrapper) surfaces in the
+    tool result, run.json, and the transcript instead of failing silently."""
+    tool, state_dir = workflow_tool
+    stub, _ = _stub_dispatch()
+    tool._agent_tool.dispatch_workflow_agent = stub
+
+    script = (
+        'meta = {"name": "buggy", "description": "d"}\n'
+        "out = await pipeline(\n"
+        "    ['a', 'b'],\n"
+        "    lambda item: agent('review ' + item, schema={'type': 'object'}),\n"
+        "    lambda review: [f.get('severity') for f in review],\n"  # iterates the wrapper dict
+        ")\n"
+        "return out\n"
+    )
+    summary = await tool.run_workflow(script=script)
+
+    assert "WARNING:" in summary
+    assert "dropped to None by exceptions raised in the workflow script" in summary
+    assert "AttributeError" in summary
+    assert "(x2)" in summary
+
+    run_id = next(line.split("runId:")[1].strip() for line in summary.splitlines() if "runId:" in line)
+    meta = json.loads((Path(state_dir) / "workflows" / run_id / "run.json").read_text())
+    assert meta["script_exception_drops"] == 2
+    transcript = (Path(state_dir) / "workflows" / run_id / "transcript.md").read_text()
+    assert "## Dropped fan-out items" in transcript
+    assert "pipeline item 0 stage 2" in transcript
+
+
+@pytest.mark.asyncio
 async def test_interrupted_run_recovery_end_to_end(workflow_tool) -> None:
     """The headline flow: interrupt -> list_workflow_runs -> resume replays the prefix."""
     tool, _ = workflow_tool

@@ -13,6 +13,7 @@ import asyncio
 import json
 import time
 import uuid
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -239,6 +240,7 @@ class WorkflowTool(BaseTool):
             error = f"workflow failed: {exc}"
 
         duration_seconds = round(time.time() - started, 2)
+        dropped = list(runtime.dropped_items)
         rendered_result = self._result_json_text(result)
         journal.write_result_artifacts(result, self._render_result_markdown(meta, run_id, status, error, result))
 
@@ -252,6 +254,7 @@ class WorkflowTool(BaseTool):
             error=error,
             duration_seconds=duration_seconds,
             total_tokens=budget.spent(),
+            script_exception_drops=len(dropped),
             result_size_chars=len(rendered_result),
             artifacts={
                 "scriptPath": str(journal.script_path),
@@ -260,7 +263,7 @@ class WorkflowTool(BaseTool):
             },
         )
 
-        return self._summarize(meta, run_id, journal, budget, status, error, result)
+        return self._summarize(meta, run_id, journal, budget, status, error, result, dropped)
 
     async def list_workflow_runs(self, limit: int = 20) -> str:
         """List this session's gigacode workflow runs, newest first.
@@ -664,6 +667,29 @@ class WorkflowTool(BaseTool):
         else:
             lines.append("No returned agent values were recorded.")
 
+        dropped_events = [event for event in raw_events if event.get("type") == "fanout_item_dropped"]
+        if dropped_events:
+            lines.extend(
+                [
+                    "",
+                    "## Dropped fan-out items",
+                    "",
+                    (
+                        "> These items raised in the workflow SCRIPT itself (not agent failures — a "
+                        "failed agent returns None without raising) and were dropped to None."
+                    ),
+                    "",
+                ]
+            )
+            for event in dropped_events:
+                stage = event.get("stage")
+                stage_txt = f" stage {stage + 1}" if stage is not None else ""
+                line_no = event.get("script_line")
+                line_txt = f" (script line {line_no})" if line_no else ""
+                lines.append(
+                    f"- {event.get('where')} item {event.get('item')}{stage_txt}: {event.get('error')}{line_txt}"
+                )
+
         cached_events = [event for event in raw_events if event.get("type") == "agent_cached"]
         if cached_events:
             lines.extend(["", "## Cached resume calls", ""])
@@ -672,7 +698,17 @@ class WorkflowTool(BaseTool):
 
         return "\n".join(str(line) for line in lines).rstrip() + "\n"
 
-    def _summarize(self, meta, run_id, journal: RunJournal, budget: Budget, status, error, result) -> str:
+    def _summarize(
+        self,
+        meta,
+        run_id,
+        journal: RunJournal,
+        budget: Budget,
+        status,
+        error,
+        result,
+        dropped: Optional[list[dict]] = None,
+    ) -> str:
         lines = [
             f"Workflow {meta.get('name')!r} {status}.",
             f"runId: {run_id}",
@@ -683,6 +719,18 @@ class WorkflowTool(BaseTool):
         ]
         if error:
             lines.append(f"error: {error}")
+        if dropped:
+            groups = Counter((d.get("error", ""), d.get("script_line")) for d in dropped)
+            (err, line), count = groups.most_common(1)[0]
+            first = err + (f" at script line {line}" if line else "")
+            if count > 1:
+                first += f" (x{count})"
+            lines.append(
+                f"WARNING: {len(dropped)} fan-out item(s) were dropped to None by exceptions raised in "
+                f"the workflow script itself — {first}. These are script bugs or invalid agent() "
+                "arguments, not agent failures; the results are incomplete where those items were "
+                "dropped. Per-item details are in transcriptPath under 'Dropped fan-out items'."
+            )
         lines.append(
             "result: written to resultPath. Read resultPath for the workflow result, "
             "or transcriptPath for execution details."

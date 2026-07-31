@@ -14,6 +14,17 @@ This project uses GitHub Releases for detailed generated release notes. This fil
   had salvaged only 6 of 91 completed calls). Resumed runs also journal what
   they replayed, making a resume of a resume exact, and a duplicate `agent()`
   label now logs a one-time authoring hint. Existing journals work unchanged.
+- Workflow fan-out failures are no longer silent. A `pipeline()` stage or
+  `parallel()` thunk that raises still drops its item to `None`, but the drop
+  is now reported live in the progress log and recorded in the transcript with
+  the exception and the offending script line; the `run_workflow` result warns
+  with an aggregate (e.g. `AttributeError at script line 299 (x6)`) and
+  `run.json` records `script_exception_drops`. A fan-out that comes back all
+  `None` with drops is called out as a likely script bug. Budget and agent-cap
+  exhaustion now propagate out of fan-outs and fail the run (cancelling and
+  draining the remaining chains) instead of shredding it into `None`s —
+  previously a run could report `completed` after a script bug silently
+  discarded every result.
 - An interrupted gigacode workflow's run id is now recoverable. Runs are
   stamped with their owning session, cancelling a turn marks the run
   `interrupted` in `run.json`, and the new session-scoped `list_workflow_runs`

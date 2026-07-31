@@ -24,14 +24,18 @@ from .accounting import (
     set_current_agent_reservation,
 )
 from .budget import Budget
-from .errors import WorkflowScriptError
-from .executor import DEFAULT_MAX_AGENT_DEPTH, run_script, safe_builtins
+from .errors import WorkflowAgentCapExceeded, WorkflowBudgetExceeded, WorkflowScriptError
+from .executor import DEFAULT_MAX_AGENT_DEPTH, SCRIPT_FILENAME, run_script, safe_builtins
 from .journal import ResumeCache, RunJournal
 from .types import AgentRunSpec, DispatchFn, EmitFn, WorkflowResolver
 
 # Largest single parallel()/pipeline() fan-out, and the lifetime agent backstop.
 MAX_FANOUT = 4096
 DEFAULT_AGENT_CAP = 1000
+
+# Individual dropped-item reports beyond this count go to the transcript only,
+# so a pathological fan-out cannot flood the progress log.
+DROPPED_ITEM_LOG_LIMIT = 10
 
 # A batch admitted through the semaphore together would otherwise fire LLM requests at the
 # same instant; a small random pre-dispatch delay de-synchronizes them so concurrent
@@ -107,6 +111,12 @@ class WorkflowRuntime:
         self._pending_emits: "set[asyncio.Task]" = set()
         self._seen_labels: set[str] = set()
         self._warned_duplicate_labels: set[str] = set()
+        self._dropped_items: List[dict] = []
+
+    @property
+    def dropped_items(self) -> List[dict]:
+        """Fan-out items dropped to ``None`` by exceptions in the authored script."""
+        return self._dropped_items
 
     # ------------------------------------------------------------------ run
     async def execute(self, source: str, args: Any) -> Any:
@@ -309,17 +319,25 @@ class WorkflowRuntime:
 
     async def parallel(self, thunks: Iterable[Callable[[], Awaitable[Any]]]) -> List[Any]:
         """Run thunks concurrently and wait for all (a barrier). A thunk that
-        raises resolves to ``None`` — the call itself never rejects.
+        raises resolves to ``None`` and the drop is logged and recorded in the
+        transcript with the offending script line. Budget/agent-cap exhaustion
+        is a run-global condition, not a per-item one — it propagates and fails
+        the run instead of shredding the fan-out into ``None`` values.
         """
         items = list(thunks)
         if len(items) > MAX_FANOUT:
             raise WorkflowScriptError(f"parallel() accepts at most {MAX_FANOUT} items, got {len(items)}")
-        return await asyncio.gather(*[self._invoke(t) for t in items])
+        drops_before = len(self._dropped_items)
+        results = await self._gather_all([self._invoke(t, item_index=i) for i, t in enumerate(items)])
+        self._maybe_warn_all_dropped("parallel", results, drops_before)
+        return results
 
     async def pipeline(self, items: Iterable[Any], *stages: Callable[..., Any]) -> List[Any]:
         """Run each item through all stages independently — no barrier between
         stages. A stage that throws drops that item to ``None`` and skips its
-        remaining stages. Each stage receives ``(prevResult, originalItem, index)``.
+        remaining stages; the drop is logged and recorded in the transcript with
+        the offending script line. Budget/agent-cap exhaustion propagates and
+        fails the run. Each stage receives ``(prevResult, originalItem, index)``.
         """
         materialized = list(items)
         if len(materialized) > MAX_FANOUT:
@@ -327,17 +345,23 @@ class WorkflowRuntime:
 
         async def chain(original: Any, index: int) -> Any:
             value: Any = original
-            for stage in stages:
+            for stage_index, stage in enumerate(stages):
                 try:
                     out = _call_with_arity(stage, value, original, index)
                     if inspect.isawaitable(out):
                         out = await out
                     value = out
-                except Exception:
+                except (WorkflowBudgetExceeded, WorkflowAgentCapExceeded):
+                    raise
+                except Exception as exc:
+                    self._record_dropped_item("pipeline", index, stage_index, exc)
                     return None
             return value
 
-        return await asyncio.gather(*[chain(item, i) for i, item in enumerate(materialized)])
+        drops_before = len(self._dropped_items)
+        results = await self._gather_all([chain(item, i) for i, item in enumerate(materialized)])
+        self._maybe_warn_all_dropped("pipeline", results, drops_before)
+        return results
 
     def phase(self, title: str) -> None:
         """Start a new phase; subsequent ``agent()`` calls group under it."""
@@ -367,15 +391,110 @@ class WorkflowRuntime:
         raise WorkflowScriptError("workflow() cannot be nested more than one level deep")
 
     # ------------------------------------------------------------- helpers
-    async def _invoke(self, thunk: Any) -> Any:
-        """Await a thunk (zero-arg callable) or a bare awaitable; failures -> None."""
+    async def _invoke(self, thunk: Any, item_index: int = 0) -> Any:
+        """Await a thunk (zero-arg callable) or a bare awaitable.
+
+        Ordinary failures drop to ``None`` and are recorded; budget/agent-cap
+        exhaustion propagates (see :meth:`parallel`).
+        """
         try:
             result = thunk() if callable(thunk) else thunk
             if inspect.isawaitable(result):
                 result = await result
             return result
-        except Exception:
+        except (WorkflowBudgetExceeded, WorkflowAgentCapExceeded):
+            raise
+        except Exception as exc:
+            self._record_dropped_item("parallel", item_index, None, exc)
             return None
+
+    async def _gather_all(self, coros: List[Any]) -> List[Any]:
+        """``gather`` that never leaves children running when it raises.
+
+        When an exception propagates out of a fan-out (budget/cap exhaustion,
+        cancellation), the remaining chains are cancelled and drained before
+        re-raising so no sub-agent dispatch outlives its fan-out.
+        """
+        tasks = [asyncio.ensure_future(coro) for coro in coros]
+        try:
+            return await asyncio.gather(*tasks)
+        except BaseException:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
+
+    @staticmethod
+    def _script_line_from(exc: BaseException) -> Optional[int]:
+        """Deepest authored-script line in ``exc``'s traceback, if any.
+
+        The executor compiles the script under :data:`SCRIPT_FILENAME` and the
+        AST wrapping preserves source line numbers, so frames with that
+        filename point into the model's own script.
+        """
+        line: Optional[int] = None
+        tb = exc.__traceback__
+        while tb is not None:
+            if tb.tb_frame.f_code.co_filename == SCRIPT_FILENAME:
+                line = tb.tb_lineno
+            tb = tb.tb_next
+        return line
+
+    def _record_dropped_item(
+        self,
+        where: str,
+        item_index: int,
+        stage_index: Optional[int],
+        exc: BaseException,
+    ) -> None:
+        """Make a fan-out drop visible: transcript event + progress log line.
+
+        These exceptions come from the authored script (or a raising thunk),
+        not from agent failures — a failed agent returns ``None`` without
+        raising. Silence here is what let a run "complete" after dropping
+        every reviewed finding.
+        """
+        error = f"{type(exc).__name__}: {exc}"
+        if len(error) > 200:
+            error = error[:200] + "…"
+        record = {
+            "where": where,
+            "item": item_index,
+            "stage": stage_index,
+            "error": error,
+            "script_line": self._script_line_from(exc),
+        }
+        self._dropped_items.append(record)
+        self._journal.append_transcript_event({"type": "fanout_item_dropped", **record})
+        shown = len(self._dropped_items)
+        if shown > DROPPED_ITEM_LOG_LIMIT:
+            return
+        stage_txt = f" stage {stage_index + 1}" if stage_index is not None else ""
+        line_txt = f" at script line {record['script_line']}" if record["script_line"] else ""
+        self._emit_soon(
+            "workflow_log",
+            {"message": f"{where} item {item_index}{stage_txt} raised {error}{line_txt} — item dropped (None)"},
+        )
+        if shown == DROPPED_ITEM_LOG_LIMIT:
+            self._emit_soon(
+                "workflow_log",
+                {"message": "further dropped-item reports go to the transcript only"},
+            )
+
+    def _maybe_warn_all_dropped(self, where: str, results: List[Any], drops_before: int) -> None:
+        """Call out the everything-came-back-None case — almost always a script bug."""
+        drops = len(self._dropped_items) - drops_before
+        if not results or not drops or any(result is not None for result in results):
+            return
+        self._emit_soon(
+            "workflow_log",
+            {
+                "message": (
+                    f"{where}: all {len(results)} items returned None ({drops} dropped by exceptions "
+                    "raised in the workflow script) — this usually means a script bug, not agent failures"
+                )
+            },
+        )
 
     def _emit_soon(self, event_type: str, content: dict) -> None:
         """Fire-and-forget a progress emit from a synchronous primitive.

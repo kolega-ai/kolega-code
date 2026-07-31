@@ -267,6 +267,104 @@ async def test_pipeline_stage_arity_and_failure_isolation(tmp_path):
     assert out[1] is None  # 'bad' dropped at stage 1
 
 
+# ------------------------------------------------- fan-out drop reporting
+@pytest.mark.asyncio
+async def test_pipeline_stage_exception_recorded_with_script_line(tmp_path):
+    script = META + (
+        "def busted(review):\n"
+        "    return review.get('missing')\n"  # script line 3: AttributeError on a str
+        "out = await pipeline(\n"
+        "    ['a', 'b'],\n"
+        "    lambda item: agent('review ' + item),\n"
+        "    lambda prev: busted(prev),\n"
+        ")\n"
+        "return out\n"
+    )
+
+    async def dispatch(spec: AgentRunSpec) -> AgentRunResult:
+        return AgentRunResult(text="not a dict", tokens=1)
+
+    runtime, _, events, journal = make_runtime(tmp_path, dispatch=dispatch)
+    assert await runtime.execute(script, args=None) == [None, None]
+
+    drops = runtime.dropped_items
+    assert len(drops) == 2
+    assert all(d["where"] == "pipeline" and d["stage"] == 1 for d in drops)
+    assert all("AttributeError" in d["error"] for d in drops)
+    assert all(d["script_line"] == 3 for d in drops)
+
+    transcript_events = [json.loads(line) for line in journal.transcript_jsonl_path.read_text().splitlines()]
+    dropped_events = [e for e in transcript_events if e.get("type") == "fanout_item_dropped"]
+    assert len(dropped_events) == 2
+
+    logs = [c["message"] for kind, c in events if kind == "workflow_log"]
+    assert any("item dropped" in m and "AttributeError" in m and "script line 3" in m for m in logs)
+    # Every item came back None with drops recorded — the script-bug hint fires.
+    assert any("script bug" in m for m in logs)
+
+
+@pytest.mark.asyncio
+async def test_parallel_thunk_exception_recorded_without_all_none_hint(tmp_path):
+    runtime, _, events, _ = make_runtime(tmp_path)
+    script = META + (
+        "res = await parallel([\n"
+        "    (lambda: agent('ok')),\n"
+        "    (lambda: [][5]),\n"  # script line 4: IndexError
+        "])\n"
+        "return res\n"
+    )
+    assert await runtime.execute(script, args=None) == ["recap:ok", None]
+
+    drops = runtime.dropped_items
+    assert len(drops) == 1
+    assert drops[0]["where"] == "parallel"
+    assert drops[0]["item"] == 1
+    assert drops[0]["stage"] is None
+    assert "IndexError" in drops[0]["error"]
+    assert drops[0]["script_line"] == 4
+
+    logs = [c["message"] for kind, c in events if kind == "workflow_log"]
+    assert any("item dropped" in m for m in logs)
+    assert not any("script bug" in m for m in logs)  # one item succeeded
+
+
+@pytest.mark.asyncio
+async def test_budget_exhaustion_propagates_out_of_fanout(tmp_path):
+    """Budget exhaustion fails the run instead of shredding the fan-out into Nones."""
+    budget = Budget(total=5)
+    accounting = WorkflowRunAccounting(budget, agent_cap=1000)
+    runtime, calls, _, _ = make_runtime(tmp_path, budget=budget, accounting=accounting)
+    script = META + (
+        "await agent('first')\n"  # spends 5 of 5
+        "return await parallel([(lambda: agent('starved-1')), (lambda: agent('starved-2'))])\n"
+    )
+    with pytest.raises(WorkflowBudgetExceeded):
+        await runtime.execute(script, args=None)
+    assert [c.prompt for c in calls] == ["first"]
+    assert runtime.dropped_items == []  # exhaustion is not a per-item drop
+
+
+@pytest.mark.asyncio
+async def test_agent_cap_exhaustion_propagates_out_of_fanout(tmp_path):
+    runtime, calls, _, _ = make_runtime(tmp_path, agent_cap=1)
+    script = META + ("await agent('first')\nreturn await parallel([(lambda: agent('over-cap'))])\n")
+    with pytest.raises(WorkflowAgentCapExceeded):
+        await runtime.execute(script, args=None)
+    assert [c.prompt for c in calls] == ["first"]
+
+
+@pytest.mark.asyncio
+async def test_workflow_script_error_in_fanout_still_drops_but_is_recorded(tmp_path):
+    """Per-call authoring errors keep the documented drop-to-None contract
+    (docs/gigacode.mdx promises this for malformed overrides) — but loudly."""
+    runtime, calls, _, _ = make_runtime(tmp_path)
+    script = META + "return await parallel([(lambda: agent('x', model='legacy'))])\n"
+    assert await runtime.execute(script, args=None) == [None]
+    assert calls == []
+    assert len(runtime.dropped_items) == 1
+    assert "WorkflowScriptError" in runtime.dropped_items[0]["error"]
+
+
 # ------------------------------------------------------------------- phase/log
 @pytest.mark.asyncio
 async def test_phase_and_log_emit_events(tmp_path):
