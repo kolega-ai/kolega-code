@@ -85,6 +85,21 @@ CHANGES_SCOPE_BRANCH = "Branch: {branch}"
 CHANGES_HISTORY_MOVED = "Commits merged, pulled, or rebased in since the baseline are not shown."
 CHANGES_HISTORY_UNTRACKED = "Committed changes are not tracked in this repository."
 
+# Agent-initiated worktree switch. The agent may only switch when the user asked
+# for it, so every switch is confirmed here before anything durable is written.
+WORKTREE_SWITCH_CONFIRM_QUESTION = "Move this session's workspace from {old_root} to {new_root}{branch_note}?"
+WORKTREE_SWITCH_CONFIRM_APPROVE = "Switch workspace"
+WORKTREE_SWITCH_CONFIRM_APPROVE_DESCRIPTION = (
+    "Rebuild the session in the new checkout at the end of this turn and start a fresh Changes/Rewind baseline."
+)
+WORKTREE_SWITCH_CONFIRM_DECLINE = "Stay here"
+WORKTREE_SWITCH_CONFIRM_DECLINE_DESCRIPTION = "Keep working in {old_root}. Nothing is changed."
+WORKTREE_SWITCH_DECLINED = (
+    "The user declined the workspace switch, so the active workspace is unchanged. Continue working in "
+    "`{old_root}` and do not request the switch again unless the user raises it."
+)
+WORKTREE_SWITCH_DECLINED_ANSWER = ' The user answered: "{answer}".'
+
 # Rewind
 REWIND_BLOCKED_TURN = "Stop the current turn (Esc) before rewinding."
 REWIND_NOTHING = "Nothing to rewind — no file changes since {label}."

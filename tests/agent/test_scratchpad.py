@@ -143,6 +143,8 @@ class TestScratchpadPrompt:
         assert ".kolega/worktrees/<safe-unique-slug>" in rendered
         assert "Never create a Git worktree in the scratchpad" in rendered
         assert "shared Git `info/exclude`" in rendered
+        # Placement guidance must not read as licence to create one unasked.
+        assert "only when the user explicitly asks for it" in rendered
 
     def test_template_is_fully_rendered(self, tmp_path: Path) -> None:
         rendered = build_scratchpad_prompt(tmp_path / "scratchpad")

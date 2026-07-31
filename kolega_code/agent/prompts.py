@@ -96,6 +96,16 @@ def build_scratchpad_prompt(scratchpad_path: str | Path) -> str:
     )
 
 
+def build_worktree_control_prompt(plan_mode: bool = False) -> str:
+    """Policy for agent-initiated Git worktree creation and workspace switching.
+
+    Plan mode has no ``switch_worktree`` tool (it is filtered out of the
+    planning agent's registry), so its body forbids creating worktrees and
+    points at the user-driven ways to move the session instead.
+    """
+    return render_prompt_template("extensions/cli/worktree_control.md.j2", plan_mode=plan_mode)
+
+
 def build_init_agents_prompt(arguments: str) -> str:
     return render_prompt_template("user_tasks/cli/init_agents.md.j2", arguments=arguments.strip())
 

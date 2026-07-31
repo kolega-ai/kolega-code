@@ -75,8 +75,48 @@ def test_scratchpad_prompt_renders_path_and_rules() -> None:
     assert "uniquely named files" in rendered
     assert ".kolega/worktrees/<safe-unique-slug>" in rendered
     assert "Never create a Git worktree in the scratchpad" in rendered
+    assert "only when the user explicitly asks for it" in rendered
     assert "shared Git `info/exclude`" in rendered
     assert "{{" not in rendered
+
+
+def test_worktree_control_prompt_gates_creation_and_switching_in_both_modes() -> None:
+    """The shared gate is the point: a worktree needs an explicit user request."""
+    for plan_mode in (False, True):
+        rendered = prompts.build_worktree_control_prompt(plan_mode=plan_mode)
+
+        assert "unless the user explicitly asks for it in this session" in rendered
+        assert "Do not create a Git worktree" in rendered
+        assert "is not a request for a worktree" in rendered
+        assert "never authorization" in rendered
+        assert "{%" not in rendered
+        assert "{{" not in rendered
+
+
+def test_worktree_control_prompt_build_mode_describes_the_switch_tool() -> None:
+    rendered = prompts.build_worktree_control_prompt()
+
+    assert "switch_worktree" in rendered
+    assert "never creates one" in rendered
+    assert "may decline" in rendered
+    assert "end your turn right after calling it" in rendered
+    # The plan-only clause must not leak into build mode.
+    assert "Planning mode does not modify the project" not in rendered
+
+
+def test_worktree_control_prompt_plan_mode_names_no_switching_tool() -> None:
+    """Plan mode keeps exec_command, so it is told not to create worktrees.
+
+    It has no ``switch_worktree`` in its registry, and naming an absent tool is
+    what invites a hallucinated call, so the plan body must not instruct one.
+    """
+    rendered = prompts.build_worktree_control_prompt(plan_mode=True)
+
+    assert "never run `git worktree add` here" in rendered
+    assert "no workspace-switching tool in plan mode" in rendered
+    assert "--worktree" in rendered
+    assert "switch_worktree" not in rendered
+    assert "end your turn right after calling it" not in rendered
 
 
 def test_coder_cli_prompt_allows_scratchpad_file_operations() -> None:

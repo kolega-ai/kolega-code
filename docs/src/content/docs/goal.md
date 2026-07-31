@@ -77,10 +77,10 @@ A few things to know:
 
 ### Letting the agent set a goal
 
-The top-level TUI agent can also call `set_goal` when an explicit governing
-instruction directs it to enter goal mode. That direction can come from you, an
-activated Agent Skill, or another host-provided workflow with authority over the
-current task:
+The top-level TUI **build-mode** agent can also call `set_goal` when an explicit
+governing instruction directs it to enter goal mode. That direction can come
+from you, an activated Agent Skill, or another host-provided workflow with
+authority over the current task:
 
 ```text
 Set a goal that all parser tests pass and the parser documentation is current.
@@ -99,6 +99,10 @@ activated skill, or authoritative host workflow explicitly directs it.
 
 The tool only sets or replaces a goal. Use `/goal` to inspect its status and
 `/goal clear` to remove it.
+
+The tool is not available in plan mode: a planning turn cannot start an
+autonomous loop by itself. `/goal <condition>` works in either mode, and a goal
+set in build mode keeps driving turns after you switch to plan mode.
 
 ## From the CLI: `ask --goal`
 
