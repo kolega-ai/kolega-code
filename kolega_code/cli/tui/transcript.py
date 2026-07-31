@@ -38,6 +38,22 @@ from .sub_agent_screen import SubAgentEntryWidget
 from .widgets import ConversationEntryWidget, JumpToBottomBar, ToolEntryWidget
 
 
+def _is_standalone_system_reminder_history_item(item: dict) -> bool:
+    """Whether a raw history item is a generated volatile-context message."""
+    if item.get("role") != "user":
+        return False
+    content = item.get("content")
+    if not isinstance(content, list) or len(content) != 1:
+        return False
+    block = content[0]
+    if not isinstance(block, dict) or block.get("type") != "text":
+        return False
+    text = block.get("text")
+    return (
+        isinstance(text, str) and text.startswith('<system-reminder source="') and text.endswith("</system-reminder>")
+    )
+
+
 class _IndentedRenderState:
     """Incremental render cache for an indented streaming body (assistant/thinking).
 
@@ -135,6 +151,8 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
                     pending_tool_entries.pop(key, None)
 
         for item in history:
+            if _is_standalone_system_reminder_history_item(item):
+                continue
             try:
                 message = Message.from_dict(item)
             except Exception:
