@@ -19,7 +19,7 @@ from .errors import (
     WorkflowScriptError,
 )
 from .executor import DEFAULT_MAX_AGENT_DEPTH, MAX_AGENT_DEPTH, extract_meta, run_script, safe_builtins
-from .journal import RunJournal, saved_workflows_dir, workflows_root
+from .journal import ResumeCache, RunJournal, saved_workflows_dir, workflows_root
 from .runtime import DEFAULT_AGENT_CAP, MAX_FANOUT, WorkflowRuntime, default_concurrency
 from .types import AgentRunResult, AgentRunSpec, DispatchFn, EmitFn
 
@@ -34,6 +34,7 @@ __all__ = [
     "safe_builtins",
     "DEFAULT_MAX_AGENT_DEPTH",
     "MAX_AGENT_DEPTH",
+    "ResumeCache",
     "RunJournal",
     "workflows_root",
     "saved_workflows_dir",

@@ -6,6 +6,48 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+### Fixed
+
+- Gigacode resume now matches cached `agent()` results by call content instead
+  of call position, so completed work no longer re-runs after `pipeline()`
+  timing drift or script edits that shift call positions (one production resume
+  had salvaged only 6 of 91 completed calls). Resumed runs also journal what
+  they replayed, making a resume of a resume exact, and a duplicate `agent()`
+  label now logs a one-time authoring hint. Existing journals work unchanged.
+- Workflow scripts now have a designated drafting location. The authoring
+  guide and `script_path` docs direct models to draft long scripts in the
+  session scratchpad instead of the project working tree — generated scripts
+  in the repo pollute `git status` and go stale for later sessions. The
+  executed script is persisted under the run directory either way.
+- Workflow token budgets are harder to undersize by accident. The
+  `token_budget` schema, tool docstrings, and authoring guide now carry
+  evidence-based sizing anchors (measured across real runs: review calls
+  median ~6k/p90 ~24k output tokens, coder calls median ~20k/p90 ~80k,
+  reasoning included — size as review_calls × 15k + coder_calls × 50k,
+  doubled, or omit), the run warns in the progress log at 75% and 90% spend,
+  and a run
+  that dies on budget exhaustion tells the model in its tool result that it is
+  resumable — with the exact `resume_from_run_id` call and the count of
+  journaled calls that will replay free.
+- Workflow fan-out failures are no longer silent. A `pipeline()` stage or
+  `parallel()` thunk that raises still drops its item to `None`, but the drop
+  is now reported live in the progress log and recorded in the transcript with
+  the exception and the offending script line; the `run_workflow` result warns
+  with an aggregate (e.g. `AttributeError at script line 299 (x6)`) and
+  `run.json` records `script_exception_drops`. A fan-out that comes back all
+  `None` with drops is called out as a likely script bug. Budget and agent-cap
+  exhaustion now propagate out of fan-outs and fail the run (cancelling and
+  draining the remaining chains) instead of shredding it into `None`s —
+  previously a run could report `completed` after a script bug silently
+  discarded every result.
+- An interrupted gigacode workflow's run id is now recoverable. Runs are
+  stamped with their owning session, cancelling a turn marks the run
+  `interrupted` in `run.json`, and the new session-scoped `list_workflow_runs`
+  tool lists this session's runs (status, tokens, journaled calls, artifact
+  paths) so the agent can resume an interrupted run with `resume_from_run_id`
+  instead of re-running it from scratch — previously the run id was only
+  returned on normal completion, so an interrupted run's journal was orphaned.
+
 ## 0.26.0 - 2026-07-31
 
 ### Added

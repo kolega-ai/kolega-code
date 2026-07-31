@@ -12,19 +12,23 @@ Everything a run needs lives under::
         transcript.md    readable workflow transcript/index
         agents/          per sub-agent raw/readable transcripts
 
-Resume contract: scripts are deterministic (the runtime blocks ``random``/``time``
-and ``import``), so the same source + args produce ``agent()`` calls in the same
-order. On resume we replay cached results for the longest unchanged prefix —
-matched on ``(call_index, cache_key)`` — and run live from the first changed or
-new call onward.
+Resume contract: each ``agent()`` call is matched by its content ``cache_key``
+(a hash of the prompt and every other semantically significant input — see
+``AgentRunSpec.cache_key``), not by its position in the run. Calls sharing one
+key consume the journaled values FIFO in original issue order, so replay
+survives the call-order drift ``pipeline()`` timing introduces and script edits
+that shift positions. ``call_index`` is still recorded — it orders the FIFO and
+names per-agent artifacts — and replayed calls are re-recorded into the new
+run's journal so a resume of a resume replays exactly.
 """
 
 from __future__ import annotations
 
 import json
 import re
+from collections import deque
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional
 
 
 def workflows_root(state_dir: Path) -> Path:
@@ -44,6 +48,34 @@ def _slugify(value: str, *, fallback: str = "agent", max_length: int = 64) -> st
     if not slug:
         slug = fallback
     return slug[:max_length].rstrip("-._") or fallback
+
+
+class ResumeCache:
+    """Journaled results of a prior run, consumable by content key.
+
+    Each key maps to a FIFO of full journal rows in original issue order
+    (``index``-sorted). ``take`` pops the next row for a key, so identical-spec
+    calls (e.g. fan-out seats whose prompts don't differ) each consume exactly
+    one journaled value, in the order the original run issued them.
+    """
+
+    def __init__(self, rows_by_key: Optional[Dict[str, "deque[dict]"]] = None) -> None:
+        self._rows_by_key: Dict[str, "deque[dict]"] = rows_by_key or {}
+
+    def take(self, key: str) -> Optional[dict]:
+        """Pop and return the next journal row recorded for ``key``, or ``None``.
+
+        Returns the full row (always a dict on a hit) rather than the bare value
+        so a legitimately-``None`` cached value is distinguishable from a miss
+        and provenance fields can be carried into the resumed run's journal.
+        """
+        rows = self._rows_by_key.get(key)
+        if not rows:
+            return None
+        return rows.popleft()
+
+    def __len__(self) -> int:
+        return sum(len(rows) for rows in self._rows_by_key.values())
 
 
 class RunJournal:
@@ -113,13 +145,18 @@ class RunJournal:
         self.ensure_dirs()
         self._meta_path.write_text(json.dumps(meta, indent=2, default=str) + "\n", encoding="utf-8")
 
+    def read_meta(self) -> Dict[str, Any]:
+        """Return the run's ``run.json`` contents; ``{}`` when absent/unreadable."""
+        if not self._meta_path.exists():
+            return {}
+        try:
+            meta = json.loads(self._meta_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return {}
+        return meta if isinstance(meta, dict) else {}
+
     def update_meta(self, **fields: Any) -> None:
-        meta: Dict[str, Any] = {}
-        if self._meta_path.exists():
-            try:
-                meta = json.loads(self._meta_path.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError):
-                meta = {}
+        meta = self.read_meta()
         meta.update(fields)
         self.write_meta(meta)
 
@@ -137,6 +174,9 @@ class RunJournal:
 
         ``journal.jsonl`` is the resume contract. Extra fields are allowed and ignored
         by ``load_cache()`` so newer artifact metadata remains backward-compatible.
+        A resumed run re-records each replayed call with ``replayed: true`` and no
+        ``tokens`` (replays spend nothing), keeping the journal self-contained so a
+        resume of a resume replays exactly.
         """
         self.ensure_dirs()
         payload = {"index": call_index, "key": key, "label": label, "status": status, "value": value}
@@ -170,15 +210,18 @@ class RunJournal:
         self.ensure_dirs()
         self._transcript_md_path.write_text(markdown, encoding="utf-8")
 
-    def load_cache(self) -> Dict[int, Tuple[str, Any]]:
-        """Read a prior run's journal into ``{call_index: (key, value)}``.
+    def load_cache(self) -> ResumeCache:
+        """Read a prior run's journal into a :class:`ResumeCache`.
 
         Only ``completed`` entries are cached — a failed/skipped call should be
-        retried live on resume.
+        retried live on resume. Rows are deduplicated by ``index`` (last wins)
+        and sorted by it before grouping: the journal file is in *completion*
+        order, and the FIFO pairing of identical-key calls must follow the
+        original *issue* order.
         """
-        cache: Dict[int, Tuple[str, Any]] = {}
         if not self._journal_path.exists():
-            return cache
+            return ResumeCache()
+        by_index: Dict[int, dict] = {}
         for raw in self._journal_path.read_text(encoding="utf-8").splitlines():
             raw = raw.strip()
             if not raw:
@@ -198,8 +241,12 @@ class RunJournal:
                 continue
             if not isinstance(key, str):
                 continue
-            cache[index] = (key, entry.get("value"))
-        return cache
+            by_index[index] = entry
+        rows_by_key: Dict[str, "deque[dict]"] = {}
+        for index in sorted(by_index):
+            entry = by_index[index]
+            rows_by_key.setdefault(entry["key"], deque()).append(entry)
+        return ResumeCache(rows_by_key)
 
     def agent_transcript_path(self, agent_id: str) -> Path:
         self.ensure_dirs()

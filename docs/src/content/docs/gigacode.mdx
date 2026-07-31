@@ -196,12 +196,16 @@ until a workflow-aware accounting and depth protocol exists. This restriction
 does not change ordinary non-workflow extension or agent-delegation behavior.
 
 <Aside type="note">
-Workflows are deterministic and **resumable**. Each run is saved under Kolega
-Code's state directory (`workflows/<run-id>/`) with its script, full result files,
-a readable Markdown transcript, raw JSONL, a resume journal, and debug sub-agent
-transcripts, so an interrupted run can pick up where it left off instead of redoing
-finished work. Use resume when intentionally iterating on the workflow; use the
-artifact paths when you only need to inspect output.
+Workflow *scripts* are deterministic by construction (`time`, `random`, and
+`import` are blocked), and every run is saved under Kolega Code's state directory
+(`workflows/<run-id>/`) with its script, full result files, a readable Markdown
+transcript, raw JSONL, a resume journal of every completed agent call, and debug
+sub-agent transcripts. Resuming a run with `resume_from_run_id` replays journaled
+calls whose content is unchanged and runs only the rest live — a runtime
+guarantee. After an interruption the agent is instructed to find the run with
+`list_workflow_runs` and resume it rather than redo finished work, and it
+typically does. Use resume to iterate on a workflow or to continue an interrupted
+one; use the artifact paths when you only need to inspect output.
 </Aside>
 
 ## Behavior and safety

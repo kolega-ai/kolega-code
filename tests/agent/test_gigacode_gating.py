@@ -61,6 +61,7 @@ def test_run_workflow_absent_by_default(project_path, mock_connection_manager, a
     agent = _coder(project_path, mock_connection_manager, agent_config)
     names = {tool.name for tool in agent.tool_collection.get_tool_list()}
     assert "run_workflow" not in names
+    assert "list_workflow_runs" not in names
 
 
 def test_run_workflow_appears_when_enabled(project_path, mock_connection_manager, agent_config):
@@ -78,6 +79,11 @@ def test_run_workflow_appears_when_enabled(project_path, mock_connection_manager
     assert "args" in schema["properties"]
     assert "type" not in schema["properties"]["args"]
 
+    # The session-scoped run listing ships with the same gate. Its schema is
+    # derived from the method signature, so no explicit input_schema is set.
+    assert "list_workflow_runs" in by_name
+    assert by_name["list_workflow_runs"].input_schema is None
+
 
 def test_sub_agent_never_gets_run_workflow(project_path, mock_connection_manager, agent_config):
     """A dispatched (sub) coder must not get run_workflow even with the flag set."""
@@ -85,6 +91,7 @@ def test_sub_agent_never_gets_run_workflow(project_path, mock_connection_manager
     agent.gigacode_enabled = True
     names = {tool.name for tool in agent.tool_collection.get_tool_list()}
     assert "run_workflow" not in names
+    assert "list_workflow_runs" not in names
 
 
 def test_default_workflow_coder_is_a_leaf(
@@ -174,6 +181,7 @@ def test_planning_agent_gets_run_workflow_when_enabled(project_path, mock_connec
     agent.gigacode_enabled = True
     names = {tool.name for tool in agent.tool_collection.get_tool_list()}
     assert "run_workflow" in names
+    assert "list_workflow_runs" in names
     # The orchestrator is read-only, which the dispatch adapter uses to force
     # read-only sub-agents.
     assert agent.tool_collection.read_only is True

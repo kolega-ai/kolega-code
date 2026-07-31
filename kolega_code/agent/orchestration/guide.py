@@ -37,7 +37,8 @@ results = await pipeline(
     DIMENSIONS,
     lambda d: agent(d["prompt"], label=f"review:{d['key']}", schema=FINDINGS_SCHEMA),
     lambda review: parallel([
-        (lambda f=f: agent(f"Adversarially verify: {f['title']}", schema=VERDICT_SCHEMA, phase="Verify"))
+        (lambda f=f: agent(f"Adversarially verify: {f['title']}",
+                           label=f"verify:{f['title'][:40]}", schema=VERDICT_SCHEMA, phase="Verify"))
         for f in (review or {}).get("findings", [])
     ]),
 )
@@ -48,6 +49,17 @@ return {"confirmed": confirmed}
 `meta` must be a pure literal (no variables, calls, or f-strings) — it is read
 without running the script. Required keys: `name`, `description`. Optional keys:
 `phases` and `max_agent_depth`.
+
+### Where scripts live
+
+Pass short scripts inline via `script`. Draft a long script in your session
+scratchpad directory (its path is in your system prompt) and pass `script_path`.
+Do NOT write workflow scripts into the project working tree unless the user
+explicitly asks for a repo-versioned workflow: generated scripts there pollute
+`git status` and go stale for future sessions. Nothing durable is lost by using
+the scratchpad — every executed script is persisted under the run directory and
+returned as `scriptPath`; iterate by editing THAT file and re-running with
+`script_path`.
 
 `max_agent_depth` controls nested agent delegation for the whole workflow. It
 defaults to `1`, so agents dispatched directly by workflow `agent()` calls are
@@ -126,11 +138,15 @@ fail with a migration error rather than running with partially inherited routing
   regardless of `agent_type`, so use workflows there for parallel research and
   synthesis, not edits.
 - `await parallel(thunks)` — run zero-arg thunks concurrently and wait for ALL (a barrier).
-  A thunk that raises resolves to `None`; the call never rejects. Filter `None` before use.
+  A thunk that raises resolves to `None` and the drop is reported in the progress log and
+  transcript with the offending script line — check those reports before trusting a fan-out
+  full of `None`s. Budget/agent-cap exhaustion is never swallowed; it fails the run.
+  Filter `None` before use.
 - `await pipeline(items, *stages)` — run each item through all stages independently, with
   NO barrier between stages (item A can be in stage 3 while item B is still in stage 1).
   Each stage is called with `(prev_result, original_item, index)` — write `lambda r: ...`
-  or `lambda prev, item, i: ...`, both work. A stage that raises drops that item to `None`.
+  or `lambda prev, item, i: ...`, both work. A stage that raises drops that item to `None`,
+  reported the same way as `parallel` drops; budget/agent-cap exhaustion fails the run.
   This is the DEFAULT for multi-stage work; only use a `parallel` barrier when a stage
   genuinely needs ALL prior results at once (dedup/merge, early-exit on zero).
 - `phase(title)` — start a phase; later `agent()` calls group under it in the UI.
@@ -139,6 +155,13 @@ fail with a migration error rather than running with partially inherited routing
 - `budget` — token budget: `budget.total`, `budget.spent()`, `budget.remaining()`.
   `agent()` raises once the total is reached. With no `token_budget` set, `remaining()`
   is `inf` — so guard budget loops on `budget.total` being set.
+  SIZING: the ceiling counts EVERY sub-agent's full output including its reasoning
+  tokens. Observed spend per call in real runs: review/investigation median ~6k with
+  p90 ~24k; general ~12k; coder median ~20k with p90 ~80k. Budget roughly
+  review_calls x 15k + coder_calls x 50k, then double it — the budget is a runaway
+  backstop, not a target. When unsure, omit `token_budget` entirely. The run warns at
+  75% and 90% spend, and an exhausted run stops mid-fan-out but is resumable with its
+  completed calls replaying free.
 
 ### Rules that keep workflows correct
 
@@ -147,6 +170,17 @@ fail with a migration error rather than running with partially inherited routing
 - Scripts must be DETERMINISTIC: `import`, `open`, `time`, and `random` are unavailable
   (this is what makes resume work). Pass any timestamps/seeds in via `args`. Vary agents
   by index/prompt, not by randomness.
+- Give every `agent()` in a fan-out a label that is unique in the run — include the
+  item's identifying fingerprint (finding id, file, shard AND seat number), e.g.
+  `label=f"verify:{f['id']}#{seat}"`. Labels name transcripts and progress lines;
+  duplicates make agents indistinguishable there.
+- Make each agent's PROMPT self-distinguishing. Two `agent()` calls with identical
+  prompt, schema, and agent_type are the same call to the resume cache: on resume their
+  cached results are interchangeable. When fanning N skeptics over one finding, say so
+  in the prompt ("You are skeptic {i+1} of {n}; take a distinct angle") — this makes
+  resume exact and the votes genuinely independent. If a prompt depends on an earlier
+  call's side effects (files it wrote), embed that call's output or a revision marker
+  in the prompt.
 - Concurrency is capped automatically; you may pass large lists to `parallel`/`pipeline`
   (up to 4096) and they all complete — only a handful active execution chains run
   at once. Nested dispatch within one direct worker is serialized. A lifetime cap
@@ -158,7 +192,11 @@ fail with a migration error rather than running with partially inherited routing
 - Run totals and failed-agent artifacts include finalized output from direct and
   built-in nested workers, including usage recorded before a later failure.
 - Use `schema` for anything you'll compute over (counts, filtering, merging). The
-  sub-agent is forced to return data matching the schema instead of prose.
+  sub-agent is forced to return data matching the schema instead of prose. `agent()`
+  returns the FULL object matching the schema — with `{"properties": {"findings": ...}}`
+  you get `{"findings": [...]}` back, not the inner array. Unwrap before iterating:
+  `for f in (result or {}).get("findings") or []`. Iterating the wrapper dict itself
+  yields its string keys and typically crashes the stage, silently dropping that item.
 
 ### Quality patterns to compose
 
@@ -181,6 +219,8 @@ fail with a migration error rather than running with partially inherited routing
   clusters → fix isolated causes → rerun targeted tests.
 - Adversarial verify: for each finding, spawn N skeptics prompted to REFUTE it; keep it
   only if a majority fail to refute. Prevents plausible-but-wrong findings surviving.
+  Number the seats in each skeptic's prompt (not just the label) so the votes are
+  distinct calls with distinct angles rather than N copies of one prompt.
 - Loop-until-dry: for unknown-size discovery, keep spawning finders until K consecutive
   rounds surface nothing new (dedup against everything seen, not just confirmed items).
 - Judge panel: generate N independent attempts from different angles, score with parallel
@@ -247,6 +287,15 @@ workflow, not as a transcript-recovery mechanism.
 Each run persists its script, full results, a readable transcript, raw JSONL, and a
 resume journal under the state directory and returns a `runId` plus artifact paths.
 To iterate, edit the script and re-run with `script_path`, or pass `resume_from_run_id`
-to replay cached `agent()` results for the unchanged prefix and only re-run new/changed
-calls.
+to replay cached `agent()` results for every call whose content is unchanged (matched
+by call content, not position — reordering or inserting calls doesn't invalidate the
+rest) and only re-run new/changed calls. Resumed runs journal what they replayed, so
+resuming a resumed run replays exactly.
+
+If a `run_workflow` call was interrupted (its tool result says "Operation was
+interrupted", or the run was otherwise cut short), do NOT re-run the script from
+scratch: call `list_workflow_runs`, take the most recent interrupted run, and pass its
+id as `resume_from_run_id` — every agent call it completed replays from the journal at
+no cost. `list_workflow_runs` shows only this session's runs; a run still listed as
+"running" when no workflow is in flight died mid-run and is resumable the same way.
 """

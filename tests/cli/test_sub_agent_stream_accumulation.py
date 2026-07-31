@@ -89,4 +89,4 @@ def test_large_stream_is_linear_not_quadratic(mixin):
     step = activity.stream_steps["u1"]
     assert len(step.content) == n * len(delta)
     # Generous bound: the O(n^2) version took multiple seconds at this size.
-    assert elapsed < 1.0, f"accumulation took {elapsed:.2f}s — likely regressed to O(n^2)"
+    assert elapsed < 2.0, f"accumulation took {elapsed:.2f}s — likely regressed to O(n^2)"

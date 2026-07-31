@@ -20,6 +20,9 @@ from typing import Any, Dict
 from .errors import WorkflowScriptError
 
 WRAPPER_NAME = "__workflow_main__"
+# Filename the script is compiled under; traceback frames with this filename
+# carry line numbers into the authored source (AST wrapping preserves them).
+SCRIPT_FILENAME = "<workflow>"
 DEFAULT_MAX_AGENT_DEPTH = 1
 MAX_AGENT_DEPTH = 2
 
@@ -173,7 +176,7 @@ async def run_script(source: str, namespace: Dict[str, Any]) -> Any:
     """
     try:
         module = _wrap_as_coroutine(source)
-        code = compile(module, "<workflow>", "exec")
+        code = compile(module, SCRIPT_FILENAME, "exec")
     except SyntaxError as exc:
         raise WorkflowScriptError(f"workflow script has a syntax error: {exc}") from exc
 
