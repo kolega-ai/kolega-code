@@ -88,6 +88,7 @@ async def test_textual_app_mounts_with_fake_agent(tmp_path: Path, monkeypatch: p
 
     async with app.run_test():
         assert isinstance(app.agent, FakeCoderAgent)
+        assert app._onboarding_screen is None
         assert app.mode == AgentMode.CLI.value
         assert app.interaction_mode == "build"
         assert app.session.mode == AgentMode.CLI.value
@@ -255,6 +256,7 @@ async def test_textual_app_mounts_settings_without_api_key(
     pytest.importorskip("textual")
 
     from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.onboarding_screen import OnboardingScreen
     from kolega_code.cli.tui.widgets import ChatComposer
     from textual.widgets import TabbedContent
 
@@ -275,6 +277,11 @@ async def test_textual_app_mounts_settings_without_api_key(
     )
 
     async with app.run_test():
+        onboarding = app._onboarding_screen
+        assert isinstance(onboarding, OnboardingScreen)
+        assert app.screen is onboarding
+        assert onboarding.is_mounted
+        assert onboarding.query_one("#onboarding_step_welcome") is not None
         assert app.agent is None
         composer = app.query_one("#composer", ChatComposer)
         assert composer.disabled is True
@@ -307,6 +314,7 @@ async def test_textual_app_does_not_select_model_from_api_key_env(
     pytest.importorskip("textual")
 
     from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui.onboarding_screen import OnboardingScreen
     from kolega_code.cli.tui.widgets import ChatComposer
 
     install_fake_agents(monkeypatch, coder_cls=_GuardCoderAgent)
@@ -328,6 +336,11 @@ async def test_textual_app_does_not_select_model_from_api_key_env(
     )
 
     async with app.run_test():
+        onboarding = app._onboarding_screen
+        assert isinstance(onboarding, OnboardingScreen)
+        assert app.screen is onboarding
+        assert onboarding.is_mounted
+        assert onboarding.query_one("#onboarding_step_welcome") is not None
         assert app.agent is None
         composer = app.query_one("#composer", ChatComposer)
         assert composer.disabled is True

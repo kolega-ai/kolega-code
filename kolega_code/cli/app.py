@@ -522,7 +522,7 @@ class KolegaCodeApp(
             await self._ensure_agent_from_settings()
         await self._restore_loop_on_startup()
         if self.config is None and not self._onboarding_skipped:
-            self.call_after_refresh(self.action_open_onboarding)
+            await self.action_open_onboarding()
 
     @property
     def _conversation(self) -> tui_widgets.ConversationView:
@@ -1066,7 +1066,7 @@ class KolegaCodeApp(
             return
         if event.button.id == "open_settings":
             if self.config is None:
-                self.action_open_onboarding()
+                await self.action_open_onboarding()
             else:
                 self.action_open_settings()
             return
@@ -1238,13 +1238,13 @@ class KolegaCodeApp(
     def _close_memory_manager(self) -> None:
         self.memory_manager.close()
 
-    def action_open_onboarding(self) -> None:
+    async def action_open_onboarding(self) -> None:
         """Open the independent connection wizard."""
         if self.config is not None or self._onboarding_screen is not None or self._settings_screen is not None:
             return
         screen = tui_onboarding.OnboardingScreen(self)
         self._onboarding_screen = screen
-        self._push_fullscreen_modal(screen)
+        await self.push_screen(screen, callback=self._on_fullscreen_modal_dismissed)
 
     def action_open_sub_agent(self, key: Optional[str] = None) -> None:
         """Open the full-screen sub-agent inspector (mission control)."""
