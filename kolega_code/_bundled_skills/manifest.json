@@ -5,6 +5,26 @@
       "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
     },
     {
+      "path": "skills/deep-research/SKILL.md",
+      "sha256": "1fbbef0e49a27ff23917a28c8c4baf7aa9005458ce10e55f895f2649103f12af"
+    },
+    {
+      "path": "skills/deep-research/references/evidence-and-reporting.md",
+      "sha256": "933965dde6b5f95c00d68185251469553fde727779d2bb4113e7749527955418"
+    },
+    {
+      "path": "skills/deep-research/references/gigacode-workflow.md",
+      "sha256": "097807156d55a29d12b16a3a5d496a41fb07f152476e95e390699dec1842bc6a"
+    },
+    {
+      "path": "skills/deep-research/scripts/deep-research.workflow",
+      "sha256": "5207a175f1f1b4144d1c1e53c66e351c20006444e9d31abc7ce3f9be9204df3c"
+    },
+    {
+      "path": "skills/deep-research/scripts/materialize_report.py",
+      "sha256": "2e9d652b05b62c9f08ebbbf47b72b0156e1cf8bd39ddf33ee1416315932c600f"
+    },
+    {
       "path": "skills/docx/LICENSE",
       "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
     },
@@ -39,6 +59,14 @@
     {
       "path": "skills/docx/scripts/smoke_test.py",
       "sha256": "1cb265f9b129032a09586132a4bfb4924bbd0aefa6dfa6c641576e1e159b3ece"
+    },
+    {
+      "path": "skills/humanizer/LICENSE",
+      "sha256": "4ac4810254ab36d45419141aeb8e69bf50652cfafe5b2dab947d06d44e5cbf96"
+    },
+    {
+      "path": "skills/humanizer/SKILL.md",
+      "sha256": "2fc8fa3cefe67013f2fecfa9ec63564a4a821ddcc03da483d7b1ade00762ca3c"
     },
     {
       "path": "skills/pdf/LICENSE",
@@ -179,7 +207,9 @@
   ],
   "schema_version": 1,
   "skills": [
+    "deep-research",
     "docx",
+    "humanizer",
     "pdf",
     "pptx",
     "review",
@@ -187,8 +217,8 @@
     "xlsx"
   ],
   "source": {
-    "commit": "22eeee98363a92c199d234a10a798cbdaf3998e2",
+    "commit": "c0ba68e7aee0994318913aa9fcaad4f57cbc11d7",
     "repository": "https://github.com/kolega-ai/kolega-skills",
-    "tag": "v0.2.1"
+    "tag": "v0.3.0"
   }
 }
