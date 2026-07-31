@@ -50,6 +50,17 @@ return {"confirmed": confirmed}
 without running the script. Required keys: `name`, `description`. Optional keys:
 `phases` and `max_agent_depth`.
 
+### Where scripts live
+
+Pass short scripts inline via `script`. Draft a long script in your session
+scratchpad directory (its path is in your system prompt) and pass `script_path`.
+Do NOT write workflow scripts into the project working tree unless the user
+explicitly asks for a repo-versioned workflow: generated scripts there pollute
+`git status` and go stale for future sessions. Nothing durable is lost by using
+the scratchpad — every executed script is persisted under the run directory and
+returned as `scriptPath`; iterate by editing THAT file and re-running with
+`script_path`.
+
 `max_agent_depth` controls nested agent delegation for the whole workflow. It
 defaults to `1`, so agents dispatched directly by workflow `agent()` calls are
 leaves and receive no agent-dispatch tools. The only other accepted value, and

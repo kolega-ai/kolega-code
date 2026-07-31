@@ -81,7 +81,11 @@ RUN_WORKFLOW_INPUT_SCHEMA = {
         },
         "script_path": {
             "type": "string",
-            "description": "Path to a script file on disk; takes precedence over `script`.",
+            "description": (
+                "Path to a script file on disk; takes precedence over `script`. Draft long scripts "
+                "in the session scratchpad, not the project working tree; the executed script is "
+                "persisted under the run directory either way, and that copy is the one to iterate on."
+            ),
         },
         "resume_from_run_id": {
             "type": "string",
@@ -153,6 +157,7 @@ class WorkflowTool(BaseTool):
                 ~6-24k output tokens each and coder calls ~20-80k, so size generously
                 or omit.
             script_path: Path to a script file on disk; takes precedence over `script`.
+                Draft long scripts in the session scratchpad, not the project tree.
             resume_from_run_id: Resume from a prior run, replaying cached agent() results
                 for calls whose content is unchanged (matched by call content, not
                 position) and running new/changed calls live.

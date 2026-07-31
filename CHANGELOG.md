@@ -14,6 +14,11 @@ This project uses GitHub Releases for detailed generated release notes. This fil
   had salvaged only 6 of 91 completed calls). Resumed runs also journal what
   they replayed, making a resume of a resume exact, and a duplicate `agent()`
   label now logs a one-time authoring hint. Existing journals work unchanged.
+- Workflow scripts now have a designated drafting location. The authoring
+  guide and `script_path` docs direct models to draft long scripts in the
+  session scratchpad instead of the project working tree — generated scripts
+  in the repo pollute `git status` and go stale for later sessions. The
+  executed script is persisted under the run directory either way.
 - Workflow token budgets are harder to undersize by accident. The
   `token_budget` schema, tool docstrings, and authoring guide now carry
   evidence-based sizing anchors (measured across real runs: review calls

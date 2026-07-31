@@ -1548,6 +1548,7 @@ class ToolCollection(LogMixin):
                 ~6-24k output tokens each and coder calls ~20-80k, so size generously
                 or omit.
             script_path: Path to a script file on disk; takes precedence over `script`.
+                Draft long scripts in the session scratchpad, not the project tree.
             resume_from_run_id: Resume a prior run, replaying cached agent() results for
                 calls whose content is unchanged (matched by call content, not position)
                 and running new/changed calls live.
