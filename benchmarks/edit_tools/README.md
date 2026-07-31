@@ -213,7 +213,7 @@ uv run python -m benchmarks.edit_tools provider-smoke \
 ```
 
 This currently covers Anthropic, OpenAI, OpenAI ChatGPT OAuth, Google,
-Moonshot, Kimi Coding, Z.AI, DeepSeek, xAI, Fireworks, Together, DashScope, and
+Moonshot, Kimi Coding, Z.AI, DeepSeek, xAI, Fireworks, Together, DashScope, OpenRouter, and
 Ollama Cloud. Missing credentials are recorded as `not_run`; `--require-complete`
 returns non-zero unless every provider/protocol trial passes. Groq and local
 Llama remain available for explicit research matrices but are not part of this

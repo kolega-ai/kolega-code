@@ -105,7 +105,17 @@ class LLMClient:
             from .providers.openai_responses import OpenAIResponsesProvider
 
             return OpenAIResponsesProvider
-        if p in ("together", "groq", "fireworks", "llama", "xai", "dashscope", "deepseek", "ollama_cloud"):
+        if p in (
+            "together",
+            "groq",
+            "fireworks",
+            "llama",
+            "xai",
+            "dashscope",
+            "deepseek",
+            "ollama_cloud",
+            "openrouter",
+        ):
             from .providers.openai import OpenAIProvider
 
             return OpenAIProvider
@@ -167,6 +177,7 @@ class LLMClient:
                 "zai": "https://api.z.ai/api/anthropic",
                 "kimi_coding": "https://api.kimi.com/coding",
                 "ollama_cloud": "https://ollama.com/v1",
+                "openrouter": "https://openrouter.ai/api/v1",
             }
 
             provider_class = self._provider_class(provider)

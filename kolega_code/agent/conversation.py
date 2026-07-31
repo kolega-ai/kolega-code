@@ -23,6 +23,7 @@ from kolega_code.llm.models import (
     ToolCall,
     ToolResult,
 )
+from kolega_code.llm.specs import prior_reasoning_is_replayable
 from kolega_code.utils import images as image_utils
 from kolega_code.agent.tool_backend.hashline_v2 import strip_hashline_read_output
 
@@ -235,9 +236,19 @@ def _providers_replay_compatible(source_provider: str, target_provider: str) -> 
     return any(source_provider in group and target_provider in group for group in _REASONING_COMPATIBLE_GROUPS)
 
 
-def _preserve_reasoning_block(block: Any, *, source_provider: str, target_provider: str) -> bool:
+def _preserve_reasoning_block(
+    block: Any, *, source_provider: str, target_provider: str, target_model: str = ""
+) -> bool:
     _ = block
-    return _providers_replay_compatible(source_provider, target_provider)
+    if not _providers_replay_compatible(source_provider, target_provider):
+        return False
+    # Same-provider reasoning is normally safe to send back, but a gateway can
+    # front a model whose reasoning is only valid with provider-native metadata
+    # the gateway does not round-trip (Anthropic thinking signatures). Replaying
+    # it there is rejected upstream, and rendering it as visible text gets echoed.
+    if target_model and not prior_reasoning_is_replayable(target_provider, target_model):
+        return False
+    return True
 
 
 # Foreign reasoning used to be replaced with a text placeholder here. Do not
@@ -325,7 +336,12 @@ def _adapt_content_blocks_for_provider(
             adapted.append(adapted_block)
             changed = changed or image_changed
         elif isinstance(block, (ThinkingBlock, RedactedThinkingBlock, ResponsesReasoningBlock)):
-            if _preserve_reasoning_block(block, source_provider=source_provider, target_provider=target_provider):
+            if _preserve_reasoning_block(
+                block,
+                source_provider=source_provider,
+                target_provider=target_provider,
+                target_model=target_model,
+            ):
                 adapted.append(block)
             else:
                 # Dropped, never substituted — see _ECHOED_REASONING_PLACEHOLDER.

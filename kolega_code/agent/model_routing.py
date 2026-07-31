@@ -12,6 +12,8 @@ from kolega_code.llm.specs import (
     MODEL_SPECS,
     default_thinking_effort,
     get_model_specs,
+    is_featured_model,
+    provider_has_featured_models,
     supports_vision,
     thinking_effort_options,
     validate_thinking_effort,
@@ -298,6 +300,12 @@ def subagent_model_catalog(config: AgentConfig, provider: Optional[str] = None) 
         }
 
     models_by_provider: dict[str, list[dict[str, Any]]] = {}
+    # Gateway providers catalog hundreds of models. Listing them all would put
+    # hundreds of table rows into every dispatch prompt, so only featured models
+    # are enumerated; any catalogued model is still accepted as an override.
+    featured_only_providers = {
+        provider_value for provider_value, _ in MODEL_SPECS if provider_has_featured_models(provider_value)
+    }
     for provider_value, model_name in MODEL_SPECS:
         try:
             model_provider = ModelProvider(provider_value)
@@ -306,6 +314,8 @@ def subagent_model_catalog(config: AgentConfig, provider: Optional[str] = None) 
         if provider_filter is not None and model_provider != provider_filter:
             continue
         if not provider_is_configured(config, model_provider):
+            continue
+        if provider_value in featured_only_providers and not is_featured_model(provider_value, model_name):
             continue
         efforts = thinking_effort_options(model_provider, model_name)
         models_by_provider.setdefault(provider_value, []).append(
@@ -352,6 +362,11 @@ def render_subagent_model_catalog(catalog: dict[str, Any]) -> str:
         "- Gigacode: `provider`, `model`, `effort`",
         "- Effort must be an exact listed value; use `null` only where efforts are `null`.",
     ]
+    if any(provider_has_featured_models(entry["provider"]) for entry in catalog["providers"]):
+        lines.append(
+            "- Gateway providers list only their most-used models here; any other "
+            "catalogued model id for them is also accepted."
+        )
     if {ModelProvider.OPENAI.value, ModelProvider.OPENAI_CHATGPT.value} <= configured:
         lines.append(f"- {SIBLING_PREFERENCE_ADVICE}")
     lines.extend(

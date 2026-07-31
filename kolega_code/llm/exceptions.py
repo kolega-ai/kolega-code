@@ -152,6 +152,7 @@ def _provider_display_name(provider: str | None) -> str:
         ModelProvider.DEEPSEEK.value: "DeepSeek",
         ModelProvider.LLAMA.value: "Llama",
         ModelProvider.OLLAMA_CLOUD.value: "Ollama Cloud",
+        ModelProvider.OPENROUTER.value: "OpenRouter",
     }
     if not provider:
         return "The selected provider"

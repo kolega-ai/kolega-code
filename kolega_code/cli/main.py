@@ -75,6 +75,7 @@ from .config import (
 )
 from .connection import CliConnectionManager
 from .mentions import build_file_attachments
+from .model_catalog import SORT_CHOICES, apply_catalog_overlay, run_models_list, run_models_refresh
 from .session_store import SessionRecord, SessionStore, SessionStoreError, resolve_active_project
 from .settings import CliSettings, SettingsStore, SettingsStoreError
 from .goal import (
@@ -110,7 +111,19 @@ from .skills import (
 )
 from .updater import check_for_update, run_self_update, update_status_message
 
-SUBCOMMANDS = {"ask", "sessions", "doctor", "update", "prompts", "agents", "browser", "mcp", "tui", "share"}
+SUBCOMMANDS = {
+    "ask",
+    "sessions",
+    "doctor",
+    "update",
+    "prompts",
+    "agents",
+    "browser",
+    "mcp",
+    "models",
+    "tui",
+    "share",
+}
 RESUME_LATEST = "__latest__"
 CLI_AGENT_MODE = AgentMode.CLI.value
 ASK_DEFAULT_PERMISSION_MODE = PermissionMode.AUTO.value
@@ -135,9 +148,14 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
     except (OSError, ValueError, RuntimeError):
         pass
     args = parse_args(list(argv) if argv is not None else sys.argv[1:])
+    # Merge any cached provider catalog before a command resolves a model. This
+    # only reads a local file; refreshing it is an explicit `models refresh`.
+    apply_catalog_overlay(getattr(args, "state_dir", None))
     try:
         if getattr(args, "version", False):
             return _run_version()
+        if args.command == "models":
+            return _run_models(args)
         if args.command == "ask":
             return asyncio.run(_run_ask(args))
         if args.command == "sessions":
@@ -451,6 +469,30 @@ def _build_subcommand_parser() -> argparse.ArgumentParser:
     doctor.add_argument("--project", default=".", type=Path, help="Project directory to check.")
     doctor.add_argument("--state-dir", type=Path, help="Directory for CLI session state.")
     _add_common_model_args(doctor)
+
+    models = subparsers.add_parser("models", help="Inspect and refresh the model catalog.")
+    models_sub = models.add_subparsers(dest="models_command", required=True)
+    models_list = models_sub.add_parser("list", help="List catalogued provider models.")
+    models_list.add_argument("--provider", help="Restrict the listing to one provider.")
+    models_list.add_argument(
+        "--featured",
+        action="store_true",
+        help="Only models offered in the picker (gateway providers list their most-used models).",
+    )
+    models_list.add_argument(
+        "--sort",
+        choices=SORT_CHOICES,
+        default="popularity",
+        help="popularity keeps catalog order (usage rank for gateways); id sorts alphabetically.",
+    )
+    models_list.add_argument("--json", action="store_true", help="Emit JSON instead of a table.")
+    models_list.add_argument("--state-dir", type=Path, help="Directory for CLI session state.")
+    models_refresh = models_sub.add_parser(
+        "refresh",
+        help="Fetch the provider's current model list into a local cache.",
+    )
+    models_refresh.add_argument("--provider", help="Provider to refresh (default: openrouter).")
+    models_refresh.add_argument("--state-dir", type=Path, help="Directory for CLI session state.")
 
     prompts = subparsers.add_parser("prompts", help="Manage project prompt override files.")
     prompts_sub = prompts.add_subparsers(dest="prompts_command", required=True)
@@ -1953,6 +1995,20 @@ def _parse_key_value_options(values: list[str], flag_name: str) -> dict[str, str
             raise ValueError(f"{flag_name} values must include a non-empty name")
         parsed[key] = value
     return parsed
+
+
+def _run_models(args: argparse.Namespace) -> int:
+    def _out(text: str) -> None:
+        _print_styled(text)
+
+    def _err(text: str) -> None:
+        _print_styled(f"kolega-code: {text}", style="error", stderr=True)
+
+    if args.models_command == "list":
+        return run_models_list(args, _out)
+    if args.models_command == "refresh":
+        return run_models_refresh(args, _out, _err)
+    raise ValueError(f"Unsupported models command: {args.models_command}")
 
 
 def _run_doctor(args: argparse.Namespace) -> int:

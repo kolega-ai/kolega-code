@@ -32,7 +32,7 @@ def test_provider_smoke_matrix_covers_every_catalog_provider() -> None:
     matrix = _catalog_smoke_matrix()
 
     assert [item.provider for item in matrix.models] == catalog_providers()
-    assert len(matrix.models) == 13
+    assert len(matrix.models) == 14
     assert all(
         item.protocols == ["search_replace", "codex_apply_patch", "claude_code", "hashline_v2"]
         for item in matrix.models

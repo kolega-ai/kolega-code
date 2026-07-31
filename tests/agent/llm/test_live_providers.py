@@ -44,6 +44,11 @@ SYSTEM = Message(
 # non-subscription smoke model so all-test runs avoid expensive/flaky/gated calls.
 OLLAMA_CLOUD_SMOKE_MODEL = "gpt-oss:20b"
 
+# OpenRouter fronts hundreds of models at wildly different prices. Its default
+# model is chosen for day-to-day use, not for a smoke test, so pin a cheap
+# reasoning- and tool-capable model here instead.
+OPENROUTER_SMOKE_MODEL = "openai/gpt-5.4-mini"
+
 
 def _messages() -> MessageHistory:
     return MessageHistory(
@@ -65,6 +70,8 @@ def _provider_smoke_models() -> list[tuple[str, str]]:
         added.add(provider_value)
         if provider_value == ModelProvider.OLLAMA_CLOUD.value:
             model = OLLAMA_CLOUD_SMOKE_MODEL
+        elif provider_value == ModelProvider.OPENROUTER.value:
+            model = OPENROUTER_SMOKE_MODEL
         else:
             model = default_model_for_provider(ModelProvider(provider_value))
         seen.append((provider_value, model))

@@ -4,6 +4,7 @@ from .accessors import (
     _provider_value,
     default_thinking_effort,
     get_thinking_effort_spec,
+    prior_reasoning_is_replayable,
     thinking_effort_options,
 )
 
@@ -100,6 +101,15 @@ def build_thinking_request_params(provider: str, model_name: str, effort: Option
         # Fireworks additionally accepts "none" to disable reasoning.
         return {"reasoning_effort": normalized}
 
+    if spec.mode == "openrouter_reasoning":
+        # OpenRouter nests reasoning controls in its own request object, which the
+        # OpenAI SDK doesn't model, so it travels via extra_body. Disabling has to
+        # go through {"enabled": False}: effort "none" is not honored by every
+        # upstream, and reasoning-mandatory models reject it outright.
+        if normalized == "none":
+            return {"extra_body": {"reasoning": {"enabled": False}}}
+        return {"extra_body": {"reasoning": {"effort": normalized}}}
+
     if spec.mode == "openai_responses_reasoning":
         # The Responses API nests reasoning effort under a "reasoning" object,
         # unlike Chat Completions' flat "reasoning_effort". We request
@@ -125,6 +135,9 @@ _REASONING_REPLAY_FIELDS: Dict[str, str] = {
     "deepseek": "reasoning_content",
     "fireworks": "reasoning_content",
     "ollama_cloud": "reasoning",
+    # OpenRouter emits reasoning as delta.reasoning and requires it echoed back on
+    # assistant tool-call turns whenever reasoning is enabled.
+    "openrouter": "reasoning",
     # xAI's Chat Completions endpoint returns and accepts reasoning_content even
     # though its public docs only describe the Responses API (verified live
     # against grok-4.3: streaming emits reasoning_content deltas and replaying it
@@ -135,7 +148,7 @@ _REASONING_REPLAY_FIELDS: Dict[str, str] = {
 # Chat-Completions reasoning modes whose reasoning text is replayable via a flat
 # top-level field. Responses/Anthropic/Google modes carry reasoning differently
 # and are excluded.
-_REASONING_REPLAY_MODES = frozenset({"openai_reasoning_effort", "deepseek_effort"})
+_REASONING_REPLAY_MODES = frozenset({"openai_reasoning_effort", "deepseek_effort", "openrouter_reasoning"})
 
 
 def reasoning_replay_field(provider: str, model_name: str) -> Optional[str]:
@@ -149,6 +162,10 @@ def reasoning_replay_field(provider: str, model_name: str) -> Optional[str]:
     """
     field = _REASONING_REPLAY_FIELDS.get(_provider_value(provider))
     if field is None:
+        return None
+    # A model whose reasoning cannot survive the round trip (an Anthropic model
+    # behind a gateway loses its thinking signature) must not replay at all.
+    if not prior_reasoning_is_replayable(provider, model_name):
         return None
     try:
         spec = get_thinking_effort_spec(provider, model_name)

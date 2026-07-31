@@ -1,0 +1,212 @@
+{
+ "data": [
+  {
+   "count": 10050003,
+   "date": "2026-07-30 00:00:00",
+   "model_permaslug": "anthropic/claude-opus-5-20260723",
+   "total_completion_tokens": 11618211016,
+   "total_prompt_tokens": 770948679325,
+   "variant": "standard"
+  },
+  {
+   "count": 3090,
+   "date": "2026-07-29 00:00:00",
+   "model_permaslug": "google/gemini-3.6-flash-20260721",
+   "total_completion_tokens": 2384163,
+   "total_prompt_tokens": 5509932,
+   "variant": "batch"
+  },
+  {
+   "count": 16599107,
+   "date": "2026-07-30 00:00:00",
+   "model_permaslug": "inclusionai/ling-3.0-flash-20260723",
+   "total_completion_tokens": 22633171457,
+   "total_prompt_tokens": 1273922723613,
+   "variant": "free"
+  },
+  {
+   "count": 60930965,
+   "date": "2026-07-30 00:00:00",
+   "model_permaslug": "tencent/hy3-20260706",
+   "total_completion_tokens": 73705876515,
+   "total_prompt_tokens": 4718985895335,
+   "variant": "standard"
+  },
+  {
+   "count": 706013923,
+   "date": "2026-07-30 00:00:00",
+   "model_permaslug": "deepseek/deepseek-v4-flash-20260423",
+   "total_completion_tokens": 491758646291,
+   "total_prompt_tokens": 7078570436994,
+   "variant": "standard"
+  },
+  {
+   "count": 18041422,
+   "date": "2026-07-30 00:00:00",
+   "model_permaslug": "moonshotai/kimi-k3-20260715",
+   "total_completion_tokens": 16544998702,
+   "total_prompt_tokens": 1328350491986,
+   "variant": "standard"
+  },
+  {
+   "count": 117540289,
+   "date": "2026-07-30 00:00:00",
+   "model_permaslug": "deepseek/deepseek-v4-pro-20260423",
+   "total_completion_tokens": 129026923302,
+   "total_prompt_tokens": 3464729732366,
+   "variant": "standard"
+  },
+  {
+   "count": 269668907,
+   "date": "2026-07-30 00:00:00",
+   "model_permaslug": "google/gemini-2.5-flash-lite",
+   "total_completion_tokens": 56240683169,
+   "total_prompt_tokens": 647067427089,
+   "variant": "standard"
+  },
+  {
+   "count": 36189465,
+   "date": "2026-07-30 00:00:00",
+   "model_permaslug": "anthropic/claude-4.6-sonnet-20260217",
+   "total_completion_tokens": 21142158720,
+   "total_prompt_tokens": 914634393902,
+   "variant": "standard"
+  },
+  {
+   "count": 11035480,
+   "date": "2026-07-30 00:00:00",
+   "model_permaslug": "xiaomi/mimo-v2.5-pro-20260422",
+   "total_completion_tokens": 7454238380,
+   "total_prompt_tokens": 636959669665,
+   "variant": "standard"
+  },
+  {
+   "count": 27692693,
+   "date": "2026-07-30 00:00:00",
+   "model_permaslug": "openai/gpt-5.4-mini-20260317",
+   "total_completion_tokens": 12212815450,
+   "total_prompt_tokens": 191964038616,
+   "variant": "standard"
+  },
+  {
+   "count": 26496371,
+   "date": "2026-07-30 00:00:00",
+   "model_permaslug": "nvidia/nemotron-3-ultra-550b-a55b-20260604",
+   "total_completion_tokens": 17403020642,
+   "total_prompt_tokens": 2675275595590,
+   "variant": "free"
+  },
+  {
+   "count": 14958693,
+   "date": "2026-07-30 00:00:00",
+   "model_permaslug": "google/gemini-3.1-pro-preview-20260219",
+   "total_completion_tokens": 23941676847,
+   "total_prompt_tokens": 168695814989,
+   "variant": "standard"
+  },
+  {
+   "count": 26505332,
+   "date": "2026-07-30 00:00:00",
+   "model_permaslug": "stepfun/step-3.7-flash-20260528",
+   "total_completion_tokens": 18384635685,
+   "total_prompt_tokens": 1724263364274,
+   "variant": "standard"
+  },
+  {
+   "count": 120856079,
+   "date": "2026-07-30 00:00:00",
+   "model_permaslug": "openai/gpt-oss-120b",
+   "total_completion_tokens": 72975081484,
+   "total_prompt_tokens": 432376805557,
+   "variant": "standard"
+  },
+  {
+   "count": 9520909,
+   "date": "2026-07-30 00:00:00",
+   "model_permaslug": "x-ai/grok-4.5-20260708",
+   "total_completion_tokens": 8051247843,
+   "total_prompt_tokens": 468134726734,
+   "variant": "standard"
+  },
+  {
+   "count": 119284886,
+   "date": "2026-07-30 00:00:00",
+   "model_permaslug": "google/gemini-3-flash-preview-20251217",
+   "total_completion_tokens": 44751557958,
+   "total_prompt_tokens": 936020887139,
+   "variant": "standard"
+  },
+  {
+   "count": 168206841,
+   "date": "2026-07-30 00:00:00",
+   "model_permaslug": "google/gemini-2.5-flash",
+   "total_completion_tokens": 47634155332,
+   "total_prompt_tokens": 548336720195,
+   "variant": "standard"
+  },
+  {
+   "count": 115047707,
+   "date": "2026-07-30 00:00:00",
+   "model_permaslug": "google/gemini-3.1-flash-lite-20260507",
+   "total_completion_tokens": 29870509088,
+   "total_prompt_tokens": 542093350640,
+   "variant": "standard"
+  },
+  {
+   "count": 74351294,
+   "date": "2026-07-30 00:00:00",
+   "model_permaslug": "z-ai/glm-5.2-20260616",
+   "total_completion_tokens": 66791548565,
+   "total_prompt_tokens": 3173376311517,
+   "variant": "standard"
+  },
+  {
+   "count": 129120050,
+   "date": "2026-07-30 00:00:00",
+   "model_permaslug": "xiaomi/mimo-v2.5-20260422",
+   "total_completion_tokens": 75186273711,
+   "total_prompt_tokens": 8825320895104,
+   "variant": "standard"
+  },
+  {
+   "count": 9394909,
+   "date": "2026-07-30 00:00:00",
+   "model_permaslug": "openai/gpt-5.6-sol-20260709",
+   "total_completion_tokens": 5923806312,
+   "total_prompt_tokens": 473161366305,
+   "variant": "standard"
+  },
+  {
+   "count": 18671525,
+   "date": "2026-07-30 00:00:00",
+   "model_permaslug": "anthropic/claude-sonnet-5-20260630",
+   "total_completion_tokens": 14981666301,
+   "total_prompt_tokens": 1003249258764,
+   "variant": "standard"
+  },
+  {
+   "count": 121980975,
+   "date": "2026-07-30 00:00:00",
+   "model_permaslug": "openai/gpt-4o-mini",
+   "total_completion_tokens": 10773820588,
+   "total_prompt_tokens": 212018680099,
+   "variant": "standard"
+  },
+  {
+   "count": 37775054,
+   "date": "2026-07-30 00:00:00",
+   "model_permaslug": "minimax/minimax-m3-20260531",
+   "total_completion_tokens": 31229342286,
+   "total_prompt_tokens": 1986099288819,
+   "variant": "standard"
+  },
+  {
+   "count": 11409343,
+   "date": "2026-07-30 00:00:00",
+   "model_permaslug": "anthropic/claude-4.8-opus-20260528",
+   "total_completion_tokens": 10151620907,
+   "total_prompt_tokens": 665545930295,
+   "variant": "standard"
+  }
+ ]
+}

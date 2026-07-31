@@ -51,6 +51,7 @@ provider or model.
 | `ZAI_API_KEY` | Z.AI (GLM Coding Plan) |
 | `KIMI_CODING_API_KEY` | Kimi Coding Plan |
 | `OLLAMA_API_KEY` | Ollama Cloud |
+| `OPENROUTER_API_KEY` | OpenRouter |
 
 The local `llama` provider needs no key. The `zai` key authenticates against Z.AI's
 Anthropic-compatible endpoint (it is the key Z.AI also documents as `ANTHROPIC_AUTH_TOKEN`).
@@ -58,6 +59,19 @@ The `kimi_coding` key authenticates against the Kimi Coding Plan's separate
 Anthropic-compatible endpoint (`https://api.kimi.com/coding/`), which is distinct from the
 standard Moonshot API used by the `moonshot` provider.
 The `OLLAMA_API_KEY` key authenticates against Ollama Cloud's direct API (`https://ollama.com/v1` for OpenAI-compatible requests).
+The `OPENROUTER_API_KEY` key authenticates against the OpenRouter gateway (`https://openrouter.ai/api/v1`).
+
+### OpenRouter tuning
+
+All optional; unset means Kolega Code sends nothing for that field.
+
+| Variable | Purpose |
+| --- | --- |
+| `KOLEGA_CODE_OPENROUTER_MAX_TOKENS` | Send an explicit output cap. By default no `max_tokens` is sent, because on a gateway it biases which upstream serves the request. Useful on a low credit balance. |
+| `KOLEGA_CODE_OPENROUTER_PROVIDER_ORDER` | Comma-separated upstream provider slugs to try in order (OpenRouter `provider.order`). |
+| `KOLEGA_CODE_OPENROUTER_PROVIDER_ONLY` | Comma-separated upstream provider slugs to restrict routing to (OpenRouter `provider.only`). |
+| `KOLEGA_CODE_OPENROUTER_CATALOG` | Read the refreshed model cache from this path instead of the state directory. |
+| `KOLEGA_CODE_DISABLE_OPENROUTER_CATALOG` | Ignore any refreshed cache and use only the catalog bundled with this release. |
 
 ## Model selection
 

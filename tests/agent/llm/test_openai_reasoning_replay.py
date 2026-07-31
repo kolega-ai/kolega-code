@@ -215,3 +215,42 @@ def test_streamed_deepseek_reasoning_round_trips_to_reasoning_content():
 
     assert out["reasoning_content"] == "streamed cot"
     assert out["content"] == [{"type": "text", "text": "final"}]
+
+
+# --- openrouter gateway ---------------------------------------------------
+
+
+def test_reasoning_replay_field_openrouter_uses_reasoning():
+    # OpenRouter emits reasoning as delta.reasoning and requires it echoed back
+    # on assistant tool-call turns whenever reasoning is enabled.
+    assert reasoning_replay_field("openrouter", "z-ai/glm-5.2") == "reasoning"
+    assert reasoning_replay_field("openrouter", "deepseek/deepseek-v4-pro") == "reasoning"
+
+
+def test_reasoning_replay_field_openrouter_anthropic_models_opt_out():
+    # Anthropic reasoning is carried by signed thinking blocks; a plain
+    # `reasoning` string cannot reconstruct one, so nothing is replayed.
+    assert reasoning_replay_field("openrouter", "anthropic/claude-opus-5") is None
+    assert reasoning_replay_field("openrouter", "anthropic/claude-sonnet-5") is None
+
+
+def test_reasoning_replay_field_openrouter_non_reasoning_model():
+    # minimax/minimax-m3 exposes no effort control, so there is nothing to replay.
+    assert reasoning_replay_field("openrouter", "minimax/minimax-m3") is None
+    assert reasoning_replay_field("openrouter", "nope/not-a-model") is None
+
+
+def test_openrouter_thinking_block_serializes_as_reasoning_on_a_tool_call_turn():
+    asst = _assistant(
+        ThinkingBlock(thinking="checking the forecast"),
+        TextBlock("calling the tool"),
+        ToolCall(id="t9", name="get_weather", input={"city": "Dublin"}),
+        provider="openrouter",
+    )
+
+    out = MessageHistory([asst]).to_openai(provider="openrouter", model="z-ai/glm-5.2")[0]
+
+    assert out["reasoning"] == "checking the forecast"
+    assert out["content"] == [{"type": "text", "text": "calling the tool"}]
+    assert "*Thinking:*" not in str(out["content"])
+    assert out["tool_calls"][0]["id"] == "t9"

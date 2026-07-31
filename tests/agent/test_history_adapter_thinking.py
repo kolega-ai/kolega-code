@@ -470,3 +470,63 @@ def test_adapt_leaves_ordinary_assistant_prose_untouched():
     )
 
     assert out is history
+
+
+def test_adapt_preserves_openrouter_thinking_for_a_replayable_model():
+    history = [
+        _assistant(
+            ThinkingBlock(thinking="gateway reasoning"),
+            TextBlock(text="answer"),
+            provider="openrouter",
+        )
+    ]
+
+    out = adapt_history_for_provider(
+        history,
+        target_provider="openrouter",
+        target_model="z-ai/glm-5.2",
+        supports_vision=False,
+    )
+
+    assert out is history
+    assert isinstance(out[0].content[0], ThinkingBlock)
+    assert out[0].content[0].thinking == "gateway reasoning"
+
+
+def test_adapt_drops_openrouter_thinking_for_anthropic_backed_models():
+    # Anthropic reasoning behind the gateway loses its thinking signature, so it
+    # is dropped rather than replayed or rendered as visible text (a visible
+    # placeholder gets echoed back by the model and then persisted).
+    history = [
+        _assistant(
+            ThinkingBlock(thinking="gateway reasoning"),
+            TextBlock(text="answer"),
+            provider="openrouter",
+        )
+    ]
+
+    out = adapt_history_for_provider(
+        history,
+        target_provider="openrouter",
+        target_model="anthropic/claude-opus-5",
+        supports_vision=True,
+    )
+
+    assert out is not history
+    assert [type(block) for block in out[0].content] == [TextBlock]
+    assert "*Thinking:*" not in str(out[0].content)
+    assert "omitted for compatibility" not in str(out[0].content)
+
+
+def test_adapt_drops_reasoning_only_openrouter_message_for_anthropic_backed_models():
+    history = [_assistant(ThinkingBlock(thinking="gateway reasoning"), provider="openrouter")]
+
+    out = adapt_history_for_provider(
+        history,
+        target_provider="openrouter",
+        target_model="anthropic/claude-opus-5",
+        supports_vision=True,
+    )
+
+    # Reasoning was the whole message, so the message itself goes away.
+    assert out == []

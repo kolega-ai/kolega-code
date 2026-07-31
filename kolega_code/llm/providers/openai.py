@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import math
+import os
 import threading
 import uuid
 
@@ -22,7 +23,7 @@ from ..models import (
     ToolDefinition,
     ToolResult,
 )
-from ..specs import build_thinking_request_params
+from ..specs import MODEL_SPECS, build_thinking_request_params
 from ..timeouts import streaming_timeout
 from ..tool_execution_ids import ToolExecutionIdRegistry
 from .base import BaseLLMProvider
@@ -37,12 +38,87 @@ from .models import GenerationParams, TokenCount
 _ENCODING_NAME = "cl100k_base"
 _encoding = None
 
+# The OpenRouter gateway needs request/response handling the direct OpenAI-compatible
+# providers do not (see _apply_openrouter_request_rules and _capture_usage_details).
+OPENROUTER_PROVIDER = "openrouter"
+
 
 def _get_encoding():
     global _encoding
     if _encoding is None:
         _encoding = tiktoken.get_encoding(_ENCODING_NAME)
     return _encoding
+
+
+def _positive_int_env(name: str) -> Optional[int]:
+    """Read a positive integer override from the environment, ignoring junk."""
+    raw = os.environ.get(name)
+    if not raw:
+        return None
+    try:
+        value = int(raw.strip())
+    except ValueError:
+        logging.getLogger(__name__).warning("Ignoring non-integer %s=%r", name, raw)
+        return None
+    if value <= 0:
+        logging.getLogger(__name__).warning("Ignoring non-positive %s=%r", name, raw)
+        return None
+    return value
+
+
+def _csv_env(name: str) -> List[str]:
+    """Read a comma-separated list from the environment, dropping blanks."""
+    raw = os.environ.get(name)
+    if not raw:
+        return []
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+def _openrouter_routing_preferences() -> Dict[str, Any]:
+    """Build the optional OpenRouter ``provider`` routing object.
+
+    Deliberately empty unless an operator opts in: any value here narrows which
+    upstreams may serve the request, which changes availability and price. A
+    gateway default that alters routing is exactly what we do not want to ship.
+    """
+    preferences: Dict[str, Any] = {}
+    order = _csv_env("KOLEGA_CODE_OPENROUTER_PROVIDER_ORDER")
+    if order:
+        preferences["order"] = order
+    only = _csv_env("KOLEGA_CODE_OPENROUTER_PROVIDER_ONLY")
+    if only:
+        preferences["only"] = only
+    return preferences
+
+
+def _capture_usage_details(usage: Any, target: Dict[str, Any]) -> None:
+    """Record cache-read/cache-write token detail from an OpenAI-shaped usage object.
+
+    OpenRouter reports cache writes separately and bills them at a premium, while
+    counting them inside ``prompt_tokens``. Anthropic-shaped providers report
+    ``input_tokens`` exclusive of cache creation, so the write count is subtracted
+    here to keep one meaning of "input tokens" across providers.
+    """
+    details = getattr(usage, "prompt_tokens_details", None)
+    if details is None:
+        return
+
+    def _detail(name: str) -> Optional[int]:
+        value = getattr(details, name, None)
+        if value is None and isinstance(details, dict):
+            value = details.get(name)
+        return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+    cached = _detail("cached_tokens")
+    if cached is not None:
+        target["cache_read_input_tokens"] = cached
+
+    cache_write = _detail("cache_write_tokens")
+    if cache_write:
+        target["cache_write_input_tokens"] = cache_write
+        prompt_tokens = target.get("prompt_tokens")
+        if isinstance(prompt_tokens, int):
+            target["prompt_tokens"] = max(prompt_tokens - cache_write, 0)
 
 
 class OpenAIStreamWrapper:
@@ -135,15 +211,9 @@ class OpenAIStreamWrapper:
                     "completion_tokens": chunk.usage.completion_tokens,
                     "total_tokens": chunk.usage.total_tokens,
                 }
-                # Capture cached prompt tokens if available (e.g., DashScope/Qwen)
-                details = getattr(chunk.usage, "prompt_tokens_details", None)
-                cached = None
-                if details is not None:
-                    cached = getattr(details, "cached_tokens", None)
-                    if cached is None and isinstance(details, dict):
-                        cached = details.get("cached_tokens")
-                if cached is not None:
-                    self.usage_data["cache_read_input_tokens"] = cached
+                # Cached / cache-written prompt tokens when the provider reports
+                # them (e.g. DashScope/Qwen, OpenRouter).
+                _capture_usage_details(chunk.usage, self.usage_data)
 
             # Return a safe chunk representation; ignore events with no choices
             if hasattr(chunk, "choices") and chunk.choices:
@@ -216,6 +286,16 @@ class OpenAIProvider(BaseLLMProvider):
         }
         if self.provider_name == "xai":
             client_kwargs["default_headers"] = {"x-grok-conv-id": self._session_id}
+        elif self.provider_name == OPENROUTER_PROVIDER:
+            # Attribution headers identify the app on openrouter.ai; x-session-id
+            # asks OpenRouter to keep a conversation on one upstream so its prompt
+            # caches actually hit.
+            client_kwargs["default_headers"] = {
+                "HTTP-Referer": "https://github.com/kolega-ai/kolega-code",
+                "X-Title": "Kolega Code",
+                "X-OpenRouter-Categories": "programming",
+                "x-session-id": self._session_id,
+            }
         # Forward max_retries so the SDK's built-in exponential backoff + jitter (which
         # honors retry-after and retries 429/5xx + connection errors) is actually used.
         self.async_client = AsyncOpenAI(**client_kwargs)
@@ -252,16 +332,86 @@ class OpenAIProvider(BaseLLMProvider):
 
         return generation_params
 
+    @staticmethod
+    def _merge_request_params(generation_params: Dict[str, Any], extra: Dict[str, Any]) -> None:
+        """Merge provider-specific request params, combining ``extra_body`` instead of replacing it.
+
+        Several contributors (thinking effort, gateway caching, usage accounting,
+        routing preferences) each need keys under ``extra_body``. A plain update
+        would let whichever ran last silently drop the others.
+        """
+        for key, value in extra.items():
+            if key == "extra_body" and isinstance(value, dict):
+                existing = generation_params.get("extra_body")
+                if isinstance(existing, dict):
+                    existing.update(value)
+                    continue
+                generation_params["extra_body"] = dict(value)
+                continue
+            generation_params[key] = value
+
     def _apply_thinking_params(self, generation_params: Dict[str, Any], params: Optional[GenerationParams]) -> None:
         if not params or not params.thinking:
             return
-        generation_params.update(
+        self._merge_request_params(
+            generation_params,
             build_thinking_request_params(
                 self.provider_name,
                 str(generation_params["model"]),
                 params.thinking,
-            )
+            ),
         )
+
+    def _apply_model_request_rules(self, generation_params: Dict[str, Any]) -> None:
+        """Apply catalog- and gateway-specific request shaping for one model.
+
+        Kept in one place so ``stream`` and ``generate`` cannot diverge.
+        """
+        model = str(generation_params.get("model") or "")
+
+        # Reasoning models (gpt-5.x, etc.) use max_completion_tokens and only accept the
+        # default temperature (1); sending any other value is a 400, so drop it.
+        if model in self.models_max_completion_tokens:
+            if "max_tokens" in generation_params:
+                generation_params["max_completion_tokens"] = generation_params.pop("max_tokens")
+            generation_params.pop("temperature", None)
+
+        # Catalog-driven: a model that documents no temperature support rejects the
+        # field outright. Unknown models keep the previous behavior of sending it.
+        specs = MODEL_SPECS.get((self.provider_name, model))
+        if specs is not None and specs.get("supports_temperature", True) is False:
+            generation_params.pop("temperature", None)
+
+        if self.provider_name == OPENROUTER_PROVIDER:
+            self._apply_openrouter_request_rules(generation_params)
+
+    def _apply_openrouter_request_rules(self, generation_params: Dict[str, Any]) -> None:
+        """Shape a request for the OpenRouter gateway.
+
+        OpenRouter picks an upstream provider per request, and optional fields act
+        as routing hints: a catalog-default ``max_tokens`` excludes every endpoint
+        whose output cap is lower, biasing routing (and price) for no benefit. The
+        cap is dropped unless the operator asked for one explicitly. The catalog's
+        max_completion_tokens is still used for Kolega Code's own context budgeting.
+        """
+        explicit_cap = _positive_int_env("KOLEGA_CODE_OPENROUTER_MAX_TOKENS")
+        if explicit_cap is not None:
+            generation_params["max_tokens"] = explicit_cap
+        else:
+            generation_params.pop("max_tokens", None)
+
+        extra: Dict[str, Any] = {
+            # Automatic prompt caching: OpenRouter applies this breakpoint to the
+            # last cacheable block and advances it as the conversation grows, so
+            # Anthropic/Vertex/Bedrock caching works without per-block markers.
+            "cache_control": {"type": "ephemeral"},
+            # Ask for the token detail that carries cache reads and cache writes.
+            "usage": {"include": True},
+        }
+        routing = _openrouter_routing_preferences()
+        if routing:
+            extra["provider"] = routing
+        self._merge_request_params(generation_params, {"extra_body": extra})
 
     async def count_tokens(
         self,
@@ -525,13 +675,7 @@ class OpenAIProvider(BaseLLMProvider):
             # Best-effort; some providers may not support stream_options
             pass
 
-        # Reasoning models (gpt-5.x, etc.) use max_completion_tokens and only accept the
-        # default temperature (1); sending any other value is a 400, so drop it.
-        if generation_params["model"] in self.models_max_completion_tokens:
-            if "max_tokens" in generation_params:
-                generation_params["max_completion_tokens"] = generation_params["max_tokens"]
-                del generation_params["max_tokens"]
-            generation_params.pop("temperature", None)
+        self._apply_model_request_rules(generation_params)
 
         # Combine system message with messages if provided
         if system:
@@ -569,14 +713,7 @@ class OpenAIProvider(BaseLLMProvider):
         generation_params = self._prepare_generation_params(params)
         generation_params.update(kwargs)
         self._apply_thinking_params(generation_params, params)
-
-        # Reasoning models (gpt-5.x, etc.) use max_completion_tokens and only accept the
-        # default temperature (1); sending any other value is a 400, so drop it.
-        if generation_params["model"] in self.models_max_completion_tokens:
-            if "max_tokens" in generation_params:
-                generation_params["max_completion_tokens"] = generation_params["max_tokens"]
-                del generation_params["max_tokens"]
-            generation_params.pop("temperature", None)
+        self._apply_model_request_rules(generation_params)
 
         # Combine system message with messages if provided
         if system:
@@ -597,22 +734,15 @@ class OpenAIProvider(BaseLLMProvider):
 
         # Add usage data from the response
         if hasattr(response, "usage") and response.usage:
-            message.usage_metadata.update(
-                {
-                    "prompt_tokens": response.usage.prompt_tokens,
-                    "completion_tokens": response.usage.completion_tokens,
-                    "total_tokens": response.usage.total_tokens,
-                }
-            )
-            # Capture cached prompt tokens if available (e.g., DashScope/Qwen)
-            details = getattr(response.usage, "prompt_tokens_details", None)
-            cached = None
-            if details is not None:
-                cached = getattr(details, "cached_tokens", None)
-                if cached is None and isinstance(details, dict):
-                    cached = details.get("cached_tokens")
-            if cached is not None:
-                message.usage_metadata["cache_read_input_tokens"] = cached
+            usage_data: Dict[str, Any] = {
+                "prompt_tokens": response.usage.prompt_tokens,
+                "completion_tokens": response.usage.completion_tokens,
+                "total_tokens": response.usage.total_tokens,
+            }
+            # Cached / cache-written prompt tokens when the provider reports them
+            # (e.g. DashScope/Qwen, OpenRouter).
+            _capture_usage_details(response.usage, usage_data)
+            message.usage_metadata.update(usage_data)
         else:
             logging.getLogger(__name__).warning(
                 "OpenAIProvider.generate: response contains no usage metadata; billing may be skipped"

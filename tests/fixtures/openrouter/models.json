@@ -1,0 +1,1454 @@
+{
+ "data": [
+  {
+   "architecture": {
+    "input_modalities": [
+     "text",
+     "audio",
+     "image",
+     "video"
+    ],
+    "output_modalities": [
+     "text"
+    ]
+   },
+   "canonical_slug": "xiaomi/mimo-v2.5-20260422",
+   "context_length": 1050000,
+   "id": "xiaomi/mimo-v2.5",
+   "name": "Xiaomi: MiMo-V2.5",
+   "pricing": {
+    "completion": "0.00000028",
+    "prompt": "0.00000014"
+   },
+   "reasoning": {
+    "mandatory": false
+   },
+   "supported_parameters": [
+    "frequency_penalty",
+    "include_reasoning",
+    "logit_bias",
+    "logprobs",
+    "max_tokens",
+    "min_p",
+    "presence_penalty",
+    "reasoning",
+    "repetition_penalty",
+    "response_format",
+    "seed",
+    "stop",
+    "structured_outputs",
+    "temperature",
+    "tool_choice",
+    "tools",
+    "top_k",
+    "top_logprobs",
+    "top_p"
+   ],
+   "top_provider": {
+    "context_length": 1048576,
+    "is_moderated": false,
+    "max_completion_tokens": 131072
+   }
+  },
+  {
+   "architecture": {
+    "input_modalities": [
+     "text"
+    ],
+    "output_modalities": [
+     "text"
+    ]
+   },
+   "canonical_slug": "deepseek/deepseek-v4-flash-20260423",
+   "context_length": 1048576,
+   "id": "deepseek/deepseek-v4-flash",
+   "name": "DeepSeek: DeepSeek V4 Flash",
+   "pricing": {
+    "completion": "0.00000028",
+    "prompt": "0.00000014"
+   },
+   "reasoning": {
+    "default_effort": "high",
+    "mandatory": false,
+    "supported_efforts": [
+     "xhigh",
+     "high"
+    ]
+   },
+   "supported_parameters": [
+    "frequency_penalty",
+    "include_reasoning",
+    "logit_bias",
+    "logprobs",
+    "max_tokens",
+    "min_p",
+    "presence_penalty",
+    "reasoning",
+    "reasoning_effort",
+    "repetition_penalty",
+    "response_format",
+    "seed",
+    "stop",
+    "structured_outputs",
+    "temperature",
+    "tool_choice",
+    "tools",
+    "top_a",
+    "top_k",
+    "top_logprobs",
+    "top_p"
+   ],
+   "top_provider": {
+    "context_length": 1048576,
+    "is_moderated": false,
+    "max_completion_tokens": 393216
+   }
+  },
+  {
+   "architecture": {
+    "input_modalities": [
+     "text"
+    ],
+    "output_modalities": [
+     "text"
+    ]
+   },
+   "canonical_slug": "tencent/hy3-20260706",
+   "context_length": 262144,
+   "id": "tencent/hy3",
+   "name": "Tencent: Hy3",
+   "pricing": {
+    "completion": "0.000000528",
+    "prompt": "0.000000132"
+   },
+   "reasoning": {
+    "default_effort": "high",
+    "default_enabled": true,
+    "mandatory": false,
+    "supported_efforts": [
+     "high",
+     "low",
+     "none"
+    ]
+   },
+   "supported_parameters": [
+    "frequency_penalty",
+    "include_reasoning",
+    "logit_bias",
+    "max_completion_tokens",
+    "max_tokens",
+    "min_p",
+    "presence_penalty",
+    "reasoning",
+    "reasoning_effort",
+    "repetition_penalty",
+    "response_format",
+    "seed",
+    "stop",
+    "structured_outputs",
+    "temperature",
+    "tool_choice",
+    "tools",
+    "top_k",
+    "top_p"
+   ],
+   "top_provider": {
+    "context_length": 262144,
+    "is_moderated": false,
+    "max_completion_tokens": 128000
+   }
+  },
+  {
+   "architecture": {
+    "input_modalities": [
+     "text"
+    ],
+    "output_modalities": [
+     "text"
+    ]
+   },
+   "canonical_slug": "deepseek/deepseek-v4-pro-20260423",
+   "context_length": 1048576,
+   "id": "deepseek/deepseek-v4-pro",
+   "name": "DeepSeek: DeepSeek V4 Pro",
+   "pricing": {
+    "completion": "0.00000087",
+    "prompt": "0.000000435"
+   },
+   "reasoning": {
+    "default_effort": "high",
+    "mandatory": false,
+    "supported_efforts": [
+     "xhigh",
+     "high"
+    ]
+   },
+   "supported_parameters": [
+    "frequency_penalty",
+    "include_reasoning",
+    "logit_bias",
+    "logprobs",
+    "max_tokens",
+    "min_p",
+    "presence_penalty",
+    "reasoning",
+    "reasoning_effort",
+    "repetition_penalty",
+    "response_format",
+    "seed",
+    "stop",
+    "structured_outputs",
+    "temperature",
+    "tool_choice",
+    "tools",
+    "top_k",
+    "top_logprobs",
+    "top_p"
+   ],
+   "top_provider": {
+    "context_length": 1048576,
+    "is_moderated": false,
+    "max_completion_tokens": 384000
+   }
+  },
+  {
+   "architecture": {
+    "input_modalities": [
+     "text"
+    ],
+    "output_modalities": [
+     "text"
+    ]
+   },
+   "canonical_slug": "z-ai/glm-5.2-20260616",
+   "context_length": 1048576,
+   "id": "z-ai/glm-5.2",
+   "name": "Z.ai: GLM 5.2",
+   "pricing": {
+    "completion": "0.00000374",
+    "prompt": "0.00000119"
+   },
+   "reasoning": {
+    "default_effort": "high",
+    "default_enabled": true,
+    "mandatory": false,
+    "supported_efforts": [
+     "xhigh",
+     "high"
+    ]
+   },
+   "supported_parameters": [
+    "frequency_penalty",
+    "include_reasoning",
+    "logit_bias",
+    "logprobs",
+    "max_tokens",
+    "min_p",
+    "parallel_tool_calls",
+    "presence_penalty",
+    "reasoning",
+    "reasoning_effort",
+    "repetition_penalty",
+    "response_format",
+    "seed",
+    "stop",
+    "structured_outputs",
+    "temperature",
+    "tool_choice",
+    "tools",
+    "top_k",
+    "top_logprobs",
+    "top_p"
+   ],
+   "top_provider": {
+    "context_length": 1024000,
+    "is_moderated": false,
+    "max_completion_tokens": 128000
+   }
+  },
+  {
+   "architecture": {
+    "input_modalities": [
+     "text"
+    ],
+    "output_modalities": [
+     "text"
+    ]
+   },
+   "canonical_slug": "nvidia/nemotron-3-ultra-550b-a55b-20260604",
+   "context_length": 1000000,
+   "id": "nvidia/nemotron-3-ultra-550b-a55b:free",
+   "name": "NVIDIA: Nemotron 3 Ultra (free)",
+   "pricing": {
+    "completion": "0",
+    "prompt": "0"
+   },
+   "reasoning": {
+    "default_effort": "high",
+    "default_enabled": true,
+    "mandatory": false,
+    "supported_efforts": [
+     "high",
+     "medium"
+    ],
+    "supports_max_tokens": true
+   },
+   "supported_parameters": [
+    "include_reasoning",
+    "max_tokens",
+    "reasoning",
+    "reasoning_effort",
+    "seed",
+    "temperature",
+    "tool_choice",
+    "tools",
+    "top_p"
+   ],
+   "top_provider": {
+    "context_length": 1000000,
+    "is_moderated": false,
+    "max_completion_tokens": 65536
+   }
+  },
+  {
+   "architecture": {
+    "input_modalities": [
+     "text",
+     "image",
+     "video"
+    ],
+    "output_modalities": [
+     "text"
+    ]
+   },
+   "canonical_slug": "minimax/minimax-m3-20260531",
+   "context_length": 1048576,
+   "id": "minimax/minimax-m3",
+   "name": "MiniMax: MiniMax M3",
+   "pricing": {
+    "completion": "0.0000012",
+    "prompt": "0.0000003"
+   },
+   "reasoning": {
+    "mandatory": false
+   },
+   "supported_parameters": [
+    "frequency_penalty",
+    "include_reasoning",
+    "logit_bias",
+    "logprobs",
+    "max_tokens",
+    "min_p",
+    "presence_penalty",
+    "reasoning",
+    "repetition_penalty",
+    "response_format",
+    "seed",
+    "stop",
+    "structured_outputs",
+    "temperature",
+    "tool_choice",
+    "tools",
+    "top_k",
+    "top_logprobs",
+    "top_p"
+   ],
+   "top_provider": {
+    "context_length": 524288,
+    "is_moderated": false,
+    "max_completion_tokens": 512000
+   }
+  },
+  {
+   "architecture": {
+    "input_modalities": [
+     "text",
+     "image",
+     "video"
+    ],
+    "output_modalities": [
+     "text"
+    ]
+   },
+   "canonical_slug": "stepfun/step-3.7-flash-20260528",
+   "context_length": 262144,
+   "id": "stepfun/step-3.7-flash",
+   "name": "StepFun: Step 3.7 Flash",
+   "pricing": {
+    "completion": "0.00000115",
+    "prompt": "0.0000002"
+   },
+   "reasoning": {
+    "default_effort": "medium",
+    "mandatory": true,
+    "supported_efforts": [
+     "high",
+     "medium",
+     "low"
+    ]
+   },
+   "supported_parameters": [
+    "frequency_penalty",
+    "include_reasoning",
+    "logit_bias",
+    "logprobs",
+    "max_tokens",
+    "min_p",
+    "presence_penalty",
+    "reasoning",
+    "reasoning_effort",
+    "repetition_penalty",
+    "response_format",
+    "seed",
+    "stop",
+    "structured_outputs",
+    "temperature",
+    "tool_choice",
+    "tools",
+    "top_k",
+    "top_logprobs",
+    "top_p"
+   ],
+   "top_provider": {
+    "context_length": 256000,
+    "is_moderated": false,
+    "max_completion_tokens": 256000
+   }
+  },
+  {
+   "architecture": {
+    "input_modalities": [
+     "text",
+     "image"
+    ],
+    "output_modalities": [
+     "text"
+    ]
+   },
+   "canonical_slug": "moonshotai/kimi-k3-20260715",
+   "context_length": 1048576,
+   "id": "moonshotai/kimi-k3",
+   "name": "MoonshotAI: Kimi K3",
+   "pricing": {
+    "completion": "0.000015",
+    "prompt": "0.000003"
+   },
+   "reasoning": {
+    "default_effort": "max",
+    "default_enabled": true,
+    "mandatory": false,
+    "supported_efforts": [
+     "max",
+     "high",
+     "low"
+    ]
+   },
+   "supported_parameters": [
+    "frequency_penalty",
+    "include_reasoning",
+    "logit_bias",
+    "logprobs",
+    "max_tokens",
+    "min_p",
+    "presence_penalty",
+    "reasoning",
+    "reasoning_effort",
+    "repetition_penalty",
+    "response_format",
+    "seed",
+    "stop",
+    "structured_outputs",
+    "temperature",
+    "tool_choice",
+    "tools",
+    "top_k",
+    "top_logprobs",
+    "top_p"
+   ],
+   "top_provider": {
+    "context_length": 1048576,
+    "is_moderated": false,
+    "max_completion_tokens": null
+   }
+  },
+  {
+   "architecture": {
+    "input_modalities": [
+     "text"
+    ],
+    "output_modalities": [
+     "text"
+    ]
+   },
+   "canonical_slug": "inclusionai/ling-3.0-flash-20260723",
+   "context_length": 262144,
+   "id": "inclusionai/ling-3.0-flash:free",
+   "name": "Ling-3.0-flash (free)",
+   "pricing": {
+    "completion": "0",
+    "prompt": "0"
+   },
+   "reasoning": {
+    "default_enabled": true,
+    "mandatory": false
+   },
+   "supported_parameters": [
+    "frequency_penalty",
+    "include_reasoning",
+    "logprobs",
+    "max_tokens",
+    "presence_penalty",
+    "reasoning",
+    "repetition_penalty",
+    "seed",
+    "stop",
+    "temperature",
+    "tool_choice",
+    "tools",
+    "top_k",
+    "top_logprobs",
+    "top_p"
+   ],
+   "top_provider": {
+    "context_length": 262144,
+    "is_moderated": false,
+    "max_completion_tokens": 32768
+   }
+  },
+  {
+   "architecture": {
+    "input_modalities": [
+     "text",
+     "image",
+     "file"
+    ],
+    "output_modalities": [
+     "text"
+    ]
+   },
+   "canonical_slug": "anthropic/claude-sonnet-5-20260630",
+   "context_length": 1000000,
+   "id": "anthropic/claude-sonnet-5",
+   "name": "Anthropic: Claude Sonnet 5",
+   "pricing": {
+    "completion": "0.00001",
+    "prompt": "0.000002"
+   },
+   "reasoning": {
+    "default_effort": "high",
+    "default_enabled": true,
+    "mandatory": false,
+    "supported_efforts": [
+     "max",
+     "xhigh",
+     "high",
+     "medium",
+     "low"
+    ]
+   },
+   "supported_parameters": [
+    "include_reasoning",
+    "max_completion_tokens",
+    "max_tokens",
+    "reasoning",
+    "reasoning_effort",
+    "response_format",
+    "stop",
+    "structured_outputs",
+    "tool_choice",
+    "tools",
+    "verbosity"
+   ],
+   "top_provider": {
+    "context_length": 1000000,
+    "is_moderated": true,
+    "max_completion_tokens": 128000
+   }
+  },
+  {
+   "architecture": {
+    "input_modalities": [
+     "text",
+     "image",
+     "file",
+     "audio",
+     "video"
+    ],
+    "output_modalities": [
+     "text"
+    ]
+   },
+   "canonical_slug": "google/gemini-3-flash-preview-20251217",
+   "context_length": 1048576,
+   "id": "google/gemini-3-flash-preview",
+   "name": "Google: Gemini 3 Flash Preview",
+   "pricing": {
+    "completion": "0.000003",
+    "prompt": "0.0000005"
+   },
+   "reasoning": {
+    "default_effort": "medium",
+    "mandatory": false,
+    "supported_efforts": [
+     "high",
+     "medium",
+     "low",
+     "minimal"
+    ]
+   },
+   "supported_parameters": [
+    "include_reasoning",
+    "max_tokens",
+    "reasoning",
+    "reasoning_effort",
+    "response_format",
+    "seed",
+    "stop",
+    "structured_outputs",
+    "temperature",
+    "tool_choice",
+    "tools",
+    "top_p"
+   ],
+   "top_provider": {
+    "context_length": 1048576,
+    "is_moderated": false,
+    "max_completion_tokens": 65535
+   }
+  },
+  {
+   "architecture": {
+    "input_modalities": [
+     "text",
+     "image",
+     "file"
+    ],
+    "output_modalities": [
+     "text"
+    ]
+   },
+   "canonical_slug": "anthropic/claude-4.6-sonnet-20260217",
+   "context_length": 1000000,
+   "id": "anthropic/claude-sonnet-4.6",
+   "name": "Anthropic: Claude Sonnet 4.6",
+   "pricing": {
+    "completion": "0.000015",
+    "prompt": "0.000003"
+   },
+   "reasoning": {
+    "default_effort": "medium",
+    "mandatory": false,
+    "supported_efforts": [
+     "max",
+     "high",
+     "medium",
+     "low"
+    ]
+   },
+   "supported_parameters": [
+    "include_reasoning",
+    "max_completion_tokens",
+    "max_tokens",
+    "reasoning",
+    "reasoning_effort",
+    "response_format",
+    "stop",
+    "structured_outputs",
+    "temperature",
+    "tool_choice",
+    "tools",
+    "top_k",
+    "top_p",
+    "verbosity"
+   ],
+   "top_provider": {
+    "context_length": 1000000,
+    "is_moderated": true,
+    "max_completion_tokens": 128000
+   }
+  },
+  {
+   "architecture": {
+    "input_modalities": [
+     "text",
+     "image",
+     "file"
+    ],
+    "output_modalities": [
+     "text"
+    ]
+   },
+   "canonical_slug": "anthropic/claude-opus-5-20260723",
+   "context_length": 1000000,
+   "id": "anthropic/claude-opus-5",
+   "name": "Claude Opus 5",
+   "pricing": {
+    "completion": "0.000025",
+    "prompt": "0.000005"
+   },
+   "reasoning": {
+    "default_effort": "high",
+    "default_enabled": true,
+    "mandatory": false,
+    "supported_efforts": [
+     "max",
+     "xhigh",
+     "high",
+     "medium",
+     "low"
+    ]
+   },
+   "supported_parameters": [
+    "include_reasoning",
+    "max_completion_tokens",
+    "max_tokens",
+    "reasoning",
+    "reasoning_effort",
+    "response_format",
+    "stop",
+    "structured_outputs",
+    "temperature",
+    "tool_choice",
+    "tools",
+    "verbosity"
+   ],
+   "top_provider": {
+    "context_length": 1000000,
+    "is_moderated": true,
+    "max_completion_tokens": 128000
+   }
+  },
+  {
+   "architecture": {
+    "input_modalities": [
+     "text",
+     "image",
+     "file",
+     "audio",
+     "video"
+    ],
+    "output_modalities": [
+     "text"
+    ]
+   },
+   "canonical_slug": "google/gemini-2.5-flash-lite",
+   "context_length": 1048576,
+   "id": "google/gemini-2.5-flash-lite",
+   "name": "Google: Gemini 2.5 Flash Lite",
+   "pricing": {
+    "completion": "0.0000004",
+    "prompt": "0.0000001"
+   },
+   "reasoning": {
+    "mandatory": false
+   },
+   "supported_parameters": [
+    "include_reasoning",
+    "max_tokens",
+    "reasoning",
+    "response_format",
+    "seed",
+    "stop",
+    "structured_outputs",
+    "temperature",
+    "tool_choice",
+    "tools",
+    "top_p"
+   ],
+   "top_provider": {
+    "context_length": 1048576,
+    "is_moderated": false,
+    "max_completion_tokens": 65535
+   }
+  },
+  {
+   "architecture": {
+    "input_modalities": [
+     "text",
+     "image",
+     "file"
+    ],
+    "output_modalities": [
+     "text"
+    ]
+   },
+   "canonical_slug": "anthropic/claude-4.8-opus-20260528",
+   "context_length": 1000000,
+   "id": "anthropic/claude-opus-4.8",
+   "name": "Anthropic: Claude Opus 4.8",
+   "pricing": {
+    "completion": "0.000025",
+    "prompt": "0.000005"
+   },
+   "reasoning": {
+    "default_effort": "high",
+    "default_enabled": false,
+    "mandatory": false,
+    "supported_efforts": [
+     "max",
+     "xhigh",
+     "high",
+     "medium",
+     "low"
+    ]
+   },
+   "supported_parameters": [
+    "include_reasoning",
+    "max_completion_tokens",
+    "max_tokens",
+    "reasoning",
+    "reasoning_effort",
+    "response_format",
+    "stop",
+    "structured_outputs",
+    "temperature",
+    "tool_choice",
+    "tools",
+    "verbosity"
+   ],
+   "top_provider": {
+    "context_length": 1000000,
+    "is_moderated": true,
+    "max_completion_tokens": 128000
+   }
+  },
+  {
+   "architecture": {
+    "input_modalities": [
+     "text"
+    ],
+    "output_modalities": [
+     "text"
+    ]
+   },
+   "canonical_slug": "xiaomi/mimo-v2.5-pro-20260422",
+   "context_length": 1050000,
+   "id": "xiaomi/mimo-v2.5-pro",
+   "name": "Xiaomi: MiMo-V2.5-Pro",
+   "pricing": {
+    "completion": "0.00000087",
+    "prompt": "0.000000435"
+   },
+   "reasoning": {
+    "mandatory": false
+   },
+   "supported_parameters": [
+    "frequency_penalty",
+    "include_reasoning",
+    "logit_bias",
+    "logprobs",
+    "max_tokens",
+    "min_p",
+    "presence_penalty",
+    "reasoning",
+    "repetition_penalty",
+    "response_format",
+    "seed",
+    "stop",
+    "structured_outputs",
+    "temperature",
+    "tool_choice",
+    "tools",
+    "top_k",
+    "top_logprobs",
+    "top_p"
+   ],
+   "top_provider": {
+    "context_length": 1048576,
+    "is_moderated": false,
+    "max_completion_tokens": 131072
+   }
+  },
+  {
+   "architecture": {
+    "input_modalities": [
+     "file",
+     "image",
+     "text",
+     "audio",
+     "video"
+    ],
+    "output_modalities": [
+     "text"
+    ]
+   },
+   "canonical_slug": "google/gemini-2.5-flash",
+   "context_length": 1048576,
+   "id": "google/gemini-2.5-flash",
+   "name": "Google: Gemini 2.5 Flash",
+   "pricing": {
+    "completion": "0.0000025",
+    "prompt": "0.0000003"
+   },
+   "reasoning": {
+    "mandatory": false
+   },
+   "supported_parameters": [
+    "include_reasoning",
+    "max_tokens",
+    "reasoning",
+    "response_format",
+    "seed",
+    "stop",
+    "structured_outputs",
+    "temperature",
+    "tool_choice",
+    "tools",
+    "top_p"
+   ],
+   "top_provider": {
+    "context_length": 1048576,
+    "is_moderated": false,
+    "max_completion_tokens": 65535
+   }
+  },
+  {
+   "architecture": {
+    "input_modalities": [
+     "text",
+     "image",
+     "video",
+     "file",
+     "audio"
+    ],
+    "output_modalities": [
+     "text"
+    ]
+   },
+   "canonical_slug": "google/gemini-3.1-flash-lite-20260507",
+   "context_length": 1048576,
+   "id": "google/gemini-3.1-flash-lite",
+   "name": "Google: Gemini 3.1 Flash Lite",
+   "pricing": {
+    "completion": "0.0000015",
+    "prompt": "0.00000025"
+   },
+   "reasoning": {
+    "default_effort": "minimal",
+    "default_enabled": true,
+    "mandatory": false,
+    "supported_efforts": [
+     "high",
+     "medium",
+     "low",
+     "minimal"
+    ]
+   },
+   "supported_parameters": [
+    "include_reasoning",
+    "max_tokens",
+    "reasoning",
+    "reasoning_effort",
+    "response_format",
+    "seed",
+    "stop",
+    "structured_outputs",
+    "temperature",
+    "tool_choice",
+    "tools",
+    "top_p"
+   ],
+   "top_provider": {
+    "context_length": 1048576,
+    "is_moderated": false,
+    "max_completion_tokens": 65536
+   }
+  },
+  {
+   "architecture": {
+    "input_modalities": [
+     "text"
+    ],
+    "output_modalities": [
+     "text"
+    ]
+   },
+   "canonical_slug": "openai/gpt-oss-120b",
+   "context_length": 131072,
+   "id": "openai/gpt-oss-120b",
+   "name": "OpenAI: gpt-oss-120b",
+   "pricing": {
+    "completion": "0.00000017",
+    "prompt": "0.000000037"
+   },
+   "reasoning": {
+    "default_effort": "medium",
+    "mandatory": true,
+    "supported_efforts": [
+     "high",
+     "medium",
+     "low"
+    ]
+   },
+   "supported_parameters": [
+    "frequency_penalty",
+    "include_reasoning",
+    "logit_bias",
+    "logprobs",
+    "max_tokens",
+    "min_p",
+    "presence_penalty",
+    "reasoning",
+    "reasoning_effort",
+    "repetition_penalty",
+    "response_format",
+    "seed",
+    "stop",
+    "structured_outputs",
+    "temperature",
+    "tool_choice",
+    "tools",
+    "top_a",
+    "top_k",
+    "top_logprobs",
+    "top_p"
+   ],
+   "top_provider": {
+    "context_length": 131072,
+    "is_moderated": false,
+    "max_completion_tokens": 131072
+   }
+  },
+  {
+   "architecture": {
+    "input_modalities": [
+     "file",
+     "image",
+     "text"
+    ],
+    "output_modalities": [
+     "text"
+    ]
+   },
+   "canonical_slug": "openai/gpt-5.6-sol-20260709",
+   "context_length": 1050000,
+   "id": "openai/gpt-5.6-sol",
+   "name": "OpenAI: GPT-5.6 Sol",
+   "pricing": {
+    "completion": "0.00003",
+    "prompt": "0.000005"
+   },
+   "reasoning": {
+    "default_effort": "medium",
+    "default_enabled": true,
+    "mandatory": false,
+    "supported_efforts": [
+     "max",
+     "xhigh",
+     "high",
+     "medium",
+     "low",
+     "none"
+    ]
+   },
+   "supported_parameters": [
+    "include_reasoning",
+    "max_completion_tokens",
+    "max_tokens",
+    "reasoning",
+    "reasoning_effort",
+    "response_format",
+    "seed",
+    "structured_outputs",
+    "tool_choice",
+    "tools"
+   ],
+   "top_provider": {
+    "context_length": 1050000,
+    "is_moderated": true,
+    "max_completion_tokens": 128000
+   }
+  },
+  {
+   "architecture": {
+    "input_modalities": [
+     "file",
+     "image",
+     "text"
+    ],
+    "output_modalities": [
+     "text"
+    ]
+   },
+   "canonical_slug": "openai/gpt-5.4-mini-20260317",
+   "context_length": 400000,
+   "id": "openai/gpt-5.4-mini",
+   "name": "OpenAI: GPT-5.4 Mini",
+   "pricing": {
+    "completion": "0.0000045",
+    "prompt": "0.00000075"
+   },
+   "reasoning": {
+    "default_effort": "medium",
+    "default_enabled": false,
+    "mandatory": false,
+    "supported_efforts": [
+     "xhigh",
+     "high",
+     "medium",
+     "low",
+     "none"
+    ]
+   },
+   "supported_parameters": [
+    "include_reasoning",
+    "max_completion_tokens",
+    "max_tokens",
+    "reasoning",
+    "reasoning_effort",
+    "response_format",
+    "seed",
+    "structured_outputs",
+    "tool_choice",
+    "tools"
+   ],
+   "top_provider": {
+    "context_length": 400000,
+    "is_moderated": true,
+    "max_completion_tokens": 128000
+   }
+  },
+  {
+   "architecture": {
+    "input_modalities": [
+     "audio",
+     "file",
+     "image",
+     "text",
+     "video"
+    ],
+    "output_modalities": [
+     "text"
+    ]
+   },
+   "canonical_slug": "google/gemini-3.1-pro-preview-20260219",
+   "context_length": 1048576,
+   "id": "google/gemini-3.1-pro-preview",
+   "name": "Google: Gemini 3.1 Pro Preview",
+   "pricing": {
+    "completion": "0.000012",
+    "prompt": "0.000002"
+   },
+   "reasoning": {
+    "default_effort": "medium",
+    "mandatory": true,
+    "supported_efforts": [
+     "high",
+     "medium",
+     "low"
+    ]
+   },
+   "supported_parameters": [
+    "include_reasoning",
+    "max_tokens",
+    "reasoning",
+    "reasoning_effort",
+    "response_format",
+    "seed",
+    "stop",
+    "structured_outputs",
+    "temperature",
+    "tool_choice",
+    "tools",
+    "top_p"
+   ],
+   "top_provider": {
+    "context_length": 1048576,
+    "is_moderated": false,
+    "max_completion_tokens": 65536
+   }
+  },
+  {
+   "architecture": {
+    "input_modalities": [
+     "text",
+     "image",
+     "file"
+    ],
+    "output_modalities": [
+     "text"
+    ]
+   },
+   "canonical_slug": "x-ai/grok-4.5-20260708",
+   "context_length": 500000,
+   "id": "x-ai/grok-4.5",
+   "name": "xAI: Grok 4.5",
+   "pricing": {
+    "completion": "0.000006",
+    "prompt": "0.000002"
+   },
+   "reasoning": {
+    "default_effort": "high",
+    "default_enabled": true,
+    "mandatory": true,
+    "supported_efforts": [
+     "high",
+     "medium",
+     "low"
+    ]
+   },
+   "supported_parameters": [
+    "frequency_penalty",
+    "include_reasoning",
+    "logprobs",
+    "max_tokens",
+    "presence_penalty",
+    "reasoning",
+    "reasoning_effort",
+    "response_format",
+    "seed",
+    "stop",
+    "structured_outputs",
+    "temperature",
+    "tool_choice",
+    "tools",
+    "top_logprobs",
+    "top_p"
+   ],
+   "top_provider": {
+    "context_length": 500000,
+    "is_moderated": false,
+    "max_completion_tokens": null
+   }
+  },
+  {
+   "architecture": {
+    "input_modalities": [
+     "text",
+     "image",
+     "audio",
+     "file",
+     "video"
+    ],
+    "output_modalities": [
+     "text",
+     "image"
+    ]
+   },
+   "canonical_slug": "openrouter/auto",
+   "context_length": 2000000,
+   "id": "openrouter/auto",
+   "name": "Auto Router",
+   "pricing": {
+    "completion": "-1",
+    "prompt": "-1"
+   },
+   "supported_parameters": [
+    "frequency_penalty",
+    "include_reasoning",
+    "logit_bias",
+    "logprobs",
+    "max_tokens",
+    "min_p",
+    "prediction",
+    "presence_penalty",
+    "reasoning",
+    "reasoning_effort",
+    "repetition_penalty",
+    "response_format",
+    "seed",
+    "stop",
+    "structured_outputs",
+    "temperature",
+    "tool_choice",
+    "tools",
+    "top_a",
+    "top_k",
+    "top_logprobs",
+    "top_p",
+    "web_search_options"
+   ],
+   "top_provider": {
+    "context_length": null,
+    "is_moderated": false,
+    "max_completion_tokens": null
+   }
+  },
+  {
+   "architecture": {
+    "input_modalities": [
+     "file",
+     "image",
+     "text"
+    ],
+    "output_modalities": [
+     "text"
+    ]
+   },
+   "canonical_slug": "~openai/gpt-latest",
+   "context_length": 1050000,
+   "id": "~openai/gpt-latest",
+   "name": "OpenAI GPT Latest",
+   "pricing": {
+    "completion": "0.00003",
+    "prompt": "0.000005"
+   },
+   "reasoning": {
+    "default_effort": "medium",
+    "default_enabled": true,
+    "mandatory": false,
+    "supported_efforts": [
+     "max",
+     "xhigh",
+     "high",
+     "medium",
+     "low",
+     "none"
+    ]
+   },
+   "supported_parameters": [
+    "include_reasoning",
+    "max_completion_tokens",
+    "max_tokens",
+    "reasoning",
+    "reasoning_effort",
+    "response_format",
+    "seed",
+    "structured_outputs",
+    "tool_choice",
+    "tools"
+   ],
+   "top_provider": {
+    "context_length": 1050000,
+    "is_moderated": true,
+    "max_completion_tokens": 128000
+   }
+  },
+  {
+   "architecture": {
+    "input_modalities": [
+     "text",
+     "image",
+     "video",
+     "file",
+     "audio"
+    ],
+    "output_modalities": [
+     "text"
+    ]
+   },
+   "canonical_slug": "google/gemini-3.6-flash-20260721",
+   "context_length": 1048576,
+   "id": "google/gemini-3.6-flash:batch",
+   "name": "Google: Gemini 3.6 Flash (batch)",
+   "pricing": {
+    "completion": "0.00000375",
+    "prompt": "0.00000075"
+   },
+   "reasoning": {
+    "default_effort": "medium",
+    "default_enabled": true,
+    "mandatory": true,
+    "supported_efforts": [
+     "high",
+     "medium",
+     "low",
+     "minimal"
+    ]
+   },
+   "supported_parameters": [
+    "include_reasoning",
+    "max_tokens",
+    "reasoning",
+    "reasoning_effort",
+    "response_format",
+    "seed",
+    "stop",
+    "structured_outputs",
+    "tool_choice",
+    "tools"
+   ],
+   "top_provider": {
+    "context_length": 1048576,
+    "is_moderated": false,
+    "max_completion_tokens": 65536
+   }
+  },
+  {
+   "architecture": {
+    "input_modalities": [
+     "text",
+     "image",
+     "file"
+    ],
+    "output_modalities": [
+     "text"
+    ]
+   },
+   "canonical_slug": "openai/gpt-4o-mini",
+   "context_length": 128000,
+   "id": "openai/gpt-4o-mini",
+   "name": "OpenAI: GPT-4o-mini",
+   "pricing": {
+    "completion": "0.0000006",
+    "prompt": "0.00000015"
+   },
+   "supported_parameters": [
+    "frequency_penalty",
+    "logit_bias",
+    "logprobs",
+    "max_completion_tokens",
+    "max_tokens",
+    "prediction",
+    "presence_penalty",
+    "response_format",
+    "seed",
+    "stop",
+    "structured_outputs",
+    "temperature",
+    "tool_choice",
+    "tools",
+    "top_logprobs",
+    "top_p",
+    "web_search_options"
+   ],
+   "top_provider": {
+    "context_length": 128000,
+    "is_moderated": true,
+    "max_completion_tokens": 16384
+   }
+  },
+  {
+   "architecture": {
+    "input_modalities": [
+     "file",
+     "image",
+     "text",
+     "audio"
+    ],
+    "output_modalities": [
+     "text"
+    ]
+   },
+   "canonical_slug": "google/gemini-2.5-pro-preview-06-05",
+   "context_length": 1048576,
+   "id": "google/gemini-2.5-pro-preview",
+   "name": "Google: Gemini 2.5 Pro Preview 06-05",
+   "pricing": {
+    "completion": "0.00001",
+    "prompt": "0.00000125"
+   },
+   "reasoning": {
+    "mandatory": true
+   },
+   "supported_parameters": [
+    "include_reasoning",
+    "max_tokens",
+    "reasoning",
+    "response_format",
+    "seed",
+    "stop",
+    "structured_outputs",
+    "temperature",
+    "tool_choice",
+    "tools",
+    "top_p"
+   ],
+   "top_provider": {
+    "context_length": 1048576,
+    "is_moderated": false,
+    "max_completion_tokens": 65536
+   }
+  }
+ ]
+}

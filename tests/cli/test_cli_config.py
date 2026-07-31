@@ -17,6 +17,7 @@ from kolega_code.cli.provider_registry import (
     UI_DEFAULT_PROVIDER,
 )
 from kolega_code.cli.settings import CliSettings
+from kolega_code.llm.specs import is_featured_model
 
 
 @pytest.mark.parametrize(
@@ -568,3 +569,76 @@ def test_web_search_backend_and_base_url_from_env(tmp_path: Path) -> None:
 
     assert config.web_search_backend == "searxng"
     assert config.web_search_base_url == "https://searx.example"
+
+
+# --- openrouter gateway ---------------------------------------------------
+
+
+def test_build_agent_config_openrouter_provider_default(tmp_path: Path) -> None:
+    config = build_agent_config(
+        tmp_path,
+        CliConfigOverrides(provider=ModelProvider.OPENROUTER.value),
+        env={"OPENROUTER_API_KEY": "sk-or-key"},
+    )
+
+    assert config.long_context_config.provider == ModelProvider.OPENROUTER
+    assert config.long_context_config.model == "moonshotai/kimi-k3"
+    assert config.fast_config.provider == ModelProvider.OPENROUTER
+    assert config.thinking_config.provider == ModelProvider.OPENROUTER
+    assert config.openrouter_api_key == "sk-or-key"
+
+
+def test_build_agent_config_accepts_a_non_featured_openrouter_model(tmp_path: Path) -> None:
+    # The picker lists only the most-used models, but any catalogued id resolves.
+    model = "deepseek/deepseek-v3.2"
+    assert not is_featured_model(ModelProvider.OPENROUTER.value, model)
+
+    config = build_agent_config(
+        tmp_path,
+        CliConfigOverrides(provider=ModelProvider.OPENROUTER.value, model=model),
+        env={"OPENROUTER_API_KEY": "sk-or-key"},
+    )
+
+    assert config.long_context_config.model == model
+
+
+def test_openrouter_model_paired_with_the_wrong_provider_is_rejected(tmp_path: Path) -> None:
+    with pytest.raises(CliConfigError, match="openrouter"):
+        build_agent_config(
+            tmp_path,
+            CliConfigOverrides(provider=ModelProvider.ANTHROPIC.value, model="z-ai/glm-5.2"),
+            env={"ANTHROPIC_API_KEY": "anthropic-key"},
+        )
+
+
+def test_openrouter_requires_openrouter_api_key(tmp_path: Path) -> None:
+    with pytest.raises(CliConfigError, match="OPENROUTER_API_KEY"):
+        build_agent_config(tmp_path, CliConfigOverrides(provider=ModelProvider.OPENROUTER.value), env={})
+
+
+def test_saved_non_featured_openrouter_model_survives_config_building(tmp_path: Path) -> None:
+    # _coerce_known_model must not "repair" a valid-but-unlisted gateway model.
+    settings = CliSettings(
+        active_provider=ModelProvider.OPENROUTER.value,
+        active_model="deepseek/deepseek-v3.2",
+    )
+
+    config = build_agent_config(tmp_path, env={"OPENROUTER_API_KEY": "sk-or-key"}, settings=settings)
+
+    assert config.long_context_config.model == "deepseek/deepseek-v3.2"
+
+
+def test_openrouter_edit_protocol_defaults_to_claude_code_except_openai_models(tmp_path: Path) -> None:
+    config = build_agent_config(
+        tmp_path,
+        CliConfigOverrides(provider=ModelProvider.OPENROUTER.value, model="z-ai/glm-5.2"),
+        env={"OPENROUTER_API_KEY": "sk-or-key"},
+    )
+    assert config.resolve_edit_protocol() == EditProtocol.CLAUDE_CODE
+
+    config = build_agent_config(
+        tmp_path,
+        CliConfigOverrides(provider=ModelProvider.OPENROUTER.value, model="openai/gpt-5.6-sol"),
+        env={"OPENROUTER_API_KEY": "sk-or-key"},
+    )
+    assert config.resolve_edit_protocol() == EditProtocol.CODEX_APPLY_PATCH
