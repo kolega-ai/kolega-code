@@ -158,6 +158,17 @@ async def test_textual_app_passes_shared_task_list_tools_to_build_agent_only(
         assert goal_schema["required"] == ["condition"]
         assert goal_schema["properties"]["condition"]["type"] == "string"
 
+        # The worktree switch carries the same shape of authorization gate: the
+        # model sees it in the tool description as well as the prompt section.
+        switch_extension = extension_by_name(app.agent.kwargs["tool_extensions"], "cli-worktree-control")
+        switch_prompt = extension_by_name(app.agent.kwargs["prompt_extensions"], "cli-worktree-control")
+        switch_doc = switch_extension.tools["switch_worktree"].__doc__ or ""
+        for policy_text in (switch_doc, switch_prompt.markdown):
+            policy_lower = " ".join(policy_text.lower().split())
+            assert "explicitly asked" in policy_lower or "explicitly asks" in policy_lower
+            assert "does not create a worktree" in policy_lower or "never creates one" in policy_lower
+            assert "may decline" in policy_lower
+
         await pilot.press("shift+tab")
 
         assert isinstance(app.agent, FakePlanningAgent)
@@ -181,10 +192,23 @@ async def test_textual_app_passes_shared_task_list_tools_to_build_agent_only(
         assert "cli-shared-task-list" not in plan_prompt_ids
         # ...and still gets the planning-question tool.
         assert "cli-planning-questions" in plan_extension_names
+        # The goal and worktree control extensions are installed in both modes,
+        # but neither declares planning_tools — the group that bypasses the
+        # planning agent's read_only filter — so plan mode's registry drops both.
         assert "cli-goal-control" in plan_extension_names
         plan_goal_extension = extension_by_name(app.agent.kwargs["tool_extensions"], "cli-goal-control")
         assert set(plan_goal_extension.tools) == {"set_goal"}
-        assert "set_goal" in plan_goal_extension.tool_groups["planning_tools"]
+        assert plan_goal_extension.tool_groups == {"cli_goal_tools": ["set_goal"]}
+        plan_switch_extension = extension_by_name(app.agent.kwargs["tool_extensions"], "cli-worktree-control")
+        assert plan_switch_extension.tool_groups == {"cli_worktree_tools": ["switch_worktree"]}
+        # Naming an absent tool invites a hallucinated call, so the goal policy
+        # section is build-mode only...
+        assert "cli-goal-control" not in plan_prompt_ids
+        # ...while the worktree section stays: plan mode keeps exec_command and
+        # must still be told not to create a worktree.
+        plan_switch_prompt = extension_by_name(app.agent.kwargs["prompt_extensions"], "cli-worktree-control")
+        assert "never run `git worktree add` here" in plan_switch_prompt.markdown
+        assert "switch_worktree" not in plan_switch_prompt.markdown
         question_tools = extension_by_name(app.agent.kwargs["tool_extensions"], "cli-planning-questions").tools
         assert {"ask_user_choice"} == set(question_tools)
         prompt_markdown = "\n".join(extension.markdown for extension in app.agent.kwargs["prompt_extensions"])

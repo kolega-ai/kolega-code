@@ -7,6 +7,6 @@ Use it for throwaway work that must not touch the user's working tree: one-off s
 Rules:
 
 - Never place deliverables in the scratchpad. It is a per-session temp directory that the OS may delete at any time; anything the user must keep belongs in the working directory.
-- Never create a Git worktree in the scratchpad. Worktrees are persistent developer-visible state; create new ones under the project-local `.kolega/worktrees/<safe-unique-slug>` path after verifying that subtree is ignored through the shared Git `info/exclude`.
+- Never create a Git worktree in the scratchpad. Worktrees are persistent developer-visible state, so create one only when the user explicitly asks for it; when asked, put it under the project-local `.kolega/worktrees/<safe-unique-slug>` path after verifying that subtree is ignored through the shared Git `info/exclude`.
 - The directory may already contain files from earlier turns of this session or from sub-agents that share it. Do not delete files you did not create.
 - Create uniquely named files; other agents may use the directory concurrently.

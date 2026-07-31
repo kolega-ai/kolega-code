@@ -72,6 +72,17 @@ class TestPromptProvider:
         assert "Never ignore all of `.kolega/`" in prompt
         assert "Do not move or remove any existing worktree" in prompt
 
+    def test_coder_agent_cli_mode_gates_worktree_creation_on_an_explicit_request(self, prompt_provider, prompt_context):
+        """Placement guidance alone reads as an invitation to create one."""
+        prompt = prompt_provider.get_system_prompt(
+            agent_type=AgentType.CODER, mode=AgentMode.CLI, context=prompt_context
+        )
+
+        assert "Work in the checkout you were started in" in prompt
+        assert "Do not create a Git worktree unless the user explicitly asks for one" in prompt
+        assert "suggest it and let the user decide instead of acting" in prompt
+        assert "When the user has asked for an auxiliary Git worktree" in prompt
+
     @pytest.mark.parametrize(
         ("agent_type", "mode"),
         [

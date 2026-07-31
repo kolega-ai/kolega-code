@@ -30,14 +30,18 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 - **Worktree-aware startup and workspace switching.** Interactive and headless
   launches can select a registered checkout with `--worktree`, or create one
   safely with `--create-worktree` plus optional `--from` and
-  `--worktree-path`. In the TUI, the top-level agent can explicitly switch its
-  complete active workspace between registered sibling worktrees: the switch
-  commits immediately and applies at the end of the agent's turn by rebuilding
-  the workspace — terminal, filesystem, LSP, snapshots, skills, autocomplete,
-  and Changes/Rewind scope move together — after which the agent is prompted
-  to continue in the new checkout. Session identity and sibling-checkout
-  isolation remain unchanged, and active workspace selection persists across
-  resume.
+  `--worktree-path`. In the TUI, the top-level build-mode agent can switch its
+  complete active workspace between registered sibling worktrees, but only when
+  the user has explicitly asked it to: the agent never creates a worktree or
+  moves the session on its own initiative, plan mode has no workspace-switching
+  tool at all, and every agent-initiated switch is confirmed by the user first,
+  with a declined or unanswered prompt leaving the workspace unchanged. Once
+  approved, the switch commits immediately and applies at the end of the agent's
+  turn by rebuilding the workspace — terminal, filesystem, LSP, snapshots,
+  skills, autocomplete, and Changes/Rewind scope move together — after which the
+  agent is prompted to continue in the new checkout. Session identity and
+  sibling-checkout isolation remain unchanged, and active workspace selection
+  persists across resume.
 - The public `ToolExtension` API now accepts additive `exclusive_tools`
   metadata for tools that must run alone in a model tool-call batch.
 - `browser_scroll` on both browser backends, taking exactly one of a target, a
@@ -47,6 +51,11 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ### Changed
 
+- The TUI `set_goal` tool is now build-mode only. Plan mode's tool inventory is
+  meant to be read-only plus investigation, and a planning turn should not be
+  able to start an autonomous loop on its own; `/goal <condition>` still works in
+  either mode, and a goal set in build mode keeps driving turns after switching
+  to plan mode.
 - Project memory, repository guidance (`AGENTS.md`/`KOLEGA.md`), and the current
   date are no longer rendered into the system prompt. They now reach the agent as
   `<system-reminder>` context updates, sent once each time they change. Because

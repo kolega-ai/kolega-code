@@ -14,7 +14,7 @@ from kolega_code.agent.generalagent import GeneralAgent
 from kolega_code.agent.investigationagent import InvestigationAgent
 from kolega_code.agent.planningagent import PlanningAgent
 from kolega_code.agent.prompt_provider import AgentMode, PromptProvider
-from kolega_code.agent.tools import ToolCollection
+from kolega_code.agent.tools import ToolCollection, ToolExtension
 from kolega_code.llm.specs import MODEL_SPECS
 
 
@@ -346,11 +346,87 @@ def test_planning_agent_exposes_read_only_and_planning_tools(project_path, mock_
     assert "write" not in tool_names
     # Planning agent can run investigative shell commands but cannot edit files.
     assert {"exec_command", "write_stdin", "kill_command", "list_sessions"} <= tool_names
+    # ``planning_tools`` is checked before the read_only filter in
+    # _should_include_tool, so declaring a tool in that group is a deliberate
+    # bypass of this contract, not a label. Anything added to it must be
+    # justified against this subset.
     assert tool_names - expected_planning_tools <= (
         set(agent.tool_collection.read_only_tools)
         | set(agent.tool_collection.command_tools)
         | {"write_memory", "edit_memory", "delete_memory"}
     )
+
+
+def _session_control_tool_extensions():
+    """Extensions shaped like the TUI's worktree/goal control pair."""
+
+    async def switch_worktree(path: str) -> str:
+        """Switch the active workspace."""
+        return path
+
+    async def set_goal(condition: str) -> str:
+        """Set an autonomous goal."""
+        return condition
+
+    return [
+        ToolExtension(
+            name="cli-worktree-control",
+            tools={"switch_worktree": switch_worktree},
+            tool_groups={"cli_worktree_tools": ["switch_worktree"]},
+            propagate_to_sub_agents=False,
+            exclusive_tools=frozenset({"switch_worktree"}),
+        ),
+        ToolExtension(
+            name="cli-goal-control",
+            tools={"set_goal": set_goal},
+            tool_groups={"cli_goal_tools": ["set_goal"]},
+            propagate_to_sub_agents=False,
+        ),
+    ]
+
+
+def test_planning_agent_cannot_reach_session_control_tools(project_path, mock_connection_manager, agent_config):
+    """Switching the workspace or starting a goal loop is not a planning action.
+
+    Neither tool is declared in ``planning_tools``, so the read_only filter drops
+    both from the registry. ``call``/``has_tool`` dispatch through the registry,
+    so the bound callbacks are unreachable even if the model names them.
+    """
+    agent = PlanningAgent(
+        project_path=project_path,
+        workspace_id="test_workspace",
+        thread_id=str(uuid.uuid4()),
+        connection_manager=mock_connection_manager,
+        config=agent_config,
+        agent_mode=AgentMode.CLI,
+        tool_extensions=_session_control_tool_extensions(),
+    )
+
+    tool_names = {tool.name for tool in agent.tool_collection.get_tool_list()}
+
+    assert "switch_worktree" not in tool_names
+    assert "set_goal" not in tool_names
+    assert agent.tool_collection.has_tool("switch_worktree") is False
+    assert agent.tool_collection.has_tool("set_goal") is False
+
+
+def test_coder_agent_keeps_session_control_tools(project_path, mock_connection_manager, agent_config):
+    """The same extensions stay available in build mode."""
+    agent = CoderAgent(
+        project_path=project_path,
+        workspace_id="test_workspace",
+        thread_id=str(uuid.uuid4()),
+        connection_manager=mock_connection_manager,
+        config=agent_config,
+        agent_mode=AgentMode.CLI,
+        tool_extensions=_session_control_tool_extensions(),
+    )
+
+    tool_names = {tool.name for tool in agent.tool_collection.get_tool_list()}
+
+    assert {"switch_worktree", "set_goal"} <= tool_names
+    assert agent.tool_collection.has_tool("switch_worktree") is True
+    assert agent.tool_collection.has_tool("set_goal") is True
 
 
 def test_exec_command_exposes_optional_background_param(project_path, mock_connection_manager, agent_config):

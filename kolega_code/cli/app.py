@@ -1293,6 +1293,42 @@ class KolegaCodeApp(
             return
         self._start_scope_probe()
 
+    async def _confirm_worktree_switch(self, new_root: Path, branch: str, old_root: Path) -> tuple[bool, str]:
+        """Ask the user to approve an agent-initiated workspace switch.
+
+        Returns ``(approved, answer)``. Only the exact approve label approves:
+        free text the user typed instead is a decline, and is handed back to the
+        model so it can react. An unanswered prompt — no control lease, or the
+        channel's timeout — is also a decline, which is the safe direction for a
+        switch nobody asked for.
+        """
+        if self._pending_question is not None:
+            raise ToolError("A question is already waiting for an answer. Resolve it before switching worktrees.")
+
+        branch_note = f" on branch `{branch}`" if branch else ""
+        question = messages.WORKTREE_SWITCH_CONFIRM_QUESTION.format(
+            old_root=old_root,
+            new_root=new_root,
+            branch_note=branch_note,
+        )
+        try:
+            answer = await self._ask_user_choice(
+                question,
+                [messages.WORKTREE_SWITCH_CONFIRM_APPROVE, messages.WORKTREE_SWITCH_CONFIRM_DECLINE],
+                [
+                    messages.WORKTREE_SWITCH_CONFIRM_APPROVE_DESCRIPTION,
+                    messages.WORKTREE_SWITCH_CONFIRM_DECLINE_DESCRIPTION.format(old_root=old_root),
+                ],
+            )
+        except ToolError:
+            # Nobody could answer (no controller, or the request timed out).
+            return False, ""
+        if answer == messages.WORKTREE_SWITCH_CONFIRM_APPROVE:
+            return True, answer
+        if answer == messages.WORKTREE_SWITCH_CONFIRM_DECLINE:
+            return False, ""
+        return False, answer
+
     async def _switch_active_worktree(self, path: str) -> str:
         """Durably commit a switch of the active workspace; it applies at turn end."""
         agent = self.agent
@@ -1322,6 +1358,17 @@ class KolegaCodeApp(
                 "Cannot switch worktrees while terminal sessions are running. Stop them with `kill_command`, "
                 "then call `switch_worktree` again by itself."
             )
+
+        # Asked after the cheap refusals (no prompt for a no-op or for a switch
+        # that is going to be refused anyway) and before anything durable is
+        # written. The agent may only switch when the user asked for it, so the
+        # user gets the final say regardless of permission mode or goal loop.
+        approved, answer = await self._confirm_worktree_switch(new_root, target.branch, old_root)
+        if not approved:
+            declined = messages.WORKTREE_SWITCH_DECLINED.format(old_root=old_root)
+            if answer:
+                declined += messages.WORKTREE_SWITCH_DECLINED_ANSWER.format(answer=answer)
+            return declined
 
         try:
             old_info = await asyncio.to_thread(resolve_worktree, self.project_path, old_root)

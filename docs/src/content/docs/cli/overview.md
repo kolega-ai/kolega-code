@@ -75,8 +75,14 @@ occupied destination. `--from` and `--worktree-path` are valid only with
 `--create-worktree`; creation cannot be combined with `--resume` or `--session`.
 The same options are available on `kolega-code ask`.
 
-During a TUI session, the top-level agent can explicitly call
-`switch_worktree`. The switch is committed to the session immediately and
+During a TUI session, the top-level **build-mode** agent can call
+`switch_worktree`, and only when you have explicitly asked it to move the
+session to another worktree — it never creates a worktree on its own
+initiative, and plan mode has no workspace-switching tool at all. Every
+agent-initiated switch asks you to confirm first; declining, or leaving the
+prompt unanswered, leaves the active workspace unchanged.
+
+Once approved, the switch is committed to the session immediately and
 applied when the agent's turn ends: the workspace is rebuilt in the selected
 checkout — filesystem, terminal, search/edit, LSP, snapshots, skills,
 custom agents, and future sub-agent work all follow — and the agent is then

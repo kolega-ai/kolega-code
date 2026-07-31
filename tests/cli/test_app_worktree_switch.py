@@ -1,3 +1,4 @@
+import asyncio
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -7,9 +8,11 @@ from unittest.mock import Mock
 import pytest
 
 from kolega_code.agent.tools import ToolExtension
+from kolega_code.cli import messages as cli_messages
 from kolega_code.cli.config import config_summary
 from kolega_code.cli.session_store import SessionStore
 from kolega_code.cli.tui import agent_runtime as agent_runtime_module
+from kolega_code.cli.tui import constants as tui_constants
 from kolega_code.cli.tui.state import PendingApproval
 from kolega_code.permissions import PERMISSIONS_RELATIVE_PATH, allow_rule_options, permission_request_for_tool
 from kolega_code.services.terminal import LocalTerminalManager
@@ -124,6 +127,36 @@ def _switch_tool(app: Any):
     return extension_by_name(app.agent.kwargs["tool_extensions"], "cli-worktree-control").tools["switch_worktree"]
 
 
+async def _wait_for_pending_question(app: Any, timeout: float = 5.0) -> None:
+    """Poll to a deadline for the confirmation prompt to reach this client.
+
+    The request travels the control channel as an event, so it arrives a few
+    loop iterations after the tool call starts.
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while app._pending_question is None:
+        if loop.time() > deadline:
+            raise AssertionError("The worktree switch confirmation prompt never appeared.")
+        await asyncio.sleep(0.01)
+
+
+async def _switch_with_answer(app: Any, target: str, answer: str) -> str:
+    """Call ``switch_worktree`` and answer its confirmation prompt."""
+    task = asyncio.create_task(_switch_tool(app)(target))
+    try:
+        await _wait_for_pending_question(app)
+    except AssertionError:
+        task.cancel()
+        raise
+    await app._answer_pending_question(answer)
+    return await task
+
+
+async def _approve_switch(app: Any, target: str) -> str:
+    return await _switch_with_answer(app, target, cli_messages.WORKTREE_SWITCH_CONFIRM_APPROVE)
+
+
 @pytest.mark.asyncio
 async def test_top_level_agent_exposes_exclusive_non_propagating_switch_tool(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -138,8 +171,14 @@ async def test_top_level_agent_exposes_exclusive_non_propagating_switch_tool(
         assert set(extension.tools) == {"switch_worktree"}
         assert extension.propagate_to_sub_agents is False
         assert extension.exclusive_tools == frozenset({"switch_worktree"})
-        assert extension.tool_groups["planning_tools"] == ["switch_worktree"]
+        # planning_tools bypasses the planning agent's read_only filter, so the
+        # tool is deliberately absent from it: plan mode has no switch tool.
+        assert extension.tool_groups == {"cli_worktree_tools": ["switch_worktree"]}
+        assert "planning_tools" not in extension.tool_groups
         assert prompt.propagate_to_sub_agents is False
+        # The build-mode body gates the tool on an explicit request.
+        assert "unless the user explicitly asks for it in this session" in prompt.markdown
+        assert "switch_worktree" in prompt.markdown
 
 
 @pytest.mark.asyncio
@@ -200,6 +239,9 @@ async def test_switch_worktree_same_root_is_noop(tmp_path: Path, monkeypatch: py
 
         assert "already active" in result
         assert "baseline was not reset" in result
+        # A no-op must not interrupt the user with a confirmation prompt.
+        assert app._pending_question is None
+        assert app.control_channel.pending() == []
         assert app._session_diff_tracker is tracker
         assert app._session_diff_generation == generation
         assert app.session.active_project_path is None
@@ -233,6 +275,9 @@ async def test_switch_worktree_is_blocked_by_running_local_terminal(
             terminal.sessions.pop("running", None)
 
         assert app.active_project_path == main
+        # Refused before the user is asked anything.
+        assert app._pending_question is None
+        assert app.control_channel.pending() == []
         assert app._session_diff_tracker is tracker
         assert app.session.active_project_path is None
         assert _workspace_events(store, app.session.session_id) == []
@@ -275,9 +320,8 @@ async def test_switch_commits_boundary_and_defers_apply(tmp_path: Path, monkeypa
     async with app.run_test():
         first_agent = app.agent
         tracker = app._session_diff_tracker
-        switch = _switch_tool(app)
 
-        result = await switch(str(linked))
+        result = await _approve_switch(app, str(linked))
 
         assert result.startswith("Committed a switch")
         pending = app._pending_workspace_switch
@@ -306,6 +350,133 @@ async def test_switch_commits_boundary_and_defers_apply(tmp_path: Path, monkeypa
 
 
 @pytest.mark.asyncio
+async def test_switch_writes_nothing_until_the_user_confirms(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The prompt is raised before anything durable is written."""
+    app, main, linked, store, _agent_cls = _build_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        task = asyncio.create_task(_switch_tool(app)(str(linked)))
+        await _wait_for_pending_question(app)
+
+        pending_question = app._pending_question
+        assert pending_question is not None
+        assert str(linked) in pending_question.question
+        assert str(main) in pending_question.question
+        assert "feature/switch-test" in pending_question.question
+        assert pending_question.options == [
+            cli_messages.WORKTREE_SWITCH_CONFIRM_APPROVE,
+            cli_messages.WORKTREE_SWITCH_CONFIRM_DECLINE,
+        ]
+        # Nothing is committed while the question is open.
+        assert app.session.active_project_path is None
+        assert store.load(app.session.session_id).active_project_path is None
+        assert _workspace_events(store, app.session.session_id) == []
+        assert app._pending_workspace_switch is None
+
+        await app._answer_pending_question(cli_messages.WORKTREE_SWITCH_CONFIRM_APPROVE)
+        result = await task
+
+        assert result.startswith("Committed a switch")
+        assert app._pending_workspace_switch is not None
+        assert len(_workspace_events(store, app.session.session_id)) == 1
+
+
+@pytest.mark.asyncio
+async def test_declined_switch_leaves_the_workspace_untouched(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    app, main, linked, store, _agent_cls = _build_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        first_agent = app.agent
+        tracker = app._session_diff_tracker
+        generation = app._session_diff_generation
+
+        result = await _switch_with_answer(app, str(linked), cli_messages.WORKTREE_SWITCH_CONFIRM_DECLINE)
+
+        assert cli_messages.WORKTREE_SWITCH_DECLINED.format(old_root=main) in result
+        assert app._pending_workspace_switch is None
+        assert app.active_project_path == main
+        assert app.session.active_project_path is None
+        assert store.load(app.session.session_id).active_project_path is None
+        assert _workspace_events(store, app.session.session_id) == []
+        assert app._session_diff_tracker is tracker
+        assert app._session_diff_generation == generation
+        assert app.agent is first_agent
+
+
+@pytest.mark.asyncio
+async def test_free_text_answer_declines_and_reaches_the_model(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Only the exact approve label approves; anything else is a decline."""
+    app, main, linked, store, _agent_cls = _build_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        result = await _switch_with_answer(app, str(linked), "not yet, finish the audit here first")
+
+        assert cli_messages.WORKTREE_SWITCH_DECLINED.format(old_root=main) in result
+        assert "not yet, finish the audit here first" in result
+        assert app._pending_workspace_switch is None
+        assert app.session.active_project_path is None
+        assert _workspace_events(store, app.session.session_id) == []
+
+
+@pytest.mark.asyncio
+async def test_switch_is_refused_when_no_client_can_answer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """With no control lease the request resolves to its default: a decline."""
+    app, main, linked, store, _agent_cls = _build_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        app.control_channel.release(tui_constants.TUI_CLIENT_ID)
+
+        result = await _switch_tool(app)(str(linked))
+
+        assert cli_messages.WORKTREE_SWITCH_DECLINED.format(old_root=main) in result
+        assert app._pending_question is None
+        assert app._pending_workspace_switch is None
+        assert app.session.active_project_path is None
+        assert _workspace_events(store, app.session.session_id) == []
+
+
+@pytest.mark.asyncio
+async def test_switch_is_refused_while_another_question_is_pending(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app, _main, linked, store, _agent_cls = _build_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        question_task = asyncio.create_task(app._ask_user_choice("Which approach?", ["A", "B"]))
+        await _wait_for_pending_question(app)
+
+        with pytest.raises(ToolError, match="question is already waiting"):
+            await _switch_tool(app)(str(linked))
+
+        assert _workspace_events(store, app.session.session_id) == []
+        assert app._pending_workspace_switch is None
+
+        await app._answer_pending_question("A")
+        assert await question_task == "A"
+
+
+@pytest.mark.asyncio
+async def test_cancelling_the_turn_during_confirmation_commits_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app, main, linked, store, _agent_cls = _build_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        task = asyncio.create_task(_switch_tool(app)(str(linked)))
+        await _wait_for_pending_question(app)
+
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        assert app._pending_workspace_switch is None
+        assert app.active_project_path == main
+        assert app.session.active_project_path is None
+        assert _workspace_events(store, app.session.session_id) == []
+        assert app.control_channel.pending() == []
+
+
+@pytest.mark.asyncio
 async def test_apply_pending_switch_rebuilds_workspace_and_returns_continuation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -331,8 +502,7 @@ async def test_apply_pending_switch_rebuilds_workspace_and_returns_continuation(
         (main / "same-name.txt").write_text("launch root\n", encoding="utf-8")
         (linked / "same-name.txt").write_text("active root\n", encoding="utf-8")
 
-        switch = _switch_tool(app)
-        result = await switch(str(linked))
+        result = await _approve_switch(app, str(linked))
         assert result.startswith("Committed a switch")
 
         first_agent.append_user_message("before switch")
@@ -412,8 +582,7 @@ async def test_process_message_runs_continuation_turn_in_new_workspace(
 
     async with app.run_test():
         first_agent = app.agent
-        switch = _switch_tool(app)
-        await switch(str(linked))
+        await _approve_switch(app, str(linked))
 
         await app._process_message("original task")
 
@@ -431,12 +600,11 @@ async def test_second_switch_before_turn_end_is_refused(tmp_path: Path, monkeypa
     app, main, linked, store, _agent_cls = _build_app(tmp_path, monkeypatch)
 
     async with app.run_test():
-        switch = _switch_tool(app)
-        first_result = await switch(str(linked))
+        first_result = await _approve_switch(app, str(linked))
         assert first_result.startswith("Committed a switch")
 
         with pytest.raises(ToolError, match="already committed"):
-            await switch(str(main))
+            await _switch_tool(app)(str(main))
 
         assert len(_workspace_events(store, app.session.session_id)) == 1
 
@@ -452,10 +620,9 @@ async def test_persist_failure_leaves_workspace_unchanged(tmp_path: Path, monkey
             raise OSError("metadata unavailable")
 
         monkeypatch.setattr(app, "_save_workspace_switch_async", fail_save)
-        switch = _switch_tool(app)
 
         with pytest.raises(ToolError, match="Could not persist.*metadata unavailable"):
-            await switch(str(linked))
+            await _approve_switch(app, str(linked))
 
         assert app._pending_workspace_switch is None
         assert app.session.active_project_path is None
@@ -475,9 +642,8 @@ async def test_workspace_event_failure_does_not_publish_phantom_metadata(
         record_switch = Mock(side_effect=OSError("workspace event unavailable"))
         monkeypatch.setattr(recorder, "record_workspace_switched", record_switch)
 
-        switch = _switch_tool(app)
         with pytest.raises(ToolError, match="Could not persist"):
-            await switch(str(linked))
+            await _approve_switch(app, str(linked))
 
         assert _workspace_events(store, app.session.session_id) == []
         assert not any(
@@ -498,8 +664,7 @@ async def test_rebuild_failure_falls_back_to_previous_workspace(
 
     async with app.run_test():
         first_agent = app.agent
-        switch = _switch_tool(app)
-        await switch(str(linked))
+        await _approve_switch(app, str(linked))
 
         original_build_agent = app._build_agent
 
@@ -552,8 +717,7 @@ async def test_rebuild_double_failure_disables_chat(tmp_path: Path, monkeypatch:
     app, main, linked, store, _agent_cls = _build_app(tmp_path, monkeypatch)
 
     async with app.run_test():
-        switch = _switch_tool(app)
-        await switch(str(linked))
+        await _approve_switch(app, str(linked))
 
         async def always_fail_build_agent(*_args: Any, **_kwargs: Any) -> None:
             raise RuntimeError("rebuild failed")
