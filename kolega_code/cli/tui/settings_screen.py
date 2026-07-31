@@ -30,7 +30,7 @@ from ..provider_registry import (
     ui_provider_options,
     ui_thinking_effort_options,
 )
-from . import settings_panel
+from . import custom_model, settings_panel
 
 if TYPE_CHECKING:
     from ..app import KolegaCodeApp
@@ -189,6 +189,9 @@ class SettingsScreen(ModalScreen[None]):
                     allow_blank=False,
                     value=UI_DEFAULT_MODEL,
                 )
+                custom_model_input = Input(id="model_custom_input", placeholder=custom_model.CUSTOM_MODEL_PLACEHOLDER)
+                custom_model_input.display = False
+                yield custom_model_input
                 yield Label("Thinking effort")
                 yield Select(
                     ui_thinking_effort_options(UI_DEFAULT_PROVIDER, UI_DEFAULT_MODEL),
@@ -259,6 +262,12 @@ class SettingsScreen(ModalScreen[None]):
                                 allow_blank=True,
                                 prompt="—",
                             )
+                        row_custom_model = Input(
+                            id=f"am_custom_model_{role_value}",
+                            placeholder=custom_model.CUSTOM_MODEL_PLACEHOLDER,
+                        )
+                        row_custom_model.display = False
+                        yield row_custom_model
                         with Horizontal(classes="agent-model-field"):
                             yield Label("Effort", classes="agent-model-field-label")
                             yield Select(

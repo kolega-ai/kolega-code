@@ -76,10 +76,12 @@ Model IDs are `vendor/model`, for example `anthropic/claude-opus-5` or
 are heavily rate limited and are best kept for experiments rather than long
 sessions.
 
-Because the catalog runs to hundreds of entries, the Settings picker, `/model`
-and the sub-agent model catalog list only OpenRouter's **20 most-used models**,
-in the order of [OpenRouter's own LLM Leaderboard](https://openrouter.ai/rankings).
-Every other catalogued model still works — pass the exact ID:
+Because the catalog runs to hundreds of entries, the Settings picker (the main
+Model dropdown and every Agent Models row) leads with OpenRouter's **20
+most-used models**, in the order of [OpenRouter's own LLM Leaderboard](https://openrouter.ai/rankings),
+and then offers an **Other…** option where you can type any catalogued model id
+directly. `/model` and the sub-agent model catalog stay most-used-only. Every
+catalogued model still works — pass the exact ID:
 
 ```bash
 kolega-code models list --provider openrouter        # the whole catalog, most-used first

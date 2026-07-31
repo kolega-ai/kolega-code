@@ -20,6 +20,7 @@ def _configured_app(
     provider: str = UI_DEFAULT_PROVIDER,
     model: str = UI_DEFAULT_MODEL,
     effort: str | None = None,
+    agent_models: dict | None = None,
 ):
     from kolega_code.cli.app import KolegaCodeApp
 
@@ -30,6 +31,8 @@ def _configured_app(
     settings_store = SettingsStore(state_dir)
     settings = CliSettings(active_provider=provider, active_model=model, active_thinking_effort=effort)
     settings.set_api_key(provider, "stored-key")
+    if agent_models:
+        settings.agent_models = agent_models
     settings_store.save(settings)
     config = build_agent_config(project, env={}, settings=settings, settings_store=settings_store)
     store = SessionStore(state_dir)
@@ -44,6 +47,30 @@ def _configured_app(
             session=session,
         ),
         settings_store,
+    )
+
+
+def _non_featured_openrouter_model() -> str:
+    """A catalogued OpenRouter id outside the featured picker set, with efforts."""
+    from kolega_code.llm.specs import MODEL_SPECS, is_featured_model, thinking_effort_options
+
+    return next(
+        model
+        for provider, model in MODEL_SPECS
+        if provider == "openrouter"
+        and not is_featured_model("openrouter", model)
+        and thinking_effort_options("openrouter", model)
+    )
+
+
+def _non_vision_openrouter_model() -> str:
+    """A catalogued OpenRouter id that cannot accept image input."""
+    from kolega_code.llm.specs import MODEL_SPECS, supports_vision
+
+    return next(
+        model
+        for provider, model in MODEL_SPECS
+        if provider == "openrouter" and not supports_vision("openrouter", model)
     )
 
 
@@ -143,6 +170,7 @@ async def test_settings_screen_retains_active_model_and_effort(
 
     async with app.run_test(size=(140, 40)) as pilot:
         app.action_open_settings()
+        await pilot.pause()
         screen = app.screen
         assert isinstance(screen, SettingsScreen)
         await _wait_for_select_values(
@@ -378,3 +406,386 @@ async def test_onboarding_actions_stay_on_screen_at_small_sizes(
             region = next_button.region
             assert region.height > 0, f"step {step}: Continue button not laid out"
             assert region.y + region.height <= 24, f"step {step}: Continue button clipped"
+
+
+# --- "Other…" custom model picker ----------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_settings_other_model_restores_a_saved_non_featured_openrouter_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
+) -> None:
+    """A saved catalogued-but-non-featured model opens as Other… + typed id."""
+    pytest.importorskip("textual")
+    from textual.widgets import Input, Select
+
+    from kolega_code.cli.tui.custom_model import CUSTOM_MODEL_SENTINEL
+    from kolega_code.cli.tui.settings_screen import SettingsScreen
+
+    custom_model_id = _non_featured_openrouter_model()
+    app, _ = _configured_app(tmp_path, monkeypatch, provider="openrouter", model=custom_model_id)
+
+    async with app.run_test(size=(140, 40)) as pilot:
+        app.action_open_settings()
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+        await _wait_for_select_values(pilot, screen, {"model_select": CUSTOM_MODEL_SENTINEL})
+
+        custom_input = screen.query_one("#model_custom_input", Input)
+        assert custom_input.display is True
+        assert custom_input.value == custom_model_id
+        assert screen.dirty is False
+        # Effort options come from the typed id, never the sentinel.
+        from kolega_code.cli.provider_registry import ui_thinking_effort_options
+
+        effort = screen.query_one("#thinking_effort_select", Select)
+        valid_efforts = {value for _label, value in ui_thinking_effort_options("openrouter", custom_model_id)}
+        assert valid_efforts
+        assert str(effort.value) in valid_efforts
+
+
+@pytest.mark.asyncio
+async def test_settings_other_model_picks_and_applies_a_typed_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
+) -> None:
+    pytest.importorskip("textual")
+    from textual.widgets import Input, Select
+
+    from kolega_code.cli.tui.custom_model import CUSTOM_MODEL_SENTINEL
+    from kolega_code.cli.tui.settings_screen import SettingsScreen
+
+    custom_model_id = _non_featured_openrouter_model()
+    app, settings_store = _configured_app(tmp_path, monkeypatch, provider="openrouter")
+
+    async with app.run_test(size=(140, 40)) as pilot:
+        app.action_open_settings()
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+        model_select = screen.query_one("#model_select", Select)
+        model_select.value = CUSTOM_MODEL_SENTINEL
+        await _wait_for_select_values(pilot, screen, {"model_select": CUSTOM_MODEL_SENTINEL})
+
+        custom_input = screen.query_one("#model_custom_input", Input)
+        assert custom_input.display is True
+        await pilot.pause()
+        assert app.focused is custom_input
+
+        custom_input.value = custom_model_id
+        await pilot.pause()
+        await app._save_settings_from_ui()
+
+        assert settings_store.load().active_model == custom_model_id
+        # The picker keeps showing Other… with the typed id.
+        assert screen.query_one("#model_select", Select).value == CUSTOM_MODEL_SENTINEL
+        assert screen.query_one("#model_custom_input", Input).value == custom_model_id
+
+
+@pytest.mark.asyncio
+async def test_settings_other_model_rejects_an_unknown_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
+) -> None:
+    pytest.importorskip("textual")
+    from textual.widgets import Input, Select, Static
+
+    from kolega_code.cli.tui.custom_model import CUSTOM_MODEL_SENTINEL
+    from kolega_code.cli.tui.settings_screen import SettingsScreen
+
+    app, settings_store = _configured_app(tmp_path, monkeypatch, provider="openrouter")
+
+    async with app.run_test(size=(140, 40)) as pilot:
+        app.action_open_settings()
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+        screen.query_one("#model_select", Select).value = CUSTOM_MODEL_SENTINEL
+        await _wait_for_select_values(pilot, screen, {"model_select": CUSTOM_MODEL_SENTINEL})
+        screen.query_one("#model_custom_input", Input).value = "vendor/not-real"
+        await pilot.pause()
+        await app._save_settings_from_ui()
+
+        assert settings_store.load().active_model != "vendor/not-real"
+        status = str(screen.query_one("#settings_status", Static).render())
+        assert "vendor/not-real" in status
+
+
+@pytest.mark.asyncio
+async def test_settings_other_model_requires_a_typed_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
+) -> None:
+    pytest.importorskip("textual")
+    from textual.widgets import Select, Static
+
+    from kolega_code.cli.tui.custom_model import CUSTOM_MODEL_SENTINEL
+    from kolega_code.cli.tui.settings_screen import SettingsScreen
+
+    app, settings_store = _configured_app(tmp_path, monkeypatch, provider="openrouter")
+    original_model = settings_store.load().active_model
+
+    async with app.run_test(size=(140, 40)) as pilot:
+        app.action_open_settings()
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+        screen.query_one("#model_select", Select).value = CUSTOM_MODEL_SENTINEL
+        await _wait_for_select_values(pilot, screen, {"model_select": CUSTOM_MODEL_SENTINEL})
+        await app._save_settings_from_ui()
+
+        assert settings_store.load().active_model == original_model
+        status = str(screen.query_one("#settings_status", Static).render())
+        assert "Type a model id" in status
+
+
+@pytest.mark.asyncio
+async def test_settings_other_model_is_cleared_by_a_provider_switch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
+) -> None:
+    pytest.importorskip("textual")
+    from textual.widgets import Input, Select
+
+    from kolega_code.cli.tui.custom_model import CUSTOM_MODEL_SENTINEL
+    from kolega_code.cli.tui.settings_screen import SettingsScreen
+
+    custom_model_id = _non_featured_openrouter_model()
+    app, _ = _configured_app(tmp_path, monkeypatch, provider="openrouter")
+
+    async with app.run_test(size=(140, 40)) as pilot:
+        app.action_open_settings()
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+        screen.query_one("#model_select", Select).value = CUSTOM_MODEL_SENTINEL
+        await _wait_for_select_values(pilot, screen, {"model_select": CUSTOM_MODEL_SENTINEL})
+        custom_input = screen.query_one("#model_custom_input", Input)
+        custom_input.value = custom_model_id
+        await pilot.pause()
+
+        screen.query_one("#provider_select", Select).value = "anthropic"
+        await _wait_for_select_values(pilot, screen, {"model_select": "claude-fable-5"})
+        assert custom_input.display is False
+        assert custom_input.value == ""
+
+
+@pytest.mark.asyncio
+async def test_agent_row_other_model_restores_a_saved_non_featured_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
+) -> None:
+    pytest.importorskip("textual")
+    from textual.widgets import Input
+
+    from kolega_code.cli.tui.custom_model import CUSTOM_MODEL_SENTINEL
+    from kolega_code.cli.tui.settings_screen import SettingsScreen
+
+    custom_model_id = _non_featured_openrouter_model()
+    agent_models = {"planning": {"provider": "openrouter", "model": custom_model_id}}
+    app, _ = _configured_app(tmp_path, monkeypatch, provider="openrouter", agent_models=agent_models)
+
+    async with app.run_test(size=(140, 40)) as pilot:
+        app.action_open_settings("agents")
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+        await _wait_for_select_values(
+            pilot,
+            screen,
+            {"am_provider_planning": "openrouter", "am_model_planning": CUSTOM_MODEL_SENTINEL},
+        )
+
+        row_input = screen.query_one("#am_custom_model_planning", Input)
+        assert row_input.display is True
+        assert row_input.value == custom_model_id
+        assert screen.dirty is False
+
+
+@pytest.mark.asyncio
+async def test_agent_row_other_model_picks_and_applies_a_typed_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
+) -> None:
+    pytest.importorskip("textual")
+    from textual.widgets import Input, Select
+
+    from kolega_code.cli.tui.custom_model import CUSTOM_MODEL_SENTINEL
+    from kolega_code.cli.tui.settings_screen import SettingsScreen
+
+    custom_model_id = _non_featured_openrouter_model()
+    app, settings_store = _configured_app(tmp_path, monkeypatch, provider="openrouter")
+
+    async with app.run_test(size=(140, 40)) as pilot:
+        app.action_open_settings("agents")
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+        screen.query_one("#am_provider_planning", Select).value = "openrouter"
+        await _wait_for_select_values(pilot, screen, {"am_provider_planning": "openrouter"})
+        screen.query_one("#am_model_planning", Select).value = CUSTOM_MODEL_SENTINEL
+        await _wait_for_select_values(pilot, screen, {"am_model_planning": CUSTOM_MODEL_SENTINEL})
+
+        row_input = screen.query_one("#am_custom_model_planning", Input)
+        assert row_input.display is True
+        row_input.value = custom_model_id
+        await pilot.pause()
+        await app._save_settings_from_ui()
+
+        saved = settings_store.load().get_agent_model("planning")
+        assert saved is not None
+        assert saved["provider"] == "openrouter"
+        assert saved["model"] == custom_model_id
+
+
+@pytest.mark.asyncio
+async def test_agent_row_other_model_rejects_an_unknown_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
+) -> None:
+    pytest.importorskip("textual")
+    from textual.widgets import Input, Select, Static
+
+    from kolega_code.cli.tui.custom_model import CUSTOM_MODEL_SENTINEL
+    from kolega_code.cli.tui.settings_screen import SettingsScreen
+
+    app, settings_store = _configured_app(tmp_path, monkeypatch, provider="openrouter")
+
+    async with app.run_test(size=(140, 40)) as pilot:
+        app.action_open_settings("agents")
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+        screen.query_one("#am_provider_planning", Select).value = "openrouter"
+        await _wait_for_select_values(pilot, screen, {"am_provider_planning": "openrouter"})
+        screen.query_one("#am_model_planning", Select).value = CUSTOM_MODEL_SENTINEL
+        await _wait_for_select_values(pilot, screen, {"am_model_planning": CUSTOM_MODEL_SENTINEL})
+        screen.query_one("#am_custom_model_planning", Input).value = "vendor/not-real"
+        await pilot.pause()
+        await app._save_settings_from_ui()
+
+        assert settings_store.load().get_agent_model("planning") is None
+        status = str(screen.query_one("#settings_status", Static).render())
+        assert "vendor/not-real" in status
+
+
+@pytest.mark.asyncio
+async def test_agent_row_other_model_requires_a_typed_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
+) -> None:
+    pytest.importorskip("textual")
+    from textual.widgets import Select, Static
+
+    from kolega_code.cli.tui.custom_model import CUSTOM_MODEL_SENTINEL
+    from kolega_code.cli.tui.settings_screen import SettingsScreen
+
+    app, settings_store = _configured_app(tmp_path, monkeypatch, provider="openrouter")
+
+    async with app.run_test(size=(140, 40)) as pilot:
+        app.action_open_settings("agents")
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+        screen.query_one("#am_provider_planning", Select).value = "openrouter"
+        await _wait_for_select_values(pilot, screen, {"am_provider_planning": "openrouter"})
+        screen.query_one("#am_model_planning", Select).value = CUSTOM_MODEL_SENTINEL
+        await _wait_for_select_values(pilot, screen, {"am_model_planning": CUSTOM_MODEL_SENTINEL})
+        await app._save_settings_from_ui()
+
+        assert settings_store.load().get_agent_model("planning") is None
+        status = str(screen.query_one("#settings_status", Static).render())
+        assert "Type a model id" in status
+
+
+@pytest.mark.asyncio
+async def test_agent_row_other_model_is_cleared_when_row_returns_to_inherit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
+) -> None:
+    pytest.importorskip("textual")
+    from textual.widgets import Input, Select
+
+    from kolega_code.cli.provider_registry import INHERIT_SENTINEL
+    from kolega_code.cli.tui.custom_model import CUSTOM_MODEL_SENTINEL
+    from kolega_code.cli.tui.settings_screen import SettingsScreen
+
+    custom_model_id = _non_featured_openrouter_model()
+    agent_models = {"planning": {"provider": "openrouter", "model": custom_model_id}}
+    app, settings_store = _configured_app(tmp_path, monkeypatch, provider="openrouter", agent_models=agent_models)
+
+    async with app.run_test(size=(140, 40)) as pilot:
+        app.action_open_settings("agents")
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+        await _wait_for_select_values(pilot, screen, {"am_model_planning": CUSTOM_MODEL_SENTINEL})
+        assert screen.query_one("#am_custom_model_planning", Input).display is True
+
+        screen.query_one("#am_provider_planning", Select).value = INHERIT_SENTINEL
+        await pilot.pause()
+        await app._save_settings_from_ui()
+
+        assert settings_store.load().get_agent_model("planning") is None
+        assert screen.query_one("#am_custom_model_planning", Input).display is False
+        assert screen.query_one("#am_custom_model_planning", Input).value == ""
+
+
+@pytest.mark.asyncio
+async def test_agent_row_other_model_keeps_the_browser_vision_gate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
+) -> None:
+    """A typed non-vision id in the Browser row blocks save, like the listed path."""
+    pytest.importorskip("textual")
+    from textual.widgets import Input, Select, Static
+
+    from kolega_code.cli.tui.custom_model import CUSTOM_MODEL_SENTINEL
+    from kolega_code.cli.tui.settings_screen import SettingsScreen
+
+    non_vision = _non_vision_openrouter_model()
+    app, settings_store = _configured_app(tmp_path, monkeypatch, provider="openrouter")
+
+    async with app.run_test(size=(140, 40)) as pilot:
+        app.action_open_settings("agents")
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+        screen.query_one("#am_provider_browser", Select).value = "openrouter"
+        await _wait_for_select_values(pilot, screen, {"am_provider_browser": "openrouter"})
+        screen.query_one("#am_model_browser", Select).value = CUSTOM_MODEL_SENTINEL
+        await _wait_for_select_values(pilot, screen, {"am_model_browser": CUSTOM_MODEL_SENTINEL})
+        screen.query_one("#am_custom_model_browser", Input).value = non_vision
+        await pilot.pause()
+        await app._save_settings_from_ui()
+
+        assert settings_store.load().get_agent_model("browser") is None
+        status = str(screen.query_one("#settings_status", Static).render())
+        assert "does not support vision" in status
+
+
+@pytest.mark.asyncio
+async def test_agent_row_other_model_accepts_a_vision_capable_browser_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_cli_env: None
+) -> None:
+    pytest.importorskip("textual")
+    from textual.widgets import Input, Select
+
+    from kolega_code.llm.specs import MODEL_SPECS, supports_vision
+
+    from kolega_code.cli.tui.custom_model import CUSTOM_MODEL_SENTINEL
+    from kolega_code.cli.tui.settings_screen import SettingsScreen
+
+    vision_id = next(
+        model for provider, model in MODEL_SPECS if provider == "openrouter" and supports_vision("openrouter", model)
+    )
+    app, settings_store = _configured_app(tmp_path, monkeypatch, provider="openrouter")
+
+    async with app.run_test(size=(140, 40)) as pilot:
+        app.action_open_settings("agents")
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+        screen.query_one("#am_provider_browser", Select).value = "openrouter"
+        await _wait_for_select_values(pilot, screen, {"am_provider_browser": "openrouter"})
+        screen.query_one("#am_model_browser", Select).value = CUSTOM_MODEL_SENTINEL
+        await _wait_for_select_values(pilot, screen, {"am_model_browser": CUSTOM_MODEL_SENTINEL})
+        screen.query_one("#am_custom_model_browser", Input).value = vision_id
+        await pilot.pause()
+        await app._save_settings_from_ui()
+
+        saved = settings_store.load().get_agent_model("browser")
+        assert saved is not None
+        assert saved["provider"] == "openrouter"
+        assert saved["model"] == vision_id

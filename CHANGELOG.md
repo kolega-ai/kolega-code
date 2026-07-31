@@ -27,6 +27,12 @@ This project uses GitHub Releases for detailed generated release notes. This fil
   can be used without upgrading. Startup merges the cache without any network
   access; `KOLEGA_CODE_OPENROUTER_CATALOG` and
   `KOLEGA_CODE_DISABLE_OPENROUTER_CATALOG` control it.
+- **Settings "Other…" model picker.** The main Model dropdown and every Agent
+  Models role row lead with OpenRouter's most-used models and then offer an
+  "Other…" entry backed by a free-text field, so any catalogued model id
+  (bundled or added by `models refresh`) can be selected from Settings instead
+  of only by exact ID on the command line. Typed ids are validated against the
+  catalog before saving, and the Browser role keeps its vision-capability gate.
 - **Worktree-aware startup and workspace switching.** Interactive and headless
   launches can select a registered checkout with `--worktree`, or create one
   safely with `--create-worktree` plus optional `--from` and

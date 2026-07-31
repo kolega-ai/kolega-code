@@ -152,6 +152,11 @@ MENTIONS_NOT_FOUND = "Not found, sent as plain text: {mentions}"
 # Slash commands
 MODEL_SWITCHED = "Switched model to {provider}/{model} with thinking effort {effort}."
 MODEL_UNKNOWN = "Unknown model {model} for provider {provider}."
+MODEL_CUSTOM_EMPTY = "Type a model id (vendor/model) in the custom model field, or pick a listed model."
+MODEL_CUSTOM_UNKNOWN = (
+    '"{model}" is not a known {provider} model. See "kolega-code models list --provider {provider}" '
+    'for valid ids, or run "kolega-code models refresh" to pick up newer models.'
+)
 MODEL_SWITCH_HINT = "Choose below, or switch with /model <name>."
 MODEL_PARTIAL_LISTING_HINT = (
     "{provider} offers many more models. Any of them works with /model <id> — "
