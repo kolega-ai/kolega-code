@@ -56,6 +56,37 @@ def default_thinking_effort(provider: str, model_name: str) -> Optional[str]:
     return spec.default if spec else None
 
 
+def is_featured_model(provider: str, model_name: str) -> bool:
+    """Whether a model is one of a gateway provider's listed (featured) models.
+
+    Only gateway catalogs large enough to overwhelm a picker mark entries
+    featured; for every other provider this is uniformly ``False`` and callers
+    fall back to listing the whole provider.
+    """
+    specs = MODEL_SPECS.get((_provider_value(provider), model_name))
+    return bool(specs and specs.get("featured", False))
+
+
+def provider_has_featured_models(provider: str) -> bool:
+    """Whether ``provider`` marks any model featured, i.e. wants a short list."""
+    provider_str = _provider_value(provider)
+    return any(key[0] == provider_str and specs.get("featured", False) for key, specs in MODEL_SPECS.items())
+
+
+def prior_reasoning_is_replayable(provider: str, model_name: str) -> bool:
+    """Whether prior reasoning may be sent back to this model.
+
+    Defaults to ``True`` — including for unknown models — so only a catalog
+    entry that explicitly opts out changes behavior. Anthropic models reached
+    through a gateway opt out: their reasoning is carried by signed thinking
+    blocks that no plain-text replay field can reconstruct.
+    """
+    specs = MODEL_SPECS.get((_provider_value(provider), model_name))
+    if specs is None:
+        return True
+    return not specs.get("drop_prior_reasoning", False)
+
+
 def preferred_edit_protocol(provider: str, model_name: str) -> Optional[str]:
     """Return the catalogue-preferred edit protocol, when one is configured.
 

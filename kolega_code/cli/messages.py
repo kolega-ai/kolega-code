@@ -138,6 +138,10 @@ MENTIONS_NOT_FOUND = "Not found, sent as plain text: {mentions}"
 MODEL_SWITCHED = "Switched model to {provider}/{model} with thinking effort {effort}."
 MODEL_UNKNOWN = "Unknown model {model} for provider {provider}."
 MODEL_SWITCH_HINT = "Choose below, or switch with /model <name>."
+MODEL_PARTIAL_LISTING_HINT = (
+    "{provider} offers many more models. Any of them works with /model <id> — "
+    "list them with `kolega-code models list --provider {provider}`."
+)
 MODEL_NON_VISION_IMAGE_HISTORY = (
     "This thread contains images from earlier turns. The current model does not support "
     "vision, so those images will be replaced with text placeholders — switch back to a "

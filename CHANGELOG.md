@@ -8,6 +8,25 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ### Added
 
+- **OpenRouter provider.** `openrouter` (`OPENROUTER_API_KEY`) reaches the
+  OpenRouter gateway, shipping a generated catalog of every tool-capable
+  OpenRouter model with per-model context, output, vision, reasoning-effort and
+  edit-protocol metadata. Because the catalog runs to hundreds of models, the
+  Settings picker, `/model` and the sub-agent model catalog list OpenRouter's 20
+  most-used models — in the order of OpenRouter's own LLM Leaderboard — while
+  every other catalogued model stays selectable by exact ID via `--model`,
+  `/model`, `KOLEGA_CODE_MODEL` or `settings.json`. Reasoning effort maps to
+  OpenRouter's nested `reasoning` control, prompt caching is enabled
+  automatically, and `max_tokens` is deliberately not sent so an output cap
+  cannot bias upstream routing (override with
+  `KOLEGA_CODE_OPENROUTER_MAX_TOKENS`). Models default to the Claude Code-style
+  edit tool, except OpenAI models which use Codex `apply_patch`.
+- **`kolega-code models` command.** `models list` inspects the model catalog
+  (`--provider`, `--featured`, `--sort`, `--json`), and `models refresh` caches
+  OpenRouter's current model list locally so models published after a release
+  can be used without upgrading. Startup merges the cache without any network
+  access; `KOLEGA_CODE_OPENROUTER_CATALOG` and
+  `KOLEGA_CODE_DISABLE_OPENROUTER_CATALOG` control it.
 - **Worktree-aware startup and workspace switching.** Interactive and headless
   launches can select a registered checkout with `--worktree`, or create one
   safely with `--create-worktree` plus optional `--from` and

@@ -15,6 +15,8 @@ from kolega_code.llm.specs import (
     MODEL_SPECS,
     default_thinking_effort,
     get_model_specs,
+    is_featured_model,
+    provider_has_featured_models,
     thinking_effort_options,
 )
 
@@ -35,6 +37,7 @@ PROVIDER_LABELS: dict[ModelProvider, str] = {
     ModelProvider.TOGETHER: "Together AI",
     ModelProvider.DASHSCOPE: "DashScope / Qwen",
     ModelProvider.OLLAMA_CLOUD: "Ollama Cloud",
+    ModelProvider.OPENROUTER: "OpenRouter",
 }
 
 # Friendly display names for models. Anything not listed falls back to its raw
@@ -145,6 +148,9 @@ PROVIDER_DEFAULT_MODEL: dict[ModelProvider, str] = {
     ModelProvider.TOGETHER: "moonshotai/Kimi-K2.7-Code",
     ModelProvider.DASHSCOPE: "qwen3-coder-plus",
     ModelProvider.OLLAMA_CLOUD: "gpt-oss:20b",
+    # Hardcoded on purpose: regenerating the OpenRouter catalog reorders it by
+    # live usage, and that must never silently change what new users get.
+    ModelProvider.OPENROUTER: "moonshotai/kimi-k3",
 }
 
 UI_DEFAULT_PROVIDER = ModelProvider.MOONSHOT.value
@@ -165,6 +171,9 @@ class ModelOption:
     supports_vision: bool
     thinking_efforts: tuple[str, ...]
     default_thinking_effort: str | None
+    # Gateway providers catalog hundreds of models. Only featured ones are
+    # listed in pickers; every catalogued model stays resolvable by id.
+    featured: bool = False
 
 
 def _api_key_env(provider: ModelProvider) -> str:
@@ -197,12 +206,14 @@ def _model_option(provider: ModelProvider, model: str) -> ModelOption:
         supports_vision=bool(specs.get("supports_vision", False)),
         thinking_efforts=thinking_effort_options(provider, model),
         default_thinking_effort=default_thinking_effort(provider, model),
+        featured=is_featured_model(provider, model),
     )
 
 
 def _build_ui_model_options() -> list[ModelOption]:
     """Generate the UI model list from MODEL_SPECS, grouped by PROVIDER_LABELS order."""
-    # Models per provider, preserving MODEL_SPECS insertion order.
+    # Models per provider, preserving MODEL_SPECS insertion order. For gateway
+    # catalogs that order is the provider's own popularity ranking.
     models_by_provider: dict[str, list[str]] = {}
     for provider_value, model in MODEL_SPECS:
         models_by_provider.setdefault(provider_value, []).append(model)
@@ -215,6 +226,17 @@ def _build_ui_model_options() -> list[ModelOption]:
 
 
 UI_MODEL_OPTIONS = _build_ui_model_options()
+
+
+def rebuild_ui_model_options() -> list[ModelOption]:
+    """Rebuild the cached UI model list after MODEL_SPECS gains entries.
+
+    ``UI_MODEL_OPTIONS`` is materialized at import time, so a runtime catalog
+    overlay (``kolega-code models refresh``) has to ask for a rebuild.
+    """
+    global UI_MODEL_OPTIONS
+    UI_MODEL_OPTIONS = _build_ui_model_options()
+    return UI_MODEL_OPTIONS
 
 
 def ui_provider_options() -> list[tuple[str, str]]:
@@ -230,11 +252,21 @@ def ui_provider_options() -> list[tuple[str, str]]:
 
 
 def ui_model_options(provider: str, *, vision_only: bool = False) -> list[tuple[str, str]]:
-    """Return Textual Select options for supported UI models."""
+    """Return Textual Select options for supported UI models.
+
+    A provider that marks some models ``featured`` (currently only the
+    OpenRouter gateway, whose catalog runs to hundreds of entries) is listed by
+    its featured models alone. Everything else is listed in full, unchanged.
+    Non-featured models stay reachable by id via ``--model``, ``/model``,
+    ``KOLEGA_CODE_MODEL`` and ``settings.json``.
+    """
+    featured_only = provider_has_featured_models(provider)
     return [
         (option.model_label, option.model)
         for option in UI_MODEL_OPTIONS
-        if option.provider == provider and (option.supports_vision or not vision_only)
+        if option.provider == provider
+        and (option.supports_vision or not vision_only)
+        and (option.featured or not featured_only)
     ]
 
 

@@ -22,7 +22,7 @@ from kolega_code.cli.settings import (
     SettingsStoreError,
 )
 from kolega_code.config import ModelProvider
-from kolega_code.llm.specs import MODEL_SPECS
+from kolega_code.llm.specs import MODEL_SPECS, is_featured_model
 
 
 def test_settings_store_round_trip_and_file_permissions(tmp_path: Path) -> None:
@@ -363,3 +363,26 @@ def test_lsp_project_trust_independent_of_mcp(tmp_path: Path) -> None:
 
     assert settings.is_lsp_project_trusted(project) is True
     assert settings.is_mcp_project_trusted(project) is False
+
+
+def test_gateway_providers_list_featured_models_but_resolve_every_catalogued_id() -> None:
+    # OpenRouter catalogs hundreds of models. The picker shows only the featured
+    # (most-used) ones so the dropdown and sub-agent prompts stay bounded, while
+    # get_ui_model still resolves anything in the catalog.
+    catalogued = [model for provider_value, model in MODEL_SPECS if provider_value == "openrouter"]
+    featured = [model for model in catalogued if is_featured_model("openrouter", model)]
+
+    assert featured, "expected the generated catalog to mark its most-used models"
+    assert len(catalogued) > len(featured)
+    assert [model for _label, model in ui_model_options("openrouter")] == featured
+
+    unlisted = next(model for model in catalogued if model not in set(featured))
+    option = get_ui_model("openrouter", unlisted)
+    assert option is not None
+    assert option.api_key_env == "OPENROUTER_API_KEY"
+    assert option.featured is False
+
+
+def test_non_gateway_providers_still_list_every_model() -> None:
+    anthropic_models = [model for provider_value, model in MODEL_SPECS if provider_value == "anthropic"]
+    assert [model for _label, model in ui_model_options("anthropic")] == anthropic_models

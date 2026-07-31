@@ -37,6 +37,8 @@ from ..loop import (
 from ..provider_registry import (
     UI_DEFAULT_PROVIDER,
     default_ui_thinking_effort,
+    get_ui_model,
+    provider_has_featured_models,
     ui_model_options,
     ui_thinking_effort_options,
 )
@@ -777,15 +779,22 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
                 if current_model
                 else messages.SETTINGS_ACTIVE_MODEL_UNCONFIGURED
             )
+            listing_is_partial = provider_has_featured_models(provider)
             lines = [
                 active_model_line,
                 messages.SETTINGS_THINKING_EFFORT_LINE.format(effort=current_effort or "not supported"),
                 "",
-                "Available models:",
+                "Most-used models:" if listing_is_partial else "Available models:",
                 *(f"- `{value}` ({label})" for label, value in model_options),
-                "",
-                messages.MODEL_SWITCH_HINT,
             ]
+            if listing_is_partial:
+                lines.extend(
+                    [
+                        "",
+                        messages.MODEL_PARTIAL_LISTING_HINT.format(provider=provider),
+                    ]
+                )
+            lines.extend(["", messages.MODEL_SWITCH_HINT])
             self._add_conversation_entry(tui_state.ConversationEntry(kind="system", content="\n".join(lines)))
             self._pending_model_selection = tui_state.PendingModelSelection(provider=provider, options=model_options)
             self._cancel_pending_effort_selection()
@@ -867,8 +876,17 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
         )
 
     def _match_model_value(self, model_options: list[tuple[str, str]], value: str) -> Optional[str]:
-        clean_value = value.strip().lower()
-        return next((model for _, model in model_options if model.lower() == clean_value), None)
+        clean_value = value.strip()
+        lowered = clean_value.lower()
+        matched = next((model for _, model in model_options if model.lower() == lowered), None)
+        if matched is not None:
+            return matched
+        # A gateway provider only offers its most-used models above, but every
+        # catalogued model stays selectable by typing its exact id.
+        provider = self.settings.active_provider or UI_DEFAULT_PROVIDER
+        if clean_value and get_ui_model(provider, clean_value) is not None:
+            return clean_value
+        return None
 
     # Providers the user can sign in to with /login <provider>. Add new targets
     # here as more OAuth integrations land.

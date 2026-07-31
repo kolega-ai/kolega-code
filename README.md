@@ -142,6 +142,7 @@ Supported model providers:
 - Fireworks.ai
 - xAI / Grok
 - DashScope / Qwen
+- OpenRouter (gateway to 250+ tool-capable models)
 - Moonshot / Kimi
 - DeepSeek
 - Z.AI / GLM Coding Plan

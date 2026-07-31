@@ -32,6 +32,7 @@ _OPENAI_USAGE_PROVIDERS = frozenset(
         "dashscope",
         "deepseek",
         "ollama_cloud",
+        "openrouter",
     }
 )
 

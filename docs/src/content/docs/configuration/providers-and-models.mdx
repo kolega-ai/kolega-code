@@ -32,6 +32,7 @@ The agent runtime recognizes these providers:
 | Z.AI (GLM Coding Plan) | `zai` | `ZAI_API_KEY` |
 | Kimi Coding Plan | `kimi_coding` | `KIMI_CODING_API_KEY` |
 | Ollama Cloud | `ollama_cloud` | `OLLAMA_API_KEY` |
+| OpenRouter | `openrouter` | `OPENROUTER_API_KEY` |
 | Llama (local) | `llama` | _none — local model_ |
 
 <Aside type="tip">
@@ -60,6 +61,54 @@ Code uses the direct API model IDs returned by Ollama, such as **`glm-5.2`** and
 **`gpt-oss:120b`**, rather than local Ollama aliases such as `:cloud` or
 `-cloud`. Ollama may deprecate or retire older cloud models, so Kolega Code's supported
 model catalog should be refreshed periodically from Ollama's model library/API.
+</Aside>
+
+<Aside type="tip">
+**OpenRouter.** The `openrouter` provider reaches OpenRouter's OpenAI-compatible
+endpoint (`https://openrouter.ai/api/v1`) with `OPENROUTER_API_KEY`. Unlike the
+other providers, OpenRouter is a gateway in front of many vendors, so Kolega Code
+ships a **generated catalog of every tool-capable OpenRouter model** — a model
+that cannot call tools cannot run the agent, so it is deliberately excluded.
+
+Model IDs are `vendor/model`, for example `anthropic/claude-opus-5` or
+`z-ai/glm-5.2`. OpenRouter's routing suffixes pass straight through, so
+`:free`, `:nitro` and `:floor` variants work as their own IDs. `:free` endpoints
+are heavily rate limited and are best kept for experiments rather than long
+sessions.
+
+Because the catalog runs to hundreds of entries, the Settings picker, `/model`
+and the sub-agent model catalog list only OpenRouter's **20 most-used models**,
+in the order of [OpenRouter's own LLM Leaderboard](https://openrouter.ai/rankings).
+Every other catalogued model still works — pass the exact ID:
+
+```bash
+kolega-code models list --provider openrouter        # the whole catalog, most-used first
+kolega-code models list --provider openrouter --featured
+kolega-code --provider openrouter --model deepseek/deepseek-v3.2
+```
+
+or `/model deepseek/deepseek-v3.2` in the TUI, `KOLEGA_CODE_MODEL`, or
+`settings.json`. The bundled catalog is a snapshot taken at release time; to pick
+up models published since then, run `kolega-code models refresh`. That caches
+OpenRouter's current model list locally and merges it at startup. Cached models
+are usable by ID but never join the featured list, and startup itself never
+touches the network.
+
+Two behaviours are specific to this provider:
+
+- **No `max_tokens` is sent.** On a gateway an output cap is a routing hint that
+  excludes every upstream with a lower cap, biasing routing and price. Set
+  `KOLEGA_CODE_OPENROUTER_MAX_TOKENS` to send an explicit cap — worth doing on a
+  low credit balance, since OpenRouter otherwise reserves credit for its own
+  default output size and can reject a request that would have cost pennies.
+- **Prompt caching is automatic.** Kolega Code sends OpenRouter's top-level
+  `cache_control` breakpoint, so Anthropic-, Vertex- and Bedrock-backed models
+  get prompt caching with no extra configuration.
+
+Routing preferences are not set by default, because any of them narrows which
+upstreams may serve a request. Opt in with
+`KOLEGA_CODE_OPENROUTER_PROVIDER_ORDER` and `KOLEGA_CODE_OPENROUTER_PROVIDER_ONLY`
+(comma-separated provider slugs).
 </Aside>
 
 <Aside type="tip">

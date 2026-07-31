@@ -19,6 +19,7 @@ OPENAI_SHAPED = {
     "dashscope",
     "deepseek",
     "ollama_cloud",
+    "openrouter",
 }
 
 
