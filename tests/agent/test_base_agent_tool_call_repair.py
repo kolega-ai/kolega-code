@@ -80,6 +80,43 @@ class TestBaseAgent:
         assert placeholder_msg.content[0].is_error is True
         assert "interrupted" in placeholder_msg.content[0].content.lower()
 
+    def testfix_incomplete_tool_call_does_not_duplicate_following_user_content(self, base_agent):
+        """The next prompt is merged beside the placeholder, not also emitted again."""
+        continuation = TextBlock(text="Continue after the cancelled tool")
+        following_user = Message(
+            role="user",
+            content=[continuation],
+            stop_reason="end_turn",
+            tool_calls=[],
+            usage_metadata={"source": "regression"},
+        )
+        incomplete_history = [
+            Message(role="assistant", content=[ToolCall(id="tool1", name="test_tool", input={})]),
+            following_user,
+        ]
+
+        fixed_history = base_agent.fix_incomplete_tool_calls(incomplete_history)
+
+        assert len(fixed_history) == 2
+        repaired_following = fixed_history[1]
+        assert repaired_following.role == "user"
+        assert repaired_following.stop_reason == following_user.stop_reason
+        assert repaired_following.tool_calls == following_user.tool_calls
+        assert repaired_following.usage_metadata == following_user.usage_metadata
+        assert isinstance(repaired_following.content, list)
+        assert isinstance(repaired_following.content[0], ToolResult)
+        assert repaired_following.content[0].tool_use_id == "tool1"
+        assert repaired_following.content[0].is_error is True
+
+        continuation_blocks = [
+            block
+            for message in fixed_history
+            if isinstance(message.content, list)
+            for block in message.content
+            if isinstance(block, TextBlock) and block.text == continuation.text
+        ]
+        assert continuation_blocks == [continuation]
+
     def testfix_incomplete_tool_calls_multiple_tools(self, base_agent):
         """Test fix method handles multiple incomplete tool calls."""
         incomplete_history = [
@@ -639,7 +676,12 @@ class TestBaseAgent:
 
         # But verify that fix_incomplete_tool_calls can fix it
         fixed_history = base_agent.fix_incomplete_tool_calls(list(base_agent.history))
-        assert len(fixed_history) == 3  # assistant, user (tool result), user (new message)
+        assert len(fixed_history) == 2  # assistant, user (tool result + original message)
+        repaired_user = fixed_history[1]
+        assert isinstance(repaired_user.content[0], ToolResult)
+        assert repaired_user.content[0].tool_use_id == "tool1"
+        assert isinstance(repaired_user.content[1], TextBlock)
+        assert repaired_user.content[1].text == "New user message"
         assert base_agent._is_history_valid_for_anthropic(fixed_history) is True
 
     def test_append_user_message_no_fix_needed(self, base_agent):

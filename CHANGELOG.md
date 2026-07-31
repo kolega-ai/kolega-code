@@ -110,6 +110,9 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ### Fixed
 
+- Continuing after cancelling an in-flight tool call no longer duplicates the
+  next prompt or makes Anthropic reject the request for exceeding its maximum
+  of four `cache_control` blocks.
 - Stopped image-heavy sessions from freezing the TUI. Building request history
   re-encoded every screenshot in history on every LLM request, on the event
   loop — dozens of multi-second stalls per session, multiplied by each running

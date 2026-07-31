@@ -413,23 +413,22 @@ class TestDuplicateToolResultPrevention:
         # Test fix_incomplete_tool_calls
         fixed_messages = base_agent.fix_incomplete_tool_calls(messages)
 
-        # Should have 3 messages: assistant with tool call, user with tool result, user with text
-        assert len(fixed_messages) == 3
+        # The intervening text is retained in the same repaired user message as the relocated
+        # result, rather than duplicated as a second user message.
+        assert len(fixed_messages) == 2
 
         # First message should be the assistant message
         assert fixed_messages[0].role == "assistant"
         assert any(isinstance(block, ToolCall) for block in fixed_messages[0].content)
 
-        # Second message should have the tool result (moved to correct position)
+        # Second message should have the tool result (moved to correct position) and user text.
         assert fixed_messages[1].role == "user"
         tool_results = [block for block in fixed_messages[1].content if isinstance(block, ToolResult)]
         assert len(tool_results) == 1
         assert tool_results[0].tool_use_id == "toolu_test123"
         assert tool_results[0].content == "File contents: print('hello')"
-
-        # Third message should be the user text message
-        assert fixed_messages[2].role == "user"
-        assert fixed_messages[2].content[0].text == "Please hurry up!"
+        text_blocks = [block for block in fixed_messages[1].content if isinstance(block, TextBlock)]
+        assert [block.text for block in text_blocks] == ["Please hurry up!"]
 
         # Verify no duplicate tool results
         all_tool_results = []

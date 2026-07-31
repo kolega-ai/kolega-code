@@ -33,10 +33,12 @@ class RecordingLLM(FakeLLM):
     async def _stream(self, *args: Any, **kwargs: Any):
         messages = kwargs.get("messages")
         system = kwargs.get("system")
+        tools = kwargs.get("tools")
         self.payloads.append(
             {
                 "messages": copy.deepcopy(messages.to_anthropic()) if messages is not None else None,
                 "system": copy.deepcopy([block.to_anthropic() for block in system.content]) if system else None,
+                "tools": copy.deepcopy([tool.to_anthropic() for tool in tools]) if tools else [],
             }
         )
         return await super()._stream(*args, **kwargs)
@@ -249,6 +251,74 @@ class TestInjectionDoesNotBreakToolPairing:
 
 
 class TestBreakpointBudgetInRealRequests:
+    @pytest.mark.asyncio
+    async def test_cancelled_tool_followup_stays_within_four_breakpoints(self, recording_agent):
+        """Repair must not serialize the marked follow-up twice and create a fifth breakpoint."""
+        from kolega_code.llm.models import Message, TextBlock, ToolCall, ToolDefinition
+        from kolega_code.tools import Tool, ToolRegistry
+
+        agent, llm, _manager = recording_agent
+
+        async def handler(**inputs):
+            return "ok"
+
+        registry = ToolRegistry().add(
+            Tool(
+                name="write_stdin",
+                definition=ToolDefinition(name="write_stdin", description="write", parameters=[]),
+                handler=handler,
+            )
+        )
+        agent.tool_collection.get_tool_list = lambda: registry.definitions()
+
+        # Seed both the prior rolling checkpoint and the volatile-context tracker. The next turn
+        # then recreates the production failure exactly: an older marker survives while the
+        # ordinary user message immediately following an orphaned tool call is the newest marker.
+        await run_turn(agent, "prime cache")
+        agent.conversation.history.append(Message(role="user", content=[TextBlock(text="earlier ask")]))
+        agent.conversation.history.append(
+            Message(
+                role="assistant",
+                content=[ToolCall(id="orphan-1", name="write_stdin", input={})],
+                stop_reason="tool_use",
+            )
+        )
+
+        await run_turn(agent, "continue after cancellation")
+
+        payload = llm.payloads[-1]
+        matching_text = [
+            block
+            for message in payload["messages"]
+            for block in message["content"]
+            if isinstance(block, dict)
+            and block.get("type") == "text"
+            and block.get("text") == "continue after cancellation"
+        ]
+        assert len(matching_text) == 1
+
+        orphan_index = next(
+            index
+            for index, message in enumerate(payload["messages"])
+            if any(isinstance(block, dict) and block.get("id") == "orphan-1" for block in message["content"])
+        )
+        repaired_following = payload["messages"][orphan_index + 1]
+        assert any(
+            isinstance(block, dict) and block.get("type") == "tool_result" and block.get("tool_use_id") == "orphan-1"
+            for block in repaired_following["content"]
+        )
+
+        tools = sum("cache_control" in tool for tool in payload["tools"])
+        system = sum("cache_control" in block for block in payload["system"])
+        history = sum(
+            "cache_control" in block
+            for message in payload["messages"]
+            for block in message["content"]
+            if isinstance(block, dict)
+        )
+        assert (tools, system, history) == (1, 1, 2)
+        assert tools + system + history == 4
+
     @pytest.mark.asyncio
     async def test_a_multi_turn_request_never_exceeds_four_breakpoints(self, recording_agent):
         """The API rejects a fifth. Assert on real payloads, not on the pieces in isolation."""
