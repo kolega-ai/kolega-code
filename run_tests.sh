@@ -30,7 +30,19 @@ for arg in "$@"; do
   esac
 done
 
-PYTEST_BASE_ARGS=(-ra --durations=50 --import-mode=importlib)
+if [ -n "${PYTEST_WORKERS:-}" ]; then
+  NUM_CPUS="$PYTEST_WORKERS"
+elif command -v nproc &> /dev/null; then
+  NUM_CPUS=$(nproc)
+elif command -v sysctl &> /dev/null; then
+  NUM_CPUS=$(sysctl -n hw.ncpu 2>/dev/null || echo auto)
+else
+  NUM_CPUS=auto
+fi
+
+echo "Running tests with ${NUM_CPUS} parallel workers"
+
+PYTEST_BASE_ARGS=(-ra --durations=50 --import-mode=importlib -n "$NUM_CPUS")
 
 if [ "$RUN_COVERAGE" = true ]; then
   PYTEST_BASE_ARGS+=(--cov=kolega_code --cov-report=term-missing --cov-report=xml --cov-fail-under="$COVERAGE_FAIL_UNDER")
