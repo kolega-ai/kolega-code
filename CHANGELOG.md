@@ -6,6 +6,22 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+### Fixed
+
+- Gigacode resume now matches cached `agent()` results by call content instead
+  of call position, so completed work no longer re-runs after `pipeline()`
+  timing drift or script edits that shift call positions (one production resume
+  had salvaged only 6 of 91 completed calls). Resumed runs also journal what
+  they replayed, making a resume of a resume exact, and a duplicate `agent()`
+  label now logs a one-time authoring hint. Existing journals work unchanged.
+- An interrupted gigacode workflow's run id is now recoverable. Runs are
+  stamped with their owning session, cancelling a turn marks the run
+  `interrupted` in `run.json`, and the new session-scoped `list_workflow_runs`
+  tool lists this session's runs (status, tokens, journaled calls, artifact
+  paths) so the agent can resume an interrupted run with `resume_from_run_id`
+  instead of re-running it from scratch — previously the run id was only
+  returned on normal completion, so an interrupted run's journal was orphaned.
+
 ## 0.26.0 - 2026-07-31
 
 ### Added
@@ -124,19 +140,6 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 - Standalone generated `<system-reminder>` context no longer appears in the TUI
   transcript after resuming a session or rebuilding the agent for model and
   settings changes; the context remains unchanged in model and session history.
-- Gigacode resume now matches cached `agent()` results by call content instead
-  of call position, so completed work no longer re-runs after `pipeline()`
-  timing drift or script edits that shift call positions (one production resume
-  had salvaged only 6 of 91 completed calls). Resumed runs also journal what
-  they replayed, making a resume of a resume exact, and a duplicate `agent()`
-  label now logs a one-time authoring hint. Existing journals work unchanged.
-- An interrupted gigacode workflow's run id is now recoverable. Runs are
-  stamped with their owning session, cancelling a turn marks the run
-  `interrupted` in `run.json`, and the new session-scoped `list_workflow_runs`
-  tool lists this session's runs (status, tokens, journaled calls, artifact
-  paths) so the agent can resume an interrupted run with `resume_from_run_id`
-  instead of re-running it from scratch — previously the run id was only
-  returned on normal completion, so an interrupted run's journal was orphaned.
 - Continuing after cancelling an in-flight tool call no longer duplicates the
   next prompt or makes Anthropic reject the request for exceeding its maximum
   of four `cache_control` blocks.

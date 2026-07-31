@@ -39,8 +39,9 @@ With [Gigacode](https://kolega-ai.github.io/kolega-code/gigacode/), Kolega Code 
   sub-agent transcripts under Kolega Code's state directory.
 - **Run in either mode.** In Plan mode, workflow sub-agents stay read-only for
   parallel investigation. In Build mode, they can use the full coding toolset.
-- **Resume interrupted runs.** Finished workflow steps are journaled so a deliberate
-  resume does not have to restart the whole fan-out.
+- **Resumable runs.** Finished workflow steps are journaled so a deliberate
+  resume does not have to restart the whole fan-out, and the agent is guided to
+  resume an interrupted run rather than re-run it.
 
 Use normal chat for focused changes. Turn on Gigacode when the problem is broad
 enough that one serial agent pass would be the bottleneck.
