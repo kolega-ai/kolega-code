@@ -2,6 +2,7 @@ from pathlib import Path
 
 from kolega_code.agent import prompts
 from kolega_code.agent.orchestration.guide import GIGACODE_AUTHORING_GUIDE
+from kolega_code.cli.goal import build_goal_control_prompt_extension_markdown
 
 
 def test_static_prompt_templates_load() -> None:
@@ -98,25 +99,50 @@ def test_worktree_control_prompt_build_mode_describes_the_switch_tool() -> None:
 
     assert "switch_worktree" in rendered
     assert "never creates one" in rendered
+    assert "Once the requested target is registered" in rendered
+    assert "make `switch_worktree` the next model response" in rendered
+    assert "use the target as another tool's `workdir` before switching" in rendered
     assert "may decline" in rendered
     assert "end your turn right after calling it" in rendered
     # The plan-only clause must not leak into build mode.
     assert "Planning mode does not modify the project" not in rendered
 
 
-def test_worktree_control_prompt_plan_mode_names_no_switching_tool() -> None:
-    """Plan mode keeps exec_command, so it is told not to create worktrees.
-
-    It has no ``switch_worktree`` in its registry, and naming an absent tool is
-    what invites a hallucinated call, so the plan body must not instruct one.
-    """
+def test_worktree_control_prompt_plan_mode_describes_build_handoff_without_authorizing_a_call() -> None:
+    """The planner knows the build tool and orders it before work in the target."""
     rendered = prompts.build_worktree_control_prompt(plan_mode=True)
 
     assert "never run `git worktree add` here" in rendered
-    assert "no workspace-switching tool in plan mode" in rendered
-    assert "--worktree" in rendered
-    assert "switch_worktree" not in rendered
-    assert "end your turn right after calling it" not in rendered
+    assert "cannot call `switch_worktree` in planning mode" in rendered
+    assert "Do not attempt to call it now" in rendered
+    assert "make the build-mode handoff explicit in the plan" in rendered
+    assert "make `switch_worktree` the next model response" in rendered
+    assert "call it by itself, and end that turn" in rendered
+    assert "only after the continuation starts in the switched workspace" in rendered
+    assert "absolute or prefixed worktree path" in rendered
+    assert "For an existing registered worktree" in rendered
+    assert "may decline" in rendered
+
+
+def test_goal_control_prompt_build_mode_keeps_authorization_gate() -> None:
+    rendered = build_goal_control_prompt_extension_markdown()
+
+    assert "explicit governing instruction" in rendered
+    assert "Do not infer goal mode" in rendered
+    assert "not by itself authorization" in rendered
+    assert "Planning mode cannot call" not in rendered
+
+
+def test_goal_control_prompt_plan_mode_places_build_handoff_after_any_prerequisites() -> None:
+    rendered = build_goal_control_prompt_extension_markdown(plan_mode=True)
+
+    assert "explicit governing instruction" in rendered
+    assert "Planning mode cannot call `set_goal`" in rendered
+    assert "Do not attempt to call it now" in rendered
+    assert "exact, verifiable goal condition" in rendered
+    assert "intended transition into autonomous work" in rendered
+    assert "prerequisites may come first" in rendered
+    assert "before the work that should run under" in rendered
 
 
 def test_coder_cli_prompt_allows_scratchpad_file_operations() -> None:

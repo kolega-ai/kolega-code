@@ -104,6 +104,13 @@ The tool is not available in plan mode: a planning turn cannot start an
 autonomous loop by itself. `/goal <condition>` works in either mode, and a goal
 set in build mode keeps driving turns after you switch to plan mode.
 
+The planner does know that the Build agent can call `set_goal`. When an
+authorized request for goal mode also needs a plan, it can place that call at
+the intended transition into autonomous work and provide the verifiable goal
+condition. Required setup, workspace changes, dependency provisioning, or
+authentication may come before that transition; `set_goal` belongs before the
+work that should run under the evaluate-and-continue loop.
+
 ## From the CLI: `ask --goal`
 
 ```bash

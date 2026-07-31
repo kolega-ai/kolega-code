@@ -201,14 +201,17 @@ async def test_textual_app_passes_shared_task_list_tools_to_build_agent_only(
         assert plan_goal_extension.tool_groups == {"cli_goal_tools": ["set_goal"]}
         plan_switch_extension = extension_by_name(app.agent.kwargs["tool_extensions"], "cli-worktree-control")
         assert plan_switch_extension.tool_groups == {"cli_worktree_tools": ["switch_worktree"]}
-        # Naming an absent tool invites a hallucinated call, so the goal policy
-        # section is build-mode only...
-        assert "cli-goal-control" not in plan_prompt_ids
-        # ...while the worktree section stays: plan mode keeps exec_command and
-        # must still be told not to create a worktree.
+        # Mode-aware prompt sections name the build-only handoffs while making it
+        # explicit that the planning agent cannot call either tool.
+        assert "cli-goal-control" in plan_prompt_ids
+        plan_goal_prompt = extension_by_name(app.agent.kwargs["prompt_extensions"], "cli-goal-control")
+        assert "Planning mode cannot call `set_goal`" in plan_goal_prompt.markdown
+        assert "prerequisites may come first" in plan_goal_prompt.markdown
         plan_switch_prompt = extension_by_name(app.agent.kwargs["prompt_extensions"], "cli-worktree-control")
         assert "never run `git worktree add` here" in plan_switch_prompt.markdown
-        assert "switch_worktree" not in plan_switch_prompt.markdown
+        assert "cannot call `switch_worktree` in planning mode" in plan_switch_prompt.markdown
+        assert "make `switch_worktree` the next model response" in plan_switch_prompt.markdown
+        assert "only after the continuation starts in the switched workspace" in plan_switch_prompt.markdown
         question_tools = extension_by_name(app.agent.kwargs["tool_extensions"], "cli-planning-questions").tools
         assert {"ask_user_choice"} == set(question_tools)
         prompt_markdown = "\n".join(extension.markdown for extension in app.agent.kwargs["prompt_extensions"])

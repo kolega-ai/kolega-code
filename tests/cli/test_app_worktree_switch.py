@@ -179,6 +179,12 @@ async def test_top_level_agent_exposes_exclusive_non_propagating_switch_tool(
         # The build-mode body gates the tool on an explicit request.
         assert "unless the user explicitly asks for it in this session" in prompt.markdown
         assert "switch_worktree" in prompt.markdown
+        assert "make `switch_worktree` the next model response" in prompt.markdown
+        assert "use the target as another tool's `workdir` before switching" in prompt.markdown
+        tool_doc = extension.tools["switch_worktree"].__doc__ or ""
+        normalized_tool_doc = " ".join(tool_doc.split())
+        assert "this must be the next model response" in normalized_tool_doc
+        assert "use the target as another tool's" in normalized_tool_doc
 
 
 @pytest.mark.asyncio

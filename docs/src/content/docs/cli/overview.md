@@ -82,6 +82,13 @@ initiative, and plan mode has no workspace-switching tool at all. Every
 agent-initiated switch asks you to confirm first; declining, or leaving the
 prompt unanswered, leaves the active workspace unchanged.
 
+Plan mode still knows about the build-only handoff so it can produce an
+implementable worktree plan. When you explicitly request a new worktree, the
+plan should create or register it first, make `switch_worktree` the Build
+agent's next action, and defer dependency setup, file access, tests, and
+delegated work until the session continues in the switched checkout. The
+planner cannot execute either worktree creation or the switch itself.
+
 Once approved, the switch is committed to the session immediately and
 applied when the agent's turn ends: the workspace is rebuilt in the selected
 checkout — filesystem, terminal, search/edit, LSP, snapshots, skills,

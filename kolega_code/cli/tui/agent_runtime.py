@@ -357,6 +357,12 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             This tool does not create a worktree, and the user is asked to confirm
             the switch and may decline, in which case the workspace is unchanged.
 
+            Once the requested target is registered, call this before using any
+            other tool against it. If you just created the worktree, this must be
+            the next model response. Do not provision dependencies, inspect or edit
+            files, run tests, delegate work, or use the target as another tool's
+            workdir before switching.
+
             Must be the only tool call in the model response. An approved switch is
             committed at once but applies when the current turn ends, so end your
             turn right after calling it; you will be prompted to continue in the new
@@ -398,7 +404,9 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         return PromptExtension(
             id="cli-goal-control",
             title="Setting autonomous goals",
-            markdown=build_goal_control_prompt_extension_markdown(),
+            markdown=build_goal_control_prompt_extension_markdown(
+                plan_mode=self.interaction_mode == tui_constants.PLAN_INTERACTION_MODE
+            ),
             modes=[AgentMode.CLI],
             # Only the top-level TUI agent owns goal and session state.
             propagate_to_sub_agents=False,
@@ -1080,14 +1088,12 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         # inherited by delegates. Both tool extensions are installed in either
         # mode; neither tool is declared in ``planning_tools``, so the planning
         # agent's registry filters both out and its dispatch cannot reach them.
-        # The worktree *prompt* still applies in plan mode, which keeps
-        # exec_command and so must be told not to create worktrees; the goal
-        # policy section is build-mode only, since describing a tool the model
-        # cannot call only invites a hallucinated call.
+        # The mode-aware prompts still apply in plan mode. They explicitly mark
+        # both tools as unavailable there while teaching the planner where the
+        # build-mode handoffs belong in an approved plan.
         prompt_extensions.append(self._worktree_control_prompt_extension())
         tool_extensions.append(self._worktree_control_tool_extension())
-        if self.interaction_mode == tui_constants.BUILD_INTERACTION_MODE:
-            prompt_extensions.append(self._goal_control_prompt_extension())
+        prompt_extensions.append(self._goal_control_prompt_extension())
         tool_extensions.append(self._goal_control_tool_extension())
         # Both interaction modes get the scratchpad: plan-mode research and
         # build-mode execution both produce throwaway files.
