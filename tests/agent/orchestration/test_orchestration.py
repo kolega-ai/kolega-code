@@ -6,6 +6,7 @@ so they need none of the agent/LLM stack.
 
 import asyncio
 import json
+import os
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Optional
@@ -13,6 +14,7 @@ from typing import Any, Optional
 import pytest
 
 from kolega_code.agent.orchestration import (
+    DEFAULT_WORKFLOW_CONCURRENCY,
     AgentRunResult,
     AgentRunSpec,
     Budget,
@@ -38,7 +40,7 @@ def make_runtime(
     budget: Optional[Budget] = None,
     accounting: Optional[WorkflowRunAccounting] = None,
     resume_cache: Optional[ResumeCache] = None,
-    concurrency: int = 4,
+    concurrency: Optional[int] = 4,
     agent_cap: int = 1000,
     max_agent_depth: int = 1,
     run_id: str = "run",
@@ -422,6 +424,19 @@ async def test_unbounded_budget_remaining_is_inf(tmp_path):
 
 
 # ----------------------------------------------------------------------- caps
+@pytest.mark.parametrize("reported_cpus", [1, 2, 64, None])
+def test_default_concurrency_ignores_host_cpu_count(tmp_path: Path, monkeypatch, reported_cpus) -> None:
+    """Workers wait on the provider, not the CPU, so the cap is machine-independent.
+
+    A core-derived cap collapsed to 1 in a single-CPU container and varied with
+    whatever laptop the fan-out happened to run on.
+    """
+    monkeypatch.setattr(os, "cpu_count", lambda: reported_cpus)
+    runtime, _, _, _ = make_runtime(tmp_path, concurrency=None)
+
+    assert runtime._sem._value == DEFAULT_WORKFLOW_CONCURRENCY
+
+
 @pytest.mark.asyncio
 async def test_agent_cap_raises(tmp_path):
     runtime, _, _, _ = make_runtime(tmp_path, agent_cap=2)
