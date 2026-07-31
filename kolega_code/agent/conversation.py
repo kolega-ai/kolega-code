@@ -839,8 +839,10 @@ class Conversation:
                                 else:
                                     other_content_blocks.append(block)
 
-                            if all_tool_results:
-                                processed_indices.add(i + 1)
+                            # Every block from this message is rebuilt below beside the complete
+                            # tool-result set. Leaving the original message in the output would
+                            # duplicate its non-result content when no matching result existed.
+                            processed_indices.add(i + 1)
 
                     # Search the entire remaining conversation for any missing tool results
                     missing_ids = tool_call_ids - set(all_tool_results.keys())
