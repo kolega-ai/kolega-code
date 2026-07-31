@@ -28,6 +28,7 @@ from kolega_code.cli.provider_registry import (
 )
 from kolega_code.cli.session_store import SessionStore
 from kolega_code.cli.settings import CliSettings, SettingsStore
+from kolega_code.cli.tui.transcript import _is_standalone_system_reminder_history_item
 
 from ._app_test_utils import (
     FakeCoderAgent,
@@ -76,6 +77,35 @@ def _persist_history(
     loaded = store.load(session.session_id)
     session.history = loaded.history
     session.compaction = loaded.compaction
+
+
+def test_standalone_system_reminder_history_item_fast_path() -> None:
+    reminder = (
+        '<system-reminder source="memory">\nMemory context\n</system-reminder>\n'
+        '<system-reminder source="guidance" path="AGENTS.md">\nGuidance\n</system-reminder>\n'
+        '<system-reminder source="date">\nToday\n</system-reminder>'
+    )
+    assert _is_standalone_system_reminder_history_item(Message(role="user", content=[TextBlock(reminder)]).to_dict())
+
+    large_ordinary_text = "x" * 1_000_000 + reminder
+    large_tool_result = Message(
+        role="user",
+        content=[
+            ToolResult(
+                tool_use_id="large-tool",
+                content=reminder + ("y" * 1_000_000),
+                name="read_file",
+                is_error=False,
+            )
+        ],
+    ).to_dict()
+    ordinary_items = [
+        Message(role="assistant", content=[TextBlock(reminder)]).to_dict(),
+        Message(role="user", content=[TextBlock(large_ordinary_text)]).to_dict(),
+        large_tool_result,
+    ]
+
+    assert not any(_is_standalone_system_reminder_history_item(item) for item in ordinary_items)
 
 
 @pytest.mark.asyncio
@@ -474,8 +504,24 @@ async def test_textual_app_renders_resumed_history_in_chat(tmp_path: Path, monke
     config = build_test_config(project)
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
+    reminder = (
+        '<system-reminder source="memory">\nMemory context\n</system-reminder>\n'
+        '<system-reminder source="guidance" path="AGENTS.md">\nGuidance\n</system-reminder>\n'
+        '<system-reminder source="date">\nToday\n</system-reminder>'
+    )
+    prose = "Please explain <system-reminder> tags in prose."
+    code_fence = f"```\n{reminder}\n```"
+    leading_text = f"Quoted reminder:\n{reminder}"
+    trailing_text = f"{reminder}\nAdditional notes."
+    tool_reminder = '<system-reminder source="tool">Tool output</system-reminder>'
     history = [
         Message(role="user", content=[TextBlock("Please read the README")]).to_dict(),
+        Message(role="user", content=[TextBlock(reminder)]).to_dict(),
+        Message(role="user", content=[TextBlock(prose)]).to_dict(),
+        Message(role="user", content=[TextBlock(code_fence)]).to_dict(),
+        Message(role="user", content=[TextBlock(leading_text)]).to_dict(),
+        Message(role="user", content=[TextBlock(trailing_text)]).to_dict(),
+        Message(role="assistant", content=[TextBlock(reminder)]).to_dict(),
         Message(
             role="assistant",
             content=[
@@ -485,7 +531,7 @@ async def test_textual_app_renders_resumed_history_in_chat(tmp_path: Path, monke
         ).to_dict(),
         Message(
             role="user",
-            content=[ToolResult(tool_use_id="tool-1", content="README contents", name="read_file", is_error=False)],
+            content=[ToolResult(tool_use_id="tool-1", content=tool_reminder, name="read_file", is_error=False)],
         ).to_dict(),
         Message(
             role="user",
@@ -507,8 +553,13 @@ async def test_textual_app_renders_resumed_history_in_chat(tmp_path: Path, monke
         assert f"Model: {expected_model}" in startup
         assert [(entry.kind, entry.content, entry.tool_name) for entry in app.conversation_entries[1:]] == [
             ("user", "Please read the README", None),
+            ("user", prose, None),
+            ("user", code_fence, None),
+            ("user", leading_text, None),
+            ("user", trailing_text, None),
+            ("assistant", reminder, None),
             ("assistant", "I'll inspect it.", None),
-            ("tool_result", "README contents", "read_file"),
+            ("tool_result", tool_reminder, "read_file"),
             ("tool_error", "Permission denied", "write_file"),
             ("assistant", "Done.", None),
         ]
@@ -647,6 +698,11 @@ async def test_textual_app_model_rebuild_rerenders_completed_tool_once(
     session = store.create(project, "code", config_summary(config))
     app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
     history = [
+        Message(role="user", content=[TextBlock("List the files")]).to_dict(),
+        Message(
+            role="user",
+            content=[TextBlock('<system-reminder source="memory">\nMemory context\n</system-reminder>')],
+        ).to_dict(),
         Message(
             role="assistant",
             content=[ToolCall(id="provider-1", name="list_directory", input={"path": "."})],
@@ -663,5 +719,9 @@ async def test_textual_app_model_rebuild_rerenders_completed_tool_once(
         app.agent.history = history
         await app._build_agent(config, rebuild=True)
 
+        assert app.agent.dump_message_history() == history
+        assert [(entry.kind, entry.content) for entry in app.conversation_entries if entry.kind == "user"] == [
+            ("user", "List the files")
+        ]
         tool_entries = [entry for entry in app.conversation_entries if entry.tool_name == "list_directory"]
         assert [(entry.kind, entry.content) for entry in tool_entries] == [("tool_result", "files")]

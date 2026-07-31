@@ -110,6 +110,9 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ### Fixed
 
+- Standalone generated `<system-reminder>` context no longer appears in the TUI
+  transcript after resuming a session or rebuilding the agent for model and
+  settings changes; the context remains unchanged in model and session history.
 - Continuing after cancelling an in-flight tool call no longer duplicates the
   next prompt or makes Anthropic reject the request for exceeding its maximum
   of four `cache_control` blocks.
