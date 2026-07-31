@@ -7,8 +7,9 @@ cut, so a model published after that release is unknown to it. ``models refresh`
 fetches the documented ``/api/v1/models`` endpoint once, on request, and caches
 the result in the state directory; the cache is merged into ``MODEL_SPECS`` at
 CLI startup. Startup itself never touches the network, and cached entries are
-never marked ``featured`` — pickers and sub-agent prompts keep showing the
-curated-by-usage set from the bundled snapshot.
+never marked ``featured`` — Settings pickers lead with the release's curated-by-
+usage set (and admit any catalogued id through their "Other…" entry), while
+sub-agent prompts keep showing the featured set alone.
 """
 
 from __future__ import annotations

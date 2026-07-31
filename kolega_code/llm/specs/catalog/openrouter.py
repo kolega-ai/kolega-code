@@ -4,7 +4,7 @@
 # Ranking: https://openrouter.ai/api/frontend/v1/rankings/models?view=week (snapshot 2026-07-31);
 #          catalog order is OpenRouter leaderboard rank, most-used first.
 #
-# 257 tool-capable models, 20 featured.
+# 258 tool-capable models, 20 featured.
 # Featured models are the ones every picker and the sub-agent model catalog
 # show; the rest stay selectable by id (--model, /model, settings.json).
 #
@@ -572,7 +572,7 @@ OPENROUTER_SPECS = {
     },
     ("openrouter", "qwen/qwen3.7-max"): {
         "context_length": 1000000,
-        "max_completion_tokens": 65536,
+        "max_completion_tokens": 131072,
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
@@ -586,7 +586,7 @@ OPENROUTER_SPECS = {
     },
     ("openrouter", "qwen/qwen3.7-plus"): {
         "context_length": 1000000,
-        "max_completion_tokens": 65536,
+        "max_completion_tokens": 131072,
         "default_temperature": 1.0,
         "supports_vision": True,
         "preferred_edit_protocol": "claude_code",
@@ -2206,6 +2206,18 @@ OPENROUTER_SPECS = {
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",
+    },
+    ("openrouter", "deepseek/deepseek-v4-flash-0731"): {
+        "context_length": 1048576,
+        "max_completion_tokens": 384000,
+        "default_temperature": 1.0,
+        "supports_vision": False,
+        "preferred_edit_protocol": "claude_code",
+        "thinking_effort": ThinkingEffortSpec(
+            options=("none", "low", "high", "max"),
+            default="high",
+            mode="openrouter_reasoning",
+        ),
     },
     ("openrouter", "google/gemini-2.5-pro-preview"): {
         "context_length": 1048576,

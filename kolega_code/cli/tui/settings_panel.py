@@ -49,6 +49,11 @@ from ..provider_registry import (
     ui_thinking_effort_options,
 )
 from . import app_base as tui_app_base
+from .custom_model import (
+    CUSTOM_MODEL_SENTINEL,
+    resolve_custom_model,
+    settings_model_options,
+)
 from ..settings import WEB_SEARCH_KEY_NAMES, CliSettings
 from ..theme import Color, Glyph
 
@@ -263,7 +268,7 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
                 provider = str(self._settings_query_one("#provider_select", Select).value)
             except NoMatches:
                 return
-            self._set_effort_select_default(provider, str(event.value))
+            self._sync_effort_for_model_value(provider, str(event.value), "model_select", "thinking_effort_select")
             self._update_browser_model_hint()
             return
 
@@ -308,7 +313,15 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
                 # A restored effort waits here for the model that hosts it; a manual
                 # model change has none pending and falls back to preserve/default.
                 preferred = self._pending_agent_efforts.pop(f"am_effort_{role}", None)
-                self._set_effort_select_default(provider, str(event.value), f"am_effort_{role}", preferred=preferred)
+                self._sync_effort_for_model_value(
+                    provider,
+                    str(event.value),
+                    f"am_model_{role}",
+                    f"am_effort_{role}",
+                    preferred=preferred,
+                )
+            else:
+                self._sync_custom_model_input(f"am_model_{role}", f"am_custom_model_{role}")
             if role == "browser":
                 self._update_browser_model_hint()
             return
@@ -320,6 +333,41 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             if name != theme.active_theme().name:
                 self._apply_theme(name)
 
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """Keep effort selects and the browser hint in sync with "Other…" text.
+
+        The Settings screen has its own ``on_input_changed`` (API key staging and
+        dirty tracking); this app-level handler only reacts to the custom-model
+        inputs, so the two never conflict.
+        """
+        input_id = event.input.id or ""
+        if input_id == "model_custom_input":
+            model_select_id, effort_select_id, provider_id = (
+                "model_select",
+                "thinking_effort_select",
+                "provider_select",
+            )
+        elif input_id.startswith("am_custom_model_"):
+            role = input_id[len("am_custom_model_") :]
+            model_select_id, effort_select_id, provider_id = (
+                f"am_model_{role}",
+                f"am_effort_{role}",
+                f"am_provider_{role}",
+            )
+        else:
+            return
+        try:
+            model_select = self._settings_query_one(f"#{model_select_id}", Select)
+            provider = str(self._settings_query_one(f"#{provider_id}", Select).value)
+        except NoMatches:
+            return
+        if str(model_select.value) != CUSTOM_MODEL_SENTINEL:
+            return
+        typed = self._typed_custom_model(provider, input_id)
+        if typed is not None:
+            self._set_effort_select_default(provider, typed, effort_select_id)
+        self._update_browser_model_hint()
+
     def _populate_settings_controls(self) -> None:
         screen = getattr(self, "_settings_screen", None)
         if screen is None or not getattr(screen, "is_attached", False):
@@ -330,17 +378,26 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
         provider = (
             self.settings.active_provider if self.settings.active_provider in provider_values else UI_DEFAULT_PROVIDER
         )
-        model_options = ui_model_options(provider)
+        model_options = settings_model_options(provider)
         valid_models = {value for _, value in model_options}
         model = self.settings.active_model if self.settings.active_model in valid_models else None
+        custom_value: Optional[str] = None
+        if model is None and self.settings.active_model:
+            # A saved catalogued id outside the listed (featured) models maps to
+            # the "Other…" entry backed by the custom input.
+            if CUSTOM_MODEL_SENTINEL in valid_models and get_ui_model(provider, self.settings.active_model) is not None:
+                model = CUSTOM_MODEL_SENTINEL
+                custom_value = self.settings.active_model
         if model is None:
             model = model_options[0][1] if model_options else UI_DEFAULT_MODEL
-        effort_options = {value for _, value in ui_thinking_effort_options(provider, model)}
+        # The sentinel itself has no spec: effort always comes from the real id.
+        effort_model = custom_value or model
+        effort_options = {value for _, value in ui_thinking_effort_options(provider, effort_model)}
         effort = (
             self.settings.active_thinking_effort if self.settings.active_thinking_effort in effort_options else None
         )
         if effort is None:
-            effort = default_ui_thinking_effort(provider, model)
+            effort = default_ui_thinking_effort(provider, effort_model)
         provider_select = self._settings_query_one("#provider_select", Select)
         model_select = self._settings_query_one("#model_select", Select)
         effort_select = self._settings_query_one("#thinking_effort_select", Select)
@@ -349,7 +406,12 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
         provider_select.value = provider
         model_select.set_options(model_options)
         model_select.value = model
-        effort_select.set_options(ui_thinking_effort_options(provider, model))
+        try:
+            self._settings_query_one("#model_custom_input", Input).value = custom_value or ""
+        except NoMatches:
+            pass
+        self._sync_custom_model_input("model_select", "model_custom_input")
+        effort_select.set_options(ui_thinking_effort_options(provider, effort_model))
         if effort is not None:
             effort_select.value = effort
         theme_select = self._settings_query_one("#theme_select", Select)
@@ -451,9 +513,15 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
         if inherited:
             try:
                 provider = str(self._settings_query_one("#provider_select", Select).value)
-                model = str(self._settings_query_one("#model_select", Select).value)
+                model_value = str(self._settings_query_one("#model_select", Select).value)
             except NoMatches:
                 return "", "info", False
+            if model_value == CUSTOM_MODEL_SENTINEL:
+                model = self._typed_custom_model(provider, "model_custom_input")
+                if model is None:
+                    return "", "info", False
+            else:
+                model = model_value
         else:
             provider = browser_provider
             try:
@@ -462,7 +530,12 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
                 return "", "info", False
             if model_value is Select.NULL:
                 return messages.BROWSER_MODEL_PROVIDER_NO_VISION.format(provider=provider), "error", True
-            model = str(model_value)
+            if model_value == CUSTOM_MODEL_SENTINEL:
+                model = self._typed_custom_model(provider, "am_custom_model_browser")
+                if model is None:
+                    return "", "info", False
+            else:
+                model = str(model_value)
 
         option = get_ui_model(provider, model)
         supports_vision = bool(option and option.supports_vision)
@@ -973,7 +1046,10 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
         ``effort_value`` pre-select a model/effort (used while restoring saved
         settings). Otherwise the select's current model is kept when it is still valid
         for ``provider`` (so a restore is not clobbered), falling back to the
-        provider's first model."""
+        provider's first model. A catalogued model that is not among the listed
+        (featured) options maps to the "Other…" entry backed by the row's custom
+        input; on a non-gateway Browser row the stale model keeps its explicit
+        "(vision required)" option instead."""
         try:
             model_select = self._settings_query_one(f"#{model_id}", Select)
         except NoMatches:
@@ -982,12 +1058,32 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             current = model_select.value
             model_value = None if current is Select.NULL else str(current)
         browser_role = model_id == "am_model_browser"
-        model_options = ui_model_options(provider, vision_only=True) if browser_role else ui_model_options(provider)
-        valid_models = {value for _, value in model_options}
-        if browser_role and model_value and model_value not in valid_models:
+        model_options = settings_model_options(provider, vision_only=browser_role)
+        custom_input_id = self._custom_input_id(model_id)
+        custom_value: Optional[str] = None
+        option_values = {value for _, value in model_options}
+        if model_value and model_value not in option_values:
             stale_option = get_ui_model(provider, model_value)
             if stale_option is not None:
-                model_options.append((f"{stale_option.model_label} (vision required)", model_value))
+                if CUSTOM_MODEL_SENTINEL in option_values:
+                    # Gateway row: surface any catalogued-but-unlisted saved model
+                    # through "Other…" (non-featured ids, and on the Browser row
+                    # saved non-vision models).
+                    model_value = CUSTOM_MODEL_SENTINEL
+                    custom_value = stale_option.model
+                elif browser_role:
+                    # Non-gateway Browser row: keep the explicit stale option so a
+                    # saved non-vision model stays visible and selectable.
+                    model_options.append((f"{stale_option.model_label} (vision required)", stale_option.model))
+        if model_value == CUSTOM_MODEL_SENTINEL and custom_value is None:
+            # A cascade re-entered while "Other…" was already selected (e.g. the
+            # provider Changed posted during restore): keep what was typed.
+            try:
+                custom_input = self._settings_query_one(f"#{custom_input_id}", Input)
+            except NoMatches:
+                custom_input = None
+            if custom_input is not None:
+                custom_value = custom_input.value or None
         model_select.set_options(model_options)
         valid_models = {value for _, value in model_options}
         model = model_value if (model_value and model_value in valid_models) else None
@@ -995,7 +1091,19 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             model = model_options[0][1] if model_options else UI_DEFAULT_MODEL
         if model_options:
             model_select.value = model
-        self._set_effort_select_default(provider, model, effort_id, preferred=effort_value)
+        try:
+            custom_input = self._settings_query_one(f"#{custom_input_id}", Input)
+        except NoMatches:
+            custom_input = None
+        if custom_input is not None:
+            custom_input.value = custom_value or ""
+        # The sentinel itself has no spec; effort comes from the real id, and is
+        # left untouched when no valid id is typed yet (mid-typing text must not
+        # blank the effort select).
+        effort_model = custom_value or model
+        if effort_model != CUSTOM_MODEL_SENTINEL and resolve_custom_model(provider, effort_model) is not None:
+            self._set_effort_select_default(provider, effort_model, effort_id, preferred=effort_value)
+        self._sync_custom_model_input(model_id, custom_input_id)
 
     def _clear_model_effort_selects(self, model_id: str, effort_id: str) -> None:
         """Blank a per-agent row's model+effort selects (the role inherits)."""
@@ -1006,6 +1114,87 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
                 continue
             select.set_options([])
             select.value = Select.NULL
+        self._sync_custom_model_input(model_id, self._custom_input_id(model_id))
+
+    def _custom_input_id(self, model_select_id: str) -> str:
+        """Return the custom-model Input id paired with a model Select id."""
+        if model_select_id == "model_select":
+            return "model_custom_input"
+        return f"am_custom_model_{model_select_id.removeprefix('am_model_')}"
+
+    def _sync_custom_model_input(self, model_select_id: str, custom_input_id: str) -> None:
+        """Show the custom-model input iff its select holds the "Other…" sentinel.
+
+        A hidden input is cleared so it can never fake dirty state. Focus is a
+        user-action concern and is handled by the select-change handlers, not here.
+        """
+        try:
+            model_select = self._settings_query_one(f"#{model_select_id}", Select)
+            custom_input = self._settings_query_one(f"#{custom_input_id}", Input)
+        except NoMatches:
+            return
+        if str(model_select.value) == CUSTOM_MODEL_SENTINEL:
+            custom_input.display = True
+        else:
+            custom_input.display = False
+            custom_input.value = ""
+
+    def _typed_custom_model(self, provider: str, custom_input_id: str) -> Optional[str]:
+        """Resolve a custom input's current text to a catalogued model id."""
+        try:
+            custom_input = self._settings_query_one(f"#{custom_input_id}", Input)
+        except NoMatches:
+            return None
+        return resolve_custom_model(provider, custom_input.value)
+
+    def _custom_model_error(self, provider: str, model_select_id: str, custom_input_id: str) -> Optional[str]:
+        """Return a blocking status message for an invalid "Other…" entry, else None."""
+        try:
+            model_select = self._settings_query_one(f"#{model_select_id}", Select)
+            custom_input = self._settings_query_one(f"#{custom_input_id}", Input)
+        except NoMatches:
+            return None
+        if str(model_select.value) != CUSTOM_MODEL_SENTINEL:
+            return None
+        typed = custom_input.value.strip()
+        if not typed:
+            return messages.MODEL_CUSTOM_EMPTY
+        if resolve_custom_model(provider, typed) is None:
+            return messages.MODEL_CUSTOM_UNKNOWN.format(model=typed, provider=provider)
+        return None
+
+    def _sync_effort_for_model_value(
+        self,
+        provider: str,
+        value: str,
+        model_select_id: str,
+        effort_select_id: str,
+        *,
+        preferred: Optional[str] = None,
+    ) -> None:
+        """Apply an "Other…"-aware model selection to its effort select.
+
+        The sentinel has no model spec, so while it is selected the effort
+        select is only refreshed when the custom input already resolves to a
+        catalogued id; otherwise it is left untouched. The custom input is
+        focused only for genuine user selections, never while restoring.
+        """
+        custom_input_id = self._custom_input_id(model_select_id)
+        self._sync_custom_model_input(model_select_id, custom_input_id)
+        if value != CUSTOM_MODEL_SENTINEL:
+            self._set_effort_select_default(provider, value, effort_select_id, preferred=preferred)
+            return
+        screen = getattr(self, "_settings_screen", None)
+        initializing = bool(screen and getattr(screen, "_initializing", False))
+        if not initializing:
+            try:
+                custom_input = self._settings_query_one(f"#{custom_input_id}", Input)
+            except NoMatches:
+                return
+            self.call_after_refresh(custom_input.focus)
+        typed = self._typed_custom_model(provider, custom_input_id)
+        if typed is not None:
+            self._set_effort_select_default(provider, typed, effort_select_id, preferred=preferred)
 
     def _populate_lsp_controls(self) -> None:
         """Seed the LSP settings toggle from saved settings."""
@@ -1078,7 +1267,13 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
     def _settings_candidate_from_ui(self) -> tuple[CliSettings, Input, str, str, str]:
         """Collect the mounted form into a detached settings candidate."""
         provider = str(self._settings_query_one("#provider_select", Select).value)
-        model = str(self._settings_query_one("#model_select", Select).value)
+        model_value = str(self._settings_query_one("#model_select", Select).value)
+        if model_value == CUSTOM_MODEL_SENTINEL:
+            # Save is pre-validated in _save_settings_from_ui, so the typed id
+            # resolves to a catalogued model here; the sentinel never persists.
+            model = self._typed_custom_model(provider, "model_custom_input") or model_value
+        else:
+            model = model_value
         effort = str(self._settings_query_one("#thinking_effort_select", Select).value)
         valid_efforts = {value for _, value in ui_thinking_effort_options(provider, model)}
         if effort not in valid_efforts:
@@ -1117,6 +1312,27 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             self._update_browser_model_hint()
             self._set_settings_status(browser_message, "error")
             self._notify_user(browser_message, severity="error")
+            return
+        # "Other…" entries are UI-only: every typed id must resolve to a
+        # catalogued model before anything is written, so an unknown id can
+        # never produce a build-time "Configuration incomplete" lockout.
+        error = self._custom_model_error(
+            str(self._settings_query_one("#provider_select", Select).value), "model_select", "model_custom_input"
+        )
+        if error is None:
+            for _, role in agent_role_options():
+                try:
+                    row_provider = str(self._settings_query_one(f"#am_provider_{role}", Select).value)
+                except NoMatches:
+                    continue
+                if row_provider == INHERIT_SENTINEL:
+                    continue
+                error = self._custom_model_error(row_provider, f"am_model_{role}", f"am_custom_model_{role}")
+                if error is not None:
+                    break
+        if error is not None:
+            self._set_settings_status(error, "error")
+            self._notify_user(error, severity="error")
             return
         candidate, api_key_input, provider, _model, _effort = self._settings_candidate_from_ui()
 
@@ -1278,7 +1494,16 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             if provider == INHERIT_SENTINEL or model_select.value is Select.NULL:
                 self.settings.clear_agent_model(role)
                 continue
-            model = str(model_select.value)
+            model_value = str(model_select.value)
+            if model_value == CUSTOM_MODEL_SENTINEL:
+                # Save is pre-validated in _save_settings_from_ui; the defensive
+                # fallback clears the override rather than persisting the sentinel.
+                model = self._typed_custom_model(provider, f"am_custom_model_{role}")
+                if model is None:
+                    self.settings.clear_agent_model(role)
+                    continue
+            else:
+                model = model_value
             effort = "" if effort_select.value is Select.NULL else str(effort_select.value)
             valid_efforts = {value for _, value in ui_thinking_effort_options(provider, model)}
             if effort not in valid_efforts:
