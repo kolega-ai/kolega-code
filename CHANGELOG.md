@@ -6,8 +6,13 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.26.0 - 2026-07-31
+
 ### Added
 
+- **New bundled research and writing skills.** `deep-research` orchestrates
+  evidence-backed research and materializes cited reports, while `humanizer`
+  helps revise generated prose into more natural writing.
 - **OpenRouter provider.** `openrouter` (`OPENROUTER_API_KEY`) reaches the
   OpenRouter gateway, shipping a generated catalog of every tool-capable
   OpenRouter model with per-model context, output, vision, reasoning-effort and
