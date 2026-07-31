@@ -133,7 +133,7 @@ markers = [
 [tool.ruff]
 line-length = 120
 target-version = "py311"
-extend-exclude = ["kolega_code/_bundled_skills"]
+extend-exclude = ["examples/parallel-code-review.py", "kolega_code/_bundled_skills"]
 
 [tool.uv]
 exclude-newer = "1 week"
