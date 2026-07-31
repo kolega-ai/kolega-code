@@ -6,6 +6,8 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.26.2 - 2026-07-31
+
 ### Added
 
 - `kolega-code ask --gigacode` enables gigacode workflow orchestration in
