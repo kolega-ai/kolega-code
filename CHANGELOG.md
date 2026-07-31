@@ -6,6 +6,14 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+### Added
+
+- `kolega-code ask --gigacode` enables gigacode workflow orchestration in
+  headless runs, matching the TUI's `/gigacode` toggle: the `run_workflow` and
+  `list_workflow_runs` tools are exposed and the authoring guide is injected.
+  The setting persists with the session, so `ask --session <id>` resumes with
+  gigacode still on.
+
 ## 0.26.1 - 2026-07-31
 
 ### Fixed

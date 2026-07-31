@@ -5,6 +5,8 @@ it in sync with the primitives in :mod:`runtime` and the tool in
 ``tool_backend/workflow_tool.py``.
 """
 
+from ..prompt_provider import PromptExtension
+
 GIGACODE_AUTHORING_GUIDE = """\
 ## gigacode — dynamic workflow orchestration
 
@@ -299,3 +301,21 @@ id as `resume_from_run_id` — every agent call it completed replays from the jo
 no cost. `list_workflow_runs` shows only this session's runs; a run still listed as
 "running" when no workflow is in flight died mid-run and is resumable the same way.
 """
+
+
+def gigacode_prompt_extension() -> PromptExtension:
+    """The authoring guide as a prompt extension, for every frontend that enables gigacode.
+
+    The TUI's ``/gigacode`` toggle and ``kolega-code ask --gigacode`` share this
+    so a headless run sees exactly the guidance an interactive session does.
+    """
+    return PromptExtension(
+        id="gigacode",
+        title="gigacode — workflow orchestration",
+        markdown=GIGACODE_AUTHORING_GUIDE,
+        agent_types=None,
+        modes=None,
+        # Sub-agents can't run workflows (run_workflow is gated off for them),
+        # so the authoring guide is just prompt bloat for a sub-agent.
+        propagate_to_sub_agents=False,
+    )
