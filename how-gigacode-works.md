@@ -4,7 +4,7 @@
 
 Multi-agent work needs a defined structure. In graph frameworks, a developer writes that structure in code before the run. With ordinary agent delegation, the orchestrating model decides it turn by turn. Gigacode takes a third approach: the model writes a Python program for the current task, and a runtime executes it. The resulting structure is explicit, inspectable, and re-runnable, but it is not written in advance.
 
-Gigacode is off by default and toggled per session with `/gigacode`. Everything below is derived from the code in this repository; file paths are given so you can check.
+Gigacode is off by default and enabled per session with `/gigacode on`. Everything below is derived from the code in this repository; file paths are given so you can check.
 
 ## The authoring loop
 
@@ -89,6 +89,7 @@ stateDiagram-v2
     interrupted --> running : resume — journaled calls replay free
     stale_running --> running : list_workflow_runs, then resume
     interrupted --> replan : model reads partial results,<br/>authors new workflow
+    replan --> running : new run, fresh id —<br/>prior outputs read, not replayed
     completed --> [*]
 ```
 
@@ -186,7 +187,7 @@ flowchart LR
 
 ### What models actually choose
 
-We classified model-authored workflow scripts collected on one development machine. The sample contains 99 substantial unique scripts, each with at least three journaled agent calls. Classification used keyword markers in the source, so the shape numbers are approximate, and the sample reflects one machine's usage rather than fleet telemetry.
+We classified model-authored workflow scripts collected on one development machine. The sample contains 99 substantial unique scripts, each with at least three journaled agent calls. Classification used keyword markers in the source (`scripts/workflow_shape_stats.py`), so the shape numbers are approximate and the categories overlap — a script can count toward several rows — and the sample reflects one machine's usage rather than fleet telemetry.
 
 | | Share of scripts |
 | --- | --- |
@@ -236,10 +237,10 @@ Claude Code's dynamic workflows are the most prominent deployment of the same ap
 | Who writes the orchestration | The model, per task | The model, per task | A developer, ahead of time |
 | Script language | Python, restricted builtins | JavaScript | Host language |
 | Execution | Foreground; blocks the session until done | Background; session stays responsive; `/workflows` progress view | Application-controlled |
-| Trigger | `/gigacode` on; model decides per task | `ultracode` keyword, natural-language request, or `/effort ultracode`; launch approval prompt in most permission modes | Application code |
+| Trigger | `/gigacode on`; model decides per task | `ultracode` keyword, natural-language request, or `/effort ultracode`; launch approval prompt in most permission modes | Application code |
 | Worker permissions | Auto mode, no prompts (build mode); all workers forced read-only in plan mode | Subagents always run in `acceptEdits` and inherit the user's tool allowlist; non-allowlisted commands can prompt mid-run | Whatever the host grants |
 | Scale caps | 4,096 per fan-out; 1,000 agents/run; concurrency ≤ 8 | 16 concurrent; 1,000 agents/run; advisory size guideline + large-run warning | Application-defined |
-| Resume semantics | Content-keyed: unchanged calls replay regardless of position; works across sessions and process restarts from the on-disk journal | Start-order prefix: "cached results stop at the first agent that didn't finish, and every agent that started after that one runs again"; same-session only, and exiting starts fresh | Explicit checkpointing APIs |
+| Resume semantics | Content-keyed: unchanged calls replay regardless of position; works across sessions and process restarts from the on-disk journal | Start-order prefix: "Cached results stop at the first agent that didn't finish, and every agent that started after that one runs again, even if it completed"; same-session only, and exiting starts fresh | Explicit checkpointing APIs |
 | Interrupted-run discovery | `list_workflow_runs` (session-scoped); interrupted/failed runs carry status and resume hint | `/workflows` view lists runs; pause/resume keys | Application-defined |
 | Token budget | Optional hard ceiling with 75/90% warnings and resumable stop | Advisory warnings (>25 agents or >1.5M projected tokens); hard ceiling not documented | N/A |
 | Journal keying mechanism | Content hash of each call's semantic inputs (documented above, in code) | Not documented (behavior documented at start-order level) | N/A |
