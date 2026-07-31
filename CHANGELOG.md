@@ -130,6 +130,13 @@ This project uses GitHub Releases for detailed generated release notes. This fil
   had salvaged only 6 of 91 completed calls). Resumed runs also journal what
   they replayed, making a resume of a resume exact, and a duplicate `agent()`
   label now logs a one-time authoring hint. Existing journals work unchanged.
+- An interrupted gigacode workflow's run id is now recoverable. Runs are
+  stamped with their owning session, cancelling a turn marks the run
+  `interrupted` in `run.json`, and the new session-scoped `list_workflow_runs`
+  tool lists this session's runs (status, tokens, journaled calls, artifact
+  paths) so the agent can resume an interrupted run with `resume_from_run_id`
+  instead of re-running it from scratch — previously the run id was only
+  returned on normal completion, so an interrupted run's journal was orphaned.
 - Continuing after cancelling an in-flight tool call no longer duplicates the
   next prompt or makes Anthropic reject the request for exceeding its maximum
   of four `cache_control` blocks.

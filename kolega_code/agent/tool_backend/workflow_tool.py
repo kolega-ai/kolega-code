@@ -9,9 +9,11 @@ UI, and supports journal-based resume.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -32,6 +34,7 @@ from ..orchestration import (
     WorkflowScriptError,
     extract_meta,
     saved_workflows_dir,
+    workflows_root,
 )
 from ..orchestration.accounting import WorkflowRunAccounting, get_current_agent_reservation
 from .agent_tool import AgentTool
@@ -175,6 +178,10 @@ class WorkflowTool(BaseTool):
                 "status": "running",
                 "args": args,
                 "resumed_from": resume_from_run_id or None,
+                # Scopes list_workflow_runs to the owning session; stable across
+                # agent rebuilds and process-quit-plus-resume.
+                "thread_id": self.thread_id,
+                "started_at": datetime.now(timezone.utc).isoformat(),
             }
         )
 
@@ -214,6 +221,16 @@ class WorkflowTool(BaseTool):
         result: Any = None
         try:
             result = await runtime.execute(source, args)
+        except asyncio.CancelledError:
+            # The turn is being torn down: record the truth for later recovery
+            # (list_workflow_runs + resume_from_run_id) and get out of the way —
+            # no result rendering or event emits mid-cancellation.
+            journal.update_meta(
+                status="interrupted",
+                duration_seconds=round(time.time() - started, 2),
+                total_tokens=budget.spent(),
+            )
+            raise
         except WorkflowScriptError as exc:
             status = "failed"
             error = f"workflow script error: {exc}"
@@ -244,6 +261,80 @@ class WorkflowTool(BaseTool):
         )
 
         return self._summarize(meta, run_id, journal, budget, status, error, result)
+
+    async def list_workflow_runs(self, limit: int = 20) -> str:
+        """List this session's gigacode workflow runs, newest first.
+
+        Args:
+            limit: Maximum number of runs to report (default 20).
+
+        Returns:
+            One block per run: runId, name, status, timing, tokens, journaled
+            agent calls, and artifact paths. An interrupted run (or a stale
+            "running" one left by a dead process) can be resumed with
+            run_workflow(resume_from_run_id=...) — its journaled calls replay
+            instead of re-running.
+        """
+        from kolega_code.cli.session_store import default_state_dir
+
+        root = workflows_root(default_state_dir())
+        runs: list[tuple[RunJournal, dict]] = []
+        if root.exists():
+            for run_dir in root.iterdir():
+                # ``_saved`` (reusable named workflows) is a sibling of run dirs.
+                if not run_dir.is_dir() or run_dir.name.startswith("_"):
+                    continue
+                journal = RunJournal(run_dir, run_dir.name)
+                meta = journal.read_meta()
+                if meta.get("thread_id") != self.thread_id:
+                    continue
+                runs.append((journal, meta))
+
+        if not runs:
+            return "No workflow runs in this session."
+
+        # started_at is UTC ISO, so lexicographic order is chronological.
+        runs.sort(key=lambda entry: str(entry[1].get("started_at") or ""), reverse=True)
+        shown = runs[: max(1, limit)]
+        lines = [f"{len(runs)} workflow run(s) in this session; showing {len(shown)}, newest first."]
+        for journal, meta in shown:
+            status = str(meta.get("status") or "unknown")
+            if status == "interrupted":
+                status_text = "interrupted — resumable via run_workflow(resume_from_run_id=...)"
+            elif status == "running":
+                status_text = "running (or died mid-run — resumable if no workflow is actually in flight)"
+            else:
+                status_text = status
+            journaled_calls = self._count_journaled_calls(journal)
+            lines.append(f"- runId: {journal.run_id}")
+            lines.append(f"  name: {meta.get('name')} | status: {status_text}")
+            lines.append(
+                f"  started: {meta.get('started_at')} | duration: {meta.get('duration_seconds', '?')}s"
+                f" | tokens: {meta.get('total_tokens', 0)} | journaled agent calls: {journaled_calls}"
+            )
+            if meta.get("resumed_from"):
+                lines.append(f"  resumed_from: {meta['resumed_from']}")
+            lines.append(f"  scriptPath: {journal.script_path}")
+            lines.append(f"  resultPath: {journal.result_md_path} | transcriptPath: {journal.transcript_md_path}")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _count_journaled_calls(journal: RunJournal) -> int:
+        """Completed rows in the run's journal — the work a resume would replay."""
+        if not journal.journal_path.exists():
+            return 0
+        count = 0
+        for raw in journal.journal_path.read_text(encoding="utf-8").splitlines():
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                entry = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(entry, dict) and entry.get("status", "completed") == "completed":
+                count += 1
+        return count
 
     # -------------------------------------------------------------- internals
     def _resolve_source(self, script: str, script_path: str, resume_from_run_id: str, state_dir: Path) -> str:

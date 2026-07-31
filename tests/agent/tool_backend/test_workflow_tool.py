@@ -719,3 +719,129 @@ async def test_changed_inherited_routing_invalidates_resume(
 
     await second.run_workflow(script=script, resume_from_run_id=first_run_id)
     assert len(second_calls) == 1
+
+
+INTERRUPTIBLE_SCRIPT = """\
+meta = {"name": "interruptible", "description": "d"}
+a = await agent("alpha")
+b = await agent("beta")
+return [a, b]
+"""
+
+
+def _interrupting_stub(cancel_on_task: str) -> tuple[Any, list[str]]:
+    """A dispatch stub that simulates the user cancelling the turn on one task."""
+    tasks: list[str] = []
+
+    async def dispatch_workflow_agent(agent_class: type[Any], task: str, **kwargs: Any) -> tuple[str, int, Any]:
+        if task == cancel_on_task:
+            raise asyncio.CancelledError()
+        tasks.append(task)
+        return (f"recap:{task}", 3, None)
+
+    return dispatch_workflow_agent, tasks
+
+
+def _only_run_dir(state_dir: Path) -> Path:
+    run_dirs = [d for d in (Path(state_dir) / "workflows").iterdir() if d.is_dir() and not d.name.startswith("_")]
+    assert len(run_dirs) == 1
+    return run_dirs[0]
+
+
+@pytest.mark.asyncio
+async def test_interrupt_marks_run_interrupted(workflow_tool) -> None:
+    """Cancellation mid-run records the truth in run.json and keeps the journal."""
+    tool, state_dir = workflow_tool
+    stub, tasks = _interrupting_stub("beta")
+    tool._agent_tool.dispatch_workflow_agent = stub
+
+    with pytest.raises(asyncio.CancelledError):
+        await tool.run_workflow(script=INTERRUPTIBLE_SCRIPT)
+    assert tasks == ["alpha"]
+
+    run_dir = _only_run_dir(state_dir)
+    meta = json.loads((run_dir / "run.json").read_text())
+    assert meta["status"] == "interrupted"
+    assert meta["thread_id"] == "thread"
+    assert meta["started_at"]
+    assert meta["total_tokens"] == 3
+    assert isinstance(meta["duration_seconds"], float)
+    # The completed prefix survives for resume.
+    journal_rows = [json.loads(line) for line in (run_dir / "journal.jsonl").read_text().splitlines()]
+    assert len(journal_rows) == 1
+    assert journal_rows[0]["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_list_workflow_runs_filters_to_current_session(workflow_tool) -> None:
+    tool, state_dir = workflow_tool
+    stub, _ = _stub_dispatch()
+    tool._agent_tool.dispatch_workflow_agent = stub
+
+    summary = await tool.run_workflow(script=SCRIPT)
+    run_id = next(line.split("runId:")[1].strip() for line in summary.splitlines() if "runId:" in line)
+
+    workflows = Path(state_dir) / "workflows"
+    # Another session's run, a pre-stamping legacy run, a malformed meta, and the
+    # _saved dir must all be ignored.
+    (workflows / "foreign-run").mkdir()
+    (workflows / "foreign-run" / "run.json").write_text(json.dumps({"thread_id": "other", "name": "foreign"}))
+    (workflows / "legacy-run").mkdir()
+    (workflows / "legacy-run" / "run.json").write_text(json.dumps({"name": "legacy"}))
+    (workflows / "broken-run").mkdir()
+    (workflows / "broken-run" / "run.json").write_text("{not json")
+    (workflows / "_saved").mkdir(exist_ok=True)
+
+    listing = await tool.list_workflow_runs()
+    assert run_id in listing
+    assert "1 workflow run(s) in this session" in listing
+    assert "foreign" not in listing
+    assert "legacy" not in listing
+    assert "broken-run" not in listing
+
+
+@pytest.mark.asyncio
+async def test_list_workflow_runs_orders_limits_and_reports_fields(workflow_tool) -> None:
+    tool, _ = workflow_tool
+    stub, _ = _stub_dispatch()
+    tool._agent_tool.dispatch_workflow_agent = stub
+
+    assert await tool.list_workflow_runs() == "No workflow runs in this session."
+
+    first = await tool.run_workflow(script=SCRIPT)
+    second = await tool.run_workflow(script=SCRIPT)
+    first_id = next(line.split("runId:")[1].strip() for line in first.splitlines() if "runId:" in line)
+    second_id = next(line.split("runId:")[1].strip() for line in second.splitlines() if "runId:" in line)
+
+    listing = await tool.list_workflow_runs()
+    assert listing.index(second_id) < listing.index(first_id)  # newest first
+    assert "status: completed" in listing
+    assert "journaled agent calls: 4" in listing
+    assert "scriptPath:" in listing and "resultPath:" in listing and "transcriptPath:" in listing
+
+    limited = await tool.list_workflow_runs(limit=1)
+    assert second_id in limited
+    assert first_id not in limited
+    assert "showing 1" in limited
+
+
+@pytest.mark.asyncio
+async def test_interrupted_run_recovery_end_to_end(workflow_tool) -> None:
+    """The headline flow: interrupt -> list_workflow_runs -> resume replays the prefix."""
+    tool, _ = workflow_tool
+    stub, _ = _interrupting_stub("beta")
+    tool._agent_tool.dispatch_workflow_agent = stub
+
+    with pytest.raises(asyncio.CancelledError):
+        await tool.run_workflow(script=INTERRUPTIBLE_SCRIPT)
+
+    listing = await tool.list_workflow_runs()
+    assert "interrupted — resumable via run_workflow(resume_from_run_id=...)" in listing
+    run_id = next(line.split("runId:")[1].strip() for line in listing.splitlines() if "runId:" in line)
+
+    live_stub, live_tasks = _stub_dispatch()
+    tool._agent_tool.dispatch_workflow_agent = live_stub
+    summary = await tool.run_workflow(script=INTERRUPTIBLE_SCRIPT, resume_from_run_id=run_id)
+    assert "completed" in summary
+    # Only the interrupted call runs live; "alpha" replays from the journal.
+    assert [call[0] for call in live_tasks] == ["beta"]

@@ -265,4 +265,11 @@ to replay cached `agent()` results for every call whose content is unchanged (ma
 by call content, not position — reordering or inserting calls doesn't invalidate the
 rest) and only re-run new/changed calls. Resumed runs journal what they replayed, so
 resuming a resumed run replays exactly.
+
+If a `run_workflow` call was interrupted (its tool result says "Operation was
+interrupted", or the run was otherwise cut short), do NOT re-run the script from
+scratch: call `list_workflow_runs`, take the most recent interrupted run, and pass its
+id as `resume_from_run_id` — every agent call it completed replays from the journal at
+no cost. `list_workflow_runs` shows only this session's runs; a run still listed as
+"running" when no workflow is in flight died mid-run and is resumable the same way.
 """

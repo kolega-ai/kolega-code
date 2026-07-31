@@ -500,6 +500,7 @@ class ToolCollection(LogMixin):
         "read_image",
         "lsp",
         "list_subagent_models",
+        "list_workflow_runs",
     ]
 
     browser_tools = [
@@ -571,6 +572,7 @@ class ToolCollection(LogMixin):
     # top-level (non-sub) agent gets it, and only when gigacode is enabled.
     orchestration_tools = [
         "run_workflow",
+        "list_workflow_runs",
     ]
 
     # Shell execution + session management. Exposed to the planning and
@@ -1561,6 +1563,23 @@ class ToolCollection(LogMixin):
             script_path=script_path,
             resume_from_run_id=resume_from_run_id,
         )
+
+    async def list_workflow_runs(self, limit: int = 20) -> str:
+        """List this session's gigacode workflow runs, newest first, with each run's
+        runId, name, status, timing, tokens, journaled agent calls, and artifact
+        paths. Only runs started by the current session are shown.
+
+        Use this to recover a run whose id you no longer have — for example after a
+        `run_workflow` call was interrupted ("Operation was interrupted"). Do not
+        re-run an interrupted workflow from scratch: resume it with
+        `run_workflow(resume_from_run_id=...)` so its journaled calls replay instead
+        of re-running. A run listed as "running" when no workflow is actually in
+        flight died mid-run and is resumable the same way.
+
+        Args:
+            limit: Maximum number of runs to report (default 20).
+        """
+        return await self.workflow_tool.list_workflow_runs(limit=limit)
 
     async def think_hard(self, problem_statement: str) -> str:
         """

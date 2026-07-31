@@ -145,13 +145,18 @@ class RunJournal:
         self.ensure_dirs()
         self._meta_path.write_text(json.dumps(meta, indent=2, default=str) + "\n", encoding="utf-8")
 
+    def read_meta(self) -> Dict[str, Any]:
+        """Return the run's ``run.json`` contents; ``{}`` when absent/unreadable."""
+        if not self._meta_path.exists():
+            return {}
+        try:
+            meta = json.loads(self._meta_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return {}
+        return meta if isinstance(meta, dict) else {}
+
     def update_meta(self, **fields: Any) -> None:
-        meta: Dict[str, Any] = {}
-        if self._meta_path.exists():
-            try:
-                meta = json.loads(self._meta_path.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError):
-                meta = {}
+        meta = self.read_meta()
         meta.update(fields)
         self.write_meta(meta)
 
