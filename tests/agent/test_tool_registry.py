@@ -3,7 +3,7 @@
 import pytest
 
 from kolega_code.llm.models import ToolDefinition
-from kolega_code.tools import Tool, ToolPolicy, ToolRegistry
+from kolega_code.tools import Tool, ToolError, ToolPolicy, ToolRegistry
 
 
 def make_tool(name: str, *, parallel_safe: bool = False, result: str = "ok") -> Tool:
@@ -91,6 +91,77 @@ class TestToolRegistry:
         subset_definitions = subset.definitions()
         assert [d.name for d in subset_definitions] == ["a", "b"]
         assert [d.cache_checkpoint for d in subset_definitions] == [False, True]
+
+
+class TestMalformedArgumentErrors:
+    """A wrong-arguments call becomes a clean, public ToolError — never a raw
+    TypeError that leaks the handler's internal class/method name."""
+
+    @staticmethod
+    def _tool(handler, name="eval"):
+        return Tool(
+            name=name,
+            definition=ToolDefinition(name=name, description=f"{name} tool", parameters=[]),
+            handler=handler,
+        )
+
+    @pytest.mark.asyncio
+    async def test_missing_required_argument_reports_usage(self):
+        async def handler(code: str, language: str = "py"):
+            return code
+
+        tool = self._tool(handler)
+        with pytest.raises(ToolError) as exc_info:
+            await tool.call(language="py")  # required `code` omitted
+        message = str(exc_info.value)
+        assert "Invalid arguments for `eval`" in message
+        assert "code" in message
+        assert "Usage: eval(code, language='py')" in message
+
+    @pytest.mark.asyncio
+    async def test_unexpected_keyword_reports_usage(self):
+        async def handler(code: str):
+            return code
+
+        tool = self._tool(handler)
+        with pytest.raises(ToolError) as exc_info:
+            await tool.call(code="x", bogus=1)
+        message = str(exc_info.value)
+        assert "unexpected keyword argument" in message
+        assert "Usage: eval(code)" in message
+
+    @pytest.mark.asyncio
+    async def test_message_never_leaks_handler_qualname(self):
+        # Public tool name `write` is backed by an internal method on a class the
+        # model must never see the name of.
+        class _SecretInternalCollection:
+            async def claude_write(self, path: str, content: str):
+                return content
+
+        tool = self._tool(_SecretInternalCollection().claude_write, name="write")
+        with pytest.raises(ToolError) as exc_info:
+            await tool.call(path="a.txt")  # required `content` omitted
+        message = str(exc_info.value)
+        assert "_SecretInternalCollection" not in message
+        assert "claude_write" not in message
+        assert "`write`" in message
+        assert "Usage: write(path, content)" in message
+
+    @pytest.mark.asyncio
+    async def test_varkw_handler_accepts_any_arguments(self):
+        async def handler(**kwargs):
+            return sorted(kwargs)
+
+        tool = self._tool(handler, name="flex")
+        assert await tool.call(a=1, b=2) == ["a", "b"]
+
+    @pytest.mark.asyncio
+    async def test_valid_call_passes_through_unchanged(self):
+        async def handler(code: str, language: str = "py"):
+            return f"{language}:{code}"
+
+        tool = self._tool(handler)
+        assert await tool.call(code="1+1") == "py:1+1"
 
 
 class TestToolCollectionRegistry:
