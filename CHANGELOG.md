@@ -6,6 +6,14 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+### Changed
+
+- `deepseek-v4-flash` now connects over DeepSeek's **Responses API**
+  (`https://api.deepseek.com`) for its native tool-calling format and graded
+  reasoning effort. Every other DeepSeek model (including `deepseek-v4-pro`)
+  continues to use the OpenAI-compatible Chat Completions endpoint. This is a
+  per-model routing decision; no configuration change is required.
+
 ## 0.26.3 - 2026-08-02
 
 ### Added

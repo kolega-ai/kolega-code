@@ -73,11 +73,18 @@ class LLMClient:
         requests_per_minute: Optional[int] = None,
         tokens_per_minute: Optional[int] = None,
         token_manager: Optional[Any] = None,
+        model: Optional[str] = None,
     ):
         self.provider_name = provider.lower()
         self._api_key = api_key  # Store API key privately
         # Refreshing OAuth token manager, used only by the ChatGPT-subscription provider.
         self._token_manager = token_manager
+        # Routing hint only: nearly every model shares its provider's API surface, so
+        # the client is provider-scoped and the model id is passed per call. The one
+        # exception is deepseek-v4-flash (Responses API vs the deepseek Chat default),
+        # which must be known at construction to pick the right provider class. The
+        # per-call `model=` kwarg still governs the request body.
+        self._model = model
         self.provider = self._initialize_provider(
             provider,
             max_retries=max_retries,
@@ -161,6 +168,23 @@ class LLMClient:
                     tokens_per_minute=tokens_per_minute,
                     base_url=chatgpt_constants.INFERENCE_BASE_URL,
                     provider_name=chatgpt_constants.PROVIDER_KEY,
+                )
+
+            # TEMPORARY single exception: deepseek-v4-flash speaks the Responses API
+            # (bare host, no /v1) while the rest of the deepseek catalog stays on Chat
+            # Completions. Special-cased here — like the ChatGPT provider above —
+            # because it needs a distinct base URL. Delete this branch once DeepSeek
+            # moves its catalog to Responses (then route "deepseek" wholesale).
+            if provider.lower() == "deepseek" and self._model == "deepseek-v4-flash":
+                from .providers.deepseek_responses import DeepSeekResponsesProvider
+
+                return DeepSeekResponsesProvider(
+                    api_key=self._api_key,
+                    max_retries=max_retries,
+                    requests_per_minute=requests_per_minute,
+                    tokens_per_minute=tokens_per_minute,
+                    base_url="https://api.deepseek.com",
+                    provider_name="deepseek",
                 )
 
             base_urls: Dict[str, str] = {

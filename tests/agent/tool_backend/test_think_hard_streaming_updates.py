@@ -143,6 +143,7 @@ async def test_think_hard_streaming_with_thinking_and_text(think_hard_tool, mock
             mock_llm_class.assert_called_once_with(
                 provider="anthropic",
                 api_key="test-key",
+                model="claude-3-7-sonnet-20250131",
                 max_retries=3,
                 requests_per_minute=10,
                 tokens_per_minute=100000,

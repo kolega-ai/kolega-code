@@ -142,6 +142,7 @@ class WebFetchTool(StreamingTool):
         client_kwargs = {
             "provider": provider.value,
             "api_key": self.config.get_api_key(provider),
+            "model": self.config.fast_config.model,
             "max_retries": rate_limits.max_retries,
             "requests_per_minute": rate_limits.requests_per_minute,
             "tokens_per_minute": rate_limits.tokens_per_minute,

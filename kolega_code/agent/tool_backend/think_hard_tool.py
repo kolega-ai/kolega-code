@@ -37,6 +37,7 @@ class ThinkHardTool(StreamingTool):
             client = InstrumentedLLMClient(
                 provider=provider.value,
                 api_key=api_key or "",
+                model=self.config.thinking_config.model,
                 max_retries=rate_limits.max_retries,
                 requests_per_minute=rate_limits.requests_per_minute,
                 tokens_per_minute=rate_limits.tokens_per_minute,
@@ -54,6 +55,7 @@ class ThinkHardTool(StreamingTool):
             client = LLMClient(
                 provider=provider.value,
                 api_key=api_key or "",
+                model=self.config.thinking_config.model,
                 max_retries=rate_limits.max_retries,
                 requests_per_minute=rate_limits.requests_per_minute,
                 tokens_per_minute=rate_limits.tokens_per_minute,
