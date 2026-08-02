@@ -6,6 +6,15 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+### Fixed
+
+- DeepSeek `deepseek-v4-flash` on the Responses API no longer crashes mid-task
+  with a 400 "No tool output found for tool call ..." when the model returns tool
+  calls together with assistant text. The text was serialized between the tool
+  calls and their outputs, which DeepSeek rejects; it is now emitted before the
+  calls so each call's output stays adjacent. Tool calls are also defensively
+  guaranteed a matching output on replay.
+
 ## 0.26.4 - 2026-08-02
 
 ### Changed

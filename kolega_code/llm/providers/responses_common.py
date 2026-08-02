@@ -129,6 +129,7 @@ def to_responses_input(messages: MessageHistory) -> List[Dict[str, Any]]:
             continue
 
         text_parts: List[tuple] = []
+        tool_call_items: List[Dict[str, Any]] = []
         tool_image_messages: List[Dict[str, Any]] = []
         for block in message.content or []:
             if isinstance(block, ResponsesReasoningBlock):
@@ -140,8 +141,14 @@ def to_responses_input(messages: MessageHistory) -> List[Dict[str, Any]]:
                 # reasoning block first in the assistant message.
                 items.append(block.to_responses_item())
             elif isinstance(block, ToolCall):
+                # Collected, not emitted inline: the function_call items must be the
+                # LAST items of the assistant turn so the next message's
+                # function_call_output items follow them immediately. An assistant
+                # text item interposed between the calls and their outputs makes
+                # DeepSeek's Responses API 400 ("No tool output found for tool call
+                # ..."). See the assistant-text ordering below.
                 if block.input_kind == "freeform":
-                    items.append(
+                    tool_call_items.append(
                         {
                             "type": "custom_tool_call",
                             "call_id": block.id,
@@ -150,7 +157,7 @@ def to_responses_input(messages: MessageHistory) -> List[Dict[str, Any]]:
                         }
                     )
                 else:
-                    items.append(
+                    tool_call_items.append(
                         {
                             "type": "function_call",
                             "call_id": block.id,
@@ -178,11 +185,42 @@ def to_responses_input(messages: MessageHistory) -> List[Dict[str, Any]]:
             # Foreign Anthropic thinking/redacted-thinking blocks (from a prior
             # provider) are skipped here; adapt_history_for_provider has already
             # dropped them before this conversion runs.
+        # Assistant text goes BEFORE the tool calls; the calls stay last so their
+        # outputs (next message) are adjacent — required by DeepSeek's Responses API.
         if text_parts:
             item = _role_message_item(message.role, text_parts)
             if item:
                 items.append(item)
+        items.extend(tool_call_items)
         items.extend(tool_image_messages)
+
+    # Every function_call must be answered by a function_call_output or the
+    # Responses API 400s ("No tool output found for tool call ..."). A tool call
+    # can be left unanswered when a turn made several parallel calls and one
+    # result went missing (e.g. a yielded/long-running command). Mirror the Chat
+    # path (Message.to_openai) and pad any orphan with a placeholder output so the
+    # request stays valid. Keyed by call_id, preserving the freeform vs json shape.
+    # Defense-in-depth: every function_call must still be answered by a
+    # function_call_output, or the Responses API 400s. Pad any orphan (mirrors the
+    # Chat path, Message.to_openai). With the ordering above this should not fire,
+    # but a genuinely dropped result must not become a hard request failure.
+    answered = {
+        it.get("call_id") for it in items if it.get("type") in ("function_call_output", "custom_tool_call_output")
+    }
+    for it in items:
+        if it.get("type") not in ("function_call", "custom_tool_call"):
+            continue
+        call_id = it.get("call_id")
+        if call_id in answered:
+            continue
+        answered.add(call_id)
+        items.append(
+            {
+                "type": "custom_tool_call_output" if it["type"] == "custom_tool_call" else "function_call_output",
+                "call_id": call_id,
+                "output": "[no tool output recorded]",
+            }
+        )
     return items
 
 
