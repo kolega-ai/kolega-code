@@ -398,6 +398,12 @@ def _build_subcommand_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Enable gigacode workflow orchestration (the TUI's /gigacode, for headless runs).",
     )
+    ask.add_argument(
+        "--no-memory-tools",
+        action="store_true",
+        help="Disable the persistent project-memory tools (read/list/write/edit/delete memory). "
+        "Use for headless or benchmark runs where there is no durable memory store to read or write.",
+    )
     ask.add_argument("--save", action="store_true", help="Persist the session after the prompt completes.")
     ask.add_argument("--json", action="store_true", help="Emit response chunks and events as JSON.")
     ask.add_argument("--browser-visible", action="store_true", help="Launch visible Playwright browser windows.")
@@ -1343,6 +1349,7 @@ async def _run_ask(args: argparse.Namespace) -> int:
         hook_dispatcher=hook_dispatcher,
         custom_agent_catalog=custom_agent_catalog,
         memory_project_path=launch_project_path,
+        memory_enabled=not getattr(args, "no_memory_tools", False),
     )
     agent_ref["agent"] = agent
     # --gigacode turns orchestration on for this run; a resumed session that had

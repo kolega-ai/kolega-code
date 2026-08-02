@@ -47,6 +47,7 @@ class PlanningAgent(BaseAgent):
         max_iterations: Optional[int] = None,
         custom_agent_catalog: Optional[Any] = None,
         memory_manager: Optional[Any] = None,
+        memory_enabled: bool = True,
     ) -> None:
         if custom_agent_catalog is not None:
             custom_agent_catalog = custom_agent_catalog.for_mode("plan")
@@ -81,6 +82,7 @@ class PlanningAgent(BaseAgent):
             max_iterations=max_iterations,
             custom_agent_catalog=custom_agent_catalog,
             memory_manager=memory_manager,
+            memory_enabled=memory_enabled,
         )
 
         self._completed_plan: Optional[str] = None

@@ -261,6 +261,75 @@ def test_coder_agent_exposes_dispatch_general_agent(project_path, mock_connectio
     assert not tool_names.intersection(ToolCollection.browser_tools)
 
 
+MEMORY_TOOL_NAMES = {"read_memory", "list_memory", "write_memory", "edit_memory", "delete_memory"}
+
+
+@pytest.mark.parametrize("agent_cls", [CoderAgent, PlanningAgent])
+def test_memory_enabled_false_gates_tools_and_prompt_for_top_level_agents(
+    agent_cls, project_path, mock_connection_manager, agent_config
+):
+    """memory_enabled=False nulls the manager, removing memory tools AND the memory-policy
+    prompt section — for whichever top-level agent the mode selects, not just the coder."""
+
+    def build(*, memory_enabled):
+        return agent_cls(
+            project_path=project_path,
+            workspace_id="test_workspace",
+            thread_id=str(uuid.uuid4()),
+            connection_manager=mock_connection_manager,
+            config=agent_config,
+            agent_mode=AgentMode.CLI,
+            memory_enabled=memory_enabled,
+        )
+
+    enabled = build(memory_enabled=True)
+    disabled = build(memory_enabled=False)
+
+    # "Off" is one representation: a present-but-disabled manager, never None.
+    assert enabled.memory_manager is not None and enabled.memory_manager.enabled
+    assert disabled.memory_manager is not None and not disabled.memory_manager.enabled
+
+    # Both surfaces follow the manager: tools...
+    enabled_tools = {tool.name for tool in enabled.tool_collection.get_tool_list()}
+    disabled_tools = {tool.name for tool in disabled.tool_collection.get_tool_list()}
+    assert MEMORY_TOOL_NAMES & enabled_tools  # at least the read tools when enabled
+    assert not (MEMORY_TOOL_NAMES & disabled_tools)
+
+    # ...and the memory-policy section injected into the system prompt.
+    assert enabled.build_prompt_context().memory_policy != ""
+    assert disabled.build_prompt_context().memory_policy == ""
+
+
+def test_dispatch_browser_agent_gated_on_browser_agent_model_vision(
+    project_path, mock_connection_manager, agent_config
+):
+    """dispatch_browser_agent is offered iff the model *resolved for the browser-agent
+    role* is vision-capable — independent of the main coding model."""
+    main = agent_config.long_context_config  # claude-sonnet — vision-capable
+
+    vision_browser = Mock(provider="anthropic", model="claude-sonnet-4-5-20250929")
+    blind_browser = Mock(provider="deepseek", model="deepseek-v4-flash")
+
+    def tools_with_browser_model(browser_model):
+        agent_config.model_config_for_agent.side_effect = lambda name: (
+            browser_model if name == "browser-agent" else main
+        )
+        agent = CoderAgent(
+            project_path=project_path,
+            workspace_id="test_workspace",
+            thread_id=str(uuid.uuid4()),
+            connection_manager=mock_connection_manager,
+            config=agent_config,
+            agent_mode=AgentMode.CLI,
+        )
+        return {tool.name for tool in agent.tool_collection.get_tool_list()}
+
+    # Vision-capable browser-agent model -> offered even if we later flip the main model.
+    assert "dispatch_browser_agent" in tools_with_browser_model(vision_browser)
+    # Vision-less browser-agent model -> not offered, so the model can't waste a turn on it.
+    assert "dispatch_browser_agent" not in tools_with_browser_model(blind_browser)
+
+
 def test_sub_agent_coder_cannot_dispatch_general_agent(project_path, mock_connection_manager, agent_config):
     """A dispatched CoderAgent must not fan out into further sub-agents."""
     agent = CoderAgent(
@@ -475,8 +544,10 @@ def test_eval_tool_schema_carries_the_kernel_contract(project_path, mock_connect
     assert "model-facing format" in description
 
     params = {param.name: param for param in eval_tool.parameters}
-    assert params["language"].required is True
+    # `code` is the payload and stays required; `language` defaults to "py" (the
+    # dominant case), so omitting it is a valid call rather than a hard error.
     assert params["code"].required is True
+    assert params["language"].required is False
     assert params["title"].required is False
     assert params["timeout"].type == "number"
     assert params["reset"].type == "boolean"

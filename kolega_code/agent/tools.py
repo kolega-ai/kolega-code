@@ -2003,8 +2003,8 @@ class ToolCollection(LogMixin):
 
     async def eval(
         self,
-        language: str,
         code: str,
+        language: str = "py",
         title: Optional[str] = None,
         timeout: Optional[float] = None,
         reset: bool = False,
@@ -2034,8 +2034,8 @@ class ToolCollection(LogMixin):
         Top-level await works; declarations inside await-wrapped cells do NOT persist — use setGlobal(name, value) for cross-cell state there. Redeclaring an existing top-level name errors: assign without redeclaring, or pass reset=true.
 
         Args:
-            language: "py" for the persistent Python kernel, "js" for the persistent JavaScript kernel (js needs bun or node >= 18 on PATH).
             code: code to run in this eval call, verbatim. Top-level await is fine.
+            language: which kernel to run in; defaults to "py" (the persistent Python kernel). Pass "js" for the persistent JavaScript kernel (needs bun or node >= 18 on PATH).
             title: short label for this step shown in the transcript (e.g. "load csv", "chart by region").
             timeout: timeout for this cell in seconds; 0 disables it. Default 120, max 600.
             reset: wipe this language's kernel before running (fresh state). The other language is untouched.
@@ -2199,7 +2199,13 @@ class ToolCollection(LogMixin):
         return await self.memory_tool.delete_memory(path)
 
     async def search_codebase(
-        self, pattern: str, file_pattern: str = "*", case_sensitive: bool = False, literal: bool = False
+        self,
+        pattern: str,
+        file_pattern: str = "*",
+        case_sensitive: bool = False,
+        literal: bool = False,
+        path: Optional[str] = None,
+        max_results: int = 128,
     ) -> str:
         """
         Search the codebase for lines matching a regular expression (grep/ripgrep).
@@ -2210,14 +2216,19 @@ class ToolCollection(LogMixin):
         `^ $`, quantifiers `* + ? {n,m}`, groups `(...)`). Set `literal=True` to match
         the pattern as plain text instead (e.g. to find `arr[0]` or `a||b` verbatim).
 
+        Narrow a search with `path` (search only within a subdirectory) and
+        `max_results` (cap the number of files returned).
+
         Args:
             pattern: The regular expression to search for (use `literal=True` to match it as plain text)
-            file_pattern: Optional glob to filter which files to search (default: all files)
+            file_pattern: Glob to filter which files to search by name, e.g. `*.py` (default: all files)
             case_sensitive: Whether the search is case-sensitive (default: False)
             literal: Treat the pattern as plain text instead of a regular expression (default: False)
+            path: Directory (relative to the project root) to search within; searches the whole project when omitted
+            max_results: Maximum number of matching files to return (default 128, capped at 512)
 
         Returns:
-            Markdown formatted list of files and matches, limited to 128 results
+            Markdown formatted list of files and matches, capped at `max_results` files
 
         Raises:
             Exception: If any error occurs during the search operation
@@ -2236,6 +2247,8 @@ class ToolCollection(LogMixin):
             "file_pattern": file_pattern,
             "case_sensitive": case_sensitive,
             "literal": literal,
+            "path": path,
+            "max_results": max_results,
         }
         if formatter is not None:
             kwargs["line_formatter"] = formatter
@@ -2679,6 +2692,17 @@ class ToolCollection(LogMixin):
         # Vision gate: read_image is only surfaced to vision-capable models.
         if method_name == "read_image":
             return bool(getattr(self.caller, "supports_vision", False))
+
+        # Vision gate: dispatching the browser agent only works when the model
+        # resolved for the browser-agent role accepts images (it reads page
+        # screenshots). That model may differ from the main one, so gate on it —
+        # not caller.supports_vision — rather than offer a call that can only
+        # fail at dispatch.
+        if method_name == "dispatch_browser_agent":
+            from kolega_code.agent.browseragent import BrowserAgent
+
+            if not BrowserAgent.resolved_model_supports_vision(self.config):
+                return False
 
         # Settings gate: eval can be disabled host-wide (AgentConfig.eval_enabled).
         # Strict `is False` so Mock configs in tests keep the default (enabled).

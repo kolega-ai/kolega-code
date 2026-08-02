@@ -22,6 +22,8 @@ _RC_MARKER = "__KOLEGA_RG_RC"
 
 # Display caps (shared by every engine via the single formatter).
 _MAX_FILES = 128
+# Ceiling for a caller-supplied ``max_results`` so a huge request can't flood context.
+_MAX_FILES_CEILING = 512
 _MAX_LINES_PER_FILE = 5
 _MAX_LINE_LENGTH = 200
 _MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
@@ -44,6 +46,10 @@ _BROAD_ROOT_EXCLUDE_DIRS = {
 class _EngineUnavailable(Exception):
     """Raised by an engine runner when it cannot run (binary missing, unknown
     flag, non-regex error) so the caller falls back to the next engine tier."""
+
+
+class _InvalidSearchPath(Exception):
+    """A caller-supplied ``path`` that escapes the project or isn't a directory."""
 
 
 class _SearchTimedOut(Exception):
@@ -147,6 +153,31 @@ class SearchCodebaseTool(BaseTool):
             excluded.update(_BROAD_ROOT_EXCLUDE_DIRS)
         return excluded
 
+    def _resolve_search_target(self, path: Optional[str]) -> str:
+        """Validate a caller-supplied ``path`` and return a project-relative search
+        root (``.`` for the whole project). Rejects absolute paths, parent escapes,
+        and non-directories so the search can never wander outside the project."""
+        if not path or path.strip() in ("", ".", "./"):
+            return "."
+        candidate = Path(path.strip())
+        if candidate.is_absolute() or ".." in candidate.parts:
+            raise _InvalidSearchPath(f"path must be a relative directory inside the project, got '{path}'")
+        rel = candidate.as_posix().strip("/")
+        if not rel:
+            return "."
+        try:
+            exists = self.filesystem.exists(rel)
+            is_dir = exists and self.filesystem.is_dir(rel)
+        except Exception:
+            # If the filesystem can't answer (e.g. an exotic sandbox), let the
+            # engine handle the path rather than blocking a legitimate search.
+            return rel
+        if not exists:
+            raise _InvalidSearchPath(f"path '{path}' was not found in the project")
+        if not is_dir:
+            raise _InvalidSearchPath(f"path '{path}' is not a directory; use file_pattern to filter files")
+        return rel
+
     async def search_codebase(
         self,
         pattern: str,
@@ -154,6 +185,8 @@ class SearchCodebaseTool(BaseTool):
         case_sensitive: bool = False,
         literal: bool = False,
         *,
+        path: Optional[str] = None,
+        max_results: int = _MAX_FILES,
         line_formatter: Optional[Callable[[int, str], str]] = None,
     ) -> str:
         """
@@ -170,9 +203,11 @@ class SearchCodebaseTool(BaseTool):
             file_pattern: Optional glob to filter which files to search (default: all files)
             case_sensitive: Whether the search is case-sensitive (default: False)
             literal: Treat the pattern as plain text instead of a regular expression (default: False)
+            path: Optional directory (relative to the project root) to restrict the search to; searches the whole project when omitted
+            max_results: Maximum number of matching files to return (default 128, capped at 512)
 
         Returns:
-            Markdown formatted list of files and matches, limited to 128 results
+            Markdown formatted list of files and matches, capped at ``max_results`` files
 
         Raises:
             Exception: If any error occurs during the search operation
@@ -198,10 +233,16 @@ class SearchCodebaseTool(BaseTool):
                 await self.log_error(error_msg, sender=self.caller.agent_name)
                 return f"Error: {error_msg}"
 
+            limit = max(1, min(int(max_results), _MAX_FILES_CEILING))
+            try:
+                search_target = self._resolve_search_target(path)
+            except _InvalidSearchPath as exc:
+                return f"Error: {exc}"
+
             # Run the first available engine; fall back down the tiers on failure.
             for runner in await self._engine_chain():
                 try:
-                    run = await runner(pattern, file_pattern, case_sensitive, literal, regex)
+                    run = await runner(pattern, file_pattern, case_sensitive, literal, regex, search_target, limit)
                 except _EngineUnavailable:
                     continue
                 except _SearchTimedOut:
@@ -213,7 +254,7 @@ class SearchCodebaseTool(BaseTool):
                         f"elapsed={run.elapsed_seconds:.2f}s)",
                         sender=self.caller.agent_name,
                     )
-                return self._format_results(run, pattern, line_formatter=line_formatter)
+                return self._format_results(run, pattern, limit=limit, line_formatter=line_formatter)
 
             # The Python tier never raises _EngineUnavailable, so this is unreachable.
             return f"No matches found for pattern '{pattern}'"
@@ -266,7 +307,9 @@ class SearchCodebaseTool(BaseTool):
     # ripgrep engine
     # ------------------------------------------------------------------
 
-    def _rg_args(self, pattern: str, file_pattern: str, case_sensitive: bool, literal: bool) -> List[str]:
+    def _rg_args(
+        self, pattern: str, file_pattern: str, case_sensitive: bool, literal: bool, search_target: str = "."
+    ) -> List[str]:
         args = [
             "--json",
             "--no-config",
@@ -297,17 +340,25 @@ class SearchCodebaseTool(BaseTool):
         if file_pattern != "*":
             glob = file_pattern if "/" not in file_pattern else f"**/{file_pattern}"
             args += ["-g", glob]
-        # Pattern as its own argv element (after -e) and an explicit search path so
-        # ripgrep never reads stdin in a headless context.
-        args += ["-e", pattern, "."]
+        # Pattern as its own argv element (after -e) and an explicit search path
+        # (the whole tree, or the caller's ``path`` subtree) so ripgrep never reads
+        # stdin in a headless context.
+        args += ["-e", pattern, search_target]
         return args
 
     async def _run_rg_local(
-        self, pattern: str, file_pattern: str, case_sensitive: bool, literal: bool, regex
+        self,
+        pattern: str,
+        file_pattern: str,
+        case_sensitive: bool,
+        literal: bool,
+        regex,
+        search_target: str = ".",
+        limit: int = _MAX_FILES,
     ) -> SearchRun:
         if shutil.which("rg") is None:
             raise _EngineUnavailable()
-        args = self._rg_args(pattern, file_pattern, case_sensitive, literal)
+        args = self._rg_args(pattern, file_pattern, case_sensitive, literal, search_target)
         env = {**os.environ, "RIPGREP_CONFIG_FILE": ""}
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -329,9 +380,16 @@ class SearchCodebaseTool(BaseTool):
         return SearchRun(self._parse_rg_json(stdout.decode("utf-8", "replace")))
 
     async def _run_rg_sandbox(
-        self, pattern: str, file_pattern: str, case_sensitive: bool, literal: bool, regex
+        self,
+        pattern: str,
+        file_pattern: str,
+        case_sensitive: bool,
+        literal: bool,
+        regex,
+        search_target: str = ".",
+        limit: int = _MAX_FILES,
     ) -> SearchRun:
-        args = self._rg_args(pattern, file_pattern, case_sensitive, literal)
+        args = self._rg_args(pattern, file_pattern, case_sensitive, literal, search_target)
         cmd = "RIPGREP_CONFIG_FILE= rg " + " ".join(shlex.quote(a) for a in args)
         full_cmd = f"cd {shlex.quote(self._fs_root)} && {cmd} ; echo {_RC_MARKER}=$?"
         try:
@@ -390,7 +448,9 @@ class SearchCodebaseTool(BaseTool):
     # grep engine
     # ------------------------------------------------------------------
 
-    def _grep_argv(self, pattern: str, file_pattern: str, case_sensitive: bool, literal: bool) -> List[str]:
+    def _grep_argv(
+        self, pattern: str, file_pattern: str, case_sensitive: bool, literal: bool, search_target: str = "."
+    ) -> List[str]:
         argv = ["grep", "-r", "-n", "--binary-files=without-match"]
         if not case_sensitive:
             argv.append("-i")
@@ -403,16 +463,24 @@ class SearchCodebaseTool(BaseTool):
             argv.append("--exclude-dir=.*")
         for ext in sorted(self.BINARY_EXTENSIONS):
             argv.append(f"--exclude=*{ext}")
-        # -e guards a pattern that starts with '-'; '.' is the search root.
-        argv += ["-e", pattern, "."]
+        # -e guards a pattern that starts with '-'; search_target is the search
+        # root (the whole tree, or the caller's ``path`` subtree).
+        argv += ["-e", pattern, search_target]
         return argv
 
     async def _run_grep_local(
-        self, pattern: str, file_pattern: str, case_sensitive: bool, literal: bool, regex
+        self,
+        pattern: str,
+        file_pattern: str,
+        case_sensitive: bool,
+        literal: bool,
+        regex,
+        search_target: str = ".",
+        limit: int = _MAX_FILES,
     ) -> SearchRun:
         if shutil.which("grep") is None:
             raise _EngineUnavailable()
-        argv = self._grep_argv(pattern, file_pattern, case_sensitive, literal)
+        argv = self._grep_argv(pattern, file_pattern, case_sensitive, literal, search_target)
         try:
             proc = await asyncio.create_subprocess_exec(
                 *argv,
@@ -431,9 +499,16 @@ class SearchCodebaseTool(BaseTool):
         return SearchRun(self._drop_oversize_local(records))
 
     async def _run_grep_sandbox(
-        self, pattern: str, file_pattern: str, case_sensitive: bool, literal: bool, regex
+        self,
+        pattern: str,
+        file_pattern: str,
+        case_sensitive: bool,
+        literal: bool,
+        regex,
+        search_target: str = ".",
+        limit: int = _MAX_FILES,
     ) -> SearchRun:
-        argv = self._grep_argv(pattern, file_pattern, case_sensitive, literal)
+        argv = self._grep_argv(pattern, file_pattern, case_sensitive, literal, search_target)
         cmd = " ".join(shlex.quote(a) for a in argv)
         full_cmd = f"cd {shlex.quote(self._fs_root)} && {cmd} ; echo {_RC_MARKER}=$?"
         try:
@@ -524,15 +599,23 @@ class SearchCodebaseTool(BaseTool):
     # ------------------------------------------------------------------
 
     async def _run_python(
-        self, pattern: str, file_pattern: str, case_sensitive: bool, literal: bool, regex
+        self,
+        pattern: str,
+        file_pattern: str,
+        case_sensitive: bool,
+        literal: bool,
+        regex,
+        search_target: str = ".",
+        limit: int = _MAX_FILES,
     ) -> SearchRun:
         if hasattr(self.filesystem, "sandbox"):
-            return await self._run_python_sandbox_fallback(file_pattern, regex)
+            return await self._run_python_sandbox_fallback(file_pattern, regex, search_target, limit)
 
         normalized_pattern = "**/*" if file_pattern == "*" else f"**/{file_pattern}"
         self._load_gitignore_patterns()
+        scan_root = Path(self._fs_root) if search_target == "." else Path(self._fs_root) / search_target
         scan = await scan_workspace(
-            Path(self._fs_root),
+            scan_root,
             pattern=normalized_pattern,
             include_files=True,
             include_directories=False,
@@ -543,9 +626,9 @@ class SearchCodebaseTool(BaseTool):
             ignore_spec=getattr(self, "_gitignore_spec", None),
             limits=ScanLimits(timeout_seconds=_SCAN_TIMEOUT_SECONDS, max_entries=_SCAN_MAX_ENTRIES),
         )
-        return await self._search_scanned_files(scan, regex)
+        return await self._search_scanned_files(scan, regex, limit)
 
-    async def _search_scanned_files(self, scan: ScanOutcome, regex) -> SearchRun:
+    async def _search_scanned_files(self, scan: ScanOutcome, regex, limit: int = _MAX_FILES) -> SearchRun:
         cancel_event = threading.Event()
         started = time.monotonic()
         remaining = max(0.01, _SEARCH_TIMEOUT_SECONDS - scan.elapsed_seconds)
@@ -570,7 +653,7 @@ class SearchCodebaseTool(BaseTool):
                     if regex.search(line):
                         records.append((norm, line_num, line))
                         matched_files.add(norm)
-                if len(matched_files) > _MAX_FILES:
+                if len(matched_files) > limit:
                     return SearchRun(
                         records,
                         False,
@@ -598,17 +681,24 @@ class SearchCodebaseTool(BaseTool):
             task.cancel()
             return SearchRun([], False, "deadline", scan.visited_entries, _SEARCH_TIMEOUT_SECONDS)
 
-    async def _run_python_sandbox_fallback(self, file_pattern: str, regex) -> SearchRun:
+    async def _run_python_sandbox_fallback(
+        self, file_pattern: str, regex, search_target: str = ".", limit: int = _MAX_FILES
+    ) -> SearchRun:
         """Keep the legacy remote-files fallback off-loop and time bounded."""
         cancel_event = threading.Event()
         started = time.monotonic()
+        prefix = "" if search_target == "." else search_target.rstrip("/") + "/"
 
         def search() -> SearchRun:
             records: List[Record] = []
+            matched_files: set[str] = set()
             for file_path, file_size in self._get_files_batch_sync(file_pattern):
                 if cancel_event.is_set() or time.monotonic() - started >= _SEARCH_TIMEOUT_SECONDS:
                     return SearchRun(records, False, "deadline", elapsed_seconds=time.monotonic() - started)
                 if file_size > _MAX_FILE_SIZE or self._is_likely_binary_by_extension(file_path):
+                    continue
+                norm = self._normalize_path(file_path)
+                if prefix and not norm.startswith(prefix):
                     continue
                 try:
                     content = self.filesystem.read_text(file_path)
@@ -616,10 +706,12 @@ class SearchCodebaseTool(BaseTool):
                         continue
                 except Exception:
                     continue
-                norm = self._normalize_path(file_path)
                 for line_num, line in enumerate(content.splitlines(), start=1):
                     if regex.search(line):
                         records.append((norm, line_num, line))
+                        matched_files.add(norm)
+                if len(matched_files) > limit:
+                    return SearchRun(records, False, "result_limit", elapsed_seconds=time.monotonic() - started)
             return SearchRun(records, elapsed_seconds=time.monotonic() - started)
 
         task = asyncio.create_task(asyncio.to_thread(search))
@@ -643,6 +735,7 @@ class SearchCodebaseTool(BaseTool):
         run: SearchRun,
         original_pattern: str,
         *,
+        limit: int = _MAX_FILES,
         line_formatter: Optional[Callable[[int, str], str]] = None,
     ) -> str:
         """Group records by file (first-seen order), apply the display caps, and
@@ -652,7 +745,7 @@ class SearchCodebaseTool(BaseTool):
         for path, line_num, raw in run.records:
             if path in files:
                 files[path].append((line_num, raw))
-            elif len(files) < _MAX_FILES:
+            elif len(files) < limit:
                 files[path] = [(line_num, raw)]
             else:
                 limit_hit = True
@@ -690,9 +783,7 @@ class SearchCodebaseTool(BaseTool):
 
         output = f"# Search Results for '{original_pattern}'\n\n"
         if limit_hit or run.stop_reason == "result_limit":
-            output += (
-                f"⚠️ **Note:** Showing only the first {_MAX_FILES} results. There are more matches in the codebase.\n\n"
-            )
+            output += f"⚠️ **Note:** Showing only the first {limit} results. There are more matches in the codebase.\n\n"
         elif not run.complete:
             output += (
                 f"⚠️ **Incomplete search:** stopped because of {run.stop_reason or 'a search limit'}. "

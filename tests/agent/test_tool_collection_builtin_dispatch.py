@@ -180,7 +180,7 @@ class TestToolCollection:
         result = await tool_collection.search_codebase(pattern, file_pattern, case_sensitive)
         assert result == expected_response
         tool_collection.search_codebase_tool.search_codebase.assert_called_once_with(
-            pattern, file_pattern=file_pattern, case_sensitive=case_sensitive, literal=False
+            pattern, file_pattern=file_pattern, case_sensitive=case_sensitive, literal=False, path=None, max_results=128
         )
 
     async def test_web_fetch(self, tool_collection: AsyncMock) -> None:

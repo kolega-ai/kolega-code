@@ -58,6 +58,7 @@ def _tools(
     manager: ProjectMemoryManager,
     *,
     sub_agent: bool = False,
+    include_memory_tools: bool = True,
     write_access: bool = True,
     allowed_tools: list[str] | None = None,
 ) -> ToolCollection:
@@ -69,7 +70,7 @@ def _tools(
         _config(),
         _caller(manager, sub_agent=sub_agent),
         tool_config=ToolCollectionConfig(
-            include_memory_tools=True,
+            include_memory_tools=include_memory_tools,
             memory_write_access=write_access,
             allowed_tools=allowed_tools,
         ),
@@ -302,6 +303,20 @@ def test_tool_schema_order_availability_and_revision_free_file_api(tmp_path: Pat
     assert "do nothing when the fact is already covered" in definitions["write_memory"].description
     assert "exact, unique" in definitions["edit_memory"].description
     assert "remove its link from MEMORY.md before deleting" in definitions["delete_memory"].description
+
+
+def test_include_memory_tools_false_removes_all_memory_tools(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    manager = ProjectMemoryManager(project, tmp_path / "state")
+
+    enabled = _tools(project, manager, include_memory_tools=True).registry()
+    disabled = _tools(project, manager, include_memory_tools=False).registry()
+
+    assert [name for name in enabled.names() if name in MEMORY_TOOL_NAMES] == MEMORY_TOOL_NAMES
+    assert not any(name in MEMORY_TOOL_NAMES for name in disabled.names())
+    # Non-memory tools are unaffected by the toggle.
+    assert "read_entire_file" in disabled.names()
 
 
 def test_subagent_exposes_only_read_and_list_even_when_write_is_requested(tmp_path: Path) -> None:

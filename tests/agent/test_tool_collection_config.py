@@ -41,12 +41,14 @@ def agent_config() -> AgentConfig:
         anthropic_api_key="test_key",
         openai_api_key="test-key",
         long_context_config=ModelConfig(
-            provider=ModelProvider.ANTHROPIC, model="test-model", rate_limits=RateLimitConfig()
+            provider=ModelProvider.ANTHROPIC, model="claude-sonnet-4-5-20250929", rate_limits=RateLimitConfig()
         ),
-        fast_config=ModelConfig(provider=ModelProvider.ANTHROPIC, model="test-model", rate_limits=RateLimitConfig()),
+        fast_config=ModelConfig(
+            provider=ModelProvider.ANTHROPIC, model="claude-sonnet-4-5-20250929", rate_limits=RateLimitConfig()
+        ),
         thinking_config=ModelConfig(
             provider=ModelProvider.ANTHROPIC,
-            model="test-model",
+            model="claude-sonnet-4-5-20250929",
             rate_limits=RateLimitConfig(),
             thinking_effort="medium",
         ),

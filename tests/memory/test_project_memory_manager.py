@@ -43,6 +43,39 @@ def test_lazy_private_persistence_and_project_isolation(tmp_path: Path) -> None:
     assert not ProjectMemoryManager(other, state).read_entry("MEMORY.md").present
 
 
+def test_disabled_manager_is_inert_and_never_touches_storage(tmp_path: Path) -> None:
+    project = tmp_path / "repo"
+    project.mkdir()
+    state = tmp_path / "state"
+
+    manager = ProjectMemoryManager.disabled(project, state)
+
+    # Present but off — the single representation of "memory off".
+    assert not manager.enabled
+    assert not manager.status().enabled
+    assert manager.tool_bindings() == ()
+    with pytest.raises(MemoryUnavailableError):
+        manager.prompt_context()
+
+    # Every path that would touch disk on a live manager must stay inert here.
+    manager.refresh()  # must NOT reload the manifest and silently re-enable
+    assert not manager.enabled
+    scoped = manager.with_scope(MemoryAccessScope.SUBAGENT)
+    assert not scoped.enabled and scoped.tool_bindings() == ()
+    manager.status()
+    manager.close()
+
+    # Refuses to enable, reconfigure, or write.
+    fresh = ProjectMemoryManager.disabled(project, state)
+    with pytest.raises(MemoryUnavailableError):
+        fresh.set_enabled(True)
+    with pytest.raises(MemoryUnavailableError):
+        fresh.write_entry("MEMORY.md", "should not persist")
+
+    # After all of that, storage was never materialized on disk.
+    assert not state.exists()
+
+
 def test_complete_writes_and_path_only_deletes_are_revision_free(tmp_path: Path) -> None:
     project = tmp_path / "repo"
     project.mkdir()
