@@ -140,7 +140,13 @@ exclude-newer = "1 week"
 
 [tool.pyright]
 include = ["kolega_code", "benchmarks", "tests"]
-exclude = ["benchmarks/edit_tools/fixtures/snapshots", "kolega_code/_bundled_skills"]
+exclude = [
+    "benchmarks/edit_tools/fixtures/snapshots",
+    # Terminal-Bench (Harbor) adapter: imports the optional `harbor` package,
+    # which isn't a project dependency, so pyright can't resolve it.
+    "benchmarks/terminal_bench",
+    "kolega_code/_bundled_skills",
+]
 typeCheckingMode = "basic"
 pythonVersion = "3.11"
 venvPath = "."
