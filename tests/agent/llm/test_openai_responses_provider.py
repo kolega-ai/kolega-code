@@ -16,16 +16,98 @@ from kolega_code.llm.models import (
     MessageHistory,
     ResponsesReasoningBlock,
     TextBlock,
+    ToolCall,
     ToolDefinition,
+    ToolInputKind,
     ToolParameter,
+    ToolResult,
 )
 from kolega_code.llm.providers.models import GenerationParams
 from kolega_code.llm.providers.openai import OpenAIProvider
 from kolega_code.llm.providers.openai_responses import OpenAIResponsesProvider
+from kolega_code.llm.providers.responses_common import to_responses_input
 
 
 def _ns(**kwargs):
     return types.SimpleNamespace(**kwargs)
+
+
+def _mk_call(cid, kind: ToolInputKind = "json"):
+    inp = "{}" if kind == "freeform" else {"cmd": "x"}
+    return ToolCall(id=cid, name="run", input=inp, execution_id=cid, input_kind=kind)
+
+
+def _mk_result(cid, kind: ToolInputKind = "json"):
+    return ToolResult(tool_use_id=cid, content="ok", name="run", is_error=False, input_kind=kind)
+
+
+class TestOrphanedToolCallPadding:
+    """Every function_call must be answered or the Responses API 400s with
+    'No tool output found for tool call ...'. Parallel tool calls can leave one
+    unanswered (e.g. a yielded command); to_responses_input pads the orphan."""
+
+    def test_orphaned_parallel_call_gets_placeholder_output(self):
+        ids = ["call_00_a", "call_01_b", "call_02_c", "call_03_d"]
+        history = MessageHistory(
+            [
+                Message(role="user", content=[TextBlock(text="inspect")]),
+                Message(role="assistant", content=[_mk_call(i) for i in ids]),
+                Message(role="user", content=[_mk_result(i) for i in ids[:3]]),  # call_03_d orphaned
+            ]
+        )
+        items = to_responses_input(history)
+        calls = {it["call_id"] for it in items if it.get("type") == "function_call"}
+        outputs = {it["call_id"] for it in items if it.get("type") == "function_call_output"}
+        assert calls == set(ids)
+        assert calls == outputs  # every call answered, orphan padded
+        placeholder = [it for it in items if it.get("type") == "function_call_output" and it["call_id"] == "call_03_d"]
+        assert len(placeholder) == 1 and placeholder[0]["output"]
+
+    def test_fully_answered_calls_are_not_double_padded(self):
+        ids = ["call_00_a", "call_01_b"]
+        history = MessageHistory(
+            [
+                Message(role="assistant", content=[_mk_call(i) for i in ids]),
+                Message(role="user", content=[_mk_result(i) for i in ids]),
+            ]
+        )
+        outputs = [it for it in to_responses_input(history) if it.get("type") == "function_call_output"]
+        assert [o["call_id"] for o in outputs] == ids  # exactly one each, no extras
+
+    def test_orphaned_freeform_call_gets_custom_placeholder(self):
+        history = MessageHistory([Message(role="assistant", content=[_mk_call("call_00_ff", kind="freeform")])])
+        items = to_responses_input(history)
+        pad = [it for it in items if it.get("type") == "custom_tool_call_output"]
+        assert len(pad) == 1 and pad[0]["call_id"] == "call_00_ff"
+
+
+class TestAssistantTextToolCallOrdering:
+    """When an assistant turn has both text and tool calls, the text must be
+    emitted BEFORE the function_calls so the next message's outputs stay adjacent
+    to the calls. An interposed assistant message makes DeepSeek's Responses API
+    400 ("No tool output found for tool call ...")."""
+
+    def test_assistant_text_precedes_tool_calls_and_outputs_are_adjacent(self):
+        ids = ["call_00_a", "call_01_b"]
+        history = MessageHistory(
+            [
+                Message(role="user", content=[TextBlock(text="inspect the repo")]),
+                # The model emitted a preamble sentence AND two tool calls.
+                Message(
+                    role="assistant",
+                    content=[TextBlock(text="I'll check a couple things."), *[_mk_call(i) for i in ids]],
+                ),
+                Message(role="user", content=[_mk_result(i) for i in ids]),
+            ]
+        )
+        types = [it.get("type") or it.get("role") for it in to_responses_input(history)]
+        # assistant text must come before the first function_call
+        assert types.index("assistant") < types.index("function_call")
+        # and NO assistant/user message may sit between the calls and their outputs
+        first_call = types.index("function_call")
+        first_output = types.index("function_call_output")
+        between = types[first_call:first_output]
+        assert set(between) == {"function_call"}, f"non-call item interposed: {between}"
 
 
 class _FakeStream:
