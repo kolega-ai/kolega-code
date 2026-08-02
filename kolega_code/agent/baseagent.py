@@ -170,6 +170,7 @@ class BaseAgent(LogMixin):
         custom_agent_catalog: Optional[Any] = None,
         memory_manager: Optional[Any] = None,
         memory_project_path: Optional[Path] = None,
+        memory_enabled: bool = True,
     ) -> None:
         """
         Initialize a new BaseAgent instance.
@@ -308,15 +309,21 @@ class BaseAgent(LogMixin):
             from kolega_code.memory import MemoryAccessScope
 
             self.memory_manager = self.memory_manager.with_scope(MemoryAccessScope.SUBAGENT)
-        if self.memory_manager is None and not sub_agent and isinstance(self.filesystem, LocalFileSystem):
-            # Keep non-local/sandbox hosts unchanged unless they inject a manager.
+        elif self.memory_manager is None and not sub_agent:
             from kolega_code.cli.session_store import default_state_dir
             from kolega_code.memory import ProjectMemoryManager
 
-            self.memory_manager = ProjectMemoryManager(
-                memory_project_path if memory_project_path is not None else self.project_path,
-                default_state_dir(),
-            )
+            project = memory_project_path if memory_project_path is not None else self.project_path
+            # "Memory off" has one representation everywhere: a present-but-disabled
+            # manager, never a None. Memory is live only for a local project with the
+            # per-run opt-out unset; a non-local/sandbox host (whose storage would be a
+            # local state dir, disconnected from the remote project) or an explicit
+            # `--no-memory-tools` opt-out gets an inert, storage-inert manager that
+            # writes nothing. Dispatched sub-agents inherit whichever it is.
+            if memory_enabled and isinstance(self.filesystem, LocalFileSystem):
+                self.memory_manager = ProjectMemoryManager(project, default_state_dir())
+            else:
+                self.memory_manager = ProjectMemoryManager.disabled(project, default_state_dir())
             self.context.services.memory_manager = self.memory_manager
             self._owns_memory_manager = True
 

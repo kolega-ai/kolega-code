@@ -53,6 +53,7 @@ class ProjectMemoryManager:
         registry: MemoryBackendRegistry | None = None,
         access_scope: MemoryAccessScope = MemoryAccessScope.TOP_LEVEL,
         identity: ProjectIdentity | None = None,
+        inert: bool = False,
     ) -> None:
         self.identity = identity or resolve_project_identity(project_path)
         self.state_root = Path(state_root).expanduser()
@@ -64,15 +65,21 @@ class ProjectMemoryManager:
         self.registry = registry or default_registry()
         self.access_scope = access_scope
         self._source: ProjectMemoryManager | None = None
-        safety_error = self._storage_safety_error()
-        if safety_error is None:
+        # An inert manager is "present but off" and never touches storage: it
+        # skips the manifest read, refuses to create a backend, and rejects every
+        # mutation. It gives "memory disabled" one representation — used for
+        # non-local hosts and per-run opt-outs instead of a null manager.
+        self._inert = inert
+        if inert:
+            self._manifest = MemoryManifest.defaults(self.identity)
+            self._manifest.enabled = False
+            self._manifest_error = None
+        elif (safety_error := self._storage_safety_error()) is None:
             self._manifest, self._manifest_error = load_manifest(
                 self.manifest_path,
                 self.identity,
             )
         else:
-            from .manifest import MemoryManifest
-
             self._manifest = MemoryManifest.defaults(self.identity)
             self._manifest.enabled = False
             self._manifest_error = safety_error
@@ -82,6 +89,32 @@ class ProjectMemoryManager:
         self._lifecycle_lock = threading.RLock()
         self._closed = False
         self._owns_backend = True
+
+    @classmethod
+    def disabled(
+        cls,
+        project_path: Path | str,
+        state_root: Path | str,
+        *,
+        registry: MemoryBackendRegistry | None = None,
+        access_scope: MemoryAccessScope = MemoryAccessScope.TOP_LEVEL,
+        identity: ProjectIdentity | None = None,
+    ) -> "ProjectMemoryManager":
+        """A present-but-off manager that never touches storage.
+
+        Behaviorally identical to a ``None`` manager — empty tool bindings, empty
+        prompt context, no disk reads or writes — but gives "memory off" a single
+        representation for non-local hosts and per-run opt-outs. ``set_enabled(True)``
+        is refused: an inert manager has no storage to enable.
+        """
+        return cls(
+            project_path,
+            state_root,
+            registry=registry,
+            access_scope=access_scope,
+            identity=identity,
+            inert=True,
+        )
 
     @property
     def enabled(self) -> bool:
@@ -100,7 +133,7 @@ class ProjectMemoryManager:
         if self._source is not None:
             return self._source.backend
         with self._lifecycle_lock:
-            if self._closed or self._storage_safety_error() is not None:
+            if self._closed or self._inert or self._storage_safety_error() is not None:
                 return None
             if self._backend is None and self._backend_error is None and self.registry.available(self.backend_id):
                 try:
@@ -141,6 +174,7 @@ class ProjectMemoryManager:
             view._backend_warning = self._backend_warning
             view._lifecycle_lock = self._lifecycle_lock
             view._closed = self._closed
+            view._inert = self._inert
             view._owns_backend = False
             return view
 
@@ -174,6 +208,8 @@ class ProjectMemoryManager:
         )
 
     def set_enabled(self, enabled: bool) -> None:
+        if self._inert:
+            raise MemoryUnavailableError("project memory is disabled for this session and has no storage to enable")
         self._require_top_level()
         with self._manifest_lock():
             with self._lifecycle_lock:
@@ -186,6 +222,8 @@ class ProjectMemoryManager:
                 self._adopt_manifest(manifest, None)
 
     def select_backend(self, backend_id: str, settings: dict[str, Any] | None = None) -> None:
+        if self._inert:
+            raise MemoryUnavailableError("project memory is disabled for this session and has no storage to configure")
         self._require_top_level()
         validate_backend_id(backend_id)
         with self._manifest_lock():
@@ -298,6 +336,10 @@ class ProjectMemoryManager:
 
     def refresh(self) -> None:
         """Reload common config and notify the owned backend (top-level lifecycle only)."""
+        if self._inert:
+            # Reloading would read the manifest and, when absent, default to
+            # enabled=True — silently un-disabling. An inert manager stays off.
+            return
         self._require_top_level()
         safety_error = self._storage_safety_error()
         if safety_error is not None:
@@ -375,6 +417,8 @@ class ProjectMemoryManager:
     @contextmanager
     def _prepared_mutation(self) -> Generator[None, None, None]:
         """Serialize config observation and mutation against opt-out/backend changes."""
+        if self._inert:
+            raise MemoryUnavailableError("project memory is disabled for this session and has no storage to write")
         self._require_open()
         with self._manifest_lock():
             manifest, error = load_manifest(self.manifest_path, self.identity)
