@@ -6,6 +6,8 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.26.5 - 2026-08-02
+
 ### Fixed
 
 - DeepSeek `deepseek-v4-flash` on the Responses API no longer crashes mid-task
