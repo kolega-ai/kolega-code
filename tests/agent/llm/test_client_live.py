@@ -100,11 +100,12 @@ async def test_anthropic_count_tokens(anthropic_client):
 async def test_anthropic_generate(anthropic_client):
     """Test text generation with Anthropic"""
     response = await anthropic_client.generate(messages=TEST_MESSAGES, system=TEST_SYSTEM, temperature=0.7)
-    # Test that the response has the expected attributes
+    # The default model (claude-opus-5) is a reasoning model and may return a
+    # ThinkingBlock before the TextBlock, so assert on the text content rather than
+    # assuming content[0] is the text block.
     assert hasattr(response, "content")
     assert len(response.content) > 0
-    assert hasattr(response.content[0], "text")
-    assert len(response.content[0].text) > 0
+    assert response.get_text_content().strip()
 
 
 @pytest.mark.slow

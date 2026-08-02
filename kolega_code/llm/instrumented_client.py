@@ -80,8 +80,11 @@ class InstrumentedLLMClient(LLMClient):
         user_email: Optional[str] = None,
         usage_recorder: Optional[Any] = None,
         token_manager: Optional[Any] = None,
+        model: Optional[str] = None,
     ):
-        super().__init__(provider, api_key, max_retries, requests_per_minute, tokens_per_minute, token_manager)
+        super().__init__(
+            provider, api_key, max_retries, requests_per_minute, tokens_per_minute, token_manager, model=model
+        )
         self.langfuse = langfuse_client
         self.workspace_id = workspace_id
         self.thread_id = thread_id

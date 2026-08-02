@@ -109,6 +109,7 @@ class AgentContext:
             return InstrumentedLLMClient(
                 provider=model_config.provider,
                 api_key=self.config.get_api_key(model_config.provider) or "",
+                model=model_config.model,
                 max_retries=model_config.rate_limits.max_retries,
                 requests_per_minute=model_config.rate_limits.requests_per_minute,
                 tokens_per_minute=model_config.rate_limits.tokens_per_minute,
@@ -126,6 +127,7 @@ class AgentContext:
         return LLMClient(
             provider=model_config.provider,
             api_key=self.config.get_api_key(model_config.provider) or "",
+            model=model_config.model,
             max_retries=model_config.rate_limits.max_retries,
             requests_per_minute=model_config.rate_limits.requests_per_minute,
             tokens_per_minute=model_config.rate_limits.tokens_per_minute,
