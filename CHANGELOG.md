@@ -6,6 +6,30 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.26.3 - 2026-08-02
+
+### Added
+
+- `kolega-code ask --no-memory-tools` disables the persistent project-memory
+  tools (read/list/write/edit/delete memory) and their prompt guidance for a
+  run — useful for headless or benchmark use where there is no durable memory
+  store.
+- `search_codebase` accepts `path` to restrict the search to a subdirectory and
+  `max_results` to cap how many files are returned.
+
+### Changed
+
+- `eval` now defaults `language` to `py`, so a call that omits the language runs
+  Python instead of failing.
+- A tool call made with the wrong arguments now returns a clear message naming
+  the expected signature (for example `Usage: eval(code, language='py', …)`) and
+  no longer exposes internal class or method names.
+- "Memory off" now has a single, consistent representation: a non-local host,
+  the new `--no-memory-tools` flag, and the memory toggle all behave the same
+  way, hiding both the memory tools and the memory prompt section.
+- The browser agent's dispatch tool is now hidden when the model configured for
+  the browser agent cannot accept images, instead of failing only when invoked.
+
 ## 0.26.2 - 2026-07-31
 
 ### Added
