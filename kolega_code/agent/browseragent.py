@@ -20,12 +20,29 @@ class BrowserAgent(BaseAgent):
     agent_name = "browser-agent"
 
     @classmethod
-    def validate_model_capabilities(cls, config: AgentConfig) -> None:
-        """Require the resolved browser-agent model to accept image input."""
+    def resolved_model_supports_vision(cls, config: AgentConfig) -> bool:
+        """True if the model resolved for the browser-agent role accepts image input.
+
+        The browser agent may run on its own ``agent_models`` override, so this is
+        deliberately keyed on the browser-agent's resolved model — not the main
+        coding model, which can differ in either direction.
+        """
         model_config = config.model_config_for_agent(cls.agent_name)
         provider = getattr(model_config.provider, "value", model_config.provider)
-        if model_supports_vision(provider, model_config.model):
+        try:
+            return model_supports_vision(provider, model_config.model)
+        except ValueError:
+            # Unknown model → can't confirm image support → treat as no vision.
+            # This runs on every tool-list build, so it must never raise.
+            return False
+
+    @classmethod
+    def validate_model_capabilities(cls, config: AgentConfig) -> None:
+        """Require the resolved browser-agent model to accept image input."""
+        if cls.resolved_model_supports_vision(config):
             return
+        model_config = config.model_config_for_agent(cls.agent_name)
+        provider = getattr(model_config.provider, "value", model_config.provider)
         raise ValueError(
             "BrowserAgent requires a vision-capable model, but "
             f"{provider}/{model_config.model} does not support image input. "

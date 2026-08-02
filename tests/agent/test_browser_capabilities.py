@@ -21,7 +21,11 @@ _EXTENSION_ORIGIN = "chrome-extension://edihigldhbmimflgjkohkgnjefmhngdn/"
 
 
 def _agent_config() -> AgentConfig:
-    model = ModelConfig(provider=ModelProvider.ANTHROPIC, model="test-model", rate_limits=RateLimitConfig())
+    # A real vision-capable model: the browser agent requires image support, and
+    # dispatch_browser_agent is now gated on the browser-agent model's vision.
+    model = ModelConfig(
+        provider=ModelProvider.ANTHROPIC, model="claude-sonnet-4-5-20250929", rate_limits=RateLimitConfig()
+    )
     return AgentConfig(
         anthropic_api_key="test-key",
         long_context_config=model,

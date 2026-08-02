@@ -141,6 +141,42 @@ class TestSearchCodebaseTool:
         assert "src/utils.py" in result
         assert "tests/test_main.py" in result
 
+    async def test_search_codebase_path_scopes_to_subdirectory(self, search_codebase_tool, sample_files):
+        # "def" matches under both src/ and tests/; path="tests" restricts the search.
+        result = await search_codebase_tool.search_codebase("def", path="tests")
+
+        assert "tests/test_main.py" in result
+        assert "src/main.py" not in result
+        assert "src/utils.py" not in result
+
+    async def test_search_codebase_max_results_caps_files(self, search_codebase_tool, project_path):
+        for index in range(5):
+            (project_path / f"f{index}.py").write_text("needle\n")
+
+        result = await search_codebase_tool.search_codebase("needle", max_results=2)
+
+        shown = sum(1 for index in range(5) if f"f{index}.py" in result)
+        assert shown == 2
+        assert "Showing only the first 2 results" in result
+
+    async def test_search_codebase_rejects_path_escaping_project(self, search_codebase_tool, sample_files):
+        result = await search_codebase_tool.search_codebase("def", path="../outside")
+
+        assert result.startswith("Error:")
+        assert "inside the project" in result
+
+    async def test_search_codebase_rejects_nonexistent_path(self, search_codebase_tool, sample_files):
+        result = await search_codebase_tool.search_codebase("def", path="does-not-exist")
+
+        assert result.startswith("Error:")
+        assert "not found" in result
+
+    async def test_search_codebase_rejects_file_as_path(self, search_codebase_tool, sample_files):
+        result = await search_codebase_tool.search_codebase("def", path="src/main.py")
+
+        assert result.startswith("Error:")
+        assert "not a directory" in result
+
     async def test_search_codebase_no_matches(self, search_codebase_tool, sample_files):
         result = await search_codebase_tool.search_codebase("nonexistent_pattern")
 
