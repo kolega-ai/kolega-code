@@ -6,6 +6,8 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.26.4 - 2026-08-02
+
 ### Changed
 
 - `deepseek-v4-flash` now connects over DeepSeek's **Responses API**
