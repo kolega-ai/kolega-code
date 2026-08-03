@@ -13,7 +13,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-07-27T09:03:29.890831Z"
+exclude-newer = "2026-07-27T12:17:13.394155Z"
 exclude-newer-span = "P1W"
 
 [[package]]
@@ -1531,7 +1531,7 @@ wheels = [
 
 [[package]]
 name = "kolega-code"
-version = "0.26.7"
+version = "0.26.8"
 source = { editable = "." }
 dependencies = [
     { name = "anthropic" },

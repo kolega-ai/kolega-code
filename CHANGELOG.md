@@ -6,6 +6,35 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.26.8 - 2026-08-03
+
+### Added
+
+- Completed model messages now carry normalized token usage across supported
+  providers. Session usage is persisted across resume, exported with provider
+  and model breakdowns, and shown in a dedicated Usage card on the Status tab.
+- `kolega-code ask --json` now emits complete, replay-safe messages instead of
+  streaming prose chunks, including normalized usage and an explicit final
+  summary.
+- Detached background terminal sessions now keep stdin open, so callers can
+  send multiple inputs to long-running processes with `write_stdin`.
+
+### Changed
+
+- Build and ask agents now share stronger act-first and independent-verification
+  guidance. Silent reasoning-only turns are retried with escalating prompts,
+  and visible responses cut off at the output limit are asked to continue.
+- Tool dispatch accepts common parameter aliases for `exec_command`, `eval`,
+  and `find_files_by_pattern`, while canonical arguments still take precedence.
+- Turn status now appears immediately while checkpoints are prepared, and
+  session-diff baseline/checkpoint work is asynchronous and caches unchanged
+  files for faster turns.
+- Switching between Plan and Build with existing history now gives the model a
+  hidden toolset-change notice so it does not attempt tools from the old mode.
+- Web connection failures now distinguish unreachable hosts, TLS failures,
+  rate limits, and retryable errors, with guidance that reflects whether
+  outbound access is available.
+
 ### Fixed
 
 - Installing on an Intel Mac no longer fails with a `cryptography` source-build
@@ -31,6 +60,10 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 - The non-streaming chat `generate()` path now maps `finish_reason` (it lives
   on the choice, not the message), so its responses carry a real stop reason
   instead of `None`.
+- Quitting while a question or approval is pending no longer raises a Textual
+  teardown traceback.
+- JavaScript eval kernels no longer wait for orphaned cell timers during
+  shutdown.
 
 ### Removed
 
