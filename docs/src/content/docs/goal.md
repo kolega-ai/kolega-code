@@ -170,7 +170,7 @@ With `--goal`, the exit code reflects the outcome:
 ## JSON output
 
 With `--json`, the command streams newline-delimited JSON objects as usual, plus
-two goal-specific `kind` values alongside the existing `chunk`, `event`, and
+two goal-specific `kind` values alongside the existing `message`, `event`, and
 `summary` kinds:
 
 | `kind` | Meaning |
@@ -181,12 +181,12 @@ two goal-specific `kind` values alongside the existing `chunk`, `event`, and
 Example stream (abbreviated):
 
 ```json
-{"kind": "chunk", "data": {"type": "response", "content": "Fixing the parser…"}}
+{"kind": "message", "data": {"role": "assistant", "content": [{"type": "text", "text": "Fixing the parser…"}], "stop_reason": "end_turn", "usage": {"provider": "anthropic", "input_tokens": 1200, "output_tokens": 85, "total_tokens": 1285}}}
 {"kind": "goal_eval", "data": {"met": false, "turns": 1, "reason": "test_parse_empty still fails"}}
-{"kind": "chunk", "data": {"type": "response", "content": "Added the empty-input guard…"}}
+{"kind": "message", "data": {"role": "assistant", "content": [{"type": "text", "text": "Added the empty-input guard…"}], "stop_reason": "end_turn", "usage": {"provider": "anthropic", "input_tokens": 1450, "output_tokens": 60, "total_tokens": 1510}}}
 {"kind": "goal_eval", "data": {"met": true, "turns": 2, "reason": ""}}
 {"kind": "goal_result", "data": {"met": true, "turns": 2, "reason": ""}}
-{"kind": "summary", "chunks": 4, "session_id": "abc123"}
+{"kind": "summary", "messages": 2, "session_id": "abc123"}
 ```
 
 ## Tips

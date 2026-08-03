@@ -811,9 +811,10 @@ def test_ask_json_interleaves_sub_agent_events(
     assert exit_code == 0
     lines = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.strip()]
     kinds = [line["kind"] for line in lines]
+    assert "chunk" not in kinds  # the chunk protocol is gone
     event_index = kinds.index("event")
-    final_chunk_index = max(i for i, line in enumerate(lines) if line["kind"] == "chunk")
-    assert event_index < final_chunk_index, "sub-agent event should interleave before the final chunk"
+    message_index = kinds.index("message")
+    assert event_index < message_index, "sub-agent event should interleave before the completed message"
     event_line = lines[event_index]
     assert event_line["data"]["sub_agent_info"]["agent_name"] == "general-agent"
 
