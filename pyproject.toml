@@ -30,6 +30,10 @@ classifiers = [
 dependencies = [
     "anthropic==0.101.0",
     "beautifulsoup4==4.14.3",
+    # cryptography >=49 dropped Intel-mac wheels, so Intel Macs fall back to the
+    # sdist, which needs Rust + OpenSSL headers and fails the curl-install.
+    # Hold the last universal2 build there; other platforms resolve freely.
+    "cryptography==48.0.1; sys_platform == 'darwin' and platform_machine == 'x86_64'",
     "ddgs==9.14.4",
     # The session server ships to every user, so its stack is a core dependency.
     # starlette/uvicorn/websockets were already installed transitively (mcp pulls

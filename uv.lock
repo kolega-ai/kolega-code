@@ -13,7 +13,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-07-27T02:41:25.262267Z"
+exclude-newer = "2026-07-27T09:03:29.890831Z"
 exclude-newer-span = "P1W"
 
 [[package]]
@@ -1536,6 +1536,7 @@ source = { editable = "." }
 dependencies = [
     { name = "anthropic" },
     { name = "beautifulsoup4" },
+    { name = "cryptography", marker = "platform_machine == 'x86_64' and sys_platform == 'darwin'" },
     { name = "ddgs" },
     { name = "fastapi" },
     { name = "filelock" },
@@ -1593,6 +1594,7 @@ dev = [
 requires-dist = [
     { name = "anthropic", specifier = "==0.101.0" },
     { name = "beautifulsoup4", specifier = "==4.14.3" },
+    { name = "cryptography", marker = "platform_machine == 'x86_64' and sys_platform == 'darwin'", specifier = "==48.0.1" },
     { name = "ddgs", specifier = "==9.14.4" },
     { name = "fastapi", specifier = "==0.139.2" },
     { name = "filelock", specifier = "==3.20.3" },
