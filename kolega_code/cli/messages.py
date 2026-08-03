@@ -41,6 +41,7 @@ ATTACH_CLIPBOARD_EMPTY = (
 
 # Turn progress
 WORKING = "Working…"
+PREPARING_CHECKPOINT = "Preparing checkpoint…"
 GENERATING = "Generating…"
 THINKING = "Thinking…"
 READING_RESPONSE = "Reading model response…"

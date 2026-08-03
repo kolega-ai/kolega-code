@@ -23,6 +23,7 @@ ScreenResultT = TypeVar("ScreenResultT")
 
 if TYPE_CHECKING:
     import asyncio
+    import threading
 
     from datetime import datetime
     from pathlib import Path
@@ -38,6 +39,7 @@ if TYPE_CHECKING:
     from kolega_code.memory import ProjectMemoryManager
     from kolega_code.permissions import PermissionDecision, PermissionMode, PermissionRequest
 
+    from .. import messages
     from ..config import CliConfigOverrides
     from kolega_code.session.control import ControlChannel
     from kolega_code.session.recording import RecordingConnectionManager
@@ -131,6 +133,9 @@ class KolegaAppBase(App):
         _session_file_changes: list[tui_state.SessionFileChange]
         _pending_workspace_switch: tui_state.PendingWorkspaceSwitch | None
         _session_diff_tracker: SessionDiffTrackerBase | None
+        #: Serializes tracker mutations (baseline, checkpoint, refresh, scope)
+        #: across worker threads; tracker methods are not thread-safe.
+        _session_diff_lock: threading.Lock
         _session_diff_files: list[SessionDiffFile]
         _session_diff_scope: DiffScope | None
         _session_diff_dirty: bool
@@ -384,7 +389,7 @@ class KolegaAppBase(App):
         def _apply_stream_chunk(self, chunk: dict, *, kind: str) -> None: ...
         def _apply_sub_agent_edit_preview(self, event: AgentEvent) -> None: ...
         def _apply_tool_streaming_update(self, content: dict) -> None: ...
-        def _begin_turn_progress(self) -> None: ...
+        def _begin_turn_progress(self, activity: str = messages.WORKING) -> None: ...
         def _finalize_sub_agent_activities(self, status: str = "stopped") -> None: ...
         def _finalize_workflow_activities(self, status: str = "stopped") -> None: ...
         def _finish_turn_progress(

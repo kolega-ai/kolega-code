@@ -18,7 +18,13 @@ from kolega_code.permissions import PERMISSIONS_RELATIVE_PATH, allow_rule_option
 from kolega_code.services.terminal import LocalTerminalManager
 from kolega_code.tools import ToolError
 
-from ._app_test_utils import FakeCoderAgent, build_test_config, extension_by_name, install_fake_agents
+from ._app_test_utils import (
+    FakeCoderAgent,
+    build_test_config,
+    extension_by_name,
+    install_fake_agents,
+    wait_for_session_diff_baseline,
+)
 
 
 pytestmark = pytest.mark.usefixtures("hermetic_git_config")
@@ -209,6 +215,7 @@ async def test_tui_resume_constructs_agent_and_changes_tracker_in_persisted_acti
         _assert_agent_root(app.agent, linked)
         assert app._session_diff_tracker is not None
         assert app._session_diff_tracker.project_path == linked
+        await wait_for_session_diff_baseline(app)
         assert app._session_diff_tracker.checkpoints()[0].checkpoint_id == 0
         assert mcp_roots == [linked]
 
@@ -542,6 +549,7 @@ async def test_apply_pending_switch_rebuilds_workspace_and_returns_continuation(
         assert app._session_diff_tracker is not tracker_before
         assert app._session_diff_tracker is not None
         assert app._session_diff_tracker.project_path == linked
+        await wait_for_session_diff_baseline(app)
         checkpoints = app._session_diff_tracker.checkpoints()
         assert len(checkpoints) == 1
         assert checkpoints[0].checkpoint_id == 0
