@@ -1,0 +1,9 @@
+<system-reminder>
+{% if attempt == 1 %}
+Your last message hit the output-token limit and was cut off mid-reply. Continue exactly from where it stopped — do not repeat what you already wrote. If you are producing a very large output, emit it in smaller pieces or write it to a file with a tool instead of one giant message.
+{% elif attempt == 2 %}
+Your reply has now been cut off at the output-token limit twice in a row. Giant single messages will keep getting truncated. Continue from where the last message stopped in a SHORTER message, or move the long content into a file via a tool call.
+{% else %}
+FINAL WARNING: three consecutive replies were cut off at the output-token limit. If this reply is truncated as well, the turn will end with the partial output and no further reminders. Finish the remaining content briefly, or write it to a file with a tool NOW.
+{% endif %}
+</system-reminder>

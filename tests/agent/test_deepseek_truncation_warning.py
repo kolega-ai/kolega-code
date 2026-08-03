@@ -90,8 +90,9 @@ async def test_at_ceiling_tool_use_warns(base_agent) -> None:
 @pytest.mark.asyncio
 async def test_honest_max_tokens_stop_does_not_warn(base_agent) -> None:
     # An honest truncation needs no warning: the stop reason already tells the
-    # truth and the loop/guard react to it.
-    _configure(base_agent, [_message("max_tokens", CAP)])
+    # truth and the truncated-turn guard reacts to it (the second scripted
+    # message answers the guard's continuation prompt).
+    _configure(base_agent, [_message("max_tokens", CAP), _message("end_turn", 50)])
 
     _ = [chunk async for chunk in base_agent.process_message_stream("do X")]
 

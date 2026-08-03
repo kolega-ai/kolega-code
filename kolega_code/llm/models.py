@@ -1383,12 +1383,20 @@ class Message:
         )
 
     @classmethod
-    def from_openai(cls, message, tool_execution_ids: Optional[ToolExecutionIdRegistry] = None):
+    def from_openai(
+        cls,
+        message,
+        tool_execution_ids: Optional[ToolExecutionIdRegistry] = None,
+        finish_reason: Optional[str] = None,
+    ):
         """
         Converts an OpenAI message to a Message instance.
 
         Args:
             message: The OpenAI message from the response
+            finish_reason: The choice's finish_reason. It lives on the choice,
+                not the message, so callers must pass it explicitly — without it
+                the produced Message has stop_reason None.
 
         Returns:
             Message: A unified message representation
@@ -1429,7 +1437,9 @@ class Message:
             role="assistant",
             content=content_blocks,
             tool_calls=tool_use_blocks if tool_use_blocks else None,
-            stop_reason=_normalize_openai_finish_reason(getattr(message, "finish_reason", None)),
+            stop_reason=_normalize_openai_finish_reason(
+                finish_reason if finish_reason is not None else getattr(message, "finish_reason", None)
+            ),
             usage_metadata=usage_metadata,
         )
 

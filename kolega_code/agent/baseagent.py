@@ -146,6 +146,12 @@ class BaseAgent(LogMixin):
     # Runtime half of the coder_base.md.j2 invariant ("Thinking is invisible
     # and changes nothing on its own").
     MAX_SILENT_TURN_NUDGES = 3
+    # Cap on consecutive continuation prompts after a truncated turn: the model
+    # hit the output-token limit mid-reply (honest "max_tokens" stop, visible
+    # text, no tool call). Unlike a silent turn there IS partial content, so
+    # exhausting the cap finalizes the turn with what was produced instead of
+    # reporting no result.
+    MAX_TRUNCATED_TURN_NUDGES = 3
     # A DeepSeek response whose output lands within this many tokens of the wire
     # output cap without an honest "max_tokens" stop was likely truncated
     # server-side: DeepSeek reports its own cutoff as a clean finish (probed
@@ -1966,6 +1972,7 @@ class BaseAgent(LogMixin):
         stop_reason = None
         stop_overrides = 0
         silent_turn_nudges = 0
+        truncated_turn_nudges = 0
         iterations = 0
         while stop_reason not in ["end_turn", "max_tokens", "stop_sequence"]:
             iterations += 1
@@ -2147,6 +2154,11 @@ class BaseAgent(LogMixin):
                 # silent-turn budget: the cap measures only consecutive silence.
                 if not self._is_silent_turn(assistant_message):
                     silent_turn_nudges = 0
+                # And any response that was not cut off at the output limit
+                # resets the truncation budget: the cap measures only
+                # consecutive truncations.
+                if stop_reason != "max_tokens":
+                    truncated_turn_nudges = 0
 
                 if thinking_started or current_thinking:
                     yield {"type": "thinking", "content": current_thinking, "complete": True, "uuid": thinking_uuid}
@@ -2242,6 +2254,37 @@ class BaseAgent(LogMixin):
                             "uuid": str(uuid.uuid4()),
                         }
                         break
+
+                # Truncated-turn guard: an honest "max_tokens" stop with visible
+                # text and no tool call means the reply was cut off mid-message
+                # (the silent-turn guard above owns the no-visible-output case
+                # and cleared stop_reason if it fired). Finalizing would deliver
+                # a partial answer, so ask the model to continue; after the cap,
+                # finalize with the partial output — unlike a silent turn there
+                # IS content worth delivering.
+                if stop_reason == "max_tokens" and not assistant_message.tool_calls:
+                    from .prompts import build_truncated_turn_nudge
+
+                    if truncated_turn_nudges < self.MAX_TRUNCATED_TURN_NUDGES:
+                        truncated_turn_nudges += 1
+                        await self.emitter.llm_status(
+                            "info",
+                            "Response hit the output limit — asking the model to continue "
+                            f"({truncated_turn_nudges}/{self.MAX_TRUNCATED_TURN_NUDGES})…",
+                        )
+                        await self._record_context_user_message(build_truncated_turn_nudge(truncated_turn_nudges))
+                        stop_reason = None
+                    else:
+                        await self.log_warning(
+                            f"Model hit the output-token limit {self.MAX_TRUNCATED_TURN_NUDGES + 1} times "
+                            "in a row; finalizing the turn with the partial output.",
+                            sender=self.agent_name,
+                        )
+                        await self.emitter.llm_status(
+                            "warning",
+                            "Response still truncated after repeated continuation prompts — "
+                            "delivering the partial output.",
+                        )
 
                 # Stop hooks (main agent only). On a natural turn end, a hook may
                 # keep the agent working by blocking the stop and returning a reason.

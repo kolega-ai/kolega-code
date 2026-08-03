@@ -24,6 +24,13 @@ This project uses GitHub Releases for detailed generated release notes. This fil
   `response.incomplete` event, so a response truncated at `max_output_tokens`
   reports stop reason `max_tokens` (and keeps its usage/billing metadata)
   instead of looking like a clean `end_turn` with no usage.
+- A reply cut off at the output-token limit mid-message is no longer delivered
+  as-is: the agent asks the model to continue (up to 3 escalating continuation
+  prompts, mirroring the silent-turn guard), and only finalizes with the
+  partial output if the reply is still truncated after that.
+- The non-streaming chat `generate()` path now maps `finish_reason` (it lives
+  on the choice, not the message), so its responses carry a real stop reason
+  instead of `None`.
 
 ### Removed
 

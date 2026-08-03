@@ -744,8 +744,12 @@ class OpenAIProvider(BaseLLMProvider):
             **generation_params,
         )
 
-        # Extract message and add usage data
-        message = Message.from_openai(response.choices[0].message)
+        # Extract message and add usage data. finish_reason lives on the choice,
+        # not the message — pass it through or stop_reason is silently None.
+        message = Message.from_openai(
+            response.choices[0].message,
+            finish_reason=getattr(response.choices[0], "finish_reason", None),
+        )
         message.usage_metadata["provider"] = self.provider_name
 
         # Add usage data from the response
