@@ -61,6 +61,13 @@ def _build_permission_test_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     return KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
 
 
+# Generous cap for awaiting a decision/question task to resolve after we answer it.
+# The happy path settles in milliseconds; this wait_for only guards against a true
+# hang, so it must be loose enough never to fire under CI load (parallel workers +
+# coverage), where a tight 1s occasionally lost the event-loop scheduling race.
+_ANSWER_TIMEOUT_S = 5.0
+
+
 async def _wait_for_layout(pilot, predicate, *, timeout: float = 6.0) -> None:
     """Poll until ``predicate()`` is truthy or time out.
 
@@ -259,7 +266,7 @@ async def test_textual_app_long_permission_command_keeps_approval_actions_visibl
         assert approval_actions.region.y + approval_actions.region.height <= app.size.height
 
         await pilot.press("1")
-        response = await asyncio.wait_for(decision_task, timeout=1)
+        response = await asyncio.wait_for(decision_task, timeout=_ANSWER_TIMEOUT_S)
 
         assert response["allowed"] is True
         assert app._pending_approval is None
@@ -350,7 +357,7 @@ async def test_textual_app_long_question_keeps_actions_visible_and_selectable(
         assert question_actions.region.y + question_actions.region.height <= app.size.height
 
         await pilot.press("2")
-        answer = await asyncio.wait_for(question_task, timeout=1)
+        answer = await asyncio.wait_for(question_task, timeout=_ANSWER_TIMEOUT_S)
 
         assert answer == "Use bounded prompt header"
         assert app._pending_question is None
@@ -388,7 +395,7 @@ async def test_textual_app_approval_answer_reenables_active_turn_composer(
         assert composer.display is True
 
         await app._answer_approval_option(0)
-        response = await asyncio.wait_for(decision_task, timeout=1)
+        response = await asyncio.wait_for(decision_task, timeout=_ANSWER_TIMEOUT_S)
 
         assert response["allowed"] is True
         assert app._pending_approval is None
@@ -434,7 +441,7 @@ async def test_textual_app_queued_messages_hide_during_permission_and_restore_af
         assert [item.text for item in app._queued_messages] == ["second", "third"]
 
         await app._answer_approval_option(0)
-        response = await asyncio.wait_for(permission_task, timeout=1)
+        response = await asyncio.wait_for(permission_task, timeout=_ANSWER_TIMEOUT_S)
         await pilot.pause()
 
         assert response["allowed"] is True
@@ -502,7 +509,7 @@ async def test_textual_app_question_answer_reenables_active_turn_composer(
         app._set_chat_enabled(True)
 
         await app._answer_pending_question("A")
-        response = await asyncio.wait_for(question_task, timeout=1)
+        response = await asyncio.wait_for(question_task, timeout=_ANSWER_TIMEOUT_S)
 
         composer = app.query_one("#composer", ChatComposer)
         assert response["answer"] == "A"
@@ -548,7 +555,7 @@ async def test_textual_app_queued_messages_hide_during_question_and_restore_afte
 
         composer.load_text("custom answer")
         await app.on_chat_composer_submitted(ChatComposer.Submitted(composer, composer.text))
-        answer = await asyncio.wait_for(question_task, timeout=1)
+        answer = await asyncio.wait_for(question_task, timeout=_ANSWER_TIMEOUT_S)
         await pilot.pause()
 
         assert answer == "custom answer"
@@ -592,7 +599,7 @@ async def test_textual_app_queued_messages_hide_during_question_and_restore_afte
 
         # Cancelling settles the request with a non-answer, so the tool is told
         # nobody chose rather than being left waiting.
-        response = await asyncio.wait_for(question_task, timeout=1)
+        response = await asyncio.wait_for(question_task, timeout=_ANSWER_TIMEOUT_S)
         assert response["answer"] == ""
         assert app._pending_question is None
         assert [item.text for item in app._queued_messages] == ["second", "third"]
