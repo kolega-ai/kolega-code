@@ -17,6 +17,7 @@ from kolega_code.agent import CoderAgent
 from kolega_code.config import EditProtocol
 from kolega_code.llm.ledger import UsageLedger
 
+from .ask_output import AskMessageEmitter, synthetic_text_message
 from .session_usage import SessionUsageSink
 from kolega_code.agent.custom_agents import discover_custom_agents, validate_custom_agent_models
 from kolega_code.agent.orchestration.guide import gigacode_prompt_extension
@@ -408,7 +409,7 @@ def _build_subcommand_parser() -> argparse.ArgumentParser:
         "Use for headless or benchmark runs where there is no durable memory store to read or write.",
     )
     ask.add_argument("--save", action="store_true", help="Persist the session after the prompt completes.")
-    ask.add_argument("--json", action="store_true", help="Emit response chunks and events as JSON.")
+    ask.add_argument("--json", action="store_true", help="Emit complete messages and events as JSON.")
     ask.add_argument("--browser-visible", action="store_true", help="Launch visible Playwright browser windows.")
     ask.add_argument(
         "--permission-mode",
@@ -1403,7 +1404,7 @@ async def _run_ask(args: argparse.Namespace) -> int:
         prompt = skill_prompt
         if not prompt:
             if args.json:
-                print(json.dumps({"kind": "chunk", "data": {"type": "response", "content": activation_content}}))
+                print(json.dumps({"kind": "message", "data": synthetic_text_message(activation_content)}))
             else:
                 print(activation_content)
             if args.save or args.session:
@@ -1505,17 +1506,29 @@ async def _run_ask(args: argparse.Namespace) -> int:
                 state.tokens_spent += delta.total_tokens
             usage_mark = current
 
+        # In --json mode, emit one line per COMPLETED assistant message rather
+        # than streaming chunks: the agent appends each message to history
+        # before yielding its final chunk, so a drain on every completed
+        # response chunk sees exactly the finished messages.
+        message_emitter = AskMessageEmitter(agent)
+
+        async def _consume_turn(stream) -> None:
+            async for chunk in stream:
+                response_chunks.append(chunk)
+                if args.json:
+                    if chunk.get("type") == "response" and chunk.get("complete"):
+                        message_emitter.drain(fallback_chunk=chunk)
+                elif chunk.get("type") == "response" and chunk.get("content"):
+                    print(chunk["content"], end="" if not chunk.get("complete") else "\n")
+            if args.json:
+                message_emitter.drain()
+
         stream = (
             agent.process_message_stream(turn_prompt, attachments)
             if attachments
             else agent.process_message_stream(turn_prompt)
         )
-        async for chunk in stream:
-            response_chunks.append(chunk)
-            if args.json:
-                print(json.dumps({"kind": "chunk", "data": chunk}, default=str))
-            elif chunk.get("type") == "response" and chunk.get("content"):
-                print(chunk["content"], end="" if not chunk.get("complete") else "\n")
+        await _consume_turn(stream)
 
         # --loop: keep re-running the prompt until the cap or the expiry is hit.
         if loop_state is not None:
@@ -1540,12 +1553,7 @@ async def _run_ask(args: argparse.Namespace) -> int:
                     if attachments
                     else agent.process_message_stream(turn_prompt)
                 )
-                async for chunk in stream:
-                    response_chunks.append(chunk)
-                    if args.json:
-                        print(json.dumps({"kind": "chunk", "data": chunk}, default=str))
-                    elif chunk.get("type") == "response" and chunk.get("content"):
-                        print(chunk["content"], end="" if not chunk.get("complete") else "\n")
+                await _consume_turn(stream)
                 _drain_tokens(loop_state)
                 loop_state.advance_after_completion()
             _emit_loop_finished(loop_state, args.json)
@@ -1579,13 +1587,7 @@ async def _run_ask(args: argparse.Namespace) -> int:
                     break
                 turns_remaining = goal_state.max_turns - goal_state.turns_evaluated
                 nudge = build_goal_nudge(goal_state.condition, verdict, turns_remaining)
-                stream = agent.process_message_stream(nudge)
-                async for chunk in stream:
-                    response_chunks.append(chunk)
-                    if args.json:
-                        print(json.dumps({"kind": "chunk", "data": chunk}, default=str))
-                    elif chunk.get("type") == "response" and chunk.get("content"):
-                        print(chunk["content"], end="" if not chunk.get("complete") else "\n")
+                await _consume_turn(agent.process_message_stream(nudge))
                 _drain_tokens(goal_state)
             # The loop above can exit on a met verdict or the turn cap; count the
             # final verifier either way.
@@ -1644,7 +1646,9 @@ async def _run_ask(args: argparse.Namespace) -> int:
         return exit_code
 
     if args.json:
-        print(json.dumps({"kind": "summary", "chunks": len(response_chunks), "session_id": session.session_id}))
+        print(
+            json.dumps({"kind": "summary", "messages": message_emitter.emitted_total, "session_id": session.session_id})
+        )
     return 0
 
 
@@ -1656,6 +1660,11 @@ async def _pump_ask_events(manager: CliConnectionManager, json_mode: bool) -> No
 
 def _print_ask_event(event, json_mode: bool) -> None:
     if json_mode:
+        # Streaming deltas duplicate prose that arrives as complete "message"
+        # lines; everything else (tools, sub-agents, workflows, lifecycle)
+        # stays on the event channel.
+        if event.event_type in ("assistant_delta", "thinking_delta"):
+            return
         print(json.dumps({"kind": "event", "data": event.model_dump()}, default=str))
         return
 
