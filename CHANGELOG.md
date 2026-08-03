@@ -6,6 +6,14 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+### Fixed
+
+- Installing on an Intel Mac no longer fails with a `cryptography` source-build
+  error (`Failed to build cryptography==50.0.0` / missing OpenSSL). cryptography
+  49+ stopped publishing Intel-mac wheels, so the installer tried to compile it
+  with Rust and OpenSSL; Intel Macs now install the last release that ships a
+  prebuilt universal2 wheel. Other platforms are unaffected.
+
 ## 0.26.7 - 2026-08-03
 
 ### Fixed
