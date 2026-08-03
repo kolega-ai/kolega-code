@@ -82,3 +82,26 @@ async def test_model_connection_times_out(tmp_path: Path) -> None:
 
 def test_local_provider_credential_status_is_not_required(tmp_path: Path) -> None:
     assert key_status(ModelProvider.LLAMA.value, tmp_path) == "not required for the local provider"
+
+
+@pytest.mark.asyncio
+async def test_model_connection_threads_usage_ledger_only_when_set(tmp_path: Path) -> None:
+    from kolega_code.llm.ledger import UsageLedger
+
+    calls: list[dict] = []
+
+    class FakeClient:
+        async def generate(self, **kwargs):
+            return Message(role="assistant", content=[TextBlock(text="OK")])
+
+    def factory(**kwargs):
+        calls.append(kwargs)
+        return FakeClient()
+
+    config = _config(tmp_path)
+    await run_model_connection_probe(config, client_factory=factory)
+    assert "usage_ledger" not in calls[0]
+
+    ledger = UsageLedger()
+    await run_model_connection_probe(config, client_factory=factory, usage_ledger=ledger)
+    assert calls[1]["usage_ledger"] is ledger

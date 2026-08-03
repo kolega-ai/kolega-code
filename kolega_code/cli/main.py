@@ -15,6 +15,7 @@ from typing import Any, Iterable, Optional
 
 from kolega_code.agent import CoderAgent
 from kolega_code.config import EditProtocol
+from kolega_code.llm.ledger import UsageLedger
 from kolega_code.agent.custom_agents import discover_custom_agents, validate_custom_agent_models
 from kolega_code.agent.orchestration.guide import gigacode_prompt_extension
 from kolega_code.agent.prompt_provider import PromptExtension
@@ -1096,20 +1097,6 @@ def _permission_callback_for_ask(project_path: Path):
     return permission_callback
 
 
-def _extract_last_turn_tokens(agent: CoderAgent) -> int:
-    """Best-effort token usage from the agent's last assistant turn (for goal accounting)."""
-    try:
-        history = agent.history
-    except Exception:  # noqa: BLE001 - token accounting must never break the goal loop
-        return 0
-    for message in reversed(history):
-        if getattr(message, "role", None) == "assistant":
-            usage = getattr(message, "usage_metadata", {}) or {}
-            added = int(usage.get("input_tokens") or 0) + int(usage.get("output_tokens") or 0)
-            return added
-    return 0
-
-
 async def _sleep_until_loop_fire(state: LoopState, json_mode: bool) -> None:
     """Wait until the loop's next fire time, in slices so Ctrl-C stays responsive."""
     remaining = state.seconds_until()
@@ -1331,6 +1318,7 @@ async def _run_ask(args: argparse.Namespace) -> int:
         getattr(args, "permission_mode", ASK_DEFAULT_PERMISSION_MODE),
         default=PermissionMode.AUTO,
     )
+    usage_ledger = UsageLedger()
     agent = CoderAgent(
         project_path=project_path,
         workspace_id=session.workspace_id,
@@ -1350,6 +1338,7 @@ async def _run_ask(args: argparse.Namespace) -> int:
         custom_agent_catalog=custom_agent_catalog,
         memory_project_path=launch_project_path,
         memory_enabled=not getattr(args, "no_memory_tools", False),
+        usage_ledger=usage_ledger,
     )
     agent_ref["agent"] = agent
     # --gigacode turns orchestration on for this run; a resumed session that had
@@ -1489,6 +1478,20 @@ async def _run_ask(args: argparse.Namespace) -> int:
                 fresh=loop_state.fresh,
             )
 
+        # Checkpoint for goal/loop token accounting: each drain adds everything
+        # the ledger saw since the previous drain — the whole command tree
+        # (verifier sub-agents, compression, think_hard, web-fetch, hooks) —
+        # to the state's counter. --goal and --loop are mutually exclusive.
+        usage_mark = usage_ledger.snapshot()
+
+        def _drain_tokens(state) -> None:
+            nonlocal usage_mark
+            current = usage_ledger.snapshot()
+            delta = current.since(usage_mark)
+            if delta.total_tokens > 0:
+                state.tokens_spent += delta.total_tokens
+            usage_mark = current
+
         stream = (
             agent.process_message_stream(turn_prompt, attachments)
             if attachments
@@ -1503,6 +1506,7 @@ async def _run_ask(args: argparse.Namespace) -> int:
 
         # --loop: keep re-running the prompt until the cap or the expiry is hit.
         if loop_state is not None:
+            _drain_tokens(loop_state)
             loop_state.advance_after_completion()
             while loop_state.is_active:
                 await _sleep_until_loop_fire(loop_state, args.json)
@@ -1529,12 +1533,13 @@ async def _run_ask(args: argparse.Namespace) -> int:
                         print(json.dumps({"kind": "chunk", "data": chunk}, default=str))
                     elif chunk.get("type") == "response" and chunk.get("content"):
                         print(chunk["content"], end="" if not chunk.get("complete") else "\n")
+                _drain_tokens(loop_state)
                 loop_state.advance_after_completion()
             _emit_loop_finished(loop_state, args.json)
 
         # --goal: evaluate and auto-continue until the goal is met or the cap is hit.
         if goal_state is not None:
-            goal_state.tokens_spent += _extract_last_turn_tokens(agent)
+            _drain_tokens(goal_state)
             while not goal_state.met and goal_state.turns_evaluated < goal_state.max_turns:
                 verdict = await agent.evaluate_goal_condition(goal_state.condition)
                 goal_state.turns_evaluated += 1
@@ -1568,7 +1573,10 @@ async def _run_ask(args: argparse.Namespace) -> int:
                         print(json.dumps({"kind": "chunk", "data": chunk}, default=str))
                     elif chunk.get("type") == "response" and chunk.get("content"):
                         print(chunk["content"], end="" if not chunk.get("complete") else "\n")
-                goal_state.tokens_spent += _extract_last_turn_tokens(agent)
+                _drain_tokens(goal_state)
+            # The loop above can exit on a met verdict or the turn cap; count the
+            # final verifier either way.
+            _drain_tokens(goal_state)
             # Emit a final goal result line.
             if args.json:
                 print(

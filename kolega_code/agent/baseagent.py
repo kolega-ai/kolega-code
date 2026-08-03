@@ -171,6 +171,7 @@ class BaseAgent(LogMixin):
         permission_callback: Optional[Any] = None,
         usage_recorder: Optional[Any] = None,
         sub_agent_recorder: Optional[Any] = None,
+        usage_ledger: Optional[Any] = None,
         session_recorder: Optional[Any] = None,
         hook_dispatcher: Optional[HookDispatcher] = None,
         context: Optional[AgentContext] = None,
@@ -249,6 +250,7 @@ class BaseAgent(LogMixin):
                     user_email=user_email,
                     usage_recorder=usage_recorder,
                     sub_agent_recorder=sub_agent_recorder,
+                    usage_ledger=usage_ledger,
                 ),
                 agent_mode=agent_mode,
                 prompt_provider=prompt_provider,
@@ -309,6 +311,7 @@ class BaseAgent(LogMixin):
         self.hook_dispatcher = context.hook_dispatcher or NO_OP_DISPATCHER
         self.usage_recorder = context.telemetry.usage_recorder
         self.sub_agent_recorder = context.telemetry.sub_agent_recorder
+        self.usage_ledger = context.telemetry.usage_ledger
         self.session_recorder = None if sub_agent else session_recorder
         self.custom_agent_catalog = custom_agent_catalog
         self.memory_manager = context.services.memory_manager
@@ -1421,6 +1424,7 @@ class BaseAgent(LogMixin):
             requests_per_minute=model_config.rate_limits.requests_per_minute,
             tokens_per_minute=model_config.rate_limits.tokens_per_minute,
             token_manager=self.config.get_chatgpt_token_manager(),
+            usage_ledger=self.usage_ledger,
         )
         response = await client.generate(
             model=model_config.model,

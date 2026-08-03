@@ -354,7 +354,7 @@ class OnboardingScreen(ModalScreen[None]):
             return
         button.disabled = True
         status.update("Testing connection…")
-        result = await test_model_connection(config)
+        result = await test_model_connection(config, usage_ledger=getattr(self.owner, "_usage_ledger", None))
         status.update(result.message)
         button.disabled = False
         if result.ok:

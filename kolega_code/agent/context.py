@@ -75,6 +75,10 @@ class Telemetry:
     user_email: Optional[str] = None
     usage_recorder: Optional[Any] = None
     sub_agent_recorder: Optional[Any] = None
+    # Process-wide runtime usage accounting (kolega_code/llm/ledger.py). Unlike
+    # the recorders above it does not require Langfuse: it reaches the plain
+    # LLMClient too.
+    usage_ledger: Optional[Any] = None
 
 
 @dataclass
@@ -122,6 +126,7 @@ class AgentContext:
                 user_email=self.telemetry.user_email,
                 usage_recorder=self.telemetry.usage_recorder,
                 token_manager=self.config.get_chatgpt_token_manager(),
+                usage_ledger=self.telemetry.usage_ledger,
             )
 
         return LLMClient(
@@ -132,4 +137,5 @@ class AgentContext:
             requests_per_minute=model_config.rate_limits.requests_per_minute,
             tokens_per_minute=model_config.rate_limits.tokens_per_minute,
             token_manager=self.config.get_chatgpt_token_manager(),
+            usage_ledger=self.telemetry.usage_ledger,
         )

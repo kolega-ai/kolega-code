@@ -2,7 +2,7 @@
 """Test suite for the think_hard tool with streaming implementation."""
 
 import pytest
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import ANY, AsyncMock, Mock, patch
 
 from kolega_code.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
 from kolega_code.events import AgentConnectionManager
@@ -148,6 +148,7 @@ async def test_think_hard_streaming_with_thinking_and_text(think_hard_tool, mock
                 requests_per_minute=10,
                 tokens_per_minute=100000,
                 token_manager=None,
+                usage_ledger=ANY,  # the caller's ledger (a Mock attribute here)
             )
 
             # Verify stream was called (we can't use assert_called_once with a regular function)

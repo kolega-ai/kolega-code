@@ -58,6 +58,8 @@ from . import messages, theme
 from .config import CliConfigOverrides, active_model_override_message, key_status
 from .connection import CliConnectionManager
 from .session_event_store import FileArtifactStore, FileSessionEventStore
+from kolega_code.llm.ledger import UsageLedger
+
 from .goal import GoalState
 from .loop import LOOP_TICK_SECONDS, LoopState
 from .diagnostics import DiagnosticsLog, ResponsivenessWatchdog
@@ -278,7 +280,13 @@ class KolegaCodeApp(
         self._plan_reofferable: bool = bool(self._latest_plan and (self.session.plan_reofferable or self._plan_pending))
         self._plan_decision_active = False
         self._gigacode_enabled = bool(self.session.gigacode_enabled)
+        # Process-wide LLM usage accounting; every agent build (including
+        # rebuilds on model/settings changes) shares this one ledger.
+        self._usage_ledger = UsageLedger()
         self._goal: Optional[GoalState] = GoalState.from_dict(self.session.goal) if self.session.goal else None
+        # Checkpoint for goal token accounting: drains advance it, so a resumed
+        # goal continues from the persisted tokens_spent without recounting.
+        self._goal_usage_mark = self._usage_ledger.snapshot()
         self._scheduled_loop: Optional[LoopState] = (
             LoopState.from_dict(self.session.loop) if self.session.loop else None
         )
