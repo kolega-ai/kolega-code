@@ -41,6 +41,7 @@ from ._app_test_utils import (
     install_fake_agents,
     question_payload,
     renderable_text,
+    wait_for_question_prompt,
 )
 
 
@@ -88,11 +89,10 @@ async def test_textual_app_planning_question_tool_accepts_option_list_answer(
                 )
             )
         )
-        await pilot.pause()
+        question_actions = await wait_for_question_prompt(app, pilot)
 
         assert app._pending_question is not None
         assert app.query_one("#composer", ChatComposer).disabled is False
-        question_actions = app.query_one("#question_actions", ActionList)
         assert question_actions.display is True
         assert app.focused is question_actions
         assert question_actions.highlighted == 0
@@ -151,9 +151,7 @@ async def test_textual_app_planning_question_supports_arrow_and_digit_selection(
         answer_task = asyncio.create_task(
             ask_user_choice(questions=question_payload("Pick one of four?", options, header="Pick"))
         )
-        await pilot.pause()
-
-        question_actions = app.query_one("#question_actions", ActionList)
+        question_actions = await wait_for_question_prompt(app, pilot)
         assert question_actions.option_count == 4
         assert app.focused is question_actions
 
@@ -164,7 +162,7 @@ async def test_textual_app_planning_question_supports_arrow_and_digit_selection(
         answer_task = asyncio.create_task(
             ask_user_choice(questions=question_payload("Pick again?", options, header="Pick"))
         )
-        await pilot.pause()
+        await wait_for_question_prompt(app, pilot)
 
         assert app.focused is app.query_one("#question_actions", ActionList)
         await pilot.press("4")
@@ -205,9 +203,7 @@ async def test_textual_app_planning_question_tool_accepts_custom_text_answer(
         answer_task = asyncio.create_task(
             ask_user_choice(questions=question_payload("Which scope?", ["Small fix", "Full workflow"], header="Scope"))
         )
-        await pilot.pause()
-
-        question_actions = app.query_one("#question_actions", ActionList)
+        question_actions = await wait_for_question_prompt(app, pilot)
         assert question_actions.get_option("question_option_0").prompt == "1. Small fix — details"
 
         composer = app.query_one("#composer", ChatComposer)
@@ -258,17 +254,15 @@ async def test_textual_app_planning_question_tool_asks_multiple_questions_sequen
             "Second?", ["A2", "B2"], header="Second"
         )
         answer_task = asyncio.create_task(ask_user_choice(questions=questions))
-        await pilot.pause()
 
         # First question is presented; answer it, then the second appears.
-        question_actions = app.query_one("#question_actions", ActionList)
+        question_actions = await wait_for_question_prompt(app, pilot)
         assert question_actions.option_count == 2
         selected = question_actions.get_option("question_option_0")
         await app.on_option_list_option_selected(OptionList.OptionSelected(question_actions, selected, 0))
-        await pilot.pause()
 
+        question_actions = await wait_for_question_prompt(app, pilot)
         assert app._pending_question is not None
-        question_actions = app.query_one("#question_actions", ActionList)
         selected = question_actions.get_option("question_option_1")
         await app.on_option_list_option_selected(OptionList.OptionSelected(question_actions, selected, 1))
 
@@ -387,10 +381,9 @@ async def test_question_tool_answers_in_build_mode(tmp_path: Path, monkeypatch: 
                 )
             )
         )
-        await pilot.pause()
+        question_actions = await wait_for_question_prompt(app, pilot)
 
         assert app._pending_question is not None
-        question_actions = app.query_one("#question_actions", ActionList)
         assert question_actions.display is True
 
         await app._answer_question_option(1)
