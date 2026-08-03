@@ -6,6 +6,8 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.26.9 - 2026-08-03
+
 ### Added
 
 - Settings → Model & Account gains a **Model Slots** section for pinning the fast
@@ -14,6 +16,8 @@ This project uses GitHub Releases for detailed generated release notes. This fil
   silently inherited the active model — every `web_fetch` answering call ran on
   the main coding model. Slots still inherit by default, and each row now shows
   which model it currently resolves to.
+- The README now includes a direct invitation to the Kolega Code Discord
+  community.
 
 ### Changed
 
