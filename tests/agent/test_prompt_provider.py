@@ -58,6 +58,21 @@ class TestPromptProvider:
         assert "## Context Updates" in prompt
         assert len(prompt) > 0
 
+    def test_coder_cli_and_ask_modes_share_the_action_and_verification_sections(self, prompt_provider, prompt_context):
+        """Both coder prompts render from the shared base: the act/verify/finish
+        guidance and the thinking-only-stop invariant must appear in each mode."""
+        for mode in (AgentMode.CLI, AgentMode.ASK):
+            prompt = prompt_provider.get_system_prompt(agent_type=AgentType.CODER, mode=mode, context=prompt_context)
+
+            assert "## Act — Do Not Describe" in prompt
+            assert "## Verify By Running" in prompt
+            assert "## Finish the Whole Task" in prompt
+            # The prompt half of the runaway think-then-stop fix (see
+            # findings/thinking-control-and-runaway-turns.md): a turn must never
+            # end on reasoning alone with nothing emitted.
+            assert "NEVER end a turn on reasoning alone" in prompt
+            assert "Prefer the specialized file tools" in prompt
+
     def test_coder_agent_ask_mode_uses_autonomous_template(self, prompt_provider, prompt_context):
         """ASK mode (the non-interactive `ask` command) renders the autonomous coder_ask template."""
         assert prompt_provider._get_template_name(AgentType.CODER, AgentMode.ASK) == "system/agents/coder_ask.md.j2"
@@ -72,6 +87,10 @@ class TestPromptProvider:
         assert "## Finish the Whole Task" in prompt
         # Frontend design guidance was intentionally dropped from the ask prompt.
         assert "Frontend Design Guidance" not in prompt
+        # Interactive-only guidance must not leak into the autonomous rendering.
+        assert "There is no user present to approve actions" in prompt
+        assert "requiring explicit user approval" not in prompt
+        assert "Do not create a Git worktree" not in prompt
 
     def test_coder_agent_cli_mode_keeps_worktrees_project_local(self, prompt_provider, prompt_context):
         prompt = prompt_provider.get_system_prompt(
