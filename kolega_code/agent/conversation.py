@@ -163,6 +163,7 @@ def _message_with_content(message: Message, content: List[Any]) -> Message:
         stop_reason=message.stop_reason,
         tool_calls=tool_calls,
         usage_metadata=message.usage_metadata,
+        usage=message.usage,
     )
 
 
@@ -699,6 +700,7 @@ class Conversation:
                 stop_reason=message.stop_reason,
                 tool_calls=message.tool_calls,
                 usage_metadata=message.usage_metadata,
+                usage=message.usage,
             )
 
         self.history.append(message)

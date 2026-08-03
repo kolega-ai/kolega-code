@@ -15,6 +15,7 @@ from kolega_code.utils.images import ascii_thumbnail_from_base64
 from .specs.accessors import _provider_value
 from .specs.thinking import reasoning_replay_field
 from .tool_execution_ids import ToolExecutionIdRegistry, new_tool_execution_id
+from .usage import NormalizedUsage, read_detail_int
 
 
 class _LazyModule:
@@ -1156,12 +1157,17 @@ class Message:
         stop_reason: Optional[str] = None,
         tool_calls: Optional[List[ToolCall]] = None,
         usage_metadata: Optional[Dict[str, Any]] = None,
+        usage: Optional[NormalizedUsage] = None,
     ):
         self.role = role
         self.content = content
         self.stop_reason = stop_reason
         self.tool_calls = tool_calls or []
         self.usage_metadata = usage_metadata or {}
+        # Provider-independent view of usage_metadata, attached by the provider
+        # layer on every completed response (kolega_code/llm/usage.py). None on
+        # user/system messages and on messages restored from pre-usage sessions.
+        self.usage = usage
 
     def get_text_content(self) -> str:
         """
@@ -1332,6 +1338,11 @@ class Message:
                 "cache_write_input_tokens": getattr(usage, "cache_creation_input_tokens", 0),
                 "provider": "anthropic",
             }
+            # Moonshot extends the Anthropic usage shape with a thinking-token
+            # subset of output_tokens (non-streaming responses only).
+            thinking = read_detail_int(getattr(usage, "output_tokens_details", None), "thinking_tokens")
+            if thinking is not None:
+                usage_metadata["reasoning_output_tokens"] = thinking
 
         # print(f"Stop reason: {message.stop_reason if hasattr(message, 'stop_reason') else ''}")
 
@@ -1444,16 +1455,25 @@ class Message:
         if tool_use_blocks:
             mapped_stop_reason = "tool_use"
 
-        # Extract usage metadata
+        # Extract usage metadata. A response without a usage object must yield an
+        # empty dict, not fabricated zero counts (zeros read as authoritative).
         usage_metadata = {}
-        if hasattr(message, "usage_metadata"):
-            usage = message.usage_metadata
+        usage = getattr(message, "usage_metadata", None)
+        if usage is not None:
             usage_metadata = {
                 "prompt_token_count": getattr(usage, "prompt_token_count", 0),
                 "candidates_token_count": getattr(usage, "candidates_token_count", 0),
                 "total_token_count": getattr(usage, "total_token_count", 0),
                 "provider": "google",
             }
+            for optional_key in (
+                "cached_content_token_count",
+                "thoughts_token_count",
+                "tool_use_prompt_token_count",
+            ):
+                value = getattr(usage, optional_key, None)
+                if value is not None:
+                    usage_metadata[optional_key] = value
 
         return cls(
             role="assistant",
@@ -1587,13 +1607,16 @@ class Message:
             serialized_content = []
 
         # Note: Tool calls are part of content list now, no separate field needed for dump
-        return {
+        result = {
             "role": self.role,
             "content": serialized_content,
             "stop_reason": self.stop_reason,
             "usage_metadata": self.usage_metadata,
             # 'tool_calls' is implicitly handled within the 'content' list
         }
+        if self.usage is not None:
+            result["usage"] = self.usage.to_dict()
+        return result
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Message":
@@ -1619,6 +1642,7 @@ class Message:
             stop_reason=data.get("stop_reason"),
             tool_calls=tool_calls,  # Populate from deserialized content
             usage_metadata=data.get("usage_metadata", {}),
+            usage=NormalizedUsage.from_dict(data.get("usage")),
         )
 
     def to_markdown(self) -> str:

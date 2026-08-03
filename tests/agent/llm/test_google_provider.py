@@ -23,7 +23,9 @@ from kolega_code.llm.providers.models import GenerationParams
 class _FakeGoogleModels:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str, object]] = []
-        self.response = object()
+        # A real Message: the provider attaches normalized usage to the message
+        # produced by (the monkeypatched, identity) Message.from_google.
+        self.response = Message(role="assistant", content="")
         self.stream = SimpleNamespace()
 
     async def generate_content(self, *, model: str, contents: object, config: object) -> object:

@@ -25,6 +25,7 @@ from ..models import (
 from ..specs import MODEL_SPECS, build_thinking_request_params
 from ..timeouts import streaming_timeout
 from ..tool_execution_ids import ToolExecutionIdRegistry
+from ..usage import attach_normalized_usage, read_detail_int
 from ._token_encoding import get_counting_encoding
 from .base import BaseLLMProvider
 from .models import GenerationParams, TokenCount
@@ -103,21 +104,20 @@ def _capture_usage_details(usage: Any, target: Dict[str, Any]) -> None:
     ``input_tokens`` exclusive of cache creation, so the write count is subtracted
     here to keep one meaning of "input tokens" across providers.
     """
+    completion_details = getattr(usage, "completion_tokens_details", None)
+    reasoning = read_detail_int(completion_details, "reasoning_tokens")
+    if reasoning is not None:
+        target["reasoning_output_tokens"] = reasoning
+
     details = getattr(usage, "prompt_tokens_details", None)
     if details is None:
         return
 
-    def _detail(name: str) -> Optional[int]:
-        value = getattr(details, name, None)
-        if value is None and isinstance(details, dict):
-            value = details.get(name)
-        return value if isinstance(value, int) and not isinstance(value, bool) else None
-
-    cached = _detail("cached_tokens")
+    cached = read_detail_int(details, "cached_tokens")
     if cached is not None:
         target["cache_read_input_tokens"] = cached
 
-    cache_write = _detail("cache_write_tokens")
+    cache_write = read_detail_int(details, "cache_write_tokens")
     if cache_write:
         target["cache_write_input_tokens"] = cache_write
         prompt_tokens = target.get("prompt_tokens")
@@ -126,8 +126,15 @@ def _capture_usage_details(usage: Any, target: Dict[str, Any]) -> None:
 
 
 class OpenAIStreamWrapper:
-    def __init__(self, openai_stream, requested_include_usage: bool = False, provider_name: str = "openai"):
+    def __init__(
+        self,
+        openai_stream,
+        requested_include_usage: bool = False,
+        provider_name: str = "openai",
+        model: Optional[str] = None,
+    ):
         self.openai_stream = openai_stream
+        self.model = model
         # Accumulate streamed deltas into lists and ''.join once at finalize. A
         # running ``str += delta`` is O(n^2) here because the buffer is an instance
         # attribute (CPython's in-place concat optimization only fires for locals
@@ -260,7 +267,7 @@ class OpenAIStreamWrapper:
                     "OpenAIStreamWrapper: no usage metadata captured from streaming response; billing may be skipped"
                 )
 
-        return message
+        return attach_normalized_usage(message, self.provider_name, self.model)
 
 
 class OpenAIProvider(BaseLLMProvider):
@@ -705,6 +712,7 @@ class OpenAIProvider(BaseLLMProvider):
             ),
             requested_include_usage=True,
             provider_name=self.provider_name,
+            model=str(generation_params["model"]),
         )
 
     async def generate(
@@ -752,4 +760,4 @@ class OpenAIProvider(BaseLLMProvider):
                 "OpenAIProvider.generate: response contains no usage metadata; billing may be skipped"
             )
 
-        return message
+        return attach_normalized_usage(message, self.provider_name, str(generation_params["model"]))
