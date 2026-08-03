@@ -145,8 +145,8 @@ def test_goal_control_prompt_plan_mode_places_build_handoff_after_any_prerequisi
     assert "before the work that should run under" in rendered
 
 
-def test_coder_cli_prompt_allows_scratchpad_file_operations() -> None:
-    source = prompts.prompt_template_source("system/agents/coder_cli.md.j2")
+def test_coder_prompt_allows_scratchpad_file_operations() -> None:
+    source = prompts.prompt_template_source("system/agents/coder_base.md.j2")
 
     assert "session scratchpad directory" in source
 
