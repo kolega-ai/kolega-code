@@ -228,15 +228,20 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             self._log_status(messages.FINISHED, "ok")
         except asyncio.CancelledError:
             cancelled_by_user = True
-            self._cancel_pending_question()
-            self._cancel_pending_approval()
-            await self._drain_pending_events()
-            self._start_session_diff_refresh()
-            self._finalize_sub_agent_activities()
-            self._finalize_workflow_activities()
-            await self._save_session_history_async()
-            self._finish_turn_progress(messages.STOPPED_BY_USER, tui_state.TurnState.STOPPED)
-            self._log_status(messages.STOPPED_BY_USER, "warn")
+            # When the app is quitting, action_quit already settled open
+            # prompts (control lease release) and saved the session, and the
+            # widget tree is being torn down — skip the cleanup that would
+            # repaint it.
+            if not self._exit:
+                self._cancel_pending_question()
+                self._cancel_pending_approval()
+                await self._drain_pending_events()
+                self._start_session_diff_refresh()
+                self._finalize_sub_agent_activities()
+                self._finalize_workflow_activities()
+                await self._save_session_history_async()
+                self._finish_turn_progress(messages.STOPPED_BY_USER, tui_state.TurnState.STOPPED)
+                self._log_status(messages.STOPPED_BY_USER, "warn")
         except LLMError as exc:
             self._cancel_pending_question()
             self._cancel_pending_approval()
@@ -261,18 +266,19 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             self._log_status(messages.STOPPED_WITH_ERROR.format(error=exc), "error")
             raise
         finally:
-            self._flush_terminal_output()
-            self._flush_log_output()
-            self._flush_conversation_render()
             self._active_progress_entry = None
             self._turn_active = False
-            if self._plan_decision_active:
-                self._set_composer_status(messages.PLAN_READY_PLACEHOLDER)
-            else:
-                self._restore_composer_placeholder()
-            self._set_chat_enabled(self.agent is not None and not self._plan_decision_active)
-            if cancelled_by_user:
-                self._schedule_primary_focus_restore()
+            if not self._exit:
+                self._flush_terminal_output()
+                self._flush_log_output()
+                self._flush_conversation_render()
+                if self._plan_decision_active:
+                    self._set_composer_status(messages.PLAN_READY_PLACEHOLDER)
+                else:
+                    self._restore_composer_placeholder()
+                self._set_chat_enabled(self.agent is not None and not self._plan_decision_active)
+                if cancelled_by_user:
+                    self._schedule_primary_focus_restore()
         return cancelled_by_user
 
     async def _process_message(
