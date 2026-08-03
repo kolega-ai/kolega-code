@@ -706,6 +706,7 @@ class ToolCollection(LogMixin):
             "log_error",
             "log_warning",
             "log_info",
+            "log_debug",
         ]
         # Backend bindings, not these compatibility methods, own model-facing
         # memory schemas and capability registration.
@@ -1927,7 +1928,10 @@ class ToolCollection(LogMixin):
             command: Shell command line, executed via `bash -c`.
             workdir: Working directory for the command. Defaults to project root.
             yield_time_ms: How long to wait for output/exit before returning, in
-                           milliseconds (clamped to 250–30000).
+                           milliseconds (clamped to 250–30000). A `timeout`
+                           argument is accepted as an alias for this window
+                           (values under 1000 are read as seconds, larger
+                           values as milliseconds).
             max_output_tokens: Maximum tokens of output to return in this call.
             login: Run the shell as a login shell (sources profile). Default false.
             background: Launch detached and return after a short startup window
@@ -2636,7 +2640,12 @@ class ToolCollection(LogMixin):
             # child at a time. Ordinary delegation remains parallel-safe.
             parallel_safe=(method_name in (self.read_only_tools or []) or ordinary_parallel_dispatch)
             and not workflow_dispatch,
+            log_debug=self._log_alias_hit,
         )
+
+    async def _log_alias_hit(self, message: str) -> None:
+        """Debug log_message sink for Tool param-alias hits (trajectory mining)."""
+        await self.log_debug(message, sender=getattr(self.caller, "agent_name", "agent"))
 
     def has_tool(self, name: str) -> bool:
         """True if the named tool is currently enabled."""
