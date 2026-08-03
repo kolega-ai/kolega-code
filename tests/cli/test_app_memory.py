@@ -320,6 +320,44 @@ async def test_memory_screen_create_and_path_delete_refresh_prompt(
 
 
 @pytest.mark.asyncio
+async def test_memory_screen_refresh_worker_after_teardown_does_not_raise(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A refresh worker that finishes after the screen is torn down must not
+    render into the detached DOM.
+
+    Regression for a flaky ``WorkerFailed: NoMatches("#memory_new")``: workers
+    load off-thread and then ``query_one`` to render. The ``_work_generation``
+    guard alone misses the teardown race where child widgets detach before
+    ``on_unmount`` bumps the generation, so rendering is now also gated on
+    ``is_mounted``.
+    """
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.tui.memory_screen import MemoryScreen
+
+    app = _build_mention_test_app(tmp_path, monkeypatch)
+    async with app.run_test() as pilot:
+        app.action_open_memory()
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, MemoryScreen)
+
+        await app.pop_screen()
+        await pilot.pause()
+        # Popping detaches the screen's widgets, so query_one now raises NoMatches
+        # even though is_mounted is still True.
+        assert not screen.is_attached
+
+        # Pass the *current* generation so it still matches — only the is_attached
+        # guard can stop the render. Before the fix this reached
+        # query_one("#memory_new") on the detached DOM and raised NoMatches; now
+        # the worker bails cleanly.
+        await screen._refresh(screen._work_generation, None)
+
+
+@pytest.mark.asyncio
 async def test_memory_screen_edit_mode_blocks_roster_and_filter(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

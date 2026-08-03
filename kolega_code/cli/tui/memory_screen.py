@@ -115,6 +115,22 @@ class MemoryScreen(ModalScreen[None]):
         if self._owner._memory_screen is self:
             self._owner._memory_screen = None
 
+    def _work_current(self, generation: int) -> bool:
+        """Whether a worker may still render — not superseded, and still attached.
+
+        A worker finishes its threaded load asynchronously, by which point the
+        screen may have been replaced by a newer refresh or torn down. Rendering
+        then calls ``query_one`` on detached widgets and raises ``NoMatches``
+        *inside the worker* (surfacing as ``WorkerFailed``). ``_work_generation``
+        covers supersede; ``is_attached`` additionally closes the teardown race
+        where child widgets detach before ``on_unmount`` bumps the generation.
+        (``is_mounted`` is the wrong signal here: it stays True after the screen
+        is popped, while ``is_attached`` flips exactly when ``query_one`` starts
+        raising.) The render after this check is synchronous, so ``is_attached``
+        cannot flip mid-render.
+        """
+        return generation == self._work_generation and self.is_attached
+
     # ---- loading -------------------------------------------------------------
 
     def _start_refresh(self, *, select_reference: str | None = None, from_disk: bool = False) -> None:
@@ -148,17 +164,17 @@ class MemoryScreen(ModalScreen[None]):
                     allow_disabled=True,
                 )
         except Exception as error:
-            if generation == self._work_generation:
+            if self._work_current(generation):
                 self._status = None
                 self._all_entries = []
                 self._entries = []
                 self._render_error(str(error))
             return
         finally:
-            if generation == self._work_generation:
+            if self._work_current(generation):
                 self._set_busy(False)
 
-        if generation != self._work_generation:
+        if not self._work_current(generation):
             return
         self._status = status
         self._all_entries = entries
@@ -189,13 +205,13 @@ class MemoryScreen(ModalScreen[None]):
                 allow_disabled=True,
             )
         except Exception as error:
-            if generation == self._work_generation:
+            if self._work_current(generation):
                 self._render_error(str(error))
             return
         finally:
-            if generation == self._work_generation:
+            if self._work_current(generation):
                 self._set_busy(False)
-        if generation != self._work_generation:
+        if not self._work_current(generation):
             return
         self._loaded_entry = entry
         self._render_entry(entry)
@@ -448,7 +464,7 @@ class MemoryScreen(ModalScreen[None]):
         try:
             context = await asyncio.to_thread(self._manager.prompt_context)
         except MemoryUnavailableError as error:
-            if generation != self._work_generation:
+            if not self._work_current(generation):
                 return
             self._set_busy(False)
             self._enter_agent_view(
@@ -458,11 +474,11 @@ class MemoryScreen(ModalScreen[None]):
             )
             return
         except Exception as error:
-            if generation == self._work_generation:
+            if self._work_current(generation):
                 self._set_busy(False)
                 self.query_one("#memory_notice", Static).update(str(error))
             return
-        if generation != self._work_generation:
+        if not self._work_current(generation):
             return
         self._set_busy(False)
         truncated = " · truncated" if context.truncated else ""
