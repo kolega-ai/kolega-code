@@ -367,6 +367,100 @@ async def test_foreground_long_runner_is_killed_by_cleanup_all(manager):
     assert not _process_alive(pid)
 
 
+@pytest.mark.asyncio
+async def test_background_write_stdin_delivers_input(manager):
+    result = await manager.exec_command(
+        'while read line; do echo "got:$line"; done', yield_time_ms=500, background=True
+    )
+    assert result.status == "running"
+    sid = result.session_id
+    out = (await manager.write_stdin(sid, "hello\n", yield_time_ms=500)).output
+    for _ in range(20):  # bounded: this suite has no pytest-timeout
+        if "got:hello" in out:
+            break
+        out += (await manager.write_stdin(sid, "hello\n", yield_time_ms=500)).output
+    assert "got:hello" in out
+    await manager.kill_session(sid, "TERM")
+
+
+@pytest.mark.asyncio
+async def test_background_multiple_writes_no_eof_between(manager):
+    # `while read` exits the moment stdin hits EOF, so three separate writes
+    # landing while the loop is still running proves the FIFO never delivers
+    # EOF between write_stdin calls.
+    result = await manager.exec_command(
+        'while read line; do echo "got:$line"; done', yield_time_ms=500, background=True
+    )
+    sid = result.session_id
+    out = ""
+    for word in ("one", "two", "three"):
+        out += (await manager.write_stdin(sid, f"{word}\n", yield_time_ms=500)).output
+    for _ in range(20):
+        if all(f"got:{w}" in out for w in ("one", "two", "three")):
+            break
+        out += (await manager.write_stdin(sid, "ping\n", yield_time_ms=500)).output
+    for word in ("one", "two", "three"):
+        assert f"got:{word}" in out
+    assert manager.sessions[sid].running is True, "reader loop exited — stdin saw EOF"
+    await manager.kill_session(sid, "TERM")
+
+
+@pytest.mark.asyncio
+async def test_background_stdin_reader_survives_cleanup_all(manager, tmp_path):
+    # A stdin-draining child would die the instant its stdin hit EOF; surviving
+    # cleanup_all proves the FIFO never loses its last writer when we exit.
+    marker = tmp_path / "lines.log"
+    cmd = f'while read line; do echo "$line" >> {marker}; done'
+    result = await manager.exec_command(cmd, yield_time_ms=500, background=True)
+    assert result.status == "running"
+    session = manager.sessions[result.session_id]
+    pid, fifo = session.pid, session.stdin_path
+    assert pid is not None and fifo is not None
+
+    await manager.write_stdin(result.session_id, "before\n", yield_time_ms=500)
+    await manager.cleanup_all()  # == kolega-code exit
+    assert len(manager.sessions) == 0
+
+    await asyncio.sleep(0.3)
+    try:
+        assert _process_alive(pid), "stdin-reading background process died on cleanup_all"
+        # Delivery is still possible after our exit: any writer can open the FIFO.
+        fd = os.open(fifo, os.O_WRONLY | os.O_NONBLOCK)
+        try:
+            os.write(fd, b"after\n")
+        finally:
+            os.close(fd)
+        for _ in range(40):
+            if marker.exists() and "after" in marker.read_text():
+                break
+            await asyncio.sleep(0.05)
+        text = marker.read_text()
+        assert "before" in text and "after" in text
+    finally:
+        # It really is a survivor, so we must clean it up ourselves.
+        with contextlib.suppress(OSError):
+            os.killpg(os.getpgid(pid), signal.SIGKILL)
+
+
+@pytest.mark.asyncio
+async def test_detached_write_true_then_false_after_exit(manager):
+    result = await manager.exec_command("read x; echo done-$x", yield_time_ms=500, background=True)
+    session = manager.sessions[result.session_id]
+    fifo = session.stdin_path
+    assert fifo is not None
+    assert await session.write("go\n") is True
+    for _ in range(100):  # bounded wait; the pump polls every 0.05s
+        if session.exited.is_set():
+            break
+        await asyncio.sleep(0.05)
+    assert session.exited.is_set()
+    assert await session.write("late\n") is False  # ENXIO: no reader left
+    final = await manager.write_stdin(result.session_id, "")  # exited -> drain returns instantly
+    assert final.status == "exited" and final.exit_code == 0
+    assert "done-go" in (result.output + final.output)
+    assert not os.path.exists(fifo)  # finished session unlinked its FIFO
+
+
 def test_signal_group_none_pid_is_noop():
     # Defensive: signalling before a process exists must not raise.
     _signal_group(None, signal.SIGTERM)

@@ -1911,13 +1911,17 @@ class ToolCollection(LogMixin):
 
         Running long-lived processes: pass background=true for dev servers,
         watchers, and long builds you want to keep running while you do other
-        work. It returns after a short startup window with a session_id; the
-        process keeps running until you stop it with kill_command or the agent
-        session ends. Do NOT use shell `&` for this — processes backgrounded
-        that way are killed when the command that started them ends. Manage
-        background sessions with write_stdin (poll output), kill_command
-        (stop), and list_sessions (see all running shells). Always verify a
-        server answers (e.g. curl) before handing its URL to the browser agent.
+        work. It returns after a short startup window with a session_id. The
+        process is launched detached, so it keeps running until you stop it with
+        kill_command — including after this agent session ends (it does NOT die
+        when you finish). Do NOT use shell `&` for this — processes backgrounded
+        that way are killed when the command that started them ends. Drive
+        background sessions with write_stdin: chars sends real input, chars=""
+        polls new output. Input is not echoed (their stdin is not a TTY) and
+        never reaches EOF, so commands that read stdin run until kill_command
+        stops them. Use list_sessions to see all running shells. Always verify
+        a server answers (e.g. curl) before handing its URL to the browser
+        agent — do not rely on its log, which may be buffered.
 
         Args:
             command: Shell command line, executed via `bash -c`.
@@ -1926,9 +1930,12 @@ class ToolCollection(LogMixin):
                            milliseconds (clamped to 250–30000).
             max_output_tokens: Maximum tokens of output to return in this call.
             login: Run the shell as a login shell (sources profile). Default false.
-            background: Keep the command running and return after a short
-                        startup window (~2s) with a session_id. Commands that
-                        exit within that window report their real exit code.
+            background: Launch detached and return after a short startup window
+                        (~2s) with a session_id. The process outlives this call
+                        and the agent session until kill_command stops it; it
+                        accepts write_stdin input (no echo; stdin never reaches
+                        EOF). Commands that exit within the startup window
+                        report their real exit code.
 
         Returns:
             A JSON object: {"status": "exited"|"running", "exit_code",
@@ -1960,6 +1967,11 @@ class ToolCollection(LogMixin):
         trailing "\\n" to submit a line. Waits up to yield_time_ms (clamped to
         250–30000 when writing, 5000–300000 when polling) for more output or for
         the process to exit.
+
+        Works for background sessions too: input is delivered to their stdin
+        but not echoed, so verify the effect from the command's output; their
+        stdin never reaches EOF, so stop stdin-reading commands with
+        kill_command.
 
         Args:
             session_id: The id returned by exec_command when status == "running".

@@ -52,11 +52,13 @@ class TerminalManager(ABC):
         result has status "running" and a ``session_id`` that can be driven with
         ``write_stdin`` and stopped with ``kill_session``.
 
-        ``background`` launches a detached, poll-only session meant to outlive the
-        agent process (dev servers, watchers). Local backends spawn it with its
-        own session and file-backed output so it survives our exit; sandbox
-        backends run it in the sandbox's persistent terminal, which lives until
-        the sandbox is destroyed.
+        ``background`` launches a detached session meant to outlive the agent
+        process (dev servers, watchers). Local backends spawn it with its own
+        session, file-backed output, and FIFO-backed stdin, so it survives our
+        exit and still accepts ``write_stdin`` (input is not echoed, and its
+        stdin never reaches EOF, so stdin-draining commands run until killed);
+        sandbox backends run it in the sandbox's persistent terminal, which
+        lives until the sandbox is destroyed.
         """
 
     @abstractmethod

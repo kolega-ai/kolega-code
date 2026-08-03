@@ -35,16 +35,16 @@ Run shell commands in the project and stream their output to the **Terminal** ta
 
 **Background processes & dev servers:** pass `background=true` to `exec_command`
 for dev servers, watchers, and long builds you want to keep running. It returns
-after a short startup window (~2s) with a `session_id`; the process keeps
-running until stopped. Poll output with `write_stdin`, stop it with
-`kill_command`, and see all running shells with `list_sessions` (background
-sessions are marked `background: true`). Avoid shell `&` instead — processes
-backgrounded that way are killed when the command that started them ends, and
-the result prints a warning when that happens. A command passed with
-`background=true` that exits within the startup window (e.g. port already in
-use) reports its real exit code and output. Processes started by the agent
-never outlive kolega-code: all sessions are terminated when the agent session
-ends, including on quit.
+after a short startup window (~2s) with a `session_id`. The process is launched
+detached: it keeps running until `kill_command` stops it — including after the
+agent session ends. Send it input or poll new output with `write_stdin` (input
+is not echoed, and its stdin never reaches EOF, so stdin-reading commands run
+until killed), stop it with `kill_command`, and see all running shells with
+`list_sessions` (background sessions are marked `background: true`). Avoid
+shell `&` instead — processes backgrounded that way are killed when the command
+that started them ends, and the result prints a warning when that happens. A
+command passed with `background=true` that exits within the startup window
+(e.g. port already in use) reports its real exit code and output.
 
 ### Code execution (eval)
 
