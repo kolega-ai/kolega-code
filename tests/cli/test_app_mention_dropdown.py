@@ -42,6 +42,7 @@ from ._app_test_utils import (
     first_text_styles,
     question_payload,
     renderable_text,
+    wait_for_turn_idle,
 )
 
 
@@ -224,6 +225,7 @@ async def test_textual_app_submitting_mention_attaches_file_and_keeps_short_text
             entry.kind == "user" and entry.content == "summarize @src/alpha.py please"
             for entry in app.conversation_entries
         )
+        await wait_for_turn_idle(app, pilot)
 
 
 @pytest.mark.asyncio
@@ -252,3 +254,4 @@ async def test_textual_app_unresolved_mention_clears_hint_and_sends_plain_text(
         assert isinstance(app.agent, _MentionAgent)
         assert app.agent.messages == ["look at @does/not/exist.py"]
         assert app.agent.attachments == [None]
+        await wait_for_turn_idle(app, pilot)

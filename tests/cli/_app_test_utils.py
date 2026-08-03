@@ -140,6 +140,25 @@ def renderable_text(renderable) -> str:
     return capture.get()
 
 
+async def wait_for_turn_idle(app, pilot, timeout: float = 6.0) -> None:
+    """Wait until the submitted turn's worker has fully finished.
+
+    A test that submits a turn must not exit ``run_test`` while the worker is
+    still finalizing: app shutdown prunes the screen before workers are
+    cancelled, so the worker's UI cleanup (``_set_chat_enabled`` →
+    ``query_one("#composer")``) races teardown and can surface as
+    ``WorkerFailed: NoMatches`` under CI load. ``agent_worker`` is cleared at
+    the very end of ``_process_message``, strictly after that cleanup ran, so
+    waiting for it closes the race.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if app.agent_worker is None and not app._turn_active:
+            return
+        await pilot.pause(0.01)
+    raise AssertionError("Timed out waiting for the agent turn worker to finish")
+
+
 async def settle_changes_inspector(app, pilot, timeout: float = 5.0) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
