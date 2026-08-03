@@ -6,6 +6,17 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.26.7 - 2026-08-03
+
+### Fixed
+
+- Local token counting no longer crashes on content that contains a tokenizer
+  special-token literal (for example `<|endoftext|>` or `<|im_start|>`, common in
+  ML/tokenizer files and chat-format prompts); those strings are now counted as
+  ordinary text instead of aborting the run.
+- The Private Project Memory screen no longer crashes with an internal
+  "NoMatches" error when it is closed while still loading.
+
 ## 0.26.6 - 2026-08-03
 
 ### Changed
