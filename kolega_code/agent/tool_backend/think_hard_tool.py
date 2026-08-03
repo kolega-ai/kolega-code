@@ -5,6 +5,7 @@ from contextlib import AbstractAsyncContextManager
 from .. import prompts
 from kolega_code.llm.client import LLMClient
 from kolega_code.llm.instrumented_client import InstrumentedLLMClient
+from kolega_code.llm.ledger import helper_origin, llm_call_origin
 from kolega_code.llm.models import Message, MessageHistory, TextBlock, ThinkingBlock
 from kolega_code.llm.specs import get_model_specs
 from .streaming_tool import StreamingTool
@@ -101,16 +102,17 @@ class ThinkHardTool(StreamingTool):
             # ``LLMClient.stream`` is typed as ``AsyncContextManager | Coroutine``
             # because providers may define ``stream`` either way; every concrete
             # provider is ``async def``, so cast to the coroutine form before awaiting.
-            stream_cm = await cast(
-                Coroutine[Any, Any, AbstractAsyncContextManager[Any]],
-                client.stream(
-                    model=self.config.thinking_config.model,
-                    max_completion_tokens=max_completion,
-                    system=system_message,
-                    messages=messages,
-                    thinking=thinking_param,
-                ),
-            )
+            with llm_call_origin(helper_origin("think_hard")):
+                stream_cm = await cast(
+                    Coroutine[Any, Any, AbstractAsyncContextManager[Any]],
+                    client.stream(
+                        model=self.config.thinking_config.model,
+                        max_completion_tokens=max_completion,
+                        system=system_message,
+                        messages=messages,
+                        thinking=thinking_param,
+                    ),
+                )
             async with stream_cm as stream:
                 # Process chunks for streaming if we have a tool_call_id
                 if tool_call_id:

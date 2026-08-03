@@ -174,3 +174,28 @@ async def test_tail_survives_a_partially_written_record(store: SessionStore, tmp
     assert [event.content["text"] for event in stored] == ["complete record"], (
         "a half-written trailing record must be ignored, not treated as corruption"
     )
+
+
+@pytest.mark.asyncio
+async def test_llm_events_are_invisible_to_the_presentation_stream(tmp_path):
+    """share export reads only ui.* events; llm.* journal records never leak."""
+    from kolega_code.cli.session_store import SessionStore
+    from kolega_code.cli.session_event_store import FileSessionEventStore
+
+    store = SessionStore(tmp_path / "state")
+    session = store.create(tmp_path / "proj", "code", {})
+    journal = store.journal(session.session_id)
+    journal.append(
+        "llm.message",
+        actor="assistant",
+        payload={
+            "request_id": "r",
+            "run_id": "x",
+            "provider": "p",
+            "model": "m",
+            "origin": {"kind": "helper"},
+            "message": None,
+        },
+    )
+    events = await FileSessionEventStore(journal).read(session.session_id)
+    assert events == []

@@ -326,7 +326,7 @@ class LLMClient:
                 # outer clause maps Exception only).
                 self._usage_ledger.record_failure(request_id, describe_error(exc))
                 raise
-            self._usage_ledger.record_response(request_id, getattr(message, "usage", None))
+            self._usage_ledger.record_response(request_id, getattr(message, "usage", None), message=message)
             return message
         except Exception as e:
             raise map_to_llm_error(e, self.provider_name) from e

@@ -30,9 +30,11 @@ from __future__ import annotations
 
 import logging
 import uuid
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Optional
+from typing import Any, Generator, Optional
 
 from .usage import NormalizedUsage
 
@@ -61,6 +63,56 @@ def describe_error(error: BaseException | type[BaseException] | None) -> str:
     return f"{type(error).__name__}: {error}"[:_ERROR_TRUNCATION]
 
 
+@dataclass(frozen=True, slots=True)
+class LlmCallOrigin:
+    """Who made an LLM call, for persistence attribution.
+
+    ``kind`` values: "history" (the top-level agent's main loop, whose response
+    is recorded as ``assistant.message`` by the session recorder), "sub_agent",
+    "helper" (a named internal helper client), and "primary" (a top-level loop
+    with no session recorder, e.g. unsaved ask runs).
+    """
+
+    kind: str
+    agent_name: Optional[str] = None
+    agent_id: Optional[str] = None
+    parent_tool_call_id: Optional[str] = None
+    depth: Optional[int] = None
+    helper: Optional[str] = None
+
+    def to_payload(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {"kind": self.kind}
+        for name in ("agent_name", "agent_id", "parent_tool_call_id", "depth", "helper"):
+            value = getattr(self, name)
+            if value is not None:
+                payload[name] = value
+        return payload
+
+
+HISTORY_ORIGIN = LlmCallOrigin(kind="history")
+
+
+def helper_origin(name: str) -> LlmCallOrigin:
+    return LlmCallOrigin(kind="helper", helper=name)
+
+
+_llm_call_origin: ContextVar[Optional[LlmCallOrigin]] = ContextVar("llm_call_origin", default=None)
+
+
+def current_llm_call_origin() -> Optional[LlmCallOrigin]:
+    return _llm_call_origin.get()
+
+
+@contextmanager
+def llm_call_origin(origin: LlmCallOrigin) -> Generator[None]:
+    """Attribute LLM calls begun within this scope (and child tasks) to ``origin``."""
+    token = _llm_call_origin.set(origin)
+    try:
+        yield
+    finally:
+        _llm_call_origin.reset(token)
+
+
 class _RequestState(Enum):
     OPEN = "open"
     RESPONDED = "responded"
@@ -71,8 +123,22 @@ class _RequestState(Enum):
 class _RequestRecord:
     provider: str
     model: Optional[str]
+    origin: Optional[LlmCallOrigin] = None
     state: _RequestState = _RequestState.OPEN
     usage: Optional[NormalizedUsage] = None
+    error: Optional[str] = None
+
+
+@dataclass(frozen=True, slots=True)
+class SettledRequest:
+    """Immutable handoff to a persistence observer at settlement time."""
+
+    request_id: str
+    run_id: str
+    provider: str
+    model: Optional[str]
+    origin: Optional[LlmCallOrigin]
+    usage: Optional[NormalizedUsage]
     error: Optional[str] = None
 
 
@@ -118,6 +184,9 @@ class UsageSnapshot:
     cache_read_input_tokens: int = 0
     cache_write_input_tokens: int = 0
     reasoning_output_tokens: int = 0
+    # Failed persistence-observer notifications/writes. Health of the journal
+    # sink, not of accounting itself — deliberately outside `complete`.
+    persist_failures: int = 0
     breakdown: tuple[ProviderModelUsage, ...] = field(default=())
 
     @property
@@ -137,6 +206,7 @@ class UsageSnapshot:
 
         deltas = {name: getattr(self, name) - getattr(earlier, name) for name in _COUNT_FIELDS}
         deltas["open"] = self.open
+        deltas["persist_failures"] = self.persist_failures - earlier.persist_failures
         sums = {name: getattr(self, name) - getattr(earlier, name) for name in _TOKEN_SUM_FIELDS}
 
         earlier_rows = {(row.provider, row.model): row for row in earlier.breakdown}
@@ -166,21 +236,30 @@ class UsageLedger:
     def __init__(self) -> None:
         self.run_id: str = uuid.uuid4().hex
         self._records: dict[str, _RequestRecord] = {}
+        # Optional persistence observer, duck-typed: on_response(settled, message)
+        # / on_failure(settled). Notified exactly once per request, inside the
+        # first-wins state transition. Observer errors are counted, never raised.
+        self.observer: Optional[Any] = None
+        self.persist_failures: int = 0
 
     def begin(self, provider: str, model: Optional[str]) -> str:
         """Register one invocation and return its request_id.
 
         Always returns a fresh id, even if internal bookkeeping fails — a later
-        settle for an unknown id is a logged no-op, never an error.
+        settle for an unknown id is a logged no-op, never an error. The ambient
+        LlmCallOrigin (if any) is captured here so attribution survives to
+        settlement regardless of which task finalizes the request.
         """
         request_id = uuid.uuid4().hex
         try:
-            self._records[request_id] = _RequestRecord(provider=str(provider), model=model)
+            self._records[request_id] = _RequestRecord(
+                provider=str(provider), model=model, origin=current_llm_call_origin()
+            )
         except Exception:
             logger.exception("UsageLedger.begin failed; request %s will be untracked", request_id)
         return request_id
 
-    def record_response(self, request_id: str, usage: Optional[NormalizedUsage]) -> None:
+    def record_response(self, request_id: str, usage: Optional[NormalizedUsage], message: Optional[Any] = None) -> None:
         """Settle a completed response. First settle wins; later calls no-op."""
         try:
             record = self._records.get(request_id)
@@ -191,6 +270,7 @@ class UsageLedger:
                 return
             record.state = _RequestState.RESPONDED
             record.usage = usage if isinstance(usage, NormalizedUsage) else None
+            self._notify(lambda observer: observer.on_response(self._settled(request_id, record), message))
         except Exception:
             logger.exception("UsageLedger.record_response failed for request %s", request_id)
 
@@ -205,8 +285,37 @@ class UsageLedger:
                 return
             record.state = _RequestState.FAILED
             record.error = str(error)[:_ERROR_TRUNCATION]
+            self._notify(lambda observer: observer.on_failure(self._settled(request_id, record)))
         except Exception:
             logger.exception("UsageLedger.record_failure failed for request %s", request_id)
+
+    def _settled(self, request_id: str, record: _RequestRecord) -> SettledRequest:
+        return SettledRequest(
+            request_id=request_id,
+            run_id=self.run_id,
+            provider=record.provider,
+            model=record.model,
+            origin=record.origin,
+            usage=record.usage,
+            error=record.error,
+        )
+
+    def _notify(self, call: Any) -> None:
+        observer = self.observer
+        if observer is None:
+            return
+        try:
+            call(observer)
+        except Exception:
+            self.persist_failures += 1
+            logger.exception("Usage observer notification failed")
+
+    def note_persist_failure(self) -> None:
+        """Record an asynchronous persistence failure (exception-proof)."""
+        try:
+            self.persist_failures += 1
+        except Exception:
+            pass
 
     def snapshot(self) -> UsageSnapshot:
         """Aggregate all records into an immutable snapshot."""
@@ -241,7 +350,9 @@ class UsageLedger:
                 ProviderModelUsage(provider=provider, model=model, **counts)
                 for (provider, model), counts in sorted(rows.items())
             )
-            return UsageSnapshot(run_id=self.run_id, breakdown=breakdown, **totals)
+            return UsageSnapshot(
+                run_id=self.run_id, persist_failures=self.persist_failures, breakdown=breakdown, **totals
+            )
         except Exception:
             logger.exception("UsageLedger.snapshot failed; returning empty snapshot")
             return UsageSnapshot(run_id=self.run_id)
@@ -293,7 +404,7 @@ class LedgerStreamAdapter:
         except BaseException as exc:
             self._ledger.record_failure(self._request_id, describe_error(exc))
             raise
-        self._ledger.record_response(self._request_id, getattr(message, "usage", None))
+        self._ledger.record_response(self._request_id, getattr(message, "usage", None), message=message)
         return message
 
     def __getattr__(self, name: str):

@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Awaitable, Callable, Optional
 
 from .conversation import Conversation
+from kolega_code.llm.ledger import helper_origin, llm_call_origin
 from kolega_code.llm.models import Message, MessageHistory, TextBlock
 from .prompts import (
     build_compression_summary_user_prompt,
@@ -109,14 +110,16 @@ class HistoryCompressor:
             # Stream and drain rather than calling generate(): the Anthropic SDK
             # rejects non-streaming requests whose max_tokens is large enough to risk
             # a >10-minute response, which the model's full completion budget triggers.
-            async with await llm.stream(
-                messages=messages,
-                system=system_message,
-                temperature=temperature,
-                model=model,
-                max_completion_tokens=self.SUMMARY_MAX_TOKENS,
-                thinking=thinking,
-            ) as stream:
+            with llm_call_origin(helper_origin("compression")):
+                stream_cm = await llm.stream(
+                    messages=messages,
+                    system=system_message,
+                    temperature=temperature,
+                    model=model,
+                    max_completion_tokens=self.SUMMARY_MAX_TOKENS,
+                    thinking=thinking,
+                )
+            async with stream_cm as stream:
                 async for _event in stream:
                     pass
             response = await stream.get_final_message()

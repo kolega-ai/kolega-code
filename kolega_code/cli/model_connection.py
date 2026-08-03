@@ -9,6 +9,7 @@ from typing import Any, Callable
 from kolega_code.config import AgentConfig
 from kolega_code.llm.client import LLMClient
 from kolega_code.llm.exceptions import LLMError, llm_error_message
+from kolega_code.llm.ledger import helper_origin, llm_call_origin
 from kolega_code.llm.models import Message, MessageHistory, TextBlock
 
 
@@ -20,6 +21,16 @@ CONNECTION_TEST_MAX_COMPLETION_TOKENS = 32
 class ModelConnectionResult:
     ok: bool
     message: str
+
+
+async def _probe_generate(client: Any, model: str, messages: MessageHistory) -> Any:
+    with llm_call_origin(helper_origin("model_connection")):
+        return await client.generate(
+            messages=messages,
+            model=model,
+            max_completion_tokens=CONNECTION_TEST_MAX_COMPLETION_TOKENS,
+            tools=[],
+        )
 
 
 async def test_model_connection(
@@ -52,12 +63,7 @@ async def test_model_connection(
         client = client_factory(**factory_kwargs)
         messages = MessageHistory([Message(role="user", content=[TextBlock(text="Reply with OK.")])])
         await asyncio.wait_for(
-            client.generate(
-                messages=messages,
-                model=model_config.model,
-                max_completion_tokens=CONNECTION_TEST_MAX_COMPLETION_TOKENS,
-                tools=[],
-            ),
+            _probe_generate(client, model_config.model, messages),
             timeout=timeout,
         )
     except asyncio.TimeoutError:

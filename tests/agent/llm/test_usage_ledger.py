@@ -190,3 +190,73 @@ async def test_concurrent_settlement_is_exact():
     assert snap.reported == 50
     assert snap.total_tokens == 50 * 15
     assert snap.complete is True
+
+
+class _RecordingObserver:
+    def __init__(self):
+        self.responses = []
+        self.failures = []
+
+    def on_response(self, settled, message):
+        self.responses.append((settled, message))
+
+    def on_failure(self, settled):
+        self.failures.append(settled)
+
+
+def test_observer_notified_exactly_once_with_origin_and_message():
+    from kolega_code.llm.ledger import helper_origin, llm_call_origin
+
+    ledger = UsageLedger()
+    observer = _RecordingObserver()
+    ledger.observer = observer
+
+    with llm_call_origin(helper_origin("compression")):
+        request_id = ledger.begin("anthropic", "m")
+    marker = object()
+    ledger.record_response(request_id, _usage(), message=marker)
+    ledger.record_response(request_id, _usage(), message=object())  # dedup: no second notify
+    ledger.record_failure(request_id, "late")  # settled: no notify
+
+    assert len(observer.responses) == 1 and not observer.failures
+    settled, message = observer.responses[0]
+    assert message is marker
+    assert settled.request_id == request_id
+    assert settled.run_id == ledger.run_id
+    assert settled.origin is not None and settled.origin.helper == "compression"
+    assert settled.usage is not None and settled.usage.reported
+
+
+def test_observer_failure_notification():
+    ledger = UsageLedger()
+    observer = _RecordingObserver()
+    ledger.observer = observer
+    request_id = ledger.begin("openai", None)
+    ledger.record_failure(request_id, "boom")
+    assert len(observer.failures) == 1
+    assert observer.failures[0].error == "boom"
+    assert observer.failures[0].origin is None
+
+
+def test_observer_exception_counts_persist_failure_and_never_raises():
+    class _Broken:
+        def on_response(self, settled, message):
+            raise RuntimeError("sink broke")
+
+        def on_failure(self, settled):
+            raise RuntimeError("sink broke")
+
+    ledger = UsageLedger()
+    ledger.observer = _Broken()
+    r1 = ledger.begin("anthropic", "m")
+    ledger.record_response(r1, _usage())
+    r2 = ledger.begin("anthropic", "m")
+    ledger.record_failure(r2, "x")
+
+    assert ledger.persist_failures == 2
+    snap = ledger.snapshot()
+    assert snap.persist_failures == 2
+    assert (snap.responses, snap.failed) == (1, 1)  # settlement itself unharmed
+    # since() subtracts persist_failures like the counters.
+    ledger.note_persist_failure()
+    assert ledger.snapshot().since(snap).persist_failures == 1

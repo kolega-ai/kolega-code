@@ -292,3 +292,32 @@ async def test_adapter_passes_through_wrapper_attributes():
     stream_cm = await _open_stream(client)
     assert stream_cm.provider_name == "anthropic"
     assert hasattr(stream_cm, "get_final_message")
+
+
+@pytest.mark.asyncio
+async def test_settlements_pass_the_message_to_the_observer():
+    class _Observer:
+        def __init__(self):
+            self.messages = []
+
+        def on_response(self, settled, message):
+            self.messages.append(message)
+
+        def on_failure(self, settled):
+            pass
+
+    ledger = UsageLedger()
+    observer = _Observer()
+    ledger.observer = observer
+    provider = _FakeProvider()
+    client = _client(ledger, provider)
+
+    generated = await client.generate(messages=_messages())
+    assert observer.messages == [generated]
+
+    stream_cm = await _open_stream(client)
+    async with stream_cm as stream:
+        async for _ in stream:
+            pass
+    final = await stream.get_final_message()
+    assert observer.messages == [generated, final]

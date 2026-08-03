@@ -8,6 +8,7 @@ from typing import Union
 from kolega_code.config import AgentConfig
 from kolega_code.llm.client import LLMClient
 from kolega_code.llm.instrumented_client import InstrumentedLLMClient
+from kolega_code.llm.ledger import helper_origin, llm_call_origin
 from kolega_code.llm.specs import get_model_specs
 from kolega_code.tools import ToolError
 
@@ -92,7 +93,10 @@ class WebFetchTool(StreamingTool):
                 context_length=int(specs["context_length"]),
                 max_completion_tokens=int(specs["max_completion_tokens"]),
             )
-            answer = await answerer.answer(instruction.strip(), web_content.content)
+            # Covers the answerer's chunk fan-out too: gathered child tasks copy
+            # the context (and so the origin) at creation.
+            with llm_call_origin(helper_origin("web_fetch")):
+                answer = await answerer.answer(instruction.strip(), web_content.content)
             if answer.insufficient:
                 result = self._format_content_fallback(
                     web_content,

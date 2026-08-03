@@ -16,6 +16,8 @@ from typing import Any, Iterable, Optional
 from kolega_code.agent import CoderAgent
 from kolega_code.config import EditProtocol
 from kolega_code.llm.ledger import UsageLedger
+
+from .session_usage import SessionUsageSink
 from kolega_code.agent.custom_agents import discover_custom_agents, validate_custom_agent_models
 from kolega_code.agent.orchestration.guide import gigacode_prompt_extension
 from kolega_code.agent.prompt_provider import PromptExtension
@@ -1319,6 +1321,15 @@ async def _run_ask(args: argparse.Namespace) -> int:
         default=PermissionMode.AUTO,
     )
     usage_ledger = UsageLedger()
+    # When the session persists, journal every settled non-history response and
+    # failure. Attached before the SESSION_START hook below: hook prompts are
+    # paid LLM calls and must be covered from the first request.
+    usage_sink: Optional[SessionUsageSink] = None
+    if session_recorder is not None:
+        sink = SessionUsageSink(store.journal(session.session_id), session_recorder, usage_ledger, mode="ask")
+        usage_sink = sink
+        usage_ledger.observer = sink
+        await sink.start()
     agent = CoderAgent(
         project_path=project_path,
         workspace_id=session.workspace_id,
@@ -1399,6 +1410,8 @@ async def _run_ask(args: argparse.Namespace) -> int:
                 session.config = summary
                 store.save(session)
             await agent.cleanup()
+            if usage_sink is not None:
+                await usage_sink.aclose()
             return 0
 
     # --goal: apply the goal-aware prompt extension and synthesise the first
@@ -1624,6 +1637,8 @@ async def _run_ask(args: argparse.Namespace) -> int:
             except Exception:
                 pass
         await agent.cleanup()
+        if usage_sink is not None:
+            await usage_sink.aclose()
 
     if exit_code:
         return exit_code
