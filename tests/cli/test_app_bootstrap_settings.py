@@ -42,6 +42,7 @@ from ._app_test_utils import (
     open_settings_screen,
     question_payload,
     renderable_text,
+    stage_provider_api_key,
 )
 
 
@@ -547,7 +548,7 @@ async def test_textual_app_saves_settings_and_builds_agent(
     async with app.run_test() as pilot:
         assert app.agent is None
         screen = await open_settings_screen(app, pilot)
-        screen.query_one("#api_key_input", Input).value = "moonshot-key"
+        await stage_provider_api_key(screen, pilot, UI_DEFAULT_PROVIDER, "moonshot-key")
         await app._save_settings_from_ui()
 
         assert isinstance(app.agent, FakeCoderAgent)
@@ -597,7 +598,7 @@ async def test_textual_app_saves_deepseek_settings_and_builds_agent(
         model_select = screen.query_one("#model_select", Select)
         model_select.set_options([("DeepSeek V4 Pro", DEEPSEEK_DEFAULT_MODEL)])
         model_select.value = DEEPSEEK_DEFAULT_MODEL
-        screen.query_one("#api_key_input", Input).value = "deepseek-key"
+        await stage_provider_api_key(screen, pilot, ModelProvider.DEEPSEEK.value, "deepseek-key")
         await app._save_settings_from_ui()
 
         assert isinstance(app.agent, FakeCoderAgent)
@@ -634,7 +635,7 @@ async def test_save_settings_logs_on_success_without_toast(tmp_path: Path, monke
         monkeypatch.setattr(app, "_log_status", spy_log_status)
 
         screen = await open_settings_screen(app, pilot)
-        screen.query_one("#api_key_input", Input).value = "moonshot-key"
+        await stage_provider_api_key(screen, pilot, UI_DEFAULT_PROVIDER, "moonshot-key")
         await app._save_settings_from_ui()
 
         assert ("Settings saved.", "ok") in logged
@@ -722,7 +723,7 @@ async def test_agent_models_section_saves_override_and_builds_agent(
 
     async with app.run_test() as pilot:
         screen = await open_settings_screen(app, pilot)
-        screen.query_one("#api_key_input", Input).value = "moonshot-key"
+        await stage_provider_api_key(screen, pilot, UI_DEFAULT_PROVIDER, "moonshot-key")
         # Give the investigation role its own model (same provider keeps one API key).
         screen.query_one("#am_provider_investigation", Select).value = UI_DEFAULT_PROVIDER
         await pilot.pause()  # let the provider->model cascade settle

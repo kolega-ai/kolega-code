@@ -17,6 +17,14 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ### Changed
 
+- Settings gains a **Providers** category, first in the rail, holding every model
+  provider's API key and the ChatGPT sign-in, each row labelled with its live
+  credential status. **Model & Account** is renamed **Models** and keeps only what
+  runs. Keys now stage per provider, so credentials for a provider you are not
+  currently using — needed by a fast/thinking slot or an agent-role override — can be
+  entered without switching your main model and switching back. **Test Connection**
+  moves with them and probes the selected provider rather than the active model, so a
+  credential can be checked without running on that provider.
 - **Breaking:** provider and model are now always specified together. `--provider`
   without `--model` (and the per-role/per-slot equivalents such as
   `KOLEGA_CODE_FAST_PROVIDER`) is an error instead of silently selecting that

@@ -30,7 +30,8 @@ separates the controls into:
 
 | Category | What it configures |
 | --- | --- |
-| **Model & Account** | Provider, model, thinking effort, API key or ChatGPT sign-in, and connection testing |
+| **Providers** | API keys and ChatGPT sign-in for every model provider, plus per-provider connection testing |
+| **Models** | Provider, model, thinking effort, and the fast/thinking model slots |
 | **Agent Models** | Optional provider/model/effort override for each agent role |
 | **Tools** | Web-search backend and global LSP toggle |
 | **MCP Servers** | Global and trusted-project MCP server management |
@@ -43,12 +44,25 @@ the previous settings remain saved and the draft stays open for correction. Clos
 a changed draft asks before discarding it. Theme changes preview immediately but
 follow the same Apply/discard behavior.
 
+**Providers** lists every model provider with its current credential status —
+`present via <ENV_VAR>`, `present in local settings`, `signed in as …`, or `missing` —
+so you can see at a glance what you are set up for. Select a provider to edit its
+credential.
+
 The API-key input never echoes a saved secret. Leave it blank to retain the current
 key, paste a value to replace it, or select **Remove Stored Key** to stage its
 removal. Environment variables are only reported, never changed by the TUI.
-ChatGPT sign-in and sign-out are staged the same way. **Test Connection** uses the
-current draft and has the same small, potentially billable request behavior as the
-onboarding test.
+ChatGPT sign-in and sign-out are staged the same way.
+
+Keys are staged **per provider**, so you can set up several providers before pressing
+Apply — useful when a fast/thinking slot or an agent role runs on a provider other
+than your main model. Credentials are independent of model selection: changing the
+provider under **Models** does not touch any key.
+
+**Test Connection** probes the *selected* provider rather than the active model, using
+that provider's configured model where there is one and its default otherwise — so you
+can check a credential for a provider you are not currently running on. It has the same
+small, potentially billable request behavior as the onboarding test.
 
 MCP actions are the exception to the global Apply button: their server config,
 verification, enable/disable state, trust, and OAuth actions save immediately.

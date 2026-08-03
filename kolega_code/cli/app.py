@@ -1101,16 +1101,16 @@ class KolegaCodeApp(
         if event.button.id == "save_settings":
             await self._save_settings_from_ui()
             return
-        if event.button.id == "settings_chatgpt_login":
+        if event.button.id == "provider_chatgpt_login":
             await self._settings_login_chatgpt()
             return
-        if event.button.id == "settings_chatgpt_logout":
+        if event.button.id == "provider_chatgpt_logout":
             self._settings_logout_chatgpt()
             return
-        if event.button.id == "settings_remove_api_key":
+        if event.button.id == "provider_remove_api_key":
             self._settings_remove_api_key()
             return
-        if event.button.id == "settings_test_connection":
+        if event.button.id == "provider_test_connection":
             await self._test_settings_connection()
             return
         if event.button.id and event.button.id.startswith("mcp_"):

@@ -150,13 +150,15 @@ resolves to, so an inherited slot is never a surprise.
 
 ## Set models per role
 
-In the TUI, open **Settings → Model & Account → Model Slots** (or `/model`) and
+In the TUI, open **Settings → Models → Model Slots** (or `/model`) and
 give the Fast or Thinking row a provider and model. Leave a row on
 *Default (inherit)* to keep it following the active model.
 
 A slot may use a **different provider** from your main model — for example a
-DeepSeek main model with Anthropic Haiku for fast utility calls. That provider
-needs its own API key, and Settings refuses to apply the change until it has one.
+DeepSeek main model with Anthropic Haiku for fast utility calls. That provider needs
+its own API key: add it under **Settings → Providers**, which lists every provider
+with its credential status and lets you set up more than one before applying.
+Settings refuses to apply a slot whose provider has no credential.
 
 Equivalently, from the command line:
 
