@@ -84,17 +84,42 @@ jobs:
         if: needs.changes.outputs.coverage-badge-only != 'true'
         run: uv sync --extra dev --frozen
 
-      - name: Install Playwright Chromium
+      - name: Get Playwright version
         if: needs.changes.outputs.coverage-badge-only != 'true'
+        id: playwright-version
+        run: echo "version=$(uv run python -c "from importlib.metadata import version; print(version('playwright'))")" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright Chromium
+        if: needs.changes.outputs.coverage-badge-only != 'true'
+        id: playwright-cache
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-${{ steps.playwright-version.outputs.version }}
+
+      # The system-deps half of this install (apt fetching font packages) has
+      # stalled for up to 10 minutes on flaky mirrors, so it only runs when the
+      # browser cache misses (i.e. on a Playwright version bump). On cache hits
+      # the runner image's preinstalled browser libraries cover Chromium.
+      - name: Install Playwright Chromium
+        if: needs.changes.outputs.coverage-badge-only != 'true' && steps.playwright-cache.outputs.cache-hit != 'true'
         run: uv run playwright install --with-deps chromium
 
       - name: Run pre-commit hooks
         if: needs.changes.outputs.coverage-badge-only != 'true'
         run: uv run pre-commit run --all-files --show-diff-on-failure
 
-      - name: Run fast tests with coverage
+      # Coverage runs on 3.11 only: it is the version whose coverage.xml the
+      # badge job consumes, and instrumenting the other matrix jobs costs
+      # minutes of wall time for artifacts nothing reads.
+      - name: Run fast tests
         if: needs.changes.outputs.coverage-badge-only != 'true'
-        run: ./run_tests.sh --coverage
+        run: |
+          if [ "${{ matrix.python-version }}" = "3.11" ]; then
+            ./run_tests.sh --coverage
+          else
+            ./run_tests.sh
+          fi
 
       - name: Build and verify bundled skill package data
         if: needs.changes.outputs.coverage-badge-only != 'true' && matrix.python-version == '3.11'
@@ -103,7 +128,7 @@ jobs:
           uv run python scripts/verify_bundled_skill_artifacts.py /tmp/kolega-code-dist/*
 
       - name: Upload coverage report
-        if: needs.changes.outputs.coverage-badge-only != 'true'
+        if: needs.changes.outputs.coverage-badge-only != 'true' && matrix.python-version == '3.11'
         uses: actions/upload-artifact@v6
         with:
           name: coverage-xml-python-${{ matrix.python-version }}
