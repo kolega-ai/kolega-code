@@ -424,20 +424,25 @@ class DetachedSession:
     """A ``background=true`` command that outlives the kolega-code process.
 
     Unlike :class:`PtySession`, this is spawned **detached** — ``setsid`` (its own
-    session, no controlling terminal), stdin from ``/dev/null``, and stdout+stderr
-    to a temp log file. That combination is what makes it durable:
+    session, no controlling terminal), stdin from a private FIFO the child holds
+    open O_RDWR as fd 0, and stdout+stderr to a temp log file. That combination
+    is what makes it durable:
 
     - No controlling TTY, so it never gets SIGHUP when our terminal/PTY goes away.
     - Output goes to a real file (never a pipe/PTY we hold), so a write can't fail
       with EIO once we exit.
     - It is not tracked by an asyncio child-transport, so nothing SIGKILLs it when
       our event loop tears down.
+    - Its stdin FIFO never loses its last writer (the child's own fd 0 is one), so
+      the child never reads EOF — blocking reads just wait, like an idle terminal,
+      including after we exit.
 
     The process therefore keeps running after the agent session ends (reparented
     to init) — matching claude-code's ``run_in_background``. It is stopped only by
     ``kill_command`` (SIGTERM/-KILL to its group) or by the container going away.
-    Because stdin is closed it is poll-only: ``write`` is a no-op and callers read
-    fresh output by polling the tailed log. Output may be block-buffered by the
+    ``write`` delivers real input through the FIFO; there is no echo (the FIFO is
+    not a TTY), and stdin-draining commands (``while read``, REPLs, bare ``cat``)
+    never see EOF, so they run until killed. Output may be block-buffered by the
     child (its stdout is a file, not a TTY), so verify a server as a client (curl)
     rather than waiting on its log.
     """
@@ -471,6 +476,7 @@ class DetachedSession:
         self.exit_code: Optional[int] = None
         self.start_time = time.monotonic()
         self.log_path: Optional[str] = None
+        self.stdin_path: Optional[str] = None
 
         self.exited = asyncio.Event()
         self._new_output = asyncio.Event()
@@ -495,8 +501,21 @@ class DetachedSession:
 
         fd, self.log_path = tempfile.mkstemp(prefix="kolega-bg-", suffix=".log")
         os.close(fd)
+        # stdin FIFO named after the log: the log path is unique (mkstemp), so
+        # "<log>.stdin" is too — mkfifo raises EEXIST rather than reusing.
+        self.stdin_path = self.log_path + ".stdin"
+        os.mkfifo(self.stdin_path, 0o600)
         self._reader = open(self.log_path, "rb")
         writer = open(self.log_path, "wb")
+        # The FIFO is opened O_RDWR and handed to the child as fd 0. O_RDWR never
+        # blocks waiting for a peer, and because the child's own fd 0 is then both
+        # a reader AND a writer, the FIFO never loses its last writer while the
+        # child (or any descendant that inherited fd 0) lives: the child never
+        # reads EOF on stdin — not at startup, not between write() calls, not
+        # after we exit. POSIX leaves O_RDWR-on-FIFO undefined; Linux documents it
+        # as non-blocking (fifo(7)) and macOS/BSD behaves the same — the only
+        # supported runtimes.
+        stdin_fd = os.open(self.stdin_path, os.O_RDWR)
         try:
             # start_new_session=True -> setsid in the child: its own session and
             # process group, no controlling terminal. plain Popen (not asyncio)
@@ -505,23 +524,27 @@ class DetachedSession:
                 [shell, *shell_args],
                 cwd=str(self.workdir),
                 env=env,
-                stdin=subprocess.DEVNULL,
+                stdin=stdin_fd,
                 stdout=writer,
                 stderr=subprocess.STDOUT,
                 start_new_session=True,
-                close_fds=True,
+                close_fds=True,  # std handles passed above are exempt
             )
         except Exception:
-            # Launch failed: don't leak the reader fd or the temp log.
+            # Launch failed: don't leak the reader fd or the temp files.
             with contextlib.suppress(OSError):
                 self._reader.close()
             self._reader = None
             with contextlib.suppress(OSError):
                 os.unlink(self.log_path)
             self.log_path = None
+            with contextlib.suppress(OSError):
+                os.unlink(self.stdin_path)
+            self.stdin_path = None
             raise
         finally:
             writer.close()  # the child holds its own dup of the fd
+            os.close(stdin_fd)  # ditto: the child's fd 0 keeps the FIFO alive
         self.pid = self._proc.pid
         self._pump_task = asyncio.create_task(self._pump())
 
@@ -591,8 +614,37 @@ class DetachedSession:
         return cap_tokens(text, max_output_tokens)
 
     async def write(self, chars: str) -> bool:
-        # Detached sessions have no stdin (closed to /dev/null); poll-only.
-        return False
+        """Deliver ``chars`` to the child's stdin FIFO.
+
+        Opens the FIFO O_WRONLY|O_NONBLOCK per call: POSIX guarantees this
+        succeeds while any process holds the read side (the child's own O_RDWR
+        fd 0, for its whole life) and fails with ENXIO once the child and its
+        fd-0 heirs are gone. There is no echo — the FIFO is not a TTY, so these
+        bytes appear in the log only if the child prints them. ``stdin_path`` is
+        always set between start() and close(), the only window in which the
+        manager calls write().
+        """
+        assert self.stdin_path is not None
+        try:
+            fd = os.open(self.stdin_path, os.O_WRONLY | os.O_NONBLOCK)
+        except OSError:
+            # ENXIO: no reader left — the child (and anything that inherited
+            # its fd 0) exited or closed stdin. Mirrors PtySession's False.
+            return False
+        try:
+            data = chars.encode()
+            while data:
+                # Loop for partial writes (payloads > PIPE_BUF: 512 on macOS,
+                # 4096 on Linux). CPython ignores SIGPIPE, so a lost-reader race
+                # raises BrokenPipeError here, not a signal; a full pipe (child
+                # not draining its backlog) raises BlockingIOError. Both are
+                # OSError -> False.
+                data = data[os.write(fd, data) :]
+            return True
+        except OSError:
+            return False
+        finally:
+            os.close(fd)
 
     async def kill(self, signame: str = "TERM") -> None:
         first = signal.SIGINT if signame == "INT" else signal.SIGTERM
@@ -621,11 +673,17 @@ class DetachedSession:
             with contextlib.suppress(OSError):
                 self._reader.close()
             self._reader = None
-        # Only drop the log once the process is gone; a survivor still writes to it.
-        if self.exited.is_set() and self.log_path:
-            with contextlib.suppress(OSError):
-                os.unlink(self.log_path)
-            self.log_path = None
+        # Only drop the log and stdin FIFO once the process is gone; a survivor
+        # still writes to the log and owns the FIFO through its own fd 0.
+        if self.exited.is_set():
+            if self.log_path:
+                with contextlib.suppress(OSError):
+                    os.unlink(self.log_path)
+                self.log_path = None
+            if self.stdin_path:
+                with contextlib.suppress(OSError):
+                    os.unlink(self.stdin_path)
+                self.stdin_path = None
 
     @property
     def running(self) -> bool:
@@ -794,6 +852,11 @@ class LocalTerminalManager(TerminalManager):
         yield_ms = clamp_yield(yield_time_ms, poll=(chars == ""))
         start = time.monotonic()
         if chars:
+            # Both session types return a success bool; it is intentionally
+            # discarded (parity between the PTY and detached paths). A write
+            # that failed because the process died surfaces as status="exited"
+            # in this same result: the drain below observes the exit well
+            # within the >=250ms write window.
             await session.write(chars)
         await session.drain(yield_ms)
         duration_ms = int((time.monotonic() - start) * 1000)

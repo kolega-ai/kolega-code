@@ -23,10 +23,12 @@ BACKGROUND_SETTLE_MS = 2000
 _BACKGROUND_NOTE = (
     "Running in background, detached: it keeps running after this command and even "
     "after the agent session ends, until you stop it with kill_command(session_id) "
-    "(or the environment goes away). It is poll-only — write_stdin(session_id) reads "
-    "new output but cannot send input. See all running shells with list_sessions. "
-    "Output may be buffered, so verify a server by reaching it as a client (e.g. curl), "
-    "not by waiting on this log."
+    "(or the environment goes away). write_stdin(session_id, chars) sends real input "
+    "to its stdin; write_stdin(session_id) polls new output. Input is not echoed and "
+    "its stdin never reaches EOF, so verify effects from the output (or as a client) "
+    "and stop stdin-reading commands with kill_command. See all running shells with "
+    "list_sessions. Output may be buffered, so verify a server by reaching it as a "
+    "client (e.g. curl), not by waiting on this log."
 )
 
 
@@ -166,11 +168,13 @@ class TerminalTool(BaseTool):
         process is launched detached, so it keeps running until you stop it with
         kill_command — including after this agent session ends (it does NOT die
         when you finish). Do NOT use shell `&` for this — processes backgrounded
-        that way are killed when the command that started them ends. Background
-        sessions are poll-only: use write_stdin to read new output (it cannot
-        send input to them), kill_command to stop, and list_sessions to see all
-        running shells. Always verify a server answers (e.g. curl) before handing
-        its URL to the browser agent — do not rely on its log, which may be buffered.
+        that way are killed when the command that started them ends. Drive
+        background sessions with write_stdin: chars sends real input, chars=""
+        polls new output. Input is not echoed (their stdin is not a TTY) and
+        never reaches EOF, so commands that read stdin run until kill_command
+        stops them. Use list_sessions to see all running shells. Always verify
+        a server answers (e.g. curl) before handing its URL to the browser
+        agent — do not rely on its log, which may be buffered.
 
         Args:
             command: Shell command line, executed via `bash -c`.
@@ -182,9 +186,10 @@ class TerminalTool(BaseTool):
             login: Run the shell as a login shell (sources profile). Default false.
             background: Launch detached and return after a short startup window
                         (~2s) with a session_id. The process outlives this call
-                        and the agent session until kill_command stops it; it is
-                        poll-only (no stdin). Commands that exit within the
-                        startup window report their real exit code.
+                        and the agent session until kill_command stops it; it
+                        accepts write_stdin input (no echo; stdin never reaches
+                        EOF). Commands that exit within the startup window
+                        report their real exit code.
 
         Returns:
             A JSON object: {"status": "exited"|"running", "exit_code",
@@ -230,6 +235,11 @@ class TerminalTool(BaseTool):
         trailing "\\n" to submit a line. Waits up to yield_time_ms (clamped to
         250–30000 when writing, 5000–300000 when polling) for more output or for
         the process to exit.
+
+        Works for background sessions too: input is delivered to their stdin
+        but not echoed, so verify the effect from the command's output; their
+        stdin never reaches EOF, so stop stdin-reading commands with
+        kill_command.
 
         Args:
             session_id: The id returned by exec_command when status == "running".

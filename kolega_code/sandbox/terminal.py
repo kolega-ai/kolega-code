@@ -115,9 +115,10 @@ class SandboxTerminalManager(TerminalManager):
         env: Optional[Dict[str, str]] = None,
         background: bool = False,
     ) -> ExecResult:
-        # background is a lifetime hint for local PTYs; here the command runs in
-        # the sandbox's persistent terminal, which already outlives any single
-        # exec and lives until the sandbox is destroyed, so no special handling.
+        # background is a lifetime hint for the local backend; here the command
+        # runs in the sandbox's persistent terminal, which already outlives any
+        # single exec and lives until the sandbox is destroyed, so no special
+        # handling.
         _ = background
         yield_ms = clamp_yield(yield_time_ms, poll=False)
         terminal_id = await self._ensure_default_terminal()
