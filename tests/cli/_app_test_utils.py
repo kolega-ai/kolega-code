@@ -159,6 +159,28 @@ async def wait_for_turn_idle(app, pilot, timeout: float = 6.0) -> None:
     raise AssertionError("Timed out waiting for the agent turn worker to finish")
 
 
+async def wait_for_question_prompt(app, pilot, timeout: float = 6.0):
+    """Wait until a pending ask_user_choice question is presented in the UI.
+
+    Presenting a question crosses several event-loop hops (the tool task
+    records the pending question, then the app populates and shows
+    ``#question_actions``), so a single ``pilot.pause()`` after creating the
+    tool task intermittently loses the race under CI load and asserts against
+    an empty option list. Waiting for the populated, visible list closes the
+    race. Returns the ``ActionList`` for convenience.
+    """
+    from kolega_code.cli.tui.widgets import ActionList
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if app._pending_question is not None:
+            question_actions = app.query_one("#question_actions", ActionList)
+            if question_actions.display and question_actions.option_count > 0:
+                return question_actions
+        await pilot.pause(0.01)
+    raise AssertionError("Timed out waiting for the planning question to be presented")
+
+
 async def settle_changes_inspector(app, pilot, timeout: float = 5.0) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
