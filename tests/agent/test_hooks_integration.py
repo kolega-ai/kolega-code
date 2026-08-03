@@ -68,6 +68,14 @@ def stop_until_flag_hook(event):
     return HookOutcome.empty()
 
 
+_STOP_FIRE_COUNT = [0]
+
+
+def count_stop_hook(event):
+    _STOP_FIRE_COUNT[0] += 1
+    return HookOutcome.empty()
+
+
 def _dispatcher(event: HookEvent, func: str, matcher: str = "*") -> HookDispatcher:
     spec = HookSpec(type="python", timeout=5, scope="global", callable=f"{__name__}:{func}")
     return HookDispatcher(HookConfig(entries={event: [(HookMatcher(matcher), [spec])]}))
@@ -229,3 +237,33 @@ async def test_stop_hook_keeps_working_then_completes(tmp_path, agent_config):
     assert chunks[-1]["complete"] is True
     # The keep-working reason was appended to history as a user message.
     assert any("keep going" in m.get_text_content() for m in agent.history if m.role == "user")
+
+
+@pytest.mark.asyncio
+async def test_stop_hook_skipped_on_nudged_iteration_fires_on_real_end(tmp_path, agent_config):
+    """A silent-turn nudge is not a turn end: the Stop hook must not fire on the
+    nudged iteration, only once when the model actually finishes."""
+    from kolega_code.llm.models import ThinkingBlock
+
+    from .compaction_helpers import FakeStream
+
+    _STOP_FIRE_COUNT[0] = 0
+    agent = _make_agent(tmp_path, agent_config, _dispatcher(HookEvent.STOP, "count_stop_hook"))
+    agent.system_prompt = Message("system", [TextBlock("test agent")])
+    agent.tool_collection = Mock()
+    agent.tool_collection.get_tool_list = Mock(return_value=[])
+    agent.count_current_context = AsyncMock(return_value=TokenCount(input_tokens=10))
+    agent.llm = Mock()
+    agent.llm.stream = AsyncMock(
+        side_effect=[
+            FakeStream(Message(role="assistant", content=[ThinkingBlock(thinking="hmm")], stop_reason="end_turn")),
+            FakeStream(Message(role="assistant", content=[TextBlock(text="done")], stop_reason="end_turn")),
+        ]
+    )
+
+    chunks = [chunk async for chunk in agent.process_message_stream("hello")]
+
+    # Silent first iteration → nudged (no Stop hook), second iteration ends for real.
+    assert agent.llm.stream.await_count == 2
+    assert _STOP_FIRE_COUNT[0] == 1
+    assert chunks[-1]["complete"] is True
