@@ -305,7 +305,14 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  emitError(CURRENT.id, err);
-  process.exit(1);
-});
+main()
+  .then(() => {
+    // Exit explicitly: an interrupted cell can leave timers or sockets in the
+    // event loop that would otherwise keep the process alive after the host
+    // asked it to exit. Flush stdout first so no result frame is truncated.
+    process.stdout.write("", () => process.exit(0));
+  })
+  .catch((err) => {
+    emitError(CURRENT.id, err);
+    process.exit(1);
+  });
