@@ -304,21 +304,12 @@ class LoopRuntimeMixin(tui_app_base.KolegaAppBase):
         self._add_conversation_entry(tui_state.ConversationEntry(kind="skill", content=activated))
         return remainder.strip() or f"Apply the {skill_name} skill now."
 
-    def _accumulate_loop_tokens(self) -> None:
-        """Best-effort: add the last assistant turn's token usage to the loop."""
-        if self._scheduled_loop is None or self.agent is None:
-            return
-        try:
-            history = self.agent.history
-        except Exception:  # noqa: BLE001 - token accounting must never break the loop
-            return
-        for message in reversed(history):
-            if getattr(message, "role", None) == "assistant":
-                usage = getattr(message, "usage_metadata", {}) or {}
-                added = int(usage.get("input_tokens") or 0) + int(usage.get("output_tokens") or 0)
-                if added > 0:
-                    self._scheduled_loop.tokens_spent += added
-                return
+    def _drain_loop_tokens(self, state: LoopState, mark) -> None:
+        """Add all LLM usage since ``mark`` — the whole iteration's command tree —
+        to the loop's counter."""
+        delta = self._usage_ledger.snapshot().since(mark)
+        if delta.total_tokens > 0:
+            state.tokens_spent += delta.total_tokens
 
     async def _run_loop_iteration(self) -> None:
         """Run one scheduled iteration as an ordinary turn."""
@@ -327,6 +318,7 @@ class LoopRuntimeMixin(tui_app_base.KolegaAppBase):
             self._loop_iteration_active = False
             self.agent_worker = None
             return
+        iteration_mark = self._usage_ledger.snapshot()
         # ``_process_message`` owns ``agent_worker`` for its whole lifetime and
         # releases it in its own finally. Any path that returns *before* calling
         # it has to release the worker itself, or the app stays permanently
@@ -370,10 +362,11 @@ class LoopRuntimeMixin(tui_app_base.KolegaAppBase):
             turn_started = True
             cancelled = await self._process_message(turn_prompt, turn_label=f"Loop {iteration}: {prompt}")
             if cancelled:
+                self._drain_loop_tokens(state, iteration_mark)
                 await self._stop_loop(messages.LOOP_STOPPED_BY_USER.format(iterations=iteration))
                 return
 
-            self._accumulate_loop_tokens()
+            self._drain_loop_tokens(state, iteration_mark)
             state.advance_after_completion()
             await self._persist_loop_async()
             self._refresh_status_dashboard()

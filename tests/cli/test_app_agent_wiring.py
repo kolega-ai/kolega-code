@@ -1,5 +1,6 @@
 # ruff: noqa: F401,F811,E402
 from pathlib import Path
+from typing import Any, cast
 import asyncio
 import json
 import time
@@ -256,3 +257,39 @@ async def test_textual_app_passes_skill_extensions_to_build_and_plan_agents(
         assert isinstance(app.agent, FakePlanningAgent)
         planning_skill_tools = extension_by_name(app.agent.kwargs["tool_extensions"], "cli-agent-skills")
         assert "activate_skill" in planning_skill_tools.tools
+
+
+@pytest.mark.asyncio
+async def test_agent_rebuild_keeps_the_same_usage_ledger(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Model/settings rebuilds construct a new agent but must keep accounting on
+    the app's one process-wide ledger (same object, same run_id)."""
+    pytest.importorskip("textual")
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.config import config_summary
+    from kolega_code.cli.session_store import SessionStore
+
+    install_fake_agents(monkeypatch)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        first_agent = cast(Any, app.agent)
+        assert first_agent is not None
+        ledger = first_agent.kwargs["usage_ledger"]
+        assert ledger is app._usage_ledger
+        run_id = ledger.run_id
+
+        await app._build_agent(config, rebuild=True)
+
+        assert app.agent is not first_agent
+        assert cast(Any, app.agent).kwargs["usage_ledger"] is ledger
+        assert ledger.run_id == run_id

@@ -147,6 +147,7 @@ class WebFetchTool(StreamingTool):
             "requests_per_minute": rate_limits.requests_per_minute,
             "tokens_per_minute": rate_limits.tokens_per_minute,
             "token_manager": self.config.get_chatgpt_token_manager(),
+            "usage_ledger": getattr(self.caller, "usage_ledger", None),
         }
         caller_llm = getattr(self.caller, "llm", None)
         if isinstance(caller_llm, InstrumentedLLMClient):

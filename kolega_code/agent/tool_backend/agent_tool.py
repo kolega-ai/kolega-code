@@ -355,6 +355,7 @@ class AgentTool(BaseTool):
                 permission_callback=getattr(self.caller, "permission_callback", None) if self.caller else None,
                 usage_recorder=getattr(self.caller, "usage_recorder", None) if self.caller else None,
                 sub_agent_recorder=getattr(self.caller, "sub_agent_recorder", None) if self.caller else None,
+                usage_ledger=getattr(self.caller, "usage_ledger", None) if self.caller else None,
                 hook_dispatcher=getattr(self.caller, "hook_dispatcher", None) if self.caller else None,
                 max_iterations=getattr(self.caller, "max_iterations", None),
                 memory_manager=self.memory_manager,
@@ -810,6 +811,7 @@ class AgentTool(BaseTool):
             permission_callback=auto_allow_permission_callback,
             usage_recorder=getattr(self.caller, "usage_recorder", None) if self.caller else None,
             sub_agent_recorder=getattr(self.caller, "sub_agent_recorder", None) if self.caller else None,
+            usage_ledger=getattr(self.caller, "usage_ledger", None) if self.caller else None,
             hook_dispatcher=getattr(self.caller, "hook_dispatcher", None) if self.caller else None,
             max_iterations=getattr(self.caller, "max_iterations", None),
         )

@@ -34,6 +34,7 @@ if TYPE_CHECKING:
 
     from kolega_code.agent import AgentConfig, AgentEvent, BaseAgent, PromptExtension, ToolExtension
     from kolega_code.hooks import HookDispatcher
+    from kolega_code.llm.ledger import UsageLedger, UsageSnapshot
     from kolega_code.memory import ProjectMemoryManager
     from kolega_code.permissions import PermissionDecision, PermissionMode, PermissionRequest
 
@@ -151,7 +152,9 @@ class KolegaAppBase(App):
         _plan_reofferable: bool
         _plan_decision_active: bool
         _gigacode_enabled: bool
+        _usage_ledger: UsageLedger
         _goal: GoalState | None
+        _goal_usage_mark: UsageSnapshot
         _scheduled_loop: LoopState | None
         #: Set synchronously when a loop iteration worker is launched and cleared
         #: when its bookkeeping finishes, so the 1s scheduler tick can never

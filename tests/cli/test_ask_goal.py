@@ -216,3 +216,58 @@ def test_ask_goal_plain_mode_emits_stderr_status(tmp_path, capsys, monkeypatch, 
     captured = capsys.readouterr()
     assert "[goal]" in captured.err
     assert "MET" in captured.err
+
+
+def test_ask_goal_tokens_accumulate_from_ledger_deltas(tmp_path, capsys, monkeypatch, isolated_cli_env):
+    """Goal accounting drains the shared usage ledger: work turns and verifier
+    calls both count, on any provider shape, including the final verifier."""
+    from kolega_code.cli import main as main_module
+    from kolega_code.cli.goal import GoalState
+    from kolega_code.llm.usage import normalize_usage
+
+    class CapturingGoalState(GoalState):
+        instances: list = []
+
+        @classmethod
+        def create(cls, *args, **kwargs):
+            state = super().create(*args, **kwargs)
+            cls.instances.append(state)
+            return state
+
+    class LedgerGoalAskFakeAgent(GoalAskFakeAgent):
+        def _record(self, tokens: int) -> None:
+            ledger = self.kwargs["usage_ledger"]
+            request_id = ledger.begin("openai", "gpt-5.4-mini")
+            ledger.record_response(
+                request_id,
+                normalize_usage({"prompt_tokens": tokens, "completion_tokens": 0}, "openai", "gpt-5.4-mini"),
+            )
+
+        async def process_message_stream(self, message, attachments=None):
+            self._record(100)
+            async for item in GoalAskFakeAgent.process_message_stream(self, message, attachments):
+                yield item
+
+        async def evaluate_goal_condition(self, condition):
+            self._record(7)
+            return await GoalAskFakeAgent.evaluate_goal_condition(self, condition)
+
+    _reset_fake(monkeypatch)
+    monkeypatch.setattr(main_module, "CoderAgent", LedgerGoalAskFakeAgent)
+    monkeypatch.setattr(main_module, "GoalState", CapturingGoalState)
+    CapturingGoalState.instances = []
+    project = _setup_project(tmp_path, monkeypatch)
+
+    # Two not-met verdicts (two nudge turns), then met.
+    GoalAskFakeAgent.evaluate_queue = [
+        GoalVerdict(met=False, reason="no"),
+        GoalVerdict(met=False, reason="still no"),
+        GoalVerdict(met=True, reason="done"),
+    ]
+
+    exit_code = main_module.main(["ask", "--goal", "make tests pass", "--project", str(project)])
+
+    assert exit_code == 0
+    goal_state = CapturingGoalState.instances[0]
+    # 3 work streams (initial + 2 nudges) x 100 + 3 verifier calls x 7.
+    assert goal_state.tokens_spent == 3 * 100 + 3 * 7

@@ -49,6 +49,7 @@ class ThinkHardTool(StreamingTool):
                 user_id=self.caller.user_id,
                 user_email=self.caller.user_email,
                 token_manager=self.config.get_chatgpt_token_manager(),
+                usage_ledger=getattr(self.caller, "usage_ledger", None),
             )
         else:
             # Fallback to regular client
@@ -60,6 +61,7 @@ class ThinkHardTool(StreamingTool):
                 requests_per_minute=rate_limits.requests_per_minute,
                 tokens_per_minute=rate_limits.tokens_per_minute,
                 token_manager=self.config.get_chatgpt_token_manager(),
+                usage_ledger=getattr(self.caller, "usage_ledger", None),
             )
 
         try:

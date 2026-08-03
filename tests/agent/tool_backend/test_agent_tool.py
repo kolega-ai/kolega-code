@@ -746,3 +746,42 @@ class TestAgentTool:
         """Helper to create async generator for mock message stream."""
         for msg in messages:
             yield msg
+
+
+@pytest.mark.asyncio
+async def test_dispatch_agent_threads_callers_usage_ledger(agent_tool, mock_caller):
+    """Sub-agents (including the goal verifier) share the caller's usage ledger."""
+    from kolega_code.llm.ledger import UsageLedger
+
+    ledger = UsageLedger()
+    mock_caller.usage_ledger = ledger
+    original_import = builtins.__import__
+
+    with patch.object(builtins, "__import__") as mock_import:
+        mock_module = MagicMock()
+        mock_module.MockAgent = MockAgent
+
+        def mock_import_func(name, *args, **kwargs):
+            if name == "test.module":
+                return mock_module
+            return original_import(name, *args, **kwargs)
+
+        mock_import.side_effect = mock_import_func
+        MockAgent.configure_streaming([{"content": "Done.", "complete": True, "uuid": str(uuid.uuid4())}])
+        MockAgent.last_instance = None
+
+        await agent_tool._dispatch_agent(agent_class_import="test.module.MockAgent", task="Test task")
+
+    assert MockAgent.last_instance is not None
+    assert MockAgent.last_instance.init_kwargs["usage_ledger"] is ledger
+
+
+def test_construct_workflow_sub_agent_threads_callers_usage_ledger(agent_tool, mock_caller):
+    from kolega_code.llm.ledger import UsageLedger
+
+    ledger = UsageLedger()
+    mock_caller.usage_ledger = ledger
+
+    agent = agent_tool._construct_workflow_sub_agent(MockAgent, config=None, extra_tool_extensions=None)
+
+    assert agent.init_kwargs["usage_ledger"] is ledger

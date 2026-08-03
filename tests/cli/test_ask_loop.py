@@ -338,3 +338,47 @@ def test_a_plain_ask_is_unaffected(ask_env, capsys, isolated_cli_env):
     assert agent.messages == ["just one question"]
     assert agent.loop_active is False
     assert "[loop]" not in capsys.readouterr().err
+
+
+def test_ask_loop_tokens_accumulate_per_iteration(ask_env, capsys, isolated_cli_env):
+    """ask --loop previously had no token accounting at all; every iteration now
+    drains the shared usage ledger into LoopState.tokens_spent."""
+    from kolega_code.cli import main as main_module
+    from kolega_code.cli.loop import LoopState
+    from kolega_code.llm.usage import normalize_usage
+
+    class CapturingLoopState(LoopState):
+        instances: list = []
+
+        @classmethod
+        def create(cls, *args, **kwargs):
+            state = super().create(*args, **kwargs)
+            cls.instances.append(state)
+            return state
+
+    class LedgerLoopAskFakeAgent(LoopAskFakeAgent):
+        async def process_message_stream(self, message, attachments=None):
+            ledger = self.kwargs["usage_ledger"]
+            request_id = ledger.begin("anthropic", "m")
+            ledger.record_response(
+                request_id, normalize_usage({"input_tokens": 40, "output_tokens": 2}, "anthropic", "m")
+            )
+            async for item in LoopAskFakeAgent.process_message_stream(self, message, attachments):
+                yield item
+
+    monkeypatch = pytest.MonkeyPatch()
+    try:
+        monkeypatch.setattr(main_module, "CoderAgent", LedgerLoopAskFakeAgent)
+        monkeypatch.setattr(main_module, "LoopState", CapturingLoopState)
+        CapturingLoopState.instances = []
+
+        exit_code = main_module.main(
+            ["ask", "check CI", "--project", str(ask_env), "--loop", "5m", "--loop-max-iterations", "3"]
+        )
+    finally:
+        monkeypatch.undo()
+
+    assert exit_code == 0
+    loop_state = CapturingLoopState.instances[0]
+    assert loop_state.iterations == 3
+    assert loop_state.tokens_spent == 3 * 42

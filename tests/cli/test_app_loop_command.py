@@ -971,3 +971,31 @@ async def test_ticks_do_not_re_render_when_the_coarse_label_is_unchanged(tmp_pat
         await app._loop_tick()
         await pilot.pause()
         assert calls["count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_loop_tokens_accumulate_from_ledger_delta_per_iteration(tmp_path, monkeypatch, clock):
+    """Each loop iteration adds the ledger delta for its whole command tree."""
+    from kolega_code.llm.usage import normalize_usage
+
+    class LedgerLoopFakeAgent(LoopFakeAgent):
+        async def process_message_stream(self, message, attachments=None):
+            ledger = self.kwargs["usage_ledger"]
+            request_id = ledger.begin("anthropic", "m")
+            ledger.record_response(
+                request_id, normalize_usage({"input_tokens": 40, "output_tokens": 2}, "anthropic", "m")
+            )
+            async for item in LoopFakeAgent.process_message_stream(self, message, attachments):
+                yield item
+
+    app = _build_loop_test_app(tmp_path, monkeypatch, agent_cls=LedgerLoopFakeAgent)
+    async with app.run_test() as pilot:
+        agent = await _ready(app, pilot)
+        assert agent.kwargs["usage_ledger"] is app._usage_ledger
+
+        await _submit(app, "/loop 5m check if CI went green")
+        await _wait_loop_idle(app, pilot)
+
+        assert app._scheduled_loop is not None
+        assert app._scheduled_loop.iterations == 1
+        assert app._scheduled_loop.tokens_spent == 42

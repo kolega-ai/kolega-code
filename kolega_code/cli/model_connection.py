@@ -27,6 +27,7 @@ async def test_model_connection(
     *,
     client_factory: Callable[..., Any] = LLMClient,
     timeout: float = CONNECTION_TEST_TIMEOUT_SECONDS,
+    usage_ledger: Any = None,
 ) -> ModelConnectionResult:
     """Send a tiny no-tool prompt through the selected model.
 
@@ -36,14 +37,19 @@ async def test_model_connection(
 
     model_config = config.long_context_config
     try:
-        client = client_factory(
-            provider=model_config.provider,
-            api_key=config.get_api_key(model_config.provider) or "",
-            max_retries=0,
-            requests_per_minute=model_config.rate_limits.requests_per_minute,
-            tokens_per_minute=model_config.rate_limits.tokens_per_minute,
-            token_manager=config.get_chatgpt_token_manager(),
-        )
+        factory_kwargs: dict[str, Any] = {
+            "provider": model_config.provider,
+            "api_key": config.get_api_key(model_config.provider) or "",
+            "max_retries": 0,
+            "requests_per_minute": model_config.rate_limits.requests_per_minute,
+            "tokens_per_minute": model_config.rate_limits.tokens_per_minute,
+            "token_manager": config.get_chatgpt_token_manager(),
+        }
+        # The probe is a real paid request; account for it when the host has a
+        # ledger. Omitted when None so injected fake factories keep their shape.
+        if usage_ledger is not None:
+            factory_kwargs["usage_ledger"] = usage_ledger
+        client = client_factory(**factory_kwargs)
         messages = MessageHistory([Message(role="user", content=[TextBlock(text="Reply with OK.")])])
         await asyncio.wait_for(
             client.generate(

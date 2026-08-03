@@ -476,6 +476,8 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
 
     def _set_goal_state(self, goal: GoalState) -> None:
         self._goal = goal
+        # A goal counts tokens from the moment it is set, not from process start.
+        self._goal_usage_mark = self._usage_ledger.snapshot()
         if self.agent is not None:
             self.agent.apply_goal(goal.condition, self._goal_prompt_extension())
         self._refresh_status_dashboard()
@@ -500,21 +502,19 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         if note:
             self._add_conversation_entry(tui_state.ConversationEntry(kind="system", content=note))
 
-    def _accumulate_goal_tokens(self) -> None:
-        """Best-effort: add the last assistant turn's token usage to the goal."""
-        if self._goal is None or self.agent is None:
-            return
-        try:
-            history = self.agent.history
-        except Exception:  # noqa: BLE001 - token accounting must never break the loop
-            return
-        for message in reversed(history):
-            if getattr(message, "role", None) == "assistant":
-                usage = getattr(message, "usage_metadata", {}) or {}
-                added = int(usage.get("input_tokens") or 0) + int(usage.get("output_tokens") or 0)
-                if added > 0:
-                    self._goal.tokens_spent += added
-                return
+    def _drain_goal_tokens(self) -> None:
+        """Fold all LLM usage since the last drain into the active goal.
+
+        The ledger covers every nested caller (verifier sub-agents, compression,
+        think_hard, web-fetch, hooks), so a drain at each goal boundary counts
+        the whole command tree — including turns run while the goal was active.
+        """
+        current = self._usage_ledger.snapshot()
+        if self._goal is not None:
+            delta = current.since(self._goal_usage_mark)
+            if delta.total_tokens > 0:
+                self._goal.tokens_spent += delta.total_tokens
+        self._goal_usage_mark = current
 
     async def _evaluate_active_goal(self):
         """Dispatch the read-only verifier and update goal bookkeeping. Returns the verdict."""
@@ -531,7 +531,7 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         """Evaluate → continue loop, run after a successful (non-cancelled) turn."""
         try:
             while self._goal is not None and self._goal.is_active:
-                self._accumulate_goal_tokens()
+                self._drain_goal_tokens()
                 verdict = await self._evaluate_active_goal()
                 if verdict.met:
                     await self._complete_goal(verdict)
@@ -568,6 +568,7 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
     async def _complete_goal(self, verdict) -> None:
         if self._goal is None:
             return
+        self._drain_goal_tokens()  # count the final verifier before persisting
         condition = self._goal.condition
         self._goal.met = True
         self._goal.status_note = ""
@@ -584,6 +585,7 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
     async def _abort_goal(self) -> None:
         if self._goal is None:
             return
+        self._drain_goal_tokens()
         turns = self._goal.turns_evaluated
         self._goal.paused = True
         self._goal.status_note = f"Reached the turn cap ({self._goal.max_turns})."
@@ -601,6 +603,7 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
     async def _pause_goal(self, note: str) -> None:
         if self._goal is None:
             return
+        self._drain_goal_tokens()  # count the cancelled nudge turn's spend
         self._goal.paused = True
         self._goal.status_note = "Stopped by user."
         self._refresh_status_dashboard()
@@ -1168,6 +1171,7 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             session_recorder=self._session_recorder,
             hook_dispatcher=self._session_hook_dispatcher(),
             custom_agent_catalog=self.custom_agent_catalog,
+            usage_ledger=self._usage_ledger,
         )
         assert self.agent is not None
         # The runtime owns the agent for control purposes while the CLI keeps

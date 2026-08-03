@@ -725,3 +725,51 @@ def test_goal_state_from_dict_tolerates_missing_keys() -> None:
     assert partial.condition == "do something"
     assert partial.met is True
     assert partial.is_active is False  # met → not active
+
+
+@pytest.mark.asyncio
+async def test_goal_tokens_accumulate_from_ledger_deltas_including_verifier(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Goal token accounting drains the shared usage ledger, so every LLM call in
+    the goal's command tree counts — work turns AND the verifier sub-agent —
+    including the final verifier that produced the met verdict."""
+    from kolega_code.llm.usage import normalize_usage
+
+    class LedgerGoalFakeAgent(GoalFakeAgent):
+        def _record(self, tokens: int) -> None:
+            ledger = self.kwargs["usage_ledger"]
+            request_id = ledger.begin("anthropic", "m")
+            ledger.record_response(
+                request_id, normalize_usage({"input_tokens": tokens, "output_tokens": 0}, "anthropic", "m")
+            )
+
+        async def process_message_stream(self, message, attachments=None):
+            self._record(100)
+            async for item in GoalFakeAgent.process_message_stream(self, message, attachments):
+                yield item
+
+        async def evaluate_goal_condition(self, condition):
+            self._record(7)  # the verifier is itself LLM work on the shared ledger
+            return await GoalFakeAgent.evaluate_goal_condition(self, condition)
+
+    app = _build_goal_test_app(tmp_path, monkeypatch, agent_cls=LedgerGoalFakeAgent)
+
+    async with app.run_test() as pilot:
+        await _wait_for(app, pilot, lambda: app.agent is not None)
+        agent = GoalFakeAgent.instances[-1]
+        assert agent.kwargs["usage_ledger"] is app._usage_ledger
+
+        agent._goal_evaluate_results = [
+            GoalVerdict(met=False, reason="not yet"),
+            GoalVerdict(met=False, reason="still not"),
+            GoalVerdict(met=True, reason="done"),
+        ]
+
+        await _submit(app, pilot, "/goal make all tests pass")
+        await _wait_goal_terminal(app, pilot)
+
+        assert app._goal is not None and app._goal.met is True
+        # 3 work streams x 100 + 3 verifier evaluations x 7, nothing lost at
+        # completion (the final verifier drains in _complete_goal).
+        assert app._goal.tokens_spent == 3 * 100 + 3 * 7

@@ -34,6 +34,7 @@ tools, and provider-specific parameters in a standardized way.
 from typing import TYPE_CHECKING, Any, AsyncContextManager, Coroutine, Dict, List, Optional, Union
 
 from .exceptions import map_to_llm_error
+from .ledger import LedgerStreamAdapter, UsageLedger, describe_error
 from .models import Message, MessageHistory, ToolDefinition
 from .providers.models import GenerationParams, TokenCount
 from .specs import validate_thinking_effort
@@ -74,11 +75,15 @@ class LLMClient:
         tokens_per_minute: Optional[int] = None,
         token_manager: Optional[Any] = None,
         model: Optional[str] = None,
+        usage_ledger: Optional[UsageLedger] = None,
     ):
         self.provider_name = provider.lower()
         self._api_key = api_key  # Store API key privately
         # Refreshing OAuth token manager, used only by the ChatGPT-subscription provider.
         self._token_manager = token_manager
+        # Process-wide usage accounting; every invocation on this client settles
+        # into it exactly once (see kolega_code/llm/ledger.py). None disables it.
+        self._usage_ledger = usage_ledger
         # Routing hint only: nearly every model shares its provider's API surface, so
         # the client is provider-scoped and the model id is passed per call. The one
         # exception is deepseek-v4-flash (Responses API vs the deepseek Chat default),
@@ -310,7 +315,19 @@ class LLMClient:
                         thinking, str(kwargs.get("model")) if kwargs.get("model") else None
                     ),
                 )
-            return await self.provider.generate(messages, system, params, **kwargs)
+            if self._usage_ledger is None:
+                return await self.provider.generate(messages, system, params, **kwargs)
+            request_id = self._usage_ledger.begin(self.provider_name, self._request_model(kwargs))
+            try:
+                message = await self.provider.generate(messages, system, params, **kwargs)
+            except BaseException as exc:
+                # Includes CancelledError: a cancelled call may already have cost
+                # tokens, so it settles as failed; propagation is unchanged (the
+                # outer clause maps Exception only).
+                self._usage_ledger.record_failure(request_id, describe_error(exc))
+                raise
+            self._usage_ledger.record_response(request_id, getattr(message, "usage", None))
+            return message
         except Exception as e:
             raise map_to_llm_error(e, self.provider_name) from e
 
@@ -355,6 +372,25 @@ class LLMClient:
                 )
 
             # Return the appropriate stream type for the provider
-            return self.provider.stream(messages, system, params, **kwargs)
+            inner = self.provider.stream(messages, system, params, **kwargs)
+            if self._usage_ledger is None:
+                return inner
+            return self._ledgered_stream(inner, self._request_model(kwargs))
         except Exception as e:
             raise map_to_llm_error(e, self.provider_name) from e
+
+    def _request_model(self, kwargs: Dict[str, Any]) -> Optional[str]:
+        model = kwargs.get("model")
+        return str(model) if model else self._model
+
+    async def _ledgered_stream(self, inner: Any, model: Optional[str]) -> LedgerStreamAdapter:
+        # Runs when the CALLER awaits the stream — the point the request starts.
+        assert self._usage_ledger is not None
+        request_id = self._usage_ledger.begin(self.provider_name, model)
+        try:
+            wrapper = await inner
+        except BaseException as exc:
+            # Stream-setup errors propagate unmapped today; that is preserved.
+            self._usage_ledger.record_failure(request_id, describe_error(exc))
+            raise
+        return LedgerStreamAdapter(wrapper, self._usage_ledger, request_id)
