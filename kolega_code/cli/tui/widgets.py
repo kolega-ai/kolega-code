@@ -820,7 +820,11 @@ class PromptPanel(Vertical):
 
     def hide(self) -> None:
         self.display = False
-        self.actions.hide()
+        # App teardown prunes children before their ancestors, and the turn
+        # worker's cancellation cleanup can run mid-teardown — tolerate an
+        # already-removed ActionList.
+        for actions in self.query(ActionList):
+            actions.hide()
 
 
 class ChatComposer(TextArea):

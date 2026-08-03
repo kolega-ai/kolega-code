@@ -428,3 +428,99 @@ async def test_build_and_plan_modes_get_different_question_guidance(
 
         assert "cli-planning-questions" in prompt_ids()
         assert "cli-build-questions" not in prompt_ids()
+
+
+@pytest.mark.asyncio
+async def test_cancel_pending_question_survives_pruned_action_list(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """App teardown prunes the ActionList before the turn worker's cancellation
+    cleanup runs; _cancel_pending_question must tolerate the missing child."""
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.tools import ToolError
+
+    class FakeBaseAgent(FakeCoderAgent):
+        instances: list["FakeBaseAgent"] = []
+
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.__class__.instances.append(self)
+
+    install_fake_agents(monkeypatch, coder_cls=FakeBaseAgent, planning_cls=FakeBaseAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test() as pilot:
+        await app.action_toggle_interaction_mode()
+        ask_user_choice = extension_by_name(
+            FakeBaseAgent.instances[-1].kwargs["tool_extensions"], "cli-planning-questions"
+        ).tools["ask_user_choice"]
+
+        app._turn_active = True
+        answer_task = asyncio.create_task(
+            ask_user_choice(
+                questions=question_payload(
+                    "Which approach should we use?",
+                    [("Keep state local", "Store in memory"), ("Persist it", "Write to disk")],
+                    header="Approach",
+                )
+            )
+        )
+        question_actions = await wait_for_question_prompt(app, pilot)
+
+        await question_actions.remove()
+        await pilot.pause()
+
+        app._cancel_pending_question()
+
+        assert app._pending_question is None
+        with pytest.raises(ToolError):
+            await asyncio.wait_for(answer_task, timeout=5)
+
+
+@pytest.mark.asyncio
+async def test_cancelled_turn_skips_ui_cleanup_when_app_is_exiting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Once exit() has been requested, a cancelled turn must not repaint the
+    dying widget tree (the source of NoMatches tracebacks on Ctrl+Q)."""
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.app import KolegaCodeApp
+
+    install_fake_agents(monkeypatch, coder_cls=FakeCoderAgent, planning_cls=FakeCoderAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test():
+        calls: list[str] = []
+        monkeypatch.setattr(app, "_cancel_pending_question", lambda: calls.append("question"))
+        monkeypatch.setattr(app, "_cancel_pending_approval", lambda: calls.append("approval"))
+
+        async def cancelled_stream():
+            raise asyncio.CancelledError
+            yield  # pragma: no cover
+
+        app._exit = True
+        try:
+            cancelled = await app._run_turn_stream(lambda: cancelled_stream())
+        finally:
+            app._exit = False
+        assert cancelled is True
+        assert calls == []
+
+        cancelled = await app._run_turn_stream(lambda: cancelled_stream())
+        assert cancelled is True
+        assert calls == ["question", "approval"]
