@@ -125,15 +125,20 @@ def test_kimi_coding_k3_model_specs(model, context_length):
     assert specs["thinking_effort"].mode == "kimi_coding_effort"
 
 
-@pytest.mark.parametrize("model", ["deepseek-v4-pro", "deepseek-v4-flash"])
-def test_deepseek_model_specs(model: str):
+@pytest.mark.parametrize(
+    "model,max_completion_tokens",
+    [
+        # pro (chat): the MEASURED ceiling — the server cuts at exactly 65536.
+        ("deepseek-v4-pro", 65536),
+        # flash (Responses): no such cut; measured running to 112990 in one call.
+        ("deepseek-v4-flash", 384000),
+    ],
+)
+def test_deepseek_model_specs(model: str, max_completion_tokens: int):
     specs = get_model_specs("deepseek", model)
 
     assert specs["context_length"] == 1000000
-    # The MEASURED per-response output ceiling (server cuts at exactly 65536),
-    # not DeepSeek's published 384000 — see catalog/deepseek.py and
-    # test_deepseek_output_cap_live.py.
-    assert specs["max_completion_tokens"] == 65536
+    assert specs["max_completion_tokens"] == max_completion_tokens
     assert specs["default_temperature"] == 1.0
     assert specs["thinking_effort"].options == ("none", "high", "max")
     assert specs["thinking_effort"].default == "high"

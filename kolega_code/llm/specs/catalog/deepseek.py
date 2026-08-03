@@ -10,11 +10,15 @@ from kolega_code.llm.specs.types import ThinkingEffortSpec
 #     length allowed for this chat interface") with a clean status="completed".
 #     With an explicit max_output_tokens=64000 it streams the full 64000 and
 #     reports the cap hit honestly (status="incomplete"/max_output_tokens).
-#     Family ceiling assumed equal to pro's measured 65536.
 #   - Over-ceiling caps (384000) are accepted silently on both paths.
-# Requests never send this value raw: both request paths clamp to
-# DEEPSEEK_WIRE_OUTPUT_CAP=64000 (specs/accessors.py), so the client cap always
-# fires before the server ceiling and truncation is reported honestly.
+# flash is 384000 (corrected from 65536, which was pro's measured chat ceiling
+# assumed to apply here): those probes only measured visible output, while a
+# reasoning-heavy call was later measured running to 112990 tokens in a single
+# Responses call.
+# pro never sends this value raw: the chat path clamps to
+# DEEPSEEK_WIRE_OUTPUT_CAP=64000 (specs/accessors.py) so the client cap fires
+# before the server ceiling and truncation is reported honestly. flash passes
+# through.
 DEEPSEEK_SPECS = {
     ("deepseek", "deepseek-v4-pro"): {
         "context_length": 1000000,
@@ -35,7 +39,7 @@ DEEPSEEK_SPECS = {
     # also correctly excludes flash from the flat reasoning_content replay path.
     ("deepseek", "deepseek-v4-flash"): {
         "context_length": 1000000,
-        "max_completion_tokens": 65536,
+        "max_completion_tokens": 384000,
         "default_temperature": 1.0,
         "supports_vision": False,
         "preferred_edit_protocol": "claude_code",

@@ -119,12 +119,14 @@ def preferred_edit_protocol(provider: str, model_name: str) -> Optional[str]:
 #     rejects or visibly clamps, so the client must send the cap it wants.
 # An explicit client cap below the ceiling is therefore both the only reliable
 # honest-truncation signal AND what unlocks the model's full output (uncapped,
-# flash delivers ~7k; capped, 64000). 64000 matches oh-my-pi's
-# OPENAI_MAX_OUTPUT_TOKENS and leaves margin under the measured 65536 ceiling.
-# Applied to DeepSeek models on every provider that offers them (first-party,
-# fireworks, ollama_cloud, openrouter) by _apply_deepseek_request_rules in
-# providers/openai.py and DeepSeekResponsesProvider._build_request.
+# flash delivers ~7k; capped, 64000). 64000 leaves margin under the 65536 ceiling
+# measured on the chat path, and applies only there: flash was separately measured
+# running to 112990 output tokens in a single Responses call (2026-08-03), so it
+# takes its catalog value instead.
 DEEPSEEK_WIRE_OUTPUT_CAP = 64000
+
+# Routes whose catalog max_completion_tokens is itself the real ceiling.
+_UNCLAMPED_DEEPSEEK_ROUTES = {("deepseek", "deepseek-v4-flash")}
 
 
 def is_deepseek_model(model_name: str) -> bool:
@@ -143,8 +145,12 @@ def deepseek_output_token_cap(provider: str, model_name: str, requested: Optiona
     ``DEEPSEEK_WIRE_OUTPUT_CAP``). Always returns a value — DeepSeek requests
     always carry an explicit cap, because the server truncates silently without
     one (see the block comment above). The min keeps smaller models honest: a
-    catalog entry with a cap below 64000 stays at its own cap.
+    catalog entry with a cap below 64000 stays at its own cap. Routes in
+    ``_UNCLAMPED_DEEPSEEK_ROUTES`` skip the clamp and pass their catalog value
+    through.
     """
-    specs = MODEL_SPECS.get((_provider_value(provider), model_name))
+    provider_value = _provider_value(provider)
+    specs = MODEL_SPECS.get((provider_value, model_name))
     ceiling = specs.get("max_completion_tokens") if specs else None
-    return min(value for value in (requested, ceiling, DEEPSEEK_WIRE_OUTPUT_CAP) if value is not None)
+    clamp = None if (provider_value, model_name) in _UNCLAMPED_DEEPSEEK_ROUTES else DEEPSEEK_WIRE_OUTPUT_CAP
+    return min(value for value in (requested, ceiling, clamp) if value is not None)

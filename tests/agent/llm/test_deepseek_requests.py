@@ -162,8 +162,8 @@ def _responses_request(params) -> dict:
 
 def test_responses_build_request_emits_max_output_tokens() -> None:
     # The shared Responses builder omits the cap; the DeepSeek override must add
-    # it (clamped) — without one the server truncates silently.
+    # it — without one the server truncates at its own 65536 default.
     assert _responses_request(GenerationParams(max_completion_tokens=4096))["max_output_tokens"] == 4096
-    assert _responses_request(GenerationParams(max_completion_tokens=384000))["max_output_tokens"] == 64000
-    # No params at all (direct callers): always-emit pins the wire cap.
-    assert _responses_request(None)["max_output_tokens"] == 64000
+    # flash is unclamped: its catalog max_completion_tokens passes through.
+    assert _responses_request(GenerationParams(max_completion_tokens=384000))["max_output_tokens"] == 384000
+    assert _responses_request(None)["max_output_tokens"] == 384000
