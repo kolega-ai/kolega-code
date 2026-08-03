@@ -14,8 +14,11 @@ from .session_store import default_state_dir
 
 SETTINGS_SCHEMA_VERSION = 3
 _SUPPORTED_SCHEMA_VERSIONS = {1, 2, 3}
-# Keys read from each saved per-agent-role model entry.
+# Keys read from each saved per-agent-role model entry. Operational model-slot
+# entries carry only provider/model; the filter below drops what is absent.
 _AGENT_MODEL_KEYS = ("provider", "model", "thinking_effort")
+# Operational model slots that can be pinned independently of the active model.
+MODEL_SLOTS = ("fast", "thinking")
 # Reserved keys in the shared ``api_keys`` dict used for cloud web-search backends.
 WEB_SEARCH_KEY_NAMES = ("firecrawl", "tavily")
 
@@ -24,11 +27,12 @@ class SettingsStoreError(RuntimeError):
     """Raised when CLI settings cannot be loaded or saved."""
 
 
-def _coerce_agent_models(raw: object) -> dict[str, dict]:
-    """Normalize a stored agent_models mapping (role -> {provider, model, ...}).
+def _coerce_model_entries(raw: object) -> dict[str, dict]:
+    """Normalize a stored key -> {provider, model, ...} mapping.
 
-    Tolerant of partial/legacy data: entries without a provider or model are
-    dropped so a malformed file can never crash startup."""
+    Shared by ``agent_models`` (keyed by agent role) and ``model_slots`` (keyed by
+    operational slot). Tolerant of partial/legacy data: entries without a provider
+    or model are dropped so a malformed file can never crash startup."""
     if not isinstance(raw, dict):
         return {}
     result: dict[str, dict] = {}
@@ -82,6 +86,11 @@ class CliSettings:
     # each value a {provider, model, thinking_effort} dict. Empty = every role uses
     # the active model.
     agent_models: dict[str, dict] = field(default_factory=dict)
+    # Operational model-slot overrides, keyed by MODEL_SLOTS value ("fast",
+    # "thinking"), each a {provider, model} dict. Empty = the slot inherits the
+    # active model. Additive optional field — absent in older files -> empty
+    # mapping, no schema bump (same convention as web_search_backend).
+    model_slots: dict[str, dict] = field(default_factory=dict)
     # Resolved project paths whose .kolega/hooks.json the user has opted to trust.
     trusted_hook_projects: list[str] = field(default_factory=list)
     # Resolved project paths whose .kolega/mcp_servers.json the user has opted to trust.
@@ -129,7 +138,9 @@ class CliSettings:
             active_theme=data.get("active_theme"),
             api_keys={str(provider): str(key) for provider, key in api_keys.items() if key},
             # Additive optional field; absent in pre-v3 files -> empty mapping.
-            agent_models=_coerce_agent_models(data.get("agent_models")),
+            agent_models=_coerce_model_entries(data.get("agent_models")),
+            # Additive optional field; absent in older files -> empty mapping.
+            model_slots=_coerce_model_entries(data.get("model_slots")),
             trusted_hook_projects=[str(path) for path in trusted if path],
             trusted_mcp_projects=[str(path) for path in trusted_mcp if path],
             trusted_lsp_projects=[str(path) for path in trusted_lsp if path],
@@ -155,6 +166,7 @@ class CliSettings:
             "active_theme": self.active_theme,
             "api_keys": self.api_keys,
             "agent_models": self.agent_models,
+            "model_slots": self.model_slots,
             "trusted_hook_projects": self.trusted_hook_projects,
             "trusted_mcp_projects": self.trusted_mcp_projects,
             "trusted_lsp_projects": self.trusted_lsp_projects,
@@ -183,6 +195,18 @@ class CliSettings:
     def clear_agent_model(self, role: str) -> None:
         """Remove a per-role override so the role inherits the active model."""
         self.agent_models.pop(role, None)
+
+    def get_model_slot(self, slot: str) -> Optional[dict]:
+        """Return the saved override for an operational slot, or None when it inherits."""
+        return self.model_slots.get(slot)
+
+    def set_model_slot(self, slot: str, provider: str, model: str) -> None:
+        """Pin an operational slot to a provider/model (both are required)."""
+        self.model_slots[slot] = {"provider": provider, "model": model}
+
+    def clear_model_slot(self, slot: str) -> None:
+        """Remove a slot override so the slot inherits the active model."""
+        self.model_slots.pop(slot, None)
 
     def set_api_key(self, provider: str, api_key: str) -> None:
         if api_key:

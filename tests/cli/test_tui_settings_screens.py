@@ -6,11 +6,11 @@ from pathlib import Path
 import pytest
 
 from kolega_code.cli.config import build_agent_config, config_summary
-from kolega_code.cli.provider_registry import UI_DEFAULT_MODEL, UI_DEFAULT_PROVIDER
+from kolega_code.cli.provider_registry import DEEPSEEK_DEFAULT_MODEL, UI_DEFAULT_MODEL, UI_DEFAULT_PROVIDER
 from kolega_code.cli.session_store import SessionStore
 from kolega_code.cli.settings import CliSettings, SettingsStore
 
-from ._app_test_utils import install_fake_agents, wait_for_onboarding_screen
+from ._app_test_utils import install_fake_agents, stage_provider_api_key, wait_for_onboarding_screen
 
 
 def _configured_app(
@@ -21,6 +21,8 @@ def _configured_app(
     model: str = UI_DEFAULT_MODEL,
     effort: str | None = None,
     agent_models: dict | None = None,
+    model_slots: dict | None = None,
+    extra_key_providers: tuple[str, ...] = (),
 ):
     from kolega_code.cli.app import KolegaCodeApp
 
@@ -31,8 +33,12 @@ def _configured_app(
     settings_store = SettingsStore(state_dir)
     settings = CliSettings(active_provider=provider, active_model=model, active_thinking_effort=effort)
     settings.set_api_key(provider, "stored-key")
+    for extra_provider in extra_key_providers:
+        settings.set_api_key(extra_provider, "stored-key")
     if agent_models:
         settings.agent_models = agent_models
+    if model_slots:
+        settings.model_slots = model_slots
     settings_store.save(settings)
     config = build_agent_config(project, env={}, settings=settings, settings_store=settings_store)
     store = SessionStore(state_dir)
@@ -94,7 +100,7 @@ async def test_settings_screen_is_categorized_and_stages_credentials_atomically(
         assert isinstance(screen, SettingsScreen)
         await pilot.pause()
         assert screen.dirty is False
-        assert screen.query_one("#settings_categories", OptionList).option_count == 6
+        assert screen.query_one("#settings_categories", OptionList).option_count == 7
         assert screen.query_one("#settings_page_model").display is True
         assert screen.query_one("#settings_page_tools").display is False
         apply_button = screen.query_one("#save_settings", Button)
@@ -104,8 +110,11 @@ async def test_settings_screen_is_categorized_and_stages_credentials_atomically(
         assert screen.query_one("#settings_page_model").display is False
         assert screen.query_one("#settings_page_tools").display is True
 
-        screen._show_category("model")
-        remove_button = screen.query_one("#settings_remove_api_key", Button)
+        # Credentials live on their own page, opened on the active provider's row.
+        screen._show_category("providers")
+        await pilot.pause()
+        assert screen.credential_provider == UI_DEFAULT_PROVIDER
+        remove_button = screen.query_one("#provider_remove_api_key", Button)
         assert remove_button.disabled is False
         app._settings_remove_api_key()
         await pilot.pause()
@@ -117,20 +126,21 @@ async def test_settings_screen_is_categorized_and_stages_credentials_atomically(
         assert screen.dirty is True
         assert "Configuration incomplete" in str(screen.query_one("#settings_status").render())
 
-        screen.query_one("#api_key_input", Input).value = "replacement-key"
-        await pilot.pause()
+        await stage_provider_api_key(screen, pilot, UI_DEFAULT_PROVIDER, "replacement-key")
         assert UI_DEFAULT_PROVIDER not in screen.pending_api_key_removals
         await app._save_settings_from_ui()
 
         assert settings_store.load().get_api_key(UI_DEFAULT_PROVIDER) == "replacement-key"
-        assert screen.query_one("#api_key_input", Input).value == ""
+        assert screen.query_one("#provider_api_key_input", Input).value == ""
         assert screen.dirty is False
         assert apply_button.disabled is True
 
-        screen.query_one("#api_key_input", Input).value = "provider-specific-key"
+        # Decoupled: the Models provider picker no longer touches the key field.
+        await stage_provider_api_key(screen, pilot, UI_DEFAULT_PROVIDER, "still-here")
         screen.query_one("#provider_select", Select).value = "deepseek"
         await pilot.pause()
-        assert screen.query_one("#api_key_input", Input).value == ""
+        assert screen.query_one("#provider_api_key_input", Input).value == "still-here"
+        assert screen.pending_api_keys[UI_DEFAULT_PROVIDER] == "still-here"
 
 
 async def _wait_for_select_values(pilot, screen, expected: dict[str, str], *, attempts: int = 50) -> None:
@@ -233,10 +243,16 @@ async def test_settings_layout_uses_uniform_controls_and_quiet_actions(
         provider = screen.query_one("#provider_select", Select)
         model = screen.query_one("#model_select", Select)
         effort = screen.query_one("#thinking_effort_select", Select)
-        api_key = screen.query_one("#api_key_input")
         assert provider.region.width == model.region.width == effort.region.width == 46
+        assert provider.region.x == model.region.x == effort.region.x
+
+        # The Providers page shares the same control width.
+        screen._show_category("providers")
+        await pilot.pause()
+        api_key = screen.query_one("#provider_api_key_input")
         assert api_key.region.width == 46
-        assert provider.region.x == model.region.x == effort.region.x == api_key.region.x
+        screen._show_category("model")
+        await pilot.pause()
 
         # Quiet secondary vs one solid primary action in the footer band.
         close_button = screen.query_one("#close_settings", Button)
@@ -789,3 +805,377 @@ async def test_agent_row_other_model_accepts_a_vision_capable_browser_id(
         assert saved is not None
         assert saved["provider"] == "openrouter"
         assert saved["model"] == vision_id
+
+
+@pytest.mark.asyncio
+async def test_model_slot_rows_default_to_inherit_and_name_the_active_model(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    isolated_cli_env: None,
+) -> None:
+    pytest.importorskip("textual")
+    from textual.widgets import Select, Static
+
+    from kolega_code.cli.provider_registry import INHERIT_SENTINEL
+
+    app, settings_store = _configured_app(tmp_path, monkeypatch)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        app.action_open_settings()
+        await pilot.pause()
+        screen = app.screen
+        await _wait_for_select_values(
+            pilot, screen, {"slot_provider_fast": INHERIT_SENTINEL, "slot_provider_thinking": INHERIT_SENTINEL}
+        )
+
+        for slot in ("fast", "thinking"):
+            assert str(screen.query_one(f"#slot_provider_{slot}", Select).value) == INHERIT_SENTINEL
+            assert screen.query_one(f"#slot_model_{slot}", Select).value is Select.NULL
+            hint = str(screen.query_one(f"#slot_hint_{slot}", Static).render())
+            assert f"{UI_DEFAULT_PROVIDER}/{UI_DEFAULT_MODEL}" in hint
+            assert "inherited from the active model" in hint
+
+        # Inheriting is the absence of an override, not a stored value.
+        await app._save_settings_from_ui()
+        assert settings_store.load().model_slots == {}
+
+
+@pytest.mark.asyncio
+async def test_model_slot_row_pins_a_model_on_another_provider(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    isolated_cli_env: None,
+) -> None:
+    pytest.importorskip("textual")
+    from textual.widgets import Select, Static
+
+    app, settings_store = _configured_app(tmp_path, monkeypatch, extra_key_providers=("deepseek",))
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        app.action_open_settings()
+        await pilot.pause()
+        screen = app.screen
+        screen.query_one("#slot_provider_fast", Select).value = "deepseek"
+        await _wait_for_select_values(pilot, screen, {"slot_provider_fast": "deepseek"})
+        screen.query_one("#slot_model_fast", Select).value = "deepseek-v4-flash"
+        await _wait_for_select_values(pilot, screen, {"slot_model_fast": "deepseek-v4-flash"})
+
+        hint = str(screen.query_one("#slot_hint_fast", Static).render())
+        assert "deepseek/deepseek-v4-flash" in hint
+        assert "inherited" not in hint
+
+        await app._save_settings_from_ui()
+
+        assert settings_store.load().get_model_slot("fast") == {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+        }
+        # The fast slot now diverges from the main model it used to shadow.
+        assert app.config is not None
+        assert app.config.fast_config.model == "deepseek-v4-flash"
+        assert app.config.long_context_config.model == UI_DEFAULT_MODEL
+        # An unpinned slot still follows the active model.
+        assert app.config.thinking_config.model == UI_DEFAULT_MODEL
+
+
+@pytest.mark.asyncio
+async def test_model_slot_row_returning_to_inherit_clears_the_override(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    isolated_cli_env: None,
+) -> None:
+    pytest.importorskip("textual")
+    from textual.widgets import Select, Static
+
+    from kolega_code.cli.provider_registry import INHERIT_SENTINEL
+
+    app, settings_store = _configured_app(
+        tmp_path,
+        monkeypatch,
+        model_slots={"fast": {"provider": "deepseek", "model": "deepseek-v4-flash"}},
+        extra_key_providers=("deepseek",),
+    )
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        app.action_open_settings()
+        await pilot.pause()
+        screen = app.screen
+        # A saved slot is restored into its row.
+        await _wait_for_select_values(
+            pilot, screen, {"slot_provider_fast": "deepseek", "slot_model_fast": "deepseek-v4-flash"}
+        )
+
+        screen.query_one("#slot_provider_fast", Select).value = INHERIT_SENTINEL
+        await _wait_for_select_values(pilot, screen, {"slot_provider_fast": INHERIT_SENTINEL})
+        await app._save_settings_from_ui()
+
+        assert settings_store.load().get_model_slot("fast") is None
+        assert app.config is not None
+        assert app.config.fast_config.model == UI_DEFAULT_MODEL
+        hint = str(screen.query_one("#slot_hint_fast", Static).render())
+        assert "inherited from the active model" in hint
+
+
+@pytest.mark.asyncio
+async def test_model_slot_row_other_model_applies_a_typed_id(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    isolated_cli_env: None,
+) -> None:
+    pytest.importorskip("textual")
+    from textual.widgets import Input, Select
+
+    from kolega_code.cli.tui.custom_model import CUSTOM_MODEL_SENTINEL
+
+    custom_model_id = _non_featured_openrouter_model()
+    app, settings_store = _configured_app(tmp_path, monkeypatch, extra_key_providers=("openrouter",))
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        app.action_open_settings()
+        await pilot.pause()
+        screen = app.screen
+        screen.query_one("#slot_provider_fast", Select).value = "openrouter"
+        await _wait_for_select_values(pilot, screen, {"slot_provider_fast": "openrouter"})
+        screen.query_one("#slot_model_fast", Select).value = CUSTOM_MODEL_SENTINEL
+        await _wait_for_select_values(pilot, screen, {"slot_model_fast": CUSTOM_MODEL_SENTINEL})
+
+        custom_input = screen.query_one("#slot_custom_model_fast", Input)
+        assert custom_input.display is True
+        custom_input.value = custom_model_id
+        await pilot.pause()
+        await app._save_settings_from_ui()
+
+        # The sentinel never persists; the typed id does.
+        assert settings_store.load().get_model_slot("fast") == {
+            "provider": "openrouter",
+            "model": custom_model_id,
+        }
+
+
+@pytest.mark.asyncio
+async def test_model_slot_row_rejects_an_unknown_typed_id(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    isolated_cli_env: None,
+) -> None:
+    pytest.importorskip("textual")
+    from textual.widgets import Input, Select
+
+    from kolega_code.cli.tui.custom_model import CUSTOM_MODEL_SENTINEL
+
+    app, settings_store = _configured_app(tmp_path, monkeypatch, extra_key_providers=("openrouter",))
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        app.action_open_settings()
+        await pilot.pause()
+        screen = app.screen
+        screen.query_one("#slot_provider_fast", Select).value = "openrouter"
+        await _wait_for_select_values(pilot, screen, {"slot_provider_fast": "openrouter"})
+        screen.query_one("#slot_model_fast", Select).value = CUSTOM_MODEL_SENTINEL
+        await _wait_for_select_values(pilot, screen, {"slot_model_fast": CUSTOM_MODEL_SENTINEL})
+        screen.query_one("#slot_custom_model_fast", Input).value = "not-a-real-model"
+        await pilot.pause()
+
+        await app._save_settings_from_ui()
+
+        assert settings_store.load().model_slots == {}
+        assert "not-a-real-model" in str(screen.query_one("#settings_status").render())
+
+
+@pytest.mark.asyncio
+async def test_model_slot_row_without_an_api_key_blocks_apply(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    isolated_cli_env: None,
+) -> None:
+    pytest.importorskip("textual")
+    from textual.widgets import Select
+
+    # No stored google key: the slot's provider needs its own credential.
+    app, settings_store = _configured_app(tmp_path, monkeypatch)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        app.action_open_settings()
+        await pilot.pause()
+        screen = app.screen
+        screen.query_one("#slot_provider_fast", Select).value = "google"
+        await _wait_for_select_values(pilot, screen, {"slot_provider_fast": "google"})
+
+        await app._save_settings_from_ui()
+
+        assert settings_store.load().model_slots == {}
+        assert "GOOGLE_API_KEY" in str(screen.query_one("#settings_status").render())
+
+
+@pytest.mark.asyncio
+async def test_providers_page_stages_keys_for_several_providers_at_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    isolated_cli_env: None,
+) -> None:
+    """The case that was impossible before: keys for providers you are not using."""
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.tui.settings_screen import SettingsScreen
+
+    app, settings_store = _configured_app(tmp_path, monkeypatch)
+
+    async with app.run_test(size=(100, 40)) as pilot:
+        app.action_open_settings("providers")
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+
+        await stage_provider_api_key(screen, pilot, "deepseek", "deepseek-key")
+        await stage_provider_api_key(screen, pilot, "google", "google-key")
+        assert screen.dirty is True
+
+        await app._save_settings_from_ui()
+
+        saved = settings_store.load()
+        assert saved.get_api_key("deepseek") == "deepseek-key"
+        assert saved.get_api_key("google") == "google-key"
+        # Neither was misfiled against the active model's provider.
+        assert saved.get_api_key(UI_DEFAULT_PROVIDER) == "stored-key"
+        assert saved.active_provider == UI_DEFAULT_PROVIDER
+        assert screen.pending_api_keys == {}
+
+
+@pytest.mark.asyncio
+async def test_staged_key_survives_moving_the_selection_away_and_back(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    isolated_cli_env: None,
+) -> None:
+    pytest.importorskip("textual")
+    from textual.widgets import Input, OptionList
+
+    from kolega_code.cli.tui.settings_screen import SettingsScreen
+
+    app, _ = _configured_app(tmp_path, monkeypatch)
+
+    async with app.run_test(size=(100, 40)) as pilot:
+        app.action_open_settings("providers")
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+        provider_list = screen.query_one("#provider_list", OptionList)
+
+        await stage_provider_api_key(screen, pilot, "deepseek", "deepseek-key")
+        # Move away: the field shows the other provider's (empty) staging...
+        provider_list.highlighted = provider_list.get_option_index("provider_row_google")
+        await pilot.pause()
+        assert screen.query_one("#provider_api_key_input", Input).value == ""
+        # ...and coming back restores what was typed rather than losing it.
+        provider_list.highlighted = provider_list.get_option_index("provider_row_deepseek")
+        await pilot.pause()
+        assert screen.query_one("#provider_api_key_input", Input).value == "deepseek-key"
+        assert screen.pending_api_keys == {"deepseek": "deepseek-key"}
+
+
+@pytest.mark.asyncio
+async def test_provider_rows_report_credential_status(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    isolated_cli_env: None,
+) -> None:
+    pytest.importorskip("textual")
+    from textual.widgets import OptionList
+
+    from kolega_code.cli.tui.settings_screen import SettingsScreen
+
+    monkeypatch.setenv("GOOGLE_API_KEY", "from-the-environment")
+    app, _ = _configured_app(tmp_path, monkeypatch)
+
+    async with app.run_test(size=(100, 40)) as pilot:
+        app.action_open_settings("providers")
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+        provider_list = screen.query_one("#provider_list", OptionList)
+
+        def row(provider: str) -> str:
+            index = provider_list.get_option_index(f"provider_row_{provider}")
+            return str(provider_list.get_option_at_index(index).prompt)
+
+        assert "present in local settings" in row(UI_DEFAULT_PROVIDER)
+        assert "present via GOOGLE_API_KEY" in row("google")
+        assert "missing" in row("deepseek")
+
+        # Staging a key updates the roster immediately, before Apply.
+        await stage_provider_api_key(screen, pilot, "deepseek", "deepseek-key")
+        assert "present in local settings" in row("deepseek")
+
+
+@pytest.mark.asyncio
+async def test_test_connection_probes_the_highlighted_provider(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    isolated_cli_env: None,
+) -> None:
+    """The probe follows the Providers selection, not the active model."""
+    pytest.importorskip("textual")
+    from textual.widgets import OptionList, Static
+
+    from kolega_code.cli.tui.settings_screen import SettingsScreen
+    from kolega_code.config import ModelProvider
+
+    app, _ = _configured_app(tmp_path, monkeypatch, extra_key_providers=("deepseek",))
+    probes: list[dict] = []
+
+    async def fake_probe(provider, model, **kwargs):
+        from kolega_code.cli.model_connection import ModelConnectionResult
+
+        probes.append({"provider": provider, "model": model, **kwargs})
+        return ModelConnectionResult(True, f"Connected to {provider.value}/{model}.")
+
+    monkeypatch.setattr("kolega_code.cli.tui.settings_panel.test_model_connection", fake_probe)
+
+    async with app.run_test(size=(100, 40)) as pilot:
+        app.action_open_settings("providers")
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+        provider_list = screen.query_one("#provider_list", OptionList)
+        provider_list.highlighted = provider_list.get_option_index("provider_row_deepseek")
+        await pilot.pause()
+
+        await app._test_settings_connection()
+
+        assert probes[-1]["provider"] == ModelProvider.DEEPSEEK
+        assert probes[-1]["api_key"] == "stored-key"
+        # Active model is moonshot's, so the probe falls back to deepseek's own default.
+        assert probes[-1]["model"] == DEEPSEEK_DEFAULT_MODEL
+        assert "deepseek" in str(screen.query_one("#provider_credential_status", Static).render())
+
+
+@pytest.mark.asyncio
+async def test_chatgpt_provider_row_offers_sign_in_instead_of_a_key_field(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    isolated_cli_env: None,
+) -> None:
+    pytest.importorskip("textual")
+    from textual.widgets import OptionList
+
+    from kolega_code.cli.tui.settings_screen import SettingsScreen
+
+    app, _ = _configured_app(tmp_path, monkeypatch)
+
+    async with app.run_test(size=(100, 40)) as pilot:
+        app.action_open_settings("providers")
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, SettingsScreen)
+        provider_list = screen.query_one("#provider_list", OptionList)
+
+        assert screen.query_one("#provider_api_key_input").display is True
+        assert screen.query_one("#provider_chatgpt_login").display is False
+
+        provider_list.highlighted = provider_list.get_option_index("provider_row_openai_chatgpt")
+        await pilot.pause()
+
+        assert screen.query_one("#provider_api_key_input").display is False
+        assert screen.query_one("#provider_remove_api_key").display is False
+        assert screen.query_one("#provider_chatgpt_login").display is True
+        assert screen.query_one("#provider_chatgpt_logout").display is True

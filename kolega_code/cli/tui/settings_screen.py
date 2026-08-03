@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from copy import deepcopy
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Optional
 
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -18,7 +18,7 @@ from kolega_code.agent.tool_backend.search_backends import (
     available_backends,
 )
 
-from .. import theme
+from .. import messages, theme
 from ..provider_registry import (
     INHERIT_SENTINEL,
     UI_DEFAULT_MODEL,
@@ -26,6 +26,7 @@ from ..provider_registry import (
     agent_role_options,
     agent_role_provider_options,
     default_ui_thinking_effort,
+    model_slot_options,
     ui_model_options,
     ui_provider_options,
     ui_thinking_effort_options,
@@ -37,7 +38,11 @@ if TYPE_CHECKING:
 
 
 SETTINGS_CATEGORIES = (
-    ("Model & Account", "model"),
+    # Credentials first, matching the order onboarding already walks users through
+    # (connection, then model). The "model" value is load-bearing: /model and
+    # action_open_settings(category=...) both key off it, so only the label changed.
+    ("Providers", "providers"),
+    ("Models", "model"),
     ("Agent Models", "agents"),
     ("Tools", "tools"),
     ("MCP Servers", "mcp"),
@@ -144,6 +149,14 @@ class SettingsScreen(ModalScreen[None]):
         self.pending_oauth_tokens = deepcopy(owner.settings.oauth_tokens)
         self._oauth_baseline = deepcopy(self.pending_oauth_tokens)
         self.pending_api_key_removals: set[str] = set()
+        # Keys typed on the Providers page, keyed by provider. The page lets several
+        # providers be edited before Apply, so staging cannot live in the Input alone —
+        # its value follows the highlighted row.
+        self.pending_api_keys: dict[str, str] = {}
+        # Which provider the key Input is currently showing. Staging targets this rather
+        # than the highlighted row: it is updated before the Input is rewritten, so the
+        # Changed event that rewrite posts can never be filed against the wrong provider.
+        self.credential_provider: Optional[str] = None
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="settings_screen_header"):
@@ -155,6 +168,7 @@ class SettingsScreen(ModalScreen[None]):
                 id="settings_categories",
             )
             with Vertical(id="settings_screen_detail"):
+                yield from self._compose_providers_page()
                 yield from self._compose_model_page()
                 yield from self._compose_agent_page()
                 yield from self._compose_tools_page()
@@ -171,10 +185,48 @@ class SettingsScreen(ModalScreen[None]):
                     classes="solid-primary",
                 )
 
+    def _compose_providers_page(self) -> ComposeResult:
+        with VerticalScroll(id="settings_page_providers", classes="settings-page"):
+            with Vertical(classes="settings-section", id="settings_providers") as section:
+                section.border_title = "Providers"
+                yield Static(messages.PROVIDERS_HINT, classes="settings-hint")
+                yield OptionList(id="provider_list")
+            with Vertical(classes="settings-section", id="settings_provider_credential") as credential:
+                # Retitled to the highlighted provider by _update_provider_credential_controls.
+                credential.border_title = "Credential"
+                yield Label("API key", id="provider_api_key_label")
+                yield Input(password=True, id="provider_api_key_input")
+                yield Button(
+                    "Remove Stored Key",
+                    id="provider_remove_api_key",
+                    classes="quiet",
+                )
+                with Horizontal(classes="settings-button-row", id="provider_chatgpt_row"):
+                    yield Button(
+                        "Sign in with ChatGPT",
+                        id="provider_chatgpt_login",
+                        classes="quiet",
+                    )
+                    yield Button(
+                        "Sign out",
+                        id="provider_chatgpt_logout",
+                        classes="quiet",
+                    )
+                yield Button(
+                    "Test Connection",
+                    id="provider_test_connection",
+                    classes="quiet",
+                )
+                yield Static(
+                    "Connection testing sends a tiny, potentially billable model request.",
+                    classes="settings-hint",
+                )
+                yield Static("", id="provider_credential_status")
+
     def _compose_model_page(self) -> ComposeResult:
         with VerticalScroll(id="settings_page_model", classes="settings-page"):
             with Vertical(classes="settings-section", id="settings_model") as section:
-                section.border_title = "Model & Account"
+                section.border_title = "Models"
                 yield Label("Provider")
                 yield Select(
                     ui_provider_options(),
@@ -199,34 +251,36 @@ class SettingsScreen(ModalScreen[None]):
                     allow_blank=True,
                     value=default_ui_thinking_effort(UI_DEFAULT_PROVIDER, UI_DEFAULT_MODEL),
                 )
-                yield Label("API key", id="settings_api_key_label")
-                yield Input(password=True, id="api_key_input")
-                yield Button(
-                    "Remove Stored Key",
-                    id="settings_remove_api_key",
-                    classes="quiet",
-                )
-                with Horizontal(classes="settings-button-row"):
-                    yield Button(
-                        "Sign in with ChatGPT",
-                        id="settings_chatgpt_login",
-                        classes="quiet",
-                    )
-                    yield Button(
-                        "Sign out",
-                        id="settings_chatgpt_logout",
-                        classes="quiet",
-                    )
-                yield Button(
-                    "Test Connection",
-                    id="settings_test_connection",
-                    classes="quiet",
-                )
-                yield Static(
-                    "Connection testing sends a tiny, potentially billable model request.",
-                    classes="settings-hint",
-                )
-                yield Static("", id="settings_connection_status")
+                yield Static(messages.MODEL_CREDENTIAL_POINTER, classes="settings-hint")
+            with Vertical(classes="settings-section", id="settings_model_slots") as slots_section:
+                slots_section.border_title = "Model Slots"
+                yield Static(messages.MODEL_SLOT_HINT, classes="settings-hint")
+                for slot_label, slot_value in model_slot_options():
+                    with Vertical(classes="agent-model-group", id=f"slot_group_{slot_value}"):
+                        yield Static(slot_label, classes="agent-model-role")
+                        with Horizontal(classes="agent-model-field"):
+                            yield Label("Provider", classes="agent-model-field-label")
+                            yield Select(
+                                agent_role_provider_options(),
+                                id=f"slot_provider_{slot_value}",
+                                allow_blank=False,
+                                value=INHERIT_SENTINEL,
+                            )
+                        with Horizontal(classes="agent-model-field"):
+                            yield Label("Model", classes="agent-model-field-label")
+                            yield Select(
+                                [],
+                                id=f"slot_model_{slot_value}",
+                                allow_blank=True,
+                                prompt="—",
+                            )
+                        row_custom_model = Input(
+                            id=f"slot_custom_model_{slot_value}",
+                            placeholder=custom_model.CUSTOM_MODEL_PLACEHOLDER,
+                        )
+                        row_custom_model.display = False
+                        yield row_custom_model
+                        yield Static("", id=f"slot_hint_{slot_value}", classes="settings-hint")
 
     def _compose_agent_page(self) -> ComposeResult:
         with VerticalScroll(id="settings_page_agents", classes="settings-page"):
@@ -468,37 +522,32 @@ class SettingsScreen(ModalScreen[None]):
                 pass
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
-        if event.option_list.id != "settings_categories":
+        if event.option_list.id == "settings_categories":
+            event.stop()
+            self._show_category((event.option_id or "").removeprefix("settings_category_"))
+
+    def on_option_list_option_highlighted(self, event: OptionList.OptionHighlighted) -> None:
+        if event.option_list.id != "provider_list":
             return
         event.stop()
-        option_id = event.option_id or ""
-        self._show_category(option_id.removeprefix("settings_category_"))
+        self.owner._switch_provider_credential((event.option_id or "").removeprefix("provider_row_"))
 
     def on_select_changed(self, event: Select.Changed) -> None:
         if event.select.id == "agent_role_select":
             self._show_agent_role(str(event.value))
-        if event.select.id == "provider_select" and not self._initializing:
-            self.query_one("#api_key_input", Input).value = ""
-        if event.select.id in {"provider_select", "model_select", "thinking_effort_select"}:
-            self._reset_connection_status()
         self.call_after_refresh(self._refresh_apply_label)
 
     def on_input_changed(self, event: Input.Changed) -> None:
-        if event.input.id == "api_key_input":
+        if event.input.id == "provider_api_key_input":
             self._reset_connection_status()
-            if event.value.strip():
-                try:
-                    provider = str(self.query_one("#provider_select", Select).value)
-                    self.pending_api_key_removals.discard(provider)
-                except Exception:
-                    pass
+            self.owner._commit_visible_api_key()
         self.call_after_refresh(self._refresh_apply_label)
 
     def _reset_connection_status(self) -> None:
         if self._initializing:
             return
         try:
-            self.query_one("#settings_connection_status", Static).update("")
+            self.query_one("#provider_credential_status", Static).update("")
         except Exception:
             pass
 
@@ -508,7 +557,13 @@ class SettingsScreen(ModalScreen[None]):
             if not isinstance(widget, (Select, Input)):
                 continue
             widget_id = widget.id or ""
-            if not widget_id or widget_id.startswith("mcp_") or widget_id == "agent_role_select":
+            # provider_api_key_input follows the highlighted provider rather than holding
+            # one value, so its content is tracked in pending_api_keys, not the snapshot.
+            if (
+                not widget_id
+                or widget_id.startswith("mcp_")
+                or widget_id in {"agent_role_select", "provider_api_key_input"}
+            ):
                 continue
             value = widget.value
             if value is Select.NULL:
@@ -522,10 +577,12 @@ class SettingsScreen(ModalScreen[None]):
             self._snapshot() != self._baseline
             or self.pending_oauth_tokens != self._oauth_baseline
             or bool(self.pending_api_key_removals)
+            or bool(self.pending_api_keys)
         )
 
     def mark_clean(self, *, preserve_memory_draft: bool = False) -> None:
         self.pending_api_key_removals.clear()
+        self.pending_api_keys.clear()
         baseline = dict(self._snapshot())
         if preserve_memory_draft:
             previous = dict(self._baseline)

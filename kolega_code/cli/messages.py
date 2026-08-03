@@ -249,6 +249,24 @@ BROWSER_MODEL_EXPLICIT_NO_VISION = (
 BROWSER_MODEL_PROVIDER_NO_VISION = (
     "Provider {provider} has no vision-capable Browser models. Choose another provider or Default (inherit)."
 )
+PROVIDERS_HINT = (
+    "Credentials for model providers. Select one to add, replace, or remove its key. "
+    "What actually runs is chosen under Models."
+)
+MODEL_CREDENTIAL_POINTER = "API keys and ChatGPT sign-in live under Providers."
+PROVIDER_CREDENTIAL_STATUS = "Credential status: {status}"
+PROVIDER_KEY_STAGED = "Key will be saved for {provider} when you Apply."
+PROVIDER_KEY_NOT_STORED = (
+    "There is no locally stored key for this provider. Environment credentials are not changed here."
+)
+PROVIDER_KEY_REMOVAL_STAGED = "The locally stored API key will be removed when you Apply."
+PROVIDER_TEST_RUNNING = "Testing {provider}/{model}…"
+MODEL_SLOT_INHERITED = "Using {provider}/{model} (inherited from the active model)."
+MODEL_SLOT_PINNED = "Using {provider}/{model}."
+MODEL_SLOT_HINT = (
+    "Utility slots used outside the main conversation. Default inherits the active model; "
+    "a slot may use a different provider, which needs that provider's API key."
+)
 
 # Status dashboard
 STATUS_TOKENS_UNKNOWN = "Token counts unavailable."

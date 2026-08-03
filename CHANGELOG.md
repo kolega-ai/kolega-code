@@ -6,6 +6,41 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+### Added
+
+- Settings → Model & Account gains a **Model Slots** section for pinning the fast
+  and thinking models, each with its own provider. Previously these slots were
+  reachable only through CLI flags and environment variables, so in the TUI they
+  silently inherited the active model — every `web_fetch` answering call ran on
+  the main coding model. Slots still inherit by default, and each row now shows
+  which model it currently resolves to.
+
+### Changed
+
+- Settings gains a **Providers** category, first in the rail, holding every model
+  provider's API key and the ChatGPT sign-in, each row labelled with its live
+  credential status. **Model & Account** is renamed **Models** and keeps only what
+  runs. Keys now stage per provider, so credentials for a provider you are not
+  currently using — needed by a fast/thinking slot or an agent-role override — can be
+  entered without switching your main model and switching back. **Test Connection**
+  moves with them and probes the selected provider rather than the active model, so a
+  credential can be checked without running on that provider.
+- **Breaking:** provider and model are now always specified together. `--provider`
+  without `--model` (and the per-role/per-slot equivalents such as
+  `KOLEGA_CODE_FAST_PROVIDER`) is an error instead of silently selecting that
+  provider's default model, and a model named without a provider is rejected rather
+  than assumed to be Anthropic's. Scripts passing only one of the pair need updating;
+  the error names the missing flag. Saved settings are unaffected — the Settings UI
+  always writes both — and a saved model that later leaves the catalog still degrades
+  to the provider's default rather than blocking startup.
+
+### Removed
+
+- The unreachable `DEFAULT_LONG_MODEL`, `DEFAULT_FAST_MODEL`, `DEFAULT_THINKING_MODEL`
+  and their provider constants. No model was ever resolved through them — an unset
+  slot inherits the active model — but they were documented as defaults, which is
+  where "what is my fast model?" became unanswerable.
+
 ## 0.26.8 - 2026-08-03
 
 ### Added

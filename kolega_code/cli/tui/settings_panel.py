@@ -6,16 +6,19 @@ import json
 import re
 import shlex
 from copy import deepcopy
+from dataclasses import dataclass
 from typing import Literal, Optional, TypeVar, cast, overload
 from urllib.parse import urlparse
 
 from textual.css.query import NoMatches
 from textual.widget import Widget
 from rich.text import Text
-from textual.widgets import Button, Input, Select, Static
+from textual.widgets import Button, Input, OptionList, Select, Static
+from textual.widgets.option_list import Option
 
 from kolega_code.auth import constants as chatgpt_constants
 from kolega_code.auth.chatgpt_oauth import run_login_flow
+from kolega_code.config import ModelProvider
 from kolega_code.agent.tool_backend.search_backends import (
     DEFAULT_BACKEND as DEFAULT_WEB_SEARCH_BACKEND,
     SearchBackendError,
@@ -35,15 +38,24 @@ from kolega_code.mcp.service import MCPService
 from kolega_code.mcp.state import MCPStatusStore, MCPOAuthTokenStore
 
 from .. import messages, theme
-from ..config import CliConfigError, active_model_override_message, build_agent_config, key_status
+from ..config import (
+    CliConfigError,
+    active_model_override_message,
+    build_agent_config,
+    key_status,
+    probe_token_manager,
+    resolved_api_key,
+)
 from ..model_connection import test_model_connection
 from ..provider_registry import (
     INHERIT_SENTINEL,
+    default_model_for_provider,
     UI_DEFAULT_MODEL,
     UI_DEFAULT_PROVIDER,
     get_ui_model,
     agent_role_options,
     default_ui_thinking_effort,
+    model_slot_options,
     ui_model_options,
     ui_provider_options,
     ui_thinking_effort_options,
@@ -74,6 +86,63 @@ MCP_TRANSPORT_LABELS = {
 }
 
 SettingsWidget = TypeVar("SettingsWidget", bound=Widget)
+
+# Settings has two kinds of provider→model override row: per-agent-role rows on the
+# Agent Models page ("am_" ids) and operational model-slot rows on the Model page
+# ("slot_" ids). They share one cascade, so the widget ids are described once here
+# instead of being prefix-parsed at each handler.
+# Longest first: "custom_model_" must be matched before "model_".
+_ROW_FIELDS = ("provider_", "custom_model_", "model_", "effort_")
+
+
+@dataclass(frozen=True)
+class _OverrideRow:
+    """The widget ids making up one provider→model override row."""
+
+    key: str  # agent role, or model slot
+    provider_id: str
+    model_id: str
+    custom_id: str
+    # Slot rows carry no effort control: --fast-model/KOLEGA_CODE_FAST_MODEL cannot
+    # express an effort either, so the UI stays level with the flags.
+    effort_id: Optional[str]
+
+    @property
+    def is_slot(self) -> bool:
+        """True for an operational model-slot row, False for a per-agent-role row."""
+        return self.provider_id.startswith("slot_")
+
+
+def _agent_row(role: str) -> _OverrideRow:
+    return _OverrideRow(
+        key=role,
+        provider_id=f"am_provider_{role}",
+        model_id=f"am_model_{role}",
+        custom_id=f"am_custom_model_{role}",
+        effort_id=f"am_effort_{role}",
+    )
+
+
+def _slot_row(slot: str) -> _OverrideRow:
+    return _OverrideRow(
+        key=slot,
+        provider_id=f"slot_provider_{slot}",
+        model_id=f"slot_model_{slot}",
+        custom_id=f"slot_custom_model_{slot}",
+        effort_id=None,
+    )
+
+
+def _row_for_widget(widget_id: str) -> Optional[_OverrideRow]:
+    """Return the override row a widget id belongs to, or None if it is not one."""
+    for prefix, build in (("am_", _agent_row), ("slot_", _slot_row)):
+        if not widget_id.startswith(prefix):
+            continue
+        rest = widget_id[len(prefix) :]
+        for field in _ROW_FIELDS:
+            if rest.startswith(field):
+                return build(rest[len(field) :])
+    return None
 
 
 def _mcp_separator() -> str:
@@ -248,16 +317,12 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
                 # mount-time Changed posted with the compose-time default, delivered
                 # after _populate_settings_controls restored the real provider).
                 return
+            # Purely a model choice now: credentials are edited on the Providers page,
+            # so changing the active provider no longer touches any key field.
             self._repopulate_model_select(provider, "model_select", "thinking_effort_select")
             self._update_browser_model_hint()
-            try:
-                api_key_input = self._settings_query_one("#api_key_input", Input)
-                api_key_input.placeholder = self._api_key_placeholder(provider)
-                # OAuth providers sign in via /login, so the key field is read-only.
-                api_key_input.disabled = provider == chatgpt_constants.PROVIDER_KEY
-            except NoMatches:
-                pass
-            self._update_model_auth_controls(provider)
+            self._update_slot_model_hints()
+            self._update_settings_status()
             return
 
         if select_id == "model_select":
@@ -270,6 +335,7 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
                 return
             self._sync_effort_for_model_value(provider, str(event.value), "model_select", "thinking_effort_select")
             self._update_browser_model_hint()
+            self._update_slot_model_hints()
             return
 
         if select_id == "web_search_backend_select":
@@ -284,46 +350,41 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             self._update_mcp_transport_fields(str(event.value))
             return
 
-        if select_id.startswith("am_provider_"):
-            role = select_id[len("am_provider_") :]
+        row = _row_for_widget(select_id)
+        if row is not None and select_id == row.provider_id:
             provider = str(event.value)
             if str(event.select.value) != provider:
                 return
             if provider == INHERIT_SENTINEL:
                 # Don't drop pending here: the selects post an initial inherit-valued
                 # Changed on mount, which would clear a restore before its real cascade
-                # runs. _populate_agent_model_rows clears stale pending per row instead.
-                self._clear_model_effort_selects(f"am_model_{role}", f"am_effort_{role}")
+                # runs. The populate helpers clear stale pending per row instead.
+                self._clear_model_effort_selects(row.model_id, row.effort_id)
             else:
-                model_value = self._pending_agent_models.pop(f"am_model_{role}", None)
-                self._repopulate_model_select(
-                    provider, f"am_model_{role}", f"am_effort_{role}", model_value=model_value
-                )
-            if role == "browser":
-                self._update_browser_model_hint()
+                model_value = self._pending_agent_models.pop(row.model_id, None)
+                self._repopulate_model_select(provider, row.model_id, row.effort_id, model_value=model_value)
+            self._update_row_hints(row)
             return
 
-        if select_id.startswith("am_model_"):
-            role = select_id[len("am_model_") :]
+        if row is not None and select_id == row.model_id:
             try:
-                provider = str(self._settings_query_one(f"#am_provider_{role}", Select).value)
+                provider = str(self._settings_query_one(f"#{row.provider_id}", Select).value)
             except NoMatches:
                 return
             if provider != INHERIT_SENTINEL and event.value is not Select.NULL:
                 # A restored effort waits here for the model that hosts it; a manual
                 # model change has none pending and falls back to preserve/default.
-                preferred = self._pending_agent_efforts.pop(f"am_effort_{role}", None)
+                preferred = self._pending_agent_efforts.pop(row.effort_id, None) if row.effort_id is not None else None
                 self._sync_effort_for_model_value(
                     provider,
                     str(event.value),
-                    f"am_model_{role}",
-                    f"am_effort_{role}",
+                    row.model_id,
+                    row.effort_id,
                     preferred=preferred,
                 )
             else:
-                self._sync_custom_model_input(f"am_model_{role}", f"am_custom_model_{role}")
-            if role == "browser":
-                self._update_browser_model_hint()
+                self._sync_custom_model_input(row.model_id, row.custom_id)
+            self._update_row_hints(row)
             return
 
         if select_id == "theme_select":
@@ -341,21 +402,18 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
         inputs, so the two never conflict.
         """
         input_id = event.input.id or ""
+        row: Optional[_OverrideRow] = None
         if input_id == "model_custom_input":
             model_select_id, effort_select_id, provider_id = (
                 "model_select",
                 "thinking_effort_select",
                 "provider_select",
             )
-        elif input_id.startswith("am_custom_model_"):
-            role = input_id[len("am_custom_model_") :]
-            model_select_id, effort_select_id, provider_id = (
-                f"am_model_{role}",
-                f"am_effort_{role}",
-                f"am_provider_{role}",
-            )
         else:
-            return
+            row = _row_for_widget(input_id)
+            if row is None or input_id != row.custom_id:
+                return
+            model_select_id, effort_select_id, provider_id = (row.model_id, row.effort_id, row.provider_id)
         try:
             model_select = self._settings_query_one(f"#{model_select_id}", Select)
             provider = str(self._settings_query_one(f"#{provider_id}", Select).value)
@@ -364,9 +422,14 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
         if str(model_select.value) != CUSTOM_MODEL_SENTINEL:
             return
         typed = self._typed_custom_model(provider, input_id)
-        if typed is not None:
+        if typed is not None and effort_select_id is not None:
             self._set_effort_select_default(provider, typed, effort_select_id)
-        self._update_browser_model_hint()
+        if row is None:
+            # The active model changed: every inheriting slot hint follows it.
+            self._update_browser_model_hint()
+            self._update_slot_model_hints()
+        else:
+            self._update_row_hints(row)
 
     def _populate_settings_controls(self) -> None:
         screen = getattr(self, "_settings_screen", None)
@@ -401,7 +464,6 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
         provider_select = self._settings_query_one("#provider_select", Select)
         model_select = self._settings_query_one("#model_select", Select)
         effort_select = self._settings_query_one("#thinking_effort_select", Select)
-        api_key_input = self._settings_query_one("#api_key_input", Input)
 
         provider_select.value = provider
         model_select.set_options(model_options)
@@ -420,30 +482,157 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             if self.settings.active_theme in theme.available_themes()
             else theme.DEFAULT_THEME_NAME
         )
-        api_key_input.placeholder = self._api_key_placeholder(provider)
-        api_key_input.disabled = provider == chatgpt_constants.PROVIDER_KEY
-        self._update_model_auth_controls(provider)
+        self._populate_provider_rows()
         self._populate_agent_model_rows()
+        self._populate_slot_model_rows()
         self._update_browser_model_hint()
+        self._update_slot_model_hints()
         self._populate_web_search_controls()
         self._populate_mcp_controls()
         self._populate_lsp_controls()
         self._update_settings_status()
 
-    def _update_model_auth_controls(self, provider: str) -> None:
+    def _draft_credential_settings(self) -> CliSettings:
+        """Saved settings with the Providers page's unapplied edits layered on.
+
+        Removals are applied before staged keys, so re-typing a key for a provider you
+        just cleared wins — matching the order ``_settings_candidate_from_ui`` uses when
+        the same edits are actually written.
+        """
+        draft = deepcopy(self.settings)
+        screen = getattr(self, "_settings_screen", None)
+        if screen is None:
+            return draft
+        draft.oauth_tokens = deepcopy(screen.pending_oauth_tokens)
+        for removed_provider in screen.pending_api_key_removals:
+            draft.api_keys.pop(removed_provider, None)
+        for staged_provider, staged_key in screen.pending_api_keys.items():
+            draft.set_api_key(staged_provider, staged_key)
+        return draft
+
+    def _selected_credential_provider(self) -> Optional[str]:
+        """The provider whose credential the Providers page is editing."""
+        try:
+            provider_list = self._settings_query_one("#provider_list", OptionList)
+        except NoMatches:
+            return None
+        index = provider_list.highlighted
+        if index is None:
+            return None
+        try:
+            option = provider_list.get_option_at_index(index)
+        except IndexError:
+            return None
+        return (option.id or "").removeprefix("provider_row_") or None
+
+    def _provider_row_prompt(self, label: str, provider: str, draft: CliSettings) -> Text:
+        return Text.assemble(f"{label:<34}", (key_status(provider, self.project_path, draft), Color.MUTED))
+
+    def _populate_provider_rows(self) -> None:
+        """Build the provider list and open the active provider's credential editor."""
+        try:
+            provider_list = self._settings_query_one("#provider_list", OptionList)
+        except NoMatches:
+            return
+        draft = self._draft_credential_settings()
+        rows = ui_provider_options()
+        provider_list.clear_options()
+        provider_list.add_options(
+            [
+                Option(self._provider_row_prompt(label, value, draft), id=f"provider_row_{value}")
+                for label, value in rows
+            ]
+        )
+        values = [value for _, value in rows]
+        active = self.settings.active_provider
+        provider_list.highlighted = values.index(active) if active in values else 0
+        self._switch_provider_credential(self._selected_credential_provider() or values[0])
+
+    def _switch_provider_credential(self, provider: str) -> None:
+        """Point the credential editor at ``provider``.
+
+        The outgoing provider's typed key is banked first, then ``credential_provider``
+        moves, and only then is the Input rewritten — so the ``Changed`` that rewrite
+        posts is already filed against the incoming provider and cannot clobber the key
+        just banked for the outgoing one.
+        """
+        screen = getattr(self, "_settings_screen", None)
+        if screen is None or not provider:
+            return
+        if screen.credential_provider != provider:
+            self._commit_visible_api_key()
+            screen.credential_provider = provider
+            try:
+                self._settings_query_one("#provider_api_key_input", Input).value = screen.pending_api_keys.get(
+                    provider, ""
+                )
+            except NoMatches:
+                return
+        self._update_provider_credential_controls(provider)
+        self._refresh_provider_row_labels()
+
+    def _commit_visible_api_key(self) -> None:
+        """Bank whatever the key field holds against the provider it is showing."""
+        screen = getattr(self, "_settings_screen", None)
+        provider = getattr(screen, "credential_provider", None)
+        if screen is None or provider is None:
+            return
+        try:
+            typed = self._settings_query_one("#provider_api_key_input", Input).value.strip()
+        except NoMatches:
+            return
+        if typed:
+            screen.pending_api_keys[provider] = typed
+            # Typing a replacement supersedes a staged removal for the same provider.
+            screen.pending_api_key_removals.discard(provider)
+        else:
+            screen.pending_api_keys.pop(provider, None)
+        self._update_provider_credential_controls(provider)
+        self._refresh_provider_row_labels()
+
+    def _refresh_provider_row_labels(self) -> None:
+        """Restate row statuses in place.
+
+        Relabelling beats rebuilding: ``clear_options`` would drop the highlight and
+        post a fresh Highlighted event, which reloads the key Input mid-keystroke.
+        """
+        try:
+            provider_list = self._settings_query_one("#provider_list", OptionList)
+        except NoMatches:
+            return
+        draft = self._draft_credential_settings()
+        for label, value in ui_provider_options():
+            provider_list.replace_option_prompt(f"provider_row_{value}", self._provider_row_prompt(label, value, draft))
+
+    def _update_provider_credential_controls(self, provider: str) -> None:
+        """Swap the editor between API-key and ChatGPT sign-in shape, and restate status."""
         oauth = provider == chatgpt_constants.PROVIDER_KEY
-        for widget_id in ("settings_chatgpt_login", "settings_chatgpt_logout"):
+        for widget_id in ("provider_chatgpt_login", "provider_chatgpt_logout"):
             try:
                 self._settings_query_one(f"#{widget_id}").display = oauth
             except NoMatches:
                 pass
-        for widget_id in ("settings_api_key_label", "api_key_input"):
+        for widget_id in ("provider_api_key_label", "provider_api_key_input"):
             try:
                 self._settings_query_one(f"#{widget_id}").display = not oauth
             except NoMatches:
                 pass
         try:
-            remove_key = self._settings_query_one("#settings_remove_api_key", Button)
+            # The OAuth row is a Horizontal: hiding only its buttons would leave the
+            # empty band behind, so the container goes with them.
+            self._settings_query_one("#provider_chatgpt_row").display = oauth
+        except NoMatches:
+            pass
+        try:
+            self._settings_query_one("#provider_api_key_input", Input).placeholder = self._api_key_placeholder(provider)
+            section = self._settings_query_one("#settings_provider_credential")
+            # ui_provider_options() is (label, value); index it the other way round.
+            labels = {value: label for label, value in ui_provider_options()}
+            section.border_title = labels.get(provider, provider)
+        except NoMatches:
+            pass
+        try:
+            remove_key = self._settings_query_one("#provider_remove_api_key", Button)
         except NoMatches:
             return
         remove_key.display = not oauth
@@ -452,15 +641,14 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
         remove_key.disabled = not self.settings.has_api_key(provider) or provider in pending_removals
         if screen is None:
             return
-        draft = deepcopy(self.settings)
-        draft.oauth_tokens = deepcopy(screen.pending_oauth_tokens)
-        for removed_provider in pending_removals:
-            draft.api_keys.pop(removed_provider, None)
+        draft = self._draft_credential_settings()
         try:
-            status = self._settings_query_one("#settings_connection_status", Static)
-            status.update(f"Credential status: {key_status(provider, self.project_path, draft)}")
-            login = self._settings_query_one("#settings_chatgpt_login", Button)
-            logout = self._settings_query_one("#settings_chatgpt_logout", Button)
+            status = self._settings_query_one("#provider_credential_status", Static)
+            status.update(
+                messages.PROVIDER_CREDENTIAL_STATUS.format(status=key_status(provider, self.project_path, draft))
+            )
+            login = self._settings_query_one("#provider_chatgpt_login", Button)
+            logout = self._settings_query_one("#provider_chatgpt_logout", Button)
             signed_in = draft.has_oauth_token(chatgpt_constants.PROVIDER_KEY)
             login.label = "Sign in again" if signed_in else "Sign in with ChatGPT"
             logout.disabled = not signed_in
@@ -501,6 +689,80 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             self._repopulate_model_select(
                 provider, model_id, effort_id, model_value=model_value, effort_value=effort_value
             )
+
+    def _populate_slot_model_rows(self) -> None:
+        """Seed each model-slot row from saved settings (absent slot -> inherit).
+
+        Same restore dance as ``_populate_agent_model_rows``: the pending maps are
+        keyed by widget id, so a Changed event arriving after this deterministic pass
+        consumes the same values instead of clobbering them.
+        """
+        provider_values = {value for _, value in ui_provider_options()}
+        for _, slot in model_slot_options():
+            row = _slot_row(slot)
+            try:
+                provider_select = self._settings_query_one(f"#{row.provider_id}", Select)
+            except NoMatches:
+                continue
+            entry = self.settings.get_model_slot(slot) or {}
+            provider = entry.get("provider")
+            self._pending_agent_models.pop(row.model_id, None)
+            if provider not in provider_values:
+                provider_select.value = INHERIT_SENTINEL
+                self._clear_model_effort_selects(row.model_id, row.effort_id)
+                continue
+            model_value = str(entry["model"]) if entry.get("model") else None
+            if model_value:
+                self._pending_agent_models[row.model_id] = model_value
+            provider_select.value = provider
+            self._repopulate_model_select(provider, row.model_id, row.effort_id, model_value=model_value)
+
+    def _slot_model_status(self, slot: str) -> str:
+        """Return the hint line describing which model a slot currently resolves to."""
+        row = _slot_row(slot)
+        try:
+            slot_provider = str(self._settings_query_one(f"#{row.provider_id}", Select).value)
+        except NoMatches:
+            return ""
+
+        inherited = slot_provider == INHERIT_SENTINEL
+        provider_id, model_id, custom_id = (
+            ("provider_select", "model_select", "model_custom_input")
+            if inherited
+            else (row.provider_id, row.model_id, row.custom_id)
+        )
+        try:
+            provider = str(self._settings_query_one(f"#{provider_id}", Select).value)
+            model_value = self._settings_query_one(f"#{model_id}", Select).value
+        except NoMatches:
+            return ""
+        if model_value is Select.NULL:
+            return ""
+        if str(model_value) == CUSTOM_MODEL_SENTINEL:
+            model = self._typed_custom_model(provider, custom_id)
+            if model is None:
+                return ""
+        else:
+            model = str(model_value)
+
+        template = messages.MODEL_SLOT_INHERITED if inherited else messages.MODEL_SLOT_PINNED
+        return template.format(provider=provider, model=model)
+
+    def _update_slot_model_hints(self) -> None:
+        """Keep every slot hint synchronized with its resolved model."""
+        for _, slot in model_slot_options():
+            try:
+                hint = self._settings_query_one(f"#slot_hint_{slot}", Static)
+            except NoMatches:
+                continue
+            hint.update(self._slot_model_status(slot))
+
+    def _update_row_hints(self, row: _OverrideRow) -> None:
+        """Refresh whichever hint the changed override row feeds."""
+        if row.is_slot:
+            self._update_slot_model_hints()
+        elif row.key == "browser":
+            self._update_browser_model_hint()
 
     def _browser_model_status(self) -> tuple[str, str, bool]:
         """Return the Browser-role model message, tone, and whether saving must stop."""
@@ -1035,7 +1297,7 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
         self,
         provider: str,
         model_id: str,
-        effort_id: str,
+        effort_id: Optional[str],
         *,
         model_value: Optional[str] = None,
         effort_value: Optional[str] = None,
@@ -1101,13 +1363,17 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
         # left untouched when no valid id is typed yet (mid-typing text must not
         # blank the effort select).
         effort_model = custom_value or model
-        if effort_model != CUSTOM_MODEL_SENTINEL and resolve_custom_model(provider, effort_model) is not None:
+        if (
+            effort_id is not None
+            and effort_model != CUSTOM_MODEL_SENTINEL
+            and resolve_custom_model(provider, effort_model) is not None
+        ):
             self._set_effort_select_default(provider, effort_model, effort_id, preferred=effort_value)
         self._sync_custom_model_input(model_id, custom_input_id)
 
-    def _clear_model_effort_selects(self, model_id: str, effort_id: str) -> None:
-        """Blank a per-agent row's model+effort selects (the role inherits)."""
-        for select_id in (model_id, effort_id):
+    def _clear_model_effort_selects(self, model_id: str, effort_id: Optional[str]) -> None:
+        """Blank an override row's model (and effort, when it has one) selects."""
+        for select_id in (model_id, effort_id) if effort_id is not None else (model_id,):
             try:
                 select = self._settings_query_one(f"#{select_id}", Select)
             except NoMatches:
@@ -1120,7 +1386,10 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
         """Return the custom-model Input id paired with a model Select id."""
         if model_select_id == "model_select":
             return "model_custom_input"
-        return f"am_custom_model_{model_select_id.removeprefix('am_model_')}"
+        row = _row_for_widget(model_select_id)
+        # Every other model select in Settings belongs to an override row.
+        assert row is not None, f"No override row owns model select '{model_select_id}'"
+        return row.custom_id
 
     def _sync_custom_model_input(self, model_select_id: str, custom_input_id: str) -> None:
         """Show the custom-model input iff its select holds the "Other…" sentinel.
@@ -1168,7 +1437,7 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
         provider: str,
         value: str,
         model_select_id: str,
-        effort_select_id: str,
+        effort_select_id: Optional[str],
         *,
         preferred: Optional[str] = None,
     ) -> None:
@@ -1178,11 +1447,13 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
         select is only refreshed when the custom input already resolves to a
         catalogued id; otherwise it is left untouched. The custom input is
         focused only for genuine user selections, never while restoring.
+        ``effort_select_id`` is None on rows that carry no effort control.
         """
         custom_input_id = self._custom_input_id(model_select_id)
         self._sync_custom_model_input(model_select_id, custom_input_id)
         if value != CUSTOM_MODEL_SENTINEL:
-            self._set_effort_select_default(provider, value, effort_select_id, preferred=preferred)
+            if effort_select_id is not None:
+                self._set_effort_select_default(provider, value, effort_select_id, preferred=preferred)
             return
         screen = getattr(self, "_settings_screen", None)
         initializing = bool(screen and getattr(screen, "_initializing", False))
@@ -1192,6 +1463,8 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             except NoMatches:
                 return
             self.call_after_refresh(custom_input.focus)
+        if effort_select_id is None:
+            return
         typed = self._typed_custom_model(provider, custom_input_id)
         if typed is not None:
             self._set_effort_select_default(provider, typed, effort_select_id, preferred=preferred)
@@ -1264,7 +1537,7 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             return
         self.settings.lsp_enabled = value == "true"
 
-    def _settings_candidate_from_ui(self) -> tuple[CliSettings, Input, str, str, str]:
+    def _settings_candidate_from_ui(self) -> tuple[CliSettings, str, str, str]:
         """Collect the mounted form into a detached settings candidate."""
         provider = str(self._settings_query_one("#provider_select", Select).value)
         model_value = str(self._settings_query_one("#model_select", Select).value)
@@ -1278,8 +1551,6 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
         valid_efforts = {value for _, value in ui_thinking_effort_options(provider, model)}
         if effort not in valid_efforts:
             effort = default_ui_thinking_effort(provider, model) or ""
-        api_key_input = self._settings_query_one("#api_key_input", Input)
-
         original = self.settings
         candidate = deepcopy(original)
         screen = getattr(self, "_settings_screen", None)
@@ -1287,21 +1558,22 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             candidate.oauth_tokens = deepcopy(screen.pending_oauth_tokens)
             for removed_provider in screen.pending_api_key_removals:
                 candidate.api_keys.pop(removed_provider, None)
+            # Removals first, so re-typing a key for a provider you just cleared wins.
+            for staged_provider, staged_key in screen.pending_api_keys.items():
+                candidate.set_api_key(staged_provider, staged_key)
         self.settings = candidate
         try:
             candidate.active_provider = provider
             candidate.active_model = model
             candidate.active_thinking_effort = effort or default_ui_thinking_effort(provider, model)
             candidate.active_theme = str(self._settings_query_one("#theme_select", Select).value)
-            api_key = api_key_input.value.strip()
-            if api_key:
-                candidate.set_api_key(provider, api_key)
             self._collect_agent_models_from_ui()
+            self._collect_model_slots_from_ui()
             self._collect_web_search_from_ui()
             self._collect_lsp_from_ui()
         finally:
             self.settings = original
-        return candidate, api_key_input, provider, model, effort
+        return candidate, provider, model, effort
 
     async def _save_settings_from_ui(self) -> None:
         if self._turn_active or self.agent_worker is not None:
@@ -1320,28 +1592,32 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             str(self._settings_query_one("#provider_select", Select).value), "model_select", "model_custom_input"
         )
         if error is None:
-            for _, role in agent_role_options():
+            rows = [_agent_row(role) for _, role in agent_role_options()]
+            rows.extend(_slot_row(slot) for _, slot in model_slot_options())
+            for row in rows:
                 try:
-                    row_provider = str(self._settings_query_one(f"#am_provider_{role}", Select).value)
+                    row_provider = str(self._settings_query_one(f"#{row.provider_id}", Select).value)
                 except NoMatches:
                     continue
                 if row_provider == INHERIT_SENTINEL:
                     continue
-                error = self._custom_model_error(row_provider, f"am_model_{role}", f"am_custom_model_{role}")
+                error = self._custom_model_error(row_provider, row.model_id, row.custom_id)
                 if error is not None:
                     break
         if error is not None:
             self._set_settings_status(error, "error")
             self._notify_user(error, severity="error")
             return
-        candidate, api_key_input, provider, _model, _effort = self._settings_candidate_from_ui()
+        candidate, provider, _model, _effort = self._settings_candidate_from_ui()
 
         ok, error = await self._apply_settings_candidate(candidate, rebuild=True)
         if not ok:
             self._set_settings_status(messages.SETTINGS_INCOMPLETE.format(error=error), "error")
             return
-        api_key_input.value = ""
-        api_key_input.placeholder = self._api_key_placeholder(provider)
+        try:
+            self._settings_query_one("#provider_api_key_input", Input).value = ""
+        except NoMatches:
+            pass
         try:
             self._settings_query_one("#web_search_api_key_input", Input).value = ""
         except NoMatches:
@@ -1350,7 +1626,10 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
         if screen is not None:
             memory_applied = await screen.apply_memory_draft()
             screen.mark_clean(preserve_memory_draft=not memory_applied)
-            self._update_model_auth_controls(provider)
+            selected = self._selected_credential_provider()
+            if selected is not None:
+                self._update_provider_credential_controls(selected)
+            self._refresh_provider_row_labels()
             if not memory_applied:
                 self._set_settings_status(
                     "Other settings were saved, but project memory changes failed. Review and retry them.",
@@ -1404,18 +1683,19 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
         if self._turn_active or self.agent_worker is not None:
             self._set_settings_status("Stop the active turn before changing credentials.", "warning")
             return
-        provider = str(self._settings_query_one("#provider_select", Select).value)
+        provider = self._selected_credential_provider()
+        status = self._settings_query_one("#provider_credential_status", Static)
+        if provider is None:
+            return
         if not self.settings.has_api_key(provider):
-            self._settings_query_one("#settings_connection_status", Static).update(
-                "There is no locally stored key for this provider. Environment credentials are not changed here."
-            )
+            status.update(messages.PROVIDER_KEY_NOT_STORED)
             return
         screen.pending_api_key_removals.add(provider)
-        self._settings_query_one("#api_key_input", Input).value = ""
-        self._update_model_auth_controls(provider)
-        self._settings_query_one("#settings_connection_status", Static).update(
-            "The locally stored API key will be removed when you Apply."
-        )
+        screen.pending_api_keys.pop(provider, None)
+        self._settings_query_one("#provider_api_key_input", Input).value = ""
+        self._update_provider_credential_controls(provider)
+        self._refresh_provider_row_labels()
+        status.update(messages.PROVIDER_KEY_REMOVAL_STAGED)
         screen._refresh_apply_label()
 
     async def _settings_login_chatgpt(self) -> None:
@@ -1425,8 +1705,8 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
         screen = getattr(self, "_settings_screen", None)
         if screen is None:
             return
-        button = self._settings_query_one("#settings_chatgpt_login", Button)
-        status = self._settings_query_one("#settings_connection_status", Static)
+        button = self._settings_query_one("#provider_chatgpt_login", Button)
+        status = self._settings_query_one("#provider_credential_status", Static)
         button.disabled = True
         status.update("Opening your browser to sign in…")
 
@@ -1440,7 +1720,8 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             button.disabled = False
             return
         screen.pending_oauth_tokens[chatgpt_constants.PROVIDER_KEY] = tokens.model_dump(mode="json")
-        self._update_model_auth_controls(chatgpt_constants.PROVIDER_KEY)
+        self._update_provider_credential_controls(chatgpt_constants.PROVIDER_KEY)
+        self._refresh_provider_row_labels()
         status.update(f"Signed in as {tokens.email or 'your ChatGPT account'}. Apply to save this sign-in.")
         button.label = "Sign in again"
         button.disabled = False
@@ -1454,31 +1735,48 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             self._set_settings_status("Stop the active turn before signing out.", "warning")
             return
         removed = screen.pending_oauth_tokens.pop(chatgpt_constants.PROVIDER_KEY, None)
-        status = self._settings_query_one("#settings_connection_status", Static)
-        self._update_model_auth_controls(chatgpt_constants.PROVIDER_KEY)
+        status = self._settings_query_one("#provider_credential_status", Static)
+        self._update_provider_credential_controls(chatgpt_constants.PROVIDER_KEY)
+        self._refresh_provider_row_labels()
         status.update("ChatGPT sign-out will be saved when you Apply." if removed else "You are not signed in.")
         screen._refresh_apply_label()
 
+    def _credential_probe_model(self, provider: str) -> str:
+        """Which model to probe a provider's credential with.
+
+        The active model when it belongs to this provider — that is the one that
+        matters — otherwise the provider's registry default. This is a probe target,
+        not configuration: it pins nothing and is never written anywhere.
+        """
+        if self.settings.active_provider == provider and self.settings.active_model:
+            return self.settings.active_model
+        return default_model_for_provider(ModelProvider(provider))
+
     async def _test_settings_connection(self) -> None:
+        """Probe the highlighted provider's credential, independent of model config."""
         if self._turn_active or self.agent_worker is not None:
             self._set_settings_status("Stop the active turn before testing a connection.", "warning")
             return
-        status = self._settings_query_one("#settings_connection_status", Static)
-        button = self._settings_query_one("#settings_test_connection", Button)
+        status = self._settings_query_one("#provider_credential_status", Static)
+        button = self._settings_query_one("#provider_test_connection", Button)
+        provider = self._selected_credential_provider()
+        if provider is None:
+            return
+        draft = self._draft_credential_settings()
         try:
-            candidate, _api_key_input, _provider, _model, _effort = self._settings_candidate_from_ui()
-            config = build_agent_config(
-                self.project_path,
-                self.overrides,
-                settings=candidate,
-                settings_store=None,
-            )
-        except Exception as exc:
-            status.update(f"Configuration is incomplete: {exc}")
+            model = self._credential_probe_model(provider)
+        except ValueError as exc:
+            status.update(str(exc))
             return
         button.disabled = True
-        status.update("Testing connection…")
-        result = await test_model_connection(config, usage_ledger=getattr(self, "_usage_ledger", None))
+        status.update(messages.PROVIDER_TEST_RUNNING.format(provider=provider, model=model))
+        result = await test_model_connection(
+            ModelProvider(provider),
+            model,
+            api_key=resolved_api_key(provider, self.project_path, draft) or "",
+            token_manager=probe_token_manager(draft),
+            usage_ledger=getattr(self, "_usage_ledger", None),
+        )
         status.update(result.message)
         button.disabled = False
 
@@ -1509,6 +1807,30 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             if effort not in valid_efforts:
                 effort = default_ui_thinking_effort(provider, model) or ""
             self.settings.set_agent_model(role, provider, model, effort or None)
+
+    def _collect_model_slots_from_ui(self) -> None:
+        """Write each model-slot row into settings.model_slots (inherit rows removed)."""
+        for _, slot in model_slot_options():
+            row = _slot_row(slot)
+            try:
+                provider = str(self._settings_query_one(f"#{row.provider_id}", Select).value)
+                model_select = self._settings_query_one(f"#{row.model_id}", Select)
+            except NoMatches:
+                continue
+            if provider == INHERIT_SENTINEL or model_select.value is Select.NULL:
+                self.settings.clear_model_slot(slot)
+                continue
+            model_value = str(model_select.value)
+            if model_value == CUSTOM_MODEL_SENTINEL:
+                # Save is pre-validated in _save_settings_from_ui; the defensive
+                # fallback clears the override rather than persisting the sentinel.
+                model = self._typed_custom_model(provider, row.custom_id)
+                if model is None:
+                    self.settings.clear_model_slot(slot)
+                    continue
+            else:
+                model = model_value
+            self.settings.set_model_slot(slot, provider, model)
 
     def _set_settings_status(self, text: str, tone: str = "info") -> None:
         """Update the settings status with a tone glyph in the semantic palette."""
@@ -1569,19 +1891,24 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             mcp_line = f"MCP: {enabled}/{len(rows)} enabled"
         except Exception:
             mcp_line = "MCP: unavailable"
-        summary.update(
-            "\n".join(
-                [
-                    model_line,
-                    f"Credential: {credential}",
-                    f"Agent overrides: {override_count}",
-                    f"Web search: {search_backend}",
-                    mcp_line,
-                    f"LSP: {'enabled' if lsp_enabled else 'disabled'}",
-                    f"Theme: {theme_name}",
-                ]
-            )
+        lines = [
+            model_line,
+            f"Credential: {credential}",
+            f"Agent overrides: {override_count}",
+        ]
+        # Only shown once a slot is pinned; inheriting slots are the quiet default.
+        slots = self.settings.model_slots
+        if slots:
+            lines.append("Model slots: " + ", ".join(sorted(slots)))
+        lines.extend(
+            [
+                f"Web search: {search_backend}",
+                mcp_line,
+                f"LSP: {'enabled' if lsp_enabled else 'disabled'}",
+                f"Theme: {theme_name}",
+            ]
         )
+        summary.update("\n".join(lines))
         launch.label = "Open Settings →" if self.config is not None else "Continue Setup →"
 
     def _update_settings_status(self) -> None:

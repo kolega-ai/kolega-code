@@ -255,6 +255,7 @@ def build_test_config(project: Path):
         env={
             "ANTHROPIC_API_KEY": "test-key",
             "KOLEGA_CODE_PROVIDER": "anthropic",
+            "KOLEGA_CODE_MODEL": "claude-opus-5",
         },
     )
 
@@ -318,6 +319,26 @@ async def open_settings_screen(app, pilot, category: str = "model"):
     screen = app.screen
     assert isinstance(screen, SettingsScreen)
     return screen
+
+
+async def stage_provider_api_key(screen, pilot, provider: str, key: str) -> None:
+    """Type an API key for ``provider`` on the Providers page.
+
+    Mirrors the real interaction: highlight the provider's row, let the editor follow,
+    then type. Keys stage per provider and are only written on Apply.
+    """
+    from textual.widgets import Input, OptionList
+
+    provider_list = screen.query_one("#provider_list", OptionList)
+    provider_list.highlighted = provider_list.get_option_index(f"provider_row_{provider}")
+    # The highlight drives credential_provider through a posted message; wait for the
+    # editor to actually follow before typing, or the key lands on the previous row.
+    for _ in range(50):
+        await pilot.pause()
+        if screen.credential_provider == provider:
+            break
+    screen.query_one("#provider_api_key_input", Input).value = key
+    await pilot.pause()
 
 
 def _build_sub_agent_test_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, **app_kwargs):

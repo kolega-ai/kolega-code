@@ -114,6 +114,54 @@ def test_from_dict_drops_incomplete_agent_model_entries() -> None:
     assert set(settings.agent_models) == {"investigation"}
 
 
+def test_settings_store_round_trips_model_slots(tmp_path: Path) -> None:
+    store = SettingsStore(tmp_path)
+    settings = CliSettings(active_provider=UI_DEFAULT_PROVIDER, active_model=UI_DEFAULT_MODEL)
+    settings.set_model_slot("fast", "deepseek", "deepseek-v4-flash")
+    settings.set_model_slot("thinking", "anthropic", "claude-opus-4-8")
+
+    store.save(settings)
+    loaded = store.load()
+
+    assert loaded.get_model_slot("fast") == {"provider": "deepseek", "model": "deepseek-v4-flash"}
+    assert loaded.get_model_slot("thinking") == {"provider": "anthropic", "model": "claude-opus-4-8"}
+
+
+def test_clear_model_slot_makes_slot_inherit() -> None:
+    settings = CliSettings()
+    settings.set_model_slot("fast", "deepseek", "deepseek-v4-flash")
+    settings.clear_model_slot("fast")
+
+    assert settings.get_model_slot("fast") is None
+    assert settings.model_slots == {}
+
+
+def test_from_dict_drops_incomplete_model_slot_entries() -> None:
+    data = {
+        "schema_version": SETTINGS_SCHEMA_VERSION,
+        "model_slots": {
+            "fast": {"provider": "deepseek", "model": "deepseek-v4-flash"},
+            "thinking": {"provider": "anthropic"},  # missing model -> dropped
+        },
+    }
+
+    settings = CliSettings.from_dict(data)
+
+    assert set(settings.model_slots) == {"fast"}
+
+
+def test_settings_written_before_model_slots_load_with_none(tmp_path: Path) -> None:
+    # Additive optional field: an older file simply has no slot overrides.
+    store = SettingsStore(tmp_path)
+    store.root.mkdir(parents=True, exist_ok=True)
+    store.path.write_text(
+        f'{{"schema_version": {SETTINGS_SCHEMA_VERSION}, "active_provider": "anthropic", "active_model": "claude-opus-5"}}',
+        encoding="utf-8",
+    )
+
+    assert store.load().model_slots == {}
+
+
 def test_settings_store_migrates_v1_settings(tmp_path: Path) -> None:
     store = SettingsStore(tmp_path)
     store.root.mkdir(parents=True, exist_ok=True)

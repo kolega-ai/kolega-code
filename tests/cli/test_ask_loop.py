@@ -77,6 +77,7 @@ def ask_env(tmp_path, monkeypatch, isolated_cli_env):
     project.mkdir()
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     monkeypatch.setenv("KOLEGA_CODE_PROVIDER", "anthropic")
+    monkeypatch.setenv("KOLEGA_CODE_MODEL", "claude-opus-5")
     return project
 
 

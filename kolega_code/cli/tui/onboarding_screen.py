@@ -354,7 +354,16 @@ class OnboardingScreen(ModalScreen[None]):
             return
         button.disabled = True
         status.update("Testing connection…")
-        result = await test_model_connection(config, usage_ledger=getattr(self.owner, "_usage_ledger", None))
+        # The wizard probes exactly the pair the user just picked.
+        model_config = config.long_context_config
+        result = await test_model_connection(
+            model_config.provider,
+            model_config.model,
+            api_key=config.get_api_key(model_config.provider) or "",
+            token_manager=config.get_chatgpt_token_manager(),
+            rate_limits=model_config.rate_limits,
+            usage_ledger=getattr(self.owner, "_usage_ledger", None),
+        )
         status.update(result.message)
         button.disabled = False
         if result.ok:

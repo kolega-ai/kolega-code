@@ -61,6 +61,7 @@ def _setup(tmp_path, monkeypatch, agent_cls):
     project.mkdir()
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     monkeypatch.setenv("KOLEGA_CODE_PROVIDER", "anthropic")
+    monkeypatch.setenv("KOLEGA_CODE_MODEL", "claude-opus-5")
     return main_module, project
 
 
