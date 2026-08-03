@@ -34,6 +34,17 @@ This project uses GitHub Releases for detailed generated release notes. This fil
   always writes both — and a saved model that later leaves the catalog still degrades
   to the provider's default rather than blocking startup.
 
+### Fixed
+
+- `deepseek-v4-flash` no longer has its reasoning truncated mid-derivation. The
+  64000-token output cap added in 0.26.8 was measured on the chat API for
+  `deepseek-v4-pro` and applied to flash by assumption; flash actually runs to
+  at least 112990 output tokens in a single Responses call. Hard tasks that
+  reason for a long time before acting were cut off at the cap and produced no
+  tool call at all. flash now uses its full published output budget, while pro
+  and the fireworks/openrouter DeepSeek routes keep the 64000 cap where their
+  measured ceilings apply.
+
 ### Removed
 
 - The unreachable `DEFAULT_LONG_MODEL`, `DEFAULT_FAST_MODEL`, `DEFAULT_THINKING_MODEL`
