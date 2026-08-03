@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import time
 from pathlib import Path
-from typing import Union
+from typing import Optional, Union
 
 from kolega_code.config import AgentConfig
 from kolega_code.llm.client import LLMClient
@@ -11,6 +11,7 @@ from kolega_code.llm.instrumented_client import InstrumentedLLMClient
 from kolega_code.llm.specs import get_model_specs
 from kolega_code.tools import ToolError
 
+from .network_status import ConnectFailureTracker
 from .streaming_tool import StreamingTool
 from .web_fetch.answering import AnsweringError, WebContentAnswerer
 from .web_fetch.pipeline import LocalWebContentPipeline, WebContent, WebContentError
@@ -33,9 +34,11 @@ class WebFetchTool(StreamingTool):
         config: AgentConfig,
         caller,
         filesystem=None,
+        *,
+        connect_failures: Optional[ConnectFailureTracker] = None,
     ):
         super().__init__(project_path, workspace_id, thread_id, connection_manager, config, caller, filesystem)
-        self.content_pipeline = LocalWebContentPipeline()
+        self.content_pipeline = LocalWebContentPipeline(connect_failures=connect_failures)
 
     async def web_fetch(self, url: str, instruction: str) -> str:
         """Fetch URL content locally, follow an instruction, and return a grounded answer.

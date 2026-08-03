@@ -14,6 +14,7 @@ from kolega_code.agent.tool_backend.web_fetch.extractors import (
     html_signals,
     quality_score,
 )
+from kolega_code.agent.tool_backend.network_status import ConnectFailureTracker
 from kolega_code.agent.tool_backend.web_fetch.pipeline import LocalWebContentPipeline, WebContentError
 from kolega_code.agent.tool_backend.web_fetch.retrieval import (
     TEXT_MAX_BYTES,
@@ -87,6 +88,104 @@ async def test_retriever_rejects_declared_oversized_text() -> None:
 
     with pytest.raises(RetrievalError, match="too large"):
         await WebRetriever(_client_factory(handler)).fetch("https://example.com/large")
+
+
+@pytest.mark.asyncio
+async def test_retriever_connect_error_single_attempt_and_causal_message() -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        raise httpx.ConnectError("All connection attempts failed", request=request)
+
+    sleep = AsyncMock()
+    with patch("kolega_code.agent.tool_backend.web_fetch.retrieval.asyncio.sleep", new=sleep):
+        with pytest.raises(RetrievalError) as excinfo:
+            await WebRetriever(_client_factory(handler)).fetch("https://example.com")
+    message = str(excinfo.value)
+    assert calls == 1
+    sleep.assert_not_awaited()
+    assert "Could not connect to example.com" in message
+    assert "may restrict outbound network access" in message
+    assert "ConnectError" not in message
+
+
+@pytest.mark.asyncio
+async def test_retriever_connect_timeout_and_proxy_error_single_attempt() -> None:
+    for exc_type in (httpx.ConnectTimeout, httpx.ProxyError):
+        calls = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal calls
+            calls += 1
+            raise exc_type("", request=request)
+
+        with pytest.raises(RetrievalError) as excinfo:
+            await WebRetriever(_client_factory(handler)).fetch("https://example.com")
+        assert calls == 1
+        assert "Could not connect to example.com" in str(excinfo.value)
+
+
+@pytest.mark.asyncio
+async def test_retriever_escalates_on_second_distinct_host_not_same_host() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused", request=request)
+
+    tracker = ConnectFailureTracker()
+    retriever = WebRetriever(_client_factory(handler), connect_failures=tracker)
+    with pytest.raises(RetrievalError) as first:
+        await retriever.fetch("https://a.test")
+    assert "may restrict outbound network access" in str(first.value)
+    with pytest.raises(RetrievalError) as repeat:
+        await retriever.fetch("https://a.test")
+    assert "may restrict outbound network access" in str(repeat.value)
+    assert "distinct external hosts" not in str(repeat.value)
+    with pytest.raises(RetrievalError) as second:
+        await retriever.fetch("https://b.test")
+    assert "2 distinct external hosts have failed to connect" in str(second.value)
+    assert "treat outbound network access as unavailable" in str(second.value)
+
+
+@pytest.mark.asyncio
+async def test_retriever_tls_failure_gets_secure_message_and_is_not_counted() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed", request=request)
+
+    tracker = ConnectFailureTracker()
+    retriever = WebRetriever(_client_factory(handler), connect_failures=tracker)
+    with pytest.raises(RetrievalError) as excinfo:
+        await retriever.fetch("https://example.com")
+    message = str(excinfo.value)
+    assert "Could not establish a secure connection to example.com" in message
+    assert "may restrict outbound network access" not in message
+    assert tracker.distinct_count == 0
+
+
+@pytest.mark.asyncio
+async def test_retriever_http_404_message_unchanged() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, text="missing", request=request)
+
+    with pytest.raises(RetrievalError) as excinfo:
+        await WebRetriever(_client_factory(handler)).fetch("https://example.com")
+    assert str(excinfo.value) == "HTTP 404 while fetching https://example.com/."
+
+
+@pytest.mark.asyncio
+async def test_retriever_read_timeout_still_retries_with_unchanged_message() -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        raise httpx.ReadTimeout("boom", request=request)
+
+    with patch("kolega_code.agent.tool_backend.web_fetch.retrieval.asyncio.sleep", new=AsyncMock()):
+        with pytest.raises(RetrievalError) as excinfo:
+            await WebRetriever(_client_factory(handler)).fetch("https://example.com")
+    assert calls == 3
+    assert str(excinfo.value) == "Failed to fetch https://example.com/: boom"
 
 
 @pytest.mark.asyncio

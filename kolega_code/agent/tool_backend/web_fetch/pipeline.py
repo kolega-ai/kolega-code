@@ -18,6 +18,7 @@ from bs4 import UnicodeDammit
 
 from .documents import DocumentConversionError, DocumentConverter, SUPPORTED_DOCUMENT_EXTENSIONS
 from .extractors import DEFAULT_EXTRACTOR, ExtractorAttempt, extract_html
+from ..network_status import ConnectFailureTracker
 from .retrieval import FetchAttempt, FetchedResource, RetrievalError, WebRetriever
 
 
@@ -114,8 +115,10 @@ class LocalWebContentPipeline:
         self,
         retriever: Optional[WebRetriever] = None,
         document_converter: Optional[DocumentConverter] = None,
+        *,
+        connect_failures: Optional[ConnectFailureTracker] = None,
     ) -> None:
-        self.retriever = retriever or WebRetriever()
+        self.retriever = retriever or WebRetriever(connect_failures=connect_failures)
         self.document_converter = document_converter or DocumentConverter()
 
     async def load(self, url: str, extractor_preference: str = DEFAULT_EXTRACTOR) -> WebContent:

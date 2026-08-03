@@ -22,6 +22,7 @@ from .tool_backend.glob_tool import GlobTool
 from .tool_backend.hashline_v2 import format_hash_lines, format_line_tag
 from .tool_backend.list_directory_tool import ListDirectoryTool
 from .tool_backend.memory_tool import MemoryTool
+from .tool_backend.network_status import ConnectFailureTracker
 from .tool_backend.read_file_tool import ReadFileTool
 from .tool_backend.read_image_tool import ReadImageTool
 from .tool_backend.search_codebase_tool import SearchCodebaseTool
@@ -880,6 +881,7 @@ class ToolCollection(LogMixin):
             self.caller,
             self.filesystem,
         )
+        connect_failures = ConnectFailureTracker()
         self.web_fetch_tool = WebFetchTool(
             self.project_path,
             self.workspace_id,
@@ -888,6 +890,7 @@ class ToolCollection(LogMixin):
             self.config,
             self.caller,
             self.filesystem,
+            connect_failures=connect_failures,
         )
         self.web_search_tool = WebSearchTool(
             self.project_path,
@@ -897,6 +900,7 @@ class ToolCollection(LogMixin):
             self.config,
             self.caller,
             self.filesystem,
+            connect_failures=connect_failures,
         )
         self.glob_tool = GlobTool(
             self.project_path,

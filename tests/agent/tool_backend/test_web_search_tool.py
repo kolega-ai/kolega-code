@@ -4,12 +4,14 @@ from unittest.mock import AsyncMock, Mock, patch
 import httpx
 import pytest
 
+from kolega_code.agent.tool_backend.network_status import ConnectFailureTracker
 from kolega_code.agent.tool_backend.search_backends import (
     DEFAULT_BACKEND,
     SearchBackendError,
     SearchBackendNotConfigured,
     SearchBackendRateLimited,
     SearchBackendUnavailable,
+    SearchBackendUnreachable,
     SearchResponse,
     SearchResult,
     available_backends,
@@ -286,6 +288,36 @@ async def test_searxng_timeout_unavailable() -> None:
             await build_search_backend("searxng", base_url="https://s.test").search("q")
 
 
+# ---------------------------------------------------------------- connect-level failures
+
+
+@pytest.mark.asyncio
+async def test_searxng_connect_error_raises_unreachable_with_host() -> None:
+    with patch(
+        f"{_SEARX}.httpx.AsyncClient", _searx_client(get_exc=httpx.ConnectError("All connection attempts failed"))
+    ):
+        with pytest.raises(SearchBackendUnreachable) as excinfo:
+            await build_search_backend("searxng", base_url="https://s.test").search("q")
+    assert excinfo.value.host == "s.test"
+
+
+@pytest.mark.asyncio
+async def test_firecrawl_keyless_connect_error_raises_unreachable() -> None:
+    with patch(f"{_FIRE}.httpx.AsyncClient", _post_client(post_exc=httpx.ConnectError("connection refused"))):
+        with pytest.raises(SearchBackendUnreachable) as excinfo:
+            await build_search_backend("firecrawl").search("q")
+    assert excinfo.value.host == "api.firecrawl.dev"
+
+
+@pytest.mark.asyncio
+async def test_duckduckgo_connect_failure_sniffed_to_unreachable() -> None:
+    from ddgs.exceptions import DDGSException
+
+    with patch(f"{_DUCK}.DDGS", lambda: _DummyDDGS(exc=DDGSException("Temporary failure in name resolution"))):
+        with pytest.raises(SearchBackendUnreachable):
+            await build_search_backend("duckduckgo").search("q")
+
+
 # ------------------------------------------------------------------------- WebSearchTool
 
 
@@ -364,3 +396,51 @@ async def test_tool_never_raises_on_unexpected(tool) -> None:
     with patch("kolega_code.agent.tool_backend.web_search_tool.build_search_backend", return_value=backend):
         result = await tool.web_search("q")
     assert result.startswith("Error: web_search failed:")
+
+
+@pytest.mark.asyncio
+async def test_tool_unreachable_message_is_causal(tool) -> None:
+    backend = Mock()
+    backend.search = AsyncMock(side_effect=SearchBackendUnreachable("All connection attempts failed", host="s.test"))
+    with patch("kolega_code.agent.tool_backend.web_search_tool.build_search_backend", return_value=backend):
+        result = await tool.web_search("q")
+    assert result.startswith("Error: Could not connect to s.test")
+    assert "may restrict outbound network access" in result
+    assert "ConnectError" not in result
+
+
+@pytest.mark.asyncio
+async def test_tool_escalates_on_second_distinct_unreachable_host(tool) -> None:
+    def unreachable(host):
+        backend = Mock()
+        backend.search = AsyncMock(side_effect=SearchBackendUnreachable("connection refused", host=host))
+        return backend
+
+    with patch(
+        "kolega_code.agent.tool_backend.web_search_tool.build_search_backend", return_value=unreachable("a.test")
+    ):
+        first = await tool.web_search("q")
+    assert "may restrict outbound network access" in first
+    with patch(
+        "kolega_code.agent.tool_backend.web_search_tool.build_search_backend", return_value=unreachable("b.test")
+    ):
+        second = await tool.web_search("q")
+    assert "2 distinct external hosts have failed to connect" in second
+    assert "treat outbound network access as unavailable" in second
+
+
+@pytest.mark.asyncio
+async def test_tool_rate_limited_message_has_no_settings_hint(tool) -> None:
+    backend = Mock()
+    backend.search = AsyncMock(side_effect=SearchBackendRateLimited("too many requests"))
+    with patch("kolega_code.agent.tool_backend.web_search_tool.build_search_backend", return_value=backend):
+        result = await tool.web_search("q")
+    assert result.startswith("Error:")
+    assert "retry shortly" in result
+    assert "Settings > Web Search" not in result
+
+
+def test_tool_threads_shared_tracker(tmp_path, agent_config, caller) -> None:
+    tracker = ConnectFailureTracker()
+    tool = WebSearchTool(tmp_path, "ws", "th", AsyncMock(), agent_config, caller, connect_failures=tracker)
+    assert tool.connect_failures is tracker

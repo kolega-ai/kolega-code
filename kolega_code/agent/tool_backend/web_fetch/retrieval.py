@@ -13,6 +13,13 @@ from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
+from ..network_status import (
+    ConnectFailureTracker,
+    connect_failure_message,
+    looks_like_tls_failure,
+    secure_connection_failure_message,
+)
+
 TEXT_MAX_BYTES = 10 * 1024 * 1024
 DOCUMENT_MAX_BYTES = 50 * 1024 * 1024
 OVERALL_TIMEOUT_SECONDS = 30.0
@@ -164,13 +171,20 @@ ClientFactory = Callable[..., httpx.AsyncClient]
 class WebRetriever:
     """Fetch one URL while bounding retries, elapsed time, redirects, and bytes."""
 
-    def __init__(self, client_factory: ClientFactory = httpx.AsyncClient) -> None:
+    def __init__(
+        self,
+        client_factory: ClientFactory = httpx.AsyncClient,
+        *,
+        connect_failures: Optional[ConnectFailureTracker] = None,
+    ) -> None:
         self._client_factory = client_factory
+        self.connect_failures = connect_failures or ConnectFailureTracker()
 
     async def fetch(self, url: str) -> FetchedResource:
         normalized = normalize_url(url)
         attempts: list[FetchAttempt] = []
         last_error = "unknown retrieval failure"
+        connect_failure: Optional[str] = None
         timeout = httpx.Timeout(connect=5.0, read=15.0, write=5.0, pool=5.0)
 
         try:
@@ -267,10 +281,25 @@ class WebRetriever:
                                     error=last_error,
                                 )
                             )
+                            if isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout, httpx.ProxyError)):
+                                # No connection ever opened, so rotating user agents cannot help.
+                                connect_failure = self._describe_connect_failure(normalized, exc)
+                                break
                             if attempt_number >= MAX_ATTEMPTS:
                                 break
                             await asyncio.sleep(min(2.0, 0.25 * (2 ** (attempt_number - 1))))
         except TimeoutError as exc:
             raise RetrievalError(f"Timed out fetching {normalized} after {OVERALL_TIMEOUT_SECONDS:g} seconds.") from exc
 
+        if connect_failure:
+            raise RetrievalError(connect_failure)
         raise RetrievalError(f"Failed to fetch {normalized}: {last_error}")
+
+    def _describe_connect_failure(self, normalized_url: str, exc: Exception) -> str:
+        host = urlsplit(normalized_url).hostname or normalized_url
+        detail = str(exc).strip()
+        if looks_like_tls_failure(detail):
+            return secure_connection_failure_message(host, detail)
+        if not detail and isinstance(exc, httpx.ConnectTimeout):
+            detail = "the connection attempt timed out"
+        return connect_failure_message(host, detail, self.connect_failures.record(host))

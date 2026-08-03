@@ -16,6 +16,7 @@ from .errors import (
     SearchBackendNotConfigured,
     SearchBackendRateLimited,
     SearchBackendUnavailable,
+    SearchBackendUnreachable,
 )
 from .firecrawl import FirecrawlBackend
 from .models import SearchResponse, SearchResult
@@ -70,6 +71,7 @@ __all__ = [
     "SearchBackendNotConfigured",
     "SearchBackendRateLimited",
     "SearchBackendUnavailable",
+    "SearchBackendUnreachable",
     "SearchResponse",
     "SearchResult",
     "available_backends",

@@ -8,8 +8,9 @@ from typing import List
 from ddgs import DDGS
 from ddgs.exceptions import DDGSException, RatelimitException, TimeoutException
 
+from ..network_status import looks_like_connect_failure
 from .base import DEFAULT_RESULTS, SearchBackend, clamp_results
-from .errors import SearchBackendRateLimited, SearchBackendUnavailable
+from .errors import SearchBackendRateLimited, SearchBackendUnavailable, SearchBackendUnreachable
 from .models import SearchResponse, SearchResult
 
 
@@ -30,11 +31,17 @@ class DuckDuckGoBackend(SearchBackend):
         except RatelimitException as exc:
             raise SearchBackendRateLimited(str(exc) or "rate-limited by DuckDuckGo") from exc
         except DDGSException as exc:
-            raise SearchBackendUnavailable(str(exc) or exc.__class__.__name__) from exc
+            message = str(exc) or exc.__class__.__name__
+            if looks_like_connect_failure(message):
+                # host=None: ddgs fans out over many engines, no single endpoint to name.
+                raise SearchBackendUnreachable(message) from exc
+            raise SearchBackendUnavailable(message) from exc
         except Exception as exc:  # defensive: ddgs has changed exception types across versions
             message = str(exc) or exc.__class__.__name__
             if "ratelimit" in exc.__class__.__name__.lower() or "202" in message or "429" in message:
                 raise SearchBackendRateLimited(message) from exc
+            if looks_like_connect_failure(message):
+                raise SearchBackendUnreachable(message) from exc
             raise SearchBackendUnavailable(message) from exc
 
         results = [

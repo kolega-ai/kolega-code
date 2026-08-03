@@ -19,5 +19,13 @@ class SearchBackendUnavailable(SearchBackendError):
     """Network failure, timeout, or a backend server error."""
 
 
+class SearchBackendUnreachable(SearchBackendUnavailable):
+    """The backend endpoint could not be reached at all (DNS, TCP, or TLS connect failure)."""
+
+    def __init__(self, message: str, *, host: str | None = None) -> None:
+        super().__init__(message)
+        self.host = host
+
+
 class SearchBackendRateLimited(SearchBackendError):
     """The backend rate-limited or blocked the request."""

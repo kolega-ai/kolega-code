@@ -28,6 +28,7 @@ from .errors import (
     SearchBackendNotConfigured,
     SearchBackendRateLimited,
     SearchBackendUnavailable,
+    SearchBackendUnreachable,
 )
 from .models import SearchResponse, SearchResult
 
@@ -93,6 +94,8 @@ class FirecrawlBackend(SearchBackend):
                 response = await client.post(
                     FIRECRAWL_SEARCH_URL, json=body, headers={"Content-Type": "application/json"}
                 )
+        except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+            raise SearchBackendUnreachable(str(exc) or "connection failed", host="api.firecrawl.dev") from exc
         except httpx.TimeoutException as exc:
             raise SearchBackendUnavailable(f"timed out after {self.timeout:.0f}s") from exc
         except httpx.HTTPError as exc:

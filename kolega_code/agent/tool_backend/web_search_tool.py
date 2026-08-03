@@ -1,14 +1,16 @@
 from pathlib import Path
-from typing import Union
+from typing import Optional, Union
 
 from kolega_code.config import AgentConfig
 
+from .network_status import ConnectFailureTracker, connect_failure_message
 from .search_backends import (
     DEFAULT_BACKEND,
     DEFAULT_RESULTS,
     SearchBackendError,
     SearchBackendNotConfigured,
     SearchBackendRateLimited,
+    SearchBackendUnreachable,
     SearchResponse,
     build_search_backend,
     clamp_results,
@@ -32,8 +34,11 @@ class WebSearchTool(StreamingTool):
         config: AgentConfig,
         caller,
         filesystem=None,
+        *,
+        connect_failures: Optional[ConnectFailureTracker] = None,
     ):
         super().__init__(project_path, workspace_id, thread_id, connection_manager, config, caller, filesystem)
+        self.connect_failures = connect_failures or ConnectFailureTracker()
 
     async def web_search(self, query: str, max_results: int = DEFAULT_RESULTS) -> str:
         """Search the web with the configured backend and return formatted results.
@@ -69,9 +74,13 @@ class WebSearchTool(StreamingTool):
             return await self._error(f"{exc} Configure it in Settings > Web Search.", tool_call_id)
         except SearchBackendRateLimited as exc:
             return await self._error(
-                f"{exc} The search backend is rate-limited; retry shortly or switch backends in Settings > Web Search.",
+                f"{exc} The search backend is rate-limited; retry shortly.",
                 tool_call_id,
             )
+        except SearchBackendUnreachable as exc:
+            subject = exc.host or f"the {backend_name} search backend"
+            count = self.connect_failures.record(subject)
+            return await self._error(connect_failure_message(subject, str(exc), count), tool_call_id)
         except SearchBackendError as exc:
             return await self._error(f"Web search failed ({backend_name}): {exc}", tool_call_id)
         except Exception as exc:  # pragma: no cover - defensive

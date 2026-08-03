@@ -2,6 +2,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
+from kolega_code.agent.tool_backend.network_status import ConnectFailureTracker
 from kolega_code.agent.tool_backend.web_fetch.answering import MAX_COMPLETION_TOKENS
 from kolega_code.agent.tool_backend.web_fetch.pipeline import WebContent, WebContentError
 from kolega_code.agent.tool_backend.web_fetch_tool import WebFetchTool
@@ -42,6 +43,14 @@ def caller():
 @pytest.fixture
 def tool(tmp_path, agent_config, caller):
     return WebFetchTool(tmp_path, "test_workspace", "test_thread", AsyncMock(), agent_config, caller)
+
+
+def test_web_fetch_tool_threads_shared_tracker(tmp_path, agent_config, caller) -> None:
+    tracker = ConnectFailureTracker()
+    tool = WebFetchTool(
+        tmp_path, "test_workspace", "test_thread", AsyncMock(), agent_config, caller, connect_failures=tracker
+    )
+    assert tool.content_pipeline.retriever.connect_failures is tracker
 
 
 def _content(text: str = "Extracted content with the important fact.", **kwargs) -> WebContent:
