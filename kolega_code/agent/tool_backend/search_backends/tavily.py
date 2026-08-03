@@ -12,11 +12,13 @@ from tavily.errors import (
     UsageLimitExceededError,
 )
 
+from ..network_status import looks_like_connect_failure
 from .base import DEFAULT_RESULTS, SearchBackend, clamp_results
 from .errors import (
     SearchBackendNotConfigured,
     SearchBackendRateLimited,
     SearchBackendUnavailable,
+    SearchBackendUnreachable,
 )
 from .models import SearchResponse, SearchResult
 
@@ -43,7 +45,10 @@ class TavilyBackend(SearchBackend):
         except UsageLimitExceededError as exc:
             raise SearchBackendRateLimited(str(exc) or "Tavily usage limit exceeded.") from exc
         except Exception as exc:
-            raise SearchBackendUnavailable(str(exc) or exc.__class__.__name__) from exc
+            message = str(exc) or exc.__class__.__name__
+            if looks_like_connect_failure(message):
+                raise SearchBackendUnreachable(message, host="api.tavily.com") from exc
+            raise SearchBackendUnavailable(message) from exc
 
         rows = payload.get("results") or []
         results = [

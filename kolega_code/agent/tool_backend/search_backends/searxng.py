@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from urllib.parse import urlsplit
+
 import httpx
 
 from .base import DEFAULT_RESULTS, SearchBackend, clamp_results
@@ -9,6 +11,7 @@ from .errors import (
     SearchBackendNotConfigured,
     SearchBackendRateLimited,
     SearchBackendUnavailable,
+    SearchBackendUnreachable,
 )
 from .models import SearchResponse, SearchResult
 
@@ -33,6 +36,9 @@ class SearxngBackend(SearchBackend):
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 response = await client.get(url, params=params)
+        except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+            host = urlsplit(self.base_url).hostname or self.base_url
+            raise SearchBackendUnreachable(str(exc) or "connection failed", host=host) from exc
         except httpx.TimeoutException as exc:
             raise SearchBackendUnavailable(f"timed out after {self.timeout:.0f}s") from exc
         except httpx.HTTPError as exc:
