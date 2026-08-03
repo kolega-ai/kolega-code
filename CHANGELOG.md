@@ -13,6 +13,31 @@ This project uses GitHub Releases for detailed generated release notes. This fil
   49+ stopped publishing Intel-mac wheels, so the installer tried to compile it
   with Rust and OpenSSL; Intel Macs now install the last release that ships a
   prebuilt universal2 wheel. Other platforms are unaffected.
+- DeepSeek requests now always carry an explicit output-token cap (64000, on
+  every provider that serves DeepSeek models: first-party, Fireworks, Ollama
+  Cloud, OpenRouter). DeepSeek's real per-response ceiling is ~64k — far below
+  its published 384000 — and a server-enforced cutoff is reported as a clean
+  finish, so long reasoning runs were being truncated silently mid-word. An
+  explicit client cap is enforced and reported honestly, so truncation now
+  surfaces as a real `max_tokens` stop the agent loop can react to.
+- The Responses API stream wrapper now captures the terminal
+  `response.incomplete` event, so a response truncated at `max_output_tokens`
+  reports stop reason `max_tokens` (and keeps its usage/billing metadata)
+  instead of looking like a clean `end_turn` with no usage.
+- A reply cut off at the output-token limit mid-message is no longer delivered
+  as-is: the agent asks the model to continue (up to 3 escalating continuation
+  prompts, mirroring the silent-turn guard), and only finalizes with the
+  partial output if the reply is still truncated after that.
+- The non-streaming chat `generate()` path now maps `finish_reason` (it lives
+  on the choice, not the message), so its responses carry a real stop reason
+  instead of `None`.
+
+### Removed
+
+- The `KOLEGA_CODE_OPENROUTER_MAX_TOKENS` environment variable. OpenRouter
+  requests still send no `max_tokens` by default (it acts as a routing filter
+  on the gateway), except DeepSeek models, which now always send the honest
+  clamped cap.
 
 ## 0.26.7 - 2026-08-03
 

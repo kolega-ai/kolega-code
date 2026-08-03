@@ -109,3 +109,40 @@ async def test_empty_stream_yields_empty_buffers():
             pass
         assert stream.final_content == ""
         assert stream.final_reasoning_content == ""
+
+
+# --- finish_reason normalization --------------------------------------------------
+
+
+def test_deepseek_documented_finish_reasons_map_explicitly(caplog):
+    import logging
+
+    from kolega_code.llm.models import Message
+
+    # An explicit client cap is reported as "length" (probed live 2026-08-03,
+    # test_deepseek_output_cap_live.py) and must normalize to the honest
+    # "max_tokens" the turn loop and silent-turn guard key on.
+    with caplog.at_level(logging.WARNING, logger="kolega_code.llm.models"):
+        assert Message.from_openai_stream("assistant", "x", stop_reason="length").stop_reason == "max_tokens"
+        # DeepSeek-documented terminal reasons with no dedicated stop reason end
+        # the turn deliberately (mapped, not unknown) — no warning.
+        assert Message.from_openai_stream("assistant", "x", stop_reason="content_filter").stop_reason == "end_turn"
+        assert (
+            Message.from_openai_stream("assistant", "x", stop_reason="insufficient_system_resource").stop_reason
+            == "end_turn"
+        )
+    assert not caplog.records
+
+
+def test_unknown_finish_reason_stops_as_end_turn_with_warning(caplog):
+    import logging
+
+    from kolega_code.llm.models import Message
+
+    # Direct dict indexing used to raise KeyError during stream finalization on
+    # any unmapped finish_reason; unknown values now end the turn with a visible
+    # warning (None would keep the turn loop spinning).
+    with caplog.at_level(logging.WARNING, logger="kolega_code.llm.models"):
+        message = Message.from_openai_stream("assistant", "x", stop_reason="mystery_reason")
+    assert message.stop_reason == "end_turn"
+    assert any("mystery_reason" in record.getMessage() for record in caplog.records)

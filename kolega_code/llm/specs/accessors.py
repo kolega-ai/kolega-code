@@ -100,3 +100,51 @@ def preferred_edit_protocol(provider: str, model_name: str) -> Optional[str]:
         return None
     value = specs.get("preferred_edit_protocol")
     return str(value) if value is not None else None
+
+
+# DeepSeek's published max_completion_tokens (384000) is fiction. Probed
+# 2026-08-03, tests/agent/llm/test_deepseek_output_cap_live.py:
+#   - first-party chat, uncapped: hard server cut at exactly 65536 output
+#     tokens (reported honestly as finish_reason="length");
+#   - first-party Responses, uncapped: the model SELF-CENSORS ~7.4k tokens in
+#     ("response would exceed the maximum output length...") with a clean
+#     status="completed" — silent underdelivery; with an explicit cap it
+#     streams to the cap and reports the hit honestly
+#     (status="incomplete"/reason="max_output_tokens");
+#   - fireworks, uncapped: cut at its 32768 DEFAULT max_tokens (honest
+#     "length"); an explicit 64000 is honored and honestly reported;
+#   - openrouter deepseek slugs: accept max_tokens=64000 and report honest
+#     "length" truncations through the gateway;
+#   - over-ceiling caps (384000) are accepted silently everywhere — nothing
+#     rejects or visibly clamps, so the client must send the cap it wants.
+# An explicit client cap below the ceiling is therefore both the only reliable
+# honest-truncation signal AND what unlocks the model's full output (uncapped,
+# flash delivers ~7k; capped, 64000). 64000 matches oh-my-pi's
+# OPENAI_MAX_OUTPUT_TOKENS and leaves margin under the measured 65536 ceiling.
+# Applied to DeepSeek models on every provider that offers them (first-party,
+# fireworks, ollama_cloud, openrouter) by _apply_deepseek_request_rules in
+# providers/openai.py and DeepSeekResponsesProvider._build_request.
+DEEPSEEK_WIRE_OUTPUT_CAP = 64000
+
+
+def is_deepseek_model(model_name: str) -> bool:
+    """True for DeepSeek-family models under any provider's naming scheme.
+
+    Covers "deepseek-v4-pro" (first-party), "accounts/fireworks/models/deepseek-v4-flash"
+    (fireworks), "deepseek/deepseek-v4-pro" (openrouter), "deepseek-v3.2" (ollama_cloud).
+    """
+    return "deepseek" in model_name.lower()
+
+
+def deepseek_output_token_cap(provider: str, model_name: str, requested: Optional[int]) -> int:
+    """The output-token cap to put on the wire for a DeepSeek-model request.
+
+    The min over the non-None of (requested cap, catalog max_completion_tokens,
+    ``DEEPSEEK_WIRE_OUTPUT_CAP``). Always returns a value — DeepSeek requests
+    always carry an explicit cap, because the server truncates silently without
+    one (see the block comment above). The min keeps smaller models honest: a
+    catalog entry with a cap below 64000 stays at its own cap.
+    """
+    specs = MODEL_SPECS.get((_provider_value(provider), model_name))
+    ceiling = specs.get("max_completion_tokens") if specs else None
+    return min(value for value in (requested, ceiling, DEEPSEEK_WIRE_OUTPUT_CAP) if value is not None)

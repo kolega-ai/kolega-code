@@ -8,8 +8,6 @@ without touching the network.
 
 import asyncio
 
-import pytest
-
 from kolega_code.llm.client import LLMClient
 from kolega_code.llm.models import Message, MessageHistory
 from kolega_code.llm.providers.models import GenerationParams
@@ -103,23 +101,22 @@ def test_caching_and_usage_accounting_are_requested(monkeypatch) -> None:
     assert set(extra_body) == {"reasoning", "cache_control", "usage"}
 
 
-def test_max_tokens_is_omitted_unless_an_operator_opts_in(monkeypatch) -> None:
-    # A catalog-default cap excludes every upstream whose output cap is lower,
-    # biasing routing and price for no benefit.
+def test_max_tokens_is_always_omitted(monkeypatch) -> None:
+    # A catalog-default cap excludes every upstream whose output cap is lower
+    # ("if you set a max_tokens, then OpenRouter will only route to providers
+    # that support a response of that length"), biasing routing and price for
+    # no benefit — and catalog output caps are largely fiction anyway.
     request = _stream_request(monkeypatch, model=REASONING_MODEL)
     assert "max_tokens" not in request
     assert "max_completion_tokens" not in request
 
-    monkeypatch.setenv("KOLEGA_CODE_OPENROUTER_MAX_TOKENS", "8192")
-    request = _stream_request(monkeypatch, model=REASONING_MODEL)
-    assert request["max_tokens"] == 8192
 
-
-@pytest.mark.parametrize("value", ["0", "-5", "not-a-number", ""])
-def test_invalid_max_tokens_override_falls_back_to_omitting(monkeypatch, value: str) -> None:
-    monkeypatch.setenv("KOLEGA_CODE_OPENROUTER_MAX_TOKENS", value)
-    request = _stream_request(monkeypatch, model=REASONING_MODEL)
-    assert "max_tokens" not in request
+def test_deepseek_slug_gets_clamped_cap_despite_gateway_omission(monkeypatch) -> None:
+    # DeepSeek models are the exception: their real output ceiling (~64k) is far
+    # below the catalog value and the server truncates silently, so the honest
+    # clamped cap is always sent — the routing-filter effect is deliberate.
+    request = _stream_request(monkeypatch, model="deepseek/deepseek-v4-pro")
+    assert request["max_tokens"] == 64000
 
 
 def test_temperature_follows_the_catalog_capability_flag(monkeypatch) -> None:

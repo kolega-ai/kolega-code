@@ -175,7 +175,9 @@ def test_build_request_is_responses_shaped_with_reasoning():
     assert request["tools"][0]["type"] == "function"
     assert request["tools"][0]["name"] == "read_file"
     assert request["input"] == [{"role": "user", "content": [{"type": "input_text", "text": "hello"}]}]
-    # The Responses path must NOT send Chat-Completions-only fields.
+    # The Responses path must NOT send Chat-Completions-only fields. The absent
+    # max_output_tokens also guards the non-DeepSeek builders: only
+    # DeepSeekResponsesProvider overrides _build_request to add a clamped cap.
     assert "temperature" not in request
     assert "max_completion_tokens" not in request
     assert "max_output_tokens" not in request

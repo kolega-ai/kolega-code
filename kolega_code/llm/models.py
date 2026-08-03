@@ -1147,6 +1147,34 @@ class MessageChunk:
         return cls(type="ignore", text="")
 
 
+_OPENAI_STOP_REASON_MAP = {
+    "tool_calls": "tool_use",
+    "function_call": "tool_use",
+    "length": "max_tokens",
+    "stop": "end_turn",
+    # DeepSeek-documented finish reasons; both end the turn without tool calls.
+    "content_filter": "end_turn",
+    "insufficient_system_resource": "end_turn",
+}
+
+
+def _normalize_openai_finish_reason(finish_reason: Optional[str]) -> Optional[str]:
+    """Map an OpenAI-compatible finish_reason to the unified stop reason.
+
+    Unknown values normalize to "end_turn" with a warning rather than raising or
+    returning None: a None stop_reason would keep BaseAgent's turn loop spinning,
+    and crashing during stream finalization is strictly worse than ending the
+    turn with the warning visible.
+    """
+    if not finish_reason:
+        return None
+    normalized = _OPENAI_STOP_REASON_MAP.get(finish_reason)
+    if normalized is None:
+        logger.warning("Unmapped finish_reason %r; treating as end_turn", finish_reason)
+        return "end_turn"
+    return normalized
+
+
 class Message:
     """Unified representation of a full message"""
 
@@ -1355,23 +1383,24 @@ class Message:
         )
 
     @classmethod
-    def from_openai(cls, message, tool_execution_ids: Optional[ToolExecutionIdRegistry] = None):
+    def from_openai(
+        cls,
+        message,
+        tool_execution_ids: Optional[ToolExecutionIdRegistry] = None,
+        finish_reason: Optional[str] = None,
+    ):
         """
         Converts an OpenAI message to a Message instance.
 
         Args:
             message: The OpenAI message from the response
+            finish_reason: The choice's finish_reason. It lives on the choice,
+                not the message, so callers must pass it explicitly — without it
+                the produced Message has stop_reason None.
 
         Returns:
             Message: A unified message representation
         """
-        stop_reason_map = {
-            "tool_calls": "tool_use",
-            "function_call": "tool_use",
-            "length": "max_tokens",
-            "stop": "end_turn",
-        }
-
         tool_execution_ids = tool_execution_ids or ToolExecutionIdRegistry()
         content_blocks = []
         tool_use_blocks = []
@@ -1408,7 +1437,9 @@ class Message:
             role="assistant",
             content=content_blocks,
             tool_calls=tool_use_blocks if tool_use_blocks else None,
-            stop_reason=stop_reason_map[message.finish_reason] if hasattr(message, "finish_reason") else None,
+            stop_reason=_normalize_openai_finish_reason(
+                finish_reason if finish_reason is not None else getattr(message, "finish_reason", None)
+            ),
             usage_metadata=usage_metadata,
         )
 
@@ -1505,13 +1536,6 @@ class Message:
         Returns:
             Message: A unified message representation
         """
-        stop_reason_map = {
-            "tool_calls": "tool_use",
-            "function_call": "tool_use",
-            "length": "max_tokens",
-            "stop": "end_turn",
-        }
-
         tool_execution_ids = tool_execution_ids or ToolExecutionIdRegistry()
         content_blocks = []
         tool_use_blocks = []
@@ -1542,7 +1566,7 @@ class Message:
             role=role,
             content=content_blocks,
             tool_calls=tool_use_blocks if tool_use_blocks else None,
-            stop_reason=stop_reason_map[stop_reason] if stop_reason else None,
+            stop_reason=_normalize_openai_finish_reason(stop_reason),
             usage_metadata={},
         )
 

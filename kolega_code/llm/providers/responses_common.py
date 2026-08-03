@@ -325,6 +325,13 @@ def _blocks_from_response(response: Any, tool_execution_ids: ToolExecutionIdRegi
 
 
 def _stop_reason_from_response(response: Any, has_tool_calls: bool) -> str:
+    # DeepSeek (probed 2026-08-03, tests/agent/llm/test_deepseek_output_cap_live.py):
+    # an EXPLICIT max_output_tokens cap is enforced and reported honestly with the
+    # status="incomplete"/reason="max_output_tokens" shape handled below. But a
+    # SERVER-enforced cutoff (no cap requested) arrives as status="completed" — the
+    # truncation is unrecoverable here. That is why DeepSeek requests always send a
+    # clamped cap (DeepSeekResponsesProvider._build_request) and BaseAgent logs a
+    # warning when a DeepSeek response ends at the ceiling without a max_tokens stop.
     if has_tool_calls:
         return "tool_use"
     if getattr(response, "status", None) == "incomplete":
@@ -658,7 +665,13 @@ class ResponsesStreamWrapper:
                     record["name"] = name
                 if arguments:
                     record["arguments"] = arguments
-        elif event_type == "response.completed":
+        elif event_type in ("response.completed", "response.incomplete"):
+            # A response truncated at max_output_tokens terminates with
+            # response.incomplete, NOT response.completed (DeepSeek verified live
+            # 2026-08-03, tests/agent/llm/test_deepseek_output_cap_live.py; OpenAI
+            # documents the same). Both carry the final response object — status,
+            # incomplete_details, and usage — so both must be captured, or a
+            # truncation loses its usage and degrades to a clean end_turn.
             self._final_response = getattr(event, "response", None)
             return self._thinking_chunk(self._finish_active_summary_part())
         elif event_type in ("response.failed", "error"):
@@ -806,7 +819,9 @@ class ResponsesProviderBase(OpenAIProvider):
 
         Does NOT send ``max_output_tokens`` or ``temperature`` (the backend
         enforces limits and only accepts the default temperature for reasoning
-        models) and always streams.
+        models) and always streams. ``DeepSeekResponsesProvider`` overrides this
+        to add a clamped ``max_output_tokens`` — DeepSeek truncates silently at
+        its real ceiling unless the client sends an explicit cap.
         """
         model = str(kwargs.get("model") or self._default_model())
         request: Dict[str, Any] = {

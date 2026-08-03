@@ -45,7 +45,12 @@ from kolega_code.llm.instrumented_client import get_output_tokens
 from kolega_code.llm.ledger import HISTORY_ORIGIN, LlmCallOrigin, helper_origin, llm_call_origin
 from kolega_code.llm.models import ImageBlock, Message, MessageHistory, TextBlock, ToolCall, ToolResult
 from kolega_code.llm.providers.models import TokenCount
-from kolega_code.llm.specs import get_model_specs, supports_vision as model_supports_vision
+from kolega_code.llm.specs import (
+    deepseek_output_token_cap,
+    get_model_specs,
+    is_deepseek_model,
+    supports_vision as model_supports_vision,
+)
 from kolega_code.permissions import (
     PermissionDecision,
     PermissionMode,
@@ -142,6 +147,17 @@ class BaseAgent(LogMixin):
     # Runtime half of the coder_base.md.j2 invariant ("Thinking is invisible
     # and changes nothing on its own").
     MAX_SILENT_TURN_NUDGES = 3
+    # Cap on consecutive continuation prompts after a truncated turn: the model
+    # hit the output-token limit mid-reply (honest "max_tokens" stop, visible
+    # text, no tool call). Unlike a silent turn there IS partial content, so
+    # exhausting the cap finalizes the turn with what was produced instead of
+    # reporting no result.
+    MAX_TRUNCATED_TURN_NUDGES = 3
+    # A DeepSeek response whose output lands within this many tokens of the wire
+    # output cap without an honest "max_tokens" stop was likely truncated
+    # server-side: DeepSeek reports its own cutoff as a clean finish (probed
+    # 2026-08-03; see DEEPSEEK_WIRE_OUTPUT_CAP in llm/specs/accessors.py).
+    DEEPSEEK_OUTPUT_CAP_SLACK = 1024
     long_content_tool_calls = ["write"]
     max_tool_result_chars_in_history = 100_000
     skill_content_pattern = re.compile(r'<skill_content name="[^"]+">')
@@ -428,6 +444,18 @@ class BaseAgent(LogMixin):
         self.model_context_length = model_specs["context_length"]
         self.model_completion_tokens = model_specs["max_completion_tokens"]
         self.model_default_temperature = model_specs.get("default_temperature", 1.0)
+        # The clamped cap DeepSeek requests carry on the wire (None for other
+        # models). Used to flag probable silent server-side truncation — see the
+        # at-ceiling warning in process_message_stream.
+        self.deepseek_wire_output_cap = (
+            deepseek_output_token_cap(
+                self.primary_model_config.provider,
+                self.primary_model_config.model,
+                self.model_completion_tokens,
+            )
+            if is_deepseek_model(self.primary_model_config.model)
+            else None
+        )
         # Whether this agent's primary model can accept image input. Read by the
         # ToolCollection read_image tool gate (so non-vision models never see the
         # tool) and used by _unsupported_attachment_message to reject image
@@ -1967,6 +1995,7 @@ class BaseAgent(LogMixin):
         stop_reason = None
         stop_overrides = 0
         silent_turn_nudges = 0
+        truncated_turn_nudges = 0
         iterations = 0
         while stop_reason not in ["end_turn", "max_tokens", "stop_sequence"]:
             iterations += 1
@@ -2106,10 +2135,11 @@ class BaseAgent(LogMixin):
                 assistant_message = await stream.get_final_message()
                 self._normalize_freeform_tool_calls(assistant_message)
                 assistant_message.usage_metadata["edit_protocol"] = self.edit_protocol.value
-                self.total_tokens_used += get_output_tokens(
+                response_output_tokens = get_output_tokens(
                     assistant_message.usage_metadata,
                     self.primary_model_config.provider.value,
                 )
+                self.total_tokens_used += response_output_tokens
                 if self._accounting_reservation is not None:
                     self._accounting_reservation.report_total(self.total_tokens_used)
                 stop_reason = assistant_message.stop_reason
@@ -2120,6 +2150,23 @@ class BaseAgent(LogMixin):
                     elapsed_s=round(time.monotonic() - _req_start, 2),
                     stop_reason=stop_reason,
                 )
+                # DeepSeek reports a SERVER-side output cutoff as a clean finish;
+                # the clamped wire cap should always fire first as an honest
+                # "max_tokens" stop. A response landing at/near the cap without
+                # one was likely truncated silently — surface it in the
+                # trajectory (log_message event) since the stop reason cannot be
+                # recovered.
+                if (
+                    self.deepseek_wire_output_cap is not None
+                    and stop_reason != "max_tokens"
+                    and response_output_tokens >= self.deepseek_wire_output_cap - self.DEEPSEEK_OUTPUT_CAP_SLACK
+                ):
+                    await self.log_warning(
+                        f"DeepSeek response used {response_output_tokens} output tokens — at or near "
+                        f"the {self.deepseek_wire_output_cap}-token output cap — but reported "
+                        f"stop_reason={stop_reason!r}; the output was likely truncated server-side.",
+                        sender=self.agent_name,
+                    )
 
                 if self.session_recorder is not None:
                     await asyncio.to_thread(self.session_recorder.record_assistant, assistant_message)
@@ -2131,6 +2178,11 @@ class BaseAgent(LogMixin):
                 # silent-turn budget: the cap measures only consecutive silence.
                 if not self._is_silent_turn(assistant_message):
                     silent_turn_nudges = 0
+                # And any response that was not cut off at the output limit
+                # resets the truncation budget: the cap measures only
+                # consecutive truncations.
+                if stop_reason != "max_tokens":
+                    truncated_turn_nudges = 0
 
                 if thinking_started or current_thinking:
                     yield {"type": "thinking", "content": current_thinking, "complete": True, "uuid": thinking_uuid}
@@ -2226,6 +2278,37 @@ class BaseAgent(LogMixin):
                             "uuid": str(uuid.uuid4()),
                         }
                         break
+
+                # Truncated-turn guard: an honest "max_tokens" stop with visible
+                # text and no tool call means the reply was cut off mid-message
+                # (the silent-turn guard above owns the no-visible-output case
+                # and cleared stop_reason if it fired). Finalizing would deliver
+                # a partial answer, so ask the model to continue; after the cap,
+                # finalize with the partial output — unlike a silent turn there
+                # IS content worth delivering.
+                if stop_reason == "max_tokens" and not assistant_message.tool_calls:
+                    from .prompts import build_truncated_turn_nudge
+
+                    if truncated_turn_nudges < self.MAX_TRUNCATED_TURN_NUDGES:
+                        truncated_turn_nudges += 1
+                        await self.emitter.llm_status(
+                            "info",
+                            "Response hit the output limit — asking the model to continue "
+                            f"({truncated_turn_nudges}/{self.MAX_TRUNCATED_TURN_NUDGES})…",
+                        )
+                        await self._record_context_user_message(build_truncated_turn_nudge(truncated_turn_nudges))
+                        stop_reason = None
+                    else:
+                        await self.log_warning(
+                            f"Model hit the output-token limit {self.MAX_TRUNCATED_TURN_NUDGES + 1} times "
+                            "in a row; finalizing the turn with the partial output.",
+                            sender=self.agent_name,
+                        )
+                        await self.emitter.llm_status(
+                            "warning",
+                            "Response still truncated after repeated continuation prompts — "
+                            "delivering the partial output.",
+                        )
 
                 # Stop hooks (main agent only). On a natural turn end, a hook may
                 # keep the agent working by blocking the stop and returning a reason.

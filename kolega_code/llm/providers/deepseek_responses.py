@@ -21,11 +21,14 @@ host — DeepSeek's Responses guide uses ``https://api.deepseek.com`` (no ``/v1`
 from __future__ import annotations
 
 import uuid
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from openai import AsyncOpenAI
 
+from ..models import Message, MessageHistory
+from ..specs import deepseek_output_token_cap
 from .base import BaseLLMProvider
+from .models import GenerationParams
 from .responses_common import ResponsesProviderBase
 
 DEFAULT_BASE_URL = "https://api.deepseek.com"
@@ -64,3 +67,25 @@ class DeepSeekResponsesProvider(ResponsesProviderBase):
 
     def _default_model(self) -> str:
         return DEFAULT_MODEL
+
+    def _build_request(
+        self,
+        messages: MessageHistory,
+        system: Optional[Message],
+        params: Optional[GenerationParams],
+        kwargs: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Add the clamped output cap the shared Responses builder omits.
+
+        DeepSeek truncates silently at its server ceiling when no cap is sent,
+        but enforces AND honestly reports an explicit client cap
+        (status="incomplete", incomplete_details.reason="max_output_tokens") —
+        see DEEPSEEK_WIRE_OUTPUT_CAP in specs/accessors.py for the probe record.
+        """
+        request = super()._build_request(messages, system, params, kwargs)
+        request["max_output_tokens"] = deepseek_output_token_cap(
+            self.provider_name,
+            str(request["model"]),
+            params.max_completion_tokens if params else None,
+        )
+        return request

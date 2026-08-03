@@ -125,11 +125,15 @@ def test_kimi_coding_k3_model_specs(model, context_length):
     assert specs["thinking_effort"].mode == "kimi_coding_effort"
 
 
-def test_deepseek_v4_pro_model_specs():
-    specs = get_model_specs("deepseek", "deepseek-v4-pro")
+@pytest.mark.parametrize("model", ["deepseek-v4-pro", "deepseek-v4-flash"])
+def test_deepseek_model_specs(model: str):
+    specs = get_model_specs("deepseek", model)
 
     assert specs["context_length"] == 1000000
-    assert specs["max_completion_tokens"] == 384000
+    # The MEASURED per-response output ceiling (server cuts at exactly 65536),
+    # not DeepSeek's published 384000 — see catalog/deepseek.py and
+    # test_deepseek_output_cap_live.py.
+    assert specs["max_completion_tokens"] == 65536
     assert specs["default_temperature"] == 1.0
     assert specs["thinking_effort"].options == ("none", "high", "max")
     assert specs["thinking_effort"].default == "high"
@@ -140,8 +144,8 @@ def test_fireworks_serverless_model_specs():
         "accounts/fireworks/models/glm-5p2": (1048576, 131072),
         "accounts/fireworks/models/glm-5p1": (202800, 131072),
         "accounts/fireworks/models/kimi-k2p7-code": (262144, 262144),
-        "accounts/fireworks/models/deepseek-v4-pro": (1048576, 384000),
-        "accounts/fireworks/models/deepseek-v4-flash": (1048576, 384000),
+        "accounts/fireworks/models/deepseek-v4-pro": (1048576, 65536),
+        "accounts/fireworks/models/deepseek-v4-flash": (1048576, 65536),
         "accounts/fireworks/models/minimax-m3": (512000, 512000),
         "accounts/fireworks/models/qwen3p7-plus": (262144, 65536),
     }

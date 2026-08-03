@@ -278,3 +278,53 @@ def test_openai_provider_generate_stamps_ollama_cloud_provider_name_without_usag
     assert message.content[0].thinking == "ollama reasoning"
     assert isinstance(message.content[1], TextBlock)
     assert message.content[1].text == "final answer"
+
+
+def test_from_openai_maps_choice_finish_reason():
+    class OpenAIMessage:
+        content = "partial answer"
+        tool_calls = None
+
+    # finish_reason lives on the CHOICE, not the message; callers pass it in.
+    message = Message.from_openai(OpenAIMessage(), finish_reason="length")
+    assert message.stop_reason == "max_tokens"
+
+    message = Message.from_openai(OpenAIMessage(), finish_reason="stop")
+    assert message.stop_reason == "end_turn"
+
+    # Without it there is nothing to map (the message has no finish_reason attr).
+    assert Message.from_openai(OpenAIMessage()).stop_reason is None
+
+
+def test_generate_maps_finish_reason_from_choice(monkeypatch):
+    # The non-streaming generate() path passes choice.finish_reason through to
+    # from_openai — it used to drop it, leaving stop_reason None.
+    from types import SimpleNamespace as _ns
+
+    provider = OpenAIProvider(api_key="sk-test", provider_name="deepseek")
+    response = _ns(
+        choices=[
+            _ns(
+                message=_ns(content="partial answer", tool_calls=None, reasoning_content=None),
+                finish_reason="length",
+            )
+        ],
+        usage=_ns(prompt_tokens=5, completion_tokens=16, total_tokens=21),
+    )
+
+    class _Fake:
+        def __init__(self):
+            self.chat = self
+            self.completions = self
+
+        async def create(self, **kwargs):
+            return response
+
+    monkeypatch.setattr(provider, "async_client", _Fake())
+
+    async def run():
+        return await provider.generate(MessageHistory([]), model="deepseek-v4-pro")
+
+    message = asyncio.run(run())
+    assert message.stop_reason == "max_tokens"
+    assert message.get_text_content() == "partial answer"

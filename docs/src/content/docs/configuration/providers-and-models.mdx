@@ -99,10 +99,11 @@ touches the network.
 Two behaviours are specific to this provider:
 
 - **No `max_tokens` is sent.** On a gateway an output cap is a routing hint that
-  excludes every upstream with a lower cap, biasing routing and price. Set
-  `KOLEGA_CODE_OPENROUTER_MAX_TOKENS` to send an explicit cap — worth doing on a
-  low credit balance, since OpenRouter otherwise reserves credit for its own
-  default output size and can reject a request that would have cost pennies.
+  excludes every upstream with a lower cap, biasing routing and price. The one
+  exception is DeepSeek models, which always carry an explicit 64000-token cap:
+  their real output ceiling is far below the published value and the server
+  truncates silently without one, so the cap doubles as a deliberate filter for
+  upstreams that report truncation honestly.
 - **Prompt caching is automatic.** Kolega Code sends OpenRouter's top-level
   `cache_control` breakpoint, so Anthropic-, Vertex- and Bedrock-backed models
   get prompt caching with no extra configuration.

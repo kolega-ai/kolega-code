@@ -22,7 +22,7 @@ from ..models import (
     ToolDefinition,
     ToolResult,
 )
-from ..specs import MODEL_SPECS, build_thinking_request_params
+from ..specs import MODEL_SPECS, build_thinking_request_params, deepseek_output_token_cap, is_deepseek_model
 from ..timeouts import streaming_timeout
 from ..tool_execution_ids import ToolExecutionIdRegistry
 from ..usage import attach_normalized_usage, read_detail_int
@@ -53,22 +53,6 @@ def _get_encoding():
     if _encoding is None:
         _encoding = get_counting_encoding(_ENCODING_NAME)
     return _encoding
-
-
-def _positive_int_env(name: str) -> Optional[int]:
-    """Read a positive integer override from the environment, ignoring junk."""
-    raw = os.environ.get(name)
-    if not raw:
-        return None
-    try:
-        value = int(raw.strip())
-    except ValueError:
-        logging.getLogger(__name__).warning("Ignoring non-integer %s=%r", name, raw)
-        return None
-    if value <= 0:
-        logging.getLogger(__name__).warning("Ignoring non-positive %s=%r", name, raw)
-        return None
-    return value
 
 
 def _csv_env(name: str) -> List[str]:
@@ -396,20 +380,40 @@ class OpenAIProvider(BaseLLMProvider):
         if self.provider_name == OPENROUTER_PROVIDER:
             self._apply_openrouter_request_rules(generation_params)
 
+        # Model-scoped (any provider): runs after the OpenRouter rules so it sees
+        # the post-omission state and re-adds the honest cap for DeepSeek models.
+        if is_deepseek_model(model):
+            self._apply_deepseek_request_rules(generation_params)
+
+    def _apply_deepseek_request_rules(self, generation_params: Dict[str, Any]) -> None:
+        """Always send a clamped output cap on DeepSeek-model requests.
+
+        DeepSeek truncates output at its real ~64k ceiling but reports a
+        SERVER-enforced cutoff as a clean finish, while an explicit client cap is
+        reported honestly (finish_reason "length") — see DEEPSEEK_WIRE_OUTPUT_CAP
+        in specs/accessors.py for the probe record. On OpenRouter the cap doubles
+        as a deliberate routing filter: it selects upstreams that can honor the
+        cap and report truncation honestly.
+        """
+        model = str(generation_params.get("model") or "")
+        generation_params["max_tokens"] = deepseek_output_token_cap(
+            self.provider_name, model, generation_params.get("max_tokens")
+        )
+
     def _apply_openrouter_request_rules(self, generation_params: Dict[str, Any]) -> None:
         """Shape a request for the OpenRouter gateway.
 
         OpenRouter picks an upstream provider per request, and optional fields act
-        as routing hints: a catalog-default ``max_tokens`` excludes every endpoint
-        whose output cap is lower, biasing routing (and price) for no benefit. The
-        cap is dropped unless the operator asked for one explicitly. The catalog's
-        max_completion_tokens is still used for Kolega Code's own context budgeting.
+        as routing hints: "if you set a max_tokens, then OpenRouter will only
+        route to providers that support a response of that length" (their docs,
+        verified 2026-08-03). Catalog max_completion_tokens values are largely
+        context-window-sized fiction, so sending them would exclude most upstreams
+        for no benefit — the cap is always dropped here. DeepSeek models get an
+        honest, measured cap re-added by _apply_deepseek_request_rules. The
+        catalog's max_completion_tokens is still used for Kolega Code's own
+        context budgeting.
         """
-        explicit_cap = _positive_int_env("KOLEGA_CODE_OPENROUTER_MAX_TOKENS")
-        if explicit_cap is not None:
-            generation_params["max_tokens"] = explicit_cap
-        else:
-            generation_params.pop("max_tokens", None)
+        generation_params.pop("max_tokens", None)
 
         extra: Dict[str, Any] = {
             # Automatic prompt caching: OpenRouter applies this breakpoint to the
@@ -740,8 +744,12 @@ class OpenAIProvider(BaseLLMProvider):
             **generation_params,
         )
 
-        # Extract message and add usage data
-        message = Message.from_openai(response.choices[0].message)
+        # Extract message and add usage data. finish_reason lives on the choice,
+        # not the message — pass it through or stop_reason is silently None.
+        message = Message.from_openai(
+            response.choices[0].message,
+            finish_reason=getattr(response.choices[0], "finish_reason", None),
+        )
         message.usage_metadata["provider"] = self.provider_name
 
         # Add usage data from the response
