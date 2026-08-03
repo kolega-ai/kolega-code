@@ -11,15 +11,17 @@ from ..models import ContentBlock, Message, MessageChunk, MessageHistory, ToolDe
 from ..specs import build_thinking_request_params, get_model_specs
 from ..timeouts import streaming_timeout
 from ..tool_execution_ids import ToolExecutionIdRegistry
+from ..usage import attach_normalized_usage
 from ._token_encoding import get_counting_encoding
 from .base import BaseLLMProvider
 from .models import GenerationParams, TokenCount
 
 
 class AnthropicStreamWrapper:
-    def __init__(self, anthropic_stream, provider_name: str = "anthropic"):
+    def __init__(self, anthropic_stream, provider_name: str = "anthropic", model: Optional[str] = None):
         self.anthropic_stream = anthropic_stream
         self.provider_name = provider_name
+        self.model = model
         self.generator: Any = None
         self._closed = False
 
@@ -92,7 +94,7 @@ class AnthropicStreamWrapper:
         )
         if message.usage_metadata:
             message.usage_metadata["provider"] = self.provider_name
-        return message
+        return attach_normalized_usage(message, self.provider_name, self.model)
 
 
 class AnthropicProvider(BaseLLMProvider):
@@ -486,7 +488,7 @@ class AnthropicProvider(BaseLLMProvider):
         # request has been sent, and the SDK's unawaited request coroutine only logs a
         # RuntimeWarning.
         manager = await asyncio.to_thread(open_stream)
-        return AnthropicStreamWrapper(manager, provider_name=self.provider_name)
+        return AnthropicStreamWrapper(manager, provider_name=self.provider_name, model=str(generation_params["model"]))
 
     async def generate(
         self,
@@ -518,4 +520,4 @@ class AnthropicProvider(BaseLLMProvider):
         message = Message.from_anthropic(response)
         if message.usage_metadata:
             message.usage_metadata["provider"] = self.provider_name
-        return message
+        return attach_normalized_usage(message, self.provider_name, str(generation_params["model"]))

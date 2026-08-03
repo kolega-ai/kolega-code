@@ -37,6 +37,7 @@ from ..models import (
 )
 from ..specs import build_thinking_request_params
 from ..tool_execution_ids import ToolExecutionIdRegistry
+from ..usage import attach_normalized_usage, read_detail_int
 from .models import GenerationParams
 from .openai import OpenAIProvider
 
@@ -278,11 +279,18 @@ def _usage_from_response(response: Any) -> Dict[str, Any]:
         "provider": "openai",
     }
     details = getattr(usage, "input_tokens_details", None)
-    cached = getattr(details, "cached_tokens", None) if details is not None else None
-    if cached is None and isinstance(details, dict):
-        cached = details.get("cached_tokens")
+    cached = read_detail_int(details, "cached_tokens")
     if cached:
         metadata["cache_read_input_tokens"] = cached
+    # Deliberately NOT captured: input_tokens_details.cache_write_tokens. The
+    # chat-completions capture path subtracts cache writes from prompt_tokens
+    # (OpenRouter convention) and the normalizer adds them back; deepseek and
+    # openai appear in BOTH shapes under one provider key, so a Responses-side
+    # cache_write key would be indistinguishable from the subtracted kind and
+    # double-count input on add-back. OpenAI reports the field as 0 anyway.
+    reasoning = read_detail_int(getattr(usage, "output_tokens_details", None), "reasoning_tokens")
+    if reasoning is not None:
+        metadata["reasoning_output_tokens"] = reasoning
     return metadata
 
 
@@ -338,9 +346,15 @@ class ResponsesStreamWrapper:
     builds the authoritative final Message from the ``response.completed`` event.
     """
 
-    def __init__(self, responses_stream: Any, provider_name: str = chatgpt_constants.PROVIDER_KEY) -> None:
+    def __init__(
+        self,
+        responses_stream: Any,
+        provider_name: str = chatgpt_constants.PROVIDER_KEY,
+        model: Optional[str] = None,
+    ) -> None:
         self._stream = responses_stream
         self._provider_name = provider_name
+        self._model = model
         self._iterator: Optional[AsyncIterator[Any]] = None
         self._closed = False
         self._text = ""
@@ -682,13 +696,14 @@ class ResponsesStreamWrapper:
         # message/function_call output) so the backend continues the prior
         # chain-of-thought when this message is resent next turn.
         reasoning_blocks = self._collect_reasoning_blocks()
-        return Message(
+        message = Message(
             role="assistant",
             content=reasoning_blocks + content_blocks,
             tool_calls=tool_use_blocks or None,
             stop_reason=stop_reason,
             usage_metadata=usage_metadata,
         )
+        return attach_normalized_usage(message, self._provider_name, self._model)
 
     def _collect_reasoning_blocks(self) -> list:
         """Build the reasoning blocks to carry forward for continuity.
@@ -831,7 +846,7 @@ class ResponsesProviderBase(OpenAIProvider):
         # Per-request streaming timeout bounds the inter-chunk read wait (see
         # kolega_code/llm/timeouts.py) instead of the SDK's 600s default.
         responses_stream = await self.async_client.responses.create(timeout=streaming_timeout(), **request)
-        return ResponsesStreamWrapper(responses_stream, provider_name=self.provider_name)
+        return ResponsesStreamWrapper(responses_stream, provider_name=self.provider_name, model=str(request["model"]))
 
     async def generate(
         self,
@@ -844,7 +859,9 @@ class ResponsesProviderBase(OpenAIProvider):
         request = self._build_request(messages, system, params, kwargs)
         await self.rate_limiter.acquire()
         responses_stream = await self.async_client.responses.create(**request)
-        wrapper = ResponsesStreamWrapper(responses_stream, provider_name=self.provider_name)
+        wrapper = ResponsesStreamWrapper(
+            responses_stream, provider_name=self.provider_name, model=str(request["model"])
+        )
         async with wrapper:
             async for _chunk in wrapper:
                 pass

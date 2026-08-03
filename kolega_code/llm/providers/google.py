@@ -6,13 +6,15 @@ from google.genai import types as genai_types
 from ..models import Message, MessageChunk, MessageHistory, ToolDefinition
 from ..specs import build_thinking_request_params, get_model_specs
 from ..tool_execution_ids import ToolExecutionIdRegistry
+from ..usage import attach_normalized_usage
 from .base import BaseLLMProvider
 from .models import GenerationParams, TokenCount
 
 
 class GoogleStreamWrapper:
-    def __init__(self, gemini_stream):
+    def __init__(self, gemini_stream, model: Optional[str] = None):
         self.gemini_stream = gemini_stream
+        self.model = model
         self.final_content = ""
         # Maps a running index -> (FunctionCall, thought_signature). The signature is a
         # part-level field (Gemini 3.x), so we read it off the parts, not chunk.function_calls.
@@ -53,6 +55,14 @@ class GoogleStreamWrapper:
                     "candidates_token_count": getattr(usage, "candidates_token_count", 0),
                     "total_token_count": getattr(usage, "total_token_count", 0),
                 }
+                for optional_key in (
+                    "cached_content_token_count",
+                    "thoughts_token_count",
+                    "tool_use_prompt_token_count",
+                ):
+                    value = getattr(usage, optional_key, None)
+                    if value is not None:
+                        self.usage_metadata[optional_key] = value
 
             # Read function calls off the parts so we also capture each part's thought_signature
             # (Gemini 3.x requires it echoed back). Accumulate across chunks with a running index.
@@ -80,7 +90,7 @@ class GoogleStreamWrapper:
         )
         message.usage_metadata.update(self.usage_metadata)
         message.usage_metadata["provider"] = "google"
-        return message
+        return attach_normalized_usage(message, "google", self.model)
 
 
 class GoogleProvider(BaseLLMProvider):
@@ -186,7 +196,8 @@ class GoogleProvider(BaseLLMProvider):
         return GoogleStreamWrapper(
             await self.async_client.aio.models.generate_content_stream(
                 model=model, contents=messages.to_google(), config=config
-            )
+            ),
+            model=str(model),
         )
 
     async def generate(
@@ -206,4 +217,4 @@ class GoogleProvider(BaseLLMProvider):
             model=model, contents=messages.to_google(), config=config
         )
 
-        return Message.from_google(response)
+        return attach_normalized_usage(Message.from_google(response), "google", str(model))

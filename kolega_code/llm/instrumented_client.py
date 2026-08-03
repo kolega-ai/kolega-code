@@ -17,37 +17,11 @@ from .client import LLMClient
 from .models import Message, MessageHistory, ToolDefinition
 from .providers.models import GenerationParams
 
+# The provider-family vocabulary lives in kolega_code/llm/usage.py, shared with
+# normalized usage attachment so both consumers stay covered by one guard test.
+from .usage import usage_token_fields as _usage_token_fields
+
 logger = logging.getLogger(__name__)
-
-_ANTHROPIC_USAGE_PROVIDERS = frozenset({"anthropic", "moonshot", "zai", "kimi_coding"})
-_OPENAI_USAGE_PROVIDERS = frozenset(
-    {
-        "openai",
-        "openai_chatgpt",
-        "together",
-        "groq",
-        "fireworks",
-        "llama",
-        "xai",
-        "dashscope",
-        "deepseek",
-        "ollama_cloud",
-        "openrouter",
-    }
-)
-
-
-def _usage_token_fields(provider: object) -> Optional[tuple[str, str]]:
-    """Return the normalized input/output field names for a known provider."""
-    if not isinstance(provider, str):
-        return None
-    if provider in _ANTHROPIC_USAGE_PROVIDERS:
-        return "input_tokens", "output_tokens"
-    if provider in _OPENAI_USAGE_PROVIDERS:
-        return "prompt_tokens", "completion_tokens"
-    if provider == "google":
-        return "prompt_token_count", "candidates_token_count"
-    return None
 
 
 def get_output_tokens(usage_metadata: Optional[Mapping[str, Any]], provider: Optional[str] = None) -> int:
