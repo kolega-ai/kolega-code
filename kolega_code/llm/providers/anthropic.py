@@ -5,13 +5,13 @@ import threading
 from typing import Any, AsyncContextManager, Dict, List, Optional, cast
 from weakref import WeakKeyDictionary
 
-import tiktoken
 from anthropic import AsyncAnthropic
 
 from ..models import ContentBlock, Message, MessageChunk, MessageHistory, ToolDefinition
 from ..specs import build_thinking_request_params, get_model_specs
 from ..timeouts import streaming_timeout
 from ..tool_execution_ids import ToolExecutionIdRegistry
+from ._token_encoding import get_counting_encoding
 from .base import BaseLLMProvider
 from .models import GenerationParams, TokenCount
 
@@ -241,7 +241,9 @@ class AnthropicProvider(BaseLLMProvider):
         Returns:
             TokenCount object with estimated input token count
         """
-        encoding = tiktoken.get_encoding("p50k_base")
+        # CountingEncoding so special-token literals (e.g. <|endoftext|>) in the
+        # content are counted as text instead of raising — see _token_encoding.
+        encoding = get_counting_encoding("p50k_base")
         self._ensure_local_token_memos()
         tools = tools or []
 

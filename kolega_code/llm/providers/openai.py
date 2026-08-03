@@ -8,7 +8,6 @@ import os
 import threading
 import uuid
 
-import tiktoken
 from openai import AsyncOpenAI
 
 from ..models import (
@@ -26,6 +25,7 @@ from ..models import (
 from ..specs import MODEL_SPECS, build_thinking_request_params
 from ..timeouts import streaming_timeout
 from ..tool_execution_ids import ToolExecutionIdRegistry
+from ._token_encoding import get_counting_encoding
 from .base import BaseLLMProvider
 from .models import GenerationParams, TokenCount
 
@@ -35,6 +35,10 @@ from .models import GenerationParams, TokenCount
 # de-facto encoding for every OpenAI-compatible provider (DeepSeek, xAI, Fireworks,
 # ... have no native tiktoken table); the count is an estimate for context
 # management, not billing.
+#
+# CountingEncoding treats special-token literals (e.g. ``<|endoftext|>`` in a
+# tokenizer file) as ordinary text instead of raising, so counting never crashes
+# on such content — see _token_encoding for the rationale.
 _ENCODING_NAME = "cl100k_base"
 _encoding = None
 
@@ -46,7 +50,7 @@ OPENROUTER_PROVIDER = "openrouter"
 def _get_encoding():
     global _encoding
     if _encoding is None:
-        _encoding = tiktoken.get_encoding(_ENCODING_NAME)
+        _encoding = get_counting_encoding(_ENCODING_NAME)
     return _encoding
 
 
