@@ -1,12 +1,40 @@
 import asyncio
+import contextlib
 import os
+import signal
 import sys
 from unittest.mock import patch
 
 import pytest
 
 from kolega_code.events import AgentConnectionManager
-from kolega_code.services.terminal import LocalTerminalManager, PtySession, _strip_runtime_venv
+from kolega_code.services.terminal import (
+    DetachedSession,
+    LocalTerminalManager,
+    PtySession,
+    _signal_group,
+    _strip_runtime_venv,
+)
+
+
+def _process_alive(pid: int) -> bool:
+    """True if ``pid`` is a live, non-zombie process.
+
+    ``os.kill(pid, 0)`` reports a zombie as alive, so reap any of our own
+    finished children first (in the real deployment init reaps survivors after
+    kolega-code exits; in-process we must do it to tell dead from zombie).
+    """
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    try:
+        reaped, _ = os.waitpid(pid, os.WNOHANG)
+        if reaped == pid:
+            return False
+    except ChildProcessError:
+        pass
+    return True
 
 
 class _RecordingConnectionManager(AgentConnectionManager):
@@ -245,8 +273,10 @@ async def test_close_all_terminates_sessions(manager):
 async def test_warns_when_command_leaves_background_jobs(manager):
     # Backgrounded (`&`) processes die with the shell that started them; the
     # result must say so loudly instead of letting the agent believe a server
-    # it launched is still listening. By policy the warning must NOT teach
-    # detach recipes (nohup/disown): nothing should outlive kolega-code.
+    # it launched is still listening, and must point at the supported recipe
+    # (exec_command background=true, which is detached and survives). The
+    # warning must NOT teach raw detach recipes (nohup/disown) — durability is
+    # the terminal manager's job, not the model's.
     result = await manager.exec_command("sleep 30 & echo main-done", yield_time_ms=8000)
     assert result.status == "exited"
     assert "main-done" in result.output
@@ -254,6 +284,92 @@ async def test_warns_when_command_leaves_background_jobs(manager):
     assert "exec_command background=true" in result.output
     assert "nohup" not in result.output
     assert "disown" not in result.output
+
+
+# --------------------------------------------------------------------------- #
+# background=true durability: detached sessions outlive the kolega-code process
+# (matching claude-code's run_in_background), while foreground commands do not.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_background_launch_is_detached_and_running(manager):
+    result = await manager.exec_command("sleep 30", yield_time_ms=500, background=True)
+    assert result.status == "running"
+    assert result.session_id is not None
+    session = manager.sessions[result.session_id]
+    assert isinstance(session, DetachedSession)
+    assert session.detached is True
+    await manager.kill_session(result.session_id, "TERM")
+
+
+@pytest.mark.asyncio
+async def test_background_survives_cleanup_all(manager, tmp_path):
+    # A heartbeat "server" that appends a line every 100ms; cleanup_all() stands
+    # in for kolega-code tearing down at the end of a run.
+    marker = tmp_path / "beats.log"
+    cmd = f"while true; do echo beat >> {marker}; sleep 0.1; done"
+    result = await manager.exec_command(cmd, yield_time_ms=800, background=True)
+    pid = manager.sessions[result.session_id].pid
+    assert result.status == "running" and pid is not None
+
+    await asyncio.sleep(0.2)
+    before = marker.read_text().count("beat")
+
+    await manager.cleanup_all()  # == kolega-code exit
+    assert len(manager.sessions) == 0
+
+    await asyncio.sleep(0.4)
+    after = marker.read_text().count("beat")
+    try:
+        assert _process_alive(pid), "detached background process was reaped on cleanup_all"
+        assert after > before, "detached background process stopped writing after cleanup_all"
+    finally:
+        # It really is a survivor, so we must clean it up ourselves.
+        with contextlib.suppress(OSError):
+            os.killpg(os.getpgid(pid), signal.SIGKILL)
+
+
+@pytest.mark.asyncio
+async def test_background_stopped_by_kill_session(manager):
+    result = await manager.exec_command("sleep 30", yield_time_ms=500, background=True)
+    pid = manager.sessions[result.session_id].pid
+    killed = await manager.kill_session(result.session_id, "TERM")
+    assert killed.status == "exited"
+    await asyncio.sleep(0.1)
+    assert not _process_alive(pid)
+    assert result.session_id not in manager.sessions
+
+
+@pytest.mark.asyncio
+async def test_background_poll_captures_incremental_output(manager):
+    # Initial call captures early output; a later poll captures new output while
+    # the process keeps running (write_stdin clamps its poll window to >=5s).
+    result = await manager.exec_command(
+        "echo first; sleep 1; echo second; sleep 30", yield_time_ms=600, background=True
+    )
+    assert result.status == "running"
+    assert "first" in result.output
+    poll = await manager.write_stdin(result.session_id, "")
+    assert poll.status == "running"
+    assert "second" in poll.output
+    await manager.kill_session(result.session_id, "TERM")
+
+
+@pytest.mark.asyncio
+async def test_foreground_long_runner_is_killed_by_cleanup_all(manager):
+    # Contrast with the background case: a normal command must NOT survive.
+    result = await manager.exec_command("sleep 300", yield_time_ms=500)
+    pid = manager.sessions[result.session_id].pid
+    assert result.status == "running"
+    await manager.cleanup_all()
+    await asyncio.sleep(0.2)
+    assert not _process_alive(pid)
+
+
+def test_signal_group_none_pid_is_noop():
+    # Defensive: signalling before a process exists must not raise.
+    _signal_group(None, signal.SIGTERM)
 
 
 @pytest.mark.asyncio

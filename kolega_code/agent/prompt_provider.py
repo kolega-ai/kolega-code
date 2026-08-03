@@ -27,6 +27,9 @@ class AgentMode(Enum):
     VIBE = "vibe"
     CODE = "code"
     FIX = "fix"
+    # Non-interactive single-shot run (the `ask` CLI command): an autonomous,
+    # no-human-in-the-loop variant of CLI mode with its own coder_ask template.
+    ASK = "ask"
 
 
 @dataclass(frozen=True)
@@ -265,6 +268,8 @@ class PromptProvider:
         if agent_type == AgentType.CODER:
             if mode_value == AgentMode.CLI.value:
                 return "system/agents/coder_cli.md.j2"
+            elif mode_value == AgentMode.ASK.value:
+                return "system/agents/coder_ask.md.j2"
             elif mode_value == AgentMode.VIBE.value:
                 return "system/agents/coder_vibe.md.j2"
             elif mode_value == AgentMode.CODE.value:

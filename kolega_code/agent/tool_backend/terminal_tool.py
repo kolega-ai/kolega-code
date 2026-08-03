@@ -21,9 +21,12 @@ from .base_tool import BaseTool
 BACKGROUND_SETTLE_MS = 2000
 
 _BACKGROUND_NOTE = (
-    "Running in background. Poll output with write_stdin(session_id), stop with "
-    "kill_command(session_id), and see all running shells with list_sessions. "
-    "The session keeps running until killed or the agent session ends."
+    "Running in background, detached: it keeps running after this command and even "
+    "after the agent session ends, until you stop it with kill_command(session_id) "
+    "(or the environment goes away). It is poll-only — write_stdin(session_id) reads "
+    "new output but cannot send input. See all running shells with list_sessions. "
+    "Output may be buffered, so verify a server by reaching it as a client (e.g. curl), "
+    "not by waiting on this log."
 )
 
 
@@ -159,13 +162,15 @@ class TerminalTool(BaseTool):
 
         Running long-lived processes: pass background=true for dev servers,
         watchers, and long builds you want to keep running while you do other
-        work. It returns after a short startup window with a session_id; the
-        process keeps running until you stop it with kill_command or the agent
-        session ends. Do NOT use shell `&` for this — processes backgrounded
-        that way are killed when the command that started them ends. Manage
-        background sessions with write_stdin (poll output), kill_command
-        (stop), and list_sessions (see all running shells). Always verify a
-        server answers (e.g. curl) before handing its URL to the browser agent.
+        work. It returns after a short startup window with a session_id. The
+        process is launched detached, so it keeps running until you stop it with
+        kill_command — including after this agent session ends (it does NOT die
+        when you finish). Do NOT use shell `&` for this — processes backgrounded
+        that way are killed when the command that started them ends. Background
+        sessions are poll-only: use write_stdin to read new output (it cannot
+        send input to them), kill_command to stop, and list_sessions to see all
+        running shells. Always verify a server answers (e.g. curl) before handing
+        its URL to the browser agent — do not rely on its log, which may be buffered.
 
         Args:
             command: Shell command line, executed via `bash -c`.
@@ -175,9 +180,11 @@ class TerminalTool(BaseTool):
                            in milliseconds (clamped to 250–30000).
             max_output_tokens: Maximum tokens of output to return in this call.
             login: Run the shell as a login shell (sources profile). Default false.
-            background: Keep the command running and return after a short
-                        startup window (~2s) with a session_id. Commands that
-                        exit within that window report their real exit code.
+            background: Launch detached and return after a short startup window
+                        (~2s) with a session_id. The process outlives this call
+                        and the agent session until kill_command stops it; it is
+                        poll-only (no stdin). Commands that exit within the
+                        startup window report their real exit code.
 
         Returns:
             A JSON object: {"status": "exited"|"running", "exit_code",
@@ -200,6 +207,7 @@ class TerminalTool(BaseTool):
                 yield_time_ms=min(yield_time_ms, BACKGROUND_SETTLE_MS) if background else yield_time_ms,
                 max_output_tokens=max_output_tokens,
                 login=login,
+                background=background,
             )
         except Exception as exc:
             return json.dumps({"status": "error", "error": str(exc)})

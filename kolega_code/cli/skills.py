@@ -503,7 +503,9 @@ def build_skill_prompt_extension(
         id="cli-agent-skills",
         title="Agent Skills",
         markdown=catalog.prompt_catalog(context_window_tokens=context_window_tokens),
-        modes=[AgentMode.CLI],
+        # Both the interactive TUI (CLI) and the non-interactive `ask` command (ASK)
+        # get skills; only the hosted code/vibe/fix modes are excluded.
+        modes=[AgentMode.CLI, AgentMode.ASK],
     )
 
 

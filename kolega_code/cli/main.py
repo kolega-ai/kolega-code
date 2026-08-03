@@ -1338,7 +1338,7 @@ async def _run_ask(args: argparse.Namespace) -> int:
         connection_manager=manager,
         config=config,
         browser_manager=browser_manager,
-        agent_mode=AgentMode.CLI,
+        agent_mode=AgentMode.ASK,
         prompt_extensions=prompt_extensions,
         tool_extensions=tool_extensions,
         permission_mode=permission_mode,
