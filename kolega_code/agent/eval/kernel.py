@@ -184,8 +184,9 @@ class BaseKernel:
             try:
                 if proc.stdin is not None:
                     proc.stdin.write(encode_frame({"type": "exit"}))
-                    await proc.stdin.wait_closed()
-            except (BrokenPipeError, ConnectionError, RuntimeError):
+                    proc.stdin.close()
+                    await asyncio.wait_for(proc.stdin.wait_closed(), timeout=timeout)
+            except (BrokenPipeError, ConnectionError, RuntimeError, asyncio.TimeoutError):
                 pass
             try:
                 await asyncio.wait_for(proc.wait(), timeout=timeout)
