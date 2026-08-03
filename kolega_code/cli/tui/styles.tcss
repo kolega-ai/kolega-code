@@ -473,8 +473,18 @@ SettingsScreen #settings_screen_actions Button {
     margin-left: 1;
 }
 
-SettingsScreen #settings_connection_status {
+SettingsScreen #provider_credential_status {
     height: auto;
+    margin-top: 1;
+}
+
+/* The provider roster sizes to its rows rather than filling the page, so the
+   credential editor beneath it stays visible without scrolling. */
+SettingsScreen #provider_list {
+    height: auto;
+    max-height: 16;
+    border: none;
+    background: $background;
     margin-top: 1;
 }
 

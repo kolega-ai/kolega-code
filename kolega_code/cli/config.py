@@ -584,6 +584,24 @@ def key_status(provider: str, project_path: Path, settings: Optional[CliSettings
     return "missing"
 
 
+def resolved_api_key(provider: str, project_path: Path, settings: Optional[CliSettings] = None) -> Optional[str]:
+    """The API key a provider would actually use: env var first, then stored settings.
+
+    The value counterpart to ``key_status``, which reports the same precedence in words.
+    """
+    return _api_key_for_provider(_provider(provider), load_cli_env(project_path), settings)
+
+
+def probe_token_manager(settings: Optional[CliSettings]) -> Optional[ChatGPTTokenManager]:
+    """A ChatGPT token manager for credential probes, deliberately non-persisting.
+
+    A probe runs against an unapplied Settings draft, so a token refresh triggered by it
+    must not write back to settings.json the way the session's own manager does.
+    """
+    tokens = _resolve_chatgpt_tokens(settings)
+    return ChatGPTTokenManager(tokens) if tokens is not None else None
+
+
 def active_model_override_message(
     config: AgentConfig,
     project_path: Path,
