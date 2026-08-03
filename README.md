@@ -215,6 +215,7 @@ Full documentation lives at **[kolega-ai.github.io/kolega-code](https://kolega-a
 - [Contributing](CONTRIBUTING.md)
 - [Security policy](SECURITY.md)
 - [Issue tracker](https://github.com/kolega-ai/kolega-code/issues)
+- [Discord community](https://discord.gg/kaS8PKKp4)
 
 ## Contributing
 
@@ -225,3 +226,13 @@ privately per [SECURITY.md](SECURITY.md).
 ## License
 
 Released under the [Apache License 2.0](LICENSE).
+
+## Join the community
+
+Building something with Kolega Code, hit a rough edge, or want to shape where
+Gigacode goes next? Come talk to us.
+
+[![Join our Discord](https://img.shields.io/badge/Discord-join%20the%20community-5865F2?logo=discord&logoColor=white)](https://discord.gg/kaS8PKKp4)
+
+**→ [Join the Kolega Code Discord](https://discord.gg/kaS8PKKp4)** — share workflows,
+get help, and hear about releases first.
