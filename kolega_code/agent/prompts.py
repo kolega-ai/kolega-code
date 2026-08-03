@@ -43,6 +43,7 @@ SHARED_TASK_LIST_PROMPT = render_prompt_template("extensions/cli/shared_task_lis
 SHARED_TASK_LIST_READONLY_PROMPT = render_prompt_template("extensions/cli/shared_task_list_readonly.md")
 PLANNING_QUESTION_PROMPT = render_prompt_template("extensions/cli/planning_questions.md")
 BUILD_QUESTION_PROMPT = render_prompt_template("extensions/cli/build_questions.md")
+SILENT_TURN_EXHAUSTED_NOTICE = render_prompt_template("auxiliary/agent_loop/silent_turn_exhausted.user.md")
 
 # Compatibility templates for callers/tests that still use ``str.format`` or
 # ``replace`` style placeholders.
@@ -67,6 +68,11 @@ def build_compression_summary_user_prompt(history: str, previous_summary: Option
         history=history,
         previous_summary=previous_summary,
     )
+
+
+def build_silent_turn_nudge(attempt: int) -> str:
+    """Escalating reminder injected when the model ends a turn with no tool call and no visible text."""
+    return render_prompt_template("auxiliary/agent_loop/silent_turn_nudge.user.md.j2", attempt=attempt)
 
 
 def build_implement_plan_prompt(

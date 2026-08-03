@@ -1,0 +1,9 @@
+<system-reminder>
+{% if attempt == 1 %}
+Your last turn ended with only internal reasoning — no tool call and no visible message. Thinking is invisible and changes nothing on its own. Act now: emit the tool call you were planning, or reply with a visible message. Do not narrate what you will do — do it.
+{% elif attempt == 2 %}
+You have now ended two consecutive turns with no tool call and no visible message. Nothing you reasoned about has happened. Stop deliberating and act: this turn MUST end in a tool call or a visible, substantive reply.
+{% else %}
+FINAL WARNING: three consecutive turns have ended with no tool call and no visible message. If this turn is silent as well, it will be terminated and reported as producing no result — there will be no further reminders. Emit the tool call or the reply NOW.
+{% endif %}
+</system-reminder>

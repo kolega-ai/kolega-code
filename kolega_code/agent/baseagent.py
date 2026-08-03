@@ -133,6 +133,14 @@ class BaseAgent(LogMixin):
     # Cap on how many times a Stop hook may force the agent to keep working in one
     # turn, so a misbehaving "don't stop until X" hook cannot loop forever.
     MAX_STOP_HOOK_OVERRIDES = 5
+    # Cap on consecutive re-prompts after a "silent turn": the model ended its
+    # turn with no tool call and no visible text (empty or reasoning-only).
+    # Finalizing such a turn reports nothing — in non-interactive modes that
+    # reads as success with empty output — so the loop nudges the model to act
+    # instead, and after the cap terminates the turn and surfaces the failure.
+    # Runtime half of the coder_base.md.j2 invariant ("Thinking is invisible
+    # and changes nothing on its own").
+    MAX_SILENT_TURN_NUDGES = 3
     long_content_tool_calls = ["write"]
     max_tool_result_chars_in_history = 100_000
     skill_content_pattern = re.compile(r'<skill_content name="[^"]+">')
@@ -491,6 +499,15 @@ class BaseAgent(LogMixin):
             message: The assistant message to append
         """
         self.conversation.append_assistant(message)
+
+    async def _record_context_user_message(self, text: str) -> None:
+        """Journal and append a runtime-injected user message (not typed by the user)."""
+        if self.session_recorder is not None:
+            await asyncio.to_thread(
+                self.session_recorder.record_context_message,
+                Message(role="user", content=[TextBlock(text=text)]),
+            )
+        self.append_user_message([TextBlock(text=text)])
 
     def extend_history(self, messages: List[Message]) -> None:
         """
@@ -1712,6 +1729,17 @@ class BaseAgent(LogMixin):
         """Return the agent's final report: the text of the last message in history."""
         return self.history[-1].get_text_content()
 
+    @staticmethod
+    def _is_silent_turn(message: Message) -> bool:
+        """True when an assistant message has no tool calls and no visible text.
+
+        ThinkingBlock carries ``.thinking`` rather than ``.text``, so a
+        reasoning-only message reads as empty here. Evaluate the streamed
+        message, not history: Conversation.append_assistant replaces empty
+        content with a placeholder TextBlock.
+        """
+        return not message.tool_calls and not message.get_text_content().strip()
+
     async def _deliver_queued_user_inputs(self) -> None:
         """Append user inputs drained from the host while the current turn is running."""
         if self.queued_input_provider is None:
@@ -1911,6 +1939,7 @@ class BaseAgent(LogMixin):
 
         stop_reason = None
         stop_overrides = 0
+        silent_turn_nudges = 0
         iterations = 0
         while stop_reason not in ["end_turn", "max_tokens", "stop_sequence"]:
             iterations += 1
@@ -2070,6 +2099,10 @@ class BaseAgent(LogMixin):
                 # A clean stream resets the transient-failure budget, so the cap measures
                 # only consecutive failures, not lifetime failures across the turn.
                 self._consecutive_llm_retries = 0
+                # Likewise, a response with a tool call or visible text resets the
+                # silent-turn budget: the cap measures only consecutive silence.
+                if not self._is_silent_turn(assistant_message):
+                    silent_turn_nudges = 0
 
                 if thinking_started or current_thinking:
                     yield {"type": "thinking", "content": current_thinking, "complete": True, "uuid": thinking_uuid}
@@ -2123,18 +2156,56 @@ class BaseAgent(LogMixin):
                     # host UI so the next model request sees them.
                     await self._deliver_queued_user_inputs()
 
+                # Silent-turn guard: the model ended this iteration with no tool
+                # call and no visible text (reasoning-only or empty). Finalizing
+                # would report nothing, so re-prompt with an escalating reminder;
+                # after the cap, terminate the turn and surface the failure. Runs
+                # before the Stop hook: a nudged iteration is not a turn end, and
+                # clearing stop_reason makes the stop-hook block skip itself.
+                if stop_reason in ["end_turn", "max_tokens", "stop_sequence"] and self._is_silent_turn(
+                    assistant_message
+                ):
+                    from .prompts import SILENT_TURN_EXHAUSTED_NOTICE, build_silent_turn_nudge
+
+                    if silent_turn_nudges < self.MAX_SILENT_TURN_NUDGES:
+                        silent_turn_nudges += 1
+                        await self.emitter.llm_status(
+                            "info",
+                            "Model returned no output — asking it to act "
+                            f"({silent_turn_nudges}/{self.MAX_SILENT_TURN_NUDGES})…",
+                        )
+                        await self._record_context_user_message(build_silent_turn_nudge(silent_turn_nudges))
+                        stop_reason = None
+                    else:
+                        await self.log_warning(
+                            f"Model ended {self.MAX_SILENT_TURN_NUDGES + 1} consecutive responses with "
+                            "no tool call and no visible output; terminating the turn.",
+                            sender=self.agent_name,
+                        )
+                        await self.emitter.llm_status(
+                            "warning",
+                            "Model returned no output after repeated reminders — ending the turn with no result.",
+                        )
+                        await self._record_context_user_message(SILENT_TURN_EXHAUSTED_NOTICE)
+                        yield {
+                            "type": "response",
+                            "content": (
+                                "[no output] The model ended its turn with no tool call and no visible "
+                                f"message {self.MAX_SILENT_TURN_NUDGES + 1} times in a row despite "
+                                "reminders. The turn was terminated without a result."
+                            ),
+                            "complete": True,
+                            "uuid": str(uuid.uuid4()),
+                        }
+                        break
+
                 # Stop hooks (main agent only). On a natural turn end, a hook may
                 # keep the agent working by blocking the stop and returning a reason.
                 if stop_reason in ["end_turn", "max_tokens", "stop_sequence"] and not self.sub_agent:
                     keep_working = await self._fire_stop_hook(stop_reason)
                     if keep_working is not None and stop_overrides < self.MAX_STOP_HOOK_OVERRIDES:
                         stop_overrides += 1
-                        if self.session_recorder is not None:
-                            await asyncio.to_thread(
-                                self.session_recorder.record_context_message,
-                                Message(role="user", content=[TextBlock(text=keep_working)]),
-                            )
-                        self.append_user_message([TextBlock(text=keep_working)])
+                        await self._record_context_user_message(keep_working)
                         stop_reason = None
 
             except Exception as ex:
