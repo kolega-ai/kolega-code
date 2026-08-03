@@ -319,13 +319,30 @@ AGENT_ROLE_LABELS: dict[AgentRole, str] = {
 }
 
 
+# Display labels and render order for the operational model slots the UI exposes.
+# The long-context slot is the active model itself, so it is not listed here.
+MODEL_SLOT_LABELS: dict[str, str] = {
+    "fast": "Fast",
+    "thinking": "Thinking",
+}
+
+
 def agent_role_options() -> list[tuple[str, str]]:
     """Return (label, role-value) pairs for the configurable agent roles, in order."""
     return [(label, role.value) for role, label in AGENT_ROLE_LABELS.items()]
 
 
+def model_slot_options() -> list[tuple[str, str]]:
+    """Return (label, slot-value) pairs for the configurable model slots, in order."""
+    return [(label, slot) for slot, label in MODEL_SLOT_LABELS.items()]
+
+
 def agent_role_provider_options() -> list[tuple[str, str]]:
-    """Provider Select options for a per-agent row, with an inherit option first."""
+    """Provider Select options for an override row, with an inherit option first.
+
+    Shared by the per-agent rows and the model-slot rows: both mean "no override —
+    inherit the active model" when the sentinel is selected.
+    """
     return [("Default (inherit)", INHERIT_SENTINEL), *ui_provider_options()]
 
 

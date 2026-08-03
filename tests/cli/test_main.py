@@ -437,6 +437,7 @@ def test_ask_skill_with_prompt_activates_before_dispatch(
     write_skill(project)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     monkeypatch.setenv("KOLEGA_CODE_PROVIDER", "anthropic")
+    monkeypatch.setenv("KOLEGA_CODE_MODEL", "claude-opus-5")
     monkeypatch.setattr(main_module, "CoderAgent", FakeCoderAgent)
     browser_manager = object()
     build_browser_manager = Mock(return_value=browser_manager)
@@ -804,6 +805,7 @@ def test_ask_json_interleaves_sub_agent_events(
     project.mkdir()
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     monkeypatch.setenv("KOLEGA_CODE_PROVIDER", "anthropic")
+    monkeypatch.setenv("KOLEGA_CODE_MODEL", "claude-opus-5")
     monkeypatch.setattr(main_module, "CoderAgent", _SubAgentEventCoderAgent)
 
     exit_code = main_module.main(["ask", "do the task", "--project", str(project), "--json"])
@@ -829,6 +831,7 @@ def test_ask_plain_writes_sub_agent_lifecycle_to_stderr(
     project.mkdir()
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     monkeypatch.setenv("KOLEGA_CODE_PROVIDER", "anthropic")
+    monkeypatch.setenv("KOLEGA_CODE_MODEL", "claude-opus-5")
     monkeypatch.setattr(main_module, "CoderAgent", _SubAgentEventCoderAgent)
 
     exit_code = main_module.main(["ask", "do the task", "--project", str(project)])
@@ -866,6 +869,7 @@ def test_ask_prompt_with_file_mention_attaches_content(
     (project / "notes.md").write_text("remember the milk\n", encoding="utf-8")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     monkeypatch.setenv("KOLEGA_CODE_PROVIDER", "anthropic")
+    monkeypatch.setenv("KOLEGA_CODE_MODEL", "claude-opus-5")
     monkeypatch.setattr(main_module, "CoderAgent", FakeCoderAgent)
 
     exit_code = main_module.main(["ask", "summarize @notes.md", "--project", str(project)])
@@ -898,6 +902,7 @@ def test_ask_prompt_with_unresolved_mention_warns_on_stderr(
     project.mkdir()
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     monkeypatch.setenv("KOLEGA_CODE_PROVIDER", "anthropic")
+    monkeypatch.setenv("KOLEGA_CODE_MODEL", "claude-opus-5")
     monkeypatch.setattr(main_module, "CoderAgent", FakeCoderAgent)
 
     exit_code = main_module.main(["ask", "summarize @missing.md", "--project", str(project)])

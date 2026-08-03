@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping, Optional
+from typing import Mapping, NoReturn, Optional
 
 from pydantic import ValidationError
 
@@ -21,12 +21,9 @@ from .settings import CliSettings, SettingsStore
 # Providers authenticated by an OAuth sign-in instead of a static API key.
 OAUTH_PROVIDERS = frozenset({ModelProvider.OPENAI_CHATGPT})
 
-DEFAULT_LONG_PROVIDER = ModelProvider.ANTHROPIC
-DEFAULT_LONG_MODEL = "claude-opus-5"
-DEFAULT_FAST_PROVIDER = ModelProvider.ANTHROPIC
-DEFAULT_FAST_MODEL = "claude-haiku-4-5-20251001"
-DEFAULT_THINKING_PROVIDER = ModelProvider.ANTHROPIC
-DEFAULT_THINKING_MODEL = "claude-opus-5"
+# No built-in provider or model defaults by design. A model must be named together with
+# its provider (see _require_provider_for_model), and an unset operational slot inherits
+# the active model rather than pinning itself to any particular model.
 DEPRECATED_THINKING_TOKENS_MESSAGE = (
     "Thinking token budgets have been replaced by model-specific named effort. "
     "Use --thinking-effort or KOLEGA_CODE_THINKING_EFFORT."
@@ -118,6 +115,34 @@ def _explicit_value(
 
 def _model_sources(model: str) -> list[str]:
     return sorted(provider for provider, candidate in MODEL_SPECS if candidate == model)
+
+
+def _require_provider_for_model(model: str, model_source: Optional[str], provider_names: str) -> NoReturn:
+    """Reject a model named without a provider.
+
+    Nothing is guessed here. The same model id can be served by several providers on
+    different credentials (e.g. an OpenAI id reachable both by API key and by ChatGPT
+    subscription), so picking one for the user would silently choose an account.
+    """
+    label = f"{model_source}={model}" if model_source else f"Model '{model}'"
+    sources = _model_sources(model)
+    hint = (
+        f" It is offered by: {', '.join(sources)}."
+        if sources
+        else f" Valid providers: {', '.join(provider.value for provider in ModelProvider)}."
+    )
+    raise CliConfigError(f"{label} also needs a provider; set {provider_names}.{hint}")
+
+
+def _require_model_for_provider(provider: str, provider_source: Optional[str], model_names: str) -> NoReturn:
+    """Reject a provider named without a model.
+
+    Provider and model are always specified together: there is no house default model
+    to fall back on, and picking one from the catalog would pin a choice the user did
+    not make.
+    """
+    label = f"{provider_source}={provider}" if provider_source else f"Provider '{provider}'"
+    raise CliConfigError(f"{label} also needs a model; set {model_names}.")
 
 
 def _ensure_explicit_model_supported(
@@ -227,16 +252,19 @@ def _active_provider_model(
     model_value, model_source = _explicit_value(overrides.model, env, "KOLEGA_CODE_MODEL", "--model")
 
     if provider_value or model_value:
-        provider = _provider(provider_value or DEFAULT_LONG_PROVIDER.value)
-        if model_value:
-            _ensure_explicit_model_supported(
-                provider,
-                model_value,
-                model_source=model_source,
-                provider_source=provider_source,
-            )
-            return provider, model_value
-        return provider, default_model_for_provider(provider)
+        if not provider_value:
+            assert model_value is not None
+            _require_provider_for_model(model_value, model_source, "--provider or KOLEGA_CODE_PROVIDER")
+        if not model_value:
+            _require_model_for_provider(provider_value, provider_source, "--model or KOLEGA_CODE_MODEL")
+        provider = _provider(provider_value)
+        _ensure_explicit_model_supported(
+            provider,
+            model_value,
+            model_source=model_source,
+            provider_source=provider_source,
+        )
+        return provider, model_value
 
     if settings and settings.active_provider and settings.active_model:
         try:
@@ -254,42 +282,56 @@ def _slot_provider_model(
     model_env_key: str,
     provider_override: Optional[str],
     model_override: Optional[str],
-    default_provider: ModelProvider,
-    default_model: str,
-    active_provider: Optional[ModelProvider],
-    active_model: Optional[str],
+    active_provider: ModelProvider,
+    active_model: str,
+    saved: Optional[Mapping[str, str]] = None,
 ) -> tuple[ModelProvider, str]:
-    provider_value, provider_source = _explicit_value(
-        provider_override,
-        env,
-        provider_env_key,
-        f"--{provider_env_key.removeprefix('KOLEGA_CODE_').lower().replace('_', '-')}",
-    )
-    model_value, model_source = _explicit_value(
-        model_override,
-        env,
-        model_env_key,
-        f"--{model_env_key.removeprefix('KOLEGA_CODE_').lower().replace('_', '-')}",
-    )
+    """Resolve one operational slot: CLI flag > env var > saved slot > active model.
 
-    if provider_value or model_value:
-        provider = _provider(provider_value or (active_provider.value if active_provider else default_provider.value))
-        if model_value:
-            _ensure_explicit_model_supported(
-                provider,
-                model_value,
-                model_source=model_source,
-                provider_source=provider_source,
-            )
-            return provider, model_value
-        return provider, active_model if active_provider == provider and active_model else default_model_for_provider(
-            provider
+    ``saved`` is a persisted ``{provider, model}`` override from Settings, always
+    carrying both fields (``CliSettings`` drops half-written entries). Provider and
+    model must be given together here too, so a flag/env that names only one of them
+    is an error rather than a silent pick.
+
+    Only explicit values are validated against the catalog: a *saved* model that has
+    since left the catalog degrades to the provider's default rather than locking the
+    user out of Settings.
+
+    There is no built-in per-slot default: an unset slot inherits the active model, and
+    ``build_agent_config`` raises ``MISSING_MODEL_SELECTION_MESSAGE`` before calling this
+    when no active model is configured, so ``active_provider``/``active_model`` are always
+    present here.
+    """
+    provider_flag = f"--{provider_env_key.removeprefix('KOLEGA_CODE_').lower().replace('_', '-')}"
+    model_flag = f"--{model_env_key.removeprefix('KOLEGA_CODE_').lower().replace('_', '-')}"
+    provider_value, provider_source = _explicit_value(provider_override, env, provider_env_key, provider_flag)
+    model_value, model_source = _explicit_value(model_override, env, model_env_key, model_flag)
+
+    if provider_value and not model_value:
+        _require_model_for_provider(provider_value, provider_source, f"{model_flag} or {model_env_key}")
+    if model_value and not provider_value:
+        _require_provider_for_model(model_value, model_source, f"{provider_flag} or {provider_env_key}")
+
+    if provider_value:
+        assert model_value is not None
+        provider = _provider(provider_value)
+        _ensure_explicit_model_supported(
+            provider,
+            model_value,
+            model_source=model_source,
+            provider_source=provider_source,
         )
+        return provider, model_value
 
-    if active_provider and active_model:
-        return active_provider, active_model
+    saved = saved or {}
+    saved_provider, saved_model = saved.get("provider"), saved.get("model")
+    if saved_provider and saved_model:
+        provider = _provider(saved_provider)
+        if (provider.value, saved_model) not in MODEL_SPECS:
+            saved_model = default_model_for_provider(provider)
+        return provider, saved_model
 
-    return default_provider, default_model
+    return active_provider, active_model
 
 
 def _model_config(provider: ModelProvider, model: str, thinking_effort: Optional[str] = None) -> ModelConfig:
@@ -339,14 +381,15 @@ def _agent_role_env_keys(role: AgentRole) -> tuple[str, str, str]:
 def _agent_model_overrides(
     env: Mapping[str, str],
     settings: Optional[CliSettings],
-    active_provider: ModelProvider,
-    active_model: str,
 ) -> dict[str, ModelConfig]:
     """Resolve per-agent-role model overrides from env vars over saved settings.
 
-    A role with neither an env nor a settings provider/model is omitted, so it
-    inherits the active model. Field-level precedence is env > settings, mirroring
-    the per-slot resolution used for long/fast/thinking.
+    A role with neither an env nor a settings provider/model is omitted, so it inherits
+    the active model. Provider and model are specified together, exactly as for the
+    operational slots: an env var naming only one of them is an error rather than a
+    silent pick. Saved entries always carry both (``CliSettings`` drops half-written
+    ones), and a saved model that has left the catalog degrades to the provider default
+    instead of locking the user out of Settings.
     """
     saved = settings.agent_models if settings else {}
     overrides: dict[str, ModelConfig] = {}
@@ -355,31 +398,29 @@ def _agent_model_overrides(
         entry = saved.get(role.value) or {}
         provider_env_value = env.get(provider_key)
         model_env_value = env.get(model_key)
-        effort_env_value = env.get(effort_key)
+        effort_value = env.get(effort_key) or entry.get("thinking_effort")
+
+        if provider_env_value and not model_env_value and not entry.get("model"):
+            _require_model_for_provider(provider_env_value, provider_key, model_key)
+        if model_env_value and not provider_env_value and not entry.get("provider"):
+            _require_provider_for_model(model_env_value, model_key, provider_key)
+
         provider_value = provider_env_value or entry.get("provider")
         model_value = model_env_value or entry.get("model")
-        effort_value = effort_env_value or entry.get("thinking_effort")
-
-        if not provider_value and not model_value:
+        if not provider_value or not model_value:
             continue
 
-        provider = _provider(provider_value or active_provider.value)
-        if model_value:
-            if model_env_value:
-                _ensure_explicit_model_supported(
-                    provider,
-                    model_value,
-                    model_source=model_key,
-                    provider_source=provider_key if provider_env_value else None,
-                )
-            elif (provider.value, model_value) not in MODEL_SPECS:
-                model_value = default_model_for_provider(provider)
-            model = model_value
-        elif active_provider == provider and active_model:
-            model = active_model
-        else:
-            model = default_model_for_provider(provider)
-        overrides[role.value] = _model_config(provider, model, thinking_effort=effort_value)
+        provider = _provider(provider_value)
+        if model_env_value:
+            _ensure_explicit_model_supported(
+                provider,
+                model_value,
+                model_source=model_key,
+                provider_source=provider_key if provider_env_value else None,
+            )
+        elif (provider.value, model_value) not in MODEL_SPECS:
+            model_value = default_model_for_provider(provider)
+        overrides[role.value] = _model_config(provider, model_value, thinking_effort=effort_value)
     return overrides
 
 
@@ -411,8 +452,6 @@ def build_agent_config(
         "KOLEGA_CODE_MODEL",
         overrides.provider,
         overrides.model,
-        DEFAULT_LONG_PROVIDER,
-        DEFAULT_LONG_MODEL,
         active_provider,
         active_model,
     )
@@ -422,10 +461,9 @@ def build_agent_config(
         "KOLEGA_CODE_FAST_MODEL",
         overrides.fast_provider,
         overrides.fast_model,
-        DEFAULT_FAST_PROVIDER,
-        DEFAULT_FAST_MODEL,
         active_provider,
         active_model,
+        settings.model_slots.get("fast") if settings else None,
     )
     thinking_provider, thinking_model = _slot_provider_model(
         loaded_env,
@@ -433,10 +471,9 @@ def build_agent_config(
         "KOLEGA_CODE_THINKING_MODEL",
         overrides.thinking_provider,
         overrides.thinking_model,
-        DEFAULT_THINKING_PROVIDER,
-        DEFAULT_THINKING_MODEL,
         active_provider,
         active_model,
+        settings.model_slots.get("thinking") if settings else None,
     )
     active_thinking_effort = _resolve_active_thinking_effort(
         long_provider,
@@ -449,7 +486,7 @@ def build_agent_config(
         active_thinking_effort if thinking_provider == long_provider and thinking_model == long_model else None
     )
 
-    agent_model_overrides = _agent_model_overrides(loaded_env, settings, active_provider, active_model)
+    agent_model_overrides = _agent_model_overrides(loaded_env, settings)
     web_search_backend, web_search_api_key, web_search_base_url = _search_config(loaded_env, settings)
     state_dir = settings_store.root if settings_store is not None else SettingsStore().root
     mcp_config = load_mcp_config(

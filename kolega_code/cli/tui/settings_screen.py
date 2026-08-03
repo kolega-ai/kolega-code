@@ -18,7 +18,7 @@ from kolega_code.agent.tool_backend.search_backends import (
     available_backends,
 )
 
-from .. import theme
+from .. import messages, theme
 from ..provider_registry import (
     INHERIT_SENTINEL,
     UI_DEFAULT_MODEL,
@@ -26,6 +26,7 @@ from ..provider_registry import (
     agent_role_options,
     agent_role_provider_options,
     default_ui_thinking_effort,
+    model_slot_options,
     ui_model_options,
     ui_provider_options,
     ui_thinking_effort_options,
@@ -227,6 +228,35 @@ class SettingsScreen(ModalScreen[None]):
                     classes="settings-hint",
                 )
                 yield Static("", id="settings_connection_status")
+            with Vertical(classes="settings-section", id="settings_model_slots") as slots_section:
+                slots_section.border_title = "Model Slots"
+                yield Static(messages.MODEL_SLOT_HINT, classes="settings-hint")
+                for slot_label, slot_value in model_slot_options():
+                    with Vertical(classes="agent-model-group", id=f"slot_group_{slot_value}"):
+                        yield Static(slot_label, classes="agent-model-role")
+                        with Horizontal(classes="agent-model-field"):
+                            yield Label("Provider", classes="agent-model-field-label")
+                            yield Select(
+                                agent_role_provider_options(),
+                                id=f"slot_provider_{slot_value}",
+                                allow_blank=False,
+                                value=INHERIT_SENTINEL,
+                            )
+                        with Horizontal(classes="agent-model-field"):
+                            yield Label("Model", classes="agent-model-field-label")
+                            yield Select(
+                                [],
+                                id=f"slot_model_{slot_value}",
+                                allow_blank=True,
+                                prompt="—",
+                            )
+                        row_custom_model = Input(
+                            id=f"slot_custom_model_{slot_value}",
+                            placeholder=custom_model.CUSTOM_MODEL_PLACEHOLDER,
+                        )
+                        row_custom_model.display = False
+                        yield row_custom_model
+                        yield Static("", id=f"slot_hint_{slot_value}", classes="settings-hint")
 
     def _compose_agent_page(self) -> ComposeResult:
         with VerticalScroll(id="settings_page_agents", classes="settings-page"):

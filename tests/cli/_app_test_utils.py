@@ -255,6 +255,7 @@ def build_test_config(project: Path):
         env={
             "ANTHROPIC_API_KEY": "test-key",
             "KOLEGA_CODE_PROVIDER": "anthropic",
+            "KOLEGA_CODE_MODEL": "claude-opus-5",
         },
     )
 

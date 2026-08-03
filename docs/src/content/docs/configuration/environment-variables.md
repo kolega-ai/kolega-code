@@ -74,8 +74,10 @@ All optional; unset means Kolega Code sends nothing for that field.
 
 ## Model selection
 
-Each role can be configured independently. Set just the provider to use that
-provider's default model, or set both provider and model.
+Each role can be configured independently. **Provider and model are always set
+together** — naming one without the other is an error. Nothing is inferred from a
+model id and no model is defaulted from a provider, because the same id can be
+served by different providers on different credentials.
 
 | Variable | Role |
 | --- | --- |
@@ -84,6 +86,9 @@ provider's default model, or set both provider and model.
 | `KOLEGA_CODE_THINKING_PROVIDER` / `KOLEGA_CODE_THINKING_MODEL` | Thinking model |
 | `KOLEGA_CODE_THINKING_EFFORT` | Model-specific thinking effort |
 | `KOLEGA_CODE_EDIT_PROTOCOL` | Optional model-facing edit override: `search_replace`, `codex_apply_patch`, or `claude_code`; otherwise the model catalogue preference or `search_replace` fallback is used |
+
+These outrank the Fast/Thinking slots saved in Settings. Full precedence per role:
+CLI flag > environment variable > saved slot > the active model.
 
 See [Providers & Models](../providers-and-models/) for what each role does.
 

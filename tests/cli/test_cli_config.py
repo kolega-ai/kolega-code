@@ -4,7 +4,6 @@ import pytest
 
 from kolega_code.config import EditProtocol, ModelProvider
 from kolega_code.cli.config import (
-    DEFAULT_LONG_MODEL,
     CliConfigError,
     CliConfigOverrides,
     build_agent_config,
@@ -15,9 +14,13 @@ from kolega_code.cli.provider_registry import (
     MOONSHOT_K26_MODEL,
     UI_DEFAULT_MODEL,
     UI_DEFAULT_PROVIDER,
+    default_model_for_provider,
 )
 from kolega_code.cli.settings import CliSettings
 from kolega_code.llm.specs import is_featured_model
+
+# Anthropic's registry default, used throughout as a convenient known-good model.
+ANTHROPIC_DEFAULT_MODEL = default_model_for_provider(ModelProvider.ANTHROPIC)
 
 
 @pytest.mark.parametrize(
@@ -66,14 +69,18 @@ def test_build_agent_config_explicit_provider_uses_provider_default_model(tmp_pa
         env={
             "ANTHROPIC_API_KEY": "test-key",
             "KOLEGA_CODE_PROVIDER": "anthropic",
+            "KOLEGA_CODE_MODEL": "claude-opus-5",
         },
     )
 
+    # A provider named without a model resolves through the provider registry, and
+    # every slot then inherits that active model.
+    anthropic_default = default_model_for_provider(ModelProvider.ANTHROPIC)
     assert config.long_context_config.provider == ModelProvider.ANTHROPIC
-    assert DEFAULT_LONG_MODEL == "claude-opus-5"
-    assert config.long_context_config.model == DEFAULT_LONG_MODEL
-    assert config.fast_config.model == DEFAULT_LONG_MODEL
-    assert config.thinking_config.model == DEFAULT_LONG_MODEL
+    assert anthropic_default == "claude-opus-5"
+    assert config.long_context_config.model == anthropic_default
+    assert config.fast_config.model == anthropic_default
+    assert config.thinking_config.model == anthropic_default
     assert config.long_context_config.thinking_effort == "medium"
     assert config.thinking_config.thinking_effort == "medium"
 
@@ -83,6 +90,7 @@ def test_build_agent_config_env_overrides(tmp_path: Path) -> None:
         tmp_path,
         env={
             "ANTHROPIC_API_KEY": "test-key",
+            "KOLEGA_CODE_PROVIDER": "anthropic",
             "KOLEGA_CODE_MODEL": "claude-sonnet-4-6",
             "KOLEGA_CODE_THINKING_EFFORT": "high",
         },
@@ -96,7 +104,7 @@ def test_build_agent_config_env_overrides(tmp_path: Path) -> None:
 def test_build_agent_config_flags_override_env(tmp_path: Path) -> None:
     config = build_agent_config(
         tmp_path,
-        CliConfigOverrides(model="claude-opus-4-7", thinking_effort="xhigh"),
+        CliConfigOverrides(provider="anthropic", model="claude-opus-4-7", thinking_effort="xhigh"),
         env={
             "ANTHROPIC_API_KEY": "test-key",
             "KOLEGA_CODE_MODEL": "claude-sonnet-4-6",
@@ -112,7 +120,7 @@ def test_build_agent_config_flags_override_env(tmp_path: Path) -> None:
 def test_build_agent_config_edit_protocol_flag_overrides_env(tmp_path: Path) -> None:
     config = build_agent_config(
         tmp_path,
-        CliConfigOverrides(model="claude-opus-4-7", edit_protocol="codex_apply_patch"),
+        CliConfigOverrides(provider="anthropic", model="claude-opus-4-7", edit_protocol="codex_apply_patch"),
         env={
             "ANTHROPIC_API_KEY": "test-key",
             "KOLEGA_CODE_EDIT_PROTOCOL": "search_replace",
@@ -125,7 +133,7 @@ def test_build_agent_config_edit_protocol_flag_overrides_env(tmp_path: Path) -> 
 def test_build_agent_config_leaves_protocol_unset_for_catalog_resolution(tmp_path: Path) -> None:
     config = build_agent_config(
         tmp_path,
-        CliConfigOverrides(model="claude-opus-4-7"),
+        CliConfigOverrides(provider="anthropic", model="claude-opus-4-7"),
         env={"ANTHROPIC_API_KEY": "test-key"},
     )
 
@@ -140,7 +148,7 @@ def test_build_agent_config_rejects_unknown_edit_protocol(tmp_path: Path) -> Non
     with pytest.raises(CliConfigError, match="Unsupported edit protocol"):
         build_agent_config(
             tmp_path,
-            CliConfigOverrides(model="claude-opus-4-7", edit_protocol="not-real"),
+            CliConfigOverrides(provider="anthropic", model="claude-opus-4-7", edit_protocol="not-real"),
             env={"ANTHROPIC_API_KEY": "test-key"},
         )
 
@@ -160,19 +168,56 @@ def test_build_agent_config_rejects_invalid_thinking_effort(tmp_path: Path) -> N
     with pytest.raises(CliConfigError, match="Unsupported thinking effort"):
         build_agent_config(
             tmp_path,
-            CliConfigOverrides(model="claude-opus-4-7", thinking_effort="auto"),
+            CliConfigOverrides(provider="anthropic", model="claude-opus-4-7", thinking_effort="auto"),
             env={"ANTHROPIC_API_KEY": "test-key"},
         )
 
 
 def test_build_agent_config_requires_api_key(tmp_path: Path) -> None:
     with pytest.raises(CliConfigError, match="ANTHROPIC_API_KEY"):
-        build_agent_config(tmp_path, CliConfigOverrides(provider="anthropic"), env={})
+        build_agent_config(tmp_path, CliConfigOverrides(provider="anthropic", model=ANTHROPIC_DEFAULT_MODEL), env={})
 
 
 def test_build_agent_config_rejects_unknown_model(tmp_path: Path) -> None:
     with pytest.raises(CliConfigError, match="not available"):
-        build_agent_config(tmp_path, CliConfigOverrides(model="claude-not-real"), env={"ANTHROPIC_API_KEY": "key"})
+        build_agent_config(
+            tmp_path,
+            CliConfigOverrides(provider="anthropic", model="claude-not-real"),
+            env={"ANTHROPIC_API_KEY": "key"},
+        )
+
+
+def test_model_without_a_provider_is_rejected(tmp_path: Path) -> None:
+    """Provider and model are both required; neither is inferred nor defaulted."""
+    with pytest.raises(CliConfigError, match="also needs a provider"):
+        build_agent_config(tmp_path, CliConfigOverrides(model="claude-sonnet-5"), env={"ANTHROPIC_API_KEY": "key"})
+
+    # Unambiguous ids get no special treatment — the error names the candidates instead.
+    with pytest.raises(CliConfigError, match="offered by: anthropic"):
+        build_agent_config(tmp_path, env={"ANTHROPIC_API_KEY": "key", "KOLEGA_CODE_MODEL": "claude-sonnet-5"})
+
+    config = build_agent_config(
+        tmp_path,
+        env={"ANTHROPIC_API_KEY": "key", "KOLEGA_CODE_PROVIDER": "anthropic", "KOLEGA_CODE_MODEL": "claude-sonnet-5"},
+    )
+    assert config.long_context_config.provider == ModelProvider.ANTHROPIC
+    assert config.long_context_config.model == "claude-sonnet-5"
+
+
+def test_provider_without_a_model_is_rejected(tmp_path: Path) -> None:
+    """Provider and model go together everywhere: active model, slots, and agent roles."""
+    with pytest.raises(CliConfigError, match="also needs a model"):
+        build_agent_config(tmp_path, CliConfigOverrides(provider="anthropic"), env={"ANTHROPIC_API_KEY": "key"})
+
+    settings = CliSettings(active_provider="anthropic", active_model=ANTHROPIC_DEFAULT_MODEL)
+    settings.set_api_key("anthropic", "key")
+    settings.set_api_key("deepseek", "key")
+
+    with pytest.raises(CliConfigError, match=r"--fast-provider=deepseek also needs a model"):
+        build_agent_config(tmp_path, CliConfigOverrides(fast_provider="deepseek"), settings=settings, env={})
+
+    with pytest.raises(CliConfigError, match=r"KOLEGA_CODE_PLANNING_PROVIDER=deepseek also needs a model"):
+        build_agent_config(tmp_path, settings=settings, env={"KOLEGA_CODE_PLANNING_PROVIDER": "deepseek"})
 
 
 def test_config_summary_excludes_api_keys(tmp_path: Path) -> None:
@@ -181,12 +226,13 @@ def test_config_summary_excludes_api_keys(tmp_path: Path) -> None:
         env={
             "ANTHROPIC_API_KEY": "secret-value",
             "KOLEGA_CODE_PROVIDER": "anthropic",
+            "KOLEGA_CODE_MODEL": "claude-opus-5",
         },
     )
 
     summary = config_summary(config)
 
-    assert summary["long_model"] == DEFAULT_LONG_MODEL
+    assert summary["long_model"] == ANTHROPIC_DEFAULT_MODEL
     assert "secret-value" not in str(summary)
     assert "api_key" not in str(summary).lower()
 
@@ -256,7 +302,11 @@ def test_explicit_model_override_rejects_mismatched_provider(tmp_path: Path) -> 
     settings.set_api_key(UI_DEFAULT_PROVIDER, "moonshot-key")
 
     with pytest.raises(CliConfigError, match=r"KOLEGA_CODE_MODEL=gpt-5\.5 is not available"):
-        build_agent_config(tmp_path, settings=settings, env={"KOLEGA_CODE_MODEL": "gpt-5.5"})
+        build_agent_config(
+            tmp_path,
+            settings=settings,
+            env={"KOLEGA_CODE_MODEL": "gpt-5.5", "KOLEGA_CODE_PROVIDER": UI_DEFAULT_PROVIDER},
+        )
 
 
 @pytest.mark.parametrize(
@@ -377,9 +427,12 @@ def test_build_agent_config_accepts_ollama_cloud_cli_active_model(tmp_path: Path
 
 
 def test_build_agent_config_ollama_cloud_provider_default_is_accessible_model(tmp_path: Path) -> None:
+    # The CLI never defaults a model, but the registry default still has to be a model
+    # that actually resolves — it backs stale-model recovery and the onboarding picker.
+    assert default_model_for_provider(ModelProvider.OLLAMA_CLOUD) == "gpt-oss:20b"
     config = build_agent_config(
         tmp_path,
-        CliConfigOverrides(provider=ModelProvider.OLLAMA_CLOUD.value),
+        CliConfigOverrides(provider=ModelProvider.OLLAMA_CLOUD.value, model="gpt-oss:20b"),
         env={"OLLAMA_API_KEY": "ollama-key"},
     )
 
@@ -392,7 +445,11 @@ def test_build_agent_config_ollama_cloud_provider_default_is_accessible_model(tm
 
 def test_ollama_cloud_requires_ollama_api_key(tmp_path: Path) -> None:
     with pytest.raises(CliConfigError, match="OLLAMA_API_KEY"):
-        build_agent_config(tmp_path, CliConfigOverrides(provider=ModelProvider.OLLAMA_CLOUD.value), env={})
+        build_agent_config(
+            tmp_path,
+            CliConfigOverrides(provider=ModelProvider.OLLAMA_CLOUD.value, model="gpt-oss:20b"),
+            env={},
+        )
 
 
 def test_env_provider_model_overrides_stored_settings(tmp_path: Path) -> None:
@@ -430,7 +487,7 @@ def test_stored_deepseek_settings_require_deepseek_key(tmp_path: Path) -> None:
 
 
 def _anthropic_settings_with_deepseek_key() -> CliSettings:
-    settings = CliSettings(active_provider="anthropic", active_model=DEFAULT_LONG_MODEL)
+    settings = CliSettings(active_provider="anthropic", active_model=ANTHROPIC_DEFAULT_MODEL)
     settings.set_api_key("anthropic", "anthropic-key")
     settings.set_api_key("deepseek", "deepseek-key")
     return settings
@@ -447,11 +504,11 @@ def test_build_agent_config_applies_settings_agent_model_override(tmp_path: Path
     assert investigation.model == "deepseek-v4-flash"
     assert investigation.thinking_effort == "high"
     # Roles with no override inherit the active (long-context) model.
-    assert config.model_config_for_agent("coder").model == DEFAULT_LONG_MODEL
+    assert config.model_config_for_agent("coder").model == ANTHROPIC_DEFAULT_MODEL
 
 
 def test_env_overrides_settings_agent_model(tmp_path: Path) -> None:
-    settings = CliSettings(active_provider="anthropic", active_model=DEFAULT_LONG_MODEL)
+    settings = CliSettings(active_provider="anthropic", active_model=ANTHROPIC_DEFAULT_MODEL)
     settings.set_agent_model("investigation", "deepseek", "deepseek-v4-flash")
 
     config = build_agent_config(
@@ -474,6 +531,7 @@ def test_env_only_agent_model_override(tmp_path: Path) -> None:
             "ANTHROPIC_API_KEY": "anthropic-key",
             "DEEPSEEK_API_KEY": "deepseek-key",
             "KOLEGA_CODE_PROVIDER": "anthropic",
+            "KOLEGA_CODE_MODEL": "claude-opus-5",
             "KOLEGA_CODE_INVESTIGATION_PROVIDER": "deepseek",
             "KOLEGA_CODE_INVESTIGATION_MODEL": "deepseek-v4-flash",
         },
@@ -481,11 +539,11 @@ def test_env_only_agent_model_override(tmp_path: Path) -> None:
 
     assert config.model_config_for_agent("investigation-agent").provider == ModelProvider.DEEPSEEK
     assert config.model_config_for_agent("investigation-agent").model == "deepseek-v4-flash"
-    assert config.model_config_for_agent("coder").model == DEFAULT_LONG_MODEL
+    assert config.model_config_for_agent("coder").model == ANTHROPIC_DEFAULT_MODEL
 
 
 def test_agent_model_override_requires_api_key(tmp_path: Path) -> None:
-    settings = CliSettings(active_provider="anthropic", active_model=DEFAULT_LONG_MODEL)
+    settings = CliSettings(active_provider="anthropic", active_model=ANTHROPIC_DEFAULT_MODEL)
     settings.set_api_key("anthropic", "anthropic-key")
     settings.set_agent_model("investigation", "deepseek", "deepseek-v4-flash")
 
@@ -504,7 +562,12 @@ def test_config_summary_includes_agent_models(tmp_path: Path) -> None:
 
 def test_build_agent_config_no_agent_model_overrides_by_default(tmp_path: Path) -> None:
     config = build_agent_config(
-        tmp_path, env={"ANTHROPIC_API_KEY": "anthropic-key", "KOLEGA_CODE_PROVIDER": "anthropic"}
+        tmp_path,
+        env={
+            "ANTHROPIC_API_KEY": "anthropic-key",
+            "KOLEGA_CODE_PROVIDER": "anthropic",
+            "KOLEGA_CODE_MODEL": ANTHROPIC_DEFAULT_MODEL,
+        },
     )
 
     assert config.agent_models == {}
@@ -512,7 +575,12 @@ def test_build_agent_config_no_agent_model_overrides_by_default(tmp_path: Path) 
 
 def test_web_search_defaults_to_keyless_duckduckgo(tmp_path: Path) -> None:
     config = build_agent_config(
-        tmp_path, env={"ANTHROPIC_API_KEY": "anthropic-key", "KOLEGA_CODE_PROVIDER": "anthropic"}
+        tmp_path,
+        env={
+            "ANTHROPIC_API_KEY": "anthropic-key",
+            "KOLEGA_CODE_PROVIDER": "anthropic",
+            "KOLEGA_CODE_MODEL": ANTHROPIC_DEFAULT_MODEL,
+        },
     )
 
     assert config.web_search_backend == "duckduckgo"
@@ -521,7 +589,9 @@ def test_web_search_defaults_to_keyless_duckduckgo(tmp_path: Path) -> None:
 
 
 def test_web_search_backend_key_from_settings(tmp_path: Path) -> None:
-    settings = CliSettings(active_provider="anthropic", active_model=DEFAULT_LONG_MODEL, web_search_backend="firecrawl")
+    settings = CliSettings(
+        active_provider="anthropic", active_model=ANTHROPIC_DEFAULT_MODEL, web_search_backend="firecrawl"
+    )
     settings.set_api_key("anthropic", "anthropic-key")
     settings.set_api_key("firecrawl", "fc-from-settings")
 
@@ -532,7 +602,9 @@ def test_web_search_backend_key_from_settings(tmp_path: Path) -> None:
 
 
 def test_web_search_key_env_overrides_settings(tmp_path: Path) -> None:
-    settings = CliSettings(active_provider="anthropic", active_model=DEFAULT_LONG_MODEL, web_search_backend="firecrawl")
+    settings = CliSettings(
+        active_provider="anthropic", active_model=ANTHROPIC_DEFAULT_MODEL, web_search_backend="firecrawl"
+    )
     settings.set_api_key("anthropic", "anthropic-key")
     settings.set_api_key("firecrawl", "fc-from-settings")
 
@@ -546,7 +618,9 @@ def test_web_search_key_env_overrides_settings(tmp_path: Path) -> None:
 
 
 def test_web_search_cloud_backend_without_key_does_not_block_startup(tmp_path: Path) -> None:
-    settings = CliSettings(active_provider="anthropic", active_model=DEFAULT_LONG_MODEL, web_search_backend="tavily")
+    settings = CliSettings(
+        active_provider="anthropic", active_model=ANTHROPIC_DEFAULT_MODEL, web_search_backend="tavily"
+    )
     settings.set_api_key("anthropic", "anthropic-key")
 
     # Selecting a cloud backend without its key must NOT raise (keyless-default promise).
@@ -562,6 +636,7 @@ def test_web_search_backend_and_base_url_from_env(tmp_path: Path) -> None:
         env={
             "ANTHROPIC_API_KEY": "anthropic-key",
             "KOLEGA_CODE_PROVIDER": "anthropic",
+            "KOLEGA_CODE_MODEL": "claude-opus-5",
             "KOLEGA_CODE_WEB_SEARCH_BACKEND": "searxng",
             "SEARXNG_BASE_URL": "https://searx.example",
         },
@@ -575,9 +650,10 @@ def test_web_search_backend_and_base_url_from_env(tmp_path: Path) -> None:
 
 
 def test_build_agent_config_openrouter_provider_default(tmp_path: Path) -> None:
+    assert default_model_for_provider(ModelProvider.OPENROUTER) == "moonshotai/kimi-k3"
     config = build_agent_config(
         tmp_path,
-        CliConfigOverrides(provider=ModelProvider.OPENROUTER.value),
+        CliConfigOverrides(provider=ModelProvider.OPENROUTER.value, model="moonshotai/kimi-k3"),
         env={"OPENROUTER_API_KEY": "sk-or-key"},
     )
 
@@ -613,7 +689,11 @@ def test_openrouter_model_paired_with_the_wrong_provider_is_rejected(tmp_path: P
 
 def test_openrouter_requires_openrouter_api_key(tmp_path: Path) -> None:
     with pytest.raises(CliConfigError, match="OPENROUTER_API_KEY"):
-        build_agent_config(tmp_path, CliConfigOverrides(provider=ModelProvider.OPENROUTER.value), env={})
+        build_agent_config(
+            tmp_path,
+            CliConfigOverrides(provider=ModelProvider.OPENROUTER.value, model="moonshotai/kimi-k3"),
+            env={},
+        )
 
 
 def test_saved_non_featured_openrouter_model_survives_config_building(tmp_path: Path) -> None:
@@ -642,3 +722,78 @@ def test_openrouter_edit_protocol_defaults_to_claude_code_except_openai_models(t
         env={"OPENROUTER_API_KEY": "sk-or-key"},
     )
     assert config.resolve_edit_protocol() == EditProtocol.CODEX_APPLY_PATCH
+
+
+def test_build_agent_config_applies_saved_model_slots(tmp_path: Path) -> None:
+    settings = _anthropic_settings_with_deepseek_key()
+    settings.set_model_slot("fast", "deepseek", "deepseek-v4-flash")
+    settings.set_model_slot("thinking", "deepseek", "deepseek-v4-pro")
+
+    config = build_agent_config(tmp_path, settings=settings, env={})
+
+    assert config.fast_config.provider == ModelProvider.DEEPSEEK
+    assert config.fast_config.model == "deepseek-v4-flash"
+    assert config.thinking_config.provider == ModelProvider.DEEPSEEK
+    assert config.thinking_config.model == "deepseek-v4-pro"
+    # The main model is untouched by a slot override.
+    assert config.long_context_config.provider == ModelProvider.ANTHROPIC
+    assert config.long_context_config.model == ANTHROPIC_DEFAULT_MODEL
+
+
+def test_model_slots_inherit_the_active_model_when_unset(tmp_path: Path) -> None:
+    settings = CliSettings(active_provider="anthropic", active_model=ANTHROPIC_DEFAULT_MODEL)
+    settings.set_api_key("anthropic", "anthropic-key")
+
+    config = build_agent_config(tmp_path, settings=settings, env={})
+
+    assert config.fast_config.model == ANTHROPIC_DEFAULT_MODEL
+    assert config.thinking_config.model == ANTHROPIC_DEFAULT_MODEL
+
+
+def test_env_fast_model_beats_a_saved_model_slot(tmp_path: Path) -> None:
+    settings = _anthropic_settings_with_deepseek_key()
+    settings.set_model_slot("fast", "deepseek", "deepseek-v4-flash")
+
+    config = build_agent_config(
+        tmp_path,
+        settings=settings,
+        env={"KOLEGA_CODE_FAST_PROVIDER": "anthropic", "KOLEGA_CODE_FAST_MODEL": "claude-haiku-4-5-20251001"},
+    )
+
+    assert config.fast_config.provider == ModelProvider.ANTHROPIC
+    assert config.fast_config.model == "claude-haiku-4-5-20251001"
+
+
+def test_fast_model_flag_beats_env_and_saved_model_slot(tmp_path: Path) -> None:
+    settings = _anthropic_settings_with_deepseek_key()
+    settings.set_model_slot("fast", "deepseek", "deepseek-v4-flash")
+
+    config = build_agent_config(
+        tmp_path,
+        CliConfigOverrides(fast_provider="anthropic", fast_model="claude-haiku-4-5-20251001"),
+        settings=settings,
+        env={"KOLEGA_CODE_FAST_PROVIDER": "deepseek", "KOLEGA_CODE_FAST_MODEL": "deepseek-v4-pro"},
+    )
+
+    assert config.fast_config.provider == ModelProvider.ANTHROPIC
+    assert config.fast_config.model == "claude-haiku-4-5-20251001"
+
+
+def test_saved_model_slot_with_an_uncatalogued_model_falls_back_to_the_provider_default(tmp_path: Path) -> None:
+    # A model that leaves the catalog must not lock the user out of Settings.
+    settings = _anthropic_settings_with_deepseek_key()
+    settings.set_model_slot("fast", "deepseek", "retired-from-the-catalog")
+
+    config = build_agent_config(tmp_path, settings=settings, env={})
+
+    assert config.fast_config.provider == ModelProvider.DEEPSEEK
+    assert config.fast_config.model == DEEPSEEK_DEFAULT_MODEL
+
+
+def test_model_slot_override_requires_the_slot_providers_api_key(tmp_path: Path) -> None:
+    settings = CliSettings(active_provider="anthropic", active_model=ANTHROPIC_DEFAULT_MODEL)
+    settings.set_api_key("anthropic", "anthropic-key")
+    settings.set_model_slot("fast", "deepseek", "deepseek-v4-flash")
+
+    with pytest.raises(CliConfigError, match="DEEPSEEK_API_KEY"):
+        build_agent_config(tmp_path, settings=settings, env={})

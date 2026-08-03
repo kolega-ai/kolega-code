@@ -137,40 +137,28 @@ See [Settings & API Keys](../settings-and-api-keys/).
 Rather than one model for everything, Kolega Code uses **three model slots**, so you
 can match cost and capability to the job:
 
-| Role | Purpose | Default |
+| Role | Purpose | When unset |
 | --- | --- | --- |
-| **Long context** | The main coding model — drives the conversation and most work | `anthropic` / `claude-opus-5` |
-| **Fast** | Quick, cheap utility calls | `anthropic` / `claude-haiku-4-5-20251001` |
-| **Thinking** | Extended-reasoning ("think hard") operations | `anthropic` / `claude-opus-5` (`medium` effort) |
+| **Long context** | The main coding model — drives the conversation and most work | The active model you selected |
+| **Fast** | Quick, cheap utility calls (e.g. `web_fetch`'s page-answering stage) | Inherits the active model |
+| **Thinking** | Extended-reasoning ("think hard") operations | Inherits the active model |
 
-These built-in role defaults are used only when the corresponding provider or
-role is explicitly selected without a model. API key variables alone do not make
-these defaults active.
-
-When you pick a single provider/model in the Settings UI, that selection is applied
-to **all** roles. To assign roles individually, use environment variables or CLI
-flags.
-
-## How a model gets chosen
-
-For each role, Kolega Code resolves the provider and model in this order (first
-match wins):
-
-<Steps>
-1. **CLI flags** — e.g. `--provider`, `--model`, `--fast-model`, …
-2. **Environment variables** — e.g. `KOLEGA_CODE_PROVIDER`, `KOLEGA_CODE_MODEL`, the
-   per-role variants, and a project-local `.env` file.
-3. **Saved Settings** — the active provider/model from the Settings screen.
-</Steps>
-
-A configuration is only valid if a provider/model has been selected and every
-role's provider has an API key available (the local `llama` provider needs none).
-If a key is missing, the CLI reports exactly which environment variable is
-required.
+An unset slot **inherits the active model**, so out of the box all three run on
+your main model. Pin the Fast or Thinking slot when you want a cheaper or
+different model for that work — Settings shows which model each slot currently
+resolves to, so an inherited slot is never a surprise.
 
 ## Set models per role
 
-Override any role from the command line:
+In the TUI, open **Settings → Model & Account → Model Slots** (or `/model`) and
+give the Fast or Thinking row a provider and model. Leave a row on
+*Default (inherit)* to keep it following the active model.
+
+A slot may use a **different provider** from your main model — for example a
+DeepSeek main model with Anthropic Haiku for fast utility calls. That provider
+needs its own API key, and Settings refuses to apply the change until it has one.
+
+Equivalently, from the command line:
 
 ```bash
 kolega-code . \
@@ -182,6 +170,29 @@ kolega-code . \
 
 Or with environment variables — see
 [Environment Variables](../environment-variables/) for the complete list.
+
+## How a model gets chosen
+
+For each role, Kolega Code resolves the provider and model in this order (first
+match wins):
+
+<Steps>
+1. **CLI flags** — e.g. `--provider`, `--model`, `--fast-model`, …
+2. **Environment variables** — e.g. `KOLEGA_CODE_PROVIDER`, `KOLEGA_CODE_MODEL`, the
+   per-role variants, and a project-local `.env` file.
+3. **Saved slot** — the Fast/Thinking provider and model saved in Settings.
+4. **The active model** — the provider/model selected in Settings.
+</Steps>
+
+**Provider and model are always given together.** A flag or environment variable that
+names only one of them is an error: no model is defaulted from a provider, and no
+provider is inferred from a model id — the same id can be served by different providers
+on different credentials, so choosing one would silently choose an account.
+
+A configuration is only valid if a provider/model has been selected and every
+role's provider has an API key available (the local `llama` provider needs none).
+If a key is missing, the CLI reports exactly which environment variable is
+required.
 
 ## Per-agent models
 

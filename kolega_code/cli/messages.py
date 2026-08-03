@@ -249,6 +249,12 @@ BROWSER_MODEL_EXPLICIT_NO_VISION = (
 BROWSER_MODEL_PROVIDER_NO_VISION = (
     "Provider {provider} has no vision-capable Browser models. Choose another provider or Default (inherit)."
 )
+MODEL_SLOT_INHERITED = "Using {provider}/{model} (inherited from the active model)."
+MODEL_SLOT_PINNED = "Using {provider}/{model}."
+MODEL_SLOT_HINT = (
+    "Utility slots used outside the main conversation. Default inherits the active model; "
+    "a slot may use a different provider, which needs that provider's API key."
+)
 
 # Status dashboard
 STATUS_TOKENS_UNKNOWN = "Token counts unavailable."

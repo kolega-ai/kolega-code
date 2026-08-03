@@ -21,6 +21,8 @@ def _configured_app(
     model: str = UI_DEFAULT_MODEL,
     effort: str | None = None,
     agent_models: dict | None = None,
+    model_slots: dict | None = None,
+    extra_key_providers: tuple[str, ...] = (),
 ):
     from kolega_code.cli.app import KolegaCodeApp
 
@@ -31,8 +33,12 @@ def _configured_app(
     settings_store = SettingsStore(state_dir)
     settings = CliSettings(active_provider=provider, active_model=model, active_thinking_effort=effort)
     settings.set_api_key(provider, "stored-key")
+    for extra_provider in extra_key_providers:
+        settings.set_api_key(extra_provider, "stored-key")
     if agent_models:
         settings.agent_models = agent_models
+    if model_slots:
+        settings.model_slots = model_slots
     settings_store.save(settings)
     config = build_agent_config(project, env={}, settings=settings, settings_store=settings_store)
     store = SessionStore(state_dir)
@@ -789,3 +795,203 @@ async def test_agent_row_other_model_accepts_a_vision_capable_browser_id(
         assert saved is not None
         assert saved["provider"] == "openrouter"
         assert saved["model"] == vision_id
+
+
+@pytest.mark.asyncio
+async def test_model_slot_rows_default_to_inherit_and_name_the_active_model(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    isolated_cli_env: None,
+) -> None:
+    pytest.importorskip("textual")
+    from textual.widgets import Select, Static
+
+    from kolega_code.cli.provider_registry import INHERIT_SENTINEL
+
+    app, settings_store = _configured_app(tmp_path, monkeypatch)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        app.action_open_settings()
+        await pilot.pause()
+        screen = app.screen
+        await _wait_for_select_values(
+            pilot, screen, {"slot_provider_fast": INHERIT_SENTINEL, "slot_provider_thinking": INHERIT_SENTINEL}
+        )
+
+        for slot in ("fast", "thinking"):
+            assert str(screen.query_one(f"#slot_provider_{slot}", Select).value) == INHERIT_SENTINEL
+            assert screen.query_one(f"#slot_model_{slot}", Select).value is Select.NULL
+            hint = str(screen.query_one(f"#slot_hint_{slot}", Static).render())
+            assert f"{UI_DEFAULT_PROVIDER}/{UI_DEFAULT_MODEL}" in hint
+            assert "inherited from the active model" in hint
+
+        # Inheriting is the absence of an override, not a stored value.
+        await app._save_settings_from_ui()
+        assert settings_store.load().model_slots == {}
+
+
+@pytest.mark.asyncio
+async def test_model_slot_row_pins_a_model_on_another_provider(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    isolated_cli_env: None,
+) -> None:
+    pytest.importorskip("textual")
+    from textual.widgets import Select, Static
+
+    app, settings_store = _configured_app(tmp_path, monkeypatch, extra_key_providers=("deepseek",))
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        app.action_open_settings()
+        await pilot.pause()
+        screen = app.screen
+        screen.query_one("#slot_provider_fast", Select).value = "deepseek"
+        await _wait_for_select_values(pilot, screen, {"slot_provider_fast": "deepseek"})
+        screen.query_one("#slot_model_fast", Select).value = "deepseek-v4-flash"
+        await _wait_for_select_values(pilot, screen, {"slot_model_fast": "deepseek-v4-flash"})
+
+        hint = str(screen.query_one("#slot_hint_fast", Static).render())
+        assert "deepseek/deepseek-v4-flash" in hint
+        assert "inherited" not in hint
+
+        await app._save_settings_from_ui()
+
+        assert settings_store.load().get_model_slot("fast") == {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+        }
+        # The fast slot now diverges from the main model it used to shadow.
+        assert app.config is not None
+        assert app.config.fast_config.model == "deepseek-v4-flash"
+        assert app.config.long_context_config.model == UI_DEFAULT_MODEL
+        # An unpinned slot still follows the active model.
+        assert app.config.thinking_config.model == UI_DEFAULT_MODEL
+
+
+@pytest.mark.asyncio
+async def test_model_slot_row_returning_to_inherit_clears_the_override(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    isolated_cli_env: None,
+) -> None:
+    pytest.importorskip("textual")
+    from textual.widgets import Select, Static
+
+    from kolega_code.cli.provider_registry import INHERIT_SENTINEL
+
+    app, settings_store = _configured_app(
+        tmp_path,
+        monkeypatch,
+        model_slots={"fast": {"provider": "deepseek", "model": "deepseek-v4-flash"}},
+        extra_key_providers=("deepseek",),
+    )
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        app.action_open_settings()
+        await pilot.pause()
+        screen = app.screen
+        # A saved slot is restored into its row.
+        await _wait_for_select_values(
+            pilot, screen, {"slot_provider_fast": "deepseek", "slot_model_fast": "deepseek-v4-flash"}
+        )
+
+        screen.query_one("#slot_provider_fast", Select).value = INHERIT_SENTINEL
+        await _wait_for_select_values(pilot, screen, {"slot_provider_fast": INHERIT_SENTINEL})
+        await app._save_settings_from_ui()
+
+        assert settings_store.load().get_model_slot("fast") is None
+        assert app.config is not None
+        assert app.config.fast_config.model == UI_DEFAULT_MODEL
+        hint = str(screen.query_one("#slot_hint_fast", Static).render())
+        assert "inherited from the active model" in hint
+
+
+@pytest.mark.asyncio
+async def test_model_slot_row_other_model_applies_a_typed_id(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    isolated_cli_env: None,
+) -> None:
+    pytest.importorskip("textual")
+    from textual.widgets import Input, Select
+
+    from kolega_code.cli.tui.custom_model import CUSTOM_MODEL_SENTINEL
+
+    custom_model_id = _non_featured_openrouter_model()
+    app, settings_store = _configured_app(tmp_path, monkeypatch, extra_key_providers=("openrouter",))
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        app.action_open_settings()
+        await pilot.pause()
+        screen = app.screen
+        screen.query_one("#slot_provider_fast", Select).value = "openrouter"
+        await _wait_for_select_values(pilot, screen, {"slot_provider_fast": "openrouter"})
+        screen.query_one("#slot_model_fast", Select).value = CUSTOM_MODEL_SENTINEL
+        await _wait_for_select_values(pilot, screen, {"slot_model_fast": CUSTOM_MODEL_SENTINEL})
+
+        custom_input = screen.query_one("#slot_custom_model_fast", Input)
+        assert custom_input.display is True
+        custom_input.value = custom_model_id
+        await pilot.pause()
+        await app._save_settings_from_ui()
+
+        # The sentinel never persists; the typed id does.
+        assert settings_store.load().get_model_slot("fast") == {
+            "provider": "openrouter",
+            "model": custom_model_id,
+        }
+
+
+@pytest.mark.asyncio
+async def test_model_slot_row_rejects_an_unknown_typed_id(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    isolated_cli_env: None,
+) -> None:
+    pytest.importorskip("textual")
+    from textual.widgets import Input, Select
+
+    from kolega_code.cli.tui.custom_model import CUSTOM_MODEL_SENTINEL
+
+    app, settings_store = _configured_app(tmp_path, monkeypatch, extra_key_providers=("openrouter",))
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        app.action_open_settings()
+        await pilot.pause()
+        screen = app.screen
+        screen.query_one("#slot_provider_fast", Select).value = "openrouter"
+        await _wait_for_select_values(pilot, screen, {"slot_provider_fast": "openrouter"})
+        screen.query_one("#slot_model_fast", Select).value = CUSTOM_MODEL_SENTINEL
+        await _wait_for_select_values(pilot, screen, {"slot_model_fast": CUSTOM_MODEL_SENTINEL})
+        screen.query_one("#slot_custom_model_fast", Input).value = "not-a-real-model"
+        await pilot.pause()
+
+        await app._save_settings_from_ui()
+
+        assert settings_store.load().model_slots == {}
+        assert "not-a-real-model" in str(screen.query_one("#settings_status").render())
+
+
+@pytest.mark.asyncio
+async def test_model_slot_row_without_an_api_key_blocks_apply(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    isolated_cli_env: None,
+) -> None:
+    pytest.importorskip("textual")
+    from textual.widgets import Select
+
+    # No stored google key: the slot's provider needs its own credential.
+    app, settings_store = _configured_app(tmp_path, monkeypatch)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        app.action_open_settings()
+        await pilot.pause()
+        screen = app.screen
+        screen.query_one("#slot_provider_fast", Select).value = "google"
+        await _wait_for_select_values(pilot, screen, {"slot_provider_fast": "google"})
+
+        await app._save_settings_from_ui()
+
+        assert settings_store.load().model_slots == {}
+        assert "GOOGLE_API_KEY" in str(screen.query_one("#settings_status").render())
