@@ -58,6 +58,21 @@ class TestPromptProvider:
         assert "## Context Updates" in prompt
         assert len(prompt) > 0
 
+    def test_coder_agent_ask_mode_uses_autonomous_template(self, prompt_provider, prompt_context):
+        """ASK mode (the non-interactive `ask` command) renders the autonomous coder_ask template."""
+        assert prompt_provider._get_template_name(AgentType.CODER, AgentMode.ASK) == "system/agents/coder_ask.md.j2"
+
+        prompt = prompt_provider.get_system_prompt(
+            agent_type=AgentType.CODER, mode=AgentMode.ASK, context=prompt_context
+        )
+
+        # Autonomous, non-interactive framing distinct from the interactive CLI prompt.
+        assert "autonomous AI coding agent running non-interactively" in prompt
+        assert "## Verify By Running" in prompt
+        assert "## Finish the Whole Task" in prompt
+        # Frontend design guidance was intentionally dropped from the ask prompt.
+        assert "Frontend Design Guidance" not in prompt
+
     def test_coder_agent_cli_mode_keeps_worktrees_project_local(self, prompt_provider, prompt_context):
         prompt = prompt_provider.get_system_prompt(
             agent_type=AgentType.CODER, mode=AgentMode.CLI, context=prompt_context

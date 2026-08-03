@@ -131,7 +131,7 @@ class CoderAgent(BaseAgent, LogMixin):
             "dispatch_coding_agent",
         ]
         mode_value = self.agent_mode.value if isinstance(self.agent_mode, AgentMode) else self.agent_mode
-        if mode_value == AgentMode.CLI.value:
+        if mode_value in (AgentMode.CLI.value, AgentMode.ASK.value):
             tool_exclusions.extend(["build_backend", "build_frontend"])
         if sub_agent:
             # A dispatched coder must not fan out into further sub-agents
