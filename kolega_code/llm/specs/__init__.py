@@ -1,7 +1,10 @@
 from .accessors import (
+    DEEPSEEK_WIRE_OUTPUT_CAP,
+    deepseek_output_token_cap,
     default_thinking_effort,
     get_model_specs,
     get_thinking_effort_spec,
+    is_deepseek_model,
     is_featured_model,
     preferred_edit_protocol,
     prior_reasoning_is_replayable,
@@ -20,6 +23,9 @@ from .types import ThinkingEffortSpec
 __all__ = [
     "ThinkingEffortSpec",
     "MODEL_SPECS",
+    "DEEPSEEK_WIRE_OUTPUT_CAP",
+    "deepseek_output_token_cap",
+    "is_deepseek_model",
     "get_model_specs",
     "supports_vision",
     "get_thinking_effort_spec",

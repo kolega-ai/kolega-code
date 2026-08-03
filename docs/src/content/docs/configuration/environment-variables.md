@@ -67,7 +67,6 @@ All optional; unset means Kolega Code sends nothing for that field.
 
 | Variable | Purpose |
 | --- | --- |
-| `KOLEGA_CODE_OPENROUTER_MAX_TOKENS` | Send an explicit output cap. By default no `max_tokens` is sent, because on a gateway it biases which upstream serves the request. Useful on a low credit balance. |
 | `KOLEGA_CODE_OPENROUTER_PROVIDER_ORDER` | Comma-separated upstream provider slugs to try in order (OpenRouter `provider.order`). |
 | `KOLEGA_CODE_OPENROUTER_PROVIDER_ONLY` | Comma-separated upstream provider slugs to restrict routing to (OpenRouter `provider.only`). |
 | `KOLEGA_CODE_OPENROUTER_CATALOG` | Read the refreshed model cache from this path instead of the state directory. |

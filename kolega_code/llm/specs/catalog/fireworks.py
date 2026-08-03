@@ -49,9 +49,14 @@ FIREWORKS_SPECS = {
             mode="openai_reasoning_effort",
         ),
     },
+    # Measured 2026-08-03 (tests/agent/llm/test_deepseek_output_cap_live.py):
+    # uncapped, the Fireworks deployment cuts at its 32768 DEFAULT max_tokens
+    # (honest finish_reason="length"); an explicit 64000 cap is honored and
+    # reported honestly. 65536 mirrors the first-party measured family ceiling
+    # (see catalog/deepseek.py); the wire clamp sends 64000 regardless.
     ("fireworks", "accounts/fireworks/models/deepseek-v4-pro"): {
         "context_length": 1048576,
-        "max_completion_tokens": 384000,
+        "max_completion_tokens": 65536,
         "default_temperature": 1.0,
         "supports_vision": False,
         "thinking_effort": ThinkingEffortSpec(
@@ -62,7 +67,7 @@ FIREWORKS_SPECS = {
     },
     ("fireworks", "accounts/fireworks/models/deepseek-v4-flash"): {
         "context_length": 1048576,
-        "max_completion_tokens": 384000,
+        "max_completion_tokens": 65536,
         "default_temperature": 1.0,
         "supports_vision": False,
         "thinking_effort": ThinkingEffortSpec(

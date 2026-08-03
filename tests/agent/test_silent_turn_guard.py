@@ -166,6 +166,44 @@ async def test_max_tokens_silent_turn_is_nudged(base_agent) -> None:
 
 
 @pytest.mark.asyncio
+async def test_deepseek_shaped_max_tokens_stop_reasoning_only_is_nudged(base_agent) -> None:
+    # The exact measured DeepSeek runaway signature (TB2.1 trajectories): one
+    # huge reasoning-only stream truncated mid-word at the output cap, no tool
+    # call, no visible text. Once the wire cap makes the stop reason an honest
+    # "max_tokens", this must land in the guard rather than finalize.
+    truncated = Message(
+        role="assistant",
+        content=[ThinkingBlock(thinking="step 4096 of the proof: therefo")],
+        stop_reason="max_tokens",
+        usage_metadata={"provider": "deepseek", "prompt_tokens": 10, "completion_tokens": 64000},
+    )
+    _configure_agent(base_agent, [truncated, _end_turn_message()])
+
+    _ = [chunk async for chunk in base_agent.process_message_stream("do X")]
+
+    assert base_agent.llm.stream.await_count == 2
+    assert any(STAGE_MARKERS[0] in text for text in _user_texts(base_agent))
+
+
+@pytest.mark.asyncio
+async def test_max_tokens_stop_with_partial_text_finalizes_without_nudge(base_agent) -> None:
+    # Characterization: the silent-turn guard only catches invisible output. A
+    # truncation that cut off mid-sentence in the VISIBLE answer has text, fails
+    # _is_silent_turn, and finalizes as a completed turn. Recovery for this case
+    # is deliberately out of scope (report the truth only) — the honest
+    # "max_tokens" stop reason and the at-ceiling warning make it visible.
+    truncated = Message(role="assistant", content=[TextBlock(text="The fix is to chan")], stop_reason="max_tokens")
+    _configure_agent(base_agent, [truncated])
+
+    _ = [chunk async for chunk in base_agent.process_message_stream("do X")]
+
+    assert base_agent.llm.stream.await_count == 1
+    assert not any(STAGE_MARKERS[0] in text for text in _user_texts(base_agent))
+    assert base_agent.history[-1].role == "assistant"
+    assert base_agent.history[-1].get_text_content() == "The fix is to chan"
+
+
+@pytest.mark.asyncio
 async def test_empty_content_silent_turn_is_nudged(base_agent) -> None:
     empty = Message(role="assistant", content=[], stop_reason="end_turn")
     _configure_agent(base_agent, [empty, _end_turn_message()])

@@ -44,7 +44,12 @@ from kolega_code.llm.exceptions import (
 from kolega_code.llm.instrumented_client import get_output_tokens
 from kolega_code.llm.models import ImageBlock, Message, MessageHistory, TextBlock, ToolCall, ToolResult
 from kolega_code.llm.providers.models import TokenCount
-from kolega_code.llm.specs import get_model_specs, supports_vision as model_supports_vision
+from kolega_code.llm.specs import (
+    deepseek_output_token_cap,
+    get_model_specs,
+    is_deepseek_model,
+    supports_vision as model_supports_vision,
+)
 from kolega_code.permissions import (
     PermissionDecision,
     PermissionMode,
@@ -141,6 +146,11 @@ class BaseAgent(LogMixin):
     # Runtime half of the coder_base.md.j2 invariant ("Thinking is invisible
     # and changes nothing on its own").
     MAX_SILENT_TURN_NUDGES = 3
+    # A DeepSeek response whose output lands within this many tokens of the wire
+    # output cap without an honest "max_tokens" stop was likely truncated
+    # server-side: DeepSeek reports its own cutoff as a clean finish (probed
+    # 2026-08-03; see DEEPSEEK_WIRE_OUTPUT_CAP in llm/specs/accessors.py).
+    DEEPSEEK_OUTPUT_CAP_SLACK = 1024
     long_content_tool_calls = ["write"]
     max_tool_result_chars_in_history = 100_000
     skill_content_pattern = re.compile(r'<skill_content name="[^"]+">')
@@ -427,6 +437,18 @@ class BaseAgent(LogMixin):
         self.model_context_length = model_specs["context_length"]
         self.model_completion_tokens = model_specs["max_completion_tokens"]
         self.model_default_temperature = model_specs.get("default_temperature", 1.0)
+        # The clamped cap DeepSeek requests carry on the wire (None for other
+        # models). Used to flag probable silent server-side truncation — see the
+        # at-ceiling warning in process_message_stream.
+        self.deepseek_wire_output_cap = (
+            deepseek_output_token_cap(
+                self.primary_model_config.provider,
+                self.primary_model_config.model,
+                self.model_completion_tokens,
+            )
+            if is_deepseek_model(self.primary_model_config.model)
+            else None
+        )
         # Whether this agent's primary model can accept image input. Read by the
         # ToolCollection read_image tool gate (so non-vision models never see the
         # tool) and used by _unsupported_attachment_message to reject image
@@ -2082,10 +2104,11 @@ class BaseAgent(LogMixin):
                 assistant_message = await stream.get_final_message()
                 self._normalize_freeform_tool_calls(assistant_message)
                 assistant_message.usage_metadata["edit_protocol"] = self.edit_protocol.value
-                self.total_tokens_used += get_output_tokens(
+                response_output_tokens = get_output_tokens(
                     assistant_message.usage_metadata,
                     self.primary_model_config.provider.value,
                 )
+                self.total_tokens_used += response_output_tokens
                 if self._accounting_reservation is not None:
                     self._accounting_reservation.report_total(self.total_tokens_used)
                 stop_reason = assistant_message.stop_reason
@@ -2096,6 +2119,23 @@ class BaseAgent(LogMixin):
                     elapsed_s=round(time.monotonic() - _req_start, 2),
                     stop_reason=stop_reason,
                 )
+                # DeepSeek reports a SERVER-side output cutoff as a clean finish;
+                # the clamped wire cap should always fire first as an honest
+                # "max_tokens" stop. A response landing at/near the cap without
+                # one was likely truncated silently — surface it in the
+                # trajectory (log_message event) since the stop reason cannot be
+                # recovered.
+                if (
+                    self.deepseek_wire_output_cap is not None
+                    and stop_reason != "max_tokens"
+                    and response_output_tokens >= self.deepseek_wire_output_cap - self.DEEPSEEK_OUTPUT_CAP_SLACK
+                ):
+                    await self.log_warning(
+                        f"DeepSeek response used {response_output_tokens} output tokens — at or near "
+                        f"the {self.deepseek_wire_output_cap}-token output cap — but reported "
+                        f"stop_reason={stop_reason!r}; the output was likely truncated server-side.",
+                        sender=self.agent_name,
+                    )
 
                 if self.session_recorder is not None:
                     await asyncio.to_thread(self.session_recorder.record_assistant, assistant_message)

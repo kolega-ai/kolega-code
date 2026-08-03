@@ -347,6 +347,28 @@ async def test_responses_stream_wrapper_max_tokens_stop_reason():
 
 
 @pytest.mark.asyncio
+async def test_responses_incomplete_terminal_event_is_captured():
+    # A max_output_tokens truncation actually terminates with a
+    # response.incomplete event, NOT response.completed (DeepSeek verified live
+    # 2026-08-03, test_deepseek_output_cap_live.py; OpenAI documents the same).
+    # Before the fix the wrapper ignored it: the truncation degraded to a clean
+    # end_turn and the response's usage/billing was lost.
+    incomplete = _ns(
+        output=[_ns(type="message", content=[_ns(type="output_text", text="partial")])],
+        usage=_ns(input_tokens=5, output_tokens=16, total_tokens=21, input_tokens_details=None),
+        status="incomplete",
+        incomplete_details=_ns(reason="max_output_tokens"),
+    )
+    wrapper = ResponsesStreamWrapper(_FakeStream([_ns(type="response.incomplete", response=incomplete)]))
+    async with wrapper as stream:
+        async for _chunk in stream:
+            pass
+    message = await wrapper.get_final_message()
+    assert message.stop_reason == "max_tokens"
+    assert message.usage_metadata.get("completion_tokens") == 16 or message.usage_metadata.get("output_tokens") == 16
+
+
+@pytest.mark.asyncio
 async def test_responses_stream_wrapper_captures_reasoning_for_continuity():
     # With include=["reasoning.encrypted_content"], the backend emits a completed
     # reasoning item carrying the encrypted blob. We capture it (leading the
