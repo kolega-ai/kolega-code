@@ -155,7 +155,9 @@ async def test_planning_agent_read_only_task_list_rejects_writes(tmp_path, mock_
     )
 
     assert result.is_error is True
-    assert result.content == "Tool 'update_task_list' is not available in this mode."
+    assert result.content.startswith("Tool 'update_task_list' is not available in this mode.")
+    assert "Available tools:" in result.content
+    assert "get_task_list" in result.content
 
 
 def test_planning_agent_only_exposes_write_plan_without_host_task_tools(
@@ -199,7 +201,9 @@ async def test_planning_agent_rejects_unavailable_file_edit_tool(tmp_path, mock_
     )
 
     assert result.is_error is True
-    assert result.content == "Tool 'write' is not available in this mode."
+    assert result.content.startswith("Tool 'write' is not available in this mode.")
+    assert "Available tools:" in result.content
+    assert "write_plan" in result.content
     assert target.read_text(encoding="utf-8") == "original\n"
 
 

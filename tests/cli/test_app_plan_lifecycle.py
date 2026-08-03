@@ -29,7 +29,9 @@ from kolega_code.cli.session_store import SessionStore
 from kolega_code.cli.settings import CliSettings, SettingsStore
 
 from ._app_test_utils import (
+    FakeBuildAgentWithRegistry,
     FakeCoderAgent,
+    FakePlanAgentWithRegistry,
     _build_mention_test_app,
     _build_sub_agent_test_app,
     _sub_agent_context_event,
@@ -227,6 +229,92 @@ async def test_textual_app_implement_plan_switches_to_build_and_sends_plan(
         assert loaded.plan_pending is False
         assert loaded.plan_reofferable is False
         assert loaded.interaction_mode == "build"
+
+
+def _build_registry_plan_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.tui import agent_runtime as agent_runtime_module
+
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeBuildAgentWithRegistry)
+    monkeypatch.setattr(agent_runtime_module, "PlanningAgent", FakePlanAgentWithRegistry)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    return KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+
+def _plan_mode_exchange() -> list[Message]:
+    return [
+        Message(role="user", content=[TextBlock("plan something")]),
+        Message(role="assistant", content=[TextBlock("here is a plan")], stop_reason="end_turn"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_textual_app_implement_plan_injects_toolset_notice_before_prompt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    app = _build_registry_plan_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        await app.action_toggle_interaction_mode()
+        assert isinstance(app.agent, FakePlanAgentWithRegistry)
+        app.agent.history.extend(_plan_mode_exchange())
+        app._latest_plan = "# Plan\n\nBuild it."
+        app._plan_pending = True
+        app._plan_reofferable = True
+        app._plan_decision_active = True
+
+        await app._implement_pending_plan()
+        assert app.agent_worker is not None
+        await app.agent_worker.wait()
+
+        assert app.interaction_mode == "build"
+        assert isinstance(app.agent, FakeBuildAgentWithRegistry)
+        texts = [block.text for message in app.agent.history for block in message.content]
+        notice_index = next(
+            i for i, text in enumerate(texts) if text.startswith('<system-reminder source="interaction-mode">')
+        )
+        prompt_index = next(i for i, text in enumerate(texts) if "Implement the approved plan below." in text)
+        # The toolset boundary is marked before the implement-plan turn begins.
+        assert notice_index < prompt_index
+        assert "Tools no longer available: write_plan." in texts[notice_index]
+        assert "Tools now available: edit, update_task_list, write." in texts[notice_index]
+
+
+@pytest.mark.asyncio
+async def test_textual_app_implement_plan_with_cleared_context_skips_notice(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    app = _build_registry_plan_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        await app.action_toggle_interaction_mode()
+        assert isinstance(app.agent, FakePlanAgentWithRegistry)
+        app.agent.history.extend(_plan_mode_exchange())
+        app._latest_plan = "# Plan\n\nBuild it."
+        app._plan_pending = True
+        app._plan_reofferable = True
+        app._plan_decision_active = True
+
+        await app._implement_pending_plan(clear_context=True)
+        assert app.agent_worker is not None
+        await app.agent_worker.wait()
+
+        assert app.interaction_mode == "build"
+        assert isinstance(app.agent, FakeBuildAgentWithRegistry)
+        texts = [block.text for message in app.agent.history for block in message.content]
+        # Context was cleared before the switch; a notice about a history the
+        # model can no longer see would be noise.
+        assert not any(text.startswith("<system-reminder") for text in texts)
+        assert any("Implement the approved plan below." in text for text in texts)
 
 
 @pytest.mark.asyncio

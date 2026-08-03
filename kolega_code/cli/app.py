@@ -43,9 +43,10 @@ from kolega_code.agent.prompt_dump import list_prompt_overrides
 from kolega_code.agent.prompt_provider import AgentMode
 from kolega_code.agent.prompts import (
     build_implement_plan_prompt,
+    build_mode_switch_notice,
 )
 from kolega_code.hooks import HookDispatcher, HookEvent
-from kolega_code.llm.models import MessageHistory
+from kolega_code.llm.models import Message, MessageHistory, TextBlock
 from kolega_code.memory import ProjectMemoryManager
 from kolega_code.mcp.config import load_mcp_config, mcp_secret_values
 from kolega_code.mcp.state import MCPOAuthTokenStore
@@ -1971,6 +1972,9 @@ class KolegaCodeApp(
         if self.interaction_mode == interaction_mode:
             return
 
+        previous_tool_names = self._agent_tool_names()
+        had_history = self.agent is not None and bool(getattr(self.agent, "history", None))
+
         self.interaction_mode = interaction_mode
         self._plan_decision_active = False
         await self._save_session_async()
@@ -1986,10 +1990,48 @@ class KolegaCodeApp(
         if self.config is not None:
             await self._build_agent(self.config, rebuild=True, restore_transcript=False)
 
+        if previous_tool_names is not None and had_history:
+            await self._inject_mode_switch_notice(previous_tool_names)
+
         self._update_mode_chrome()
         self._restore_composer_placeholder()
         self._set_chat_enabled(self.agent is not None)
         self._notify_user(messages.SWITCHED_MODE.format(mode=self.interaction_mode))
+
+    def _agent_tool_names(self) -> Optional[set[str]]:
+        """Registry names of the live agent, or ``None`` when unavailable (no agent, or a test fake)."""
+        collection = getattr(self.agent, "tool_collection", None)
+        registry_fn = getattr(collection, "registry", None)
+        if not callable(registry_fn):
+            return None
+        registry: Any = registry_fn()
+        return set(registry.names())
+
+    async def _inject_mode_switch_notice(self, previous_tool_names: set[str]) -> None:
+        """Tell the model its toolset changed. Only called on a real mode switch with prior history.
+
+        The rebuilt agent carries the old conversation verbatim, so without this the model's
+        history shows it using tools that no longer exist (write_plan after plan->build being
+        the canonical failure).
+        """
+        current_tool_names = self._agent_tool_names()
+        if current_tool_names is None or self.agent is None:
+            return
+        removed = sorted(previous_tool_names - current_tool_names)
+        added = sorted(current_tool_names - previous_tool_names)
+        if not removed and not added:
+            return
+        notice = build_mode_switch_notice(
+            to_plan=self.interaction_mode == tui_constants.PLAN_INTERACTION_MODE,
+            removed_tools=removed,
+            added_tools=added,
+        )
+        await asyncio.to_thread(
+            self._session_recorder.record_context_message,
+            Message(role="user", content=[TextBlock(text=notice)]),
+        )
+        self.agent.append_user_message([TextBlock(text=notice)])
+        await self._save_session_history_async()
 
     async def _set_permission_mode(self, permission_mode: PermissionMode | str) -> None:
         mode = normalize_permission_mode(permission_mode, default=self.permission_mode)
