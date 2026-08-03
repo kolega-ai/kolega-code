@@ -389,6 +389,9 @@ class KolegaCodeApp(
                             with Vertical(classes="status-section", id="status_summary_section") as status_section:
                                 status_section.border_title = "Status"
                                 yield Static("", id="status_dashboard", markup=True)
+                            with Vertical(classes="status-section", id="status_usage_section") as usage_section:
+                                usage_section.border_title = "Usage"
+                                yield Static("", id="status_usage", markup=True)
                             with Vertical(classes="status-section", id="status_task_list_section") as task_section:
                                 task_section.border_title = "Task List"
                                 yield tui_widgets.PlanningMarkdown(
