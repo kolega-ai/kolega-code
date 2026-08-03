@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 
 from kolega_code.agent import (
     AgentConfig,
@@ -183,8 +184,21 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         tracker = self._session_diff_tracker
         if tracker is None:
             return
+        excerpt = checkpoint_excerpt(label)
+
+        def _capture() -> None:
+            with self._session_diff_lock:
+                if not tracker.checkpoints():
+                    # The startup baseline worker lost the race; skip rather
+                    # than fabricate checkpoint 0 out of a mid-session state.
+                    return
+                tracker.capture_checkpoint(excerpt)
+
         try:
-            await asyncio.to_thread(tracker.capture_checkpoint, checkpoint_excerpt(label))
+            started = time.monotonic()
+            await asyncio.to_thread(_capture)
+            if self.show_logs:
+                self._write_log(f"Checkpoint captured in {time.monotonic() - started:.2f}s", "debug")
         except Exception:
             pass
 
@@ -211,19 +225,35 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
                 if content and self.show_logs:
                     self._write_log(content, "debug")
 
-    async def _run_turn_stream(self, stream_factory) -> bool:
-        """Run one agent stream and return whether it was cancelled by the user."""
+    async def _finalize_turn_output(self, *, cancel_pending: bool) -> None:
+        """Settle transcript state common to every turn outcome, before the final status."""
+        if cancel_pending:
+            self._cancel_pending_question()
+            self._cancel_pending_approval()
+        await self._drain_pending_events()
+        self._start_session_diff_refresh()
+        self._finalize_sub_agent_activities()
+        self._finalize_workflow_activities()
+
+    async def _run_turn_stream(self, stream_factory, *, checkpoint_label: str | None = None) -> bool:
+        """Run one agent stream and return whether it was cancelled by the user.
+
+        When ``checkpoint_label`` is given, the session-diff checkpoint is
+        captured after progress begins, so the status strip flips off the
+        previous turn's result immediately and Esc during a slow capture
+        resolves through the normal cancelled path.
+        """
         cancelled_by_user = False
-        self._begin_turn_progress()
-        self._log_status(messages.GENERATING, "ok")
+        self._begin_turn_progress(messages.PREPARING_CHECKPOINT if checkpoint_label is not None else messages.WORKING)
         try:
+            if checkpoint_label is not None:
+                await self._record_turn_checkpoint(checkpoint_label)
+                self._update_progress(messages.WORKING, complete=False, state=tui_state.TurnState.GENERATING)
+            self._log_status(messages.GENERATING, "ok")
             await self._consume_agent_stream(stream_factory())
-            await self._drain_pending_events()
-            self._start_session_diff_refresh()
-            self._finalize_sub_agent_activities()
-            self._finalize_workflow_activities()
-            await self._save_session_history_async()
+            await self._finalize_turn_output(cancel_pending=False)
             self._finish_turn_progress(messages.FINISHED, tui_state.TurnState.IDLE)
+            await self._save_session_history_async()
             await self._capture_completed_plan()
             self._log_status(messages.FINISHED, "ok")
         except asyncio.CancelledError:
@@ -233,36 +263,21 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
             # widget tree is being torn down — skip the cleanup that would
             # repaint it.
             if not self._exit:
-                self._cancel_pending_question()
-                self._cancel_pending_approval()
-                await self._drain_pending_events()
-                self._start_session_diff_refresh()
-                self._finalize_sub_agent_activities()
-                self._finalize_workflow_activities()
-                await self._save_session_history_async()
+                await self._finalize_turn_output(cancel_pending=True)
                 self._finish_turn_progress(messages.STOPPED_BY_USER, tui_state.TurnState.STOPPED)
+                await self._save_session_history_async()
                 self._log_status(messages.STOPPED_BY_USER, "warn")
         except LLMError as exc:
-            self._cancel_pending_question()
-            self._cancel_pending_approval()
-            await self._drain_pending_events()
-            self._start_session_diff_refresh()
-            self._finalize_sub_agent_activities()
-            self._finalize_workflow_activities()
-            await self._save_session_history_async()
+            await self._finalize_turn_output(cancel_pending=True)
             model = self.config.long_context_config.model if self.config is not None else None
             message_text = llm_error_message(exc, model=model)
             self._finish_turn_progress(message_text, tui_state.TurnState.ERROR)
+            await self._save_session_history_async()
             self._log_status(message_text, "error")
         except Exception as exc:
-            self._cancel_pending_question()
-            self._cancel_pending_approval()
-            await self._drain_pending_events()
-            self._start_session_diff_refresh()
-            self._finalize_sub_agent_activities()
-            self._finalize_workflow_activities()
-            await self._save_session_history_async()
+            await self._finalize_turn_output(cancel_pending=True)
             self._finish_turn_progress(messages.STOPPED_WITH_ERROR.format(error=exc), tui_state.TurnState.ERROR)
+            await self._save_session_history_async()
             self._log_status(messages.STOPPED_WITH_ERROR.format(error=exc), "error")
             raise
         finally:
@@ -294,8 +309,10 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         try:
             if self.agent is None:
                 return False
-            await self._record_turn_checkpoint(turn_label or message)
-            cancelled_by_user = await self._run_turn_stream(lambda: self._agent_turn_stream(message, attachments))
+            cancelled_by_user = await self._run_turn_stream(
+                lambda: self._agent_turn_stream(message, attachments),
+                checkpoint_label=turn_label or message,
+            )
             # A committed workspace switch applies between turns: the agent is
             # rebuilt in the new checkout, then handed one continuation turn so
             # the work that prompted the switch resumes there. A cancelled turn
@@ -304,9 +321,9 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
                 continuation = await self._apply_pending_workspace_switch()
                 if cancelled_by_user or continuation is None:
                     break
-                await self._record_turn_checkpoint(continuation)
                 cancelled_by_user = await self._run_turn_stream(
-                    lambda prompt=continuation: self._agent_turn_stream(prompt)
+                    lambda prompt=continuation: self._agent_turn_stream(prompt),
+                    checkpoint_label=continuation,
                 )
             if cancelled_by_user:
                 self._schedule_maybe_start_queued_message()

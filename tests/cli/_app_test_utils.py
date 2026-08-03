@@ -1,4 +1,5 @@
 # ruff: noqa: F401,F811,E402
+import asyncio
 import time
 from pathlib import Path
 from typing import Any
@@ -179,6 +180,22 @@ async def wait_for_question_prompt(app, pilot, timeout: float = 6.0):
                 return question_actions
         await pilot.pause(0.01)
     raise AssertionError("Timed out waiting for the planning question to be presented")
+
+
+async def wait_for_session_diff_baseline(app, timeout: float = 5.0) -> None:
+    """The session-diff baseline is captured in a worker; wait for checkpoint 0.
+
+    Needed before asserting on tracker state from the event loop. Work that
+    reaches the tracker through ``_session_diff_lock`` (turn checkpoints,
+    refresh, scope) serializes behind the baseline on its own.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        tracker = app._session_diff_tracker
+        if tracker is not None and tracker.checkpoints():
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError("Timed out waiting for the session-diff baseline")
 
 
 async def settle_changes_inspector(app, pilot, timeout: float = 5.0) -> None:

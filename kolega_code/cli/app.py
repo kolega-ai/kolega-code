@@ -1305,7 +1305,12 @@ class KolegaCodeApp(
         self._start_session_diff_refresh()
 
     def _initialize_session_diff_tracker(self, baseline_label: str = "") -> None:
-        """Set up git-only net diff tracking for the Changes inspector."""
+        """Set up git-only net diff tracking for the Changes inspector.
+
+        Tracker creation is one fast ``git rev-parse``; the baseline capture
+        can read every dirty file, so it runs in a worker. Until it finishes,
+        the tracker has no checkpoint 0 and turn checkpoints skip themselves.
+        """
         self._session_diff_generation += 1
         self._session_diff_tracker = tui_session_diff.GitSessionDiffTracker.create(self.active_project_path)
         self._session_diff_files = []
@@ -1313,12 +1318,38 @@ class KolegaCodeApp(
         if self._session_diff_tracker is None:
             return
         try:
-            self._session_diff_tracker.capture_baseline(baseline_label)
+            self.run_worker(
+                self._session_diff_baseline_worker(
+                    self._session_diff_tracker, self._session_diff_generation, baseline_label
+                ),
+                name="kolega-diff-baseline",
+                group="session-diff-baseline",
+            )
         except Exception:
             self._session_diff_tracker = None
             self._session_diff_files = []
+
+    async def _session_diff_baseline_worker(
+        self, tracker: tui_session_diff.SessionDiffTrackerBase, generation: int, label: str
+    ) -> None:
+        try:
+            started = time.monotonic()
+            await asyncio.to_thread(self._tracker_capture_baseline, tracker, label)
+            if self.show_logs:
+                self._write_log(f"Session diff baseline captured in {time.monotonic() - started:.2f}s", "debug")
+        except Exception:
+            if generation == self._session_diff_generation and tracker is self._session_diff_tracker:
+                self._session_diff_tracker = None
+                self._session_diff_files = []
+            return
+        if generation != self._session_diff_generation or tracker is not self._session_diff_tracker:
             return
         self._start_scope_probe()
+
+    def _tracker_capture_baseline(self, tracker: tui_session_diff.SessionDiffTrackerBase, label: str) -> None:
+        """Capture the session baseline under the tracker lock. Worker threads only."""
+        with self._session_diff_lock:
+            tracker.capture_baseline(label)
 
     async def _confirm_worktree_switch(self, new_root: Path, branch: str, old_root: Path) -> tuple[bool, str]:
         """Ask the user to approve an agent-initiated workspace switch.

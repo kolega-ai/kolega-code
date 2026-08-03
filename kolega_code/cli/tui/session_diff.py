@@ -23,6 +23,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
+from stat import S_ISREG
 from subprocess import DEVNULL, PIPE, CompletedProcess, run as subprocess_run
 from typing import TYPE_CHECKING, Iterable, Literal, Optional, Sequence
 
@@ -182,6 +183,9 @@ class SessionDiffTrackerBase:
         self._content_intern: dict[str, tuple[bytes, Optional[str]]] = {}
         self._diff_cache: dict[str, tuple[Optional[tuple[int, int]], Optional[SessionDiffFile]]] = {}
         self._diff_cache_checkpoint_id: Optional[int] = None
+        # repo_path -> (stat signature, baseline): shared by capture and refresh
+        # so a file is read and hashed once per content version, then stat-only.
+        self._snapshot_cache: dict[str, tuple[tuple[int, int], FileBaseline]] = {}
 
     # ---- checkpoints ---------------------------------------------------------
 
@@ -192,6 +196,7 @@ class SessionDiffTrackerBase:
         self._content_intern = {}
         self._diff_cache = {}
         self._diff_cache_checkpoint_id = None
+        self._snapshot_cache = {}
         self.capture_checkpoint(label)
 
     def capture_checkpoint(self, label: str) -> TurnCheckpoint:
@@ -398,13 +403,24 @@ class SessionDiffTrackerBase:
 
     def _snapshot_repo_path(self, repo_path: str) -> FileBaseline:
         abs_path = self._abs_path(repo_path)
-        if not abs_path.exists() or not abs_path.is_file():
+        try:
+            st = os.stat(abs_path)
+        except OSError:
+            st = None
+        if st is None or not S_ISREG(st.st_mode):
+            self._snapshot_cache.pop(repo_path, None)
             return FileBaseline(path=repo_path, exists=False)
+        sig = (st.st_mtime_ns, st.st_size)
+        cached = self._snapshot_cache.get(repo_path)
+        if cached is not None and cached[0] == sig:
+            return cached[1]
         try:
             data = abs_path.read_bytes()
         except OSError:
             return FileBaseline(path=repo_path, exists=True, binary_or_unreadable=True)
-        return self._baseline_from_bytes(repo_path, data, exists=True)
+        baseline = self._baseline_from_bytes(repo_path, data, exists=True)
+        self._snapshot_cache[repo_path] = (sig, baseline)
+        return baseline
 
     @staticmethod
     def _baseline_from_bytes(repo_path: str, data: bytes, *, exists: bool) -> FileBaseline:
@@ -487,6 +503,9 @@ class GitSessionDiffTracker(SessionDiffTrackerBase):
     def __init__(self, project_path: Path, git_root: Path) -> None:
         super().__init__(project_path)
         self.git_root = git_root.resolve()
+        # repo_path -> verdict: _is_under_project resolves symlinks, which is
+        # too slow to repeat for tens of thousands of status paths per capture.
+        self._under_project_cache: dict[str, bool] = {}
         self._commit_cache: dict[tuple[str, str], FileBaseline] = {}
         # (old_sha, new_sha) -> paths that transition changed. Immutable by
         # construction, so entries never need invalidating.
@@ -556,10 +575,19 @@ class GitSessionDiffTracker(SessionDiffTrackerBase):
 
     # ---- provider hooks ------------------------------------------------------
 
+    def _dirty_paths(self) -> set[str]:
+        """Status paths the session can ever display or restore.
+
+        Sibling-worktree and out-of-project paths are dropped before any file
+        is read: they are unreachable from diff and restore output anyway.
+        """
+        return {
+            path for path in self._without_sibling_worktrees(self._git_status_paths()) if self._is_under_project(path)
+        }
+
     def _capture_dirty_baselines(self) -> dict[str, FileBaseline]:
         return {
-            repo_path: self._intern_baseline(self._snapshot_repo_path(repo_path))
-            for repo_path in self._git_status_paths()
+            repo_path: self._intern_baseline(self._snapshot_repo_path(repo_path)) for repo_path in self._dirty_paths()
         }
 
     def _candidate_paths(self, checkpoint: TurnCheckpoint, event_paths: Iterable[str]) -> set[str]:
@@ -657,11 +685,16 @@ class GitSessionDiffTracker(SessionDiffTrackerBase):
             return repo_path
 
     def _is_under_project(self, repo_path: str) -> bool:
+        cached = self._under_project_cache.get(repo_path)
+        if cached is not None:
+            return cached
         try:
             (self.git_root / repo_path).resolve(strict=False).relative_to(self.project_path)
-            return True
+            verdict = True
         except ValueError:
-            return False
+            verdict = False
+        self._under_project_cache[repo_path] = verdict
+        return verdict
 
     # ---- git helpers ---------------------------------------------------------
 

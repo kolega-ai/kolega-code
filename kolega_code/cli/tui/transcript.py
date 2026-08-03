@@ -329,7 +329,7 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
         if entry is not None:
             self._invalidate_conversation(entry)
 
-    def _begin_turn_progress(self) -> None:
+    def _begin_turn_progress(self, activity: str = messages.WORKING) -> None:
         self._close_sub_agent_inspector()
         self._tool_entries = {}
         self._tool_stream_buffers = {}
@@ -341,9 +341,9 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
         self._turn_active = True
         self._set_chat_enabled(True)
         self._set_composer_status(messages.QUEUE_PLACEHOLDER)
-        self._start_turn_timer(messages.WORKING)
-        self._set_status_activity(messages.WORKING, turn_state=TurnState.GENERATING)
-        self._update_progress(messages.WORKING, complete=False, state=TurnState.GENERATING)
+        self._start_turn_timer(activity)
+        self._set_status_activity(activity, turn_state=TurnState.GENERATING)
+        self._update_progress(activity, complete=False, state=TurnState.GENERATING)
 
     def _update_progress(self, content: str, complete: bool, state: Optional[TurnState] = None) -> None:
         if complete:
