@@ -30,7 +30,9 @@ from kolega_code.cli.session_store import SessionStore
 from kolega_code.cli.settings import CliSettings, SettingsStore
 
 from ._app_test_utils import (
+    FakeBuildAgentWithRegistry,
     FakeCoderAgent,
+    FakePlanAgentWithRegistry,
     _build_mention_test_app,
     _build_sub_agent_test_app,
     _sub_agent_context_event,
@@ -481,6 +483,113 @@ async def test_textual_app_shift_tab_toggles_between_build_and_plan_agents(
         loaded = store.load(session.session_id)
         assert loaded.latest_plan_markdown == "# Plan\n\nDo it."
         assert loaded.interaction_mode == BUILD_INTERACTION_MODE
+
+
+def _build_registry_mode_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    from kolega_code.cli.app import KolegaCodeApp
+
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", FakeBuildAgentWithRegistry)
+    monkeypatch.setattr(agent_runtime_module, "PlanningAgent", FakePlanAgentWithRegistry)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+    return app, store, session
+
+
+def _seed_history(agent) -> None:
+    agent.history.extend(
+        [
+            Message(role="user", content=[TextBlock("hello")]),
+            Message(role="assistant", content=[TextBlock("hi")], stop_reason="end_turn"),
+        ]
+    )
+
+
+@pytest.mark.asyncio
+async def test_textual_app_mode_switch_injects_toolset_change_notice(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.tui.constants import BUILD_INTERACTION_MODE, PLAN_INTERACTION_MODE
+
+    app, store, session = _build_registry_mode_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        _seed_history(app.agent)
+        entries_before = len(app.conversation_entries)
+
+        await pilot.press("shift+tab")
+
+        assert app.interaction_mode == PLAN_INTERACTION_MODE
+        assert isinstance(app.agent, FakePlanAgentWithRegistry)
+        notice = app.agent.history[-1]
+        assert notice.role == "user"
+        [block] = notice.content
+        assert block.text.startswith('<system-reminder source="interaction-mode">')
+        assert block.text.endswith("</system-reminder>")
+        assert "build mode to plan mode" in block.text
+        assert "Tools no longer available: edit, update_task_list, write." in block.text
+        assert "Tools now available: write_plan." in block.text
+        # Persisted, so a restart replays the notice into the restored history.
+        assert app.session.history[-1] == notice.to_dict()
+        # Invisible in the TUI: no conversation entry was added for it.
+        assert len(app.conversation_entries) == entries_before
+
+        await pilot.press("shift+tab")
+
+        assert app.interaction_mode == BUILD_INTERACTION_MODE
+        assert isinstance(app.agent, FakeBuildAgentWithRegistry)
+        [block] = app.agent.history[-1].content
+        assert "plan mode to build mode" in block.text
+        assert "Tools no longer available: write_plan." in block.text
+        assert "Tools now available: edit, update_task_list, write." in block.text
+        assert "Do not call `write_plan`; it no longer exists." in block.text
+        # Both switches are marked, in order.
+        assert len(app.agent.history) == 4
+
+
+@pytest.mark.asyncio
+async def test_textual_app_mode_switch_without_history_stays_silent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.tui.constants import PLAN_INTERACTION_MODE
+
+    app, _store, _session = _build_registry_mode_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        await pilot.press("shift+tab")
+
+        assert app.interaction_mode == PLAN_INTERACTION_MODE
+        assert isinstance(app.agent, FakePlanAgentWithRegistry)
+        # The model never saw the old toolset, so there is nothing to announce.
+        assert app.agent.history == []
+
+
+@pytest.mark.asyncio
+async def test_textual_app_non_mode_switch_rebuild_does_not_inject_notice(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    app, _store, _session = _build_registry_mode_app(tmp_path, monkeypatch)
+
+    async with app.run_test():
+        _seed_history(app.agent)
+        await app._save_session_history_async()
+
+        assert app.config is not None
+        await app._build_agent(app.config, rebuild=True, restore_transcript=False)
+
+        assert isinstance(app.agent, FakeBuildAgentWithRegistry)
+        assert len(app.agent.history) == 2
+        assert all("<system-reminder" not in block.text for message in app.agent.history for block in message.content)
 
 
 @pytest.mark.asyncio

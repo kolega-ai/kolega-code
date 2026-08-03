@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 
 import jinja2
+
+from kolega_code.agent.volatile_context import scrub_reminder_markup
 
 _BASE_DIR = Path(__file__).parent / "prompt_templates"
 _LOADER = jinja2.FileSystemLoader(str(_BASE_DIR))
@@ -115,6 +117,31 @@ def build_worktree_control_prompt(plan_mode: bool = False) -> str:
     build-mode workspace handoff before any work in the target checkout.
     """
     return render_prompt_template("extensions/cli/worktree_control.md.j2", plan_mode=plan_mode)
+
+
+MODE_SWITCH_NOTICE_SOURCE = "interaction-mode"
+
+
+def build_mode_switch_notice(
+    *,
+    to_plan: bool,
+    removed_tools: Sequence[str],
+    added_tools: Sequence[str],
+) -> str:
+    """Model-visible notice that a plan/build switch changed the toolset.
+
+    Injected into history as a standalone user message so the model sees, at the
+    exact point it happened, which tools disappeared and appeared. Tool names can
+    come from MCP servers and extensions, so the body is scrubbed before it is
+    wrapped in the genuine reminder envelope.
+    """
+    body = render_prompt_template(
+        "extensions/cli/mode_switch_notice.md.j2",
+        to_plan=to_plan,
+        removed_tools=list(removed_tools),
+        added_tools=list(added_tools),
+    )
+    return f'<system-reminder source="{MODE_SWITCH_NOTICE_SOURCE}">\n{scrub_reminder_markup(body)}\n</system-reminder>'
 
 
 def build_init_agents_prompt(arguments: str) -> str:

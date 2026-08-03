@@ -1,0 +1,23 @@
+{% if to_plan %}
+The session has switched from build mode to plan mode. Your toolset changed at this point in the conversation; earlier tool calls in this history used the build-mode toolset.
+
+{% if removed_tools %}
+Tools no longer available: {{ removed_tools | join(", ") }}.
+{% endif %}
+{% if added_tools %}
+Tools now available: {{ added_tools | join(", ") }}.
+{% endif %}
+
+You are now read-only: investigate and design, but do not modify files or state. When your plan is complete, submit it with `write_plan`.
+{% else %}
+The session has switched from plan mode to build mode. Your toolset changed at this point in the conversation; earlier tool calls in this history used the plan-mode toolset.
+
+{% if removed_tools %}
+Tools no longer available: {{ removed_tools | join(", ") }}.
+{% endif %}
+{% if added_tools %}
+Tools now available: {{ added_tools | join(", ") }}.
+{% endif %}
+
+Do not call `write_plan`; it no longer exists. Implement changes directly with the file-editing tools, and track multi-step progress with `update_task_list`.
+{% endif %}

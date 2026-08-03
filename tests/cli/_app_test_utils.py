@@ -106,6 +106,41 @@ class FakeCoderAgent:
 MinimalFakeCoderAgent = FakeCoderAgent
 
 
+class _RegistryStub:
+    def __init__(self, names):
+        self._names = list(names)
+
+    def names(self):
+        return list(self._names)
+
+
+class ToolCollectionWithRegistry(_FakeToolCollection):
+    """Fake tool collection that also answers ``registry()``, so the app's
+    mode-switch notice sees a real tool-name diff."""
+
+    def __init__(self, names):
+        self._names = names
+
+    def registry(self):
+        return _RegistryStub(self._names)
+
+
+class FakeBuildAgentWithRegistry(FakeCoderAgent):
+    tool_names = ["edit", "read_entire_file", "update_task_list", "write"]
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.tool_collection = ToolCollectionWithRegistry(self.tool_names)
+
+
+class FakePlanAgentWithRegistry(FakeCoderAgent):
+    tool_names = ["read_entire_file", "write_plan"]
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.tool_collection = ToolCollectionWithRegistry(self.tool_names)
+
+
 def install_fake_agents(monkeypatch: pytest.MonkeyPatch, *, coder_cls=FakeCoderAgent, planning_cls=None):
     monkeypatch.setattr(agent_runtime_module, "CoderAgent", coder_cls)
     if planning_cls is not None:

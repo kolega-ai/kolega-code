@@ -1100,11 +1100,14 @@ class BaseAgent(LogMixin):
         try:
             registry = self.tool_collection.registry()
             if tool_name not in registry:
-                error_message = f"Tool '{tool_name}' is not available in this mode."
-                await self.log_error(error_message, sender=self.agent_name)
+                short_message = f"Tool '{tool_name}' is not available in this mode."
+                # The model gets the available-tool list so it can self-correct;
+                # the transcript row keeps the short form.
+                error_message = f"{short_message} Available tools: {', '.join(sorted(registry.names()))}."
+                await self.log_error(short_message, sender=self.agent_name)
                 await self.send_chat_message(
                     message_type="tool_error",
-                    content=error_message,
+                    content=short_message,
                     is_streaming=False,
                     tool_description=tool_name,
                     tool_call_id=tool_execution_id,
