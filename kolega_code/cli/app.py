@@ -61,6 +61,7 @@ from .session_event_store import FileArtifactStore, FileSessionEventStore
 from kolega_code.llm.ledger import UsageLedger
 
 from .goal import GoalState
+from .session_usage import SessionUsageSink
 from .loop import LOOP_TICK_SECONDS, LoopState
 from .diagnostics import DiagnosticsLog, ResponsivenessWatchdog
 from .file_index import WorkspaceFileIndex
@@ -281,8 +282,10 @@ class KolegaCodeApp(
         self._plan_decision_active = False
         self._gigacode_enabled = bool(self.session.gigacode_enabled)
         # Process-wide LLM usage accounting; every agent build (including
-        # rebuilds on model/settings changes) shares this one ledger.
+        # rebuilds on model/settings changes) shares this one ledger. The
+        # journal sink is attached in on_mount, once the UI loop exists.
         self._usage_ledger = UsageLedger()
+        self._usage_sink: Optional[SessionUsageSink] = None
         self._goal: Optional[GoalState] = GoalState.from_dict(self.session.goal) if self.session.goal else None
         # Checkpoint for goal token accounting: drains advance it, so a resumed
         # goal continues from the persisted tokens_spent without recounting.
@@ -386,6 +389,9 @@ class KolegaCodeApp(
                             with Vertical(classes="status-section", id="status_summary_section") as status_section:
                                 status_section.border_title = "Status"
                                 yield Static("", id="status_dashboard", markup=True)
+                            with Vertical(classes="status-section", id="status_usage_section") as usage_section:
+                                usage_section.border_title = "Usage"
+                                yield Static("", id="status_usage", markup=True)
                             with Vertical(classes="status-section", id="status_task_list_section") as task_section:
                                 task_section.border_title = "Task List"
                                 yield tui_widgets.PlanningMarkdown(
@@ -460,6 +466,18 @@ class KolegaCodeApp(
 
     async def on_mount(self) -> None:
         self.settings = self.settings_store.load()
+        # Attach usage persistence before any turn can run: the sink journals
+        # every ledger-settled non-history response, and its start marker must
+        # precede the first covered turn so coverage boundaries are exact.
+        usage_sink = SessionUsageSink(
+            self.store.journal(self.session.session_id),
+            self._session_recorder,
+            self._usage_ledger,
+            mode="tui",
+        )
+        self._usage_sink = usage_sink
+        self._usage_ledger.observer = usage_sink
+        await usage_sink.start()
         # Local diagnostics: a per-turn timeline + a responsiveness watchdog that dumps the
         # blocking stack if the UI goes unresponsive. Local-only (shared only via /bug);
         # never let diagnostics setup break mount.
@@ -783,6 +801,7 @@ class KolegaCodeApp(
             gigacode_enabled=record.gigacode_enabled,
             goal=dict(record.goal),
             loop=dict(record.loop),
+            usage=dict(record.usage),
             active_project_path=record.active_project_path,
         )
 
@@ -1951,6 +1970,10 @@ class KolegaCodeApp(
                         pass
                 await self._save_session_history_async()
                 await self.agent.cleanup()
+            # After cleanup: cancelled streams settle their failures into the
+            # ledger first, so the drain below captures them.
+            if self._usage_sink is not None:
+                await self._usage_sink.aclose()
         finally:
             self._close_memory_manager()
             self.exit()

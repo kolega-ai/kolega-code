@@ -25,6 +25,10 @@ class StatusDashboardMixin(tui_app_base.KolegaAppBase):
     def _turn_status(self) -> Static:
         return self.query_one("#turn_status", Static)
 
+    @property
+    def _status_usage(self) -> Static:
+        return self.query_one("#status_usage", Static)
+
     def _refresh_status_dashboard(self) -> None:
         provider, model = self._startup_model()
         self._status_state.provider = provider
@@ -37,6 +41,7 @@ class StatusDashboardMixin(tui_app_base.KolegaAppBase):
         self._status_state.loop = self._loop_summary()
         try:
             self._status_dashboard.update(self._format_status_dashboard())
+            self._status_usage.update(self._usage_summary_lines())
         except Exception:
             return
 
@@ -107,6 +112,43 @@ class StatusDashboardMixin(tui_app_base.KolegaAppBase):
             f"{label('Activity')}\n"
             f"{escape(messages.DISCONNECTED_ACTIVITY if disconnected else state.activity)}"
         )
+
+    def _usage_summary_lines(self) -> str:
+        """Content of the Usage card: journal-derived baseline + live run.
+
+        The baseline (``session.usage``) is derived once at load and never
+        includes this process's run (the accounting marker is written after
+        load), so adding the live ledger snapshot cannot double-count. Pulled
+        fresh at render time — no pushed state.
+        """
+        baseline = self.session.usage or {}
+        live = self._usage_ledger.snapshot()
+
+        def combined(key: str) -> int:
+            base = baseline.get(key)
+            return (base if isinstance(base, int) else 0) + getattr(live, key)
+
+        total = combined("total_tokens")
+        session_line = f"Session: [bold]{self._format_token_count(total)}[/bold] tokens"
+        coverage = baseline.get("coverage") or {}
+        if isinstance(coverage, dict) and coverage.get("pre_accounting_turns"):
+            # Turns journaled before accounting existed: totals are a floor.
+            session_line += theme.styled(" (partial)", Color.MUTED)
+
+        split_line = (
+            f"In {self._format_token_count(combined('input_tokens'))}"
+            f" · Out {self._format_token_count(combined('output_tokens'))}"
+        )
+        cache_reads = combined("cache_read_input_tokens")
+        if cache_reads:
+            split_line += f" · Cache reads {self._format_token_count(cache_reads)}"
+
+        requests_line = f"Requests: {combined('requests'):,}"
+        failed = combined("failed")
+        if failed:
+            requests_line += " · " + theme.styled(f"{failed:,} failed", Color.ERROR)
+
+        return f"{session_line}\n{split_line}\n{requests_line}"
 
     def _worktree_summary(self) -> str:
         """``name (branch)`` when this session runs in a linked worktree, else "".

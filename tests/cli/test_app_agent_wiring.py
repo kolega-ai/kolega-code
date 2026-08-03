@@ -293,3 +293,52 @@ async def test_agent_rebuild_keeps_the_same_usage_ledger(
         assert app.agent is not first_agent
         assert cast(Any, app.agent).kwargs["usage_ledger"] is ledger
         assert ledger.run_id == run_id
+
+
+@pytest.mark.asyncio
+async def test_usage_sink_attached_on_mount_and_drained_on_quit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """on_mount writes the accounting marker and wires the ledger observer;
+    quit drains the sink; the snapshot helper carries the derived usage field."""
+    pytest.importorskip("textual")
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.cli.config import config_summary
+    from kolega_code.cli.session_store import SessionStore
+    from kolega_code.cli.session_usage import LLM_MESSAGE_EVENT, LLM_RUN_STARTED_EVENT
+    from kolega_code.llm.ledger import LlmCallOrigin, llm_call_origin
+    from kolega_code.llm.models import Message
+    from kolega_code.llm.usage import normalize_usage
+
+    install_fake_agents(monkeypatch)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app._usage_ledger.observer is app._usage_sink
+
+        ledger = app._usage_ledger
+        usage = normalize_usage({"input_tokens": 10, "output_tokens": 5}, "anthropic", "m")
+        with llm_call_origin(LlmCallOrigin(kind="sub_agent", agent_name="Investigator", agent_id="a1")):
+            request_id = ledger.begin("anthropic", "m")
+        ledger.record_response(request_id, usage, message=Message(role="assistant", content="s", usage=usage))
+
+        # Snapshot helper carries the derived field.
+        app.session.usage = {"total_tokens": 15}
+        async with app._persistence_lock:
+            snapshot = app._session_snapshot_locked()
+        assert snapshot.usage == {"total_tokens": 15}
+
+        await app.action_quit()
+
+    events = store.journal(session.session_id).read_events()
+    types = [e.event_type for e in events]
+    assert types.count(LLM_RUN_STARTED_EVENT) == 1
+    assert types.count(LLM_MESSAGE_EVENT) == 1

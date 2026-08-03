@@ -42,6 +42,7 @@ from kolega_code.llm.exceptions import (
     map_to_llm_error,
 )
 from kolega_code.llm.instrumented_client import get_output_tokens
+from kolega_code.llm.ledger import HISTORY_ORIGIN, LlmCallOrigin, helper_origin, llm_call_origin
 from kolega_code.llm.models import ImageBlock, Message, MessageHistory, TextBlock, ToolCall, ToolResult
 from kolega_code.llm.providers.models import TokenCount
 from kolega_code.llm.specs import get_model_specs, supports_vision as model_supports_vision
@@ -1399,6 +1400,27 @@ class BaseAgent(LogMixin):
     async def _log_hook_message(self, message: str) -> None:
         await self.log_warning(message, sender=self.agent_name)
 
+    def _main_loop_origin(self) -> LlmCallOrigin:
+        """Attribution for this agent's main-loop LLM calls.
+
+        HISTORY marks exactly the responses the session recorder journals as
+        ``assistant.message`` (the same ``session_recorder is not None``
+        condition guards ``record_assistant``), so the persistence sink skips
+        them and no response is ever journaled twice.
+        """
+        if self.session_recorder is not None:
+            return HISTORY_ORIGIN
+        if self.sub_agent:
+            context = getattr(self, "sub_agent_context", None) or {}
+            return LlmCallOrigin(
+                kind="sub_agent",
+                agent_name=self.agent_name,
+                agent_id=context.get("agent_id"),
+                parent_tool_call_id=context.get("parent_tool_call_id") or getattr(self, "parent_tool_call_id", None),
+                depth=context.get("depth"),
+            )
+        return LlmCallOrigin(kind="primary", agent_name=self.agent_name)
+
     async def _run_hook_prompt(self, prompt_text: str, model_hint: Optional[str]) -> str:
         """Run a `prompt` hook: a single completion on a chosen model slot.
 
@@ -1426,13 +1448,14 @@ class BaseAgent(LogMixin):
             token_manager=self.config.get_chatgpt_token_manager(),
             usage_ledger=self.usage_ledger,
         )
-        response = await client.generate(
-            model=model_config.model,
-            max_completion_tokens=512,
-            system=Message(role="system", content=[TextBlock(text=HOOK_DECISION_SYSTEM_PROMPT)]),
-            messages=MessageHistory([Message(role="user", content=[TextBlock(text=prompt_text)])]),
-            temperature=0.0,
-        )
+        with llm_call_origin(helper_origin("hook_prompt")):
+            response = await client.generate(
+                model=model_config.model,
+                max_completion_tokens=512,
+                system=Message(role="system", content=[TextBlock(text=HOOK_DECISION_SYSTEM_PROMPT)]),
+                messages=MessageHistory([Message(role="user", content=[TextBlock(text=prompt_text)])]),
+                temperature=0.0,
+            )
         return response.get_text_content() or ""
 
     async def _run_hook_agent(self, task: str) -> str:
@@ -2027,18 +2050,19 @@ class BaseAgent(LogMixin):
                 # provider is ``async def``, so the call is always a coroutine that we
                 # await into the context manager. Cast to the coroutine form for the type
                 # checker rather than awaiting the union directly.
-                stream_cm = await cast(
-                    Coroutine[Any, Any, AbstractAsyncContextManager[Any]],
-                    self.llm.stream(
-                        system=self.system_prompt,
-                        max_completion_tokens=self.model_completion_tokens,
-                        temperature=self.model_default_temperature,
-                        messages=fixed_history,
-                        model=self.primary_model_config.model,
-                        tools=self.tool_collection.get_tool_list(),
-                        thinking=self.primary_model_config.thinking_effort,
-                    ),
-                )
+                with llm_call_origin(self._main_loop_origin()):
+                    stream_cm = await cast(
+                        Coroutine[Any, Any, AbstractAsyncContextManager[Any]],
+                        self.llm.stream(
+                            system=self.system_prompt,
+                            max_completion_tokens=self.model_completion_tokens,
+                            temperature=self.model_default_temperature,
+                            messages=fixed_history,
+                            model=self.primary_model_config.model,
+                            tools=self.tool_collection.get_tool_list(),
+                            thinking=self.primary_model_config.thinking_effort,
+                        ),
+                    )
                 async with stream_cm as stream:
                     async for event in stream:
                         if event.type == "text":

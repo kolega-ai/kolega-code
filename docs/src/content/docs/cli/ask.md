@@ -20,7 +20,7 @@ kolega-code ask "<prompt>" [options]
 | `--goal <condition>` | Set an autonomous completion goal and loop until it is met or capped (no prompt required) |
 | `--goal-max-turns <N>` | Maximum evaluation turns before an unmet goal gives up (default 50) |
 | `--save` | Persist the session after the prompt completes |
-| `--json` | Emit response chunks and events as JSON |
+| `--json` | Emit complete messages and events as JSON |
 | `--browser-visible` | Launch visible Playwright browser windows |
 | `--permission-mode <auto\|ask>` | Shell/edit permission mode (default `auto`) |
 | `--session <ID>` | Resume or create a specific session |
@@ -138,15 +138,15 @@ The stream includes:
 
 | `kind` | Meaning |
 | --- | --- |
-| `chunk` | A streamed piece of the response |
-| `event` | An agent event (sub-agent activity, tool calls, terminal output) |
+| `message` | A completed assistant message: `role`, `content` blocks (text, thinking, tool calls), `stop_reason`, and normalized `usage` when the provider reported it |
+| `event` | An agent event (sub-agent activity, tool calls, terminal output). Streaming text deltas are excluded — their content arrives as `message` lines |
 | `skill` | Skill activation metadata |
 | `goal_eval` | Emitted after each goal evaluation (with `--goal`): `met`, `turns`, `reason` |
 | `goal_result` | Final goal outcome (with `--goal`): `met`, `turns`, `reason` |
 | `loop_iteration` | Emitted before each loop iteration (with `--loop`): `iteration`, `scheduled_at`, `prompt_source` |
 | `loop_sleep` | Emitted before waiting for the next fire: `seconds`, `next_fire_at` |
 | `loop_result` | Final loop outcome: `iterations`, `reason` |
-| `summary` | A final object with the chunk count and `session_id` |
+| `summary` | A final object with the emitted `messages` count and `session_id` |
 
 In plain (non-JSON) mode, the answer is written to **stdout** while sub-agent and
 tool activity is reported on **stderr** — so piping stdout gives you just the

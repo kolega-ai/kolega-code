@@ -186,6 +186,14 @@ ToolEntryWidget .tool-body {
     padding: 1 0 1 1;
 }
 
+#status_usage {
+    height: auto;
+    border: none;
+    background: $background;
+    color: $text;
+    padding: 1 0 1 1;
+}
+
 #status_task_list_markdown {
     padding: 0 0 1 0;
 }

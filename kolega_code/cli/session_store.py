@@ -22,6 +22,7 @@ from .session_journal import (
     SessionJournalError,
     SessionRecorder,
 )
+from .session_usage import derive_session_usage
 
 SCHEMA_VERSION = 1
 
@@ -43,6 +44,11 @@ class SessionRecord:
     config: dict[str, Any] = field(default_factory=dict)
     history: list[dict[str, Any]] = field(default_factory=list)
     compaction: dict[str, Any] = field(default_factory=dict)
+    # Lifetime usage aggregate, derived from journal events at load()/export
+    # time (see cli/session_usage.py). Like history/compaction it is excluded
+    # from to_metadata_dict, so it can never enter metadata.json or a metadata
+    # patch event — the journal stays canonical.
+    usage: dict[str, Any] = field(default_factory=dict)
     task_list_markdown: str = ""
     latest_plan_markdown: str = ""
     plan_pending: bool = False
@@ -100,6 +106,7 @@ class SessionRecord:
             config=data.get("config") or {},
             history=data.get("history") or [],
             compaction=data.get("compaction") or {},
+            usage=data.get("usage") or {},
             task_list_markdown=data.get("task_list_markdown") or "",
             latest_plan_markdown=latest_plan_markdown,
             plan_pending=plan_pending,
@@ -141,6 +148,7 @@ class SessionRecord:
             **self.to_metadata_dict(),
             "history": self.history,
             "compaction": self.compaction,
+            "usage": self.usage,
         }
 
 
@@ -320,7 +328,8 @@ class SessionStore:
             events = self.journal(session_id).read_events(repair_tail=True)
             metadata = self._metadata_projection(session_id, events)
             history, compaction = self._replay(events, self.journal(session_id))
-            return SessionRecord.from_dict({**metadata, "history": history, "compaction": compaction})
+            usage = derive_session_usage(events)
+            return SessionRecord.from_dict({**metadata, "history": history, "compaction": compaction, "usage": usage})
         except SessionStoreError:
             raise
         except SessionJournalError as exc:
@@ -396,7 +405,9 @@ class SessionStore:
             events = journal.read_events(repair_tail=True)
             metadata = self._metadata_projection(session_id, events)
             history, compaction = self._replay(events, journal, hydrate_artifacts=False)
-            projection = SessionRecord.from_dict({**metadata, "history": history, "compaction": compaction}).to_dict()
+            projection = SessionRecord.from_dict(
+                {**metadata, "history": history, "compaction": compaction, "usage": derive_session_usage(events)}
+            ).to_dict()
             events_jsonl = journal.raw_events()
         except SessionJournalError as exc:
             raise SessionStoreError(str(exc)) from exc

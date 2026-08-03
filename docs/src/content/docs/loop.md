@@ -219,7 +219,7 @@ kolega-code ask --loop-cron "0 9 * * 1-5" --loop-fresh   # prompt from .kolega/l
 
 Progress goes to stderr (`[loop] iteration 3/12 (every 10m)`) so piped stdout stays
 the answers. With `--json` you get `loop_iteration`, `loop_sleep`, and
-`loop_result` records alongside the usual chunks. The command exits `0` when the
+`loop_result` records alongside the usual `message` and `event` lines. The command exits `0` when the
 loop ends at its cap or expiry.
 
 `--loop` cannot be combined with `--goal`. Unlike the TUI, a leading skill command

@@ -8,6 +8,7 @@ from typing import Optional, Tuple, Union
 from .. import prompts
 from kolega_code.config import AgentConfig
 from kolega_code.llm.client import LLMClient
+from kolega_code.llm.ledger import helper_origin, llm_call_origin
 from kolega_code.llm.models import Message, MessageHistory, TextBlock
 from kolega_code.llm.specs import get_model_specs
 from kolega_code.events import AgentEvent
@@ -107,12 +108,13 @@ class TerminalTool(BaseTool):
                 ]
             )
 
-            response = await client.generate(
-                model=self.config.fast_config.model,
-                max_completion_tokens=model_specs["max_completion_tokens"],
-                system=system_message,
-                messages=messages,
-            )
+            with llm_call_origin(helper_origin("terminal_security")):
+                response = await client.generate(
+                    model=self.config.fast_config.model,
+                    max_completion_tokens=model_specs["max_completion_tokens"],
+                    system=system_message,
+                    messages=messages,
+                )
 
             response_text = response.get_text_content()
 
