@@ -17,7 +17,9 @@ import pty
 import shlex
 import signal
 import struct
+import subprocess
 import sys
+import tempfile
 import termios
 import time
 from typing import Any, Dict, Optional, Union
@@ -82,8 +84,8 @@ _BACKGROUND_JOB_TRAP = (
     'kill -0 $p 2>/dev/null && pids="$pids $p"; done; '
     'pids="${pids# }"; if [ -n "$pids" ]; then '
     'printf "\\n[kolega-code] WARNING: background process(es) (%s) backgrounded with & were terminated when this '
-    "command ended. To keep a process running between commands, re-run it with exec_command background=true; "
-    'it will still be stopped when the kolega-code session ends.\\n" "$pids" >&2; fi; fi\' EXIT; '
+    "command ended. To keep a process running, re-run it with exec_command background=true; it is detached and "
+    'keeps running after this command and after the kolega-code session ends (stop it with kill_command).\\n" "$pids" >&2; fi; fi\' EXIT; '
 )
 
 
@@ -140,6 +142,24 @@ def _normalize_exit_code(status: int) -> int:
     if code < 0:
         return 128 + (-code)
     return code
+
+
+def _signal_group(pid: Optional[int], sig: int) -> None:
+    """Signal ``pid``'s whole process group, falling back to the bare pid.
+
+    Every session leader (a ``setsid`` child) owns its process group, so
+    ``killpg`` reaches the command and everything it spawned. Shared by the PTY
+    and detached-background sessions.
+    """
+    if pid is None:
+        return
+    try:
+        os.killpg(os.getpgid(pid), sig)
+    except (ProcessLookupError, OSError):
+        try:
+            os.kill(pid, sig)
+        except (ProcessLookupError, OSError):
+            pass
 
 
 class PtySession:
@@ -353,15 +373,7 @@ class PtySession:
             return False
 
     def _signal_group(self, sig: int) -> None:
-        if self.pid is None:
-            return
-        try:
-            os.killpg(os.getpgid(self.pid), sig)
-        except (ProcessLookupError, OSError):
-            try:
-                os.kill(self.pid, sig)
-            except (ProcessLookupError, OSError):
-                pass
+        _signal_group(self.pid, sig)
 
     async def kill(self, signame: str = "TERM") -> None:
         if signame == "INT":
@@ -404,6 +416,227 @@ class PtySession:
         return not self.exited.is_set()
 
 
+# How often the detached-session pump tails its log file and checks liveness.
+_DETACHED_POLL_INTERVAL = 0.05
+
+
+class DetachedSession:
+    """A ``background=true`` command that outlives the kolega-code process.
+
+    Unlike :class:`PtySession`, this is spawned **detached** — ``setsid`` (its own
+    session, no controlling terminal), stdin from ``/dev/null``, and stdout+stderr
+    to a temp log file. That combination is what makes it durable:
+
+    - No controlling TTY, so it never gets SIGHUP when our terminal/PTY goes away.
+    - Output goes to a real file (never a pipe/PTY we hold), so a write can't fail
+      with EIO once we exit.
+    - It is not tracked by an asyncio child-transport, so nothing SIGKILLs it when
+      our event loop tears down.
+
+    The process therefore keeps running after the agent session ends (reparented
+    to init) — matching claude-code's ``run_in_background``. It is stopped only by
+    ``kill_command`` (SIGTERM/-KILL to its group) or by the container going away.
+    Because stdin is closed it is poll-only: ``write`` is a no-op and callers read
+    fresh output by polling the tailed log. Output may be block-buffered by the
+    child (its stdout is a file, not a TTY), so verify a server as a client (curl)
+    rather than waiting on its log.
+    """
+
+    detached = True
+
+    def __init__(
+        self,
+        session_id: str,
+        command: str,
+        workdir: str,
+        connection_manager: AgentConnectionManager,
+        workspace_id: str,
+        thread_id: str,
+        *,
+        login: bool = False,
+        env: Optional[Dict[str, str]] = None,
+        auto_activate_venv: bool = True,
+    ):
+        self.session_id = session_id
+        self.command = command
+        self.workdir = workdir
+        self.connection_manager = connection_manager
+        self.workspace_id = workspace_id
+        self.thread_id = thread_id
+        self.login = login
+        self.env = env or {}
+        self.auto_activate_venv = auto_activate_venv
+
+        self.pid: Optional[int] = None
+        self.exit_code: Optional[int] = None
+        self.start_time = time.monotonic()
+        self.log_path: Optional[str] = None
+
+        self.exited = asyncio.Event()
+        self._new_output = asyncio.Event()
+        self._buffer = HeadTailBuffer()
+        self._proc: Optional[subprocess.Popen] = None
+        self._reader = None
+        self._read_offset = 0
+        self._pump_task: Optional[asyncio.Task] = None
+        self._closed = False
+
+    async def start(self) -> None:
+        env = build_child_env(self.env)
+
+        command = self.command
+        if self.auto_activate_venv:
+            activate = os.path.join(str(self.workdir), _VENV_ACTIVATE_REL)
+            if os.path.isfile(activate):
+                command = f"source {shlex.quote(activate)} 2>/dev/null; {command}"
+
+        shell = _pick_shell()
+        shell_args = ["-lc", command] if self.login else ["-c", command]
+
+        fd, self.log_path = tempfile.mkstemp(prefix="kolega-bg-", suffix=".log")
+        os.close(fd)
+        self._reader = open(self.log_path, "rb")
+        writer = open(self.log_path, "wb")
+        try:
+            # start_new_session=True -> setsid in the child: its own session and
+            # process group, no controlling terminal. plain Popen (not asyncio)
+            # so no child-transport kills it when our loop closes.
+            self._proc = subprocess.Popen(  # noqa: S603 - shell chosen internally, args are controlled
+                [shell, *shell_args],
+                cwd=str(self.workdir),
+                env=env,
+                stdin=subprocess.DEVNULL,
+                stdout=writer,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+                close_fds=True,
+            )
+        except Exception:
+            # Launch failed: don't leak the reader fd or the temp log.
+            with contextlib.suppress(OSError):
+                self._reader.close()
+            self._reader = None
+            with contextlib.suppress(OSError):
+                os.unlink(self.log_path)
+            self.log_path = None
+            raise
+        finally:
+            writer.close()  # the child holds its own dup of the fd
+        self.pid = self._proc.pid
+        self._pump_task = asyncio.create_task(self._pump())
+
+    def _read_new_bytes(self) -> bytes:
+        if self._reader is None:
+            return b""
+        try:
+            self._reader.seek(self._read_offset)
+            data = self._reader.read()
+            self._read_offset = self._reader.tell()
+            return data
+        except (OSError, ValueError):
+            return b""
+
+    async def _broadcast(self, data: bytes) -> None:
+        if not self.connection_manager or not data:
+            return
+        text = data.decode("utf-8", errors="replace")
+        try:
+            await self.connection_manager.broadcast_event(
+                AgentEvent(
+                    event_type="terminal_output",
+                    sender="agent",
+                    content={
+                        "output": text,
+                        "display_output": text,
+                        "terminal_id": self.session_id,
+                        "session_id": self.session_id,
+                        "thread_id": self.thread_id,
+                    },
+                ),
+                self.workspace_id,
+                self.thread_id,
+            )
+        except Exception:
+            pass
+
+    async def _pump(self) -> None:
+        """Tail the log file and watch for exit until the process finishes."""
+        while True:
+            chunk = self._read_new_bytes()
+            if chunk:
+                self._buffer.append(chunk)
+                self._new_output.set()
+                await self._broadcast(chunk)
+            rc = self._proc.poll() if self._proc else 0
+            if rc is not None:
+                tail = self._read_new_bytes()
+                if tail:
+                    self._buffer.append(tail)
+                    self._new_output.set()
+                    await self._broadcast(tail)
+                self.exit_code = rc if rc >= 0 else 128 + (-rc)
+                self.exited.set()
+                return
+            await asyncio.sleep(_DETACHED_POLL_INTERVAL)
+
+    async def drain(self, yield_ms: int) -> None:
+        try:
+            await asyncio.wait_for(self.exited.wait(), timeout=yield_ms / 1000)
+        except asyncio.TimeoutError:
+            pass
+
+    def read_delta(self, max_output_tokens: int):
+        text = self._buffer.text()
+        self._buffer.reset()
+        return cap_tokens(text, max_output_tokens)
+
+    async def write(self, chars: str) -> bool:
+        # Detached sessions have no stdin (closed to /dev/null); poll-only.
+        return False
+
+    async def kill(self, signame: str = "TERM") -> None:
+        first = signal.SIGINT if signame == "INT" else signal.SIGTERM
+        _signal_group(self.pid, first)
+        try:
+            await asyncio.wait_for(self.exited.wait(), timeout=2.0)
+        except asyncio.TimeoutError:
+            _signal_group(self.pid, signal.SIGKILL)
+            try:
+                await asyncio.wait_for(self.exited.wait(), timeout=2.0)
+            except asyncio.TimeoutError:
+                pass
+
+    async def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        # Detached: never signal the process here — surviving our exit is the
+        # whole point. Just stop tailing and release our read handle.
+        if self._pump_task is not None:
+            self._pump_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await self._pump_task
+            self._pump_task = None
+        if self._reader is not None:
+            with contextlib.suppress(OSError):
+                self._reader.close()
+            self._reader = None
+        # Only drop the log once the process is gone; a survivor still writes to it.
+        if self.exited.is_set() and self.log_path:
+            with contextlib.suppress(OSError):
+                os.unlink(self.log_path)
+            self.log_path = None
+
+    @property
+    def running(self) -> bool:
+        return not self.exited.is_set()
+
+
+# A managed session is either a foreground PTY command or a detached background
+# one; both expose the same start/drain/read_delta/write/kill/close interface.
+Session = Union[PtySession, DetachedSession]
+
+
 class LocalTerminalManager(TerminalManager):
     """Registry of local PTY sessions implementing the unified-exec interface."""
 
@@ -417,7 +650,7 @@ class LocalTerminalManager(TerminalManager):
         self.workspace_id = workspace_id
         self.thread_id = thread_id
         self.connection_manager = connection_manager
-        self.sessions: Dict[str, PtySession] = {}
+        self.sessions: Dict[str, Session] = {}
         self._counter = 0
         self.auto_activate_venv = True
         # Default working directory for commands that don't pass one. Callers
@@ -476,7 +709,7 @@ class LocalTerminalManager(TerminalManager):
         except Exception:
             pass
 
-    def _result_from(self, session: PtySession, max_output_tokens: int, duration_ms: int) -> ExecResult:
+    def _result_from(self, session: Session, max_output_tokens: int, duration_ms: int) -> ExecResult:
         capped = session.read_delta(max_output_tokens)
         if session.exited.is_set():
             return ExecResult(
@@ -498,7 +731,7 @@ class LocalTerminalManager(TerminalManager):
             duration_ms=duration_ms,
         )
 
-    async def _finish_if_exited(self, session: PtySession) -> None:
+    async def _finish_if_exited(self, session: Session) -> None:
         await self._emit_output(session.session_id, f"[exited {session.exit_code}]\n")
         await session.close()
         self.sessions.pop(session.session_id, None)
@@ -512,6 +745,7 @@ class LocalTerminalManager(TerminalManager):
         max_output_tokens: int = 10000,
         login: bool = False,
         env: Optional[Dict[str, str]] = None,
+        background: bool = False,
     ) -> ExecResult:
         yield_ms = clamp_yield(yield_time_ms, poll=False)
         # workdir should be absolute; a relative path would chdir relative to
@@ -520,7 +754,10 @@ class LocalTerminalManager(TerminalManager):
         session_id = self._next_session_id()
 
         await self._emit_command(session_id, command, wd)
-        session = PtySession(
+        # background=true launches a detached session that survives our exit; a
+        # normal command runs under a PTY tied to this process's lifetime.
+        session_cls = DetachedSession if background else PtySession
+        session = session_cls(
             session_id,
             command,
             wd,

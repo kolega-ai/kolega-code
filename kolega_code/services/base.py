@@ -43,6 +43,7 @@ class TerminalManager(ABC):
         max_output_tokens: int = 10000,
         login: bool = False,
         env: Optional[Dict[str, str]] = None,
+        background: bool = False,
     ) -> "ExecResult":
         """Run ``command`` as a fresh process and collect output for a window.
 
@@ -50,6 +51,12 @@ class TerminalManager(ABC):
         result has status "exited" and an exit code. If it is still running, the
         result has status "running" and a ``session_id`` that can be driven with
         ``write_stdin`` and stopped with ``kill_session``.
+
+        ``background`` launches a detached, poll-only session meant to outlive the
+        agent process (dev servers, watchers). Local backends spawn it with its
+        own session and file-backed output so it survives our exit; sandbox
+        backends run it in the sandbox's persistent terminal, which lives until
+        the sandbox is destroyed.
         """
 
     @abstractmethod
