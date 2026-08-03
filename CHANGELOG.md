@@ -6,6 +6,17 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.26.6 - 2026-08-03
+
+### Changed
+
+- `kolega-code ask` now runs with a system prompt built for autonomous,
+  non-interactive use: it carries a task through to a verified result on its own
+  instead of pausing to check in.
+- A background process started with `exec_command background=true` (for example a
+  dev server) now keeps running after kolega-code exits, instead of being stopped
+  when the session ends. Stop it explicitly with `kill_command`.
+
 ## 0.26.5 - 2026-08-02
 
 ### Fixed
