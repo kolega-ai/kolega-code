@@ -1,10 +1,14 @@
 """Tool: a definition paired with its implementation and execution metadata."""
 
 import inspect
+import logging
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Dict, FrozenSet
+from typing import Any, Awaitable, Callable, Dict, FrozenSet, Optional
 
 from ..llm.models import ToolDefinition
+from .param_aliases import resolve_param_aliases
+
+logger = logging.getLogger(__name__)
 
 
 class ToolError(Exception):
@@ -29,10 +33,29 @@ class Tool:
     # Safe to run concurrently with other parallel-safe tools in one batch
     # (read-only operations and independent sub-agent dispatches).
     parallel_safe: bool = False
+    # Debug-level log_message sink for param-alias hits, so trajectory mining
+    # sees which aliases fire. None falls back to stdlib logging.
+    log_debug: Optional[Callable[[str], Awaitable[None]]] = None
 
     async def call(self, **inputs: Any) -> Any:
+        inputs = await self._resolve_param_aliases(inputs)
         self._reject_malformed_call(inputs)
         return await self.handler(**inputs)
+
+    async def _resolve_param_aliases(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
+        """Map registered wrong-name arguments onto canonical parameters.
+
+        Runs before ``_reject_malformed_call`` so a registered alias can never
+        surface as an invalid-arguments error (or a raw ``TypeError``).
+        """
+        resolved, hits = resolve_param_aliases(self.name, inputs)
+        for hit in hits:
+            message = f"Param alias on `{hit.tool}`: `{hit.alias}` {hit.action}"
+            if self.log_debug is not None:
+                await self.log_debug(message)
+            else:
+                logger.debug(message)
+        return resolved
 
     def _reject_malformed_call(self, inputs: Dict[str, Any]) -> None:
         """Convert an argument-shape mismatch into a clean, public ``ToolError``.

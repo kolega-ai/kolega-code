@@ -49,3 +49,13 @@ class LogMixin:
         """
         log_event = AgentEvent(event_type="log_message", sender=sender, content={"text": message, "level": "warning"})
         await self.connection_manager.broadcast_event(log_event, self.workspace_id, self.thread_id)
+
+    async def log_debug(self, message: str, sender: str = "agent") -> None:
+        """
+        Log a debug-level message to the logs panel.
+
+        Args:
+            message: The debug message to log
+        """
+        log_event = AgentEvent(event_type="log_message", sender=sender, content={"text": message, "level": "debug"})
+        await self.connection_manager.broadcast_event(log_event, self.workspace_id, self.thread_id)
