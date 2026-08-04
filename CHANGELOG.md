@@ -12,10 +12,11 @@ This project uses GitHub Releases for detailed generated release notes. This fil
   48.0.1 → 50.0.0 (PKCS#7 Bleichenbacher oracle CVE-2026-69247, a name-constraint
   wildcard bypass CVE-2026-69248, and a path-building DoS CVE-2026-69249) and
   `aiohttp` 3.14.1 → 3.14.3 (three parser advisories, including an out-of-bounds
-  heap read in the C response parser). No fixed cryptography release ships
-  Intel-mac wheels, so the curl installer on Intel Macs now builds cryptography
-  from source (requires Rust + OpenSSL headers) instead of installing a version
-  with a certificate-verification bypass.
+  heap read in the C response parser). Exception: Intel Macs stay on
+  `cryptography` 48.0.1 — every fixed release dropped Intel-mac wheels, and
+  upgrading would break the curl installer there with a Rust+OpenSSL source
+  build — so those three advisories are knowingly accepted on that legacy
+  platform only.
 
 ### Fixed
 

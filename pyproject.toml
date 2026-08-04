@@ -33,13 +33,15 @@ dependencies = [
     # Not imported directly (google-auth/pdfminer-six pull it in); pinned for
     # security: 48.0.1 is vulnerable to CVE-2026-69247/-69248/-69249 (PKCS#7
     # Bleichenbacher oracle, a name-constraint wildcard bypass, and a
-    # path-building DoS), all fixed only by 50.0.0. This replaces the previous
-    # ==48.0.1 Intel-mac hold (kept for its last universal2 wheel): no fixed
-    # release ships an Intel-mac wheel, so Intel Macs now fall back to the sdist
-    # (Rust + OpenSSL headers) instead of installing a version with a
-    # certificate-verification bypass — see KNOWN_SDIST_FALLBACKS in
-    # tests/test_dependency_wheel_coverage.py.
-    "cryptography==50.0.0",
+    # path-building DoS), all fixed only by 50.0.0 — which, like every release
+    # since 49, ships no Intel-mac wheels. Intel Macs would fall back to the
+    # sdist (Rust + OpenSSL headers) and break the curl-install, so they hold
+    # the last universal2 build and ACCEPT those three advisories on that
+    # legacy platform; the audit ignores exactly these IDs (see the
+    # "Audit locked dependencies" step in .github/workflows/ci.yml). Every
+    # other platform takes the fixed release.
+    "cryptography==50.0.0; sys_platform != 'darwin' or platform_machine != 'x86_64'",
+    "cryptography==48.0.1; sys_platform == 'darwin' and platform_machine == 'x86_64'",
     "ddgs==9.14.4",
     # The session server ships to every user, so its stack is a core dependency.
     # starlette/uvicorn/websockets were already installed transitively (mcp pulls

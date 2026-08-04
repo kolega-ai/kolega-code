@@ -28,14 +28,6 @@ LOCK_PATH = Path(__file__).resolve().parents[1] / "uv.lock"
 # it, so that combination fails resolution outright and predates this guard.
 PYTHONS = [(3, 11), (3, 12), (3, 13)]
 
-# Dependencies knowingly shipped without an Intel-mac wheel. cryptography's last
-# Intel-mac wheel (48.0.1) is vulnerable to CVE-2026-69247/-69248/-69249 —
-# including a certificate-verification bypass — and every fixed release dropped
-# the platform, so the dependency audit and this guard cannot both hold for it.
-# Security wins: Intel Macs build cryptography from source (Rust + OpenSSL
-# headers). Remove the entry if cryptography ever restores Intel-mac wheels.
-KNOWN_SDIST_FALLBACKS = {"cryptography"}
-
 
 def _intel_mac_env(python: tuple[int, int]) -> dict[str, str]:
     version = f"{python[0]}.{python[1]}"
@@ -119,9 +111,7 @@ def test_runtime_dependencies_have_intel_mac_wheels(python: tuple[int, int]) -> 
         for entry in _reachable_runtime_entries(env)
         # Sdist-only packages are pure source for every platform; a native one
         # would already fail everywhere, including CI.
-        if entry["name"] not in KNOWN_SDIST_FALLBACKS
-        and entry.get("wheels")
-        and not _has_installable_wheel(entry, supported)
+        if entry.get("wheels") and not _has_installable_wheel(entry, supported)
     ]
 
     assert not broken, (
