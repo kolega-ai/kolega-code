@@ -6,6 +6,17 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+### Fixed
+
+- The context gauge no longer under-reads on `deepseek-v4-flash`. DeepSeek's
+  Responses API silently re-attaches every prior round's reasoning server-side and
+  bills it as input, but the client history held none of it, so the gauge (and the
+  auto-compaction trigger) could run over 100k tokens behind the real billed
+  context on reasoning-heavy sessions. Flash's plain-text reasoning is now retained
+  in history and resent each turn — the same shape Codex replays, deduped by the
+  server so billing is unchanged — which keeps the gauge on the real number and
+  preserves chain-of-thought continuity across session restores.
+
 ## 0.26.9 - 2026-08-03
 
 ### Added

@@ -54,7 +54,9 @@ class TestDeepSeekReasoningShape:
         assert params == {"reasoning_effort": "high"}
 
     def test_flash_excluded_from_flat_replay_but_pro_included(self):
-        # DeepSeek's Responses API is stateless (no reasoning.encrypted_content), so flash
-        # must not replay reasoning via the flat reasoning_content field; pro still does.
+        # Flash replays reasoning as Responses reasoning ITEMS (plain reasoning_text
+        # retained by the stream wrapper; the backend also restores CoT server-side
+        # keyed on its own call_ids), so flash must not replay reasoning via the
+        # flat Chat-Completions reasoning_content field; pro still does.
         assert reasoning_replay_field("deepseek", "deepseek-v4-flash") is None
         assert reasoning_replay_field("deepseek", "deepseek-v4-pro") == "reasoning_content"
