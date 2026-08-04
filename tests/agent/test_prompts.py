@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from kolega_code.agent import prompts
+from kolega_code.agent.prompt_provider import AgentMode
 from kolega_code.agent.orchestration.guide import GIGACODE_AUTHORING_GUIDE
 from kolega_code.cli.goal import build_goal_control_prompt_extension_markdown
 
@@ -366,3 +367,71 @@ def test_build_question_prompt_pushes_toward_deciding_not_asking() -> None:
     assert "Batch related decisions" in prompt
     # Must not send the agent asking for things it can look up.
     assert "Never ask for something a search, a file read, or a test run would tell you." in prompt
+
+
+def _render_coder_prompt(mode: AgentMode) -> str:
+    from kolega_code.agent.prompt_provider import (
+        AgentType,
+        PromptContext,
+        PromptProvider,
+    )
+
+    return PromptProvider().get_system_prompt(AgentType.CODER, mode=mode, context=PromptContext())
+
+
+def test_coder_final_message_contract_shared_across_modes() -> None:
+    """Both modes get the codex-style final-message contract: lead with the delivered
+    outcome, brevity by default, structure scaled to complexity, files referenced by
+    path rather than re-pasted, and the plan neither restated nor walked step by step."""
+    for mode in (AgentMode.CLI, AgentMode.ASK):
+        rendered = _render_coder_prompt(mode)
+
+        assert "lead with what you delivered and its verified state" in rendered, mode
+        assert "not a restatement of the plan" in rendered, mode
+        assert "Keep it brief by default" in rendered, mode
+        assert "Let structure follow complexity" in rendered, mode
+        assert "reference a file by its path instead of re-pasting" in rendered, mode
+        assert "Do not walk through every step or repeat the plan" in rendered, mode
+        assert "Use backticks for files, directories, commands, symbols" in rendered, mode
+        # No template markers survive the render.
+        assert "{%" not in rendered, mode
+        assert "{{" not in rendered, mode
+
+
+def test_coder_final_message_preserves_honesty_invariants_in_both_modes() -> None:
+    """Conciseness must not license dropped failure admissions: the honesty clauses
+    survive verbatim-in-spirit in interactive and headless renders alike."""
+
+    for mode in (AgentMode.CLI, AgentMode.ASK):
+        rendered = _render_coder_prompt(mode)
+
+        assert "Never invent results or imply a check you did not run" in rendered, mode
+        assert "if something was not verified, say so" in rendered, mode
+        assert "an honest blocker beats a confident but wrong success claim" in rendered, mode
+        assert "staying brief is never a reason to omit a failure" in rendered, mode
+
+
+def test_coder_final_message_suggests_next_steps_only_in_interactive_mode() -> None:
+    """A suggested next step is a live-user affordance; the autonomous ask record omits it."""
+
+    cli = _render_coder_prompt(AgentMode.CLI)
+    ask = _render_coder_prompt(AgentMode.ASK)
+
+    assert "When a next step would genuinely help" in cli
+    assert "such as exercising a running app" in cli
+    assert "When a next step would genuinely help" not in ask
+    assert "exercising a running app" not in ask
+    # The clause drops cleanly with no orphaned double space where it was gated out.
+    assert "say what changed and where. Keep the tone" in ask
+
+
+def test_coder_prompt_drops_legacy_final_message_guidance_in_both_modes() -> None:
+    """The thin numbered Communication list and the interactive-only "summarize what
+    changed" line are replaced by the shared contract, in every coder mode."""
+
+    for mode in (AgentMode.CLI, AgentMode.ASK):
+        rendered = _render_coder_prompt(mode)
+
+        assert "Before finishing, summarize what changed" not in rendered, mode
+        assert "Be concise, direct, and accurate." not in rendered, mode
+        assert "Use markdown in responses." not in rendered, mode
