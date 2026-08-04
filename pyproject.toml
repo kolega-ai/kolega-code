@@ -30,10 +30,16 @@ classifiers = [
 dependencies = [
     "anthropic==0.101.0",
     "beautifulsoup4==4.14.3",
-    # cryptography >=49 dropped Intel-mac wheels, so Intel Macs fall back to the
-    # sdist, which needs Rust + OpenSSL headers and fails the curl-install.
-    # Hold the last universal2 build there; other platforms resolve freely.
-    "cryptography==48.0.1; sys_platform == 'darwin' and platform_machine == 'x86_64'",
+    # Not imported directly (google-auth/pdfminer-six pull it in); pinned for
+    # security: 48.0.1 is vulnerable to CVE-2026-69247/-69248/-69249 (PKCS#7
+    # Bleichenbacher oracle, a name-constraint wildcard bypass, and a
+    # path-building DoS), all fixed only by 50.0.0. This replaces the previous
+    # ==48.0.1 Intel-mac hold (kept for its last universal2 wheel): no fixed
+    # release ships an Intel-mac wheel, so Intel Macs now fall back to the sdist
+    # (Rust + OpenSSL headers) instead of installing a version with a
+    # certificate-verification bypass — see KNOWN_SDIST_FALLBACKS in
+    # tests/test_dependency_wheel_coverage.py.
+    "cryptography==50.0.0",
     "ddgs==9.14.4",
     # The session server ships to every user, so its stack is a core dependency.
     # starlette/uvicorn/websockets were already installed transitively (mcp pulls
@@ -141,6 +147,10 @@ extend-exclude = ["examples/parallel-code-review.py", "kolega_code/_bundled_skil
 
 [tool.uv]
 exclude-newer = "1 week"
+# cryptography 50.0.0 (released 2026-07-31) is the only release fixing
+# CVE-2026-69247/-69248/-69249 and sat inside the 1-week quarantine when the
+# advisories landed (2026-08-04); admit it without widening the global window.
+exclude-newer-package = { cryptography = "2026-08-01T00:00:00Z" }
 
 [tool.pyright]
 include = ["kolega_code", "benchmarks", "tests"]

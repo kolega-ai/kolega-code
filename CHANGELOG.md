@@ -6,6 +6,17 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+### Security
+
+- Dependency bumps for advisories published 2026-08-03/04: `cryptography`
+  48.0.1 → 50.0.0 (PKCS#7 Bleichenbacher oracle CVE-2026-69247, a name-constraint
+  wildcard bypass CVE-2026-69248, and a path-building DoS CVE-2026-69249) and
+  `aiohttp` 3.14.1 → 3.14.3 (three parser advisories, including an out-of-bounds
+  heap read in the C response parser). No fixed cryptography release ships
+  Intel-mac wheels, so the curl installer on Intel Macs now builds cryptography
+  from source (requires Rust + OpenSSL headers) instead of installing a version
+  with a certificate-verification bypass.
+
 ### Fixed
 
 - The context gauge no longer under-reads on `deepseek-v4-flash`. DeepSeek's
