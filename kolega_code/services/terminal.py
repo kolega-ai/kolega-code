@@ -125,6 +125,21 @@ def build_child_env(extra: Optional[Dict[str, str]] = None) -> Dict[str, str]:
     return env
 
 
+def _export_prefix(extra: Optional[Dict[str, str]]) -> str:
+    """Shell prefix re-exporting per-session env overrides inside the command.
+
+    Overrides are already in the spawn environment (build_child_env), but a
+    login shell (``bash -lc``) sources profile files before the command string
+    runs, and a profile may reset or unset them. Re-exporting inside the command
+    string runs after any profile, so per-session overrides (e.g. the session
+    scratchpad path) hold in every shell. Values are quoted; names come from
+    internal callers and are shell-safe identifiers.
+    """
+    if not extra:
+        return ""
+    return "".join(f"export {name}={shlex.quote(value)}; " for name, value in extra.items())
+
+
 def _pick_shell() -> str:
     for shell in ("/bin/bash", "/bin/sh"):
         if os.path.exists(shell):
@@ -215,8 +230,9 @@ class PtySession:
         # Install the background-job warning ahead of everything else so it
         # survives venv activation and still fires if the command backgrounds
         # processes and exits (the trap is overwritten only if the command
-        # sets its own EXIT trap).
-        command = _BACKGROUND_JOB_TRAP + command
+        # sets its own EXIT trap). Session env overrides are re-exported before
+        # venv activation so an activate script still wins on conflicts.
+        command = _BACKGROUND_JOB_TRAP + _export_prefix(self.env) + command
 
         shell = _pick_shell()
         shell_args = ["-lc", command] if self.login else ["-c", command]
@@ -495,6 +511,9 @@ class DetachedSession:
             activate = os.path.join(str(self.workdir), _VENV_ACTIVATE_REL)
             if os.path.isfile(activate):
                 command = f"source {shlex.quote(activate)} 2>/dev/null; {command}"
+        # Same re-export as PtySession: session env overrides must survive
+        # login-shell profiles, and run before venv activation.
+        command = _export_prefix(self.env) + command
 
         shell = _pick_shell()
         shell_args = ["-lc", command] if self.login else ["-c", command]

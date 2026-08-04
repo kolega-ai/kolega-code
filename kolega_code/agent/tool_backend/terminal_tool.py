@@ -128,6 +128,18 @@ class TerminalTool(BaseTool):
 
     # -- model-facing unified-exec tools -----------------------------------
 
+    def _session_env(self) -> Optional[dict]:
+        """Per-session env overrides injected into every exec session.
+
+        The scratchpad path is documented to the model through the scratchpad
+        prompt extension, not the tool description, so the tool schema stays
+        byte-identical.
+        """
+        scratchpad_dir = getattr(self.caller, "scratchpad_dir", None)
+        if not scratchpad_dir:
+            return None
+        return {"KOLEGA_SCRATCHPAD": str(scratchpad_dir)}
+
     def _format_result(self, result: ExecResult, *, background: bool = False) -> str:
         payload = {
             "status": result.status,
@@ -215,6 +227,7 @@ class TerminalTool(BaseTool):
                 yield_time_ms=min(yield_time_ms, BACKGROUND_SETTLE_MS) if background else yield_time_ms,
                 max_output_tokens=max_output_tokens,
                 login=login,
+                env=self._session_env(),
                 background=background,
             )
         except Exception as exc:

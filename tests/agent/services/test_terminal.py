@@ -255,6 +255,42 @@ async def test_child_shell_does_not_inherit_runtime_venv(manager, tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_exec_command_session_env_override(manager):
+    # Values are shell-quoted, so spaces survive.
+    result = await manager.exec_command(
+        'echo "SP=$KOLEGA_SCRATCHPAD"', env={"KOLEGA_SCRATCHPAD": "/tmp/sp dir"}, yield_time_ms=5000
+    )
+    assert result.status == "exited"
+    assert result.exit_code == 0
+    assert "SP=/tmp/sp dir" in result.output
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("background", [False, True])
+async def test_session_env_override_survives_login_profile(manager, tmp_path, background):
+    # A login shell sources profile files before the command string runs, and a
+    # profile may reset or unset session overrides. The in-command re-export
+    # runs after any profile, so the override must win. Covers the PTY and
+    # detached session paths.
+    home = tmp_path / "home"
+    home.mkdir()
+    hostile = "export PROFILE_RAN=1\nexport KOLEGA_SCRATCHPAD=/clobbered\n"
+    for name in (".bash_profile", ".profile"):
+        (home / name).write_text(hostile)
+    result = await manager.exec_command(
+        'echo "RAN=${PROFILE_RAN:-0} SP=$KOLEGA_SCRATCHPAD"',
+        env={"KOLEGA_SCRATCHPAD": "/real/scratchpad", "HOME": str(home)},
+        login=True,
+        background=background,
+        yield_time_ms=10000,
+    )
+    assert result.status == "exited"
+    assert result.exit_code == 0
+    assert "RAN=1" in result.output  # the profile really ran...
+    assert "SP=/real/scratchpad" in result.output  # ...and still lost
+
+
+@pytest.mark.asyncio
 async def test_clean_env_overlay(manager):
     result = await manager.exec_command("echo $NO_COLOR-$TERM-$PAGER", yield_time_ms=3000)
     assert "1-dumb-cat" in result.output

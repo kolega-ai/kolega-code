@@ -229,6 +229,22 @@ async def test_read_write_env_helpers(manager, tmp_path):
     assert (tmp_path / "sub" / "out.txt").read_text() == "line1\nline2\nline3\n"
 
 
+async def test_kernel_child_env_carries_scratchpad(tmp_path, config, monkeypatch):
+    # Shared by the py and js spawn paths; no kernel start needed.
+    monkeypatch.delenv("KOLEGA_SCRATCHPAD", raising=False)
+    with_scratchpad = EvalKernelManager(
+        workspace_id="test_ws",
+        thread_id="t-env",
+        project_path=tmp_path,
+        config=config,
+        scratchpad_dir=tmp_path / "scratchpad",
+    )
+    assert with_scratchpad._kernel_child_env()["KOLEGA_SCRATCHPAD"] == str(tmp_path / "scratchpad")
+
+    without = EvalKernelManager(workspace_id="test_ws", thread_id="t-env2", project_path=tmp_path, config=config)
+    assert "KOLEGA_SCRATCHPAD" not in without._kernel_child_env()
+
+
 async def test_sub_agent_shares_kernel_but_does_not_own_it(tmp_path, config, isolated_cli_env):
     thread_id = f"test-{uuid.uuid4().hex}"
     parent = EvalKernelManager.for_thread(

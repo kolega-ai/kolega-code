@@ -414,20 +414,36 @@ class EvalKernelManager:
         thread_id: str,
         project_path: Path,
         config: object,
+        scratchpad_dir: Optional[Path] = None,
     ) -> "EvalKernelManager":
         """Shared manager for an agent session; sub-agents join the same one."""
         key = (workspace_id, thread_id)
         manager = cls._registry.get(key)
         if manager is None or manager._shutdown:
-            manager = cls(workspace_id=workspace_id, thread_id=thread_id, project_path=project_path, config=config)
+            manager = cls(
+                workspace_id=workspace_id,
+                thread_id=thread_id,
+                project_path=project_path,
+                config=config,
+                scratchpad_dir=scratchpad_dir,
+            )
             cls._registry[key] = manager
         return manager
 
-    def __init__(self, *, workspace_id: str, thread_id: str, project_path: Path, config: object) -> None:
+    def __init__(
+        self,
+        *,
+        workspace_id: str,
+        thread_id: str,
+        project_path: Path,
+        config: object,
+        scratchpad_dir: Optional[Path] = None,
+    ) -> None:
         self.workspace_id = workspace_id
         self.thread_id = thread_id
         self.project_path = Path(project_path)
         self.config = config
+        self.scratchpad_dir = Path(scratchpad_dir) if scratchpad_dir else None
         self.session_id = uuid.uuid4().hex
         self._kernels: Dict[str, BaseKernel] = {}
         self._locks: Dict[str, asyncio.Lock] = {}
@@ -436,6 +452,17 @@ class EvalKernelManager:
         self._shutdown = False
 
     # -- kernels ------------------------------------------------------------
+
+    def _kernel_child_env(self) -> Dict[str, str]:
+        """Base env for kernel subprocesses, shared by the py and js kernels.
+
+        KOLEGA_SCRATCHPAD matches the variable injected into terminal sessions,
+        so eval cells and shell commands share one durable session location.
+        """
+        env = build_child_env()
+        if self.scratchpad_dir is not None:
+            env["KOLEGA_SCRATCHPAD"] = str(self.scratchpad_dir)
+        return env
 
     def _env_manager_for_thread(self) -> EvalEnvironmentManager:
         if self._env_manager is None:
@@ -464,7 +491,7 @@ class EvalKernelManager:
 
         env_info = await self._ensure_env()
         bridge = await ToolBridge.ensure()
-        kernel_env = build_child_env()
+        kernel_env = self._kernel_child_env()
         kernel_env.update(
             {
                 "KOLEGA_TOOL_BRIDGE_URL": bridge.url,
@@ -502,7 +529,7 @@ class EvalKernelManager:
         package_json = js_home / "package.json"
         if not package_json.exists():
             package_json.write_text("{}\n", encoding="utf-8")
-        kernel_env = build_child_env()
+        kernel_env = self._kernel_child_env()
         npm_cmd = runtime.npm_install_cmd(js_home)
         kernel_env.update(
             {
