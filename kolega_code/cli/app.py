@@ -282,6 +282,8 @@ class KolegaCodeApp(
         self._plan_reofferable: bool = bool(self._latest_plan and (self.session.plan_reofferable or self._plan_pending))
         self._plan_decision_active = False
         self._gigacode_enabled = bool(self.session.gigacode_enabled)
+        # Session web tool mode override (None -> config-resolved mode applies).
+        self._web_search_mode: Optional[str] = self.session.web_search_mode or None
         # Process-wide LLM usage accounting; every agent build (including
         # rebuilds on model/settings changes) shares this one ledger. The
         # journal sink is attached in on_mount, once the UI loop exists.
@@ -767,6 +769,7 @@ class KolegaCodeApp(
         self.session.interaction_mode = self.interaction_mode
         self.session.permission_mode = self.permission_mode.value
         self.session.gigacode_enabled = self._gigacode_enabled
+        self.session.web_search_mode = self._web_search_mode
         self.session.latest_plan_markdown = self._latest_plan or ""
         self.session.plan_pending = bool(self._latest_plan and self._plan_pending)
         self.session.plan_reofferable = bool(self._latest_plan and self._plan_reofferable)
@@ -800,6 +803,7 @@ class KolegaCodeApp(
             interaction_mode=record.interaction_mode,
             permission_mode=record.permission_mode,
             gigacode_enabled=record.gigacode_enabled,
+            web_search_mode=record.web_search_mode,
             goal=dict(record.goal),
             loop=dict(record.loop),
             usage=dict(record.usage),

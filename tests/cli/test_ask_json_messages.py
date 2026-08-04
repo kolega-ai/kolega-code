@@ -245,6 +245,31 @@ def test_serialize_keeps_plain_reasoning_and_strips_opaque_fields():
     assert data["content"][1]["type"] == "text"
 
 
+def test_serialize_keeps_hosted_web_search_calls():
+    # Hosted web_search_call blocks carry only readable action metadata
+    # (queries/URL), so --json consumers (e.g. the benchmark jsonl census) get
+    # the whole block — nothing opaque to strip.
+    from kolega_code.cli.ask_output import serialize_ask_message
+    from kolega_code.llm.models import WebSearchCallBlock
+
+    message = Message(
+        role="assistant",
+        content=[
+            WebSearchCallBlock(item_id="ws_1", status="completed", action={"type": "search", "queries": ["q"]}),
+            TextBlock(text="the answer"),
+        ],
+        stop_reason="end_turn",
+    )
+    data = serialize_ask_message(message)
+    assert data["content"][0] == {
+        "type": "web_search_call",
+        "status": "completed",
+        "action": {"type": "search", "queries": ["q"]},
+        "item_id": "ws_1",
+    }
+    assert data["content"][1]["type"] == "text"
+
+
 def test_serialize_drops_encrypted_only_reasoning():
     # OpenAI/ChatGPT reasoning is an opaque blob; once stripped nothing readable
     # remains, so the whole block is dropped as before.

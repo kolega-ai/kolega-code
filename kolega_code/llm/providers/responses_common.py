@@ -33,6 +33,7 @@ from ..models import (
     TextBlock,
     ToolCall,
     ToolResult,
+    WebSearchCallBlock,
     safe_parse_tool_arguments,
 )
 from ..specs import build_thinking_request_params
@@ -142,6 +143,12 @@ def to_responses_input(messages: MessageHistory) -> List[Dict[str, Any]]:
                 # they belong to, which holds because the stream wrapper puts the
                 # reasoning block first in the assistant message.
                 items.append(block.to_responses_item())
+            elif isinstance(block, WebSearchCallBlock):
+                # Resend hosted web-search call items in stream order: the item
+                # id keys the server-side restore of the searched content, which
+                # is what keeps that content in the model's context (and billed
+                # as input) on later turns.
+                items.append(block.to_responses_item())
             elif isinstance(block, ToolCall):
                 # Collected, not emitted inline: the function_call items must be the
                 # LAST items of the assistant turn so the next message's
@@ -238,11 +245,17 @@ def instructions_from(system: Optional[Message], messages: MessageHistory) -> st
 
 
 def responses_tools(params: Optional[GenerationParams]) -> Optional[List[Dict[str, Any]]]:
-    """Flatten Chat-Completions tool defs into the Responses (un-nested) shape."""
-    if not params or not params.tools:
+    """Flatten Chat-Completions tool defs into the Responses (un-nested) shape.
+
+    When ``params.hosted_web_search`` is set, the provider's server-side
+    ``web_search`` tool is appended as well — a hosted tool with no client-side
+    schema (the bare ``{"type": "web_search"}`` shape both DeepSeek and OpenAI
+    accept).
+    """
+    if not params or not (params.tools or params.hosted_web_search):
         return None
     tools: List[Dict[str, Any]] = []
-    for definition in params.tools:
+    for definition in params.tools or []:
         if definition.input_kind == "freeform":
             tool: Dict[str, Any] = {
                 "type": "custom",
@@ -263,6 +276,8 @@ def responses_tools(params: Optional[GenerationParams]) -> Optional[List[Dict[st
                 "parameters": fn.get("parameters"),
             }
         )
+    if params.hosted_web_search:
+        tools.append({"type": "web_search"})
     return tools
 
 
@@ -380,10 +395,13 @@ class ResponsesStreamWrapper:
         self._summary_line_buffer: List[str] = []
         self._summary_seen_delta_parts: set[tuple[str, int]] = set()
         self._summary_finished_parts: set[tuple[str, int]] = set()
-        # Completed reasoning items (encrypted_content on OpenAI backends, plain
-        # reasoning_text content on DeepSeek flash), in stream order, so they can
-        # be resent next turn for chain-of-thought continuity.
-        self._reasoning_items: List[Dict[str, Any]] = []
+        # Completed assistant-prefix items in stream-arrival order: reasoning
+        # items (encrypted_content on OpenAI backends, plain reasoning_text
+        # content on DeepSeek flash) and hosted web_search_call items. Both are
+        # resent next turn — reasoning for chain-of-thought continuity, search
+        # calls because their ids key the server-side restore of the searched
+        # content. Tagged (kind, payload) records preserve the interleaving.
+        self._prefix_records: List[tuple[str, Dict[str, Any]]] = []
         self._final_response: Any = None
         self._function_calls: Dict[str, Dict[str, str]] = {}
         self._tool_execution_ids = ToolExecutionIdRegistry()
@@ -642,7 +660,23 @@ class ResponsesStreamWrapper:
                 # so it can be resent next turn for chain-of-thought continuity.
                 captured = self._reasoning_dict(item)
                 if captured:
-                    self._reasoning_items.append(captured)
+                    self._prefix_records.append(("reasoning", captured))
+            elif item_kind == "web_search_call":
+                # Hosted web search executed server-side. The searched content
+                # never arrives client-side — only this call item does. Capture
+                # it for replay (its id keys the server-side content restore)
+                # and surface one chunk so the agent can render the call.
+                captured = self._web_search_call_dict(item)
+                self._prefix_records.append(("web_search_call", captured))
+                return MessageChunk(
+                    type="hosted_tool_call",
+                    tool_call_delta={
+                        "id": captured.get("item_id") or "",
+                        "name": "web_search",
+                        "status": captured.get("status"),
+                        "action": captured.get("action") or {},
+                    },
+                )
             elif item_kind in ("function_call", "custom_tool_call"):
                 # The completed function_call item carries the final name +
                 # arguments; capture it so tool calls survive even if argument
@@ -707,42 +741,83 @@ class ResponsesStreamWrapper:
         if usage_metadata:
             usage_metadata["provider"] = self._provider_name
 
-        # Reasoning items lead the assistant turn (they precede the model's
-        # message/function_call output) so the backend continues the prior
-        # chain-of-thought when this message is resent next turn.
-        reasoning_blocks = self._collect_reasoning_blocks()
+        # Prefix items (reasoning + hosted web-search calls, in stream order)
+        # lead the assistant turn — they precede the model's message/
+        # function_call output — so the backend continues the prior
+        # chain-of-thought and restores searched content when this message is
+        # resent next turn.
+        prefix_blocks = self._collect_prefix_blocks()
         message = Message(
             role="assistant",
-            content=reasoning_blocks + content_blocks,
+            content=prefix_blocks + content_blocks,
             tool_calls=tool_use_blocks or None,
             stop_reason=stop_reason,
             usage_metadata=usage_metadata,
         )
         return attach_normalized_usage(message, self._provider_name, self._model)
 
-    def _collect_reasoning_blocks(self) -> list:
-        """Build the reasoning blocks to carry forward for continuity.
+    def _collect_prefix_blocks(self) -> list:
+        """Build the assistant-prefix blocks to carry forward, in stream order.
 
-        Prefers items captured from ``response.output_item.done`` events; falls
-        back to the final response output for backends that only populate
-        reasoning there.
+        Reasoning blocks give chain-of-thought continuity; web_search_call
+        blocks key the server-side restore of searched content. Prefers items
+        captured from ``response.output_item.done`` events; falls back to the
+        final response output for backends that only populate items there.
         """
-        items = list(self._reasoning_items)
-        if not items and self._final_response is not None:
+        records = list(self._prefix_records)
+        if not records and self._final_response is not None:
             for out in getattr(self._final_response, "output", None) or []:
-                if getattr(out, "type", None) == "reasoning":
+                out_type = getattr(out, "type", None)
+                if out_type == "reasoning":
                     captured = self._reasoning_dict(out)
                     if captured:
-                        items.append(captured)
-        return [
-            ResponsesReasoningBlock(
-                encrypted_content=item["encrypted_content"],
-                summary=item.get("summary") or [],
-                item_id=item.get("item_id"),
-                content=item.get("content") or [],
-            )
-            for item in items
-        ]
+                        records.append(("reasoning", captured))
+                elif out_type == "web_search_call":
+                    records.append(("web_search_call", self._web_search_call_dict(out)))
+        blocks: list = []
+        for kind, item in records:
+            if kind == "reasoning":
+                blocks.append(
+                    ResponsesReasoningBlock(
+                        encrypted_content=item["encrypted_content"],
+                        summary=item.get("summary") or [],
+                        item_id=item.get("item_id"),
+                        content=item.get("content") or [],
+                    )
+                )
+            else:
+                blocks.append(
+                    WebSearchCallBlock(
+                        item_id=item.get("item_id"),
+                        status=item.get("status"),
+                        action=item.get("action") or {},
+                    )
+                )
+        return blocks
+
+    @staticmethod
+    def _web_search_call_dict(item: Any) -> Dict[str, Any]:
+        """Extract the replayable fields from a web_search_call item.
+
+        The action payload is kept verbatim (dict form) so unknown action
+        types replay untouched; SDK objects are converted via model_dump.
+        """
+        action = getattr(item, "action", None)
+        if action is None:
+            action_dict: Dict[str, Any] = {}
+        elif isinstance(action, dict):
+            action_dict = dict(action)
+        elif hasattr(action, "model_dump"):
+            action_dict = action.model_dump(exclude_none=True)
+        else:
+            action_dict = {
+                key: value for key in ("type", "queries", "url") if (value := getattr(action, key, None)) is not None
+            }
+        return {
+            "item_id": getattr(item, "id", None),
+            "status": getattr(item, "status", None),
+            "action": action_dict,
+        }
 
     @staticmethod
     def _part_texts(parts: Any) -> List[str]:

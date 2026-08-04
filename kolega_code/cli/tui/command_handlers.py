@@ -72,6 +72,8 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
             "/login": self._command_login,
             "/logout": self._command_logout,
             "/gigacode": self._command_gigacode,
+            "/web-search": self._command_web_search,
+            "/websearch": self._command_web_search,
             "/goal": self._command_goal,
             "/loop": self._command_loop,
             "/tasks": self._command_tasks,
@@ -255,6 +257,42 @@ class CommandHandlersMixin(tui_app_base.KolegaAppBase):
             note = "gigacode workflow orchestration disabled."
         self._add_conversation_entry(tui_state.ConversationEntry(kind="system", content=note))
         self._update_mode_chrome()
+
+    async def _command_web_search(self, args: str) -> None:
+        if self.agent is None:
+            self._set_settings_status(messages.SETTINGS_REQUIRED, tone="warning")
+            return
+
+        from kolega_code.cli.config import WEB_SEARCH_MODES
+
+        clean = args.strip().lower()
+        if not clean:
+            mode = getattr(self.agent, "web_search_mode", "auto")
+            state = self._web_search_state_note()
+            self._add_conversation_entry(
+                tui_state.ConversationEntry(kind="system", content=f"Web search mode: {mode} ({state}).")
+            )
+            return
+        if clean not in WEB_SEARCH_MODES:
+            self._notify_user("Usage: /web-search [auto|hosted|client|off]", severity="warning")
+            return
+
+        self._web_search_mode = clean
+        self.agent.apply_web_search_mode(clean)
+        await self._save_session_async()
+        self._add_conversation_entry(
+            tui_state.ConversationEntry(
+                kind="system",
+                content=f"Web search mode set to {clean} ({self._web_search_state_note()}).",
+            )
+        )
+
+    def _web_search_state_note(self) -> str:
+        if getattr(self.agent, "hosted_web_search_active", False):
+            return "hosted server-side search active; client web tools off"
+        if getattr(self.agent, "client_web_tools_enabled", True):
+            return "client web_search/web_fetch tools active"
+        return "no web tools"
 
     def _gigacode_prompt_extension(self) -> PromptExtension:
         from kolega_code.agent.orchestration.guide import gigacode_prompt_extension

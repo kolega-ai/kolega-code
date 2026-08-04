@@ -85,11 +85,16 @@ The Browser role only accepts vision-capable model overrides. If it inherits a
 non-vision active model, Settings allows the inheritance but warns that the browser
 agent is unavailable until you choose a compatible Browser model.
 
-The **Tools** category configures the `web_search` tool. DuckDuckGo is the
-default and needs no key. Firecrawl can also run without a key, with an optional
-key for higher rate limits. Tavily requires a key, and SearXNG requires the base
-URL of your self-hosted instance. The same settings can be supplied with
-[`KOLEGA_CODE_WEB_SEARCH_BACKEND`, `FIRECRAWL_API_KEY`, `TAVILY_API_KEY`, and
+The **Tools** category configures web access. The **Mode** select picks who
+searches: `auto` (default) uses the provider's hosted server-side web search
+when the model supports it and the client tools otherwise; `hosted`, `client`,
+and `off` pin one behavior (see [the tools overview](../../concepts/tools/#web)).
+The backend selects for the client `web_search` tool: DuckDuckGo is the default
+and needs no key. Firecrawl can also run without a key, with an optional key for
+higher rate limits. Tavily requires a key, and SearXNG requires the base URL of
+your self-hosted instance. The same settings can be supplied with
+[`KOLEGA_CODE_WEB_SEARCH_MODE`, `KOLEGA_CODE_WEB_SEARCH_BACKEND`,
+`FIRECRAWL_API_KEY`, `TAVILY_API_KEY`, and
 `SEARXNG_BASE_URL`](../environment-variables/#web-search).
 
 ## Where settings live

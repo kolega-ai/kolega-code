@@ -6,6 +6,25 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+### Added
+
+- Hosted (server-side) web search for Responses-API providers. On DeepSeek
+  flash and OpenAI gpt-5.x (API key or ChatGPT subscription), kolega can
+  request the provider's own
+  `{"type": "web_search"}` tool: searches and page-opens execute on the
+  provider's servers and the content is injected directly into the model's
+  context (billed as input tokens; the context gauge accounts for it from
+  usage, since the content never reaches the client). Calls render in the
+  transcript as `web_search (hosted)`. Controlled by a new web tool mode —
+  `auto` (default: hosted when the model supports it, else the client tools) /
+  `hosted` / `client` / `off` — via Settings, `KOLEGA_CODE_WEB_SEARCH_MODE`,
+  `ask --web-search`, or the TUI's `/web-search`. When hosted search is active
+  the client-side `web_search`/`web_fetch` tools are not registered; `off`
+  removes all web tools (for sandboxed/benchmark runs). Notes: provider
+  per-search fees, if any, are not modeled in cost reporting (injected tokens
+  are); sessions that used hosted search store a new `web_search_call` history
+  block that older kolega builds cannot load.
+
 ### Security
 
 - Dependency bumps for advisories published 2026-08-03/04: `cryptography`

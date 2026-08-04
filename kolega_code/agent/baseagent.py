@@ -43,7 +43,15 @@ from kolega_code.llm.exceptions import (
 )
 from kolega_code.llm.instrumented_client import get_output_tokens
 from kolega_code.llm.ledger import HISTORY_ORIGIN, LlmCallOrigin, helper_origin, llm_call_origin
-from kolega_code.llm.models import ImageBlock, Message, MessageHistory, TextBlock, ToolCall, ToolResult
+from kolega_code.llm.models import (
+    ImageBlock,
+    Message,
+    MessageHistory,
+    TextBlock,
+    ToolCall,
+    ToolResult,
+    WebSearchCallBlock,
+)
 from kolega_code.llm.providers.models import TokenCount
 from kolega_code.llm.specs import (
     deepseek_output_token_cap,
@@ -461,6 +469,15 @@ class BaseAgent(LogMixin):
         # tool) and used by _unsupported_attachment_message to reject image
         # attachments for non-vision models with a clear message.
         self.supports_vision = bool(model_specs.get("supports_vision", False))
+        # Web tool mode: whether the provider's hosted (server-side) web_search
+        # tool is requested and whether the client-side web_search/web_fetch
+        # tools are registered. Resolved from config.web_search_mode plus the
+        # model's supports_hosted_web_search catalog flag; the ToolCollection
+        # gate reads client_web_tools_enabled, the stream call reads
+        # hosted_web_search_active.
+        self.supports_hosted_web_search = bool(model_specs.get("supports_hosted_web_search", False))
+        self.web_search_mode = getattr(self.config, "web_search_mode", "auto") or "auto"
+        self._apply_web_search_state()
 
         self.llm = context.create_llm_client(agent_name=self.agent_name)
 
@@ -487,6 +504,15 @@ class BaseAgent(LogMixin):
         self._workflow_accounting: Optional["WorkflowRunAccounting"] = None
         self._accounting_reservation: Optional["AgentReservation"] = None
         self.total_tokens_used: int = 0
+        # Hosted web-search accounting side-channel. Searched/fetched content is
+        # injected into the model's context SERVER-side (restored on replay of
+        # web_search_call items, billed as input) and never reaches the client,
+        # so tiktoken-over-history can't see it. The residual — billed input
+        # minus the client-side count of the request actually sent — measures it
+        # and is added to the gauge in count_current_context. Updated by
+        # _update_hosted_search_residual; zeroed by compress_history.
+        self._hosted_injected_tokens: int = 0
+        self._last_raw_context_count: Optional[int] = None
         # Set by a blocking PostToolUse hook to end the turn after the current tool batch.
         self._hook_end_turn = False
         self.queued_input_provider: Optional[Callable[[], Awaitable[List[QueuedUserInput]]]] = None
@@ -651,6 +677,81 @@ class BaseAgent(LogMixin):
         initialize = getattr(self, "_initialize_system_prompt", None)
         if callable(initialize):
             initialize()
+
+    def _apply_web_search_state(self) -> None:
+        """Resolve web_search_mode + model capability into the two live gates.
+
+        ``hosted_web_search_active`` — request the provider's server-side
+        web_search tool on main-loop stream calls. ``client_web_tools_enabled``
+        — register the client-side web_search/web_fetch tools (read by the
+        ToolCollection gate). Hosted active always excludes the client tools:
+        two search paths confuse the model and waste schema tokens.
+        """
+        mode = (self.web_search_mode or "auto").lower()
+        supported = self.supports_hosted_web_search
+        if mode == "off":
+            hosted, client = False, False
+        elif mode == "client":
+            hosted, client = False, True
+        elif mode == "hosted":
+            if not supported:
+                provider = self.primary_model_config.provider
+                logger.warning(
+                    "web_search_mode=hosted, but %s/%s has no hosted web search; falling back to the client tools",
+                    getattr(provider, "value", provider),
+                    self.primary_model_config.model,
+                )
+            hosted, client = supported, not supported
+        else:  # auto
+            hosted, client = supported, not supported
+        self.hosted_web_search_active = hosted
+        self.client_web_tools_enabled = client
+
+    def apply_web_search_mode(self, mode: str) -> None:
+        """Change the web tool mode mid-session (TUI ``/web-search``).
+
+        Mirrors :meth:`apply_gigacode`: the tool registry rebuilds per call and
+        the next stream call reads the hosted gate, so no cache invalidation is
+        needed. No prompt work — the tools carry their own affordances.
+        """
+        self.web_search_mode = (mode or "auto").lower()
+        self._apply_web_search_state()
+
+    async def _emit_hosted_tool_call(self, delta: Dict[str, Any]) -> None:
+        """Render a completed hosted web_search call as a tool_call/tool_result pair.
+
+        The call executed on the provider's servers; there is no local tool
+        invocation and the searched content never reaches the client (it is
+        injected into the model's context server-side). The shared item id
+        correlates the pair in every transcript consumer.
+        """
+        action = delta.get("action") or {}
+        action_type = action.get("type") or "web_search"
+        if action_type == "search" and action.get("queries"):
+            detail = "search: " + ", ".join(repr(str(q)) for q in action["queries"])
+            outcome = "results injected server-side"
+        elif action_type == "open_page" and action.get("url"):
+            detail = f"open_page: {action['url']}"
+            outcome = "content injected server-side"
+        else:
+            detail = action_type
+            outcome = "executed server-side"
+        status = delta.get("status") or "completed"
+        tool_call_id = delta.get("id") or str(uuid.uuid4())
+        await self.send_chat_message(
+            message_type="tool_call",
+            content=f"Calling web_search (hosted): {detail}",
+            is_streaming=False,
+            tool_description="web_search (hosted)",
+            tool_call_id=tool_call_id,
+        )
+        await self.send_chat_message(
+            message_type="tool_result",
+            content=f"{detail} — {status} ({outcome})",
+            is_streaming=False,
+            tool_description="web_search (hosted)",
+            tool_call_id=tool_call_id,
+        )
 
     def apply_goal(self, condition: Optional[str], prompt_extension: Optional["PromptExtension"] = None) -> None:
         """Set, replace, or clear the active autonomous goal for this session.
@@ -944,11 +1045,60 @@ class BaseAgent(LogMixin):
             model=self.primary_model_config.model,
             tools=self.tool_collection.get_tool_list(),
         )
+        # Hosted web-search content lives only in the server's copy of the
+        # context (restored on replay of the web_search_call items, billed as
+        # input) — the client history has nothing to count for it. Add the
+        # residual measured from billed usage so the gauge AND the compaction
+        # check both see the true context size. Nonzero only while un-compacted
+        # web_search_call blocks exist (see _update_hosted_search_residual).
+        self._last_raw_context_count = token_count.input_tokens
+        if self._hosted_injected_tokens > 0:
+            token_count.input_tokens += self._hosted_injected_tokens
 
         # Send context update event
         await self._send_context_update(token_count)
 
         return token_count
+
+    # Provisional residual bump per hosted web-search call, applied while the
+    # search-bearing response's own billing is telescoped (a response that
+    # searched is several internal invocations billed cumulatively, so its
+    # billed−counted residual overstates the persistent injected size). The next
+    # clean response replaces the estimate with the measured residual. Probe
+    # calibration 2026-08-04 (findings/probes/hosted_web_search_probe.py):
+    # one-call persistent overhead ≈850 (deepseek) / ≈5000 (openai) tokens —
+    # 6000 overestimates safely, and overestimating only compacts early.
+    HOSTED_SEARCH_PROVISIONAL_TOKENS = 6000
+
+    def _update_hosted_search_residual(self, assistant_message: Message) -> None:
+        """Track server-injected hosted-search content from billed usage.
+
+        Search-bearing responses bump the estimate by a provisional per-call
+        constant (their own billing telescopes internal rounds, so the direct
+        residual would overshoot and could trip compaction spuriously). Clean
+        responses — single invocation, so ``billed − counted`` is exact —
+        replace it with the measurement. No-ops for sessions that never
+        searched, keeping the known ±tokenizer-drift band out of the gauge.
+        """
+        content = assistant_message.content if isinstance(assistant_message.content, list) else []
+        new_calls = sum(1 for block in content if isinstance(block, WebSearchCallBlock))
+        if new_calls:
+            self._hosted_injected_tokens += self.HOSTED_SEARCH_PROVISIONAL_TOKENS * new_calls
+            return
+        if self._hosted_injected_tokens <= 0 and not self._history_contains_hosted_search():
+            return
+        billed = (assistant_message.usage_metadata or {}).get("prompt_tokens")
+        counted = self._last_raw_context_count
+        if not isinstance(billed, int) or counted is None:
+            return
+        self._hosted_injected_tokens = max(0, billed - counted)
+
+    def _history_contains_hosted_search(self) -> bool:
+        for message in self.history:
+            content = getattr(message, "content", None)
+            if isinstance(content, list) and any(isinstance(block, WebSearchCallBlock) for block in content):
+                return True
+        return False
 
     async def _send_context_update(self, token_count: TokenCount) -> None:
         """Send an event to update the UI about current context usage."""
@@ -977,6 +1127,11 @@ class BaseAgent(LogMixin):
         show progress, then recounts + emits a context_update so the gauge
         refreshes. Returns the structured outcome.
         """
+        # Compacted-away web_search_call blocks stop being replayed, so the
+        # server stops restoring their content. Reset the hosted-search residual
+        # rather than carrying a stale figure; if search blocks survive in the
+        # verbatim tail, the next clean response re-measures it.
+        self._hosted_injected_tokens = 0
 
         async def on_info(message: str) -> None:
             await self.log_info(message, sender=self.agent_name)
@@ -2093,6 +2248,7 @@ class BaseAgent(LogMixin):
                             model=self.primary_model_config.model,
                             tools=self.tool_collection.get_tool_list(),
                             thinking=self.primary_model_config.thinking_effort,
+                            hosted_web_search=self.hosted_web_search_active,
                         ),
                     )
                 async with stream_cm as stream:
@@ -2135,8 +2291,24 @@ class BaseAgent(LogMixin):
 
                             await self.on_tool_use_start(event.tool_call_delta)
 
+                        elif event.type == "hosted_tool_call" and event.tool_call_delta:
+                            # A server-side web_search call completed on the
+                            # provider's infrastructure — no local execution.
+                            # Surface it as a normal tool_call/tool_result pair
+                            # so every transcript view renders it.
+                            if current_response:
+                                yield {
+                                    "type": "response",
+                                    "content": current_response,
+                                    "complete": True,
+                                    "uuid": response_uuid,
+                                }
+                                current_response = ""
+                            await self._emit_hosted_tool_call(event.tool_call_delta)
+
                 assistant_message = await stream.get_final_message()
                 self._normalize_freeform_tool_calls(assistant_message)
+                self._update_hosted_search_residual(assistant_message)
                 assistant_message.usage_metadata["edit_protocol"] = self.edit_protocol.value
                 response_output_tokens = get_output_tokens(
                     assistant_message.usage_metadata,

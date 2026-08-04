@@ -3,6 +3,12 @@ from kolega_code.llm.specs.types import ThinkingEffortSpec
 # OpenAI via ChatGPT subscription (Responses API, OAuth). Model slugs mirror
 # the Codex model picker; context/output limits mirror the API gpt-5.x specs
 # and are server-enforced (we never send max_output_tokens).
+# supports_hosted_web_search: the Codex backend executes {"type": "web_search"}
+# server-side and restores searched content on replay of the web_search_call
+# items — verified live through this OAuth transport 2026-08-04 (open_page
+# executed, replay accepted, ~4.4k tokens restored on a clean follow-up,
+# matching api.openai.com). Codex itself ships hosted search against this
+# backend, so every slug here gets the flag.
 # Note: The Codex backend advertises a 272K context window for GPT-5.6 and
 # GPT-5.5, despite the API models exposing a larger window. Keep the
 # subscription-specific values here so compression runs before backend limits.
@@ -13,6 +19,7 @@ OPENAI_CHATGPT_SPECS = {
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
+        "supports_hosted_web_search": True,
         "preferred_edit_protocol": "codex_apply_patch",
         "thinking_effort": ThinkingEffortSpec(
             options=("none", "low", "medium", "high", "xhigh", "max"),
@@ -26,6 +33,7 @@ OPENAI_CHATGPT_SPECS = {
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
+        "supports_hosted_web_search": True,
         "preferred_edit_protocol": "codex_apply_patch",
         "thinking_effort": ThinkingEffortSpec(
             options=("none", "low", "medium", "high", "xhigh", "max"),
@@ -39,6 +47,7 @@ OPENAI_CHATGPT_SPECS = {
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
+        "supports_hosted_web_search": True,
         "preferred_edit_protocol": "codex_apply_patch",
         "thinking_effort": ThinkingEffortSpec(
             options=("none", "low", "medium", "high", "xhigh", "max"),
@@ -52,6 +61,7 @@ OPENAI_CHATGPT_SPECS = {
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
+        "supports_hosted_web_search": True,
         "preferred_edit_protocol": "codex_apply_patch",
         "thinking_effort": ThinkingEffortSpec(
             options=("minimal", "low", "medium", "high", "xhigh"),
@@ -65,6 +75,7 @@ OPENAI_CHATGPT_SPECS = {
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
+        "supports_hosted_web_search": True,
         "preferred_edit_protocol": "codex_apply_patch",
         "thinking_effort": ThinkingEffortSpec(
             options=("minimal", "low", "medium", "high"),
@@ -78,6 +89,7 @@ OPENAI_CHATGPT_SPECS = {
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
+        "supports_hosted_web_search": True,
         "preferred_edit_protocol": "codex_apply_patch",
         "thinking_effort": ThinkingEffortSpec(
             options=("none", "low", "medium", "high", "xhigh"),
@@ -91,6 +103,7 @@ OPENAI_CHATGPT_SPECS = {
         "default_temperature": 1.0,
         "supports_temperature": False,
         "supports_vision": True,
+        "supports_hosted_web_search": True,
         "preferred_edit_protocol": "codex_apply_patch",
         "thinking_effort": ThinkingEffortSpec(
             options=("minimal", "low", "medium"),

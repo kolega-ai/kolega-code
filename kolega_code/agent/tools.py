@@ -2718,6 +2718,15 @@ class ToolCollection(LogMixin):
         if method_name == "read_image":
             return bool(getattr(self.caller, "supports_vision", False))
 
+        # Web tool gate: the client-side web tools drop out when the agent's
+        # web_search_mode resolved to hosted (the provider's server-side tool
+        # replaces them) or off. Exclusion-only — an enabled tool still passes
+        # through the group/read-only/browser-only filtering below. Default True
+        # so agents without the attribute (tests, custom callers) keep today's
+        # tool set.
+        if method_name in ("web_search", "web_fetch") and not getattr(self.caller, "client_web_tools_enabled", True):
+            return False
+
         # Vision gate: dispatching the browser agent only works when the model
         # resolved for the browser-agent role accepts images (it reads page
         # screenshots). That model may differ from the main one, so gate on it —

@@ -156,6 +156,13 @@ class AgentConfig(BaseModel):
 
     # Web search configuration (the web_search tool). Optional: the default backend is
     # keyless, so these must never be required for AgentConfig to be constructable.
+    web_search_mode: str = Field(
+        default="auto",
+        description=(
+            "Web tool mode: auto (hosted server-side search when the model supports it, "
+            "else the client tools), hosted, client, or off"
+        ),
+    )
     web_search_backend: str = Field(
         default="duckduckgo", description="Selected web_search backend (duckduckgo, firecrawl, tavily, searxng)"
     )

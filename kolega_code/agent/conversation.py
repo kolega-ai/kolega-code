@@ -22,6 +22,7 @@ from kolega_code.llm.models import (
     ThinkingBlock,
     ToolCall,
     ToolResult,
+    WebSearchCallBlock,
 )
 from kolega_code.llm.specs import prior_reasoning_is_replayable
 from kolega_code.utils import images as image_utils
@@ -336,7 +337,7 @@ def _adapt_content_blocks_for_provider(
             )
             adapted.append(adapted_block)
             changed = changed or image_changed
-        elif isinstance(block, (ThinkingBlock, RedactedThinkingBlock, ResponsesReasoningBlock)):
+        elif isinstance(block, (ThinkingBlock, RedactedThinkingBlock, ResponsesReasoningBlock, WebSearchCallBlock)):
             if _preserve_reasoning_block(
                 block,
                 source_provider=source_provider,

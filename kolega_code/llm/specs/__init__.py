@@ -9,6 +9,7 @@ from .accessors import (
     preferred_edit_protocol,
     prior_reasoning_is_replayable,
     provider_has_featured_models,
+    supports_hosted_web_search,
     supports_vision,
     thinking_effort_options,
 )
@@ -27,6 +28,7 @@ __all__ = [
     "deepseek_output_token_cap",
     "is_deepseek_model",
     "get_model_specs",
+    "supports_hosted_web_search",
     "supports_vision",
     "get_thinking_effort_spec",
     "is_featured_model",
