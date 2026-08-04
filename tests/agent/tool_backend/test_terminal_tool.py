@@ -48,6 +48,9 @@ def agent_config():
 def mock_base_agent():
     mock = Mock()
     mock.agent_name = "test_agent"
+    # A bare Mock attribute would read as a truthy scratchpad dir; sessions
+    # without a scratchpad are the default in these tests.
+    mock.scratchpad_dir = None
     return mock
 
 
@@ -220,6 +223,50 @@ class TestUnifiedExecTools:
         data = json.loads(await terminal_tool.exec_command("pwd", workdir=".", yield_time_ms=5000))
         assert data["status"] == "exited"
         assert data["output"].strip().endswith(terminal_tool.project_path.name)
+
+    @pytest.mark.asyncio
+    async def test_exec_command_injects_scratchpad_env(self, terminal_tool, mock_base_agent, tmp_path):
+        mock_base_agent.scratchpad_dir = tmp_path / "scratchpad"
+        terminal_tool.terminal_manager = Mock()
+        terminal_tool.terminal_manager.exec_command = AsyncMock(
+            return_value=ExecResult(status="exited", exit_code=0, output="", duration_ms=1)
+        )
+
+        await terminal_tool.exec_command("env")
+        kwargs = terminal_tool.terminal_manager.exec_command.call_args.kwargs
+        assert kwargs["env"] == {"KOLEGA_SCRATCHPAD": str(tmp_path / "scratchpad")}
+
+    @pytest.mark.asyncio
+    async def test_exec_command_without_scratchpad_injects_nothing(self, terminal_tool):
+        terminal_tool.terminal_manager = Mock()
+        terminal_tool.terminal_manager.exec_command = AsyncMock(
+            return_value=ExecResult(status="exited", exit_code=0, output="", duration_ms=1)
+        )
+
+        await terminal_tool.exec_command("env")
+        kwargs = terminal_tool.terminal_manager.exec_command.call_args.kwargs
+        assert kwargs["env"] is None
+
+    @pytest.mark.asyncio
+    async def test_exec_command_end_to_end_scratchpad_env(self, terminal_tool, mock_base_agent, tmp_path):
+        # Real PTY: the model-facing session sees $KOLEGA_SCRATCHPAD.
+        mock_base_agent.scratchpad_dir = tmp_path / "scratchpad"
+        data = json.loads(await terminal_tool.exec_command('echo "SP=$KOLEGA_SCRATCHPAD"', yield_time_ms=5000))
+        assert data["status"] == "exited"
+        assert f"SP={tmp_path / 'scratchpad'}" in data["output"]
+
+    @pytest.mark.asyncio
+    async def test_write_stdin_session_keeps_scratchpad_env(self, terminal_tool, mock_base_agent, tmp_path):
+        # A session created by exec_command and driven with write_stdin keeps
+        # the env it was spawned with.
+        mock_base_agent.scratchpad_dir = tmp_path / "scratchpad"
+        data = json.loads(
+            await terminal_tool.exec_command('read line; echo "GOT=$KOLEGA_SCRATCHPAD"', yield_time_ms=300)
+        )
+        assert data["status"] == "running"
+        data = json.loads(await terminal_tool.write_stdin(data["session_id"], "go\n", yield_time_ms=5000))
+        assert data["status"] == "exited"
+        assert f"GOT={tmp_path / 'scratchpad'}" in data["output"]
 
     @pytest.mark.asyncio
     async def test_exec_command_passes_absolute_workdir_through(self, terminal_tool):

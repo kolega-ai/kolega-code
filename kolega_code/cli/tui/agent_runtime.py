@@ -1201,8 +1201,9 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         # composing it from settings, skills, hooks, and MCP configuration.
         self.session_runtime.adopt(self.agent)
         if scratchpad_extension is not None:
-            # Expose the resolved directory for the terminal safety checker; the
-            # prompt extension above is what the model sees.
+            # Expose the resolved directory for the KOLEGA_SCRATCHPAD session env
+            # and the terminal safety checker; the prompt extension above is what
+            # the model sees.
             self.agent.scratchpad_dir = scratchpad_dir_for(self.project_path, self.session.session_id)
         # Mid-turn queue delivery: the running turn drains composer messages
         # queued while it works (main agent only; sub-agents never get this).

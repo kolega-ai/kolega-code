@@ -104,6 +104,7 @@ class EvalTool(BaseTool):
                 thread_id=self.thread_id,
                 project_path=self.project_path,
                 config=self.config,
+                scratchpad_dir=getattr(self.caller, "scratchpad_dir", None),
             )
         return self._manager
 

@@ -75,6 +75,33 @@ def test_scratchpad_prompt_renders_path_and_rules() -> None:
     assert "deliverables" in rendered
     assert "uniquely named files" in rendered
     assert ".kolega/worktrees/<safe-unique-slug>" in rendered
+    # The literal path stays (non-shell uses need it), and the prompt names the
+    # env var injected into every terminal session and eval kernel.
+    assert "`KOLEGA_SCRATCHPAD`" in rendered
+    assert "$KOLEGA_SCRATCHPAD" in rendered
+
+
+def test_scratchpad_env_var_documented_in_interactive_and_ask_modes() -> None:
+    from kolega_code.agent.prompt_provider import (
+        AgentMode,
+        AgentType,
+        PromptContext,
+        PromptExtension,
+        PromptProvider,
+    )
+    from kolega_code.scratchpad import SCRATCHPAD_PROMPT_EXTENSION_ID
+
+    extension = PromptExtension(
+        id=SCRATCHPAD_PROMPT_EXTENSION_ID,
+        title="Session Scratchpad",
+        markdown=prompts.build_scratchpad_prompt("/tmp/kolega-code-501/project-key/session-1/scratchpad"),
+    )
+    provider = PromptProvider()
+    for mode in (AgentMode.CLI, AgentMode.ASK):
+        rendered = provider.get_system_prompt(
+            AgentType.CODER, mode=mode, prompt_extensions=[extension], context=PromptContext()
+        )
+        assert "$KOLEGA_SCRATCHPAD" in rendered, mode
     assert "Never create a Git worktree in the scratchpad" in rendered
     assert "only when the user explicitly asks for it" in rendered
     assert "shared Git `info/exclude`" in rendered

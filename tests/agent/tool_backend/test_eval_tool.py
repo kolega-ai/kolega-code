@@ -17,10 +17,11 @@ PNG_1PX = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADh
 pytestmark = pytest.mark.asyncio
 
 
-def make_tool(tmp_path, *, supports_vision=False, sub_agent=False, config=None):
+def make_tool(tmp_path, *, supports_vision=False, sub_agent=False, config=None, scratchpad_dir=None):
     caller = Mock()
     caller.sub_agent = sub_agent
     caller.supports_vision = supports_vision
+    caller.scratchpad_dir = scratchpad_dir
 
     async def execute_single_tool(tool_call):
         return ToolResult(
@@ -154,6 +155,16 @@ async def test_end_to_end_cell(tmp_path, isolated_cli_env):
         assert "custom interpreter" in text  # eval_python_path override note
         text = await tool.eval("py", "total + 1")
         assert "### result\n43" in text
+    finally:
+        await tool.shutdown_if_owner()
+
+
+async def test_end_to_end_kernel_env_has_scratchpad(tmp_path, isolated_cli_env):
+    scratchpad = tmp_path / "scratchpad"
+    tool = make_tool(tmp_path, scratchpad_dir=scratchpad)
+    try:
+        text = await tool.eval("py", "import os\nos.environ.get('KOLEGA_SCRATCHPAD', 'missing')")
+        assert f"### result\n'{scratchpad}'" in text
     finally:
         await tool.shutdown_if_owner()
 
