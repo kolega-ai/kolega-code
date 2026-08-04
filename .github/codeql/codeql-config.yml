@@ -2,3 +2,9 @@ name: "Kolega Code CodeQL configuration"
 
 paths-ignore:
   - "kolega_code/_bundled_skills"
+  # Test code: not shipped, and security dataflow rules misread assertions as
+  # sanitizers (e.g. py/incomplete-url-substring-sanitization on a substring
+  # assert over a rendered label — PR #454). Inline `# codeql[...]` suppressions
+  # are not honored without the alert-suppression query pack, so exclude tests
+  # from analysis outright.
+  - "tests"
