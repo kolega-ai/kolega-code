@@ -279,10 +279,13 @@ class TestRoundTrip:
         assert restored.url == "https://e.com"
 
     def test_markdown_label(self):
+        # Exact-match assertions: a `"https://…" in text` check here trips
+        # CodeQL's URL-substring-sanitization rule (it can't tell an assertion
+        # from a sanitizer), and equality pins the full label format anyway.
         search = WebSearchCallBlock(action={"type": "search", "queries": ["a", "b"]})
-        assert "'a', 'b'" in search.to_markdown()
+        assert search.to_markdown() == "*Web search — search: 'a', 'b'*"
         page = WebSearchCallBlock(action={"type": "open_page", "url": "https://e.com"})
-        assert "https://e.com" in page.to_markdown()
+        assert page.to_markdown() == "*Web search — open_page: https://e.com*"
 
 
 # --- token counting ---------------------------------------------------------------
