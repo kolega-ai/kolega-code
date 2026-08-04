@@ -223,3 +223,41 @@ def test_loop_fresh_emitter_survives_history_clear(tmp_path, capsys, monkeypatch
     # Two iterations x two assistant messages each, despite clear_history between.
     assert len(messages) == 4
     assert lines[-1]["messages"] == 4
+
+
+def test_serialize_keeps_plain_reasoning_and_strips_opaque_fields():
+    # DeepSeek flash retains its raw chain-of-thought as plain text on the
+    # reasoning block; --json consumers get it (parity with Anthropic thinking),
+    # minus the provider-internal fields.
+    from kolega_code.cli.ask_output import serialize_ask_message
+    from kolega_code.llm.models import ResponsesReasoningBlock
+
+    message = Message(
+        role="assistant",
+        content=[
+            ResponsesReasoningBlock(content=["consider the recurrence"], item_id="rs_1"),
+            TextBlock(text="the answer"),
+        ],
+        stop_reason="end_turn",
+    )
+    data = serialize_ask_message(message)
+    assert data["content"][0] == {"type": "responses_reasoning", "summary": [], "content": ["consider the recurrence"]}
+    assert data["content"][1]["type"] == "text"
+
+
+def test_serialize_drops_encrypted_only_reasoning():
+    # OpenAI/ChatGPT reasoning is an opaque blob; once stripped nothing readable
+    # remains, so the whole block is dropped as before.
+    from kolega_code.cli.ask_output import serialize_ask_message
+    from kolega_code.llm.models import ResponsesReasoningBlock
+
+    message = Message(
+        role="assistant",
+        content=[
+            ResponsesReasoningBlock(encrypted_content="ENC", summary=["planning"]),
+            TextBlock(text="the answer"),
+        ],
+        stop_reason="end_turn",
+    )
+    data = serialize_ask_message(message)
+    assert [block["type"] for block in data["content"]] == ["text"]

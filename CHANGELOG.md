@@ -15,7 +15,10 @@ This project uses GitHub Releases for detailed generated release notes. This fil
   context on reasoning-heavy sessions. Flash's plain-text reasoning is now retained
   in history and resent each turn — the same shape Codex replays, deduped by the
   server so billing is unchanged — which keeps the gauge on the real number and
-  preserves chain-of-thought continuity across session restores.
+  preserves chain-of-thought continuity across session restores. The retained
+  reasoning text also now appears in `ask --json` message payloads (parity with
+  Anthropic thinking text); encrypted-only reasoning from OpenAI/ChatGPT stays
+  stripped as before.
 
 ## 0.26.9 - 2026-08-03
 
