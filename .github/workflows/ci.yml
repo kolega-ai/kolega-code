@@ -257,7 +257,20 @@ jobs:
         if: needs.changes.outputs.coverage-badge-only != 'true'
         run: |
           set +e
-          uv audit --locked --output-format json > /tmp/uv-audit.json
+          # Accepted advisories: cryptography 48.0.1 on the Intel-mac fork only
+          # (every other platform locks the fixed 50.0.0). All three are fixed
+          # only by releases that dropped Intel-mac wheels, so upgrading would
+          # break the curl-install there with a Rust+OpenSSL source build; the
+          # legacy platform accepts the risk instead. Revisit if cryptography
+          # ever restores Intel-mac wheels, or when Intel-mac support ends.
+          # Each advisory is listed in all three id forms (PYSEC/GHSA/CVE):
+          # --ignore matches only the primary id, and which form the OSV
+          # service reports as primary has been observed to vary.
+          uv audit --locked --output-format json \
+            --ignore PYSEC-2026-3552 --ignore GHSA-g6cj-pr64-35w5 --ignore CVE-2026-69247 \
+            --ignore PYSEC-2026-3553 --ignore GHSA-jwv3-5hgf-82ww --ignore CVE-2026-69249 \
+            --ignore PYSEC-2026-3554 --ignore GHSA-m2h6-j472-rp4c --ignore CVE-2026-69248 \
+            > /tmp/uv-audit.json
           audit_status=$?
           set -e
 

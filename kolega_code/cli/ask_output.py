@@ -7,6 +7,10 @@ message's final chunk — so each message is emitted complete, with its content
 blocks (including tool calls), stop reason, and normalized usage. Opaque
 provider state (thinking signatures, encrypted reasoning) is stripped: it is
 meaningless to consumers and only meaningful when replayed to the provider.
+Readable reasoning is kept — Anthropic thinking text, and DeepSeek flash's
+plain-text ``responses_reasoning`` content — so ``--json`` consumers see the
+same chain-of-thought the TUI displays. Note reasoning-heavy sessions can put
+100k+ tokens of reasoning text into these payloads.
 """
 
 from __future__ import annotations
@@ -16,10 +20,11 @@ import json
 from typing import Any, Optional
 
 # Content-block fields that exist purely to be replayed to the provider.
-_OPAQUE_BLOCK_TYPES = {"redacted_thinking", "responses_reasoning"}
+_OPAQUE_BLOCK_TYPES = {"redacted_thinking"}
 _OPAQUE_BLOCK_FIELDS = {
     "thinking": ("signature",),
     "tool_call": ("thought_signature",),
+    "responses_reasoning": ("encrypted_content", "item_id"),
 }
 
 
@@ -36,6 +41,13 @@ def serialize_ask_message(message: Any) -> dict[str, Any]:
                 continue
             block_type = block.get("type")
             if block_type in _OPAQUE_BLOCK_TYPES:
+                continue
+            if block_type == "responses_reasoning" and not block.get("content"):
+                # Encrypted-only reasoning (OpenAI/ChatGPT backends): nothing
+                # readable remains once the opaque blob is stripped, so the
+                # whole block goes. DeepSeek flash blocks carry the raw
+                # reasoning text in `content` and are kept — parity with the
+                # Anthropic thinking blocks above.
                 continue
             for field in _OPAQUE_BLOCK_FIELDS.get(block_type or "", ()):
                 block.pop(field, None)

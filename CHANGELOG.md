@@ -6,6 +6,32 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+### Security
+
+- Dependency bumps for advisories published 2026-08-03/04: `cryptography`
+  48.0.1 → 50.0.0 (PKCS#7 Bleichenbacher oracle CVE-2026-69247, a name-constraint
+  wildcard bypass CVE-2026-69248, and a path-building DoS CVE-2026-69249) and
+  `aiohttp` 3.14.1 → 3.14.3 (three parser advisories, including an out-of-bounds
+  heap read in the C response parser). Exception: Intel Macs stay on
+  `cryptography` 48.0.1 — every fixed release dropped Intel-mac wheels, and
+  upgrading would break the curl installer there with a Rust+OpenSSL source
+  build — so those three advisories are knowingly accepted on that legacy
+  platform only.
+
+### Fixed
+
+- The context gauge no longer under-reads on `deepseek-v4-flash`. DeepSeek's
+  Responses API silently re-attaches every prior round's reasoning server-side and
+  bills it as input, but the client history held none of it, so the gauge (and the
+  auto-compaction trigger) could run over 100k tokens behind the real billed
+  context on reasoning-heavy sessions. Flash's plain-text reasoning is now retained
+  in history and resent each turn — the same shape Codex replays, deduped by the
+  server so billing is unchanged — which keeps the gauge on the real number and
+  preserves chain-of-thought continuity across session restores. The retained
+  reasoning text also now appears in `ask --json` message payloads (parity with
+  Anthropic thinking text); encrypted-only reasoning from OpenAI/ChatGPT stays
+  stripped as before.
+
 ## 0.26.9 - 2026-08-03
 
 ### Added

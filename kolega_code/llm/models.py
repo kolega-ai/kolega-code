@@ -461,32 +461,43 @@ class RedactedThinkingBlock(ContentBlock):
 class ResponsesReasoningBlock(ContentBlock):
     """OpenAI Responses-API reasoning item, kept so it can be resent next turn.
 
-    The Responses API hides raw chain-of-thought, but when a request asks for
-    ``include=["reasoning.encrypted_content"]`` each reasoning item comes back
-    with an opaque ``encrypted_content`` blob. Resending that blob in the next
-    request's ``input`` lets the model *continue* its prior reasoning instead of
-    re-deriving it on every tool-call round — which is exactly what Codex does
-    and why Codex doesn't blow up its thinking time at high effort.
+    Two variants, matching what the backend exposes:
 
-    The block is specific to the ``openai_chatgpt`` (Responses) provider. It is
-    serialized back via :meth:`to_responses_item`; the ``to_anthropic`` /
-    ``to_openai`` / ``to_google`` conversions return a harmless placeholder so a
-    stray cross-provider conversion never sends a foreign reasoning blob.
+    - **Encrypted** (OpenAI / ChatGPT backends): raw chain-of-thought is hidden,
+      but with ``include=["reasoning.encrypted_content"]`` each reasoning item
+      returns an opaque ``encrypted_content`` blob. Resending it lets the model
+      *continue* its prior reasoning instead of re-deriving it every tool-call
+      round — exactly what Codex does at high effort.
+    - **Plain-text** (DeepSeek flash): the raw chain-of-thought itself arrives as
+      ``content`` parts (``{"type": "reasoning_text", "text": ...}``) and no
+      encrypted blob exists. Retaining and resending the text mirrors Codex
+      against the same backend and keeps continuity independent of the server's
+      own call_id-keyed reasoning restore (which dedupes explicit copies, so the
+      resend is never double-billed).
+
+    The block is specific to Responses-API providers. It is serialized back via
+    :meth:`to_responses_item`; the ``to_anthropic`` / ``to_google`` conversions
+    return a harmless placeholder, and ``Message.to_openai`` (Chat Completions)
+    omits the block entirely — anything model-visible gets echoed (see
+    ``_ECHOED_REASONING_PLACEHOLDER`` in agent/conversation.py).
     """
 
     TYPE_NAME = "responses_reasoning"
 
     def __init__(
         self,
-        encrypted_content: str,
+        encrypted_content: Optional[str] = None,
         summary: Optional[List[str]] = None,
         item_id: Optional[str] = None,
         cache_checkpoint: bool = False,
+        content: Optional[List[str]] = None,
     ):
         super().__init__(type=self.TYPE_NAME, cache_checkpoint=cache_checkpoint)
         self.encrypted_content = encrypted_content
         self.summary = list(summary or [])
         self.item_id = item_id
+        # Raw reasoning texts for backends that expose them (DeepSeek flash).
+        self.content = list(content or [])
 
     def to_dict(self) -> Dict[str, Any]:
         result = {
@@ -494,6 +505,8 @@ class ResponsesReasoningBlock(ContentBlock):
             "encrypted_content": self.encrypted_content,
             "summary": list(self.summary),
         }
+        if self.content:
+            result["content"] = list(self.content)
         if self.item_id:
             result["item_id"] = self.item_id
         return result
@@ -501,24 +514,35 @@ class ResponsesReasoningBlock(ContentBlock):
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ResponsesReasoningBlock":
         return cls(
-            encrypted_content=data["encrypted_content"],
+            encrypted_content=data.get("encrypted_content"),
             summary=data.get("summary") or [],
             item_id=data.get("item_id"),
+            content=data.get("content") or [],
         )
 
     def to_responses_item(self) -> Dict[str, Any]:
         """Serialize back to a Responses API ``input`` reasoning item.
 
         Mirrors what Codex sends to the same backend: a ``reasoning`` item with
-        its ``summary`` parts and the opaque ``encrypted_content``. The server
-        item id is intentionally omitted — with ``store=false`` it is not a valid
-        server reference and Codex clears it too.
+        its ``summary`` parts plus the opaque ``encrypted_content`` (OpenAI) or
+        the plain ``reasoning_text`` content parts (DeepSeek flash). For the
+        encrypted variant the server item id is intentionally omitted — with
+        ``store=false`` it is not a valid server reference and Codex clears it
+        too. For the plain-text variant the id IS sent when known: it is part of
+        the item shape Codex replays to DeepSeek, whose dedupe against the
+        server-side restore was verified on that exact shape.
         """
-        return {
+        item: Dict[str, Any] = {
             "type": "reasoning",
             "summary": [{"type": "summary_text", "text": text} for text in self.summary],
-            "encrypted_content": self.encrypted_content,
         }
+        if self.encrypted_content:
+            item["encrypted_content"] = self.encrypted_content
+        if self.content:
+            item["content"] = [{"type": "reasoning_text", "text": text} for text in self.content]
+            if self.item_id:
+                item["id"] = self.item_id
+        return item
 
     def to_anthropic(self) -> Dict[str, Any]:
         return {"type": "text", "text": "[Reasoning]"}
@@ -1268,8 +1292,15 @@ class Message:
         if isinstance(self.content, str):
             content = self.content
         elif isinstance(self.content, list):
-            # Exclude tool call and tool result blocks from assistant content; they are handled separately
-            non_tool_blocks = [item for item in self.content if not isinstance(item, (ToolCall, ToolResult))]
+            # Exclude tool call and tool result blocks from assistant content (handled
+            # separately) and Responses-API reasoning blocks: those only serialize on
+            # the Responses path (to_responses_item). Rendering them as placeholder
+            # text here gets echoed by the model — see _ECHOED_REASONING_PLACEHOLDER
+            # in agent/conversation.py. Reachable when a session moves between two
+            # models of one provider that span both API surfaces (flash -> pro).
+            non_tool_blocks = [
+                item for item in self.content if not isinstance(item, (ToolCall, ToolResult, ResponsesReasoningBlock))
+            ]
             if reasoning_field is not None:
                 thinking_blocks = [b for b in non_tool_blocks if isinstance(b, ThinkingBlock)]
                 rest_blocks = [b for b in non_tool_blocks if not isinstance(b, ThinkingBlock)]

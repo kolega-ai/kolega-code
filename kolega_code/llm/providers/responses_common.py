@@ -134,7 +134,8 @@ def to_responses_input(messages: MessageHistory) -> List[Dict[str, Any]]:
         tool_image_messages: List[Dict[str, Any]] = []
         for block in message.content or []:
             if isinstance(block, ResponsesReasoningBlock):
-                # Resend the model's prior reasoning (opaque encrypted blob) so it
+                # Resend the model's prior reasoning (opaque encrypted blob on
+                # OpenAI backends; raw reasoning_text on DeepSeek flash) so it
                 # continues its chain-of-thought across tool calls instead of
                 # re-deriving it every round — the key to matching Codex's
                 # thinking time. Reasoning items must precede the function_call
@@ -379,8 +380,9 @@ class ResponsesStreamWrapper:
         self._summary_line_buffer: List[str] = []
         self._summary_seen_delta_parts: set[tuple[str, int]] = set()
         self._summary_finished_parts: set[tuple[str, int]] = set()
-        # Completed reasoning items (with encrypted_content), in stream order, so
-        # they can be resent next turn for chain-of-thought continuity.
+        # Completed reasoning items (encrypted_content on OpenAI backends, plain
+        # reasoning_text content on DeepSeek flash), in stream order, so they can
+        # be resent next turn for chain-of-thought continuity.
         self._reasoning_items: List[Dict[str, Any]] = []
         self._final_response: Any = None
         self._function_calls: Dict[str, Dict[str, str]] = {}
@@ -737,31 +739,40 @@ class ResponsesStreamWrapper:
                 encrypted_content=item["encrypted_content"],
                 summary=item.get("summary") or [],
                 item_id=item.get("item_id"),
+                content=item.get("content") or [],
             )
             for item in items
         ]
 
     @staticmethod
-    def _reasoning_dict(item: Any) -> Optional[Dict[str, Any]]:
-        """Extract resend-relevant fields from a Responses reasoning item.
-
-        Only items carrying ``encrypted_content`` are useful for continuity, so
-        items without it are dropped. Summary parts (if any) are preserved so the
-        resent item matches what the backend returned.
-        """
-        encrypted = getattr(item, "encrypted_content", None)
-        if not encrypted:
-            return None
-        summary: List[str] = []
-        for part in getattr(item, "summary", None) or []:
+    def _part_texts(parts: Any) -> List[str]:
+        texts: List[str] = []
+        for part in parts or []:
             text = getattr(part, "text", None)
             if text is None and isinstance(part, dict):
                 text = part.get("text")
             if text:
-                summary.append(text)
+                texts.append(text)
+        return texts
+
+    @classmethod
+    def _reasoning_dict(cls, item: Any) -> Optional[Dict[str, Any]]:
+        """Extract resend-relevant fields from a Responses reasoning item.
+
+        An item is useful for continuity when it carries ``encrypted_content``
+        (OpenAI backends) or plain ``reasoning_text`` content parts (DeepSeek
+        flash exposes the raw chain-of-thought this way and returns no encrypted
+        blob). Items with neither are dropped. Summary parts (if any) are
+        preserved so the resent item matches what the backend returned.
+        """
+        encrypted = getattr(item, "encrypted_content", None)
+        content = cls._part_texts(getattr(item, "content", None))
+        if not encrypted and not content:
+            return None
         return {
             "encrypted_content": encrypted,
-            "summary": summary,
+            "summary": cls._part_texts(getattr(item, "summary", None)),
+            "content": content,
             "item_id": getattr(item, "id", None),
         }
 

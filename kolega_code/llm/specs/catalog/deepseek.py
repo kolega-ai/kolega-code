@@ -35,8 +35,16 @@ DEEPSEEK_SPECS = {
     # deepseek-v4-flash speaks the Responses API (see DeepSeekResponsesProvider), so its
     # reasoning effort must be emitted as the Responses `reasoning` block rather than the
     # Chat-Completions `reasoning_effort` field the shared Responses request builder ignores.
-    # DeepSeek's Responses API is stateless (no reasoning.encrypted_content), so this mode
-    # also correctly excludes flash from the flat reasoning_content replay path.
+    # This mode also correctly excludes flash from the flat reasoning_content replay path:
+    # flash's reasoning rides in Responses reasoning ITEMS instead. The endpoint returns no
+    # reasoning.encrypted_content (the include param is silently ignored) but exposes the
+    # raw chain-of-thought as plain reasoning_text content, which the stream wrapper
+    # retains and resends next turn (mirroring Codex, the client this endpoint was adapted
+    # for) — so the context gauge counts it from the history like any other content. The
+    # backend ALSO restores prior CoT server-side keyed on its own function_call call_ids,
+    # billing it as input and deduping explicit copies (verified live 2026-08-04); deep
+    # reasoning-bearing replays with a foreign call_id 400 with "reasoning_text must be
+    # passed back", minimal single-round histories with foreign ids are tolerated.
     ("deepseek", "deepseek-v4-flash"): {
         "context_length": 1000000,
         "max_completion_tokens": 384000,

@@ -10,12 +10,30 @@ provider routed to Responses wholesale.
 Request building, streaming, and token counting are shared with the OpenAI
 Responses providers via
 :class:`~kolega_code.llm.providers.responses_common.ResponsesProviderBase`; only the
-transport differs — a plain api key against ``api.deepseek.com``. DeepSeek's Responses
-API is stateless (no ``previous_response_id`` / ``reasoning.encrypted_content``), so
-there is no cross-turn reasoning continuity, but unsupported params (including the
-``include=["reasoning.encrypted_content"]`` the shared builder sends) are silently
-ignored, so the shared request builder works unmodified. The base URL is the bare
-host — DeepSeek's Responses guide uses ``https://api.deepseek.com`` (no ``/v1``).
+transport differs — a plain api key against ``api.deepseek.com``.
+
+Reasoning continuity: DeepSeek returns no ``reasoning.encrypted_content`` (the
+``include`` param the shared builder sends is silently ignored) but exposes the raw
+chain-of-thought as plain ``reasoning_text`` content on each reasoning item. The
+stream wrapper retains those items (``ResponsesReasoningBlock`` with ``content``)
+and resends them next turn — the exact shape Codex records and replays against
+this endpoint. The backend is NOT stateless despite its docs saying so: it ALSO
+re-attaches every prior round's chain-of-thought server-side, keyed on its own
+``function_call`` call_ids, bills it as input, and dedupes explicit resent copies
+(verified live 2026-08-04: with-vs-without replay of the same state billed
+identically; with 788 reasoning tokens in round N, round N+1's billed input grew by
+806 while a reasoning-free client history grew by 51). Retaining client-side keeps
+the context gauge honest (reasoning is counted from the history like any other
+content) and keeps continuity independent of the server store's unspecified
+retention. Passback is part of the documented thinking-mode contract, enforced
+only on reasoning-bearing histories: replaying a deep multi-round state with a
+foreign call_id 400s with "The reasoning_text in the thinking mode must be passed
+back to the API" (findings/flash-output-token-efficiency-levers.md), while a
+minimal single-round history with a foreign call_id — fabricated or a genuine
+flash id from another conversation — is simply tolerated (probed 2026-08-04).
+
+The base URL is the bare host — DeepSeek's Responses guide uses
+``https://api.deepseek.com`` (no ``/v1``).
 """
 
 from __future__ import annotations

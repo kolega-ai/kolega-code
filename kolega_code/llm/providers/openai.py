@@ -556,6 +556,8 @@ class OpenAIProvider(BaseLLMProvider):
                         num_tokens += len(encoding.encode(str(item.encrypted_content or "")))
                         for part in item.summary:
                             num_tokens += len(encoding.encode(str(part)))
+                        for part in item.content:
+                            num_tokens += len(encoding.encode(str(part)))
                     # Handle tool calls. OpenAI's prompt accounting uses a compact
                     # internal representation for assistant tool calls rather than
                     # charging the full Chat Completions JSON wrapper. Counting the
@@ -622,7 +624,12 @@ class OpenAIProvider(BaseLLMProvider):
         if isinstance(item, RedactedThinkingBlock):
             return ("rthink", len(str(item.data)))
         if isinstance(item, ResponsesReasoningBlock):
-            return ("rreason", len(str(item.encrypted_content or "")), tuple(len(str(p)) for p in item.summary))
+            return (
+                "rreason",
+                len(str(item.encrypted_content or "")),
+                tuple(len(str(p)) for p in item.summary),
+                tuple(len(str(p)) for p in item.content),
+            )
         if isinstance(item, ToolCall):
             payload = item.to_openai()
             function_payload = payload.get("function", {})
