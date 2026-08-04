@@ -23,6 +23,7 @@ kolega-code ask "<prompt>" [options]
 | `--json` | Emit complete messages and events as JSON |
 | `--browser-visible` | Launch visible Playwright browser windows |
 | `--permission-mode <auto\|ask>` | Shell/edit permission mode (default `auto`) |
+| `--web-search <auto\|hosted\|client\|off>` | Web tool mode: hosted server-side search, client tools, or none (default `auto`) |
 | `--session <ID>` | Resume or create a specific session |
 | `--state-dir <PATH>` | Directory for CLI session state |
 | `--worktree <PATH_OR_BRANCH>` | Start in an existing registered worktree |

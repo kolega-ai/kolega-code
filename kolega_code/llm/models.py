@@ -557,6 +557,107 @@ class ResponsesReasoningBlock(ContentBlock):
         return "*Reasoning*"
 
 
+@register_content_block
+class WebSearchCallBlock(ContentBlock):
+    """Hosted web-search call item from a Responses-API backend.
+
+    Emitted when the provider executes its server-side ``web_search`` tool
+    (``search`` / ``open_page`` actions). The searched or fetched content never
+    reaches the client — the server injects it into the model's context and
+    bills it as input tokens. The item itself carries only the action metadata
+    (queries or URL), and replaying it via :meth:`to_responses_item` is what
+    keys the server-side restore of that content on later turns (live-verified
+    for DeepSeek flash and api.openai.com; see
+    findings/no-web-tools-claim-verification.md, Phase-0 probes).
+
+    The ``action`` payload is stored verbatim so unknown future action types
+    replay untouched. Like ``ResponsesReasoningBlock``, the block is specific
+    to Responses-API providers: ``Message.to_openai`` (Chat Completions) omits
+    it, and cross-provider adaptation drops it for foreign targets.
+    """
+
+    TYPE_NAME = "web_search_call"
+
+    def __init__(
+        self,
+        item_id: Optional[str] = None,
+        status: Optional[str] = None,
+        action: Optional[Dict[str, Any]] = None,
+        cache_checkpoint: bool = False,
+    ):
+        super().__init__(type=self.TYPE_NAME, cache_checkpoint=cache_checkpoint)
+        self.item_id = item_id
+        self.status = status
+        self.action = dict(action or {})
+
+    @property
+    def action_type(self) -> Optional[str]:
+        return self.action.get("type")
+
+    @property
+    def queries(self) -> List[str]:
+        queries = self.action.get("queries")
+        return [str(q) for q in queries] if isinstance(queries, list) else []
+
+    @property
+    def url(self) -> Optional[str]:
+        url = self.action.get("url")
+        return str(url) if url else None
+
+    def to_dict(self) -> Dict[str, Any]:
+        result: Dict[str, Any] = {
+            "type": self.type,
+            "status": self.status,
+            "action": dict(self.action),
+        }
+        if self.item_id:
+            result["item_id"] = self.item_id
+        return result
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "WebSearchCallBlock":
+        return cls(
+            item_id=data.get("item_id"),
+            status=data.get("status"),
+            action=data.get("action") or {},
+        )
+
+    def to_responses_item(self) -> Dict[str, Any]:
+        """Serialize back to a Responses API ``web_search_call`` input item.
+
+        The id/status/action triple is the exact shape both backends accepted
+        in the Phase-0 replay probes; the id keys the server-side restore of
+        the searched content.
+        """
+        item: Dict[str, Any] = {
+            "type": "web_search_call",
+            "status": self.status,
+            "action": dict(self.action),
+        }
+        if self.item_id:
+            item["id"] = self.item_id
+        return item
+
+    def _label(self) -> str:
+        if self.queries:
+            return "search: " + ", ".join(repr(q) for q in self.queries)
+        if self.url:
+            return f"open_page: {self.url}"
+        return self.action_type or "web_search"
+
+    def to_anthropic(self) -> Dict[str, Any]:
+        return {"type": "text", "text": "[Web search]"}
+
+    def to_openai(self) -> Dict[str, Any]:
+        return {"type": "text", "text": "[Web search]"}
+
+    def to_google(self) -> genai_types.Part:
+        return genai_types.Part.from_text(text="[Web search]")
+
+    def to_markdown(self) -> str:
+        return f"*Web search — {self._label()}*"
+
+
 class ToolParameter:
     """Parameter definition for a tool"""
 
@@ -1293,13 +1394,16 @@ class Message:
             content = self.content
         elif isinstance(self.content, list):
             # Exclude tool call and tool result blocks from assistant content (handled
-            # separately) and Responses-API reasoning blocks: those only serialize on
-            # the Responses path (to_responses_item). Rendering them as placeholder
-            # text here gets echoed by the model — see _ECHOED_REASONING_PLACEHOLDER
-            # in agent/conversation.py. Reachable when a session moves between two
-            # models of one provider that span both API surfaces (flash -> pro).
+            # separately) and Responses-API-only blocks (reasoning, hosted web-search
+            # calls): those only serialize on the Responses path (to_responses_item).
+            # Rendering them as placeholder text here gets echoed by the model — see
+            # _ECHOED_REASONING_PLACEHOLDER in agent/conversation.py. Reachable when a
+            # session moves between two models of one provider that span both API
+            # surfaces (flash -> pro).
             non_tool_blocks = [
-                item for item in self.content if not isinstance(item, (ToolCall, ToolResult, ResponsesReasoningBlock))
+                item
+                for item in self.content
+                if not isinstance(item, (ToolCall, ToolResult, ResponsesReasoningBlock, WebSearchCallBlock))
             ]
             if reasoning_field is not None:
                 thinking_blocks = [b for b in non_tool_blocks if isinstance(b, ThinkingBlock)]

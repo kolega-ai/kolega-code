@@ -108,6 +108,31 @@ the [TUI](../../cli/overview/) or [`ask`](../../cli/ask/).
 
 ### Web
 
+Web access has four modes, set by `web_search_mode` in Settings, the
+`KOLEGA_CODE_WEB_SEARCH_MODE` environment variable, `ask --web-search`, or the
+TUI's `/web-search` command:
+
+- **auto** (default) — use the provider's **hosted** server-side web search when
+  the model supports it (currently DeepSeek flash and OpenAI gpt-5.x — API key
+  or ChatGPT subscription — over their Responses APIs), otherwise the client
+  tools below.
+- **hosted** — always request the server-side tool (falls back to client tools
+  with a warning if the model has no hosted support).
+- **client** — always use the client-side tools; never request the hosted tool.
+- **off** — no web tools at all.
+
+**Hosted mode** adds `{"type": "web_search"}` to the request and the provider
+executes searches and page-opens on its own servers, injecting the content
+directly into the model's context. The searched content never passes through
+Kolega (it is billed as input tokens, and the context gauge accounts for it from
+usage), and — because it executes on the provider's infrastructure — it is not
+subject to the local machine's or sandbox's network egress rules. Calls appear
+in the transcript as `web_search (hosted)`. When hosted search is active, the
+client tools below are not registered: two search paths confuse the model and
+waste schema tokens.
+
+**Client tools** run inside Kolega's own process:
+
 - `web_search` — search the web for relevant pages and return ranked results.
 - `web_fetch` — retrieve a URL, extract local-readable content, and answer an
   instruction with source evidence. It handles HTML, plain text, Markdown,

@@ -48,6 +48,7 @@ These control the app and your session.
 | `/login` | Sign in to a provider, e.g. `/login chatgpt` |
 | `/logout` | Sign out of a provider, e.g. `/logout chatgpt` |
 | `/gigacode` | Toggle [gigacode](../../gigacode/) workflow orchestration on or off |
+| `/web-search` | Show or set the web tool mode: `auto`, `hosted`, `client`, or `off` |
 | `/goal` | Set, show, or clear an autonomous completion goal |
 | `/loop` | Run a prompt on a repeating schedule |
 | `/tasks` | Show the shared task list |

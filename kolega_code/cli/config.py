@@ -52,6 +52,11 @@ API_KEY_ENV = {
 
 DEFAULT_WEB_SEARCH_BACKEND = "duckduckgo"
 WEB_SEARCH_BACKEND_ENV = "KOLEGA_CODE_WEB_SEARCH_BACKEND"
+# Web tool mode: auto (hosted server-side search when the model supports it,
+# else the client tools), hosted, client, or off (no web tools at all).
+WEB_SEARCH_MODES = ("auto", "hosted", "client", "off")
+DEFAULT_WEB_SEARCH_MODE = "auto"
+WEB_SEARCH_MODE_ENV = "KOLEGA_CODE_WEB_SEARCH_MODE"
 SEARXNG_BASE_URL_ENV = "SEARXNG_BASE_URL"
 # Env vars that supply a cloud web-search backend's key, keyed by backend name.
 SEARCH_BACKEND_KEY_ENV = {
@@ -77,6 +82,7 @@ class CliConfigOverrides:
     thinking_effort: Optional[str] = None
     environment: Optional[str] = None
     edit_protocol: Optional[str] = None
+    web_search_mode: Optional[str] = None
 
 
 def load_cli_env(project_path: Path, env: Optional[Mapping[str, str]] = None) -> dict[str, str]:
@@ -229,6 +235,24 @@ def _search_config(
     api_key = (env.get(env_name) if env_name else None) or (settings.get_api_key(backend) if settings else None)
     base_url = env.get(SEARXNG_BASE_URL_ENV) or (settings.web_search_base_url if settings else None)
     return backend, api_key, base_url
+
+
+def _web_search_mode(
+    env: Mapping[str, str],
+    settings: Optional[CliSettings],
+    override: Optional[str],
+) -> str:
+    """Resolve the web tool mode with flag-over-env-over-settings precedence."""
+    mode = (
+        override
+        or env.get(WEB_SEARCH_MODE_ENV)
+        or (settings.web_search_mode if settings else None)
+        or DEFAULT_WEB_SEARCH_MODE
+    ).lower()
+    if mode not in WEB_SEARCH_MODES:
+        valid = ", ".join(WEB_SEARCH_MODES)
+        raise CliConfigError(f"Unsupported web search mode '{mode}'. Valid modes: {valid}")
+    return mode
 
 
 def _coerce_known_model(provider: ModelProvider, model: Optional[str]) -> str:
@@ -488,6 +512,7 @@ def build_agent_config(
 
     agent_model_overrides = _agent_model_overrides(loaded_env, settings)
     web_search_backend, web_search_api_key, web_search_base_url = _search_config(loaded_env, settings)
+    web_search_mode = _web_search_mode(loaded_env, settings, overrides.web_search_mode)
     state_dir = settings_store.root if settings_store is not None else SettingsStore().root
     mcp_config = load_mcp_config(
         project_path,
@@ -544,6 +569,7 @@ def build_agent_config(
             fast_config=_model_config(fast_provider, fast_model),
             thinking_config=_model_config(thinking_provider, thinking_model, thinking_effort=think_hard_effort),
             agent_models=agent_model_overrides,
+            web_search_mode=web_search_mode,
             web_search_backend=web_search_backend,
             web_search_api_key=web_search_api_key,
             web_search_base_url=web_search_base_url,

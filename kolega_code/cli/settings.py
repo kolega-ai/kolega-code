@@ -103,6 +103,9 @@ class CliSettings:
     # WEB_SEARCH_KEY_NAMES keys.
     web_search_backend: Optional[str] = None
     web_search_base_url: Optional[str] = None
+    # Web tool mode (auto/hosted/client/off). Additive optional — absent ->
+    # None -> the "auto" default is applied downstream in cli/config.py.
+    web_search_mode: Optional[str] = None
     # ChatGPT-subscription OAuth credentials, keyed by provider value (e.g.
     # "openai_chatgpt"), each a serialized OAuthTokens dict. Additive optional
     # field — absent in older files -> empty mapping, no schema bump (same
@@ -147,6 +150,7 @@ class CliSettings:
             # Additive optional fields; absent in older files -> None -> default backend.
             web_search_backend=data.get("web_search_backend"),
             web_search_base_url=data.get("web_search_base_url"),
+            web_search_mode=data.get("web_search_mode"),
             # Additive optional field; absent in older files -> empty mapping.
             oauth_tokens=_coerce_oauth_tokens(data.get("oauth_tokens")),
             # Additive optional field; absent in older files -> ask.
@@ -172,6 +176,7 @@ class CliSettings:
             "trusted_lsp_projects": self.trusted_lsp_projects,
             "web_search_backend": self.web_search_backend,
             "web_search_base_url": self.web_search_base_url,
+            "web_search_mode": self.web_search_mode,
             "oauth_tokens": self.oauth_tokens,
             "permission_mode": _coerce_permission_mode(self.permission_mode),
             "lsp_enabled": self.lsp_enabled,

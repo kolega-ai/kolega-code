@@ -39,6 +39,19 @@ def supports_vision(provider: str, model_name: str) -> bool:
     return get_model_specs(provider, model_name).get("supports_vision", False)
 
 
+def supports_hosted_web_search(provider: str, model_name: str) -> bool:
+    """Whether the model's API surface executes a hosted ``web_search`` tool.
+
+    True only for Responses-API models whose backend accepts
+    ``tools: [{"type": "web_search"}]`` and runs it server-side (verified per
+    provider by findings/probes/hosted_web_search_probe.py). Defaults to
+    ``False`` — including for unknown models — so the hosted tool is never
+    requested from a backend that would reject or ignore it.
+    """
+    specs = MODEL_SPECS.get((_provider_value(provider), model_name))
+    return bool(specs and specs.get("supports_hosted_web_search", False))
+
+
 def get_thinking_effort_spec(provider: str, model_name: str) -> Optional[ThinkingEffortSpec]:
     """Return the thinking effort spec for a model, if it supports a public control."""
     return get_model_specs(provider, model_name).get("thinking_effort")

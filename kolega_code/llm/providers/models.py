@@ -19,3 +19,6 @@ class GenerationParams:
     max_completion_tokens: Optional[int] = None
     tools: Optional[List["ToolDefinition"]] = None
     thinking: Optional[Any] = None
+    # Ask the provider to expose its server-side web_search tool (Responses
+    # APIs only; other providers ignore the field).
+    hosted_web_search: bool = False

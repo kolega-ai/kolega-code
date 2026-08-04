@@ -157,6 +157,7 @@ class KolegaAppBase(App):
         _plan_reofferable: bool
         _plan_decision_active: bool
         _gigacode_enabled: bool
+        _web_search_mode: str | None
         _usage_ledger: UsageLedger
         _goal: GoalState | None
         _goal_usage_mark: UsageSnapshot

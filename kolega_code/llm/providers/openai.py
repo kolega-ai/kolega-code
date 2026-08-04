@@ -21,6 +21,7 @@ from ..models import (
     ToolCall,
     ToolDefinition,
     ToolResult,
+    WebSearchCallBlock,
 )
 from ..specs import MODEL_SPECS, build_thinking_request_params, deepseek_output_token_cap, is_deepseek_model
 from ..timeouts import streaming_timeout
@@ -558,6 +559,15 @@ class OpenAIProvider(BaseLLMProvider):
                             num_tokens += len(encoding.encode(str(part)))
                         for part in item.content:
                             num_tokens += len(encoding.encode(str(part)))
+                    # Hosted web_search_call items replay their id/status/action
+                    # triple. Only that metadata is counted here — the searched
+                    # content itself lives server-side and is accounted for by
+                    # the agent's hosted-search residual, not the history count.
+                    elif isinstance(item, WebSearchCallBlock):
+                        num_tokens += len(encoding.encode(str(item.item_id or "")))
+                        num_tokens += len(encoding.encode(str(item.status or "")))
+                        num_tokens += len(encoding.encode(json.dumps(item.action, sort_keys=True)))
+                        num_tokens += 2  # Compact formatting overhead
                     # Handle tool calls. OpenAI's prompt accounting uses a compact
                     # internal representation for assistant tool calls rather than
                     # charging the full Chat Completions JSON wrapper. Counting the
@@ -629,6 +639,13 @@ class OpenAIProvider(BaseLLMProvider):
                 len(str(item.encrypted_content or "")),
                 tuple(len(str(p)) for p in item.summary),
                 tuple(len(str(p)) for p in item.content),
+            )
+        if isinstance(item, WebSearchCallBlock):
+            return (
+                "wsc",
+                len(str(item.item_id or "")),
+                len(str(item.status or "")),
+                len(json.dumps(item.action, sort_keys=True)),
             )
         if isinstance(item, ToolCall):
             payload = item.to_openai()

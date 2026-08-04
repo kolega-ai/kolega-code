@@ -50,6 +50,11 @@ DEEPSEEK_SPECS = {
         "max_completion_tokens": 384000,
         "default_temperature": 1.0,
         "supports_vision": False,
+        # /responses executes {"type": "web_search"} server-side (search +
+        # open_page) and restores the searched content on replay of the
+        # web_search_call items, billed as input (verified live 2026-08-04,
+        # findings/probes/hosted_web_search_probe.py).
+        "supports_hosted_web_search": True,
         "preferred_edit_protocol": "claude_code",
         "thinking_effort": ThinkingEffortSpec(
             options=("none", "high", "max"),

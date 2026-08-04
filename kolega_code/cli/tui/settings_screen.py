@@ -338,8 +338,21 @@ class SettingsScreen(ModalScreen[None]):
             with Vertical(classes="settings-section", id="settings_web_search") as search_section:
                 search_section.border_title = "Web Search"
                 yield Static(
-                    "Choose the backend used by the web_search tool.",
+                    "Mode picks who searches: hosted runs the provider's server-side web_search "
+                    "tool (Responses-API models); client uses the local web_search/web_fetch tools.",
                     classes="settings-hint",
+                )
+                yield Label("Mode")
+                yield Select(
+                    [
+                        ("Auto (hosted when the model supports it)", "auto"),
+                        ("Hosted (server-side)", "hosted"),
+                        ("Client tools", "client"),
+                        ("Off (no web tools)", "off"),
+                    ],
+                    id="web_search_mode_select",
+                    allow_blank=False,
+                    value="auto",
                 )
                 yield Label("Backend")
                 yield Select(

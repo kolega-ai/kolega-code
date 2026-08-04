@@ -285,6 +285,7 @@ class LLMClient:
         tools: Optional[List[ToolDefinition]] = None,
         thinking: Optional[Union[int, str]] = None,
         params: Optional[GenerationParams] = None,
+        hosted_web_search: bool = False,
         **kwargs: Any,
     ) -> Message:
         """Generate a complete response from the LLM provider.
@@ -297,6 +298,8 @@ class LLMClient:
             tools (Optional[List[Dict[str, Any]]]): List of tool definitions for function calling
             thinking (Optional[Union[int, str]]): Model-specific thinking effort string.
             params (Optional[GenerationParams]): Override all parameters with a GenerationParams object
+            hosted_web_search (bool): Expose the provider's server-side web_search
+                tool (Responses APIs only; ignored elsewhere).
             **kwargs: Additional provider-specific parameters
 
         Returns:
@@ -314,6 +317,7 @@ class LLMClient:
                     thinking=self._prepare_thinking_param(
                         thinking, str(kwargs.get("model")) if kwargs.get("model") else None
                     ),
+                    hosted_web_search=hosted_web_search,
                 )
             if self._usage_ledger is None:
                 return await self.provider.generate(messages, system, params, **kwargs)
@@ -340,6 +344,7 @@ class LLMClient:
         tools: Optional[List[ToolDefinition]] = None,
         thinking: Optional[Union[int, str]] = None,
         params: Optional[GenerationParams] = None,
+        hosted_web_search: bool = False,
         **kwargs: Any,
     ) -> Union[AsyncContextManager[Any], Coroutine[Any, Any, AsyncContextManager[Any]]]:
         """Generate a streaming response from the LLM provider.
@@ -352,6 +357,8 @@ class LLMClient:
             tools (Optional[List[Dict[str, Any]]]): List of tool definitions for function calling
             thinking (Optional[Union[int, str]]): Model-specific thinking effort string.
             params (Optional[GenerationParams]): Override all parameters with a GenerationParams object
+            hosted_web_search (bool): Expose the provider's server-side web_search
+                tool (Responses APIs only; ignored elsewhere).
             **kwargs: Additional provider-specific parameters
 
         Returns:
@@ -369,6 +376,7 @@ class LLMClient:
                     thinking=self._prepare_thinking_param(
                         thinking, str(kwargs.get("model")) if kwargs.get("model") else None
                     ),
+                    hosted_web_search=hosted_web_search,
                 )
 
             # Return the appropriate stream type for the provider

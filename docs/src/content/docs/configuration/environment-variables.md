@@ -126,6 +126,7 @@ explicitly when you want a cloud provider or a self-hosted SearXNG instance.
 
 | Variable | Purpose |
 | --- | --- |
+| `KOLEGA_CODE_WEB_SEARCH_MODE` | Web tool mode: `auto` (hosted server-side search when the model supports it, else client tools), `hosted`, `client`, or `off` |
 | `KOLEGA_CODE_WEB_SEARCH_BACKEND` | Backend for `web_search`: `duckduckgo`, `firecrawl`, `tavily`, or `searxng` |
 | `FIRECRAWL_API_KEY` | Optional Firecrawl key for higher rate limits |
 | `TAVILY_API_KEY` | Tavily API key |

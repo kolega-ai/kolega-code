@@ -871,11 +871,17 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
 
     def _populate_web_search_controls(self) -> None:
         """Seed the Web Search controls from saved settings (key field stays blank)."""
+        from kolega_code.cli.config import DEFAULT_WEB_SEARCH_MODE, WEB_SEARCH_MODES
+
         valid = {name for _, name in available_backends()}
         backend = self.settings.web_search_backend
         if backend not in valid:
             backend = DEFAULT_WEB_SEARCH_BACKEND
+        mode = self.settings.web_search_mode
+        if mode not in WEB_SEARCH_MODES:
+            mode = DEFAULT_WEB_SEARCH_MODE
         try:
+            self._settings_query_one("#web_search_mode_select", Select).value = mode
             self._settings_query_one("#web_search_backend_select", Select).value = backend
             self._settings_query_one("#web_search_base_url_input", Input).value = (
                 self.settings.web_search_base_url or ""
@@ -888,11 +894,13 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
     def _collect_web_search_from_ui(self) -> None:
         """Write the Web Search controls into settings (keys only when newly typed)."""
         try:
+            mode = str(self._settings_query_one("#web_search_mode_select", Select).value)
             backend = str(self._settings_query_one("#web_search_backend_select", Select).value)
             base_url_input = self._settings_query_one("#web_search_base_url_input", Input)
             key_input = self._settings_query_one("#web_search_api_key_input", Input)
         except NoMatches:
             return
+        self.settings.web_search_mode = mode
         self.settings.web_search_backend = backend
         self.settings.web_search_base_url = base_url_input.value.strip() or None
         key = key_input.value.strip()

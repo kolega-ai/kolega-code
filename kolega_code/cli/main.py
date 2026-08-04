@@ -72,6 +72,7 @@ from .browser_backend import build_browser_manager
 from .diagnostics import write_crash_log
 from .config import (
     DEPRECATED_THINKING_TOKENS_MESSAGE,
+    WEB_SEARCH_MODES,
     CliConfigError,
     CliConfigOverrides,
     active_model_override_message,
@@ -408,6 +409,13 @@ def _build_subcommand_parser() -> argparse.ArgumentParser:
         help="Disable the persistent project-memory tools (read/list/write/edit/delete memory). "
         "Use for headless or benchmark runs where there is no durable memory store to read or write.",
     )
+    ask.add_argument(
+        "--web-search",
+        choices=list(WEB_SEARCH_MODES),
+        default=None,
+        help="Web tool mode: auto (hosted server-side search when the model supports it, else the "
+        "client web_search/web_fetch tools), hosted, client, or off (no web tools).",
+    )
     ask.add_argument("--save", action="store_true", help="Persist the session after the prompt completes.")
     ask.add_argument("--json", action="store_true", help="Emit complete messages and events as JSON.")
     ask.add_argument("--browser-visible", action="store_true", help="Launch visible Playwright browser windows.")
@@ -621,6 +629,7 @@ def _overrides_from_args(args: argparse.Namespace) -> CliConfigOverrides:
         thinking_effort=getattr(args, "thinking_effort", None),
         environment=getattr(args, "environment", None),
         edit_protocol=getattr(args, "edit_protocol", None),
+        web_search_mode=getattr(args, "web_search", None),
     )
 
 
@@ -1359,6 +1368,13 @@ async def _run_ask(args: argparse.Namespace) -> int:
     if gigacode_enabled:
         agent.apply_gigacode(True, gigacode_prompt_extension())
     session.gigacode_enabled = gigacode_enabled
+    # Web tool mode: an explicit --web-search flag already reached the agent via
+    # AgentConfig; otherwise a resumed session keeps its persisted mode, exactly
+    # as the TUI's /web-search toggle persists.
+    flag_web_search = getattr(args, "web_search", None)
+    if not flag_web_search and session.web_search_mode:
+        agent.apply_web_search_mode(session.web_search_mode)
+    session.web_search_mode = flag_web_search or session.web_search_mode
     lsp_messages = await agent.tool_collection.initialize()
     if not args.json:
         for msg in lsp_messages:

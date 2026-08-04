@@ -17,6 +17,7 @@ from kolega_code.llm.models import (
     ThinkingBlock,
     ToolCall,
     ToolResult,
+    WebSearchCallBlock,
 )
 
 
@@ -352,6 +353,9 @@ def test_images_and_provider_opaque_fields_are_hydrated_from_artifacts(tmp_path:
             content=[
                 ThinkingBlock("private", signature="signed-provider-value"),
                 ResponsesReasoningBlock("encrypted-provider-value", summary=["summary"]),
+                WebSearchCallBlock(
+                    item_id="ws_1", status="completed", action={"type": "search", "queries": ["release notes"]}
+                ),
                 ToolCall(id="call", name="noop", input={}, thought_signature=b"thought-bytes"),
             ],
         ),
@@ -367,8 +371,11 @@ def test_images_and_provider_opaque_fields_are_hydrated_from_artifacts(tmp_path:
     assert loaded[1].content[0].signature == "signed-provider-value"
     assert isinstance(loaded[1].content[1], ResponsesReasoningBlock)
     assert loaded[1].content[1].encrypted_content == "encrypted-provider-value"
-    assert isinstance(loaded[1].content[2], ToolCall)
-    assert loaded[1].content[2].thought_signature == b"thought-bytes"
+    assert isinstance(loaded[1].content[2], WebSearchCallBlock)
+    assert loaded[1].content[2].item_id == "ws_1"
+    assert loaded[1].content[2].action == {"type": "search", "queries": ["release notes"]}
+    assert isinstance(loaded[1].content[3], ToolCall)
+    assert loaded[1].content[3].thought_signature == b"thought-bytes"
     raw_events = store.events_path_for(record.session_id).read_text(encoding="utf-8")
     assert image_data not in raw_events
     assert "signed-provider-value" not in raw_events

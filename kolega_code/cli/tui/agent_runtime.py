@@ -1212,6 +1212,10 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         assert agent.tool_collection is not None
         await agent.tool_collection.initialize()
         agent.gigacode_enabled = gigacode_active
+        # A session-level /web-search override outlives agent rebuilds (model
+        # switches); without one the config-resolved mode stands.
+        if self._web_search_mode:
+            agent.apply_web_search_mode(self._web_search_mode)
         self._initialize_ledger_diff_tracker()
         if history:
             self.agent.restore_message_history(history)

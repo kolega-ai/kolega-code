@@ -569,6 +569,76 @@ def test_eval_tool_hidden_when_disabled(project_path, mock_connection_manager, a
     assert "eval" not in tool_names
 
 
+def _coder(project_path, mock_connection_manager, agent_config):
+    return CoderAgent(
+        project_path=project_path,
+        workspace_id="test_workspace",
+        thread_id=str(uuid.uuid4()),
+        connection_manager=mock_connection_manager,
+        config=agent_config,
+        agent_mode=AgentMode.CLI,
+    )
+
+
+def _with_hosted_support(monkeypatch):
+    """Mark the fixture model hosted-web-search-capable in the catalog."""
+    from kolega_code.llm.specs import MODEL_SPECS
+
+    key = ("anthropic", "claude-sonnet-4-5-20250929")
+    monkeypatch.setitem(MODEL_SPECS, key, {**MODEL_SPECS[key], "supports_hosted_web_search": True})
+
+
+def test_web_tools_present_when_auto_without_hosted_support(project_path, mock_connection_manager, agent_config):
+    """auto on a model without hosted search keeps the client web tools (today's set)."""
+    agent_config.web_search_mode = "auto"
+    agent = _coder(project_path, mock_connection_manager, agent_config)
+    tool_names = {tool.name for tool in agent.tool_collection.get_tool_list()}
+    assert {"web_search", "web_fetch"} <= tool_names
+    assert agent.hosted_web_search_active is False
+
+
+def test_web_tools_hidden_when_mode_off(project_path, mock_connection_manager, agent_config):
+    """off removes both client web tools and never requests the hosted tool."""
+    agent_config.web_search_mode = "off"
+    agent = _coder(project_path, mock_connection_manager, agent_config)
+    tool_names = {tool.name for tool in agent.tool_collection.get_tool_list()}
+    assert "web_search" not in tool_names
+    assert "web_fetch" not in tool_names
+    assert agent.hosted_web_search_active is False
+
+
+def test_web_tools_hidden_when_hosted_supported_on_auto(
+    project_path, mock_connection_manager, agent_config, monkeypatch
+):
+    """auto on a hosted-capable model swaps the client tools for the hosted one."""
+    _with_hosted_support(monkeypatch)
+    agent_config.web_search_mode = "auto"
+    agent = _coder(project_path, mock_connection_manager, agent_config)
+    tool_names = {tool.name for tool in agent.tool_collection.get_tool_list()}
+    assert "web_search" not in tool_names
+    assert "web_fetch" not in tool_names
+    assert agent.hosted_web_search_active is True
+
+
+def test_mode_hosted_unsupported_falls_back_to_client(project_path, mock_connection_manager, agent_config):
+    """hosted on a model without support degrades to the client tools, not to no-web."""
+    agent_config.web_search_mode = "hosted"
+    agent = _coder(project_path, mock_connection_manager, agent_config)
+    tool_names = {tool.name for tool in agent.tool_collection.get_tool_list()}
+    assert {"web_search", "web_fetch"} <= tool_names
+    assert agent.hosted_web_search_active is False
+
+
+def test_mode_client_wins_even_when_hosted_supported(project_path, mock_connection_manager, agent_config, monkeypatch):
+    """client pins today's behavior regardless of model capability."""
+    _with_hosted_support(monkeypatch)
+    agent_config.web_search_mode = "client"
+    agent = _coder(project_path, mock_connection_manager, agent_config)
+    tool_names = {tool.name for tool in agent.tool_collection.get_tool_list()}
+    assert {"web_search", "web_fetch"} <= tool_names
+    assert agent.hosted_web_search_active is False
+
+
 def test_shared_tool_names_are_well_formed(project_path, mock_connection_manager, agent_config):
     """Shared agent tool definitions have valid names and descriptions."""
     agents = [

@@ -56,6 +56,9 @@ class SessionRecord:
     interaction_mode: str = "build"
     permission_mode: str = "ask"
     gigacode_enabled: bool = False
+    # Web tool mode for the session (auto/hosted/client/off). Additive optional
+    # — absent in older files -> None -> the config-resolved mode applies.
+    web_search_mode: Optional[str] = None
     goal: dict[str, Any] = field(default_factory=dict)
     loop: dict[str, Any] = field(default_factory=dict)
     schema_version: int = SCHEMA_VERSION
@@ -114,6 +117,7 @@ class SessionRecord:
             interaction_mode=data.get("interaction_mode") or "build",
             permission_mode=data.get("permission_mode") or "ask",
             gigacode_enabled=bool(data.get("gigacode_enabled", False)),
+            web_search_mode=data.get("web_search_mode") or None,
             goal=data.get("goal") or {},
             loop=data.get("loop") or {},
             active_project_path=data.get("active_project_path") or None,
@@ -138,6 +142,7 @@ class SessionRecord:
             "interaction_mode": self.interaction_mode,
             "permission_mode": self.permission_mode,
             "gigacode_enabled": self.gigacode_enabled,
+            "web_search_mode": self.web_search_mode,
             "goal": self.goal,
             "loop": self.loop,
             "active_project_path": self.active_project_path,
