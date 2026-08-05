@@ -1525,19 +1525,29 @@ async def _run_ask(args: argparse.Namespace) -> int:
         # In --json mode, emit one line per COMPLETED assistant message rather
         # than streaming chunks: the agent appends each message to history
         # before yielding its final chunk, so a drain on every completed
-        # response chunk sees exactly the finished messages.
+        # response chunk sees exactly the finished messages. Hosted web search
+        # also flushes a complete response chunk mid-stream (segment rotation
+        # at each web_search_call), before any message has landed — so the
+        # lost-text fallback applies only at end of turn, and only when the
+        # whole turn emitted no message; draining it mid-stream would emit the
+        # pre-search text twice (once synthetic, once inside the real message).
         message_emitter = AskMessageEmitter(agent)
 
         async def _consume_turn(stream) -> None:
+            emitted_before = message_emitter.emitted_total
+            last_text_chunk: Optional[dict] = None
             async for chunk in stream:
                 response_chunks.append(chunk)
                 if args.json:
                     if chunk.get("type") == "response" and chunk.get("complete"):
-                        message_emitter.drain(fallback_chunk=chunk)
+                        if chunk.get("content"):
+                            last_text_chunk = chunk
+                        message_emitter.drain()
                 elif chunk.get("type") == "response" and chunk.get("content"):
                     print(chunk["content"], end="" if not chunk.get("complete") else "\n")
             if args.json:
-                message_emitter.drain()
+                fallback = last_text_chunk if message_emitter.emitted_total == emitted_before else None
+                message_emitter.drain(fallback_chunk=fallback)
 
         stream = (
             agent.process_message_stream(turn_prompt, attachments)

@@ -16,6 +16,10 @@ This project uses GitHub Releases for detailed generated release notes. This fil
   rows (think → search → think → answer). Resumed sessions now render hosted
   `web_search (hosted)` rows from history too — previously they were dropped
   from the restored transcript.
+- `ask --json` no longer emits spurious synthetic message fragments when
+  hosted web search flushes response text mid-stream: the lost-text fallback
+  now applies once at end of turn, and only when the turn produced no
+  assistant message.
 
 ### Added
 
