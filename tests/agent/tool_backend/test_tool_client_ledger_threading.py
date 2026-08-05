@@ -1,18 +1,15 @@
 """Every helper that constructs its own LLM client must thread the caller's
-usage_ledger into it: think_hard (both branches), web_fetch, the terminal
-security check, and hook prompt runners."""
+usage_ledger into it: web_fetch, the terminal security check, and hook prompt
+runners."""
 
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import Mock
 
 import pytest
 
-from kolega_code.events import AgentConnectionManager
 from kolega_code.agent.tool_backend import terminal_tool as terminal_tool_module
-from kolega_code.agent.tool_backend import think_hard_tool as think_hard_module
 from kolega_code.agent.tool_backend import web_fetch_tool as web_fetch_module
-from kolega_code.agent.tool_backend.think_hard_tool import ThinkHardTool
 from kolega_code.agent.tool_backend.web_fetch_tool import WebFetchTool
 from kolega_code.agent.tool_backend.terminal_tool import TerminalTool
 from kolega_code.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
@@ -60,65 +57,6 @@ def _reset_capture():
     _CapturingClient.captured = []
     yield
     _CapturingClient.captured = []
-
-
-@pytest.mark.asyncio
-async def test_think_hard_plain_branch_threads_ledger(monkeypatch):
-    caller = Mock()
-    caller.agent_name = "test_agent"
-    caller.usage_ledger = SENTINEL_LEDGER
-    caller.llm = object()  # not an InstrumentedLLMClient -> plain branch
-    tool = ThinkHardTool(
-        project_path="/tmp",
-        workspace_id="ws",
-        thread_id="th",
-        connection_manager=AsyncMock(spec=AgentConnectionManager),
-        config=_config(),
-        caller=caller,
-    )
-    tool.log_info = AsyncMock()
-    tool.log_error = AsyncMock()
-    monkeypatch.setattr(think_hard_module, "LLMClient", _CapturingClient)
-
-    await tool.think_hard("problem")  # client.stream raises; tool swallows into its error result
-
-    assert len(_CapturingClient.captured) == 1
-    assert _CapturingClient.captured[0]["usage_ledger"] is SENTINEL_LEDGER
-
-
-@pytest.mark.asyncio
-async def test_think_hard_instrumented_branch_threads_ledger(monkeypatch):
-    class _CapturingInstrumented(_CapturingClient):
-        pass
-
-    caller_llm = _CapturingInstrumented()
-    _CapturingClient.captured = []  # ignore the fixture instance above
-    caller_llm.langfuse = Mock()
-    caller_llm.environment = "test"
-    caller = Mock()
-    caller.agent_name = "test_agent"
-    caller.workspace_id = "ws"
-    caller.thread_id = "th"
-    caller.user_id = "u"
-    caller.user_email = "u@example.com"
-    caller.usage_ledger = SENTINEL_LEDGER
-    caller.llm = caller_llm
-    tool = ThinkHardTool(
-        project_path="/tmp",
-        workspace_id="ws",
-        thread_id="th",
-        connection_manager=AsyncMock(spec=AgentConnectionManager),
-        config=_config(),
-        caller=caller,
-    )
-    tool.log_info = AsyncMock()
-    tool.log_error = AsyncMock()
-    monkeypatch.setattr(think_hard_module, "InstrumentedLLMClient", _CapturingInstrumented)
-
-    await tool.think_hard("problem")
-
-    assert len(_CapturingClient.captured) == 1
-    assert _CapturingClient.captured[0]["usage_ledger"] is SENTINEL_LEDGER
 
 
 @pytest.mark.parametrize("instrumented", [False, True])

@@ -141,7 +141,7 @@ can match cost and capability to the job:
 | --- | --- | --- |
 | **Long context** | The main coding model — drives the conversation and most work | The active model you selected |
 | **Fast** | Quick, cheap utility calls (e.g. `web_fetch`'s page-answering stage) | Inherits the active model |
-| **Thinking** | Extended-reasoning ("think hard") operations | Inherits the active model |
+| **Thinking** | Background completions, e.g. `prompt` hooks that request the slot | Inherits the active model |
 
 An unset slot **inherits the active model**, so out of the box all three run on
 your main model. Pin the Fast or Thinking slot when you want a cheaper or

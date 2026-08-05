@@ -62,7 +62,6 @@ def tool_collection(
     )
 
     # Mock all tool methods
-    collection.think_hard_tool.think_hard = AsyncMock()
     collection.edit_tool.edit = AsyncMock()
     collection.edit_tool.multi_edit = AsyncMock()
     collection.edit_tool.write = AsyncMock()

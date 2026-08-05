@@ -15,6 +15,16 @@ This project uses GitHub Releases for detailed generated release notes. This fil
   Applying a pending action with `resolve` now also goes through the same
   edit-permission prompt as `edit`, `lsp_edit`, and `write`.
 
+### Removed
+
+- The `think_hard` tool is gone from the agent toolset: the `ThinkHardTool`
+  backend, its `auxiliary/tools/think_hard.system.md` prompt template, the
+  `ToolCollection.think_hard` method and its `read_only_tools` registration, and
+  the `THINK_HARD_PROMPT` constant were deleted, and the investigation agent's
+  tool list and the tools docs no longer name it. The thinking model slot stays
+  for `prompt` hooks that request it (`"model": "thinking"`), selected as before
+  via `--thinking-provider`/`--thinking-model`.
+
 ## 0.26.10 - 2026-08-05
 
 ### Added

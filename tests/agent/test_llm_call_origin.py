@@ -4,7 +4,7 @@ wraps, and ContextVar semantics (task inheritance, shadowing)."""
 import asyncio
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -137,48 +137,3 @@ async def test_compression_summarizer_runs_under_helper_origin(tmp_path):
     result = await agent.compress_history()
     assert result.ok
     assert seen and seen[0] is not None and seen[0].helper == "compression"
-
-
-@pytest.mark.asyncio
-async def test_think_hard_runs_under_helper_origin(monkeypatch):
-    from kolega_code.agent.tool_backend import think_hard_tool as think_hard_module
-    from kolega_code.agent.tool_backend.think_hard_tool import ThinkHardTool
-    from kolega_code.config import AgentConfig, ModelConfig, ModelProvider, RateLimitConfig
-    from kolega_code.events import AgentConnectionManager
-
-    seen: list = []
-
-    class _Capturing:
-        def __init__(self, **kwargs):
-            pass
-
-        def stream(self, **kwargs):
-            async def _fail():
-                seen.append(current_llm_call_origin())
-                raise RuntimeError("stop here")
-
-            return _fail()
-
-    caller = Mock()
-    caller.agent_name = "t"
-    caller.usage_ledger = None
-    caller.llm = object()
-    tool = ThinkHardTool(
-        project_path="/tmp",
-        workspace_id="w",
-        thread_id="t",
-        connection_manager=AsyncMock(spec=AgentConnectionManager),
-        config=AgentConfig(
-            anthropic_api_key="k",
-            thinking_config=ModelConfig(
-                provider=ModelProvider.ANTHROPIC, model="claude-opus-5", rate_limits=RateLimitConfig()
-            ),
-        ),
-        caller=caller,
-    )
-    tool.log_info = AsyncMock()
-    tool.log_error = AsyncMock()
-    monkeypatch.setattr(think_hard_module, "LLMClient", _Capturing)
-
-    await tool.think_hard("problem")  # error swallowed into the tool result
-    assert seen and seen[0].helper == "think_hard"

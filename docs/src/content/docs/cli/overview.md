@@ -115,8 +115,8 @@ for the run.
 | `--model` | Main coding model |
 | `--fast-provider` | Provider for fast utility calls |
 | `--fast-model` | Fast utility model |
-| `--thinking-provider` | Provider for think-hard operations |
-| `--thinking-model` | Model for think-hard operations |
+| `--thinking-provider` | Provider for the thinking model slot |
+| `--thinking-model` | Model for the thinking model slot |
 | `--thinking-effort` | Model-specific thinking effort, such as `auto`, `medium`, `high`, or `max` |
 | `--edit-protocol` | Override the model-facing edit language with `search_replace`, `codex_apply_patch`, or `claude_code` |
 | `--environment` | Environment label for tracing/metadata |

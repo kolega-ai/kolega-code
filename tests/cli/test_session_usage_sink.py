@@ -139,7 +139,7 @@ async def test_history_response_skipped_but_history_failure_journaled(tmp_path):
 @pytest.mark.asyncio
 async def test_message_none_settlement_still_journaled(tmp_path):
     store, session, _recorder, ledger, sink = await _harness(tmp_path)
-    with llm_call_origin(helper_origin("think_hard")):
+    with llm_call_origin(helper_origin("web_fetch")):
         request_id = ledger.begin("openai", "gpt-5.4-mini")
     ledger.record_response(request_id, None)
     await sink.aclose()
@@ -233,7 +233,7 @@ async def test_opaque_provider_fields_externalized_like_assistant_message(tmp_pa
         content=[ThinkingBlock(thinking="secret reasoning", signature="opaque-signature"), TextBlock(text="done")],
         usage=_usage(),
     )
-    with llm_call_origin(helper_origin("think_hard")):
+    with llm_call_origin(helper_origin("web_fetch")):
         request_id = ledger.begin("anthropic", "m")
     ledger.record_response(request_id, _usage(), message=message)
     await sink.aclose()

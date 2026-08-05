@@ -527,7 +527,7 @@ def build_agent_config(
         overrides,
         settings,
     )
-    think_hard_effort = (
+    thinking_slot_effort = (
         active_thinking_effort if thinking_provider == long_provider and thinking_model == long_model else None
     )
 
@@ -588,7 +588,7 @@ def build_agent_config(
             edit_protocol=edit_protocol,
             long_context_config=_model_config(long_provider, long_model, thinking_effort=active_thinking_effort),
             fast_config=_model_config(fast_provider, fast_model),
-            thinking_config=_model_config(thinking_provider, thinking_model, thinking_effort=think_hard_effort),
+            thinking_config=_model_config(thinking_provider, thinking_model, thinking_effort=thinking_slot_effort),
             agent_models=agent_model_overrides,
             web_search_mode=web_search_mode,
             web_search_backend=web_search_backend,

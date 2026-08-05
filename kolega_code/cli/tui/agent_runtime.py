@@ -529,7 +529,7 @@ class AgentRuntimeMixin(tui_app_base.KolegaAppBase):
         """Fold all LLM usage since the last drain into the active goal.
 
         The ledger covers every nested caller (verifier sub-agents, compression,
-        think_hard, web-fetch, hooks), so a drain at each goal boundary counts
+        web-fetch, hooks), so a drain at each goal boundary counts
         the whole command tree — including turns run while the goal was active.
         """
         current = self._usage_ledger.snapshot()

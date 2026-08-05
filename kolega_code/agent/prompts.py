@@ -37,7 +37,6 @@ def render_prompt_template(template_name: str, **variables: Any) -> str:
     return _prompt_template(template_name).render(**variables).strip()
 
 
-THINK_HARD_PROMPT = render_prompt_template("auxiliary/tools/think_hard.system.md")
 COMPRESSION_SUMMARY_SYSTEM_PROMPT = render_prompt_template("auxiliary/compression/summary.system.md")
 SHELL_SAFETY_SYSTEM_PROMPT = render_prompt_template("auxiliary/terminal/safety.system.md")
 SHELL_COMPRESSION_SYSTEM_PROMPT = render_prompt_template("auxiliary/terminal/output_summary.system.md")
