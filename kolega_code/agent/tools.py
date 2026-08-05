@@ -2191,45 +2191,14 @@ class ToolCollection(LogMixin):
         )
 
     async def get_host(self, port: int) -> str:
-        """
-        Get the hostname for accessing a service on the specified port.
-
-        This tool returns the appropriate hostname based on the environment:
-        - In local development: returns 'localhost:PORT'
-        - In cloud sandbox (e2b): returns the sandbox-specific hostname
-
-        When to use this tool:
-        - Before accessing any web service or development server
-        - When constructing URLs for HTTP requests
-        - When providing URLs to users or other tools
-        - When launching browsers to access local services
-
-        Usage notes:
-        1. Always call this tool before making HTTP requests to local services
-        2. The port parameter is required - specify the port your service is running on
-        3. Use the returned hostname to construct full URLs (e.g., http://{host}/api/endpoint)
-        4. This ensures your code works in both local and cloud sandbox environments
-
-        Args:
-            port: The port number where the service is running
-
-        Returns:
-            The full hostname including port (e.g., 'localhost:3000' or 'xxxx.e2b.dev')
-        """
-        # Check if we're using a SandboxTerminalManager (indicates sandbox mode).
-        # ``sandbox`` is only present on ``SandboxTerminalManager``; the base
-        # ``TerminalManager``/``LocalTerminalManager`` do not declare it, so access it
-        # via ``getattr`` rather than a direct attribute lookup.
-        sandbox = getattr(self.terminal_manager, "sandbox", None)
-        if sandbox is not None:
-            # We're in sandbox mode, get the host from the sandbox
-            # E2B AsyncSandbox has a get_host method that takes a port
-            # The method is synchronous and returns a string directly
-            host = sandbox.get_host(port)
-            return host
-        else:
-            # Local mode, return localhost
-            return f"localhost:{port}"
+        """Get the externally reachable hostname for a service listening on the given
+        port in this sandbox. Use it to construct URLs instead of localhost."""
+        # Terminal managers are injected at construction and never swapped
+        # mid-session, so registration-time gating in `_should_include_tool`
+        # guarantees a sandbox here. `sandbox` is intentionally duck-typed
+        # (the gate uses getattr, not isinstance), so the base-class type does
+        # not declare it.
+        return self.terminal_manager.sandbox.get_host(port)  # pyright: ignore[reportAttributeAccessIssue]
 
     def _tool_definition_from_callable(self, method_name: str, method: Callable[..., Any]) -> ToolDefinition:
         """Build a provider-agnostic tool definition from a Python callable."""
@@ -2484,6 +2453,15 @@ class ToolCollection(LogMixin):
         # Vision gate: read_image is only surfaced to vision-capable models.
         if method_name == "read_image":
             return bool(getattr(self.caller, "supports_vision", False))
+
+        # Sandbox gate: get_host needs a sandbox host provider, which only
+        # sandbox terminal managers carry. Duck-type via getattr (not
+        # isinstance) so kolega-code-e2b's injected SandboxTerminalManager —
+        # possibly subclassed from a pinned older version — keeps qualifying.
+        # Terminal managers are injected at construction and never swapped
+        # mid-session, so registration-time gating is sufficient.
+        if method_name == "get_host" and getattr(self.terminal_manager, "sandbox", None) is None:
+            return False
 
         # Web tool gate: the client-side web tools drop out when the agent's
         # web_search_mode resolved to hosted (the provider's server-side tool

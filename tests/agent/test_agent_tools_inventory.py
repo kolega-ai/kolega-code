@@ -1,5 +1,6 @@
 """Tool inventory checks for shared agent classes."""
 
+import asyncio
 import uuid
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock
@@ -678,3 +679,50 @@ def test_shared_tool_names_are_well_formed(project_path, mock_connection_manager
             assert tool.name.replace("_", "").isalnum()
             assert tool.name.islower() or tool.name.replace("_", "").isalnum()
             assert tool.description
+
+
+class _StubSandbox:
+    def get_host(self, port: int) -> str:
+        return f"stub-sandbox:{port}"
+
+
+class _SandboxCarryingTerminalManager:
+    """Terminal-manager stand-in that carries a ``sandbox`` host provider.
+
+    Deliberately not an instance of ``SandboxTerminalManager``: the gate must
+    duck-type on the attribute (getattr), not isinstance, so kolega-code-e2b's
+    injected manager — possibly subclassed from a pinned older version — keeps
+    qualifying when they bump.
+    """
+
+    def __init__(self) -> None:
+        self.sandbox = _StubSandbox()
+
+
+def test_get_host_absent_without_sandbox_terminal_manager(project_path, mock_connection_manager, agent_config):
+    """get_host is a sandbox-only tool: the default local CLI coder does not get it."""
+    agent = _coder(project_path, mock_connection_manager, agent_config)
+    tool_names = {tool.name for tool in agent.tool_collection.get_tool_list()}
+    assert "get_host" not in tool_names
+    assert agent.tool_collection.has_tool("get_host") is False
+
+
+def test_get_host_present_with_sandbox_terminal_manager(project_path, mock_connection_manager, agent_config):
+    """get_host appears when the injected terminal manager carries a ``sandbox``."""
+    agent = CoderAgent(
+        project_path=project_path,
+        workspace_id="test_workspace",
+        thread_id=str(uuid.uuid4()),
+        connection_manager=mock_connection_manager,
+        config=agent_config,
+        agent_mode=AgentMode.CLI,
+        terminal_manager=_SandboxCarryingTerminalManager(),
+    )
+
+    tool_names = {tool.name for tool in agent.tool_collection.get_tool_list()}
+    assert "get_host" in tool_names
+    assert agent.tool_collection.has_tool("get_host") is True
+
+    # The registered tool resolves the host from the sandbox, not localhost.
+    host = asyncio.run(agent.tool_collection.call("get_host", port=8000))
+    assert host == "stub-sandbox:8000"
