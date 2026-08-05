@@ -43,13 +43,13 @@ class TestToolRegistry:
 
         registry = ToolRegistry().add(
             Tool(
-                name="activate_skill",
-                definition=ToolDefinition(name="activate_skill", description="Activate a skill", parameters=[]),
+                name="sample_tool",
+                definition=ToolDefinition(name="sample_tool", description="A sample tool", parameters=[]),
                 handler=handler,
             )
         )
 
-        assert await registry.call("activate_skill", name="some-skill") == "activated:some-skill"
+        assert await registry.call("sample_tool", name="some-skill") == "activated:some-skill"
 
     @pytest.mark.asyncio
     async def test_call_allows_tool_input_named_tool_name(self):

@@ -300,6 +300,8 @@ def test_skill_catalog_prompt_renders_catalog() -> None:
     rendered = prompts.build_skill_catalog_prompt("- `demo-skill`: Use demo workflow")
 
     assert "Agent Skills discovered" in rendered
+    assert "Activate with the `skill` tool before applying a skill's workflow" in rendered
+    assert "`/skill-name`" in rendered
     assert "- `demo-skill`: Use demo workflow" in rendered
     assert "{catalog}" in prompts.SKILL_CATALOG_PROMPT_TEMPLATE
 

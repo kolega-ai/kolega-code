@@ -36,6 +36,16 @@ This project uses GitHub Releases for detailed generated release notes. This fil
   guard accepts a subsequent edit without a fresh read — exactly as it would
   right after a read. Staleness tracking is unchanged: a file modified after the
   write still requires a fresh read before editing.
+- The three skill host tools (`list_skills`, `activate_skill`, and
+  `read_skill_resource`) are consolidated into a single `skill` tool with the
+  same contract as the old `activate_skill`: it takes the skill name (without a
+  leading slash) and returns the activation envelope with the skill's
+  instructions, its absolute directory, and the resource file list. Activating
+  an already-active skill short-circuits as before, and an unknown name now
+  lists close matches (prefix first, then fuzzy) from the catalog so a
+  mistyped activation self-corrects in one turn. The in-prompt skill roster
+  always lists every skill by name: description text is shed first when the
+  metadata budget binds, and skills are never omitted wholesale.
 
 ### Removed
 
@@ -83,6 +93,16 @@ This project uses GitHub Releases for detailed generated release notes. This fil
   (possibly subclassed from a pinned older version) keeps qualifying. Existing
   session histories that recorded `get_host` calls keep them as data and
   render as-is (restore is name-agnostic).
+
+- The `list_skills`, `activate_skill`, and `read_skill_resource` host tools are
+  gone, replaced by the single `skill` tool above. Deleted:
+  `SkillCatalog.read_resource` and its truncation cap and traversal guard
+  (skill resources are read with the ordinary `read` tool, whose `file_path`
+  is relative to the absolute skill directory in the activation output), the
+  model-facing list query surface (`format_model_catalog`), and the
+  omitted-skills budget pathway in the prompt roster. Existing session
+  histories keep the old tool names as recorded data and render as-is
+  (restore is name-agnostic).
 
 ### Fixed
 
