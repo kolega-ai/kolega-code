@@ -1,4 +1,3 @@
-import asyncio
 import inspect
 from pathlib import Path
 from dataclasses import dataclass, field
@@ -497,7 +496,6 @@ class ToolCollection(LogMixin):
         "think_hard",
         "web_fetch",
         "web_search",
-        "sleep",
         "read_image",
         "lsp",
         "list_subagent_models",
@@ -1606,53 +1604,6 @@ class ToolCollection(LogMixin):
         """
         return await self.think_hard_tool.think_hard(problem_statement)
 
-    async def sleep(self, seconds: float) -> str:
-        """
-        Pause execution for a specified number of seconds.
-
-        This tool introduces a deliberate delay in execution, allowing time for external processes
-        to complete, systems to stabilize, or operations to finish processing. It's particularly
-        useful when working with asynchronous operations or waiting for long-running commands.
-
-        When to use this tool:
-        - After starting a long-running test suite and wanting to wait before checking results
-        - When waiting for a development server or application to fully start up
-        - After triggering a build process that needs time to complete
-        - When waiting for file system operations to propagate (especially on networked drives)
-        - After making configuration changes that need time to take effect
-        - When working with rate-limited APIs and need to respect timing constraints
-
-        Usage notes:
-        1. Use this tool judiciously - unnecessary delays slow down overall task completion
-        2. Consider checking process status first rather than using arbitrary wait times
-        3. For very long operations (>5 minutes), consider breaking into smaller check intervals
-        4. The tool accepts decimal values for sub-second precision (e.g., 0.5 for half a second)
-        5. Maximum recommended sleep time is 300 seconds (5 minutes) to avoid excessive delays
-        6. Prefer polling a running command with write_stdin (empty input) over sleeping to verify completion
-        7. Consider using shorter initial sleeps and checking status rather than one long sleep
-
-        Args:
-            seconds: Number of seconds to sleep (must be positive, supports decimal values)
-
-        Returns:
-            A confirmation message indicating how long the execution was paused
-
-        Raises:
-            ValueError: If seconds is negative or exceeds the maximum allowed duration
-        """
-        if seconds <= 0:
-            raise ValueError("Sleep duration must be positive")
-
-        if seconds > 300:  # 5 minutes maximum
-            raise ValueError("Sleep duration cannot exceed 300 seconds (5 minutes)")
-
-        await asyncio.sleep(seconds)
-
-        if seconds == 1:
-            return f"✅ Paused execution for {seconds} second"
-        else:
-            return f"✅ Paused execution for {seconds} seconds"
-
     async def edit(self, path: str, block: str) -> str:
         """
         Edit a file using one search and replace block.
@@ -1972,9 +1923,8 @@ class ToolCollection(LogMixin):
         Pass chars="" to poll (read new output without writing). Use this to
         answer prompts (e.g. send "y\\n"), drive a REPL, or send control
         characters (e.g. "\\x03" for Ctrl-C). The text is sent raw — include a
-        trailing "\\n" to submit a line. Waits up to yield_time_ms (clamped to
-        250–30000 when writing, 5000–300000 when polling) for more output or for
-        the process to exit.
+        trailing "\\n" to submit a line. Waits up to yield_time_ms for more
+        output or for the process to exit.
 
         Works for background sessions too: input is delivered to their stdin
         but not echoed, so verify the effect from the command's output; their
@@ -1984,7 +1934,9 @@ class ToolCollection(LogMixin):
         Args:
             session_id: The id returned by exec_command when status == "running".
             chars: Bytes to write to stdin. An empty string polls only.
-            yield_time_ms: Wait window in milliseconds.
+            yield_time_ms: How long to wait for more output or the process to
+                           exit, in milliseconds (clamped to 250–30000 when
+                           writing, 5000–300000 when polling).
             max_output_tokens: Maximum tokens of output to return in this call.
 
         Returns:

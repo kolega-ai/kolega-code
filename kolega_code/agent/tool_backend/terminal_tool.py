@@ -248,9 +248,8 @@ class TerminalTool(BaseTool):
         Pass chars="" to poll (read new output without writing). Use this to
         answer prompts (e.g. send "y\\n"), drive a REPL, or send control
         characters (e.g. "\\x03" for Ctrl-C). The text is sent raw — include a
-        trailing "\\n" to submit a line. Waits up to yield_time_ms (clamped to
-        250–30000 when writing, 5000–300000 when polling) for more output or for
-        the process to exit.
+        trailing "\\n" to submit a line. Waits up to yield_time_ms for more
+        output or for the process to exit.
 
         Works for background sessions too: input is delivered to their stdin
         but not echoed, so verify the effect from the command's output; their
@@ -260,7 +259,9 @@ class TerminalTool(BaseTool):
         Args:
             session_id: The id returned by exec_command when status == "running".
             chars: Bytes to write to stdin. An empty string polls only.
-            yield_time_ms: Wait window in milliseconds.
+            yield_time_ms: How long to wait for more output or the process to
+                           exit, in milliseconds (clamped to 250–30000 when
+                           writing, 5000–300000 when polling).
             max_output_tokens: Maximum tokens of output to return in this call.
 
         Returns:
