@@ -1620,8 +1620,9 @@ class ToolCollection(LogMixin):
     ) -> str:
         """Perform an exact string replacement in a file.
 
-        Read the file before editing it. ``old_string`` must match exactly and
-        be unique unless ``replace_all`` is true.
+        You must read the file first — or have just written it with write —
+        before editing. ``old_string`` must match exactly and be unique unless
+        ``replace_all`` is true.
 
         Args:
             file_path: Path to modify: project-relative, using ../ traversal, or absolute.

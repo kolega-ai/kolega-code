@@ -57,6 +57,9 @@ class MemoryFileSystem(LocalFileSystem):
     def exists(self, path: str) -> bool:
         return path == "crlf.txt"
 
+    def is_file(self, path: str) -> bool:
+        return path == "crlf.txt"
+
     def read_text(self, path: str) -> str:
         return self.content
 

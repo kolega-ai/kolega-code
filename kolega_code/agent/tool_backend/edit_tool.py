@@ -67,6 +67,22 @@ class EditTool(BaseTool):
         if self.filesystem.exists(normalized) and self.filesystem.is_file(normalized):
             self._read_versions[normalized] = self._content_digest(self.filesystem.read_text(normalized))
 
+    def _write_file(self, path: str, content: str) -> None:
+        """Write ``content`` to ``path`` (creating parents) and record it as read-equivalent.
+
+        A successful whole-file write leaves the file's current contents known,
+        so the result is recorded through the same mechanism a model-facing
+        read uses (``observe_read``): the edit guard then accepts the file
+        exactly as it would accept a freshly read one, and still rejects it
+        once the file changes on disk. This is the single write path for every
+        edit protocol's write handler.
+        """
+        parent = self.filesystem.get_parent(path)
+        if parent and parent != "." and not self.filesystem.exists(parent):
+            self.filesystem.create_directory(parent)
+        self.filesystem.write_text(path, content)
+        self.observe_read(path)
+
     async def claude_edit(
         self,
         file_path: str,
@@ -119,10 +135,7 @@ class EditTool(BaseTool):
             return blocked_msg
 
         def _write() -> None:
-            parent = self.filesystem.get_parent(path)
-            if parent and parent != "." and not self.filesystem.exists(parent):
-                self.filesystem.create_directory(parent)
-            self.filesystem.write_text(path, updated_content)
+            self._write_file(path, updated_content)
 
         self._mutate_with_optional_snapshot(
             tool_name="edit",
@@ -140,7 +153,6 @@ class EditTool(BaseTool):
             tool_call_id=getattr(self.caller, "current_tool_execution_id", None),
             tool_name="edit",
         )
-        self._read_versions[path] = self._content_digest(self.filesystem.read_text(path))
         result = f"Edited {path}" if exists else f"Created {path}"
         diagnostics = await self._maybe_append_lsp_diagnostics(path)
         return result + diagnostics
@@ -169,10 +181,7 @@ class EditTool(BaseTool):
             return blocked_msg
 
         def _write() -> None:
-            parent = self.filesystem.get_parent(path)
-            if parent and parent != "." and not self.filesystem.exists(parent):
-                self.filesystem.create_directory(parent)
-            self.filesystem.write_text(path, content)
+            self._write_file(path, content)
 
         self._mutate_with_optional_snapshot(
             tool_name="write",
@@ -190,7 +199,6 @@ class EditTool(BaseTool):
             tool_call_id=getattr(self.caller, "current_tool_execution_id", None),
             tool_name="write",
         )
-        self._read_versions[path] = self._content_digest(self.filesystem.read_text(path))
         result = f"Wrote {path}"
         diagnostics = await self._maybe_append_lsp_diagnostics(path)
         return result + diagnostics
@@ -262,8 +270,6 @@ class EditTool(BaseTool):
                 except Exception:
                     old_content = None
 
-            parent_dir = self.filesystem.get_parent(path)
-
             # Preserve the file's dominant line ending on overwrite; new files
             # keep the line endings the caller provided (typically LF).
             if exists and old_content is not None:
@@ -271,9 +277,7 @@ class EditTool(BaseTool):
                 content = self._normalize_line_endings(content, line_ending)
 
             def _write() -> None:
-                if parent_dir and parent_dir != "." and not self.filesystem.exists(parent_dir):
-                    self.filesystem.create_directory(parent_dir)
-                self.filesystem.write_text(path, content)
+                self._write_file(path, content)
 
             self._mutate_with_optional_snapshot(
                 tool_name="write",
@@ -404,10 +408,7 @@ class EditTool(BaseTool):
         snapshot_paths = list(dict.fromkeys(snapshot_paths))
 
         def _write() -> None:
-            parent = self.filesystem.get_parent(target)
-            if parent and parent != "." and not self.filesystem.exists(parent):
-                self.filesystem.create_directory(parent)
-            self.filesystem.write_text(target, updated)
+            self._write_file(target, updated)
             if destination is not None and self.filesystem.exists(source):
                 self.filesystem.remove(source, missing_ok=True)
 
@@ -540,10 +541,7 @@ class EditTool(BaseTool):
             for path in sorted(
                 (item for item in changed if working[item] is not None), key=lambda item: len(Path(item).parts)
             ):
-                parent = self.filesystem.get_parent(path)
-                if parent and parent != "." and not self.filesystem.exists(parent):
-                    self.filesystem.create_directory(parent)
-                self.filesystem.write_text(path, working[path] or "")
+                self._write_file(path, working[path] or "")
 
         self._mutate_with_optional_snapshot(
             tool_name="apply_patch",
@@ -661,7 +659,7 @@ class EditTool(BaseTool):
                 tool_name=tool_name,
                 reason=f"{tool_name} {path}",
                 paths=[path],
-                mutate=lambda: self.filesystem.write_text(path, normalized_updated),
+                mutate=lambda: self._write_file(path, normalized_updated),
             )
 
             await self.send_edit_preview(
