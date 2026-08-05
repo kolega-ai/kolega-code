@@ -58,6 +58,9 @@ WEB_SEARCH_MODES = ("auto", "hosted", "client", "off")
 DEFAULT_WEB_SEARCH_MODE = "auto"
 WEB_SEARCH_MODE_ENV = "KOLEGA_CODE_WEB_SEARCH_MODE"
 SEARXNG_BASE_URL_ENV = "SEARXNG_BASE_URL"
+# LSP master switch: on or off. Absent means defer to settings.lsp_enabled.
+LSP_MODES = ("on", "off")
+LSP_MODE_ENV = "KOLEGA_CODE_LSP"
 # Env vars that supply a cloud web-search backend's key, keyed by backend name.
 SEARCH_BACKEND_KEY_ENV = {
     "firecrawl": "FIRECRAWL_API_KEY",
@@ -83,6 +86,7 @@ class CliConfigOverrides:
     environment: Optional[str] = None
     edit_protocol: Optional[str] = None
     web_search_mode: Optional[str] = None
+    lsp_mode: Optional[str] = None
 
 
 def load_cli_env(project_path: Path, env: Optional[Mapping[str, str]] = None) -> dict[str, str]:
@@ -253,6 +257,23 @@ def _web_search_mode(
         valid = ", ".join(WEB_SEARCH_MODES)
         raise CliConfigError(f"Unsupported web search mode '{mode}'. Valid modes: {valid}")
     return mode
+
+
+def _lsp_enabled(
+    env: Mapping[str, str],
+    settings: Optional[CliSettings],
+    override: Optional[str],
+) -> bool:
+    """Resolve the LSP master switch with flag-over-env-over-settings precedence."""
+    mode = (override or env.get(LSP_MODE_ENV) or "").strip().lower()
+    if mode:
+        if mode not in LSP_MODES:
+            valid = ", ".join(LSP_MODES)
+            raise CliConfigError(f"Unsupported LSP mode '{mode}'. Valid modes: {valid}")
+        return mode == "on"
+    if settings is not None and settings.lsp_enabled is not None:
+        return bool(settings.lsp_enabled)
+    return True
 
 
 def _coerce_known_model(provider: ModelProvider, model: Optional[str]) -> str:
@@ -575,7 +596,7 @@ def build_agent_config(
             web_search_base_url=web_search_base_url,
             openai_chatgpt_tokens=chatgpt_tokens,
             mcp_config=mcp_config,
-            lsp=LspConfig(enabled=True if settings is None or settings.lsp_enabled is None else settings.lsp_enabled),
+            lsp=LspConfig(enabled=_lsp_enabled(loaded_env, settings, overrides.lsp_mode)),
             lsp_project_trusted=lsp_project_trusted,
             eval_enabled=(True if settings is None or settings.eval_enabled is None else bool(settings.eval_enabled)),
         )
