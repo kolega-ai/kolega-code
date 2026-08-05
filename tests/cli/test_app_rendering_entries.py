@@ -2,6 +2,7 @@
 from pathlib import Path
 import asyncio
 import json
+import re
 import time
 
 import pytest
@@ -414,7 +415,9 @@ async def test_thinking_entry_streams_collapsed_with_progress_title(
         title = app._thinking_entry_title(entry)
         assert "Thought" in title
         assert "4 words" in title
-        assert "0s" in title  # measured duration appears once complete
+        # Measured duration appears once complete; the value depends on wall
+        # clock (a slow runner can cross 1s), so assert the format, not "0s".
+        assert re.search(r"\b\d+s\b", title)
 
         # _render_conversation rebuilds the window; re-resolve the live widget.
         widget = app._entry_widgets[entry.entry_id]
