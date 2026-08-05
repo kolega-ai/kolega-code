@@ -145,17 +145,15 @@ def test_lsp_edit_schema_supports_external_source_and_destination_paths(tmp_path
 
 
 @pytest.mark.asyncio
-async def test_hashline_protocol_adds_anchors_to_read_and_search(tmp_path: Path) -> None:
+async def test_hashline_protocol_adds_anchors_to_reads(tmp_path: Path) -> None:
     tools = collection(tmp_path, EditProtocol.HASHLINE_V2)
     (tmp_path / "sample.py").write_text("def run():\n    return 42\n")
 
     entire = await tools.read_entire_file("sample.py")
     section = await tools.read_file_section("sample.py", 2, 2)
-    search = await tools.search_codebase("return", case_sensitive=True)
 
     assert "1#" in entire and ":def run():" in entire
     assert "2#" in section and ":    return 42" in section
-    assert "2#" in search and ":    return 42" in search
 
 
 @pytest.mark.asyncio
@@ -168,11 +166,10 @@ async def test_other_protocols_never_add_hashline_anchors(tmp_path: Path, protoc
     (tmp_path / "sample.py").write_text("def run():\n    return 42\n")
 
     entire = await tools.read_entire_file("sample.py")
-    search = await tools.search_codebase("return", case_sensitive=True)
+    section = await tools.read_file_section("sample.py", 2, 2)
 
     assert "1#" not in entire and "2#" not in entire
-    assert "2#" not in search
-    assert "Line 2: return 42" in search
+    assert "2#" not in section
 
 
 @pytest.mark.asyncio
@@ -189,13 +186,12 @@ async def test_restricted_hashline_collection_does_not_emit_unusable_anchors(tmp
     tools = collection(
         tmp_path,
         EditProtocol.HASHLINE_V2,
-        allowed_tools=["read_entire_file", "search_codebase"],
+        allowed_tools=["read_entire_file", "read_file_section"],
     )
     (tmp_path / "sample.py").write_text("one\ntwo\n")
 
     assert "edit" not in tools.registry()
     assert "1#" not in await tools.read_entire_file("sample.py")
-    assert "Line 2: two" in await tools.search_codebase("two", case_sensitive=True)
 
 
 @pytest.mark.asyncio

@@ -22,14 +22,12 @@ ALIAS_CASES = [
     ("exec_command", {"command": "ls", "timeout": 5000}, {"command": "ls", "yield_time_ms": 5000}),
     ("exec_command", {"command": "ls", "title": "list files"}, {"command": "ls"}),
     ("eval", {"command": "print(1)"}, {"code": "print(1)"}),
-    ("find_files_by_pattern", {"path": "src/**/*.py"}, {"pattern": "src/**/*.py"}),
 ]
 
 # One row per rename alias: alias + canonical together -> canonical wins.
 CANONICAL_WINS_CASES = [
     ("exec_command", {"command": "ls", "timeout": 60, "yield_time_ms": 500}, {"command": "ls", "yield_time_ms": 500}),
     ("eval", {"command": "print(1)", "code": "print(2)"}, {"code": "print(2)"}),
-    ("find_files_by_pattern", {"path": "src", "pattern": "*.py"}, {"pattern": "*.py"}),
 ]
 
 

@@ -74,14 +74,11 @@ def tool_collection(
     collection.edit_tool.edit = AsyncMock()
     collection.edit_tool.multi_edit = AsyncMock()
     collection.edit_tool.write = AsyncMock()
-    collection.list_directory_tool.list_directory = AsyncMock()
     collection.terminal_tool.execute_terminal_command = AsyncMock()
     collection.read_file_tool.read_entire_file = AsyncMock()
     collection.read_file_tool.read_file_section = AsyncMock()
     collection.memory_tool.read_memory = AsyncMock()
     collection.memory_tool.write_memory = AsyncMock()
-    collection.search_codebase_tool.search_codebase = AsyncMock()
-    collection.glob_tool.find_files_by_pattern = AsyncMock()
     collection.web_fetch_tool.web_fetch = AsyncMock()
     collection.terminal_tool.write_stdin = AsyncMock()
 
@@ -177,7 +174,7 @@ class TestToolCollection:
             assert tool_name in ToolCollection.browser_tools
 
         # Should not include file tools
-        file_tools = ["read_entire_file", "write", "list_directory"]
+        file_tools = ["read_entire_file", "write", "lsp"]
         for file_tool in file_tools:
             assert file_tool not in tool_names
 

@@ -31,17 +31,18 @@ main conversation.
    tools:
      - read_entire_file
      - read_file_section
-     - search_codebase
-     - find_files_by_pattern
+     - exec_command
    max_iterations: 20
    ---
 
    You are a rigorous code reviewer. Report findings in severity order, cite the
    relevant files and lines, and identify missing test coverage. Do not edit files.
+   Search the codebase with `rg` / `rg --files` in the terminal.
    ```
 
    This example is available in both Build and Plan mode, but its explicit tool
-   list keeps it read-only.
+   list keeps it read-only (shell commands still go through the active permission
+   mode).
 
 2. **Validate the definition.**
 

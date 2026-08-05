@@ -397,7 +397,7 @@ def _adapt_content_blocks_for_provider(
             call_protocol = (tool_call_protocols or {}).get(
                 block.tool_use_id, _source_edit_protocol(block, source_usage_metadata)
             )
-            is_hashline_read = block.name in {"read_entire_file", "read_file_section", "search_codebase"}
+            is_hashline_read = block.name in {"read_entire_file", "read_file_section"}
             if (
                 is_hashline_read
                 and call_protocol == "hashline_v2"
@@ -407,7 +407,7 @@ def _adapt_content_blocks_for_provider(
                 adapted.append(
                     _tool_result_with_content(
                         block,
-                        strip_hashline_read_output(block.content, search=block.name == "search_codebase"),
+                        strip_hashline_read_output(block.content, search=False),
                     )
                 )
                 changed = True

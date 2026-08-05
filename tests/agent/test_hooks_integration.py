@@ -163,11 +163,11 @@ async def test_post_tool_use_updated_output_replaces_content(tmp_path, agent_con
 async def test_parallel_batch_denies_only_matching_tool(tmp_path, agent_config, monkeypatch):
     handler = AsyncMock(return_value="ran")
     agent = _make_agent(tmp_path, agent_config, _dispatcher(HookEvent.PRE_TOOL_USE, "deny_boom_hook"))
-    # search_codebase is parallel-safe, so the batch runs via asyncio.gather.
-    monkeypatch.setattr(agent, "tool_collection", _tools(handler, name="search_codebase", parallel_safe=True))
+    # read_entire_file is parallel-safe, so the batch runs via asyncio.gather.
+    monkeypatch.setattr(agent, "tool_collection", _tools(handler, name="read_entire_file", parallel_safe=True))
 
     results = await agent.process_tool_calls(
-        [_call(name="search_codebase", index=1, task="boom"), _call(name="search_codebase", index=2, task="ok")]
+        [_call(name="read_entire_file", index=1, task="boom"), _call(name="read_entire_file", index=2, task="ok")]
     )
 
     assert results[0].is_error is True and "boom is not allowed" in results[0].content

@@ -87,8 +87,9 @@ class TestPromptProvider:
         assert "## Finish the Whole Task" in prompt
         # Frontend design guidance was intentionally dropped from the ask prompt.
         assert "Frontend Design Guidance" not in prompt
-        # Interactive-only guidance must not leak into the autonomous rendering.
-        assert "There is no user present to approve actions" in prompt
+        # The shared terminal-tools guidance reaches the autonomous render too, in
+        # its single mode-neutral wording (no interactive user-approval branch).
+        assert "unless a user has explicitly approved them or the task explicitly requires them" in prompt
         assert "requiring explicit user approval" not in prompt
         assert "Do not create a Git worktree" not in prompt
 
@@ -194,6 +195,37 @@ class TestPromptProvider:
         assert "web browser agent" in prompt
         assert "QA on a web application" in prompt
         assert "URL Navigation Guidelines" in prompt
+
+    @pytest.mark.parametrize(
+        "agent_type, mode",
+        [
+            (AgentType.CODER, AgentMode.CLI),
+            (AgentType.CODER, AgentMode.ASK),
+            (AgentType.PLANNING, AgentMode.CLI),
+            (AgentType.INVESTIGATION, AgentMode.CLI),
+            (AgentType.GENERAL, AgentMode.CLI),
+        ],
+    )
+    def test_terminal_tools_guidance_reaches_terminal_capable_agents(
+        self, prompt_provider, prompt_context, agent_type, mode
+    ):
+        """The shared terminal-tools partial (Running Commands + codex search/read
+        rules) is included in every agent with terminal access."""
+        prompt = prompt_provider.get_system_prompt(agent_type=agent_type, mode=mode, context=prompt_context)
+
+        assert "## Running Commands" in prompt
+        assert "prefer `rg` / `rg --files` over grep/find" in prompt
+        assert "Do not use python scripts (or `eval`) to print chunks of a file" in prompt
+        # One wording serves both interactive and autonomous runs: destructive
+        # commands need explicit authorization — by the user or by the task.
+        assert "unless a user has explicitly approved them or the task explicitly requires them" in prompt
+
+    def test_terminal_tools_guidance_absent_for_browser_agent(self, prompt_provider, prompt_context):
+        """The browser agent has no terminal access and must not get the guidance."""
+        prompt = prompt_provider.get_system_prompt(agent_type=AgentType.BROWSER, context=prompt_context)
+
+        assert "## Running Commands" not in prompt
+        assert "prefer `rg` / `rg --files` over grep/find" not in prompt
 
     def test_cli_prompt_with_matching_prompt_extension(self, prompt_provider, prompt_context):
         """CLI mode should render prompt extensions that target CLI mode."""

@@ -255,18 +255,18 @@ async def test_sub_agent_tool_events_update_counters_not_top_level(
     async with app.run_test():
         app._render_event(
             _sub_agent_event(
-                message_type="tool_call", text="Calling search_codebase", tool_description="search_codebase"
+                message_type="tool_call", text="Calling read_file_section", tool_description="read_file_section"
             )
         )
         app._render_event(
-            _sub_agent_event(message_type="tool_result", text="found things", tool_description="search_codebase")
+            _sub_agent_event(message_type="tool_result", text="found things", tool_description="read_file_section")
         )
 
         assert not any(entry.kind.startswith("tool") for entry in app.conversation_entries)
         entries = _sub_agent_entries(app)
         assert len(entries) == 1
         assert "1 tool" in entries[0].content
-        assert "last: search_codebase done" in entries[0].content
+        assert "last: read_file_section done" in entries[0].content
         activity = next(iter(app._sub_agent_activities.values()))
         assert activity.tool_calls == 1
 

@@ -8,6 +8,12 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ### Changed
 
+- All terminal-capable agents (coder, planning, investigation, general) now
+  share a terminal-tools prompt section with codex-style guidance: prefer
+  `rg` / `rg --files` over `grep`/`find` when searching for text or files (it is
+  much faster; use alternatives if `rg` is not found), and do not use Python
+  scripts (or `eval`) to print chunks of a file — use the file-reading tools
+  instead.
 - The `resolve` tool — which applies or discards a pending `lsp_edit(apply: false)`
   preview — is now gated like the other LSP tools. With LSP disabled (via
   settings, `KOLEGA_CODE_LSP`, or `--lsp off`) it is removed from the model's
@@ -16,6 +22,21 @@ This project uses GitHub Releases for detailed generated release notes. This fil
   edit-permission prompt as `edit`, `lsp_edit`, and `write`.
 
 ### Removed
+
+- The file-discovery tools are gone from the agent toolset: `glob` (which had
+  replaced `list_directory` and `find_files_by_pattern`), and `search_codebase`.
+  File and text discovery is now done through the terminal with `rg` /
+  `rg --files` (falling back to `find`/`grep`). Deleted: the `GlobTool` and
+  `SearchCodebaseTool` backends (the underlying `workspace_scan` service stays),
+  the `ToolCollection.glob` / `ToolCollection.search_codebase` methods and their
+  `read_only_tools` registrations, the stale `dispatch_investigation_agent`
+  docstring tool list (now naming the real surface, including terminal access),
+  and the `search_codebase` name from hashline history adaptation.
+  `@`-mention autocomplete (`cli/file_index.py`) keeps its exclusions by
+  inlining the constants it borrowed. Permission rules and custom-agent
+  allowlists naming the removed tools must be updated to the terminal tools
+  (`exec_command`, `write_stdin`, `kill_command`, `list_sessions`). Existing
+  session histories keep the old tool names as recorded data and render as-is.
 
 - The `think_hard` tool is gone from the agent toolset, along with the thinking
   model slot that powered it. Deleted: the `ThinkHardTool` backend and its

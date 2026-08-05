@@ -17,14 +17,11 @@ from .tool_backend.browser_tool import BROWSER_TOOL_SCHEMAS, BrowserTool
 from .tool_backend.edit_tool import EditTool
 from .tool_backend.eval_tool import EvalTool
 from .tool_backend.codex_patch import CODEX_APPLY_PATCH_GRAMMAR
-from .tool_backend.glob_tool import GlobTool
-from .tool_backend.hashline_v2 import format_hash_lines, format_line_tag
-from .tool_backend.list_directory_tool import ListDirectoryTool
+from .tool_backend.hashline_v2 import format_hash_lines
 from .tool_backend.memory_tool import MemoryTool
 from .tool_backend.network_status import ConnectFailureTracker
 from .tool_backend.read_file_tool import ReadFileTool
 from .tool_backend.read_image_tool import ReadImageTool
-from .tool_backend.search_codebase_tool import SearchCodebaseTool
 from .tool_backend.snapshot_tool import SnapshotTool
 from .tool_backend.web_fetch_tool import WebFetchTool
 from .tool_backend.web_search_tool import WebSearchTool
@@ -485,13 +482,10 @@ class ToolCollection(LogMixin):
     """
 
     read_only_tools = [
-        "list_directory",
         "read_entire_file",
         "read_file_section",
         "read_memory",
         "list_memory",
-        "search_codebase",
-        "find_files_by_pattern",
         "web_fetch",
         "web_search",
         "read_image",
@@ -827,15 +821,6 @@ class ToolCollection(LogMixin):
             self.filesystem,
             snapshot_service=self.snapshot_service,
         )
-        self.list_directory_tool = ListDirectoryTool(
-            self.project_path,
-            self.workspace_id,
-            self.thread_id,
-            self.connection_manager,
-            self.config,
-            self.caller,
-            self.filesystem,
-        )
         self.terminal_tool = TerminalTool(
             self.project_path,
             self.workspace_id,
@@ -859,15 +844,6 @@ class ToolCollection(LogMixin):
         if not isinstance(memory_manager, ProjectMemoryManager):
             memory_manager = None
         self.memory_tool = MemoryTool(memory_manager, self.caller)
-        self.search_codebase_tool = SearchCodebaseTool(
-            self.project_path,
-            self.workspace_id,
-            self.thread_id,
-            self.connection_manager,
-            self.config,
-            self.caller,
-            self.filesystem,
-        )
         connect_failures = ConnectFailureTracker()
         self.web_fetch_tool = WebFetchTool(
             self.project_path,
@@ -888,15 +864,6 @@ class ToolCollection(LogMixin):
             self.caller,
             self.filesystem,
             connect_failures=connect_failures,
-        )
-        self.glob_tool = GlobTool(
-            self.project_path,
-            self.workspace_id,
-            self.thread_id,
-            self.connection_manager,
-            self.config,
-            self.caller,
-            self.filesystem,
         )
         self.read_file_tool = ReadFileTool(
             self.project_path,
@@ -1344,12 +1311,12 @@ class ToolCollection(LogMixin):
         5. The agent's report is not automatically shown to the user - you should summarize key findings
 
         IMPORTANT: The agent can only use these tools:
-            - list_directory
-            - read_entire_file
-            - read_file_section
-            - read_memory
-            - search_codebase
-            - find_files_by_pattern
+            - exec_command, write_stdin, kill_command, list_sessions — terminal access
+            - eval — persistent Python/JavaScript kernels
+            - lsp — language-server intelligence
+            - read_entire_file, read_file_section — read file contents
+            - read_image — read images
+            - web_fetch, web_search — web access
         If you need to do something that requires any other tool, you should call the tool directly.
 
         Args:
@@ -1796,21 +1763,6 @@ class ToolCollection(LogMixin):
 
         return await self.edit_tool.claude_write(file_path, content)
 
-    async def list_directory(self, path: str = "") -> str:
-        """
-        List files and directories at the specified path.
-
-        Args:
-            path: Path to list. Relative to the project root is preferred; an absolute path is also accepted.
-
-        Returns:
-            Markdown formatted list of files and directories with details
-
-        Raises:
-            NotADirectoryError: If the path is not a directory
-        """
-        return await self.list_directory_tool.list_directory(path)
-
     async def execute_terminal_command(self, command: str) -> str:
         """Execute a command and display output in terminal."""
         return await self.terminal_tool.execute_terminal_command(command)
@@ -1959,7 +1911,7 @@ class ToolCollection(LogMixin):
 
         Work incrementally: imports → define → test → use, each its own cell. Re-run setup ONLY after reset or a kernel crash. On error, fix and re-run just the failing step. Prior top-level names survive into the next cell — NEVER re-import or re-declare them.
 
-        Both kernels can call back into your own tools over a loopback bridge — loop tool.search_codebase over many patterns, read images with tool.read_image, or dispatch sub-agents without leaving the cell. Bridge calls count as real tool calls (permissions and hooks apply). Use list_tools() in a cell to discover available tool names. tool.* results arrive in each tool's model-facing format (e.g. tool.read_file_section wraps content in a markdown header and code fence) — for raw file bytes like CSV/data loads, use the read()/write() helpers instead, which hit the filesystem directly.
+        Both kernels can call back into your own tools over a loopback bridge — loop tool.exec_command over shell checks, read images with tool.read_image, or dispatch sub-agents without leaving the cell. Bridge calls count as real tool calls (permissions and hooks apply). Use list_tools() in a cell to discover available tool names. tool.* results arrive in each tool's model-facing format (e.g. tool.read_file_section wraps content in a markdown header and code fence) — for raw file bytes like CSV/data loads, use the read()/write() helpers instead, which hit the filesystem directly.
 
         Python prelude (sync; pass kwargs):
           display(value)                 rich output: dict/list → JSON, matplotlib Figure → image
@@ -2142,62 +2094,6 @@ class ToolCollection(LogMixin):
         """Delete a private project-memory entry by path."""
         return await self.memory_tool.delete_memory(path)
 
-    async def search_codebase(
-        self,
-        pattern: str,
-        file_pattern: str = "*",
-        case_sensitive: bool = False,
-        literal: bool = False,
-        path: Optional[str] = None,
-        max_results: int = 128,
-    ) -> str:
-        """
-        Search the codebase for lines matching a regular expression (grep/ripgrep).
-
-        The pattern is treated as a regular expression by default, so `|` is
-        alternation: search for `TODO|FIXME|HACK` to match any of the three. Use
-        ripgrep/POSIX-ERE syntax (alternation, character classes `[...]`, anchors
-        `^ $`, quantifiers `* + ? {n,m}`, groups `(...)`). Set `literal=True` to match
-        the pattern as plain text instead (e.g. to find `arr[0]` or `a||b` verbatim).
-
-        Narrow a search with `path` (search only within a subdirectory) and
-        `max_results` (cap the number of files returned).
-
-        Args:
-            pattern: The regular expression to search for (use `literal=True` to match it as plain text)
-            file_pattern: Glob to filter which files to search by name, e.g. `*.py` (default: all files)
-            case_sensitive: Whether the search is case-sensitive (default: False)
-            literal: Treat the pattern as plain text instead of a regular expression (default: False)
-            path: Directory (relative to the project root) to search within; searches the whole project when omitted
-            max_results: Maximum number of matching files to return (default 128, capped at 512)
-
-        Returns:
-            Markdown formatted list of files and matches, capped at `max_results` files
-
-        Raises:
-            Exception: If any error occurs during the search operation
-        """
-        formatter: Callable[[int, str], str] | None = None
-        if self._hashline_output_enabled():
-
-            def hashline_formatter(line_number: int, content: str) -> str:
-                if line_number == 1 and content.startswith("\ufeff"):
-                    content = content[1:]
-                return f"{format_line_tag(line_number, content)}:{content}"
-
-            formatter = hashline_formatter
-
-        kwargs = {
-            "file_pattern": file_pattern,
-            "case_sensitive": case_sensitive,
-            "literal": literal,
-            "path": path,
-            "max_results": max_results,
-        }
-        if formatter is not None:
-            kwargs["line_formatter"] = formatter
-        return await self.search_codebase_tool.search_codebase(pattern, **kwargs)
-
     async def web_fetch(self, url: str, instruction: str) -> str:
         """
         Fetch URL content locally, follow an instruction, and return a grounded response.
@@ -2235,30 +2131,6 @@ class ToolCollection(LogMixin):
             A markdown list of results, or a message if no results were found.
         """
         return await self.web_search_tool.web_search(query, max_results)
-
-    async def find_files_by_pattern(
-        self, pattern: str, include_directories: bool = True, show_details: bool = True
-    ) -> str:
-        """
-        Find files by glob pattern in the project directory.
-
-        Behavior:
-        - Supports patterns like '*.py', 'src/**/*.js'. Leading '/' is ignored.
-        - Bare filenames without wildcards or '/' (e.g., 'README.md') are treated as '**/README.md'.
-        - include_directories=True (default) shows directories as well as files.
-        - Returns 128 results max.
-
-        Args:
-            pattern: Glob pattern or filename to search for
-            include_directories: Include directories in results (default: True)
-            show_details: Include size/mtime/type metadata (default: True)
-
-        Returns:
-            Markdown with the matching items (max 128)
-        """
-        return await self.glob_tool.find_files_by_pattern(
-            pattern, include_directories=include_directories, show_details=show_details
-        )
 
     async def lsp(
         self,
