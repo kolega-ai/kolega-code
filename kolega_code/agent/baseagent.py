@@ -725,31 +725,24 @@ class BaseAgent(LogMixin):
         injected into the model's context server-side). The shared item id
         correlates the pair in every transcript consumer.
         """
-        action = delta.get("action") or {}
-        action_type = action.get("type") or "web_search"
-        if action_type == "search" and action.get("queries"):
-            detail = "search: " + ", ".join(repr(str(q)) for q in action["queries"])
-            outcome = "results injected server-side"
-        elif action_type == "open_page" and action.get("url"):
-            detail = f"open_page: {action['url']}"
-            outcome = "content injected server-side"
-        else:
-            detail = action_type
-            outcome = "executed server-side"
-        status = delta.get("status") or "completed"
-        tool_call_id = delta.get("id") or str(uuid.uuid4())
+        block = WebSearchCallBlock(
+            item_id=delta.get("id") or None,
+            status=delta.get("status"),
+            action=delta.get("action") or {},
+        )
+        tool_call_id = block.item_id or str(uuid.uuid4())
         await self.send_chat_message(
             message_type="tool_call",
-            content=f"Calling web_search (hosted): {detail}",
+            content=f"Calling {WebSearchCallBlock.TOOL_LABEL}: {block.label()}",
             is_streaming=False,
-            tool_description="web_search (hosted)",
+            tool_description=WebSearchCallBlock.TOOL_LABEL,
             tool_call_id=tool_call_id,
         )
         await self.send_chat_message(
             message_type="tool_result",
-            content=f"{detail} — {status} ({outcome})",
+            content=block.result_summary(),
             is_streaming=False,
-            tool_description="web_search (hosted)",
+            tool_description=WebSearchCallBlock.TOOL_LABEL,
             tool_call_id=tool_call_id,
         )
 
@@ -2296,14 +2289,36 @@ class BaseAgent(LogMixin):
                             # provider's infrastructure — no local execution.
                             # Surface it as a normal tool_call/tool_result pair
                             # so every transcript view renders it.
-                            if current_response:
+                            #
+                            # Close the current thinking/response segment first
+                            # and rotate both uuids: transcript consumers key
+                            # streamed entries by uuid, so without rotation the
+                            # post-search reasoning folds into the bubble above
+                            # these rows instead of opening a new one below
+                            # them. Guards mirror the end-of-stream flushes: an
+                            # unopened thinking segment yields nothing, while
+                            # the response flush is unconditional (an empty
+                            # complete response chunk is a documented no-op for
+                            # every consumer) so a partially streamed response
+                            # entry is never stranded incomplete by rotation.
+                            if thinking_started or current_thinking:
                                 yield {
-                                    "type": "response",
-                                    "content": current_response,
+                                    "type": "thinking",
+                                    "content": current_thinking,
                                     "complete": True,
-                                    "uuid": response_uuid,
+                                    "uuid": thinking_uuid,
                                 }
-                                current_response = ""
+                                current_thinking = ""
+                                thinking_started = False
+                                thinking_uuid = str(uuid.uuid4())
+                            yield {
+                                "type": "response",
+                                "content": current_response,
+                                "complete": True,
+                                "uuid": response_uuid,
+                            }
+                            current_response = ""
+                            response_uuid = str(uuid.uuid4())
                             await self._emit_hosted_tool_call(event.tool_call_delta)
 
                 assistant_message = await stream.get_final_message()

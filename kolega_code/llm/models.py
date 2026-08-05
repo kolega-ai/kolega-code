@@ -577,6 +577,9 @@ class WebSearchCallBlock(ContentBlock):
     """
 
     TYPE_NAME = "web_search_call"
+    # Display name for transcript rows; the live stream (BaseAgent) and
+    # restored sessions (TUI) must render hosted calls under the same tool name.
+    TOOL_LABEL = "web_search (hosted)"
 
     def __init__(
         self,
@@ -638,12 +641,26 @@ class WebSearchCallBlock(ContentBlock):
             item["id"] = self.item_id
         return item
 
-    def _label(self) -> str:
+    def label(self) -> str:
         if self.queries:
             return "search: " + ", ".join(repr(q) for q in self.queries)
         if self.url:
             return f"open_page: {self.url}"
         return self.action_type or "web_search"
+
+    def result_summary(self) -> str:
+        """One-line outcome for transcript tool rows.
+
+        The searched content never reaches the client, so the row can only
+        describe the action and where its output went.
+        """
+        if self.queries:
+            outcome = "results injected server-side"
+        elif self.url:
+            outcome = "content injected server-side"
+        else:
+            outcome = "executed server-side"
+        return f"{self.label()} — {self.status or 'completed'} ({outcome})"
 
     def to_anthropic(self) -> Dict[str, Any]:
         return {"type": "text", "text": "[Web search]"}
@@ -655,7 +672,7 @@ class WebSearchCallBlock(ContentBlock):
         return genai_types.Part.from_text(text="[Web search]")
 
     def to_markdown(self) -> str:
-        return f"*Web search — {self._label()}*"
+        return f"*Web search — {self.label()}*"
 
 
 class ToolParameter:
