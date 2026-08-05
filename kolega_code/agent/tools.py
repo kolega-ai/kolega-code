@@ -2745,9 +2745,14 @@ class ToolCollection(LogMixin):
 
         # Settings gate: LSP can be disabled host-wide (AgentConfig.lsp.enabled, from
         # settings.json or the --lsp CLI flag). The manager is never built when
-        # disabled, so drop lsp/lsp_edit instead of advertising tools that can only
-        # reply "not available". Strict `is False` so Mock configs keep the default.
-        if method_name in ("lsp", "lsp_edit") and getattr(getattr(self.config, "lsp", None), "enabled", True) is False:
+        # disabled, so drop lsp/lsp_edit/resolve instead of advertising tools that
+        # can only reply "not available". resolve is LSP-coupled: pending actions
+        # are only ever created by lsp_edit(apply=false), so none can exist while
+        # LSP is off. Strict `is False` so Mock configs keep the default.
+        if (
+            method_name in ("lsp", "lsp_edit", "resolve")
+            and getattr(getattr(self.config, "lsp", None), "enabled", True) is False
+        ):
             return False
 
         if method_name in self.browser_tools:

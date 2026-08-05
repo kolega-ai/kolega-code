@@ -6,6 +6,15 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+### Changed
+
+- The `resolve` tool — which applies or discards a pending `lsp_edit(apply: false)`
+  preview — is now gated like the other LSP tools. With LSP disabled (via
+  settings, `KOLEGA_CODE_LSP`, or `--lsp off`) it is removed from the model's
+  toolset entirely, since pending actions can only be created while LSP is on.
+  Applying a pending action with `resolve` now also goes through the same
+  edit-permission prompt as `edit`, `lsp_edit`, and `write`.
+
 ## 0.26.10 - 2026-08-05
 
 ### Added
