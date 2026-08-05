@@ -176,3 +176,75 @@ async def test_claude_edit_snapshot_can_restore_change(edit_tool: EditTool, tmp_
     snapshots.restore_snapshot(record.snapshot_id)
 
     assert target.read_text() == "before\n"
+
+
+@pytest.mark.asyncio
+async def test_write_then_edit_without_read_succeeds(edit_tool: EditTool, tmp_path: Path) -> None:
+    """A successful write counts as read: the guard accepts a subsequent edit."""
+    target = tmp_path / "a.txt"
+
+    result = await edit_tool.write("a.txt", "before\nmiddle\nafter\n")
+    assert result == "Wrote a.txt"
+
+    assert await edit_tool.claude_edit("a.txt", "middle", "changed") == "Edited a.txt"
+    assert target.read_text() == "before\nchanged\nafter\n"
+
+
+@pytest.mark.asyncio
+async def test_write_overwrite_then_edit_without_read_succeeds(edit_tool: EditTool, tmp_path: Path) -> None:
+    """Overwriting an existing file with write also records the new contents."""
+    target = tmp_path / "a.txt"
+    target.write_text("original\n")
+
+    await edit_tool.write("a.txt", "new content\n")
+
+    assert await edit_tool.claude_edit("a.txt", "new content", "updated") == "Edited a.txt"
+    assert target.read_text() == "updated\n"
+
+
+@pytest.mark.asyncio
+async def test_write_then_external_modification_then_edit_is_blocked(edit_tool: EditTool, tmp_path: Path) -> None:
+    """Write grants no more than a read: external changes still go stale."""
+    target = tmp_path / "a.txt"
+    await edit_tool.write("a.txt", "before\nmiddle\nafter\n")
+
+    target.write_text("before\nEXTERNALLY CHANGED\nafter\n")
+
+    with pytest.raises(ValueError, match="has changed since it was read"):
+        await edit_tool.claude_edit("a.txt", "middle", "changed")
+
+
+@pytest.mark.asyncio
+async def test_hashline_write_then_edit_without_read_succeeds(edit_tool: EditTool, tmp_path: Path) -> None:
+    """hashline_write funnels through the same write path and records too."""
+    target = tmp_path / "a.txt"
+
+    assert await edit_tool.hashline_write("a.txt", "hello\n") == "Wrote a.txt"
+
+    assert await edit_tool.claude_edit("a.txt", "hello", "world") == "Edited a.txt"
+    assert target.read_text() == "world\n"
+
+
+@pytest.mark.asyncio
+async def test_apply_patch_add_then_edit_without_read_succeeds(edit_tool: EditTool, tmp_path: Path) -> None:
+    """apply_patch's Add File writes through the shared path and records too."""
+    target = tmp_path / "a.txt"
+
+    result = await edit_tool.apply_patch("*** Begin Patch\n*** Add File: a.txt\n+hello\n*** End Patch\n")
+    assert "A a.txt" in result
+
+    assert await edit_tool.claude_edit("a.txt", "hello", "world") == "Edited a.txt"
+    assert target.read_text() == "world\n"
+
+
+@pytest.mark.asyncio
+async def test_search_replace_edit_then_claude_edit_without_read_succeeds(edit_tool: EditTool, tmp_path: Path) -> None:
+    """Search/replace edits write through the shared path, so their result is known."""
+    target = tmp_path / "a.txt"
+    target.write_text("before\nmiddle\nafter\n")
+
+    result = await edit_tool.edit("a.txt", "<<<<<<< SEARCH\nmiddle\n=======\nchanged\n>>>>>>> REPLACE")
+    assert result == "Edited a.txt"
+
+    assert await edit_tool.claude_edit("a.txt", "changed", "changed2") == "Edited a.txt"
+    assert target.read_text() == "before\nchanged2\nafter\n"

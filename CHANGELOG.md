@@ -31,6 +31,12 @@ This project uses GitHub Releases for detailed generated release notes. This fil
   `path` is accepted at the dispatch boundary as an alias for the canonical
   `file_path`.
 
+- A successful whole-file `write` (including `hashline_write` and `apply_patch`'s
+  Add File) now records the just-written contents as read, so the read-before-edit
+  guard accepts a subsequent edit without a fresh read — exactly as it would
+  right after a read. Staleness tracking is unchanged: a file modified after the
+  write still requires a fresh read before editing.
+
 ### Removed
 
 - The `read_entire_file` and `read_file_section` tools are gone, replaced by the
