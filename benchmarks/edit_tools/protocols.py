@@ -20,11 +20,8 @@ from .models import ToolAttempt
 
 
 READ_TOOL_NAMES = (
-    "list_directory",
     "read_entire_file",
     "read_file_section",
-    "search_codebase",
-    "find_files_by_pattern",
 )
 
 

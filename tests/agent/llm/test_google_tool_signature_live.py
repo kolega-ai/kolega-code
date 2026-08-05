@@ -22,9 +22,9 @@ SKIP_IN_CI = bool(os.getenv("CI")) or bool(os.getenv("GITLAB_CI"))
 
 SYSTEM = Message(role="system", content=[TextBlock(text="You are a helpful coding assistant.")])
 LIST_DIR_TOOL = ToolDefinition(
-    name="list_directory",
-    description="List the files in a directory.",
-    parameters=[ToolParameter(name="path", type="string", description="Directory path", required=True)],
+    name="read_file_section",
+    description="Read a specific section of a file.",
+    parameters=[ToolParameter(name="path", type="string", description="File path", required=True)],
 )
 
 

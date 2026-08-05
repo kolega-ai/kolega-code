@@ -65,15 +65,7 @@ Treat completion as unproven until you have checked it against every requirement
 
 Deliver the complete, working result. NEVER ship stubs, placeholders, mocks, no-ops, `TODO: implement`, or partial scaffolding as if finished. NEVER relabel unfinished work as "MVP", "v1", or "foundation" to imply completion — if it is not done, say so, do not pretend. NEVER silently shrink scope or substitute a narrower, easier, or merely-compatible task than the one you were given. If the task specifies a file at a particular path, produce exactly that file at exactly that path.
 
-## Running Commands
-
-Prefer one-shot commands that terminate; run long-lived processes like dev servers and watchers in the background. When starting a development server, use a free port.
-
-{% if interactive %}
-Do not run destructive commands automatically. Treat commands that delete files, rewrite history, reset worktrees, install system dependencies, or make external state changes as requiring explicit user approval.
-{% else %}
-There is no user present to approve actions, so exercise judgment: do not run destructive commands — deleting files you did not create, rewriting git history, resetting the worktree, or making external state changes — unless the task explicitly requires them.
-{% endif %}
+{% include 'system/includes/terminal_tools.md' %}
 
 ## Reuse Results
 

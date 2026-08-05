@@ -80,17 +80,10 @@ PARAM_ALIASES: Dict[str, Dict[str, ParamAlias]] = {
         # cross-over of exec_command's payload name.
         "command": ParamAlias("code"),
     },
-    "find_files_by_pattern": {
-        # Seen 4×. The tool has no directory/root parameter; the glob pattern
-        # IS the scope, so a lone `path` serves best as the pattern (globs pass
-        # through unchanged; a bare directory resolves to that directory
-        # entry, confirming it exists). When `pattern` is also given it wins
-        # and `path` is dropped.
-        "path": ParamAlias("pattern"),
-    },
-    # search_codebase(path=…) (3×) and (max_results=…) (1×) were also measured,
-    # but both are canonical parameters of search_codebase since a58f99b — no
-    # alias needed.
+    # ``search_codebase`` (path=…, max_results=…) and ``find_files_by_pattern``
+    # (path→pattern) aliases were removed with the file-discovery tools
+    # themselves — both were merged into ``glob`` and then deleted in favor of
+    # terminal-based discovery.
 }
 
 

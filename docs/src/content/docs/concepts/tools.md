@@ -12,16 +12,17 @@ depends on the [agent type](../agents/) and the current [mode](../../tui/modes/)
 
 ### File & code
 
-Read, search, and edit your project:
+Read and edit your project:
 
-- `list_directory` — list files in a directory.
 - `read_entire_file`, `read_file_section` — read file contents.
-- `find_files_by_pattern` — glob-based file search.
-- `search_codebase` — search the codebase by regular expression (ripgrep/grep), e.g. `foo|bar`.
 - `lsp` — read diagnostics, symbols, definitions,
   references, hover text, call hierarchy, and code action metadata from
   [configured language servers](../../configuration/lsp/).
 - Create and edit files — create new files and apply precise edits.
+
+Finding and searching files is done through the [terminal](#terminal): the
+agent prefers `rg` / `rg --files` over `find`/`grep` for speed. There are no
+dedicated file-discovery tools.
 
 File-edit paths may be project-relative, use `../` traversal, or be absolute;
 local LSP server edits may likewise target external files. Permissions and the
@@ -55,7 +56,7 @@ calls, and across sub-agents in the session, so the agent works incrementally
 (imports → define → test → use) instead of re-running whole scripts.
 
 Inside a cell, either kernel can **call back into the agent's own tools** over
-an authenticated loopback bridge — `tool.search_codebase({pattern: "TODO"})`
+an authenticated loopback bridge — `tool.read_file_section({path: "main.py", start_line: 1, end_line: 40})`
 from Python, or `await tool.read_image({path: "chart.png"})` from JavaScript.
 Bridge calls go through the same permission and hook pipeline as model-issued
 tool calls, and results arrive in each tool's model-facing format (for example,
@@ -207,10 +208,10 @@ available through `dispatch_custom_agent` when matching definitions are discover
 ## Read-only vs. full access
 
 Tools are gated by mode. In a read-only context — like [Plan mode](../../tui/modes/)
-or an investigation sub-agent — the agent can read and search the codebase
-(`list_directory`, `read_entire_file`, `read_file_section`, `search_codebase`,
-`find_files_by_pattern`, `web_search`, `web_fetch`, and reading
-memory) **and** run shell commands to investigate. Editing files still requires
+or an investigation sub-agent — the agent can read the codebase
+(`read_entire_file`, `read_file_section`, `web_search`, `web_fetch`, and reading
+memory) **and** run shell commands to investigate — including `rg` for
+searching files. Editing files still requires
 Build mode's full toolset.
 
 This separation is what keeps Plan mode safe to run against any codebase: the

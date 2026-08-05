@@ -117,7 +117,7 @@ def test_discovery_parses_focused_schema_and_warns_on_filename_mismatch(tmp_path
 name: reviewer
 description: Reviews code
 mode: all
-tools: [read_entire_file, search_codebase]
+tools: [read_entire_file, read_file_section]
 model: anthropic/claude-opus-4-8
 thinking_effort: high
 max_iterations: 17
@@ -128,7 +128,7 @@ max_iterations: 17
     definition = catalog.get("reviewer")
 
     assert definition is not None
-    assert definition.tools == ("read_entire_file", "search_codebase")
+    assert definition.tools == ("read_entire_file", "read_file_section")
     assert definition.mode == "all"
     assert definition.model == "anthropic/claude-opus-4-8"
     assert definition.thinking_effort == "high"

@@ -10,8 +10,72 @@ from typing import List, Optional
 
 import pathspec
 
-from kolega_code.agent.tool_backend.glob_tool import GlobTool
 from kolega_code.utils.images import image_media_type
+
+# Directories that never belong in @-mention completions (mirrors the
+# exclusions the agent's file-discovery tools used before they were removed).
+_EXCLUDE_DIRS = frozenset(
+    {
+        ".git",
+        ".svn",
+        ".hg",
+        ".idea",
+        ".vscode",
+        "__pycache__",
+        "node_modules",
+        "venv",
+        "env",
+        ".env",
+        "dist",
+        "build",
+        "target",
+        "bin",
+        "obj",
+        ".next",
+        ".nuxt",
+        "coverage",
+    }
+)
+
+# Binary extensions skipped from completions unless the file is an attachable
+# image (see refresh()).
+_BINARY_EXTENSIONS = frozenset(
+    {
+        ".pyc",
+        ".so",
+        ".dll",
+        ".exe",
+        ".bin",
+        ".jar",
+        ".war",
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".gif",
+        ".bmp",
+        ".ico",
+        ".svg",
+        ".pdf",
+        ".zip",
+        ".tar",
+        ".gz",
+        ".tgz",
+        ".rar",
+        ".7z",
+        ".mp3",
+        ".mp4",
+        ".avi",
+        ".mov",
+        ".mkv",
+        ".wav",
+        ".o",
+        ".obj",
+        ".class",
+        ".binary",
+        ".wasm",
+        ".node",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -50,7 +114,7 @@ class WorkspaceFileIndex:
             rel_dir = Path(dirpath).relative_to(root)
             kept_dirs = []
             for name in sorted(dirnames):
-                if name in GlobTool.EXCLUDE_DIRS:
+                if name in _EXCLUDE_DIRS:
                     continue
                 rel = self._posix(rel_dir / name)
                 if gitignore is not None and gitignore.match_file(rel + "/"):
@@ -63,7 +127,7 @@ class WorkspaceFileIndex:
                 # Exclude binaries, but keep attachable images: @-mentioning an image
                 # attaches it (build_file_attachments handles it via the same
                 # image_media_type), so it belongs in completions for vision models.
-                if Path(name).suffix.lower() in GlobTool.BINARY_EXTENSIONS and image_media_type(name) is None:
+                if Path(name).suffix.lower() in _BINARY_EXTENSIONS and image_media_type(name) is None:
                     continue
                 rel = self._posix(rel_dir / name)
                 if gitignore is not None and gitignore.match_file(rel):

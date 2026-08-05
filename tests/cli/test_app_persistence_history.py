@@ -749,8 +749,8 @@ async def test_textual_app_restore_tool_history_matches_legacy_and_execution_ids
             TextBlock("Modern first."),
             ToolCall(
                 id="provider-modern",
-                name="search_codebase",
-                input={"pattern": "needle"},
+                name="web_fetch",
+                input={"url": "https://example.com", "instruction": "Summarize"},
                 execution_id="tool_exec_modern",
             ),
         ],
@@ -761,7 +761,7 @@ async def test_textual_app_restore_tool_history_matches_legacy_and_execution_ids
             ToolResult(
                 tool_use_id="provider-modern",
                 content="modern contents",
-                name="search_codebase",
+                name="web_fetch",
                 is_error=False,
                 execution_id="tool_exec_modern",
             ),
@@ -770,7 +770,11 @@ async def test_textual_app_restore_tool_history_matches_legacy_and_execution_ids
     ).to_dict()
     pending_call = Message(
         role="assistant",
-        content=[ToolCall(id="provider-pending", name="list_directory", input={"path": "."})],
+        content=[
+            ToolCall(
+                id="provider-pending", name="read_file_section", input={"path": "a.py", "start_line": 1, "end_line": 1}
+            )
+        ],
     ).to_dict()
     orphan_result = Message(
         role="user",
@@ -787,14 +791,14 @@ async def test_textual_app_restore_tool_history_matches_legacy_and_execution_ids
             ("assistant", "Legacy first.", None),
             ("tool_result", "legacy contents", "read_file"),
             ("assistant", "Modern first.", None),
-            ("tool_result", "modern contents", "search_codebase"),
+            ("tool_result", "modern contents", "web_fetch"),
             ("user", "Thanks for the tool output.", None),
-            ("tool_call", "Calling list_directory", "list_directory"),
+            ("tool_call", "Calling read_file_section", "read_file_section"),
             ("tool_error", "orphan failed", "write_file"),
         ]
-        modern_entry = next(entry for entry in restored if entry.tool_name == "search_codebase")
+        modern_entry = next(entry for entry in restored if entry.tool_name == "web_fetch")
         assert modern_entry.tool_call_id == "tool_exec_modern"
-        pending_entry = next(entry for entry in restored if entry.tool_name == "list_directory")
+        pending_entry = next(entry for entry in restored if entry.tool_name == "read_file_section")
         assert pending_entry.complete is False
 
 
@@ -839,11 +843,15 @@ async def test_textual_app_model_rebuild_rerenders_completed_tool_once(
         ).to_dict(),
         Message(
             role="assistant",
-            content=[ToolCall(id="provider-1", name="list_directory", input={"path": "."})],
+            content=[
+                ToolCall(
+                    id="provider-1", name="read_file_section", input={"path": "a.py", "start_line": 1, "end_line": 1}
+                )
+            ],
         ).to_dict(),
         Message(
             role="user",
-            content=[ToolResult(tool_use_id="provider-1", content="files", name="list_directory", is_error=False)],
+            content=[ToolResult(tool_use_id="provider-1", content="files", name="read_file_section", is_error=False)],
         ).to_dict(),
     ]
 
@@ -857,5 +865,5 @@ async def test_textual_app_model_rebuild_rerenders_completed_tool_once(
         assert [(entry.kind, entry.content) for entry in app.conversation_entries if entry.kind == "user"] == [
             ("user", "List the files")
         ]
-        tool_entries = [entry for entry in app.conversation_entries if entry.tool_name == "list_directory"]
+        tool_entries = [entry for entry in app.conversation_entries if entry.tool_name == "read_file_section"]
         assert [(entry.kind, entry.content) for entry in tool_entries] == [("tool_result", "files")]

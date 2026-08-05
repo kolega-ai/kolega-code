@@ -59,14 +59,11 @@ def tool_collection(
     collection.edit_tool.edit = AsyncMock()
     collection.edit_tool.multi_edit = AsyncMock()
     collection.edit_tool.write = AsyncMock()
-    collection.list_directory_tool.list_directory = AsyncMock()
     collection.terminal_tool.execute_terminal_command = AsyncMock()
     collection.read_file_tool.read_entire_file = AsyncMock()
     collection.read_file_tool.read_file_section = AsyncMock()
     collection.memory_tool.read_memory = AsyncMock()
     collection.memory_tool.write_memory = AsyncMock()
-    collection.search_codebase_tool.search_codebase = AsyncMock()
-    collection.glob_tool.find_files_by_pattern = AsyncMock()
     collection.web_fetch_tool.web_fetch = AsyncMock()
     collection.terminal_tool.write_stdin = AsyncMock()
 
@@ -94,15 +91,6 @@ class TestToolCollection:
         result = await tool_collection.multi_edit(path, blocks)
         assert result == expected_response
         tool_collection.edit_tool.multi_edit.assert_called_once_with(path, blocks)
-
-    async def test_list_directory(self, tool_collection: AsyncMock) -> None:
-        path = "test_dir"
-        expected_response = "Directory listing"
-        tool_collection.list_directory_tool.list_directory.return_value = expected_response
-
-        result = await tool_collection.list_directory(path)
-        assert result == expected_response
-        tool_collection.list_directory_tool.list_directory.assert_called_once_with(path)
 
     async def test_execute_terminal_command(self, tool_collection: AsyncMock) -> None:
         command = "ls -la"
@@ -154,19 +142,6 @@ class TestToolCollection:
         assert result == expected_response
         tool_collection.edit_tool.write.assert_called_once_with(path, content)
 
-    async def test_search_codebase(self, tool_collection: AsyncMock) -> None:
-        pattern = "test"
-        file_pattern = "*.py"
-        case_sensitive = True
-        expected_response = "Search results"
-        tool_collection.search_codebase_tool.search_codebase.return_value = expected_response
-
-        result = await tool_collection.search_codebase(pattern, file_pattern, case_sensitive)
-        assert result == expected_response
-        tool_collection.search_codebase_tool.search_codebase.assert_called_once_with(
-            pattern, file_pattern=file_pattern, case_sensitive=case_sensitive, literal=False, path=None, max_results=128
-        )
-
     async def test_web_fetch(self, tool_collection: AsyncMock) -> None:
         url = "https://example.com"
         instruction = "Summarize this page"
@@ -179,19 +154,6 @@ class TestToolCollection:
         tool_collection.web_fetch_tool.web_fetch.assert_called_once_with(url, instruction)
 
     @pytest.mark.asyncio
-    async def test_find_files_by_pattern(self, tool_collection: AsyncMock) -> None:
-        pattern = "*.py"
-        include_directories = True
-        show_details = False
-        expected_response = "File list"
-        tool_collection.glob_tool.find_files_by_pattern.return_value = expected_response
-
-        result = await tool_collection.find_files_by_pattern(pattern, include_directories, show_details)
-        assert result == expected_response
-        tool_collection.glob_tool.find_files_by_pattern.assert_called_once_with(
-            pattern, include_directories=include_directories, show_details=show_details
-        )
-
     async def test_read_image_tool_is_registered(self) -> None:
         """read_image is in read_only_tools and has a ToolCollection wrapper."""
         assert "read_image" in ToolCollection.read_only_tools
