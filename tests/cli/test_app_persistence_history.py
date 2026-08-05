@@ -629,6 +629,77 @@ async def test_textual_app_restores_hosted_web_search_rows(tmp_path: Path, monke
 
 
 @pytest.mark.asyncio
+async def test_textual_app_restores_thinking_rows(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Reasoning restores as collapsed thinking rows in true interleaved order:
+    Anthropic ThinkingBlock text, flash raw chain-of-thought (`content` parts),
+    and OpenAI/ChatGPT summaries all render; encrypted-only items are skipped
+    without splitting the surrounding text run."""
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.app import KolegaCodeApp
+    from kolega_code.llm.models import ResponsesReasoningBlock, ThinkingBlock
+
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", _RestoredHistoryFakeAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    history = [
+        Message(role="user", content=[TextBlock("Think then search")]).to_dict(),
+        Message(
+            role="assistant",
+            content=[
+                ThinkingBlock(thinking="anthropic style reasoning"),
+                TextBlock("Text after native thinking."),
+            ],
+        ).to_dict(),
+        Message(
+            role="assistant",
+            content=[
+                ResponsesReasoningBlock(content=["flash raw chain of thought"], item_id="rs_1"),
+                WebSearchCallBlock(item_id="ws_1", status="completed", action={"type": "search", "queries": ["q"]}),
+                ResponsesReasoningBlock(encrypted_content="opaque", summary=["openai summary text"], item_id="rs_2"),
+                TextBlock("Final answer."),
+            ],
+        ).to_dict(),
+        Message(
+            role="assistant",
+            content=[
+                TextBlock("Part one."),
+                ResponsesReasoningBlock(encrypted_content="opaque-only", item_id="rs_3"),
+                TextBlock("Part two."),
+            ],
+        ).to_dict(),
+    ]
+
+    _persist_history(store, session, history)
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test():
+        rows = [(entry.kind, entry.content, entry.tool_name) for entry in app.conversation_entries[1:]]
+        assert rows == [
+            ("user", "Think then search", None),
+            ("thinking", "anthropic style reasoning", None),
+            ("assistant", "Text after native thinking.", None),
+            ("thinking", "flash raw chain of thought", None),
+            (
+                "tool_result",
+                "search: 'q' — completed (results injected server-side)",
+                "web_search (hosted)",
+            ),
+            ("thinking", "openai summary text", None),
+            ("assistant", "Final answer.", None),
+            # rs_3 is encrypted-only: skipped without splitting the text run.
+            ("assistant", "Part one.\nPart two.", None),
+        ]
+        thinking_entries = [entry for entry in app.conversation_entries if entry.kind == "thinking"]
+        assert all(entry.complete for entry in thinking_entries)
+        assert all(entry.word_count > 0 for entry in thinking_entries)
+
+
+@pytest.mark.asyncio
 async def test_textual_app_restore_tool_history_matches_legacy_and_execution_ids(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -280,7 +280,12 @@ class ToolEntryWidget(Vertical):
         title_factory: Callable[[ConversationEntry], str],
         preview_factory: Optional[Callable[[ConversationEntry], Any]] = None,
     ) -> None:
-        classes = "agent-activity" if entry.kind in {"tool_call", "tool_result", "tool_error"} else None
+        if entry.kind in {"tool_call", "tool_result", "tool_error"}:
+            classes: Optional[str] = "agent-activity"
+        elif entry.kind == "thinking":
+            classes = "agent-activity thinking-entry"
+        else:
+            classes = None
         super().__init__(classes=classes)
         self.entry = entry
         self._title_factory = title_factory
@@ -290,6 +295,7 @@ class ToolEntryWidget(Vertical):
         self._preview: Optional[Static] = None
         self._title = ""
         self._body_content: object = None
+        self._body_len = 0
         self._preview_key = ""
         self._preview_visible = False
 
@@ -311,9 +317,17 @@ class ToolEntryWidget(Vertical):
     def on_mount(self) -> None:
         self.refresh_content()
 
+    def on_collapsible_expanded(self, event: Collapsible.Expanded) -> None:
+        # Thinking bodies are not updated while collapsed; sync on open.
+        self.refresh_content()
+
     def refresh_content(self) -> None:
         if self._collapsible is None or self._body is None:
             return
+
+        # Thinking entries stream through stream_parts; fold pending deltas into
+        # content once per flush (no-op for tool entries, which never stream here).
+        self.entry.materialize()
 
         title = self._title_factory(self.entry)
         if title != self._title:
@@ -321,7 +335,16 @@ class ToolEntryWidget(Vertical):
             self._title = title
 
         body_content = self.entry.full_content or self.entry.content
-        if body_content != self._body_content:
+        if self.entry.kind == "thinking":
+            # Streaming thinking appends on every flush: skip updating the
+            # hidden body entirely while collapsed (the title carries the
+            # progress), and compare by length when visible — growth is
+            # append-only, so length is the change signal and an exact string
+            # compare would be O(n) per flush, O(n^2) over the stream.
+            if not self._collapsible.collapsed and len(body_content) != self._body_len:
+                self._body.update(body_content)
+                self._body_len = len(body_content)
+        elif body_content != self._body_content:
             self._body.update(body_content)
             self._body_content = body_content
 
