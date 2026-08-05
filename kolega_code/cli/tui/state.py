@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import itertools
+import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
@@ -84,6 +85,13 @@ class ConversationEntry:
     # the whole buffer. See transcript._apply_stream_chunk / _streaming_indented_renderable.
     stream_parts: list[str] = field(default_factory=list, compare=False, repr=False)
     render_cache: object = field(default=None, compare=False, repr=False)
+    # Thinking-entry progress metadata: word_count grows per streamed delta (an
+    # incremental counter, so the collapsed title never rescans the full text),
+    # elapsed_s is stamped when the streamed segment completes. Restored entries
+    # get word_count at creation and no elapsed_s.
+    created_at: float = field(default_factory=time.monotonic, compare=False, repr=False)
+    word_count: int = field(default=0, compare=False, repr=False)
+    elapsed_s: Optional[float] = field(default=None, compare=False, repr=False)
 
     def materialize(self) -> str:
         """Fold any deferred stream deltas into ``content`` and return it.

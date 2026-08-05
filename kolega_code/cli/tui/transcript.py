@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -14,7 +15,15 @@ from rich.text import Text
 
 from kolega_code.agent import AgentEvent
 from kolega_code.events import KnownEventType
-from kolega_code.llm.models import Message, TextBlock, ToolCall, ToolResult, WebSearchCallBlock
+from kolega_code.llm.models import (
+    Message,
+    ResponsesReasoningBlock,
+    TextBlock,
+    ThinkingBlock,
+    ToolCall,
+    ToolResult,
+    WebSearchCallBlock,
+)
 from kolega_code.services.lsp import extract_lsp_label
 
 from .. import messages, theme
@@ -195,6 +204,28 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
         for block in message.content:
             if isinstance(block, TextBlock):
                 pending_text.append(block.text)
+            elif isinstance(block, (ThinkingBlock, ResponsesReasoningBlock)):
+                # Restore reasoning as the same collapsed thinking row the live
+                # transcript shows. Anthropic carries plaintext `thinking`; flash
+                # carries the raw chain-of-thought as `content` parts; OpenAI/
+                # ChatGPT carry only a plaintext `summary` beside the encrypted
+                # blob. Encrypted-only items have nothing renderable — skip
+                # without flushing so surrounding text isn't split for nothing.
+                if isinstance(block, ThinkingBlock):
+                    text = block.thinking
+                else:
+                    text = "\n\n".join(block.content) or "\n\n".join(block.summary)
+                text = (text or "").strip()
+                if text:
+                    flush_text()
+                    capped = self._capped_tool_text(text)
+                    entries.append(
+                        ConversationEntry(
+                            kind="thinking",
+                            content=capped,
+                            word_count=len(capped.split()),
+                        )
+                    )
             elif isinstance(block, WebSearchCallBlock):
                 # Hosted web search executed on the provider's servers: there is
                 # no ToolResult in history, the block itself is the whole record.
@@ -326,8 +357,15 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
             stream_index[cache_key] = entry
         if text:
             entry.stream_parts.append(text)
+            if kind == "thinking":
+                # Incremental count: the collapsed title shows progress without
+                # ever rescanning the accumulated text (a word straddling a
+                # chunk seam counts twice, so the tally may run one high per chunk).
+                entry.word_count += len(text.split())
         entry.complete = complete
         if complete:
+            if kind == "thinking" and entry.elapsed_s is None:
+                entry.elapsed_s = max(0.0, time.monotonic() - entry.created_at)
             entry.materialize()
         return entry
 
@@ -1406,6 +1444,8 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
     def _make_entry_widget(self, entry: ConversationEntry) -> ConversationEntryWidget | ToolEntryWidget:
         if entry.kind in {"tool_call", "tool_result", "tool_error"}:
             return ToolEntryWidget(entry, self._tool_entry_title, self._tool_preview_renderable)
+        if entry.kind == "thinking":
+            return ToolEntryWidget(entry, self._thinking_entry_title)
         if entry.kind == "compaction_summary":
             return ToolEntryWidget(entry, self._compaction_summary_title)
         if entry.kind == "sub_agent":
@@ -1414,6 +1454,25 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
 
     def _compaction_summary_title(self, entry: ConversationEntry) -> str:
         return theme.role_header(Glyph.STATUS, messages.COMPACTION_SUMMARY_TITLE, Color.ACCENT)
+
+    def _thinking_entry_title(self, entry: ConversationEntry) -> str:
+        """Collapsed-thinking header: progress counters only, never the text.
+
+        Streaming: `● Thinking · … · 1.2k words` (the growing count is the live
+        progress signal). Complete: `● Thought · 12s · 1.2k words`; restored
+        entries have no measured duration and drop the seconds segment.
+        """
+        sep = theme.g(Glyph.BULLET_SEP)
+        details: list[str] = []
+        if entry.complete and entry.elapsed_s is not None:
+            seconds = int(round(entry.elapsed_s))
+            details.append(f"{seconds // 60}m{seconds % 60:02d}s" if seconds >= 60 else f"{seconds}s")
+        if entry.word_count:
+            details.append(f"{self._format_token_count(entry.word_count)} words")
+        label = messages.THINKING_DONE_TITLE if entry.complete else messages.THINKING_TITLE
+        state = None if entry.complete else theme.g(Glyph.ELLIPSIS)
+        detail = f" {sep} ".join(details) if details else None
+        return theme.role_header(Glyph.AGENT, label, Color.THINKING, state=state, detail=detail)
 
     def _schedule_conversation_bottom_anchor(self, *, update_button: bool = True) -> None:
         """Pin the transcript to the latest output after layout has settled."""

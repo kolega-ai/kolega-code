@@ -139,6 +139,11 @@ ToolEntryWidget .tool-body {
     color: $text-muted;
 }
 
+ToolEntryWidget.thinking-entry .tool-body {
+    color: $text-muted;
+    text-style: italic;
+}
+
 #jump_to_bottom {
     display: none;
     height: 1;

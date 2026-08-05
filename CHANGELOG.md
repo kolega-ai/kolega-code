@@ -6,6 +6,20 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+### Changed
+
+- Thinking now renders as a collapsed row in the TUI transcript — `● Thinking
+  · … · 1.2k words` while streaming (a live word counter, never the text),
+  flipping to `● Thought · 12s · 1.2k words` on completion; expand the row to
+  read the full reasoning. Long reasoning turns (DeepSeek flash especially) no
+  longer dominate the transcript with full-height thinking walls.
+- Resumed sessions now restore reasoning as the same collapsed thinking rows,
+  in true interleaved order with tool and hosted web-search rows: Anthropic
+  thinking text, DeepSeek flash's raw chain-of-thought, and OpenAI/ChatGPT
+  reasoning summaries all render (encrypted-only reasoning items have no
+  renderable text and are skipped). Previously reasoning vanished entirely
+  from restored transcripts.
+
 ### Fixed
 
 - Hosted web-search calls now render in their true position in the TUI

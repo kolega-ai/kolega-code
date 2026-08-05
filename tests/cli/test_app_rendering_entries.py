@@ -308,13 +308,13 @@ async def test_transcript_activity_hierarchy_uses_two_cell_steps(
     top_level = [
         ConversationEntry(kind="user", content="user"),
         ConversationEntry(kind="assistant", content="agent"),
-        # Thinking aligns with the message flow (its 2-cell indent lives in the text).
-        ConversationEntry(kind="thinking", content="thinking"),
         ConversationEntry(kind="plan", content="plan"),
         ConversationEntry(kind="question", content="question"),
         ConversationEntry(kind="lsp", content="lsp"),
         ConversationEntry(kind="system", content="system"),
     ]
+    # Thinking renders as a collapsed activity row (like tools), never inline text.
+    thinking = ConversationEntry(kind="thinking", content="pondering deeply", word_count=2)
     activities = [
         ConversationEntry(kind="progress", content="status"),
         ConversationEntry(kind="skill", content="skill"),
@@ -330,7 +330,7 @@ async def test_transcript_activity_hierarchy_uses_two_cell_steps(
     compaction = ConversationEntry(kind="compaction_summary", content="summary")
 
     async with app.run_test(size=(72, 70)) as pilot:
-        app.conversation_entries = [*top_level, *activities, tool, compaction]
+        app.conversation_entries = [*top_level, *activities, thinking, tool, compaction]
         app._render_conversation()
         await pilot.pause()
 
@@ -357,6 +357,15 @@ async def test_transcript_activity_hierarchy_uses_two_cell_steps(
         assert tool_collapsible.region.x == tool_widget.region.x
         assert tool_title.content_region.x == tool_widget.region.x + 2
 
+        thinking_widget = app._entry_widgets[thinking.entry_id]
+        assert isinstance(thinking_widget, ToolEntryWidget)
+        assert thinking_widget.has_class("agent-activity")
+        assert thinking_widget.has_class("thinking-entry")
+        thinking_collapsible = thinking_widget.query_one(Collapsible)
+        assert thinking_collapsible.collapsed is True
+        thinking_title = thinking_widget.query_one(CollapsibleTitle)
+        assert thinking_title.content_region.x == thinking_widget.region.x + 2
+
         compaction_widget = app._entry_widgets[compaction.entry_id]
         assert isinstance(compaction_widget, ToolEntryWidget)
         assert not compaction_widget.has_class("agent-activity")
@@ -368,6 +377,57 @@ async def test_transcript_activity_hierarchy_uses_two_cell_steps(
         body = tool_widget.query_one(".tool-body", Static)
         assert body.region.x == tool_widget.region.x + 4
         assert body.region.right <= app._conversation.content_region.right
+
+
+@pytest.mark.asyncio
+async def test_thinking_entry_streams_collapsed_with_progress_title(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from textual.widgets import Collapsible
+
+    from kolega_code.cli.tui.widgets import ToolEntryWidget
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+
+    async with app.run_test() as pilot:
+        app._apply_stream_chunk({"uuid": "think-1", "content": "alpha beta gamma ", "complete": False}, kind="thinking")
+        app._render_conversation()
+        await pilot.pause()
+
+        entry = next(e for e in app.conversation_entries if e.kind == "thinking")
+        widget = app._entry_widgets[entry.entry_id]
+        assert isinstance(widget, ToolEntryWidget)
+        collapsible = widget.query_one(Collapsible)
+        assert collapsible.collapsed is True
+
+        # Progress counters in the title, never the text; hidden body untouched.
+        title = app._thinking_entry_title(entry)
+        assert "Thinking" in title
+        assert "3 words" in title
+        assert "alpha" not in title
+        assert widget._body_len == 0
+
+        app._apply_stream_chunk({"uuid": "think-1", "content": "delta", "complete": True}, kind="thinking")
+        app._render_conversation()
+        await pilot.pause()
+
+        title = app._thinking_entry_title(entry)
+        assert "Thought" in title
+        assert "4 words" in title
+        assert "0s" in title  # measured duration appears once complete
+
+        # _render_conversation rebuilds the window; re-resolve the live widget.
+        widget = app._entry_widgets[entry.entry_id]
+        assert isinstance(widget, ToolEntryWidget)
+        collapsible = widget.query_one(Collapsible)
+        assert collapsible.collapsed is True
+        assert widget._body_len == 0
+
+        # Opening the row syncs the deferred body.
+        collapsible.collapsed = False
+        await pilot.pause()
+        assert widget._body_len == len(entry.content)
+        assert entry.content == "alpha beta gamma delta"
 
 
 @pytest.mark.asyncio
