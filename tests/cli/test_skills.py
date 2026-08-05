@@ -8,9 +8,11 @@ from kolega_code.cli.skills import (
     activated_skill_names,
     build_skill_prompt_extension,
     build_skill_tool_extension,
+    close_skill_matches,
     discover_skills,
 )
 from kolega_code.llm.models import Message, TextBlock, ToolResult
+from kolega_code.tools import ToolError
 
 
 def write_skill(
@@ -106,7 +108,7 @@ def test_prompt_catalog_uses_only_names_and_descriptions(tmp_path: Path) -> None
     assert "(project)" not in prompt
 
 
-def test_prompt_catalog_truncates_descriptions_before_omitting_skills(tmp_path: Path) -> None:
+def test_prompt_catalog_truncates_descriptions_to_keep_all_names(tmp_path: Path) -> None:
     project = tmp_path / "project"
     user_home = tmp_path / "home"
     project.mkdir()
@@ -118,8 +120,7 @@ def test_prompt_catalog_truncates_descriptions_before_omitting_skills(tmp_path: 
     catalog = discover_skills(project, user_home=user_home, bundled_root=None)
     render = catalog.render_prompt_catalog(SkillCatalogBudget(max_chars=95))
 
-    assert render.report.included_count == 3
-    assert render.report.omitted_count == 0
+    assert render.report.total_count == 3
     assert render.report.truncated_description_count == 3
     assert "`alpha-skill`" in render.markdown
     assert "`beta-skill`" in render.markdown
@@ -128,7 +129,7 @@ def test_prompt_catalog_truncates_descriptions_before_omitting_skills(tmp_path: 
     assert long_description not in render.markdown
 
 
-def test_prompt_catalog_omits_overflow_when_names_exceed_budget(tmp_path: Path) -> None:
+def test_prompt_catalog_lists_every_name_when_budget_is_tiny(tmp_path: Path) -> None:
     project = tmp_path / "project"
     user_home = tmp_path / "home"
     project.mkdir()
@@ -139,12 +140,10 @@ def test_prompt_catalog_omits_overflow_when_names_exceed_budget(tmp_path: Path) 
     catalog = discover_skills(project, user_home=user_home, bundled_root=None)
     render = catalog.render_prompt_catalog(SkillCatalogBudget(max_chars=30))
 
-    assert render.report.included_count == 2
-    assert render.report.omitted_count == 8
-    assert "`skill-00`" in render.markdown
-    assert "`skill-01`" in render.markdown
-    assert "`skill-02`" not in render.markdown
-    assert "8 additional skills were omitted" in render.markdown
+    assert render.report.total_count == 10
+    for index in range(10):
+        assert f"`skill-{index:02d}`" in render.markdown
+    assert "omitted" not in render.markdown
 
 
 def test_build_skill_prompt_extension_uses_context_window_budget(tmp_path: Path) -> None:
@@ -192,30 +191,84 @@ def test_large_context_skill_prompt_extension_stays_bounded(tmp_path: Path) -> N
 
 
 @pytest.mark.asyncio
-async def test_list_skills_tool_is_bounded_and_queryable(tmp_path: Path) -> None:
+async def test_skill_tool_returns_activation_envelope(tmp_path: Path) -> None:
     project = tmp_path / "project"
     user_home = tmp_path / "home"
     project.mkdir()
     skills_root = project / ".agents" / "skills"
-    for index in range(60):
-        write_skill(skills_root, f"alpha-{index:02d}", f"Use alpha skill {index}.")
+    skill_dir = write_skill(skills_root, "demo-skill", "Use the demo skill.", body="# Demo steps")
+    (skill_dir / "references").mkdir()
+    (skill_dir / "references" / "guide.md").write_text("guide content", encoding="utf-8")
 
     catalog = discover_skills(project, user_home=user_home, bundled_root=None)
     extension = build_skill_tool_extension(catalog, lambda: [])
     assert extension is not None
-    list_skills = extension.tools["list_skills"]
+    assert set(extension.tools) == {"skill"}
+    assert extension.tool_groups["planning_tools"] == ["skill"]
+    assert extension.tool_groups["cli_skill_tools"] == ["skill"]
 
-    default_output = await list_skills()
-    assert "`alpha-00`" in default_output
-    assert "`alpha-49`" in default_output
-    assert "`alpha-59`" not in default_output
-    assert "10 matching skills were not shown" in default_output
-    assert "/alpha-00" not in default_output
-    assert "(project)" not in default_output
+    output = await extension.tools["skill"](name="demo-skill")
+    assert '<skill_content name="demo-skill">' in output
+    assert "# Demo steps" in output
+    assert "Skill directory:" in output
+    assert "<file>references/guide.md</file>" in output
 
-    queried_output = await list_skills(query="alpha-59")
-    assert "`alpha-59`" in queried_output
-    assert "Use alpha skill 59." in queried_output
+
+@pytest.mark.asyncio
+async def test_skill_tool_short_circuits_when_already_active(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    user_home = tmp_path / "home"
+    project.mkdir()
+    write_skill(project / ".agents" / "skills", "demo-skill", "Use the demo skill.", body="# Demo steps")
+
+    catalog = discover_skills(project, user_home=user_home, bundled_root=None)
+    history = [Message("user", [TextBlock('<skill_content name="demo-skill">body</skill_content>')])]
+    extension = build_skill_tool_extension(catalog, lambda: history)
+    assert extension is not None
+
+    output = await extension.tools["skill"](name="demo-skill")
+    assert "already active" in output
+    assert "# Demo steps" not in output
+
+
+@pytest.mark.asyncio
+async def test_skill_tool_unknown_name_lists_close_matches(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    user_home = tmp_path / "home"
+    project.mkdir()
+    skills_root = project / ".agents" / "skills"
+    for name in ("release-notes", "deep-research", "docx"):
+        write_skill(skills_root, name, f"Use {name}.")
+
+    catalog = discover_skills(project, user_home=user_home, bundled_root=None)
+    extension = build_skill_tool_extension(catalog, lambda: [])
+    assert extension is not None
+
+    with pytest.raises(ToolError, match=r"Skill not found: releas-note\..*`release-notes`"):
+        await extension.tools["skill"](name="releas-note")
+
+    with pytest.raises(ToolError, match=r"Skill not found: doc\..*`docx`"):
+        await extension.tools["skill"](name="doc")
+
+    with pytest.raises(ToolError, match=r"Skill not found: zzz$"):
+        await extension.tools["skill"](name="zzz")
+
+
+def test_close_skill_matches_ranks_prefix_before_fuzzy(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    user_home = tmp_path / "home"
+    project.mkdir()
+    skills_root = project / ".agents" / "skills"
+    for name in ("release-notes", "deep-research", "docx", "release-tag"):
+        write_skill(skills_root, name, f"Use {name}.")
+
+    catalog = discover_skills(project, user_home=user_home, bundled_root=None)
+
+    matches = close_skill_matches("release", catalog.skills.values())
+    assert matches == ["release-notes", "release-tag"]
+
+    matches = close_skill_matches("", catalog.skills.values())
+    assert matches == []
 
 
 def test_discover_skills_skips_missing_description_and_malformed_yaml(tmp_path: Path) -> None:
@@ -259,19 +312,6 @@ def test_activation_content_wraps_body_and_lists_resources(tmp_path: Path) -> No
     assert "name: resource-skill" not in content
 
 
-def test_read_resource_rejects_path_traversal_and_caps_content(tmp_path: Path) -> None:
-    project = tmp_path / "project"
-    user_home = tmp_path / "home"
-    skill_dir = write_skill(project / ".agents" / "skills", "read-skill")
-    (skill_dir / "big.txt").write_text("a" * 20, encoding="utf-8")
-
-    catalog = discover_skills(project, user_home=user_home, bundled_root=None)
-
-    assert catalog.read_resource("read-skill", "big.txt", max_chars=5).startswith("aaaaa\n\n[truncated")
-    with pytest.raises(ValueError, match="inside the skill directory"):
-        catalog.read_resource("read-skill", "../SKILL.md")
-
-
 def test_activated_skill_names_scans_text_and_tool_results() -> None:
     history = [
         Message("user", [TextBlock('<skill_content name="one">body</skill_content>')]),
@@ -282,7 +322,7 @@ def test_activated_skill_names_scans_text_and_tool_results() -> None:
                 ToolResult(
                     tool_use_id="toolu_123",
                     content=[TextBlock('<skill_content name="three">body</skill_content>')],
-                    name="activate_skill",
+                    name="skill",
                     is_error=False,
                 )
             ],

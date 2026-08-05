@@ -88,9 +88,10 @@ paths **relative to the skill directory**, and the agent can read them on demand
   [`kolega-code ask`](../cli/ask/#skills).
 
 <Aside type="note">
-When a skill is active, the agent has helper tools to inspect and load skills —
-`list_skills`, `activate_skill`, and `read_skill_resource` — so it can pull in a
-skill's instructions and resources itself when a task calls for it.
+When a skill is active, the agent can call the `skill` tool to pull in a
+skill's instructions itself when a task calls for it. The activation output
+names the skill's absolute directory, and bundled resources are then read
+with the ordinary `read` tool.
 </Aside>
 
 ## Diagnostics

@@ -249,14 +249,14 @@ async def test_textual_app_passes_skill_extensions_to_build_and_plan_agents(
         skill_tools = extension_by_name(app.agent.kwargs["tool_extensions"], "cli-agent-skills").tools
 
         assert "demo-skill" in skill_prompt.markdown
-        assert {"list_skills", "activate_skill", "read_skill_resource"} == set(skill_tools)
-        assert "demo-skill" in await skill_tools["list_skills"]()
+        assert {"skill"} == set(skill_tools)
+        assert '<skill_content name="demo-skill">' in await skill_tools["skill"](name="demo-skill")
 
         await pilot.press("shift+tab")
 
         assert isinstance(app.agent, FakePlanningAgent)
         planning_skill_tools = extension_by_name(app.agent.kwargs["tool_extensions"], "cli-agent-skills")
-        assert "activate_skill" in planning_skill_tools.tools
+        assert "skill" in planning_skill_tools.tools
 
 
 @pytest.mark.asyncio

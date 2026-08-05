@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import difflib
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -14,6 +15,7 @@ from kolega_code.agent.prompts import build_skill_catalog_prompt
 from kolega_code.agent.prompt_provider import AgentMode
 from kolega_code.llm.models import Message
 from kolega_code.llm.specs import get_model_specs
+from kolega_code.tools import ToolError
 
 
 PROJECT_SKILLS_DIR = Path(".agents") / "skills"
@@ -25,16 +27,15 @@ SKILL_SCOPE_PRECEDENCE = {
     "project": 2,
 }
 MAX_RESOURCE_FILES = 100
-MAX_RESOURCE_READ_CHARS = 100_000
 DEFAULT_SKILL_METADATA_CHAR_BUDGET = 8_000
 MAX_SKILL_METADATA_CHAR_BUDGET = 48_000
 SKILL_METADATA_CONTEXT_WINDOW_PERCENT = 2
 APPROX_CHARS_PER_TOKEN = 4
 SKILL_DESCRIPTION_TRUNCATION_SUFFIX = "..."
-LIST_SKILLS_DEFAULT_MAX_RESULTS = 50
-LIST_SKILLS_MAX_RESULTS = 100
 SKILL_NAME_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$")
 SKILL_CONTENT_RE = re.compile(r'<skill_content name="([^"]+)">')
+SKILL_SUGGESTION_MAX = 5
+SKILL_SUGGESTION_CUTOFF = 0.5
 
 
 @dataclass(frozen=True)
@@ -62,8 +63,6 @@ class SkillCatalogBudget:
 @dataclass(frozen=True)
 class SkillCatalogRenderReport:
     total_count: int
-    included_count: int
-    omitted_count: int
     truncated_description_count: int = 0
     truncated_description_chars: int = 0
 
@@ -139,52 +138,6 @@ class SkillCatalog:
         effective_budget = budget or SkillCatalogBudget.for_context_window(context_window_tokens)
         return build_skill_catalog_prompt(self.render_prompt_catalog(effective_budget).markdown)
 
-    def format_model_catalog(
-        self,
-        *,
-        query: str = "",
-        max_results: int = LIST_SKILLS_DEFAULT_MAX_RESULTS,
-        budget: Optional[SkillCatalogBudget] = None,
-    ) -> str:
-        """Return a bounded model-facing skill list with names and descriptions only."""
-        records = _filter_skill_records(list(self.skills.values()), query)
-        clean_query = query.strip()
-        if not records:
-            if clean_query:
-                return f"No Agent Skills matched query `{clean_query}`."
-            return "No Agent Skills found."
-
-        max_results = _clamp_max_results(max_results)
-        visible_records = records[:max_results]
-        render = _render_skill_metadata_records(
-            visible_records,
-            budget or SkillCatalogBudget.for_context_window(None),
-        )
-
-        if clean_query:
-            lines = [f"Available Agent Skills matching `{clean_query}` ({len(records)} total):"]
-        else:
-            lines = [f"Available Agent Skills ({len(records)} total):"]
-        if render.markdown:
-            lines.extend(["", render.markdown])
-
-        if render.report.truncated_description_count:
-            lines.extend(["", "Skill descriptions were shortened to fit the skill metadata budget."])
-
-        omitted_count = len(records) - render.report.included_count
-        if omitted_count > 0:
-            lines.extend(
-                [
-                    "",
-                    (
-                        f"{omitted_count} matching skills were not shown. "
-                        "Call `list_skills(query=...)` with a narrower query to inspect more."
-                    ),
-                ]
-            )
-
-        return "\n".join(lines)
-
     def activation_content(self, name: str, *, active_names: Optional[set[str]] = None) -> str:
         record = self._require_skill(name)
         active_names = active_names or set()
@@ -232,39 +185,11 @@ class SkillCatalog:
 
         return paths, False
 
-    def read_resource(self, name: str, relative_path: str, *, max_chars: int = MAX_RESOURCE_READ_CHARS) -> str:
-        record = self._require_skill(name)
-        clean_relative_path = relative_path.strip()
-        if not clean_relative_path:
-            raise ValueError("relative_path must not be empty.")
-        requested = Path(clean_relative_path)
-        if requested.is_absolute() or ".." in requested.parts:
-            raise ValueError("Skill resource path must stay inside the skill directory.")
-
-        root = record.skill_dir.resolve()
-        path = (record.skill_dir / requested).resolve()
-        try:
-            path.relative_to(root)
-        except ValueError as exc:
-            raise ValueError("Skill resource path must stay inside the skill directory.") from exc
-
-        if not path.is_file():
-            raise ValueError(f"Skill resource not found: {clean_relative_path}")
-
-        try:
-            content = path.read_text(encoding="utf-8")
-        except UnicodeDecodeError as exc:
-            raise ValueError(f"Skill resource is not UTF-8 text: {clean_relative_path}") from exc
-
-        if len(content) <= max_chars:
-            return content
-        return f"{content[:max_chars]}\n\n[truncated to first {max_chars} characters]"
-
     def _require_skill(self, name: str) -> SkillRecord:
         skill_name = name.strip()
         record = self.skills.get(skill_name)
         if record is None:
-            raise ValueError(f"Skill not found: {skill_name}")
+            raise ValueError(_skill_not_found_message(skill_name, self.skills.values()))
         return record
 
 
@@ -278,14 +203,14 @@ def _render_skill_metadata_records(
     if not records:
         return SkillCatalogRenderResult(
             markdown="",
-            report=SkillCatalogRenderReport(total_count=0, included_count=0, omitted_count=0),
+            report=SkillCatalogRenderReport(total_count=0),
         )
 
     full_lines = [_skill_metadata_line(record, _clean_description(record.description)) for record in records]
     if _joined_len(full_lines) <= budget.max_chars:
         return SkillCatalogRenderResult(
             markdown="\n".join(full_lines),
-            report=SkillCatalogRenderReport(total_count=total_count, included_count=total_count, omitted_count=0),
+            report=SkillCatalogRenderReport(total_count=total_count),
         )
 
     minimum_lines = [_skill_metadata_line(record, "") for record in records]
@@ -295,30 +220,19 @@ def _render_skill_metadata_records(
             markdown="\n".join(lines),
             report=SkillCatalogRenderReport(
                 total_count=total_count,
-                included_count=total_count,
-                omitted_count=0,
                 truncated_description_count=truncated_count,
                 truncated_description_chars=truncated_chars,
             ),
         )
 
-    included_lines: list[str] = []
-    included_records: list[SkillRecord] = []
-    for record in records:
-        line = _skill_metadata_line(record, "")
-        if not _line_fits(included_lines, line, budget.max_chars):
-            break
-        included_lines.append(line)
-        included_records.append(record)
-
+    # Even name-only lines exceed the budget: list every name anyway. The roster
+    # must never hide a skill name; description text is the only thing shed.
     return SkillCatalogRenderResult(
-        markdown="\n".join(included_lines),
+        markdown="\n".join(minimum_lines),
         report=SkillCatalogRenderReport(
             total_count=total_count,
-            included_count=len(included_lines),
-            omitted_count=total_count - len(included_lines),
-            truncated_description_count=sum(1 for record in included_records if _clean_description(record.description)),
-            truncated_description_chars=sum(len(_clean_description(record.description)) for record in included_records),
+            truncated_description_count=sum(1 for record in records if _clean_description(record.description)),
+            truncated_description_chars=sum(len(_clean_description(record.description)) for record in records),
         ),
     )
 
@@ -384,43 +298,45 @@ def _joined_len(lines: Sequence[str]) -> int:
     return len("\n".join(lines))
 
 
-def _line_fits(existing_lines: Sequence[str], new_line: str, max_chars: int) -> bool:
-    if not existing_lines:
-        return len(new_line) <= max_chars
-    return _joined_len([*existing_lines, new_line]) <= max_chars
-
-
 def _append_skill_metadata_notes(markdown: str, report: SkillCatalogRenderReport) -> str:
-    notes: list[str] = []
-    if report.truncated_description_count:
-        notes.append("Skill descriptions were shortened to fit the skill metadata budget.")
-    if report.omitted_count:
-        notes.append(f"{report.omitted_count} additional skills were omitted to fit the skill metadata budget.")
-    if not notes:
+    if not report.truncated_description_count:
         return markdown
-    note_block = "\n".join(f"- {note}" for note in notes)
+    note = "Skill descriptions were shortened to fit the skill metadata budget."
     if markdown:
-        return f"{markdown}\n\n{note_block}"
-    return note_block
+        return f"{markdown}\n\n- {note}"
+    return f"- {note}"
 
 
-def _filter_skill_records(records: Sequence[SkillRecord], query: str) -> list[SkillRecord]:
-    clean_query = query.strip().lower()
-    if not clean_query:
-        return list(records)
-    return [
-        record
-        for record in records
-        if clean_query in record.name.lower() or clean_query in _clean_description(record.description).lower()
+def _skill_not_found_message(name: str, records: Iterable[SkillRecord]) -> str:
+    message = f"Skill not found: {name}"
+    matches = close_skill_matches(name, records)
+    if matches:
+        suggestions = ", ".join(f"`{match}`" for match in matches)
+        message += f". Did you mean: {suggestions}?"
+    return message
+
+
+def close_skill_matches(
+    name: str,
+    records: Iterable[SkillRecord],
+    *,
+    max_matches: int = SKILL_SUGGESTION_MAX,
+) -> list[str]:
+    """Rank catalog names for a mistyped activation: prefix matches first, then fuzzy similarity."""
+    clean_name = name.strip().lower()
+    if not clean_name:
+        return []
+    catalog_names = [record.name for record in records]
+    exact = {candidate for candidate in catalog_names if candidate.lower() == clean_name}
+    prefix = [
+        candidate for candidate in catalog_names if candidate not in exact and candidate.lower().startswith(clean_name)
     ]
-
-
-def _clamp_max_results(max_results: int) -> int:
-    try:
-        value = int(max_results)
-    except (TypeError, ValueError):
-        value = LIST_SKILLS_DEFAULT_MAX_RESULTS
-    return max(1, min(value, LIST_SKILLS_MAX_RESULTS))
+    fuzzy = difflib.get_close_matches(clean_name, catalog_names, n=max_matches, cutoff=SKILL_SUGGESTION_CUTOFF)
+    ranked: list[str] = []
+    for candidate in prefix + fuzzy:
+        if candidate not in ranked:
+            ranked.append(candidate)
+    return ranked[:max_matches]
 
 
 def discover_skills(
@@ -516,28 +432,13 @@ def build_skill_tool_extension(
     if not catalog.has_skills():
         return None
 
-    async def list_skills(query: str = "", max_results: int = LIST_SKILLS_DEFAULT_MAX_RESULTS) -> str:
+    async def skill(name: str) -> str:
         """
-        Return Agent Skills available in this CLI session.
+        Activate an Agent Skill and load its full instructions.
 
-        Use this when choosing whether a specialized workflow is available. Pass a query to search by skill name or
-        description when the default result set is too broad.
-
-        Args:
-            query: Optional case-insensitive search text matched against skill names and descriptions.
-            max_results: Maximum number of matching skills to inspect. Values are clamped to a safe limit.
-
-        Returns:
-            A bounded Markdown list of skill names and descriptions.
-        """
-        return catalog.format_model_catalog(query=query, max_results=max_results)
-
-    async def activate_skill(name: str) -> str:
-        """
-        Load the full instructions for an Agent Skill.
-
-        Call this before using a skill's specialized workflow. The returned content explains where skill resources live
-        and lists bundled resources that can be read with `read_skill_resource`.
+        Call this before using a skill's specialized workflow. The returned content explains where skill resources
+        live and lists them; read any resource with the `read` tool, whose `file_path` is relative to the absolute
+        skill directory given in the output.
 
         Args:
             name: The skill name to activate, without a leading slash.
@@ -545,31 +446,17 @@ def build_skill_tool_extension(
         Returns:
             The activated skill instructions, or a note if the skill is already active.
         """
-        return catalog.activation_content(name, active_names=activated_skill_names(history_provider()))
-
-    async def read_skill_resource(name: str, relative_path: str) -> str:
-        """
-        Read a text resource bundled with an activated Agent Skill.
-
-        Args:
-            name: The skill name, without a leading slash.
-            relative_path: Path relative to the skill directory.
-
-        Returns:
-            UTF-8 text content from the requested skill resource, capped for context size.
-        """
-        return catalog.read_resource(name, relative_path)
+        try:
+            return catalog.activation_content(name, active_names=activated_skill_names(history_provider()))
+        except ValueError as exc:
+            raise ToolError(str(exc)) from None
 
     return ToolExtension(
         name="cli-agent-skills",
-        tools={
-            "list_skills": list_skills,
-            "activate_skill": activate_skill,
-            "read_skill_resource": read_skill_resource,
-        },
+        tools={"skill": skill},
         tool_groups={
-            "planning_tools": ["list_skills", "activate_skill", "read_skill_resource"],
-            "cli_skill_tools": ["list_skills", "activate_skill", "read_skill_resource"],
+            "planning_tools": ["skill"],
+            "cli_skill_tools": ["skill"],
         },
     )
 
