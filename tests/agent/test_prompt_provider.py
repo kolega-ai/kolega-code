@@ -68,9 +68,9 @@ class TestPromptProvider:
             assert "## Verify By Running" in prompt
             assert "## Finish the Whole Task" in prompt
             # The prompt half of the runaway think-then-stop fix (see
-            # findings/thinking-control-and-runaway-turns.md): a turn must never
-            # end on reasoning alone with nothing emitted.
-            assert "NEVER end a turn on reasoning alone" in prompt
+            # findings/thinking-control-and-runaway-turns.md), stated once in
+            # compact form — the runtime silent-turn guard is the second layer.
+            assert "When you finish thinking, act." in prompt
             assert "Prefer the specialized file tools" in prompt
 
     def test_coder_agent_ask_mode_uses_autonomous_template(self, prompt_provider, prompt_context):
