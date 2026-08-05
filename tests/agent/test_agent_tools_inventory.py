@@ -190,7 +190,6 @@ def test_investigation_agent_tools(project_path, mock_connection_manager, agent_
         "read_file_section",
         "read_image",
         "search_codebase",
-        "sleep",
         "think_hard",
         "web_fetch",
         "web_search",
