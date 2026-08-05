@@ -280,6 +280,19 @@ def test_lsp_edit_permission_is_gated_as_edit():
     assert request.summary == "lsp_edit src/app.py"
 
 
+def test_resolve_permission_is_gated_as_edit():
+    """resolve mutates files (applies a pending lsp_edit preview), so it is an edit tool."""
+    request = permission_request_for_tool(
+        "resolve",
+        {"action_id": "act-123", "decision": "apply"},
+    )
+
+    assert request is not None
+    assert request.kind == PermissionKind.EDIT
+    # resolve has no path input; the pending action id stays visible in the inputs.
+    assert request.summary == "resolve"
+
+
 def test_lsp_edit_rename_file_permission_summary_includes_destination():
     request = permission_request_for_tool(
         "lsp_edit",

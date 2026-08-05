@@ -570,7 +570,7 @@ def test_eval_tool_hidden_when_disabled(project_path, mock_connection_manager, a
 
 
 def test_lsp_tools_hidden_when_disabled(project_path, mock_connection_manager, agent_config):
-    """AgentConfig.lsp.enabled=False removes lsp and lsp_edit from the registry."""
+    """AgentConfig.lsp.enabled=False removes lsp, lsp_edit, and resolve from the registry."""
     from kolega_code.services.lsp import LspConfig
 
     agent_config.lsp = LspConfig(enabled=False)
@@ -586,6 +586,9 @@ def test_lsp_tools_hidden_when_disabled(project_path, mock_connection_manager, a
     tool_names = {tool.name for tool in agent.tool_collection.get_tool_list()}
     assert "lsp" not in tool_names
     assert "lsp_edit" not in tool_names
+    # resolve applies/discards pending lsp_edit(apply=false) previews, so it is
+    # LSP-coupled: no pending action can exist while LSP is off.
+    assert "resolve" not in tool_names
 
 
 def _coder(project_path, mock_connection_manager, agent_config):

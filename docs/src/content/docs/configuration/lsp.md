@@ -9,11 +9,14 @@ project languages. LSP is enabled by default and is used for:
 - diagnostics after `edit`, `multi_edit`, and `write`;
 - the generic read-only `lsp` tool;
 - the permission-gated `lsp_edit` tool;
+- the `resolve` tool, which applies or discards a pending `lsp_edit(apply: false)` preview;
 - `/lsp` and the Settings screen's Tools status display.
 
 The `lsp` tool remains read-only. Mutating LSP operations are exposed through
 `lsp_edit`, which is treated like `edit`, `multi_edit`, and `write` for
-permission prompts. Kolega Code does not expose raw arbitrary LSP requests.
+permission prompts. `resolve` mutates files only when it applies a pending
+preview, so it is gated the same way. Kolega Code does not expose raw arbitrary
+LSP requests.
 
 ## Enabling and disabling
 
@@ -29,8 +32,10 @@ flag > environment > settings:
   `settings.json` as `lsp_enabled`.
 
 When LSP is disabled, no language servers are started, post-edit diagnostics
-are skipped, and the `lsp` and `lsp_edit` tools are removed from the model's
-toolset entirely.
+are skipped, and the `lsp`, `lsp_edit`, and `resolve` tools are removed from
+the model's toolset entirely. `resolve` is LSP-coupled: pending actions are
+only ever created by `lsp_edit(apply: false)`, so none can exist while LSP is
+off.
 
 ## Tool operations
 
@@ -59,7 +64,10 @@ The mutating `lsp_edit` tool supports:
 `lsp_edit` applies server-provided `WorkspaceEdit` payloads only. If the server
 does not advertise or return an edit for an operation, Kolega Code reports that
 the operation is unsupported instead of constructing a manual fallback edit.
-Pass `apply: false` to preview the LSP edit without writing files.
+Pass `apply: false` to preview the LSP edit without writing files; the preview
+is recorded as a pending action that the `resolve` tool then applies or
+discards (`resolve(action_id=..., decision="apply"|"discard")`), subject to the
+same edit-permission prompt as `lsp_edit` itself.
 
 ### External paths, permissions, and undo
 

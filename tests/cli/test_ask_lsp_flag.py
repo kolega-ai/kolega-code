@@ -3,8 +3,8 @@
 The switch has one job spread over two layers: resolve (flag > env > settings >
 enabled, cli/config.py) and carry (AgentConfig.lsp.enabled -> the registry gate
 in ToolCollection._should_include_tool). Disabling must actually remove the
-``lsp``/``lsp_edit`` tools from the model-facing toolset — not just null the
-manager — so the e2e tests drive a real ``CoderAgent`` through
+``lsp``/``lsp_edit``/``resolve`` tools from the model-facing toolset — not just
+null the manager — so the e2e tests drive a real ``CoderAgent`` through
 ``main(["ask", ...])`` and assert on the tool inventory.
 """
 
@@ -14,7 +14,7 @@ from kolega_code.agent.coder import CoderAgent
 from kolega_code.cli.config import CliConfigError, CliConfigOverrides, _lsp_enabled
 from kolega_code.cli.settings import CliSettings, SettingsStore
 
-LSP_TOOLS = {"lsp", "lsp_edit"}
+LSP_TOOLS = {"lsp", "lsp_edit", "resolve"}
 
 
 class RecordingCoderAgent(CoderAgent):
@@ -85,7 +85,7 @@ def test_overrides_dataclass_carries_the_mode():
 # --- end to end -------------------------------------------------------------------
 
 
-def test_ask_lsp_off_removes_both_tools(tmp_path, monkeypatch, isolated_cli_env):
+def test_ask_lsp_off_removes_gated_tools(tmp_path, monkeypatch, isolated_cli_env):
     main_module, project = _setup(tmp_path, monkeypatch)
 
     exit_code = main_module.main(["ask", "do the thing", "--project", str(project), "--lsp", "off"])
@@ -97,7 +97,7 @@ def test_ask_lsp_off_removes_both_tools(tmp_path, monkeypatch, isolated_cli_env)
 
 
 def test_ask_default_keeps_lsp_tools(tmp_path, monkeypatch, isolated_cli_env):
-    """No flag, no setting: today's inventory includes both LSP tools."""
+    """No flag, no setting: today's inventory includes all LSP-gated tools."""
     main_module, project = _setup(tmp_path, monkeypatch)
 
     exit_code = main_module.main(["ask", "do the thing", "--project", str(project)])

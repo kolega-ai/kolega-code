@@ -42,6 +42,7 @@ EDIT_PERMISSION_TOOLS = frozenset(
         "apply_patch",
         "lsp_edit",
         "multi_edit",
+        "resolve",
         "write",
     }
 )
