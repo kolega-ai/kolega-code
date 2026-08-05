@@ -25,6 +25,24 @@ INTERNAL_TOOL_NAMES = {
 }
 
 
+class _StubSandbox:
+    def get_host(self, port: int) -> str:
+        return f"stub-sandbox:{port}"
+
+
+class _SandboxCarryingTerminalManager:
+    """Terminal-manager stand-in that carries a ``sandbox`` host provider.
+
+    Deliberately not an instance of ``SandboxTerminalManager``: the gate must
+    duck-type on the attribute (getattr), not isinstance, so kolega-code-e2b's
+    injected manager — possibly subclassed from a pinned older version — keeps
+    qualifying when they bump.
+    """
+
+    def __init__(self) -> None:
+        self.sandbox = _StubSandbox()
+
+
 @pytest.fixture
 def mock_connection_manager() -> AsyncMock:
     return AsyncMock()
@@ -115,6 +133,61 @@ class TestToolCollection:
         assert INTERNAL_TOOL_NAMES.isdisjoint(tool_names)
         for excluded_tool in excluded_tools:
             assert excluded_tool not in tool_names
+
+    async def test_get_host_absent_without_sandbox_terminal_manager(
+        self,
+        project_path: Path,
+        mock_connection_manager: AgentConnectionManager,
+        agent_config: AgentConfig,
+        mock_base_agent: BaseAgent,
+    ) -> None:
+        """get_host needs a sandbox host provider; the default local manager drops it."""
+        tool_collection = ToolCollection(
+            project_path,
+            "test_workspace",
+            str(uuid.uuid4()),
+            mock_connection_manager,
+            agent_config,
+            mock_base_agent,
+        )
+
+        assert "get_host" not in [tool.name for tool in tool_collection.get_tool_list()]
+        assert tool_collection.has_tool("get_host") is False
+
+    async def test_get_host_present_with_sandbox_terminal_manager(
+        self,
+        project_path: Path,
+        mock_connection_manager: AgentConnectionManager,
+        agent_config: AgentConfig,
+        mock_base_agent: BaseAgent,
+    ) -> None:
+        """A terminal manager carrying a ``sandbox`` attribute unlocks get_host.
+
+        The gate is registration-time and duck-typed: the stub is not an
+        instance of ``SandboxTerminalManager``, mirroring kolega-code-e2b
+        injecting its own (possibly subclassed) manager.
+        """
+        tool_collection = ToolCollection(
+            project_path,
+            "test_workspace",
+            str(uuid.uuid4()),
+            mock_connection_manager,
+            agent_config,
+            mock_base_agent,
+            # The stub is deliberately not a TerminalManager subclass: the gate
+            # duck-types on the `sandbox` attribute, so pyright can't see it.
+            terminal_manager=_SandboxCarryingTerminalManager(),  # pyright: ignore[reportArgumentType]
+        )
+
+        definitions = {tool.name: tool for tool in tool_collection.get_tool_list()}
+        assert "get_host" in definitions
+        assert definitions["get_host"].description == (
+            "Get the externally reachable hostname for a service listening on the given\n"
+            "port in this sandbox. Use it to construct URLs instead of localhost."
+        )
+
+        host = await tool_collection.call("get_host", port=8000)
+        assert host == "stub-sandbox:8000"
 
     async def test_tool_collection_config_read_only(
         self,

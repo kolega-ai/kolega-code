@@ -68,6 +68,16 @@ This project uses GitHub Releases for detailed generated release notes. This fil
   `settings.json` is ignored on load. The active model's own thinking effort
   (`--thinking-effort`, `KOLEGA_CODE_THINKING_EFFORT`) is unaffected.
 
+- The `get_host` tool is gone from the local toolset. It needs a sandbox host
+  provider, so it is now offered only when a terminal manager carrying a
+  `sandbox` attribute is injected (cloud sandbox deployments), and the
+  localhost fallback branch in the handler is deleted — a registered
+  `get_host` always has a sandbox. The gate duck-types on the attribute rather
+  than `isinstance`, so kolega-code-e2b's injected `SandboxTerminalManager`
+  (possibly subclassed from a pinned older version) keeps qualifying. Existing
+  session histories that recorded `get_host` calls keep them as data and
+  render as-is (restore is name-agnostic).
+
 ### Fixed
 
 - Kimi-family usage is no longer dropped when a request is served entirely from
