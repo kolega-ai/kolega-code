@@ -6,6 +6,21 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+### Fixed
+
+- Hosted web-search calls now render in their true position in the TUI
+  transcript. Previously the rows mounted at the bottom and stayed pinned
+  there while post-search reasoning kept streaming into the thinking bubble
+  above them; the stream now closes the open thinking/response segment at
+  each hosted call, so reasoning after a search opens a new bubble below its
+  rows (think → search → think → answer). Resumed sessions now render hosted
+  `web_search (hosted)` rows from history too — previously they were dropped
+  from the restored transcript.
+- `ask --json` no longer emits spurious synthetic message fragments when
+  hosted web search flushes response text mid-stream: the lost-text fallback
+  now applies once at end of turn, and only when the turn produced no
+  assistant message.
+
 ### Added
 
 - Hosted (server-side) web search for Responses-API providers. On DeepSeek

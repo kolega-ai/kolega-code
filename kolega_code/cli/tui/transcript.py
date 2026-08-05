@@ -14,7 +14,7 @@ from rich.text import Text
 
 from kolega_code.agent import AgentEvent
 from kolega_code.events import KnownEventType
-from kolega_code.llm.models import Message, TextBlock, ToolCall, ToolResult
+from kolega_code.llm.models import Message, TextBlock, ToolCall, ToolResult, WebSearchCallBlock
 from kolega_code.services.lsp import extract_lsp_label
 
 from .. import messages, theme
@@ -195,6 +195,21 @@ class TranscriptRenderingMixin(tui_app_base.KolegaAppBase):
         for block in message.content:
             if isinstance(block, TextBlock):
                 pending_text.append(block.text)
+            elif isinstance(block, WebSearchCallBlock):
+                # Hosted web search executed on the provider's servers: there is
+                # no ToolResult in history, the block itself is the whole record.
+                # Render the same completed row the live stream produced.
+                flush_text()
+                summary = block.result_summary()
+                entries.append(
+                    ConversationEntry(
+                        kind="tool_result",
+                        content=self._tool_result_preview(summary),
+                        tool_name=WebSearchCallBlock.TOOL_LABEL,
+                        tool_call_id=block.item_id or None,
+                        full_content=self._capped_tool_text(summary),
+                    )
+                )
             elif isinstance(block, ToolCall):
                 flush_text()
                 entry = ConversationEntry(

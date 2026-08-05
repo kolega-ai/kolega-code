@@ -16,7 +16,7 @@ from kolega_code.llm.exceptions import (
     LLMError,
     LLMInternalServerError,
 )
-from kolega_code.llm.models import Message, TextBlock, ToolCall, ToolResult
+from kolega_code.llm.models import Message, TextBlock, ToolCall, ToolResult, WebSearchCallBlock
 from kolega_code.events import AgentEvent
 from kolega_code.agent.prompt_provider import AgentMode
 from kolega_code.cli.config import build_agent_config, config_summary
@@ -562,6 +562,69 @@ async def test_textual_app_renders_resumed_history_in_chat(tmp_path: Path, monke
             ("tool_result", tool_reminder, "read_file"),
             ("tool_error", "Permission denied", "write_file"),
             ("assistant", "Done.", None),
+        ]
+
+
+@pytest.mark.asyncio
+async def test_textual_app_restores_hosted_web_search_rows(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Hosted web_search calls have no ToolResult in history — the
+    WebSearchCallBlock on the assistant message is the whole record, and a
+    resumed session must render it as the same completed row the live stream
+    produced, in its interleaved position between the text blocks."""
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.app import KolegaCodeApp
+
+    monkeypatch.setattr(agent_runtime_module, "CoderAgent", _RestoredHistoryFakeAgent)
+
+    project = tmp_path / "project"
+    project.mkdir()
+    config = build_test_config(project)
+    store = SessionStore(tmp_path / "state")
+    session = store.create(project, "code", config_summary(config))
+    history = [
+        Message(role="user", content=[TextBlock("Search the docs")]).to_dict(),
+        Message(
+            role="assistant",
+            content=[
+                TextBlock("Let me look."),
+                WebSearchCallBlock(
+                    item_id="ws_1", status="completed", action={"type": "search", "queries": ["kolega tui"]}
+                ),
+                WebSearchCallBlock(
+                    item_id="ws_2", status="completed", action={"type": "open_page", "url": "https://example.com/docs"}
+                ),
+                TextBlock("Found it."),
+            ],
+        ).to_dict(),
+    ]
+
+    _persist_history(store, session, history)
+    app = KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+
+    async with app.run_test():
+        rows = [
+            (entry.kind, entry.content, entry.tool_name, entry.tool_call_id, entry.complete)
+            for entry in app.conversation_entries[1:]
+        ]
+        assert rows == [
+            ("user", "Search the docs", None, None, True),
+            ("assistant", "Let me look.", None, None, True),
+            (
+                "tool_result",
+                "search: 'kolega tui' — completed (results injected server-side)",
+                "web_search (hosted)",
+                "ws_1",
+                True,
+            ),
+            (
+                "tool_result",
+                "open_page: https://example.com/docs — completed (content injected server-side)",
+                "web_search (hosted)",
+                "ws_2",
+                True,
+            ),
+            ("assistant", "Found it.", None, None, True),
         ]
 
 
