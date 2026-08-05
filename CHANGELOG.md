@@ -6,34 +6,7 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
-### Changed
-
-- Thinking now renders as a collapsed row in the TUI transcript — `● Thinking
-  · … · 1.2k words` while streaming (a live word counter, never the text),
-  flipping to `● Thought · 12s · 1.2k words` on completion; expand the row to
-  read the full reasoning. Long reasoning turns (DeepSeek flash especially) no
-  longer dominate the transcript with full-height thinking walls.
-- Resumed sessions now restore reasoning as the same collapsed thinking rows,
-  in true interleaved order with tool and hosted web-search rows: Anthropic
-  thinking text, DeepSeek flash's raw chain-of-thought, and OpenAI/ChatGPT
-  reasoning summaries all render (encrypted-only reasoning items have no
-  renderable text and are skipped). Previously reasoning vanished entirely
-  from restored transcripts.
-
-### Fixed
-
-- Hosted web-search calls now render in their true position in the TUI
-  transcript. Previously the rows mounted at the bottom and stayed pinned
-  there while post-search reasoning kept streaming into the thinking bubble
-  above them; the stream now closes the open thinking/response segment at
-  each hosted call, so reasoning after a search opens a new bubble below its
-  rows (think → search → think → answer). Resumed sessions now render hosted
-  `web_search (hosted)` rows from history too — previously they were dropped
-  from the restored transcript.
-- `ask --json` no longer emits spurious synthetic message fragments when
-  hosted web search flushes response text mid-stream: the lost-text fallback
-  now applies once at end of turn, and only when the turn produced no
-  assistant message.
+## 0.26.10 - 2026-08-05
 
 ### Added
 
@@ -53,6 +26,66 @@ This project uses GitHub Releases for detailed generated release notes. This fil
   per-search fees, if any, are not modeled in cost reporting (injected tokens
   are); sessions that used hosted search store a new `web_search_call` history
   block that older kolega builds cannot load.
+- LSP tools can now be forced on or off for a single launch: `--lsp on|off`
+  on both the TUI and `kolega-code ask`, plus a `KOLEGA_CODE_LSP` env var,
+  resolved flag > env > settings > default-enabled. `--lsp on` overrides a
+  persisted `lsp_enabled=false` without writing back to settings. Turning LSP
+  off now removes the `lsp`/`lsp_edit` tools from the model entirely —
+  previously they stayed registered and could only answer "LSP is not
+  available" — and the Settings LSP status notes when the launch flag is
+  forcing the mode.
+- The per-session scratchpad directory is now exported as `KOLEGA_SCRATCHPAD`
+  to every shell command and eval kernel, so scripts and kernels can reach the
+  session's throwaway workspace by environment variable instead of hardcoding
+  a temp path.
+
+### Changed
+
+- Thinking now renders as a collapsed row in the TUI transcript — `● Thinking
+  · … · 1.2k words` while streaming (a live word counter, never the text),
+  flipping to `● Thought · 12s · 1.2k words` on completion; expand the row to
+  read the full reasoning. Long reasoning turns (DeepSeek flash especially) no
+  longer dominate the transcript with full-height thinking walls.
+- Resumed sessions now restore reasoning as the same collapsed thinking rows,
+  in true interleaved order with tool and hosted web-search rows: Anthropic
+  thinking text, DeepSeek flash's raw chain-of-thought, and OpenAI/ChatGPT
+  reasoning summaries all render (encrypted-only reasoning items have no
+  renderable text and are skipped). Previously reasoning vanished entirely
+  from restored transcripts.
+- The coder prompt now follows a Codex-style final-message contract: the
+  closing report leads with what was delivered and its verified state, stays
+  brief by default with structure scaled to complexity, references files by
+  path instead of re-pasting contents, and never restates the plan step by
+  step. Preambles before tool calls are tightened to a single short line
+  naming the purpose of the next action, and verification effort is bounded —
+  tool results are trusted (no re-reading a file to confirm an edit applied)
+  and verification stops once no remaining check could realistically fail.
+
+### Fixed
+
+- Hosted web-search calls now render in their true position in the TUI
+  transcript. Previously the rows mounted at the bottom and stayed pinned
+  there while post-search reasoning kept streaming into the thinking bubble
+  above them; the stream now closes the open thinking/response segment at
+  each hosted call, so reasoning after a search opens a new bubble below its
+  rows (think → search → think → answer). Resumed sessions now render hosted
+  `web_search (hosted)` rows from history too — previously they were dropped
+  from the restored transcript.
+- `ask --json` no longer emits spurious synthetic message fragments when
+  hosted web search flushes response text mid-stream: the lost-text fallback
+  now applies once at end of turn, and only when the turn produced no
+  assistant message.
+- The context gauge no longer under-reads on `deepseek-v4-flash`. DeepSeek's
+  Responses API silently re-attaches every prior round's reasoning server-side and
+  bills it as input, but the client history held none of it, so the gauge (and the
+  auto-compaction trigger) could run over 100k tokens behind the real billed
+  context on reasoning-heavy sessions. Flash's plain-text reasoning is now retained
+  in history and resent each turn — the same shape Codex replays, deduped by the
+  server so billing is unchanged — which keeps the gauge on the real number and
+  preserves chain-of-thought continuity across session restores. The retained
+  reasoning text also now appears in `ask --json` message payloads (parity with
+  Anthropic thinking text); encrypted-only reasoning from OpenAI/ChatGPT stays
+  stripped as before.
 
 ### Security
 
@@ -65,20 +98,6 @@ This project uses GitHub Releases for detailed generated release notes. This fil
   upgrading would break the curl installer there with a Rust+OpenSSL source
   build — so those three advisories are knowingly accepted on that legacy
   platform only.
-
-### Fixed
-
-- The context gauge no longer under-reads on `deepseek-v4-flash`. DeepSeek's
-  Responses API silently re-attaches every prior round's reasoning server-side and
-  bills it as input, but the client history held none of it, so the gauge (and the
-  auto-compaction trigger) could run over 100k tokens behind the real billed
-  context on reasoning-heavy sessions. Flash's plain-text reasoning is now retained
-  in history and resent each turn — the same shape Codex replays, deduped by the
-  server so billing is unchanged — which keeps the gauge on the real number and
-  preserves chain-of-thought continuity across session restores. The retained
-  reasoning text also now appears in `ask --json` message payloads (parity with
-  Anthropic thinking text); encrypted-only reasoning from OpenAI/ChatGPT stays
-  stripped as before.
 
 ## 0.26.9 - 2026-08-03
 
