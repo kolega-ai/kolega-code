@@ -57,6 +57,17 @@ OPENAI_USAGE_PROVIDERS = frozenset(
 )
 GOOGLE_USAGE_PROVIDERS = frozenset({"google"})
 
+# Live-verified exception: kimi-family APIs (kimi_coding, moonshot) return
+# ``input_tokens == -1`` as a sentinel for "no uncached input tokens" when the
+# prompt is served entirely from their server-side cache
+# (``cache_read_input_tokens`` then carries the full prompt; the same prompt
+# reports a real uncached count while only partially cached, e.g. 27 uncached +
+# 6 cached = 33 total). Without the mapping the negative core count poisons the
+# whole record and output tokens are dropped from accounting too. Treated as 0,
+# the inclusive-input arithmetic reconstructs the true total.
+_ZERO_INPUT_SENTINEL_PROVIDERS = frozenset({"kimi_coding", "moonshot"})
+_ZERO_INPUT_SENTINEL = -1
+
 # Live-verified exception: xAI's completion_tokens EXCLUDES reasoning_tokens and
 # its own total is prompt + completion + reasoning. Every other OpenAI-shaped
 # provider (including OpenRouter fronting Grok models) bills reasoning inside
@@ -241,6 +252,9 @@ def _normalize_anthropic(metadata: Mapping[str, Any], provider: str, model: Opti
     # Raw input_tokens excludes cache reads and writes (live-verified for all
     # four providers); reconstruct the inclusive value. Thinking is billed
     # inside output_tokens; moonshot additionally reports it as a subset.
+    if provider in _ZERO_INPUT_SENTINEL_PROVIDERS and metadata.get("input_tokens") == _ZERO_INPUT_SENTINEL:
+        # kimi-family cache-hit sentinel: no uncached input tokens were counted.
+        metadata = {**metadata, "input_tokens": 0}
     values, reason = _read_counts(
         metadata,
         core_keys=("input_tokens", "output_tokens"),

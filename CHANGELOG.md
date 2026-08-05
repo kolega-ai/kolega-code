@@ -68,6 +68,18 @@ This project uses GitHub Releases for detailed generated release notes. This fil
   `settings.json` is ignored on load. The active model's own thinking effort
   (`--thinking-effort`, `KOLEGA_CODE_THINKING_EFFORT`) is unaffected.
 
+### Fixed
+
+- Kimi-family usage is no longer dropped when a request is served entirely from
+  the provider's prompt cache. `kimi-for-coding` / `moonshot` report
+  `input_tokens: -1` as a sentinel for "no uncached input tokens" on a full
+  cache hit; the strict usage validator previously classified that as malformed
+  and nulled the whole record, silently removing both input and output tokens
+  from session accounting for those turns. The sentinel is now interpreted as
+  zero, and the inclusive input total is reconstructed from the cache fields
+  (verified live: `-1` + 33 cached = 33 total, matching the same prompt's
+  partial-cache report of 27 uncached + 6 cached).
+
 ## 0.26.10 - 2026-08-05
 
 ### Added
