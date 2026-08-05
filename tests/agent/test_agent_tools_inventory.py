@@ -569,6 +569,25 @@ def test_eval_tool_hidden_when_disabled(project_path, mock_connection_manager, a
     assert "eval" not in tool_names
 
 
+def test_lsp_tools_hidden_when_disabled(project_path, mock_connection_manager, agent_config):
+    """AgentConfig.lsp.enabled=False removes lsp and lsp_edit from the registry."""
+    from kolega_code.services.lsp import LspConfig
+
+    agent_config.lsp = LspConfig(enabled=False)
+    agent = CoderAgent(
+        project_path=project_path,
+        workspace_id="test_workspace",
+        thread_id=str(uuid.uuid4()),
+        connection_manager=mock_connection_manager,
+        config=agent_config,
+        agent_mode=AgentMode.CLI,
+    )
+
+    tool_names = {tool.name for tool in agent.tool_collection.get_tool_list()}
+    assert "lsp" not in tool_names
+    assert "lsp_edit" not in tool_names
+
+
 def _coder(project_path, mock_connection_manager, agent_config):
     return CoderAgent(
         project_path=project_path,

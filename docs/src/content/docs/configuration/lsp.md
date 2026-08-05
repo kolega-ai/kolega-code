@@ -15,6 +15,23 @@ The `lsp` tool remains read-only. Mutating LSP operations are exposed through
 `lsp_edit`, which is treated like `edit`, `multi_edit`, and `write` for
 permission prompts. Kolega Code does not expose raw arbitrary LSP requests.
 
+## Enabling and disabling
+
+LSP can be turned off (or forced back on) at three levels, resolved as
+flag > environment > settings:
+
+- `--lsp <on|off>` — forces the switch for one session, on both the TUI and
+  `ask`. It overrides the saved setting but is never persisted; the next launch
+  without the flag re-reads settings.
+- `KOLEGA_CODE_LSP=<on|off>` — environment override, useful for headless or
+  benchmark runs.
+- The LSP toggle in the Settings screen's Tools tab — persisted in
+  `settings.json` as `lsp_enabled`.
+
+When LSP is disabled, no language servers are started, post-edit diagnostics
+are skipped, and the `lsp` and `lsp_edit` tools are removed from the model's
+toolset entirely.
+
 ## Tool operations
 
 The generic `lsp` tool supports:

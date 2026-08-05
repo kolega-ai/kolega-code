@@ -84,6 +84,14 @@ def test_explicit_tui_help_shows_tui_arguments(capsys) -> None:
     assert "--permission-mode" in output
 
 
+def test_parse_lsp_flag_on_both_parsers() -> None:
+    assert parse_args(["/tmp/project", "--lsp", "off"]).lsp == "off"
+    assert parse_args(["ask", "hello", "--lsp", "on"]).lsp == "on"
+    # Absent means defer to settings.
+    assert parse_args(["/tmp/project"]).lsp is None
+    assert parse_args(["ask", "hello"]).lsp is None
+
+
 def test_parse_tui_show_logs_flag() -> None:
     args = parse_args(["/tmp/project", "--show-logs"])
 

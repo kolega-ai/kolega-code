@@ -2743,6 +2743,13 @@ class ToolCollection(LogMixin):
         if method_name == "eval" and getattr(self.config, "eval_enabled", True) is False:
             return False
 
+        # Settings gate: LSP can be disabled host-wide (AgentConfig.lsp.enabled, from
+        # settings.json or the --lsp CLI flag). The manager is never built when
+        # disabled, so drop lsp/lsp_edit instead of advertising tools that can only
+        # reply "not available". Strict `is False` so Mock configs keep the default.
+        if method_name in ("lsp", "lsp_edit") and getattr(getattr(self.config, "lsp", None), "enabled", True) is False:
+            return False
+
         if method_name in self.browser_tools:
             supported_tools = getattr(self.browser_manager, "supported_tools", None)
             if supported_tools is not None and method_name not in supported_tools:

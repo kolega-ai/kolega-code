@@ -1495,6 +1495,13 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             status = self._settings_query_one("#lsp_status", Static)
         except NoMatches:
             return
+        lsp_mode = getattr(self.overrides, "lsp_mode", None)
+        if lsp_mode:
+            status.update(
+                f"LSP is forced {lsp_mode} for this session by the --lsp launch flag; "
+                "the toggle applies from the next launch."
+            )
+            return
         agent = self.agent
         if agent is None or agent.tool_collection is None:
             status.update("LSP is not active. Enable it above and save settings.")

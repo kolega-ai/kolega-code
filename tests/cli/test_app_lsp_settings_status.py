@@ -29,7 +29,7 @@ def _static_text(widget) -> str:
     return str(getattr(widget, "renderable", "") or "")
 
 
-def _make_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, coder_cls=FakeCoderAgent):
+def _make_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, coder_cls=FakeCoderAgent, overrides=None):
     pytest.importorskip("textual")
 
     from kolega_code.cli.app import KolegaCodeApp
@@ -43,7 +43,9 @@ def _make_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, coder_cls=Fake
     config = build_test_config(project)
     store = SessionStore(tmp_path / "state")
     session = store.create(project, "code", config_summary(config))
-    return KolegaCodeApp(project_path=project, config=config, mode="code", store=store, session=session)
+    return KolegaCodeApp(
+        project_path=project, config=config, mode="code", store=store, session=session, overrides=overrides
+    )
 
 
 class _LspEnabledFakeAgent(FakeCoderAgent):
@@ -135,6 +137,21 @@ async def test_lsp_status_shows_not_active_when_disabled(tmp_path: Path, monkeyp
         status = screen.query_one("#lsp_status", Static)
         text = _static_text(status)
         assert "not active" in text
+
+
+@pytest.mark.asyncio
+async def test_lsp_status_reports_forced_mode_from_launch_flag(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """--lsp wins over the settings toggle for the whole session; say so instead of live status."""
+    from textual.widgets import Static
+
+    from kolega_code.cli.config import CliConfigOverrides
+
+    app = _make_app(tmp_path, monkeypatch, coder_cls=_LspEnabledFakeAgent, overrides=CliConfigOverrides(lsp_mode="off"))
+    async with app.run_test() as pilot:
+        screen = await open_settings_screen(app, pilot, "tools")
+        text = _static_text(screen.query_one("#lsp_status", Static))
+        assert "forced off for this session" in text
+        assert "--lsp" in text
 
 
 @pytest.mark.asyncio
