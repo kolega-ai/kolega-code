@@ -14,7 +14,8 @@ depends on the [agent type](../agents/) and the current [mode](../../tui/modes/)
 
 Read and edit your project:
 
-- `read_entire_file`, `read_file_section` — read file contents.
+- `read` — read file contents; pass `offset`/`limit` for specific sections of
+  large files.
 - `lsp` — read diagnostics, symbols, definitions,
   references, hover text, call hierarchy, and code action metadata from
   [configured language servers](../../configuration/lsp/).
@@ -56,11 +57,11 @@ calls, and across sub-agents in the session, so the agent works incrementally
 (imports → define → test → use) instead of re-running whole scripts.
 
 Inside a cell, either kernel can **call back into the agent's own tools** over
-an authenticated loopback bridge — `tool.read_file_section({path: "main.py", start_line: 1, end_line: 40})`
+an authenticated loopback bridge — `tool.read({file_path: "main.py", offset: 1, limit: 40})`
 from Python, or `await tool.read_image({path: "chart.png"})` from JavaScript.
 Bridge calls go through the same permission and hook pipeline as model-issued
 tool calls, and results arrive in each tool's model-facing format (for example,
-`tool.read_file_section` wraps content in a markdown header and code fence).
+`tool.read` wraps content in a markdown header and code fence).
 For raw file contents — CSV loads, JSON handoffs — use the in-kernel
 `read`/`write` helpers, which hit the filesystem directly. Other helpers include
 `display()` for rich outputs (matplotlib figures are returned as images to
@@ -209,7 +210,7 @@ available through `dispatch_custom_agent` when matching definitions are discover
 
 Tools are gated by mode. In a read-only context — like [Plan mode](../../tui/modes/)
 or an investigation sub-agent — the agent can read the codebase
-(`read_entire_file`, `read_file_section`, `web_search`, `web_fetch`, and reading
+(`read`, `web_search`, `web_fetch`, and reading
 memory) **and** run shell commands to investigate — including `rg` for
 searching files. Editing files still requires
 Build mode's full toolset.

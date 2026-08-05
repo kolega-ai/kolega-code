@@ -80,6 +80,14 @@ PARAM_ALIASES: Dict[str, Dict[str, ParamAlias]] = {
         # cross-over of exec_command's payload name.
         "command": ParamAlias("code"),
     },
+    # ``read`` merged ``read_entire_file``/``read_file_section`` into one tool
+    # with a canonical ``file_path`` parameter (like claude_edit/claude_write),
+    # but every sibling file tool (edit, lsp, snapshot, …) spells it ``path``,
+    # so models will cross-contaminate. Map-and-accept: ``file_path`` stays
+    # canonical in the schema.
+    "read": {
+        "path": ParamAlias("file_path"),
+    },
     # ``search_codebase`` (path=…, max_results=…) and ``find_files_by_pattern``
     # (path→pattern) aliases were removed with the file-discovery tools
     # themselves — both were merged into ``glob`` and then deleted in favor of

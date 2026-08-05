@@ -395,10 +395,10 @@ def test_json_edit_history_stays_portable_when_surface_schema_changes() -> None:
 
 
 def test_switching_away_from_hashline_strips_read_anchors_without_mutating_history() -> None:
-    read_call = ToolCall(id="read-1", name="read_entire_file", input={"path": "a.py"})
+    read_call = ToolCall(id="read-1", name="read", input={"file_path": "a.py"})
     read_result = ToolResult(
         tool_use_id="read-1",
-        name="read_entire_file",
+        name="read",
         content="# a.py\n\n```\n1#HK:hello\n2#ZR:\n```",
         is_error=False,
     )
@@ -429,10 +429,10 @@ def test_switching_away_from_hashline_strips_read_anchors_without_mutating_histo
 
 
 def test_staying_on_hashline_preserves_prior_anchors() -> None:
-    call = ToolCall(id="read-1", name="read_file_section", input={"path": "a.py", "start_line": 1, "end_line": 1})
+    call = ToolCall(id="read-1", name="read", input={"file_path": "a.py", "offset": 1, "limit": 1})
     result = ToolResult(
         tool_use_id="read-1",
-        name="read_file_section",
+        name="read",
         content="1#HK:hello",
         is_error=False,
     )

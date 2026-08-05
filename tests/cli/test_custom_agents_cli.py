@@ -30,7 +30,7 @@ def test_agents_list_reports_effective_definitions(tmp_path: Path, capsys) -> No
     project.mkdir()
     _write_agent(
         project,
-        "---\nname: reviewer\ndescription: Reviews code\ntools: [read_entire_file]\n---\nReview carefully.\n",
+        "---\nname: reviewer\ndescription: Reviews code\ntools: [read]\n---\nReview carefully.\n",
     )
 
     result = main_module.main(["agents", "list", "--project", str(project), "--state-dir", str(tmp_path / "state")])
@@ -38,7 +38,7 @@ def test_agents_list_reports_effective_definitions(tmp_path: Path, capsys) -> No
     output = capsys.readouterr().out
     assert result == 0
     assert "`reviewer` (project, build): Reviews code" in output
-    assert "read_entire_file" in output
+    assert "read" in output
 
 
 def test_agents_validate_returns_one_for_invalid_definition(tmp_path: Path, capsys) -> None:

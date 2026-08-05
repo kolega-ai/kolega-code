@@ -184,8 +184,7 @@ def test_investigation_agent_tools(project_path, mock_connection_manager, agent_
         "list_sessions",
         "eval",
         "lsp",
-        "read_entire_file",
-        "read_file_section",
+        "read",
         "read_image",
         "web_fetch",
         "web_search",
@@ -357,7 +356,7 @@ def test_general_agent_tool_inventory(project_path, mock_connection_manager, age
 
     assert_internal_tools_not_exposed(tool_names)
     # Full read/write/terminal access
-    assert "read_entire_file" in tool_names
+    assert "read" in tool_names
     assert "edit" in tool_names
     assert "multi_edit" in tool_names
     assert "write" in tool_names

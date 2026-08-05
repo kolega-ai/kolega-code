@@ -60,8 +60,7 @@ def tool_collection(
     collection.edit_tool.multi_edit = AsyncMock()
     collection.edit_tool.write = AsyncMock()
     collection.terminal_tool.execute_terminal_command = AsyncMock()
-    collection.read_file_tool.read_entire_file = AsyncMock()
-    collection.read_file_tool.read_file_section = AsyncMock()
+    collection.read_file_tool.read = AsyncMock()
     collection.memory_tool.read_memory = AsyncMock()
     collection.memory_tool.write_memory = AsyncMock()
     collection.web_fetch_tool.web_fetch = AsyncMock()
@@ -112,25 +111,29 @@ class TestToolCollection:
             "s_1", "Ada\n", yield_time_ms=10000, max_output_tokens=10000
         )
 
-    async def test_read_entire_file(self, tool_collection: AsyncMock) -> None:
+    async def test_read(self, tool_collection: AsyncMock) -> None:
         path = "test.txt"
         expected_response = "File content"
-        tool_collection.read_file_tool.read_entire_file.return_value = expected_response
+        tool_collection.read_file_tool.read.return_value = expected_response
 
-        result = await tool_collection.read_entire_file(path)
+        result = await tool_collection.read(path)
         assert result == expected_response
-        tool_collection.read_file_tool.read_entire_file.assert_called_once_with(path)
+        tool_collection.read_file_tool.read.assert_called_once_with(
+            file_path=path, offset=1, limit=None, line_formatter=None
+        )
 
-    async def test_read_file_section(self, tool_collection: AsyncMock) -> None:
+    async def test_read_section(self, tool_collection: AsyncMock) -> None:
         path = "test.txt"
-        start_line = 1
-        end_line = 10
+        offset = 1
+        limit = 10
         expected_response = "File section"
-        tool_collection.read_file_tool.read_file_section.return_value = expected_response
+        tool_collection.read_file_tool.read.return_value = expected_response
 
-        result = await tool_collection.read_file_section(path, start_line, end_line)
+        result = await tool_collection.read(path, offset=offset, limit=limit)
         assert result == expected_response
-        tool_collection.read_file_tool.read_file_section.assert_called_once_with(path, start_line, end_line)
+        tool_collection.read_file_tool.read.assert_called_once_with(
+            file_path=path, offset=offset, limit=limit, line_formatter=None
+        )
 
     async def test_write(self, tool_collection: AsyncMock) -> None:
         path = "test.txt"

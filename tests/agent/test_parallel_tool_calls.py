@@ -117,18 +117,18 @@ class TestParallelToolCalls:
             exclusive_tools = frozenset({"switch_worktree"})
 
             def get_tool_list(self) -> list[SimpleNamespace]:
-                return [SimpleNamespace(name="switch_worktree"), SimpleNamespace(name="read_entire_file")]
+                return [SimpleNamespace(name="switch_worktree"), SimpleNamespace(name="read")]
 
             async def switch_worktree(self, task: str) -> str:
                 calls.append("switch")
                 return task
 
-            async def read_entire_file(self, task: str) -> str:
+            async def read(self, task: str) -> str:
                 calls.append("read")
                 return task
 
         base_agent.tool_collection = cast(Any, Tools())
-        blocks = [make_tool_call("switch_worktree", 0), make_tool_call("read_entire_file", 1)]
+        blocks = [make_tool_call("switch_worktree", 0), make_tool_call("read", 1)]
 
         results = await base_agent.process_tool_calls(blocks)
 
@@ -168,21 +168,21 @@ class TestParallelToolCalls:
             def get_tool_list(self) -> list[SimpleNamespace]:
                 return [
                     SimpleNamespace(name="dispatch_general_agent"),
-                    SimpleNamespace(name="read_entire_file"),
+                    SimpleNamespace(name="read"),
                 ]
 
             async def dispatch_general_agent(self, task: str) -> str:
                 await tracker.run()
                 return task
 
-            async def read_entire_file(self, task: str) -> str:
+            async def read(self, task: str) -> str:
                 await tracker.run()
                 return task
 
         base_agent.tool_collection = cast(Any, Tools())
         blocks = [
             make_tool_call("dispatch_general_agent", 0),
-            make_tool_call("read_entire_file", 1),
+            make_tool_call("read", 1),
             make_tool_call("dispatch_general_agent", 2),
         ]
 
@@ -230,22 +230,22 @@ class TestParallelToolCalls:
             def get_tool_list(self):
                 return [
                     SimpleNamespace(name="dispatch_general_agent"),
-                    SimpleNamespace(name="read_entire_file"),
+                    SimpleNamespace(name="read"),
                 ]
 
             async def dispatch_general_agent(self, task: str):
                 await tracker.run()
                 return "dispatched"
 
-            async def read_entire_file(self, task: str):
+            async def read(self, task: str):
                 await tracker.run()
                 return "file contents"
 
         base_agent.tool_collection = Tools()
         blocks = [
-            make_tool_call("read_entire_file", 0),
+            make_tool_call("read", 0),
             make_tool_call("dispatch_general_agent", 1),
-            make_tool_call("read_entire_file", 2),
+            make_tool_call("read", 2),
         ]
 
         results = await base_agent.process_tool_calls(blocks)
@@ -349,9 +349,9 @@ class TestParallelToolCalls:
 
         class NestedTools(FakeToolCollection):
             def get_tool_list(self):
-                return [SimpleNamespace(name="read_entire_file")]
+                return [SimpleNamespace(name="read")]
 
-            async def read_entire_file(self, task: str):
+            async def read(self, task: str):
                 return "nested contents"
 
         monkeypatch.setattr(nested_agent, "tool_collection", NestedTools())
@@ -363,7 +363,7 @@ class TestParallelToolCalls:
 
             async def dispatch_general_agent(self, task: str):
                 # Simulate a sub-agent running its own tool within the same asyncio task
-                await nested_agent.execute_single_tool(make_tool_call("read_entire_file", 99))
+                await nested_agent.execute_single_tool(make_tool_call("read", 99))
                 observed["parent_id"] = base_agent.current_tool_execution_id
                 return "done"
 

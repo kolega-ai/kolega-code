@@ -20,8 +20,26 @@ This project uses GitHub Releases for detailed generated release notes. This fil
   toolset entirely, since pending actions can only be created while LSP is on.
   Applying a pending action with `resolve` now also goes through the same
   edit-permission prompt as `edit`, `lsp_edit`, and `write`.
+- The two file-read tools are merged into one `read(file_path, offset?, limit?)`
+  tool. `offset` is the 1-indexed first line (default 1) and `limit` bounds the
+  number of lines; omitted parameters read from the top. Output is truncated to
+  2000 lines or 50KB — whichever binds first — snapped to line boundaries, with
+  actionable notices such as "[Showing lines a-b of N (50KB limit). Use
+  offset=b+1 to continue.]" instead of the old line-only warning and
+  100,000-character backstop. A single line larger than the 50KB budget gets an
+  explicit message suggesting `rg` / `exec_command` for targeted extraction.
+  `path` is accepted at the dispatch boundary as an alias for the canonical
+  `file_path`.
 
 ### Removed
+
+- The `read_entire_file` and `read_file_section` tools are gone, replaced by the
+  merged `read` tool above. Deleted: the `ReadFileTool.read_entire_file` /
+  `read_file_section` methods and their `read_only_tools` registrations, the
+  truncation notices that named `read_file_section`, and the stale
+  `dispatch_investigation_agent` docstring tool list. Existing session
+  histories keep the old tool names as recorded data and render as-is (restore
+  is name-agnostic).
 
 - The file-discovery tools are gone from the agent toolset: `glob` (which had
   replaced `list_directory` and `find_files_by_pattern`), and `search_codebase`.

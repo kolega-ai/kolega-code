@@ -218,7 +218,7 @@ _SOURCE_LINE = f'api_url = f"https://api.example.com/v2/runs?token={_FAKE_TOKEN}
 def test_log_line_stays_parseable_when_a_secret_precedes_an_escaped_quote(tmp_path: Path):
     """Scrubbing the serialized form used to splice across the \\" escape and break the line."""
     diag = DiagnosticsLog(tmp_path, "sess-escape")
-    diag.record("tool", name="read_entire_file", output=_SOURCE_LINE)
+    diag.record("tool", name="read", output=_SOURCE_LINE)
 
     records = _read(diag.path)
 

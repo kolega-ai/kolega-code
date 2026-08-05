@@ -76,7 +76,7 @@ async def test_claude_adapter_uses_lowercase_production_tools(tmp_path: Path) ->
     collection, _, caller = create_tool_collection(workspace, config(EditProtocol.CLAUDE_CODE), adapter, tmp_path)
     definitions = {item.name: item for item in adapter.definitions(collection)}
     try:
-        await collection.call("read_entire_file", path="a.txt")
+        await collection.call("read", path="a.txt")
         call = ToolCall(
             id="call-1",
             name="edit",
@@ -100,7 +100,7 @@ async def test_hashline_adapter_uses_anchored_production_tools(tmp_path: Path) -
     collection, _, caller = create_tool_collection(workspace, config(EditProtocol.HASHLINE_V2), adapter, tmp_path)
     definitions = {item.name: item for item in adapter.definitions(collection)}
     try:
-        read = await collection.call("read_entire_file", path="a.txt")
+        read = await collection.call("read", path="a.txt")
         tag = next(line.split(":", 1)[0] for line in read.splitlines() if line.startswith("1#"))
         call = ToolCall(
             id="call-1",

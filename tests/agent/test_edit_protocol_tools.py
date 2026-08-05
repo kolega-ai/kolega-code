@@ -149,8 +149,8 @@ async def test_hashline_protocol_adds_anchors_to_reads(tmp_path: Path) -> None:
     tools = collection(tmp_path, EditProtocol.HASHLINE_V2)
     (tmp_path / "sample.py").write_text("def run():\n    return 42\n")
 
-    entire = await tools.read_entire_file("sample.py")
-    section = await tools.read_file_section("sample.py", 2, 2)
+    entire = await tools.read("sample.py")
+    section = await tools.read("sample.py", offset=2, limit=1)
 
     assert "1#" in entire and ":def run():" in entire
     assert "2#" in section and ":    return 42" in section
@@ -165,8 +165,8 @@ async def test_other_protocols_never_add_hashline_anchors(tmp_path: Path, protoc
     tools = collection(tmp_path, protocol)
     (tmp_path / "sample.py").write_text("def run():\n    return 42\n")
 
-    entire = await tools.read_entire_file("sample.py")
-    section = await tools.read_file_section("sample.py", 2, 2)
+    entire = await tools.read("sample.py")
+    section = await tools.read("sample.py", offset=2, limit=1)
 
     assert "1#" not in entire and "2#" not in entire
     assert "2#" not in section
@@ -178,7 +178,7 @@ async def test_read_only_hashline_collection_does_not_emit_unusable_anchors(tmp_
     (tmp_path / "sample.py").write_text("one\ntwo\n")
 
     assert "edit" not in tools.registry()
-    assert "1#" not in await tools.read_entire_file("sample.py")
+    assert "1#" not in await tools.read("sample.py")
 
 
 @pytest.mark.asyncio
@@ -186,12 +186,12 @@ async def test_restricted_hashline_collection_does_not_emit_unusable_anchors(tmp
     tools = collection(
         tmp_path,
         EditProtocol.HASHLINE_V2,
-        allowed_tools=["read_entire_file", "read_file_section"],
+        allowed_tools=["read"],
     )
     (tmp_path / "sample.py").write_text("one\ntwo\n")
 
     assert "edit" not in tools.registry()
-    assert "1#" not in await tools.read_entire_file("sample.py")
+    assert "1#" not in await tools.read("sample.py")
 
 
 @pytest.mark.asyncio
@@ -200,11 +200,11 @@ async def test_hashline_read_never_anchors_partial_or_phantom_lines(tmp_path: Pa
     (tmp_path / "long.txt").write_text("x" * 100_050)
     (tmp_path / "section.txt").write_text("one\ntwo\nthree\n")
 
-    long_output = await tools.read_entire_file("long.txt")
-    section = await tools.read_file_section("section.txt", 1, 2)
+    long_output = await tools.read("long.txt")
+    section = await tools.read("section.txt", offset=1, limit=2)
 
     assert "1#" not in long_output
-    assert "File truncated by size" in long_output
+    assert "50KB output budget" in long_output
     assert "1#" in section and "2#" in section
     assert "3#" not in section
 
@@ -216,7 +216,7 @@ async def test_hashline_line_one_anchor_ignores_bom_and_can_be_applied(tmp_path:
     target = tmp_path / "bom.txt"
     target.write_text("\ufeffbefore\nafter\n")
 
-    read = await tools.read_entire_file("bom.txt")
+    read = await tools.read("bom.txt")
     tagged_line = next(line for line in read.splitlines() if line.startswith("1#"))
     tag, displayed = tagged_line.split(":", 1)
     result = await tools.call(

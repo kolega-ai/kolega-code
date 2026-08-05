@@ -315,7 +315,7 @@ def test_include_memory_tools_false_removes_all_memory_tools(tmp_path: Path) -> 
     assert [name for name in enabled.names() if name in MEMORY_TOOL_NAMES] == MEMORY_TOOL_NAMES
     assert not any(name in MEMORY_TOOL_NAMES for name in disabled.names())
     # Non-memory tools are unaffected by the toggle.
-    assert "read_entire_file" in disabled.names()
+    assert "read" in disabled.names()
 
 
 def test_subagent_exposes_only_read_and_list_even_when_write_is_requested(tmp_path: Path) -> None:

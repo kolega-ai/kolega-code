@@ -770,11 +770,7 @@ async def test_textual_app_restore_tool_history_matches_legacy_and_execution_ids
     ).to_dict()
     pending_call = Message(
         role="assistant",
-        content=[
-            ToolCall(
-                id="provider-pending", name="read_file_section", input={"path": "a.py", "start_line": 1, "end_line": 1}
-            )
-        ],
+        content=[ToolCall(id="provider-pending", name="read", input={"file_path": "a.py", "offset": 1, "limit": 1})],
     ).to_dict()
     orphan_result = Message(
         role="user",
@@ -793,12 +789,12 @@ async def test_textual_app_restore_tool_history_matches_legacy_and_execution_ids
             ("assistant", "Modern first.", None),
             ("tool_result", "modern contents", "web_fetch"),
             ("user", "Thanks for the tool output.", None),
-            ("tool_call", "Calling read_file_section", "read_file_section"),
+            ("tool_call", "Calling read", "read"),
             ("tool_error", "orphan failed", "write_file"),
         ]
         modern_entry = next(entry for entry in restored if entry.tool_name == "web_fetch")
         assert modern_entry.tool_call_id == "tool_exec_modern"
-        pending_entry = next(entry for entry in restored if entry.tool_name == "read_file_section")
+        pending_entry = next(entry for entry in restored if entry.tool_name == "read")
         assert pending_entry.complete is False
 
 
@@ -843,15 +839,11 @@ async def test_textual_app_model_rebuild_rerenders_completed_tool_once(
         ).to_dict(),
         Message(
             role="assistant",
-            content=[
-                ToolCall(
-                    id="provider-1", name="read_file_section", input={"path": "a.py", "start_line": 1, "end_line": 1}
-                )
-            ],
+            content=[ToolCall(id="provider-1", name="read", input={"file_path": "a.py", "offset": 1, "limit": 1})],
         ).to_dict(),
         Message(
             role="user",
-            content=[ToolResult(tool_use_id="provider-1", content="files", name="read_file_section", is_error=False)],
+            content=[ToolResult(tool_use_id="provider-1", content="files", name="read", is_error=False)],
         ).to_dict(),
     ]
 
@@ -865,5 +857,5 @@ async def test_textual_app_model_rebuild_rerenders_completed_tool_once(
         assert [(entry.kind, entry.content) for entry in app.conversation_entries if entry.kind == "user"] == [
             ("user", "List the files")
         ]
-        tool_entries = [entry for entry in app.conversation_entries if entry.tool_name == "read_file_section"]
+        tool_entries = [entry for entry in app.conversation_entries if entry.tool_name == "read"]
         assert [(entry.kind, entry.content) for entry in tool_entries] == [("tool_result", "files")]

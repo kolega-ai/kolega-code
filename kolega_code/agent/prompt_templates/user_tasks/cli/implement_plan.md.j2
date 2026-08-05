@@ -1,7 +1,7 @@
 Implement the approved plan below. Follow it as the source of truth, but still inspect the code before editing and run appropriate checks.
 {% if plan_artifact_path %}
 
-The approved plan is also persisted at `{{ plan_artifact_path }}`. If the conversation is compacted or you need the exact plan again later, read that file with `read_entire_file` (or `read_file_section` if needed). Treat it as read-only.
+The approved plan is also persisted at `{{ plan_artifact_path }}`. If the conversation is compacted or you need the exact plan again later, read that file with `read` (using offset/limit if needed). Treat it as read-only.
 {% endif %}
 {% if gigacode_enabled %}
 
