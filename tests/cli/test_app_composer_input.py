@@ -47,6 +47,17 @@ from ._app_test_utils import (
 )
 
 
+async def _pause_until(pilot, condition, timeout: float = 10.0) -> None:
+    """Pause the pilot until ``condition()`` holds or the deadline passes.
+
+    Worker teardown needs an unbounded number of message-pump turns on a
+    loaded runner, so waits are wall-clock deadlines, not iteration counts.
+    """
+    deadline = time.monotonic() + timeout
+    while not condition() and time.monotonic() < deadline:
+        await pilot.pause()
+
+
 @pytest.mark.asyncio
 async def test_textual_app_composer_shift_enter_inserts_line_break_and_enter_submits(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -583,14 +594,14 @@ async def test_textual_app_queues_multiple_active_turn_messages_fifo(
 
         release_first.set()
         await first_worker.wait()
-        for _ in range(20):
-            await pilot.pause()
-            if (
+        await _pause_until(
+            pilot,
+            lambda: (
                 app.agent is not None
                 and getattr(app.agent, "messages") == ["first", "second", "third"]
                 and app.agent_worker is None
-            ):
-                break
+            ),
+        )
         if app.agent_worker is not None:
             await app.agent_worker.wait()
         await pilot.pause()
@@ -719,10 +730,7 @@ async def test_textual_app_cancel_restores_queued_followups_to_composer(
 
         composer.load_text(draft)
         app.action_cancel_generation()
-        for _ in range(10):
-            await pilot.pause()
-            if app.agent_worker is None:
-                break
+        await _pause_until(pilot, lambda: app.agent_worker is None)
 
         assert app.agent_worker is None
         assert app._queued_messages == []
@@ -798,10 +806,7 @@ async def test_textual_app_queued_message_delivered_mid_turn(tmp_path: Path, mon
 
         release_finish.set()
         await worker.wait()
-        for _ in range(10):
-            await pilot.pause()
-            if app.agent_worker is None:
-                break
+        await _pause_until(pilot, lambda: app.agent_worker is None)
 
         # No second turn started for the delivered message.
         assert app.agent_worker is None
@@ -869,10 +874,7 @@ async def test_textual_app_cancel_restores_only_undelivered(tmp_path: Path, monk
 
         composer.load_text("")
         app.action_cancel_generation()
-        for _ in range(10):
-            await pilot.pause()
-            if app.agent_worker is None:
-                break
+        await _pause_until(pilot, lambda: app.agent_worker is None)
 
         # Only the undelivered follow-up returns to the composer; the delivered
         # one stays in the transcript as a user message.
