@@ -53,7 +53,6 @@ async def _execute(tmp_path: Path, call: ToolCall, api_key: str) -> ToolResult:
         openai_api_key=api_key,
         long_context_config=model,
         fast_config=model,
-        thinking_config=model,
     )
     caller = Mock(agent_name="live-smoke", agent_mode="normal", current_tool_execution_id="live-call")
     tool = EditTool(tmp_path, "workspace", "thread", AsyncMock(), config, caller)

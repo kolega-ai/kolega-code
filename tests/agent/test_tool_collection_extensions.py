@@ -31,12 +31,6 @@ def agent_config() -> AgentConfig:
             provider=ModelProvider.ANTHROPIC, model="test-model", rate_limits=RateLimitConfig()
         ),
         fast_config=ModelConfig(provider=ModelProvider.ANTHROPIC, model="test-model", rate_limits=RateLimitConfig()),
-        thinking_config=ModelConfig(
-            provider=ModelProvider.ANTHROPIC,
-            model="test-model",
-            rate_limits=RateLimitConfig(),
-            thinking_effort="medium",
-        ),
     )
 
 

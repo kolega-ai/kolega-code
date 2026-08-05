@@ -31,7 +31,6 @@ def benchmark_config(protocol: EditProtocol = EditProtocol.SEARCH_REPLACE) -> Ag
         anthropic_api_key="test",
         long_context_config=model,
         fast_config=model,
-        thinking_config=model,
         edit_protocol=protocol,
         lsp=LspConfig(enabled=False),
     )

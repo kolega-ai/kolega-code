@@ -824,16 +824,13 @@ async def test_model_slot_rows_default_to_inherit_and_name_the_active_model(
         app.action_open_settings()
         await pilot.pause()
         screen = app.screen
-        await _wait_for_select_values(
-            pilot, screen, {"slot_provider_fast": INHERIT_SENTINEL, "slot_provider_thinking": INHERIT_SENTINEL}
-        )
+        await _wait_for_select_values(pilot, screen, {"slot_provider_fast": INHERIT_SENTINEL})
 
-        for slot in ("fast", "thinking"):
-            assert str(screen.query_one(f"#slot_provider_{slot}", Select).value) == INHERIT_SENTINEL
-            assert screen.query_one(f"#slot_model_{slot}", Select).value is Select.NULL
-            hint = str(screen.query_one(f"#slot_hint_{slot}", Static).render())
-            assert f"{UI_DEFAULT_PROVIDER}/{UI_DEFAULT_MODEL}" in hint
-            assert "inherited from the active model" in hint
+        assert str(screen.query_one("#slot_provider_fast", Select).value) == INHERIT_SENTINEL
+        assert screen.query_one("#slot_model_fast", Select).value is Select.NULL
+        hint = str(screen.query_one("#slot_hint_fast", Static).render())
+        assert f"{UI_DEFAULT_PROVIDER}/{UI_DEFAULT_MODEL}" in hint
+        assert "inherited from the active model" in hint
 
         # Inheriting is the absence of an override, not a stored value.
         await app._save_settings_from_ui()
@@ -874,8 +871,6 @@ async def test_model_slot_row_pins_a_model_on_another_provider(
         assert app.config is not None
         assert app.config.fast_config.model == "deepseek-v4-flash"
         assert app.config.long_context_config.model == UI_DEFAULT_MODEL
-        # An unpinned slot still follows the active model.
-        assert app.config.thinking_config.model == UI_DEFAULT_MODEL
 
 
 @pytest.mark.asyncio

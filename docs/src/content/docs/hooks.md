@@ -133,7 +133,7 @@ For judgment calls rather than deterministic rules. Both return a yes/no decisio
 a block is the same as the table above.
 
 - **`prompt`** sends your prompt plus the event data to a model (the fast model by
-  default; `"model"` may be `"fast"`, `"long"`, or `"thinking"`). Use `$EVENT` in the
+  default; `"model"` may be `"fast"` or `"long"`). Use `$EVENT` in the
   prompt to interpolate the event JSON.
 
   ```json

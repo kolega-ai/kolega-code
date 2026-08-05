@@ -327,7 +327,6 @@ def agent_config():
         anthropic_api_key="k",
         long_context_config=ModelConfig(provider=ModelProvider.ANTHROPIC, model="m"),
         fast_config=ModelConfig(provider=ModelProvider.ANTHROPIC, model="f"),
-        thinking_config=ModelConfig(provider=ModelProvider.ANTHROPIC, model="t"),
     )
 
 

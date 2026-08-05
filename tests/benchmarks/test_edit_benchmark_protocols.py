@@ -15,7 +15,6 @@ def config(protocol: EditProtocol) -> AgentConfig:
         anthropic_api_key="test",
         long_context_config=model,
         fast_config=model,
-        thinking_config=model,
         edit_protocol=protocol,
         lsp=LspConfig(enabled=False),
     )

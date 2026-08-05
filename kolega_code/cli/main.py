@@ -238,8 +238,6 @@ def _add_common_model_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--model", help="Main coding model.")
     parser.add_argument("--fast-provider", help="Provider for fast utility calls.")
     parser.add_argument("--fast-model", help="Fast utility model.")
-    parser.add_argument("--thinking-provider", help="Provider for the thinking model slot.")
-    parser.add_argument("--thinking-model", help="Model for the thinking model slot.")
     parser.add_argument("--thinking-effort", help="Model-specific thinking effort for the active model.")
     parser.add_argument("--thinking-tokens", dest="deprecated_thinking_tokens", type=int, help=argparse.SUPPRESS)
     parser.add_argument("--environment", help="Environment label for tracing/metadata.")
@@ -637,8 +635,6 @@ def _overrides_from_args(args: argparse.Namespace) -> CliConfigOverrides:
         model=getattr(args, "model", None),
         fast_provider=getattr(args, "fast_provider", None),
         fast_model=getattr(args, "fast_model", None),
-        thinking_provider=getattr(args, "thinking_provider", None),
-        thinking_model=getattr(args, "thinking_model", None),
         thinking_effort=getattr(args, "thinking_effort", None),
         environment=getattr(args, "environment", None),
         edit_protocol=getattr(args, "edit_protocol", None),
@@ -2151,7 +2147,6 @@ def _run_doctor(args: argparse.Namespace) -> int:
         line("Override", override_message, "warning")
     line("Long model", f"{summary['long_provider']}/{summary['long_model']}")
     line("Fast model", f"{summary['fast_provider']}/{summary['fast_model']}")
-    line("Thinking model", f"{summary['thinking_provider']}/{summary['thinking_model']}")
     line("Thinking effort", summary["thinking_effort"])
     return 0
 

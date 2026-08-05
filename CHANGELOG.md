@@ -17,13 +17,17 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ### Removed
 
-- The `think_hard` tool is gone from the agent toolset: the `ThinkHardTool`
-  backend, its `auxiliary/tools/think_hard.system.md` prompt template, the
-  `ToolCollection.think_hard` method and its `read_only_tools` registration, and
-  the `THINK_HARD_PROMPT` constant were deleted, and the investigation agent's
-  tool list and the tools docs no longer name it. The thinking model slot stays
-  for `prompt` hooks that request it (`"model": "thinking"`), selected as before
-  via `--thinking-provider`/`--thinking-model`.
+- The `think_hard` tool is gone from the agent toolset, along with the thinking
+  model slot that powered it. Deleted: the `ThinkHardTool` backend and its
+  `auxiliary/tools/think_hard.system.md` prompt template, the
+  `ToolCollection.think_hard` method and its `read_only_tools` registration, the
+  `THINK_HARD_PROMPT` constant, and the `thinking_config` model slot itself.
+  `prompt` hooks now select only `"fast"` or `"long"`; the
+  `--thinking-provider`/`--thinking-model` flags, the
+  `KOLEGA_CODE_THINKING_PROVIDER`/`KOLEGA_CODE_THINKING_MODEL` env vars, and the
+  Settings Thinking slot row were removed, and a saved `thinking` slot entry in
+  `settings.json` is ignored on load. The active model's own thinking effort
+  (`--thinking-effort`, `KOLEGA_CODE_THINKING_EFFORT`) is unaffected.
 
 ## 0.26.10 - 2026-08-05
 

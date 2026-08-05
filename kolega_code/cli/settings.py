@@ -18,7 +18,7 @@ _SUPPORTED_SCHEMA_VERSIONS = {1, 2, 3}
 # entries carry only provider/model; the filter below drops what is absent.
 _AGENT_MODEL_KEYS = ("provider", "model", "thinking_effort")
 # Operational model slots that can be pinned independently of the active model.
-MODEL_SLOTS = ("fast", "thinking")
+MODEL_SLOTS = ("fast",)
 # Reserved keys in the shared ``api_keys`` dict used for cloud web-search backends.
 WEB_SEARCH_KEY_NAMES = ("firecrawl", "tavily")
 
@@ -86,8 +86,8 @@ class CliSettings:
     # each value a {provider, model, thinking_effort} dict. Empty = every role uses
     # the active model.
     agent_models: dict[str, dict] = field(default_factory=dict)
-    # Operational model-slot overrides, keyed by MODEL_SLOTS value ("fast",
-    # "thinking"), each a {provider, model} dict. Empty = the slot inherits the
+    # Operational model-slot overrides, keyed by MODEL_SLOTS value ("fast"),
+    # each a {provider, model} dict. Empty = the slot inherits the
     # active model. Additive optional field — absent in older files -> empty
     # mapping, no schema bump (same convention as web_search_backend).
     model_slots: dict[str, dict] = field(default_factory=dict)
@@ -143,7 +143,12 @@ class CliSettings:
             # Additive optional field; absent in pre-v3 files -> empty mapping.
             agent_models=_coerce_model_entries(data.get("agent_models")),
             # Additive optional field; absent in older files -> empty mapping.
-            model_slots=_coerce_model_entries(data.get("model_slots")),
+            # Legacy "thinking" slot entries (pre-removal) are dropped on load.
+            model_slots={
+                slot: entry
+                for slot, entry in _coerce_model_entries(data.get("model_slots")).items()
+                if slot in MODEL_SLOTS
+            },
             trusted_hook_projects=[str(path) for path in trusted if path],
             trusted_mcp_projects=[str(path) for path in trusted_mcp if path],
             trusted_lsp_projects=[str(path) for path in trusted_lsp if path],

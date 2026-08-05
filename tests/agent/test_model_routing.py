@@ -30,7 +30,6 @@ def _config() -> AgentConfig:
 
 def test_complete_override_replaces_only_target_role() -> None:
     config = _config()
-    original_thinking = config.thinking_config
 
     resolved = resolve_subagent_model(
         config,
@@ -44,7 +43,6 @@ def test_complete_override_replaces_only_target_role() -> None:
     assert selected.model == "deepseek-v4-flash"
     assert selected.thinking_effort == "high"
     assert resolved.config.model_config_for_agent("general-agent") == config.long_context_config
-    assert resolved.config.thinking_config == original_thinking
     assert config.agent_models == {}
 
 

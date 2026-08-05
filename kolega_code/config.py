@@ -123,7 +123,6 @@ class AgentConfig(BaseModel):
         # Access model configurations
         long_context_model = config.long_context_config
         fast_model = config.fast_config
-        thinking_model = config.thinking_config
 
     API keys can be set directly or loaded from environment variables.
     Model configurations define which models to use for different operational
@@ -195,13 +194,6 @@ class AgentConfig(BaseModel):
     fast_config: ModelConfig = Field(
         default_factory=lambda: ModelConfig(provider=ModelProvider.ANTHROPIC, model="claude-haiku-4-5-20251001"),
         description="Configuration for fast operations",
-    )
-
-    thinking_config: ModelConfig = Field(
-        default_factory=lambda: ModelConfig(
-            provider=ModelProvider.ANTHROPIC, model="claude-opus-5", thinking_effort="medium"
-        ),
-        description="Configuration for thinking operations",
     )
 
     # Per-agent-role model overrides, keyed by AgentRole value (e.g. "investigation").
@@ -313,7 +305,6 @@ class AgentConfig(BaseModel):
         configs = [
             (self.long_context_config, "long context"),
             (self.fast_config, "fast"),
-            (self.thinking_config, "thinking"),
         ]
         configs.extend((override, f"agent '{role}'") for role, override in self.agent_models.items())
 

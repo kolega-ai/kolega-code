@@ -188,8 +188,6 @@ def _build_config(project_path: Path, spec: PlannedTrial) -> AgentConfig:
         model=spec.model.model,
         fast_provider=spec.model.provider,
         fast_model=spec.model.model,
-        thinking_provider=spec.model.provider,
-        thinking_model=spec.model.model,
         thinking_effort=spec.model_parameters["thinking_effort"],
         environment="benchmark",
         edit_protocol=(adapter.production_protocol or EditProtocol.SEARCH_REPLACE).value,
@@ -208,7 +206,6 @@ def _build_config(project_path: Path, spec: PlannedTrial) -> AgentConfig:
         update={
             "long_context_config": primary,
             "fast_config": primary,
-            "thinking_config": primary,
             "agent_models": {},
             "lsp": LspConfig(enabled=False),
         }

@@ -30,7 +30,6 @@ def _config():
     return AgentConfig(
         anthropic_api_key="test-key",
         fast_config=_model_config(),
-        thinking_config=_model_config(),
     )
 
 

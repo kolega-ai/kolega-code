@@ -51,7 +51,6 @@ def _role_config():
         deepseek_api_key="deepseek-key",
         long_context_config=ModelConfig(provider=ModelProvider.ANTHROPIC, model="claude-haiku-4-5-20251001"),
         fast_config=ModelConfig(provider=ModelProvider.ANTHROPIC, model="claude-haiku-4-5-20251001"),
-        thinking_config=ModelConfig(provider=ModelProvider.ANTHROPIC, model="claude-haiku-4-5-20251001"),
         agent_models={
             "investigation": ModelConfig(
                 provider=ModelProvider.DEEPSEEK, model="deepseek-v4-flash", thinking_effort="high"

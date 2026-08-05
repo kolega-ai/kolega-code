@@ -101,11 +101,6 @@ def real_tools(tmp_path):
             model="gpt-4o",
             rate_limits=RateLimitConfig(),
         ),
-        thinking_config=ModelConfig(
-            provider=ModelProvider.OPENAI,
-            model="gpt-4o",
-            rate_limits=RateLimitConfig(),
-        ),
     )
 
     tool_config = ToolCollectionConfig(

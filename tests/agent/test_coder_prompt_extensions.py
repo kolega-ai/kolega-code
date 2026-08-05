@@ -19,12 +19,6 @@ def test_coder_agent_includes_matching_prompt_extensions(tmp_path):
             model="claude-haiku-4-5-20251001",
             rate_limits=RateLimitConfig(),
         ),
-        thinking_config=ModelConfig(
-            provider=ModelProvider.ANTHROPIC,
-            model="claude-opus-4-8",
-            rate_limits=RateLimitConfig(),
-            thinking_effort="medium",
-        ),
     )
 
     connection_manager = Mock()

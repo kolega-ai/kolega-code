@@ -22,12 +22,6 @@ def make_config() -> AgentConfig:
         openai_api_key="test-key",
         long_context_config=cfg(),
         fast_config=cfg(),
-        thinking_config=ModelConfig(
-            provider=ModelProvider.ANTHROPIC,
-            model="claude-haiku-4-5-20251001",
-            rate_limits=RateLimitConfig(),
-            thinking_effort="medium",
-        ),
     )
 
 

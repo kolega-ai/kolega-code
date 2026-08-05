@@ -46,12 +46,6 @@ def agent_config() -> AgentConfig:
         fast_config=ModelConfig(
             provider=ModelProvider.ANTHROPIC, model="claude-sonnet-4-5-20250929", rate_limits=RateLimitConfig()
         ),
-        thinking_config=ModelConfig(
-            provider=ModelProvider.ANTHROPIC,
-            model="claude-sonnet-4-5-20250929",
-            rate_limits=RateLimitConfig(),
-            thinking_effort="medium",
-        ),
     )
 
 
