@@ -25,12 +25,6 @@ def agent_config():
             model="claude-haiku-4-5-20251001",  # Using a valid model name
             rate_limits=RateLimitConfig(),
         ),
-        thinking_config=ModelConfig(
-            provider=ModelProvider.ANTHROPIC,
-            model="claude-haiku-4-5-20251001",  # Using a valid model name
-            rate_limits=RateLimitConfig(),
-            thinking_effort="medium",
-        ),
     )
 
 

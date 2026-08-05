@@ -118,13 +118,11 @@ def test_settings_store_round_trips_model_slots(tmp_path: Path) -> None:
     store = SettingsStore(tmp_path)
     settings = CliSettings(active_provider=UI_DEFAULT_PROVIDER, active_model=UI_DEFAULT_MODEL)
     settings.set_model_slot("fast", "deepseek", "deepseek-v4-flash")
-    settings.set_model_slot("thinking", "anthropic", "claude-opus-4-8")
 
     store.save(settings)
     loaded = store.load()
 
     assert loaded.get_model_slot("fast") == {"provider": "deepseek", "model": "deepseek-v4-flash"}
-    assert loaded.get_model_slot("thinking") == {"provider": "anthropic", "model": "claude-opus-4-8"}
 
 
 def test_clear_model_slot_makes_slot_inherit() -> None:
@@ -141,7 +139,22 @@ def test_from_dict_drops_incomplete_model_slot_entries() -> None:
         "schema_version": SETTINGS_SCHEMA_VERSION,
         "model_slots": {
             "fast": {"provider": "deepseek", "model": "deepseek-v4-flash"},
-            "thinking": {"provider": "anthropic"},  # missing model -> dropped
+            "fast2": {"provider": "anthropic"},  # missing model -> dropped
+        },
+    }
+
+    settings = CliSettings.from_dict(data)
+
+    assert set(settings.model_slots) == {"fast"}
+
+
+def test_from_dict_drops_legacy_thinking_slot() -> None:
+    """The thinking model slot was removed; a saved entry is ignored on load."""
+    data = {
+        "schema_version": SETTINGS_SCHEMA_VERSION,
+        "model_slots": {
+            "fast": {"provider": "deepseek", "model": "deepseek-v4-flash"},
+            "thinking": {"provider": "anthropic", "model": "claude-opus-4-8"},
         },
     }
 

@@ -16,7 +16,6 @@ def edit_tool(tmp_path: Path) -> EditTool:
         anthropic_api_key="test",
         long_context_config=model,
         fast_config=model,
-        thinking_config=model,
     )
     caller = Mock()
     caller.agent_name = "test-agent"

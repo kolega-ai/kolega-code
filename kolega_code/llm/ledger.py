@@ -3,7 +3,7 @@
 One :class:`UsageLedger` exists per CLI process, owned by the host (the TUI app
 or the ``ask`` runner) and threaded into every :class:`~kolega_code.llm.client.LLMClient`
 in the command tree — the top-level agent, sub-agents, goal verifiers, history
-compression, think_hard, web-fetch answering, hook prompts, and terminal
+compression, web-fetch answering, hook prompts, and terminal
 security checks. The client layer settles each invocation exactly once from the
 normalized ``Message.usage`` (see kolega_code/llm/usage.py); repeated stream
 finalization (the Langfuse wrapper calls ``get_final_message()`` up to three

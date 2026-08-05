@@ -190,8 +190,8 @@ async def test_textual_app_appends_append_mode_tool_streaming_events_in_chat(
                 sender="coder",
                 content={
                     "message_type": "tool_call",
-                    "text": "Calling think_hard",
-                    "tool_description": "think_hard",
+                    "text": "Calling web_fetch",
+                    "tool_description": "web_fetch",
                     "tool_call_id": "tool-1",
                 },
             )
@@ -202,7 +202,7 @@ async def test_textual_app_appends_append_mode_tool_streaming_events_in_chat(
                 sender="coder",
                 content={
                     "text": "partial analysis",
-                    "tool_name": "think_hard",
+                    "tool_name": "web_fetch",
                     "tool_call_id": "tool-1",
                     "is_complete": False,
                     "stream_mode": "append",
@@ -215,7 +215,7 @@ async def test_textual_app_appends_append_mode_tool_streaming_events_in_chat(
                 sender="coder",
                 content={
                     "text": "\ncontinued analysis",
-                    "tool_name": "think_hard",
+                    "tool_name": "web_fetch",
                     "tool_call_id": "tool-1",
                     "is_complete": False,
                     "stream_mode": "append",
@@ -235,7 +235,7 @@ async def test_textual_app_appends_append_mode_tool_streaming_events_in_chat(
                 sender="coder",
                 content={
                     "text": "final analysis",
-                    "tool_name": "think_hard",
+                    "tool_name": "web_fetch",
                     "tool_call_id": "tool-1",
                     "is_complete": True,
                 },
@@ -324,7 +324,7 @@ async def test_textual_app_caps_long_append_mode_tool_streaming_events(
                 sender="coder",
                 content={
                     "text": "a" * (TOOL_STREAM_PREVIEW_CHARS + 10),
-                    "tool_name": "think_hard",
+                    "tool_name": "web_fetch",
                     "tool_call_id": "tool-1",
                     "is_complete": False,
                     "stream_mode": "append",

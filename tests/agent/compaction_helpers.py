@@ -147,7 +147,6 @@ def make_agent_config():
         openai_api_key="test_key",
         long_context_config=cfg(),
         fast_config=cfg(),
-        thinking_config=cfg(thinking_effort="medium"),
     )
 
 

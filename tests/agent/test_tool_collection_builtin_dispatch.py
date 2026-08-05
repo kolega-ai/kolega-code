@@ -31,12 +31,6 @@ def agent_config() -> AgentConfig:
             provider=ModelProvider.ANTHROPIC, model="test-model", rate_limits=RateLimitConfig()
         ),
         fast_config=ModelConfig(provider=ModelProvider.ANTHROPIC, model="test-model", rate_limits=RateLimitConfig()),
-        thinking_config=ModelConfig(
-            provider=ModelProvider.ANTHROPIC,
-            model="test-model",
-            rate_limits=RateLimitConfig(),
-            thinking_effort="medium",
-        ),
     )
 
 
@@ -62,7 +56,6 @@ def tool_collection(
     )
 
     # Mock all tool methods
-    collection.think_hard_tool.think_hard = AsyncMock()
     collection.edit_tool.edit = AsyncMock()
     collection.edit_tool.multi_edit = AsyncMock()
     collection.edit_tool.write = AsyncMock()
@@ -82,15 +75,6 @@ def tool_collection(
 
 @pytest.mark.asyncio
 class TestToolCollection:
-    async def test_think_hard(self, tool_collection: AsyncMock) -> None:
-        problem = "Test problem"
-        expected_response = "Test response"
-        tool_collection.think_hard_tool.think_hard.return_value = expected_response
-
-        result = await tool_collection.think_hard(problem)
-        assert result == expected_response
-        tool_collection.think_hard_tool.think_hard.assert_called_once_with(problem)
-
     async def test_edit(self, tool_collection: AsyncMock) -> None:
         path = "test.txt"
         block = "<<<<<<< SEARCH\nold\n======\nnew\n>>>>>>> REPLACE"

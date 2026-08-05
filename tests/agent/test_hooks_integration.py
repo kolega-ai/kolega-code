@@ -25,12 +25,6 @@ def agent_config():
         fast_config=ModelConfig(
             provider=ModelProvider.ANTHROPIC, model="claude-haiku-4-5-20251001", rate_limits=RateLimitConfig()
         ),
-        thinking_config=ModelConfig(
-            provider=ModelProvider.ANTHROPIC,
-            model="claude-haiku-4-5-20251001",
-            rate_limits=RateLimitConfig(),
-            thinking_effort="medium",
-        ),
     )
 
 

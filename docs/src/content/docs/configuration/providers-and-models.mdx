@@ -134,24 +134,23 @@ See [Settings & API Keys](../settings-and-api-keys/).
 
 ## Model roles
 
-Rather than one model for everything, Kolega Code uses **three model slots**, so you
+Rather than one model for everything, Kolega Code uses **two model slots**, so you
 can match cost and capability to the job:
 
 | Role | Purpose | When unset |
 | --- | --- | --- |
 | **Long context** | The main coding model — drives the conversation and most work | The active model you selected |
 | **Fast** | Quick, cheap utility calls (e.g. `web_fetch`'s page-answering stage) | Inherits the active model |
-| **Thinking** | Extended-reasoning ("think hard") operations | Inherits the active model |
 
-An unset slot **inherits the active model**, so out of the box all three run on
-your main model. Pin the Fast or Thinking slot when you want a cheaper or
+An unset slot **inherits the active model**, so out of the box both run on
+your main model. Pin the Fast slot when you want a cheaper or
 different model for that work — Settings shows which model each slot currently
 resolves to, so an inherited slot is never a surprise.
 
 ## Set models per role
 
 In the TUI, open **Settings → Models → Model Slots** (or `/model`) and
-give the Fast or Thinking row a provider and model. Leave a row on
+give the Fast row a provider and model. Leave a row on
 *Default (inherit)* to keep it following the active model.
 
 A slot may use a **different provider** from your main model — for example a
@@ -166,7 +165,6 @@ Equivalently, from the command line:
 kolega-code . \
   --provider anthropic --model claude-opus-5 \
   --fast-provider anthropic --fast-model claude-haiku-4-5-20251001 \
-  --thinking-provider anthropic --thinking-model claude-opus-5 \
   --thinking-effort medium
 ```
 

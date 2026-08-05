@@ -323,7 +323,6 @@ AGENT_ROLE_LABELS: dict[AgentRole, str] = {
 # The long-context slot is the active model itself, so it is not listed here.
 MODEL_SLOT_LABELS: dict[str, str] = {
     "fast": "Fast",
-    "thinking": "Thinking",
 }
 
 

@@ -23,7 +23,6 @@ def _make_tool(tmp_path, caller=None, config=None):
             anthropic_api_key="test_key",
             long_context_config=_cfg,
             fast_config=_cfg,
-            thinking_config=_cfg,
         )
     return ReadImageTool(
         tmp_path,

@@ -70,7 +70,6 @@ def test_agent_config_validates_with_chatgpt_tokens():
         openai_chatgpt_tokens=_tokens(),
         long_context_config=ModelConfig(provider=ModelProvider.OPENAI_CHATGPT, model="gpt-5.5"),
         fast_config=ModelConfig(provider=ModelProvider.OPENAI_CHATGPT, model="gpt-5.5"),
-        thinking_config=ModelConfig(provider=ModelProvider.OPENAI_CHATGPT, model="gpt-5.5"),
     )
     assert config.get_api_key(ModelProvider.OPENAI_CHATGPT) == "at"
     manager = config.get_chatgpt_token_manager()
@@ -82,5 +81,4 @@ def test_agent_config_without_tokens_rejects_chatgpt_provider():
         AgentConfig(
             long_context_config=ModelConfig(provider=ModelProvider.OPENAI_CHATGPT, model="gpt-5.5"),
             fast_config=ModelConfig(provider=ModelProvider.OPENAI_CHATGPT, model="gpt-5.5"),
-            thinking_config=ModelConfig(provider=ModelProvider.OPENAI_CHATGPT, model="gpt-5.5"),
         )

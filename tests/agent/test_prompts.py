@@ -7,7 +7,6 @@ from kolega_code.cli.goal import build_goal_control_prompt_extension_markdown
 
 
 def test_static_prompt_templates_load() -> None:
-    assert "software architect" in prompts.THINK_HARD_PROMPT
     assert "continuity briefing" in prompts.COMPRESSION_SUMMARY_SYSTEM_PROMPT
     assert "evaluating shell commands for safety" in prompts.SHELL_SAFETY_SYSTEM_PROMPT
     assert "analyzing shell command output" in prompts.SHELL_COMPRESSION_SYSTEM_PROMPT

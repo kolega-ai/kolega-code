@@ -46,12 +46,6 @@ def agent_config() -> AgentConfig:
         fast_config=ModelConfig(
             provider=ModelProvider.ANTHROPIC, model="claude-sonnet-4-5-20250929", rate_limits=RateLimitConfig()
         ),
-        thinking_config=ModelConfig(
-            provider=ModelProvider.ANTHROPIC,
-            model="claude-sonnet-4-5-20250929",
-            rate_limits=RateLimitConfig(),
-            thinking_effort="medium",
-        ),
     )
 
 
@@ -77,7 +71,6 @@ def tool_collection(
     )
 
     # Mock all tool methods
-    collection.think_hard_tool.think_hard = AsyncMock()
     collection.edit_tool.edit = AsyncMock()
     collection.edit_tool.multi_edit = AsyncMock()
     collection.edit_tool.write = AsyncMock()
@@ -196,7 +189,7 @@ class TestToolCollection:
         mock_base_agent: BaseAgent,
     ) -> None:
         """Test combinations of configuration options work correctly."""
-        config = ToolCollectionConfig(include_agent_dispatch_tools=True, tool_exclusions=["think_hard"])
+        config = ToolCollectionConfig(include_agent_dispatch_tools=True, tool_exclusions=["web_search"])
         tool_collection = ToolCollection(
             project_path,
             "test_workspace",
@@ -211,7 +204,7 @@ class TestToolCollection:
         tool_names = [tool.name for tool in tool_list]
 
         # Should exclude explicitly excluded tools
-        assert "think_hard" not in tool_names
+        assert "web_search" not in tool_names
 
         # Should include investigation tools
         assert "dispatch_investigation_agent" in tool_names

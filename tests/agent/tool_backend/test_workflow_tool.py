@@ -508,7 +508,6 @@ async def test_atomic_override_replaces_only_actual_worker_role(tmp_path, connec
     config = _config_with_investigation_override()
     tool = WorkflowTool(str(tmp_path / "project"), "ws", "thread", connection_manager, config, caller, None)
     original_fast = config.fast_config
-    original_thinking = config.thinking_config
     original_agent_models = dict(config.agent_models)
     captured: list[AgentConfig] = []
 
@@ -538,7 +537,6 @@ async def test_atomic_override_replaces_only_actual_worker_role(tmp_path, connec
     assert selected.model == "claude-opus-4-7"
     assert selected.thinking_effort == "high"
     assert overridden.fast_config == original_fast
-    assert overridden.thinking_config == original_thinking
     assert config.agent_models == original_agent_models
 
 

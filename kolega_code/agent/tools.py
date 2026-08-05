@@ -29,7 +29,6 @@ from .tool_backend.snapshot_tool import SnapshotTool
 from .tool_backend.web_fetch_tool import WebFetchTool
 from .tool_backend.web_search_tool import WebSearchTool
 from .tool_backend.terminal_tool import TerminalTool
-from .tool_backend.think_hard_tool import ThinkHardTool
 from .tool_backend.workflow_tool import RUN_WORKFLOW_INPUT_SCHEMA, WorkflowTool
 from .edit_protocols import EDIT_HANDLER_NAMES, edit_protocol_spec
 from .orchestration.context import has_workflow_context_marker, validated_workflow_depth
@@ -493,7 +492,6 @@ class ToolCollection(LogMixin):
         "list_memory",
         "search_codebase",
         "find_files_by_pattern",
-        "think_hard",
         "web_fetch",
         "web_search",
         "read_image",
@@ -808,15 +806,6 @@ class ToolCollection(LogMixin):
             self.filesystem,
         )
 
-        self.think_hard_tool = ThinkHardTool(
-            self.project_path,
-            self.workspace_id,
-            self.thread_id,
-            self.connection_manager,
-            self.config,
-            self.caller,
-            self.filesystem,
-        )
         self.edit_tool = EditTool(
             self.project_path,
             self.workspace_id,
@@ -1361,7 +1350,6 @@ class ToolCollection(LogMixin):
             - read_memory
             - search_codebase
             - find_files_by_pattern
-            - think_hard
         If you need to do something that requires any other tool, you should call the tool directly.
 
         Args:
@@ -1587,22 +1575,6 @@ class ToolCollection(LogMixin):
             limit: Maximum number of runs to report (default 20).
         """
         return await self.workflow_tool.list_workflow_runs(limit=limit)
-
-    async def think_hard(self, problem_statement: str) -> str:
-        """
-        Uses Claude 3.7 Sonnet in extended thinking mode to analyze a problem deeply.
-
-        This tool leverages Claude's extended thinking capabilities to perform in-depth
-        analysis on complex problems. It sends the problem statement to the Claude API
-        with specific parameters to enable extended thinking and returns the detailed response.
-
-        Args:
-            problem_statement: A clear statement of the problem to be analyzed, including ALL relevant details.
-
-        Returns:
-            The detailed analysis from Claude, including its extended thinking process
-        """
-        return await self.think_hard_tool.think_hard(problem_statement)
 
     async def edit(self, path: str, block: str) -> str:
         """

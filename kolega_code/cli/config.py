@@ -80,8 +80,6 @@ class CliConfigOverrides:
     model: Optional[str] = None
     fast_provider: Optional[str] = None
     fast_model: Optional[str] = None
-    thinking_provider: Optional[str] = None
-    thinking_model: Optional[str] = None
     thinking_effort: Optional[str] = None
     environment: Optional[str] = None
     edit_protocol: Optional[str] = None
@@ -510,25 +508,12 @@ def build_agent_config(
         active_model,
         settings.model_slots.get("fast") if settings else None,
     )
-    thinking_provider, thinking_model = _slot_provider_model(
-        loaded_env,
-        "KOLEGA_CODE_THINKING_PROVIDER",
-        "KOLEGA_CODE_THINKING_MODEL",
-        overrides.thinking_provider,
-        overrides.thinking_model,
-        active_provider,
-        active_model,
-        settings.model_slots.get("thinking") if settings else None,
-    )
     active_thinking_effort = _resolve_active_thinking_effort(
         long_provider,
         long_model,
         loaded_env,
         overrides,
         settings,
-    )
-    think_hard_effort = (
-        active_thinking_effort if thinking_provider == long_provider and thinking_model == long_model else None
     )
 
     agent_model_overrides = _agent_model_overrides(loaded_env, settings)
@@ -542,7 +527,7 @@ def build_agent_config(
     )
     lsp_project_trusted = bool(settings and settings.is_lsp_project_trusted(project_path))
 
-    required_providers = {long_provider, fast_provider, thinking_provider}
+    required_providers = {long_provider, fast_provider}
     required_providers.update(override.provider for override in agent_model_overrides.values())
     # API-key providers: env/settings key required. OAuth and local providers are
     # exempt (OAuth is checked via stored tokens below; LLAMA is keyless).
@@ -588,7 +573,6 @@ def build_agent_config(
             edit_protocol=edit_protocol,
             long_context_config=_model_config(long_provider, long_model, thinking_effort=active_thinking_effort),
             fast_config=_model_config(fast_provider, fast_model),
-            thinking_config=_model_config(thinking_provider, thinking_model, thinking_effort=think_hard_effort),
             agent_models=agent_model_overrides,
             web_search_mode=web_search_mode,
             web_search_backend=web_search_backend,
@@ -698,8 +682,6 @@ def config_summary(config: AgentConfig) -> dict[str, object]:
         "long_model": config.long_context_config.model,
         "fast_provider": config.fast_config.provider.value,
         "fast_model": config.fast_config.model,
-        "thinking_provider": config.thinking_config.provider.value,
-        "thinking_model": config.thinking_config.model,
         "thinking_effort": config.long_context_config.thinking_effort,
         "agent_models": {
             role: f"{model_config.provider.value}/{model_config.model}"

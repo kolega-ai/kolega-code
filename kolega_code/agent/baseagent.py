@@ -1603,15 +1603,13 @@ class BaseAgent(LogMixin):
     async def _run_hook_prompt(self, prompt_text: str, model_hint: Optional[str]) -> str:
         """Run a `prompt` hook: a single completion on a chosen model slot.
 
-        ``model_hint`` selects a configured slot ("fast" (default), "long", or
-        "thinking"); arbitrary model ids are not used here to keep provider/API-key
+        ``model_hint`` selects a configured slot ("fast" (default) or "long");
+        arbitrary model ids are not used here to keep provider/API-key
         pairing correct across kolega's multi-provider setup.
         """
         slot = (model_hint or "fast").lower()
         if slot in ("long", "main", "long_context"):
             model_config = self.config.long_context_config
-        elif slot == "thinking":
-            model_config = self.config.thinking_config
         else:
             model_config = self.config.fast_config
 

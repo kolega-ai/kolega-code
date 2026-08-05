@@ -484,7 +484,6 @@ async def test_agent_normalizes_provider_fallback_before_storage_and_execution(t
         anthropic_api_key="test",
         long_context_config=model,
         fast_config=model,
-        thinking_config=model,
     )
     agent = BaseAgent(tmp_path, "workspace", "thread", AsyncMock(), config)
     agent.tool_collection = cast(Any, FreeformTools())

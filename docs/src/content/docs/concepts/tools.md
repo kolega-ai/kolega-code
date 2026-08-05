@@ -153,8 +153,6 @@ OCR/conversion outside this tool.
 
 ### Reasoning & memory
 
-- `think_hard` — an extended-reasoning step that uses the
-  [thinking model](../../configuration/providers-and-models/) and its token budget.
 - `read_memory(path="MEMORY.md")` — read a private project-memory index or topic,
   including its logical path, byte count, and bounded content. The startup copy
   of `MEMORY.md` counts as already read.
@@ -211,7 +209,7 @@ available through `dispatch_custom_agent` when matching definitions are discover
 Tools are gated by mode. In a read-only context — like [Plan mode](../../tui/modes/)
 or an investigation sub-agent — the agent can read and search the codebase
 (`list_directory`, `read_entire_file`, `read_file_section`, `search_codebase`,
-`find_files_by_pattern`, `web_search`, `web_fetch`, `think_hard`, and reading
+`find_files_by_pattern`, `web_search`, `web_fetch`, and reading
 memory) **and** run shell commands to investigate. Editing files still requires
 Build mode's full toolset.
 

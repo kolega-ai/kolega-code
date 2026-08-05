@@ -27,7 +27,6 @@ def _config() -> AgentConfig:
         openrouter_api_key="sk-or-test",
         long_context_config=model,
         fast_config=model,
-        thinking_config=model,
         lsp=LspConfig(enabled=False),
     )
 

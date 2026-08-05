@@ -80,9 +80,7 @@ def test_build_agent_config_explicit_provider_uses_provider_default_model(tmp_pa
     assert anthropic_default == "claude-opus-5"
     assert config.long_context_config.model == anthropic_default
     assert config.fast_config.model == anthropic_default
-    assert config.thinking_config.model == anthropic_default
     assert config.long_context_config.thinking_effort == "medium"
-    assert config.thinking_config.thinking_effort == "medium"
 
 
 def test_build_agent_config_env_overrides(tmp_path: Path) -> None:
@@ -98,7 +96,6 @@ def test_build_agent_config_env_overrides(tmp_path: Path) -> None:
 
     assert config.long_context_config.model == "claude-sonnet-4-6"
     assert config.long_context_config.thinking_effort == "high"
-    assert config.thinking_config.thinking_effort == "high"
 
 
 def test_build_agent_config_flags_override_env(tmp_path: Path) -> None:
@@ -114,7 +111,6 @@ def test_build_agent_config_flags_override_env(tmp_path: Path) -> None:
 
     assert config.long_context_config.model == "claude-opus-4-7"
     assert config.long_context_config.thinking_effort == "xhigh"
-    assert config.thinking_config.thinking_effort == "xhigh"
 
 
 def test_build_agent_config_edit_protocol_flag_overrides_env(tmp_path: Path) -> None:
@@ -313,7 +309,6 @@ def test_explicit_model_override_rejects_mismatched_provider(tmp_path: Path) -> 
     ("provider_key", "model_key"),
     [
         ("KOLEGA_CODE_FAST_PROVIDER", "KOLEGA_CODE_FAST_MODEL"),
-        ("KOLEGA_CODE_THINKING_PROVIDER", "KOLEGA_CODE_THINKING_MODEL"),
     ],
 )
 def test_explicit_slot_model_override_rejects_mismatched_provider(
@@ -351,10 +346,7 @@ def test_build_agent_config_uses_stored_kimi_for_model_slots(tmp_path: Path) -> 
     assert config.long_context_config.model == UI_DEFAULT_MODEL
     assert config.fast_config.provider == ModelProvider.MOONSHOT
     assert config.fast_config.model == UI_DEFAULT_MODEL
-    assert config.thinking_config.provider == ModelProvider.MOONSHOT
-    assert config.thinking_config.model == UI_DEFAULT_MODEL
     assert config.long_context_config.thinking_effort == "max"
-    assert config.thinking_config.thinking_effort == "max"
     assert config.moonshot_api_key == "moonshot-key"
 
 
@@ -368,10 +360,7 @@ def test_build_agent_config_uses_stored_deepseek_for_model_slots(tmp_path: Path)
     assert config.long_context_config.model == DEEPSEEK_DEFAULT_MODEL
     assert config.fast_config.provider == ModelProvider.DEEPSEEK
     assert config.fast_config.model == DEEPSEEK_DEFAULT_MODEL
-    assert config.thinking_config.provider == ModelProvider.DEEPSEEK
-    assert config.thinking_config.model == DEEPSEEK_DEFAULT_MODEL
     assert config.long_context_config.thinking_effort == "high"
-    assert config.thinking_config.thinking_effort == "high"
     assert config.deepseek_api_key == "deepseek-key"
 
 
@@ -384,7 +373,6 @@ def test_build_agent_config_accepts_moonshot_cli_active_model(tmp_path: Path) ->
 
     assert config.long_context_config.provider == ModelProvider.MOONSHOT
     assert config.fast_config.provider == ModelProvider.MOONSHOT
-    assert config.thinking_config.provider == ModelProvider.MOONSHOT
 
 
 def test_build_agent_config_accepts_moonshot_k26_model(tmp_path: Path) -> None:
@@ -408,7 +396,6 @@ def test_build_agent_config_accepts_deepseek_cli_active_model(tmp_path: Path) ->
 
     assert config.long_context_config.provider == ModelProvider.DEEPSEEK
     assert config.fast_config.provider == ModelProvider.DEEPSEEK
-    assert config.thinking_config.provider == ModelProvider.DEEPSEEK
 
 
 def test_build_agent_config_accepts_ollama_cloud_cli_active_model(tmp_path: Path) -> None:
@@ -422,7 +409,6 @@ def test_build_agent_config_accepts_ollama_cloud_cli_active_model(tmp_path: Path
     assert config.long_context_config.model == "glm-5.2"
     assert config.long_context_config.thinking_effort == "medium"
     assert config.fast_config.provider == ModelProvider.OLLAMA_CLOUD
-    assert config.thinking_config.provider == ModelProvider.OLLAMA_CLOUD
     assert config.ollama_cloud_api_key == "ollama-key"
 
 
@@ -440,7 +426,6 @@ def test_build_agent_config_ollama_cloud_provider_default_is_accessible_model(tm
     assert config.long_context_config.model == "gpt-oss:20b"
     assert config.long_context_config.thinking_effort == "medium"
     assert config.fast_config.model == "gpt-oss:20b"
-    assert config.thinking_config.model == "gpt-oss:20b"
 
 
 def test_ollama_cloud_requires_ollama_api_key(tmp_path: Path) -> None:
@@ -660,7 +645,6 @@ def test_build_agent_config_openrouter_provider_default(tmp_path: Path) -> None:
     assert config.long_context_config.provider == ModelProvider.OPENROUTER
     assert config.long_context_config.model == "moonshotai/kimi-k3"
     assert config.fast_config.provider == ModelProvider.OPENROUTER
-    assert config.thinking_config.provider == ModelProvider.OPENROUTER
     assert config.openrouter_api_key == "sk-or-key"
 
 
@@ -727,14 +711,11 @@ def test_openrouter_edit_protocol_defaults_to_claude_code_except_openai_models(t
 def test_build_agent_config_applies_saved_model_slots(tmp_path: Path) -> None:
     settings = _anthropic_settings_with_deepseek_key()
     settings.set_model_slot("fast", "deepseek", "deepseek-v4-flash")
-    settings.set_model_slot("thinking", "deepseek", "deepseek-v4-pro")
 
     config = build_agent_config(tmp_path, settings=settings, env={})
 
     assert config.fast_config.provider == ModelProvider.DEEPSEEK
     assert config.fast_config.model == "deepseek-v4-flash"
-    assert config.thinking_config.provider == ModelProvider.DEEPSEEK
-    assert config.thinking_config.model == "deepseek-v4-pro"
     # The main model is untouched by a slot override.
     assert config.long_context_config.provider == ModelProvider.ANTHROPIC
     assert config.long_context_config.model == ANTHROPIC_DEFAULT_MODEL
@@ -747,7 +728,6 @@ def test_model_slots_inherit_the_active_model_when_unset(tmp_path: Path) -> None
     config = build_agent_config(tmp_path, settings=settings, env={})
 
     assert config.fast_config.model == ANTHROPIC_DEFAULT_MODEL
-    assert config.thinking_config.model == ANTHROPIC_DEFAULT_MODEL
 
 
 def test_env_fast_model_beats_a_saved_model_slot(tmp_path: Path) -> None:

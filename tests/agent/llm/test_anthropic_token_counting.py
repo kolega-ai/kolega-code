@@ -104,11 +104,6 @@ def real_tools(tmp_path):
             model="claude-haiku-4-5-20251001",
             rate_limits=RateLimitConfig(),
         ),
-        thinking_config=ModelConfig(
-            provider=ModelProvider.ANTHROPIC,
-            model="claude-haiku-4-5-20251001",
-            rate_limits=RateLimitConfig(),
-        ),
     )
 
     tool_config = ToolCollectionConfig(
