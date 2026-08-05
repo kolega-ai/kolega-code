@@ -138,7 +138,7 @@ class TestBaseAgent:
     async def test_a_tool_returning_only_text_carries_no_images(self, base_agent):
         class TestTools:
             def get_tool_list(self):
-                return [SimpleNamespace(name="read_entire_file")]
+                return [SimpleNamespace(name="read")]
 
             def registry(self):
                 from kolega_code.llm.models import ToolDefinition
@@ -147,23 +147,21 @@ class TestBaseAgent:
                 registry = ToolRegistry()
                 registry.add(
                     Tool(
-                        name="read_entire_file",
-                        definition=ToolDefinition(name="read_entire_file", description="", parameters=[]),
-                        handler=self.read_entire_file,
+                        name="read",
+                        definition=ToolDefinition(name="read", description="", parameters=[]),
+                        handler=self.read,
                         parallel_safe=True,
                     )
                 )
                 return registry
 
-            async def read_entire_file(self, **_inputs):
+            async def read(self, **_inputs):
                 return [TextBlock(text="just words")]
 
         base_agent.tool_collection = TestTools()
         base_agent.send_chat_message = AsyncMock()
         base_agent.log_info = AsyncMock()
 
-        await base_agent.execute_single_tool(
-            ToolCall(id="r0", name="read_entire_file", input={}, execution_id="tool_exec_text")
-        )
+        await base_agent.execute_single_tool(ToolCall(id="r0", name="read", input={}, execution_id="tool_exec_text"))
 
         assert base_agent.send_chat_message.call_args_list[-1].kwargs["images"] == []

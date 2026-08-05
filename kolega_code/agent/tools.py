@@ -482,8 +482,7 @@ class ToolCollection(LogMixin):
     """
 
     read_only_tools = [
-        "read_entire_file",
-        "read_file_section",
+        "read",
         "read_memory",
         "list_memory",
         "web_fetch",
@@ -1314,7 +1313,7 @@ class ToolCollection(LogMixin):
             - exec_command, write_stdin, kill_command, list_sessions — terminal access
             - eval — persistent Python/JavaScript kernels
             - lsp — language-server intelligence
-            - read_entire_file, read_file_section — read file contents
+            - read — read file contents (offset/limit for sections)
             - read_image — read images
             - web_fetch, web_search — web access
         If you need to do something that requires any other tool, you should call the tool directly.
@@ -1558,7 +1557,7 @@ class ToolCollection(LogMixin):
 
         Before using this tool:
 
-        1. Use the read_entire_file tool to understand the file's contents and context.
+        1. Use the read tool to understand the file's contents and context.
 
         To make a file edit, provide the following:
         1. The path to the file to modify.
@@ -1911,7 +1910,7 @@ class ToolCollection(LogMixin):
 
         Work incrementally: imports → define → test → use, each its own cell. Re-run setup ONLY after reset or a kernel crash. On error, fix and re-run just the failing step. Prior top-level names survive into the next cell — NEVER re-import or re-declare them.
 
-        Both kernels can call back into your own tools over a loopback bridge — loop tool.exec_command over shell checks, read images with tool.read_image, or dispatch sub-agents without leaving the cell. Bridge calls count as real tool calls (permissions and hooks apply). Use list_tools() in a cell to discover available tool names. tool.* results arrive in each tool's model-facing format (e.g. tool.read_file_section wraps content in a markdown header and code fence) — for raw file bytes like CSV/data loads, use the read()/write() helpers instead, which hit the filesystem directly.
+        Both kernels can call back into your own tools over a loopback bridge — loop tool.exec_command over shell checks, read images with tool.read_image, or dispatch sub-agents without leaving the cell. Bridge calls count as real tool calls (permissions and hooks apply). Use list_tools() in a cell to discover available tool names. tool.* results arrive in each tool's model-facing format (e.g. tool.read wraps content in a markdown header and code fence) — for raw file bytes like CSV/data loads, use the read()/write() helpers instead, which hit the filesystem directly.
 
         Python prelude (sync; pass kwargs):
           display(value)                 rich output: dict/list → JSON, matplotlib Figure → image
@@ -1941,59 +1940,31 @@ class ToolCollection(LogMixin):
         """
         return await self.eval_tool.eval(language, code, title=title, timeout=timeout, reset=reset)
 
-    async def read_entire_file(self, path: str) -> str:
+    async def read(self, file_path: str, offset: int = 1, limit: Optional[int] = None) -> str:
         """
-        Read the contents of a file in the project.
-
-        Note: Files exceeding 2000 lines will be truncated with a warning message.
-        Use read_file_section to read specific portions of large files.
+        Read the contents of a file. Output is truncated to 2000 lines or 50KB (whichever is hit first). Use offset/limit to read specific sections of large files. When you need the full file, continue with offset until complete.
 
         Args:
-            path: Path to the file. Relative to the project root is preferred; an absolute path is also accepted.
+            file_path: Path to the file. Relative to the project root is preferred; an absolute path is also accepted.
+            offset: The 1-indexed first line to read (default 1).
+            limit: The maximum number of lines to read; omitted reads from the top.
 
         Returns:
-            The contents of the file as a string formatted as markdown
+            The contents of the file as a string formatted as markdown.
 
         Raises:
             FileNotFoundError: If the file doesn't exist
+            ValueError: If offset or limit are invalid
         """
         formatter = format_hash_lines if self._hashline_output_enabled() else None
-        if formatter is None:
-            result = await self.read_file_tool.read_entire_file(path)
-        else:
-            result = await self.read_file_tool.read_entire_file(path, line_formatter=formatter)
+        result = await self.read_file_tool.read(
+            file_path=file_path,
+            offset=offset,
+            limit=limit,
+            line_formatter=formatter,
+        )
         if self.edit_protocol == EditProtocol.CLAUDE_CODE:
-            self.edit_tool.observe_read(path)
-        return result
-
-    async def read_file_section(self, path: str, start_line: int, end_line: int) -> str:
-        """
-        Read a specific section of a file in the project from start_line to end_line (inclusive).
-
-        Args:
-            path: Path to the file. Relative to the project root is preferred; an absolute path is also accepted.
-            start_line: The line number to start reading from (1-indexed)
-            end_line: The line number to stop reading at (1-indexed, inclusive)
-
-        Returns:
-            The specified section of the file as a string formatted as markdown
-
-        Raises:
-            FileNotFoundError: If the file doesn't exist
-            ValueError: If start_line or end_line are invalid
-        """
-        formatter = format_hash_lines if self._hashline_output_enabled() else None
-        if formatter is None:
-            result = await self.read_file_tool.read_file_section(path, start_line, end_line)
-        else:
-            result = await self.read_file_tool.read_file_section(
-                path,
-                start_line,
-                end_line,
-                line_formatter=formatter,
-            )
-        if self.edit_protocol == EditProtocol.CLAUDE_CODE:
-            self.edit_tool.observe_read(path)
+            self.edit_tool.observe_read(file_path)
         return result
 
     async def write(self, path: str, content: str) -> str:

@@ -19,10 +19,7 @@ from kolega_code.services.snapshots import SnapshotService
 from .models import ToolAttempt
 
 
-READ_TOOL_NAMES = (
-    "read_entire_file",
-    "read_file_section",
-)
+READ_TOOL_NAMES = ("read",)
 
 
 class RecordingConnectionManager(AgentConnectionManager):

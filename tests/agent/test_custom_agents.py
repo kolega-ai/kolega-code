@@ -68,7 +68,7 @@ def test_discovery_scans_both_recursive_roots_and_project_overrides_user(tmp_pat
         ("name: Bad_Name\ndescription: invalid name", "Prompt", "lowercase kebab-case"),
         ("name: coder\ndescription: reserved", "Prompt", "reserved"),
         ("name: demo\ndescription: okay\nunknown: value", "Prompt", "unknown frontmatter"),
-        ("name: demo\ndescription: okay\ntools: [read_entire_file, read_entire_file]", "Prompt", "duplicate"),
+        ("name: demo\ndescription: okay\ntools: [read, read]", "Prompt", "duplicate"),
         ("name: demo\ndescription: okay\nmax_iterations: 0", "Prompt", "positive integer"),
         ("name: demo\ndescription: okay\nmode: sometimes", "Prompt", "build, plan, all"),
         ("name: demo\ndescription: okay", "", "must not be empty"),
@@ -117,7 +117,7 @@ def test_discovery_parses_focused_schema_and_warns_on_filename_mismatch(tmp_path
 name: reviewer
 description: Reviews code
 mode: all
-tools: [read_entire_file, read_file_section]
+tools: [read]
 model: anthropic/claude-opus-4-8
 thinking_effort: high
 max_iterations: 17
@@ -128,7 +128,7 @@ max_iterations: 17
     definition = catalog.get("reviewer")
 
     assert definition is not None
-    assert definition.tools == ("read_entire_file", "read_file_section")
+    assert definition.tools == ("read",)
     assert definition.mode == "all"
     assert definition.model == "anthropic/claude-opus-4-8"
     assert definition.thinking_effort == "high"
@@ -200,7 +200,7 @@ def test_custom_agent_applies_prompt_model_tools_permissions_and_dynamic_context
         connection_manager=mock_connection_manager,
         config=agent_config,
         definition=definition,
-        allowed_tools=["read_entire_file"],
+        allowed_tools=["read"],
         agent_mode=AgentMode.CLI,
         permission_mode=PermissionMode.ASK,
         permission_callback=permission_callback,
@@ -222,7 +222,7 @@ def test_custom_agent_applies_prompt_model_tools_permissions_and_dynamic_context
     assert "## Context Updates" in system_block.text
     assert agent.tool_collection is not None
     tool_names = {tool.name for tool in agent.tool_collection.get_tool_list()}
-    assert tool_names == {"read_entire_file"}
+    assert tool_names == {"read"}
     assert not tool_names.intersection(agent.tool_collection.agent_dispatch_tools)
 
 
@@ -376,7 +376,7 @@ async def test_dispatch_passes_resolved_definition_and_narrowed_tools_to_fresh_a
     _write_agent(
         tmp_path,
         ".kolega/agents/reviewer.md",
-        "name: reviewer\ndescription: Reviews code\ntools: [read_entire_file]",
+        "name: reviewer\ndescription: Reviews code\ntools: [read]",
     )
     catalog = discover_custom_agents(tmp_path, tmp_path / "state")
     coder = CoderAgent(
@@ -418,7 +418,7 @@ async def test_dispatch_passes_resolved_definition_and_narrowed_tools_to_fresh_a
     captured_definition = captured["definition"]
     assert isinstance(captured_definition, CustomAgentDefinition)
     assert captured_definition.name == "reviewer"
-    assert captured["allowed_tools"] == ["read_entire_file"]
+    assert captured["allowed_tools"] == ["read"]
     assert captured["permission_mode"] == coder.permission_mode
     assert captured["permission_callback"] is coder.permission_callback
     assert "resolved_model" not in captured
@@ -530,7 +530,7 @@ async def test_dispatch_with_omitted_tools_inherits_non_recursive_caller_surface
     with patch("kolega_code.agent.custom_agents.CustomAgent", StubCustomAgent):
         await coder.tool_collection.agent_tool.dispatch_custom_agent("helper", "Help")
 
-    assert "read_entire_file" in StubCustomAgent.allowed_tools
+    assert "read" in StubCustomAgent.allowed_tools
     assert "write" in StubCustomAgent.allowed_tools
     assert "run_workflow" not in StubCustomAgent.allowed_tools
     assert not set(StubCustomAgent.allowed_tools).intersection(coder.tool_collection.agent_dispatch_tools)

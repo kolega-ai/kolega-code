@@ -53,7 +53,7 @@ def test_implement_plan_prompt_renders_plan_artifact_path_when_provided() -> Non
 
     assert "/tmp/kolega/plans/session/current-plan.md" in rendered
     assert "conversation is compacted" in rendered
-    assert "read_entire_file" in rendered
+    assert "`read`" in rendered
     assert "read-only" in rendered
     assert "- [ ] update docs" in rendered
 
@@ -62,8 +62,7 @@ def test_current_plan_artifact_prompt_renders_path() -> None:
     rendered = prompts.build_current_plan_artifact_prompt("/tmp/kolega/plans/session/current-plan.md")
 
     assert "/tmp/kolega/plans/session/current-plan.md" in rendered
-    assert "read_entire_file" in rendered
-    assert "read_file_section" in rendered
+    assert "`read`" in rendered
     assert "read-only" in rendered
 
 

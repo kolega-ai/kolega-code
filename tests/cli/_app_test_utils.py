@@ -126,7 +126,7 @@ class ToolCollectionWithRegistry(_FakeToolCollection):
 
 
 class FakeBuildAgentWithRegistry(FakeCoderAgent):
-    tool_names = ["edit", "read_entire_file", "update_task_list", "write"]
+    tool_names = ["edit", "read", "update_task_list", "write"]
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -134,7 +134,7 @@ class FakeBuildAgentWithRegistry(FakeCoderAgent):
 
 
 class FakePlanAgentWithRegistry(FakeCoderAgent):
-    tool_names = ["read_entire_file", "write_plan"]
+    tool_names = ["read", "write_plan"]
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)

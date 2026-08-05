@@ -182,9 +182,9 @@ class TestBaseAgent:
                 "content": [
                     {
                         "type": "tool_result",
-                        "tool_use_id": "read_entire_file_24",
+                        "tool_use_id": "read_24",
                         "content": oversized_content,
-                        "name": "read_entire_file",
+                        "name": "read",
                         "is_error": False,
                         "cache_checkpoint": False,
                     }
@@ -197,8 +197,8 @@ class TestBaseAgent:
 
         result = base_agent.history[0].content[0]
         assert isinstance(result, ToolResult)
-        assert result.tool_use_id == "read_entire_file_24"
-        assert result.name == "read_entire_file"
+        assert result.tool_use_id == "read_24"
+        assert result.name == "read"
         assert result.is_error is False
         assert len(result.content) < 500
         assert "Tool result omitted from history" in result.content

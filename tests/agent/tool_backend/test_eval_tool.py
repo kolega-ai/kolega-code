@@ -172,8 +172,8 @@ async def test_end_to_end_kernel_env_has_scratchpad(tmp_path, isolated_cli_env):
 async def test_end_to_end_bridge_call_reaches_caller(tmp_path, isolated_cli_env):
     tool = make_tool(tmp_path)
     try:
-        text = await tool.eval("py", "tool.read_file_section({'path': 'x.py', 'start_line': 1, 'end_line': 2})")
-        assert "called read_file_section" in text
+        text = await tool.eval("py", "tool.read({'file_path': 'x.py', 'offset': 1, 'limit': 2})")
+        assert "called read" in text
     finally:
         await tool.shutdown_if_owner()
 

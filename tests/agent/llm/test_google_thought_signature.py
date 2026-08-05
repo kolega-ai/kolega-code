@@ -19,7 +19,7 @@ from kolega_code.llm.providers.google import GoogleStreamWrapper
 def _fake_google_response(signature: bytes) -> genai_types.GenerateContentResponse:
     """Minimal stand-in for a genai GenerateContentResponse with one function-call part."""
     part = genai_types.Part(
-        function_call=genai_types.FunctionCall(id="call-1", name="read_file_section", args={"path": "a.py"}),
+        function_call=genai_types.FunctionCall(id="call-1", name="read", args={"path": "a.py"}),
         thought_signature=signature,
         thought=False,
     )
@@ -35,10 +35,10 @@ def _fake_google_response(signature: bytes) -> genai_types.GenerateContentRespon
 
 
 def test_to_google_emits_thought_signature() -> None:
-    tc = ToolCall(id="c1", name="read_file_section", input={"path": "a.py"}, thought_signature=b"\x01\x02SIG")
+    tc = ToolCall(id="c1", name="read", input={"path": "a.py"}, thought_signature=b"\x01\x02SIG")
     part = tc.to_google()
     assert part.function_call is not None
-    assert part.function_call.name == "read_file_section"
+    assert part.function_call.name == "read"
     assert part.thought_signature == b"\x01\x02SIG"
 
 
@@ -48,7 +48,7 @@ def test_to_google_without_signature_is_none() -> None:
 
 
 def test_to_dict_from_dict_round_trip_preserves_signature() -> None:
-    tc = ToolCall(id="c1", name="read_file_section", input={"path": "a.py"}, thought_signature=b"\x01\x02SIG")
+    tc = ToolCall(id="c1", name="read", input={"path": "a.py"}, thought_signature=b"\x01\x02SIG")
     data = tc.to_dict()
     # Must be JSON-serializable (base64 string), not raw bytes.
     assert isinstance(data["thought_signature"], str)

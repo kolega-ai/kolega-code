@@ -180,8 +180,7 @@ class TestToolCollectionRegistry:
         )
         registry = collection.registry()
 
-        assert registry.get("read_entire_file").parallel_safe
-        assert registry.get("read_file_section").parallel_safe
+        assert registry.get("read").parallel_safe
         assert not registry.get("edit").parallel_safe
         assert not registry.get("lsp_edit").parallel_safe
         assert not registry.get("multi_edit").parallel_safe

@@ -188,7 +188,7 @@ def test_local_anthropic_token_counting_includes_tool_result_content():
                     ToolResult(
                         tool_use_id="tool_1",
                         content=large_tool_output,
-                        name="read_entire_file",
+                        name="read",
                         is_error=False,
                     )
                 ],
