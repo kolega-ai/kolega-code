@@ -82,6 +82,65 @@ def test_moonshot_thinking_subset_passthrough() -> None:
     assert usage.total_tokens == 124
 
 
+def test_kimi_zero_input_sentinel_reconstructs_cached_input() -> None:
+    # Live-verified: kimi-for-coding returns input_tokens=-1 as a sentinel for
+    # "no uncached input tokens" on a full server-side cache hit; the same
+    # prompt reports a real uncached count while only partially cached
+    # (27 uncached + 6 cached = 33), so the inclusive total is cache + 0.
+    usage = normalize_usage(
+        {
+            "input_tokens": -1,
+            "output_tokens": 35,
+            "cache_read_input_tokens": 33,
+            "cache_write_input_tokens": 0,
+        },
+        "kimi_coding",
+        "kimi-for-coding",
+    )
+    assert usage.reported is True
+    assert usage.input_tokens == 33
+    assert usage.output_tokens == 35
+    assert usage.total_tokens == 68
+    assert usage.cache_read_input_tokens == 33
+    assert usage.unavailable_reason is None
+
+
+def test_moonshot_zero_input_sentinel_reconstructs_cached_input() -> None:
+    usage = normalize_usage(
+        {
+            "input_tokens": -1,
+            "output_tokens": 43,
+            "cache_read_input_tokens": 33,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 40,
+        },
+        "moonshot",
+        "kimi-k3",
+    )
+    assert usage.reported is True
+    assert usage.input_tokens == 33
+    assert usage.output_tokens == 43
+    assert usage.reasoning_output_tokens == 40
+    assert usage.unavailable_reason is None
+
+
+def test_zero_input_sentinel_is_kimi_family_specific() -> None:
+    # The -1 sentinel interpretation must not widen: other Anthropic-family
+    # providers keep treating negative cores as malformed, and a nonsentinel
+    # negative on kimi itself (e.g. output) still poisons the record.
+    usage = normalize_usage({"input_tokens": -1, "output_tokens": 5}, "anthropic", None)
+    assert usage.reported is False
+    assert usage.unavailable_reason == REASON_MALFORMED
+
+    usage = normalize_usage(
+        {"input_tokens": 10, "output_tokens": -1},
+        "kimi_coding",
+        "kimi-for-coding",
+    )
+    assert usage.reported is False
+    assert usage.unavailable_reason == REASON_MALFORMED
+
+
 # --- openai family --------------------------------------------------------------
 
 
