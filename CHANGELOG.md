@@ -6,6 +6,8 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.27.0 - 2026-08-06
+
 ### Changed
 
 - The `eval`, `exec_command`, and `lsp` tool descriptions shipped to model
@@ -113,6 +115,14 @@ This project uses GitHub Releases for detailed generated release notes. This fil
   allowlists naming the removed tools must be updated to the terminal tools
   (`exec_command`, `write_stdin`, `kill_command`, `list_sessions`). Existing
   session histories keep the old tool names as recorded data and render as-is.
+
+- The `sleep` tool is gone from the agent toolset: its blind wall-clock wait is
+  strictly dominated by `write_stdin`'s empty-input poll, which waits for more
+  output or process exit and returns early when the process finishes. The
+  `yield_time_ms` clamp semantics (250–30000 ms when writing, 5000–300000 ms
+  when polling) moved from the `write_stdin` docstring body into its parameter
+  description so the poll path stays discoverable. Existing session histories
+  keep the old tool name as recorded data and render as-is.
 
 - The `think_hard` tool is gone from the agent toolset, along with the thinking
   model slot that powered it. Deleted: the `ThinkHardTool` backend and its
