@@ -33,7 +33,7 @@ separates the controls into:
 | **Providers** | API keys and ChatGPT sign-in for every model provider, plus per-provider connection testing |
 | **Models** | Provider, model, thinking effort, and the fast model slot |
 | **Agent Models** | Optional provider/model/effort override for each agent role |
-| **Tools** | Web-search backend and global LSP toggle |
+| **Tools** | Web-search backend, global LSP toggle, and the history-compression threshold |
 | **MCP Servers** | Global and trusted-project MCP server management |
 | **Appearance** | TUI theme |
 
@@ -96,6 +96,13 @@ your self-hosted instance. The same settings can be supplied with
 [`KOLEGA_CODE_WEB_SEARCH_MODE`, `KOLEGA_CODE_WEB_SEARCH_BACKEND`,
 `FIRECRAWL_API_KEY`, `TAVILY_API_KEY`, and
 `SEARXNG_BASE_URL`](../environment-variables/#web-search).
+
+The **Tools** category also holds the **history-compression threshold**: the
+context-window usage percent at which older conversation history is summarized
+automatically (default `80%`). Choose `100%` to effectively disable automatic
+compression — `/compress` always works manually. For one session only, override
+it with `--compression-threshold PERCENT` or `KOLEGA_CODE_COMPRESSION_THRESHOLD`;
+the editor notes when a launch flag or environment variable has pinned the value.
 
 ## Where settings live
 

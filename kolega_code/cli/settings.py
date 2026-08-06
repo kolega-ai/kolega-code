@@ -75,6 +75,25 @@ def _coerce_permission_mode(raw: object) -> str:
         return PermissionMode.ASK.value
 
 
+# Valid range (inclusive) for the user-facing compression threshold, in percent.
+COMPRESSION_THRESHOLD_MIN_PERCENT = 10
+COMPRESSION_THRESHOLD_MAX_PERCENT = 100
+
+
+def _coerce_compression_threshold(raw: object) -> Optional[float]:
+    """Normalize a stored compression-threshold percent, dropping invalid values.
+
+    Tolerant of hand-edits: anything that is not a number in the valid range
+    becomes None (the built-in default) instead of failing startup. Note bool is
+    a subclass of int, so it must be rejected explicitly."""
+    if raw is None or isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        return None
+    value = float(raw)
+    if COMPRESSION_THRESHOLD_MIN_PERCENT <= value <= COMPRESSION_THRESHOLD_MAX_PERCENT:
+        return value
+    return None
+
+
 @dataclass
 class CliSettings:
     active_provider: Optional[str] = None
@@ -120,6 +139,10 @@ class CliSettings:
     # Additive optional field — absent in older files -> None -> eval tool
     # enabled (persistent code kernels with the loopback tool bridge).
     eval_enabled: Optional[bool] = None
+    # Context-window usage percent that triggers automatic history compression.
+    # Additive optional field — absent in older files -> None -> the agent's
+    # built-in default (80%).
+    compression_threshold: Optional[float] = None
     schema_version: int = SETTINGS_SCHEMA_VERSION
 
     @classmethod
@@ -164,6 +187,8 @@ class CliSettings:
             lsp_enabled=data.get("lsp_enabled"),
             # Additive optional field; absent in older files -> None (enabled).
             eval_enabled=data.get("eval_enabled"),
+            # Additive optional field; absent in older files -> None (default 80%).
+            compression_threshold=_coerce_compression_threshold(data.get("compression_threshold")),
         )
 
     def to_dict(self) -> dict:
@@ -186,6 +211,7 @@ class CliSettings:
             "permission_mode": _coerce_permission_mode(self.permission_mode),
             "lsp_enabled": self.lsp_enabled,
             "eval_enabled": self.eval_enabled,
+            "compression_threshold": self.compression_threshold,
         }
 
     def get_api_key(self, provider: str) -> Optional[str]:

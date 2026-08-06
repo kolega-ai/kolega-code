@@ -21,9 +21,11 @@ The agent owns three things worth knowing about:
 
 - **Conversation** — the running message history.
 - **History compression** — when the conversation grows large, older context is
-  compressed to stay within the model's budget. You can trigger this manually with
-  [`/compress`](../../tui/slash-commands/) and inspect the current size with
-  `/context`.
+  compressed to stay within the model's budget. Automatic compression kicks in
+  once context usage crosses a threshold (80% by default — configurable in
+  Settings → Tools or with `--compression-threshold`). You can also trigger it
+  manually with [`/compress`](../../tui/slash-commands/) and inspect the current
+  size with `/context`.
 - **Events** — the agent emits a stream of typed events (chat messages, tool
   activity, terminal output, status updates, sub-agent lifecycle). The TUI renders
   these live; `ask --json` prints them.

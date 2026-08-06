@@ -16,7 +16,12 @@ from kolega_code.mcp.config import load_mcp_config
 from kolega_code.services.lsp.config import LspConfig
 
 from .provider_registry import default_model_for_provider
-from .settings import CliSettings, SettingsStore
+from .settings import (
+    COMPRESSION_THRESHOLD_MAX_PERCENT,
+    COMPRESSION_THRESHOLD_MIN_PERCENT,
+    CliSettings,
+    SettingsStore,
+)
 
 # Providers authenticated by an OAuth sign-in instead of a static API key.
 OAUTH_PROVIDERS = frozenset({ModelProvider.OPENAI_CHATGPT})
@@ -61,6 +66,9 @@ SEARXNG_BASE_URL_ENV = "SEARXNG_BASE_URL"
 # LSP master switch: on or off. Absent means defer to settings.lsp_enabled.
 LSP_MODES = ("on", "off")
 LSP_MODE_ENV = "KOLEGA_CODE_LSP"
+# Compression threshold override, in percent (10-100). Absent means defer to
+# settings.compression_threshold, then the agent's built-in default (80%).
+COMPRESSION_THRESHOLD_ENV = "KOLEGA_CODE_COMPRESSION_THRESHOLD"
 # Env vars that supply a cloud web-search backend's key, keyed by backend name.
 SEARCH_BACKEND_KEY_ENV = {
     "firecrawl": "FIRECRAWL_API_KEY",
@@ -85,6 +93,9 @@ class CliConfigOverrides:
     edit_protocol: Optional[str] = None
     web_search_mode: Optional[str] = None
     lsp_mode: Optional[str] = None
+    # Compression threshold in percent, as typed on the command line; parsed and
+    # validated in _compression_threshold.
+    compression_threshold: Optional[str] = None
 
 
 def load_cli_env(project_path: Path, env: Optional[Mapping[str, str]] = None) -> dict[str, str]:
@@ -272,6 +283,48 @@ def _lsp_enabled(
     if settings is not None and settings.lsp_enabled is not None:
         return bool(settings.lsp_enabled)
     return True
+
+
+def _compression_threshold(
+    env: Mapping[str, str],
+    settings: Optional[CliSettings],
+    override: Optional[str],
+) -> Optional[float]:
+    """Resolve the compression threshold with flag-over-env-over-settings precedence.
+
+    User-facing surfaces carry a percent (10-100); the returned value is the
+    fraction the agent compares against, or None for the built-in default (80%).
+    Explicit flag/env values are validated strictly (a typo must fail loudly);
+    settings values were already range-coerced at load."""
+    # Resolve presence per layer instead of via _explicit_value, whose truthiness
+    # check treats an explicit empty value as absent; here it is invalid input to
+    # reject, not a missing layer to fall through.
+    explicit: Optional[str] = None
+    source: Optional[str] = None
+    if override is not None:
+        explicit, source = override, "--compression-threshold"
+    elif COMPRESSION_THRESHOLD_ENV in env:
+        explicit, source = env[COMPRESSION_THRESHOLD_ENV], COMPRESSION_THRESHOLD_ENV
+    percent: Optional[float] = None
+    if explicit is not None:
+        try:
+            percent = float(explicit)
+        except ValueError:
+            percent = None
+        if (
+            percent is None
+            or percent < COMPRESSION_THRESHOLD_MIN_PERCENT
+            or percent > COMPRESSION_THRESHOLD_MAX_PERCENT
+        ):
+            raise CliConfigError(
+                f"Unsupported compression threshold '{explicit}' from {source}. "
+                f"Valid range: {COMPRESSION_THRESHOLD_MIN_PERCENT}-{COMPRESSION_THRESHOLD_MAX_PERCENT} (percent)."
+            )
+    elif settings is not None and settings.compression_threshold is not None:
+        percent = settings.compression_threshold
+    if percent is None:
+        return None
+    return percent / 100.0
 
 
 def _coerce_known_model(provider: ModelProvider, model: Optional[str]) -> str:
@@ -519,6 +572,7 @@ def build_agent_config(
     agent_model_overrides = _agent_model_overrides(loaded_env, settings)
     web_search_backend, web_search_api_key, web_search_base_url = _search_config(loaded_env, settings)
     web_search_mode = _web_search_mode(loaded_env, settings, overrides.web_search_mode)
+    compression_threshold = _compression_threshold(loaded_env, settings, overrides.compression_threshold)
     state_dir = settings_store.root if settings_store is not None else SettingsStore().root
     mcp_config = load_mcp_config(
         project_path,
@@ -583,6 +637,7 @@ def build_agent_config(
             lsp=LspConfig(enabled=_lsp_enabled(loaded_env, settings, overrides.lsp_mode)),
             lsp_project_trusted=lsp_project_trusted,
             eval_enabled=(True if settings is None or settings.eval_enabled is None else bool(settings.eval_enabled)),
+            history_compression_threshold=compression_threshold,
         )
     except ValueError as exc:
         raise CliConfigError(str(exc)) from exc

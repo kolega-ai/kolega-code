@@ -439,6 +439,12 @@ class BaseAgent(LogMixin):
         # Counts consecutive transient LLM failures (rate-limit / overload) so the turn loop
         # backs off and eventually gives up instead of retrying forever; reset on any good turn.
         self._consecutive_llm_retries = 0
+        # Host-configured compression threshold (fraction of the context window) shadows
+        # the class default when the config carries one; every read below and in
+        # _send_context_update goes through the instance attribute.
+        config_threshold = getattr(self.config, "history_compression_threshold", None)
+        if config_threshold is not None:
+            self.history_compression_threshold = config_threshold
         self.compressor = HistoryCompressor(threshold=self.history_compression_threshold)
         self.emitter = AgentEventEmitter(
             connection_manager=self.connection_manager,

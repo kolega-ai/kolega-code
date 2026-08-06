@@ -118,6 +118,7 @@ for the run.
 | `--thinking-effort` | Model-specific thinking effort, such as `auto`, `medium`, `high`, or `max` |
 | `--edit-protocol` | Override the model-facing edit language with `search_replace`, `codex_apply_patch`, or `claude_code` |
 | `--environment` | Environment label for tracing/metadata |
+| `--compression-threshold PERCENT` | Context-window usage that triggers automatic history compression (`10`–`100`, default `80`; `100` effectively disables it). Overrides settings for the session; not persisted |
 
 ## Session-state options
 

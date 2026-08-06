@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shlex
 from copy import deepcopy
@@ -39,6 +40,7 @@ from kolega_code.mcp.state import MCPStatusStore, MCPOAuthTokenStore
 
 from .. import messages, theme
 from ..config import (
+    COMPRESSION_THRESHOLD_ENV,
     CliConfigError,
     active_model_override_message,
     build_agent_config,
@@ -78,6 +80,9 @@ MCP_TRANSPORT_OPTIONS = [
 MCP_ENABLED_OPTIONS = [("Enabled", "true"), ("Disabled", "false")]
 MCP_STATUS_MESSAGE_MAX = 96
 MCP_STATUS_NAME_MAX = 34
+# Compression threshold select: "default" maps to None (the agent's built-in 80%).
+COMPRESSION_THRESHOLD_DEFAULT_VALUE = "default"
+COMPRESSION_THRESHOLD_PRESET_PERCENTS = (50, 60, 70, 80, 90, 95, 100)
 MCP_ATTENTION_STATUSES = {"failed", "stale", "unverified"}
 MCP_TRANSPORT_LABELS = {
     "streamable_http": "HTTP",
@@ -143,6 +148,22 @@ def _row_for_widget(widget_id: str) -> Optional[_OverrideRow]:
             if rest.startswith(field):
                 return build(rest[len(field) :])
     return None
+
+
+def _compression_threshold_option_value(percent: float) -> str:
+    """Select value for a threshold percent: integral values stay bare ("80")."""
+    return str(int(percent)) if float(percent).is_integer() else str(percent)
+
+
+def compression_threshold_options(saved: Optional[float] = None) -> list[tuple[str, str]]:
+    """Select options for the compression threshold, presets plus any saved off-list value."""
+    options: list[tuple[str, str]] = [("Default (80%)", COMPRESSION_THRESHOLD_DEFAULT_VALUE)]
+    options.extend((f"{percent}%", str(percent)) for percent in COMPRESSION_THRESHOLD_PRESET_PERCENTS)
+    if saved is not None:
+        saved_value = _compression_threshold_option_value(saved)
+        if saved_value not in {value for _, value in options}:
+            options.append((f"{saved_value}%", saved_value))
+    return options
 
 
 def _mcp_separator() -> str:
@@ -490,6 +511,7 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
         self._populate_web_search_controls()
         self._populate_mcp_controls()
         self._populate_lsp_controls()
+        self._populate_compression_controls()
         self._update_settings_status()
 
     def _draft_credential_settings(self) -> CliSettings:
@@ -1552,6 +1574,45 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             return
         self.settings.lsp_enabled = value == "true"
 
+    def _populate_compression_controls(self) -> None:
+        """Seed the compression-threshold select from saved settings."""
+        try:
+            select = self._settings_query_one("#compression_threshold_select", Select)
+        except NoMatches:
+            return
+        saved = self.settings.compression_threshold
+        select.set_options(compression_threshold_options(saved))
+        select.value = (
+            COMPRESSION_THRESHOLD_DEFAULT_VALUE if saved is None else _compression_threshold_option_value(saved)
+        )
+        self._update_compression_settings_status()
+
+    def _update_compression_settings_status(self) -> None:
+        """Note when a launch flag or env var pins the threshold for this session."""
+        try:
+            status = self._settings_query_one("#compression_status", Static)
+        except NoMatches:
+            return
+        flag_value = getattr(self.overrides, "compression_threshold", None)
+        env_value = os.environ.get(COMPRESSION_THRESHOLD_ENV)
+        forced = flag_value or env_value
+        if forced:
+            source = "--compression-threshold" if flag_value else COMPRESSION_THRESHOLD_ENV
+            status.update(
+                f"Compression threshold is forced to {forced}% for this session by {source}; "
+                "the setting applies from the next launch."
+            )
+            return
+        status.update("")
+
+    def _collect_compression_from_ui(self) -> None:
+        """Read the compression-threshold select and save into settings."""
+        try:
+            value = str(self._settings_query_one("#compression_threshold_select", Select).value)
+        except NoMatches:
+            return
+        self.settings.compression_threshold = None if value == COMPRESSION_THRESHOLD_DEFAULT_VALUE else float(value)
+
     def _settings_candidate_from_ui(self) -> tuple[CliSettings, str, str, str]:
         """Collect the mounted form into a detached settings candidate."""
         provider = str(self._settings_query_one("#provider_select", Select).value)
@@ -1586,6 +1647,7 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             self._collect_model_slots_from_ui()
             self._collect_web_search_from_ui()
             self._collect_lsp_from_ui()
+            self._collect_compression_from_ui()
         finally:
             self.settings = original
         return candidate, provider, model, effort

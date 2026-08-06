@@ -117,6 +117,7 @@ with vision support.
 | `KOLEGA_CODE_STATE_DIR` | Override where settings and sessions are stored |
 | `KOLEGA_CODE_ENVIRONMENT` | Environment label attached to tracing/metadata (default `development`) |
 | `KOLEGA_CODE_NO_DIAGNOSTICS` | Set to any value to disable the local [diagnostics](../../troubleshooting/diagnostics/) log and responsiveness watchdog |
+| `KOLEGA_CODE_COMPRESSION_THRESHOLD` | Context-window usage percent that triggers automatic history compression (`10`–`100`, default `80`; `100` effectively disables automatic compression) |
 
 ## Web search
 

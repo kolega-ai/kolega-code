@@ -242,6 +242,13 @@ def _add_common_model_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--thinking-tokens", dest="deprecated_thinking_tokens", type=int, help=argparse.SUPPRESS)
     parser.add_argument("--environment", help="Environment label for tracing/metadata.")
     parser.add_argument(
+        "--compression-threshold",
+        metavar="PERCENT",
+        help="Context-window usage percentage that triggers automatic history compression "
+        "(10-100; default 80). Overrides settings.json for this session; not persisted. "
+        "100 effectively disables automatic compression.",
+    )
+    parser.add_argument(
         "--edit-protocol",
         choices=[protocol.value for protocol in EditProtocol],
         help="File edit protocol exposed to coding models.",
@@ -640,6 +647,7 @@ def _overrides_from_args(args: argparse.Namespace) -> CliConfigOverrides:
         edit_protocol=getattr(args, "edit_protocol", None),
         web_search_mode=getattr(args, "web_search", None),
         lsp_mode=getattr(args, "lsp", None),
+        compression_threshold=getattr(args, "compression_threshold", None),
     )
 
 
