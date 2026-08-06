@@ -36,6 +36,20 @@ class Tool:
     # Debug-level log_message sink for param-alias hits, so trajectory mining
     # sees which aliases fire. None falls back to stdlib logging.
     log_debug: Optional[Callable[[str], Awaitable[None]]] = None
+    # Parameter names the bound handler accepts, computed once at construction
+    # via ``inspect``. Alias resolution treats a registered alias as real only
+    # when the binding does NOT accept the name: a name the handler itself
+    # accepts is a legitimate argument for this binding, never a misspelling.
+    accepted_params: FrozenSet[str] = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        try:
+            parameters = inspect.signature(self.handler).parameters
+        except (TypeError, ValueError):
+            accepted: FrozenSet[str] = frozenset()
+        else:
+            accepted = frozenset(parameters)
+        object.__setattr__(self, "accepted_params", accepted)
 
     async def call(self, **inputs: Any) -> Any:
         inputs = await self._resolve_param_aliases(inputs)
@@ -48,7 +62,7 @@ class Tool:
         Runs before ``_reject_malformed_call`` so a registered alias can never
         surface as an invalid-arguments error (or a raw ``TypeError``).
         """
-        resolved, hits = resolve_param_aliases(self.name, inputs)
+        resolved, hits = resolve_param_aliases(self.name, inputs, accepted_params=self.accepted_params)
         for hit in hits:
             message = f"Param alias on `{hit.tool}`: `{hit.alias}` {hit.action}"
             if self.log_debug is not None:

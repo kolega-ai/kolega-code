@@ -5,7 +5,7 @@ import pytest
 
 from kolega_code.agent.tools import ToolCollection, ToolCollectionConfig
 from kolega_code.config import AgentConfig, EditProtocol, ModelConfig, ModelProvider
-from kolega_code.tools import ToolRegistry
+from kolega_code.tools import ToolError, ToolRegistry
 
 
 def assert_external_path_description(description: str) -> None:
@@ -38,6 +38,7 @@ def collection(
     caller.supports_vision = False
     caller.sub_agent = False
     caller.session_id = "session"
+    caller.current_tool_execution_id = None
     return ToolCollection(
         tmp_path,
         "workspace",
@@ -56,6 +57,24 @@ def test_default_protocol_keeps_search_replace_tools(tmp_path: Path) -> None:
     assert "apply_patch" not in registry
     for tool_name in ("edit", "multi_edit", "write"):
         assert_external_path_description(parameter_description(registry, tool_name, "path"))
+
+
+@pytest.mark.asyncio
+async def test_claude_write_accepts_path_alias_at_dispatch(tmp_path: Path) -> None:
+    tools = collection(tmp_path, EditProtocol.CLAUDE_CODE)
+    result = await tools.call("write", path="aliased.txt", content="hello\n")
+    assert result.startswith("Wrote ")
+    assert (tmp_path / "aliased.txt").read_text() == "hello\n"
+
+
+@pytest.mark.asyncio
+async def test_search_replace_write_keeps_path_canonical_at_dispatch(tmp_path: Path) -> None:
+    tools = collection(tmp_path, EditProtocol.SEARCH_REPLACE)
+    result = await tools.call("write", path="direct.txt", content="hello\n")
+    assert result.startswith("Wrote ")
+    assert (tmp_path / "direct.txt").read_text() == "hello\n"
+    with pytest.raises(ToolError):
+        await tools.call("write", file_path="nope.txt", content="hello\n")
 
 
 def test_codex_protocol_replaces_ordinary_write_tools(tmp_path: Path) -> None:

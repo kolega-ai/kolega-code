@@ -10,13 +10,22 @@ maps the known aliases onto the canonical parameter at the dispatch choke point
 Measured basis: findings/tool-arg-cross-contamination-friction.md (~100
 rejections across ~820 benchmark trials; per-alias counts on each entry).
 
+Resolution is signature-aware: an argument name is only treated as an alias
+when the bound callable does NOT itself accept that name. ``Tool`` computes
+the accepted parameter names once at construction (via ``inspect``), and
+``resolve_param_aliases`` skips any registered alias the binding accepts — a
+name the tool itself accepts is a real parameter there, never a misspelling.
+This lets one entry serve a tool name bound to different callables per edit
+protocol (``write``: ``path`` is canonical under search_replace and an alias
+under claude_code) without ever rewriting a legitimate call.
+
 Adding an alias requires exactly one entry here plus one case row in
 tests/agent/test_param_aliases.py. Unregistered unknown parameters still
 error exactly as before.
 """
 
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Callable, Dict, FrozenSet, List, Mapping, Optional, Tuple
 
 # Sentinel a transform may return when the value is unusable: the alias is then
 # dropped instead of erroring, because an alias hit must never fail the call.
@@ -88,6 +97,18 @@ PARAM_ALIASES: Dict[str, Dict[str, ParamAlias]] = {
     "read": {
         "path": ParamAlias("file_path"),
     },
+    # The tool NAME ``write`` binds to different callables per edit protocol:
+    # under claude_code it is claude_write(file_path, content) — where the
+    # misses happened — and under search_replace it is write(path, content),
+    # where ``path`` is the CANONICAL parameter. Seen 15×: models borrowed
+    # ``path`` from every sibling file tool (edit, lsp, snapshot, …); record:
+    # findings/harness-tool-surface-census.md ("still open" item). The
+    # signature guard above skips an alias on any binding that itself accepts
+    # the name, so this entry is a rename under claude_code and a no-op under
+    # search_replace.
+    "write": {
+        "path": ParamAlias("file_path"),
+    },
     # ``search_codebase`` (path=…, max_results=…) and ``find_files_by_pattern``
     # (path→pattern) aliases were removed with the file-discovery tools
     # themselves — both were merged into ``glob`` and then deleted in favor of
@@ -95,8 +116,21 @@ PARAM_ALIASES: Dict[str, Dict[str, ParamAlias]] = {
 }
 
 
-def resolve_param_aliases(tool_name: str, inputs: Mapping[str, Any]) -> Tuple[Dict[str, Any], List[AliasHit]]:
+def resolve_param_aliases(
+    tool_name: str,
+    inputs: Mapping[str, Any],
+    *,
+    accepted_params: FrozenSet[str],
+) -> Tuple[Dict[str, Any], List[AliasHit]]:
     """Map registered wrong-name arguments for ``tool_name`` onto canonical ones.
+
+    ``accepted_params`` is the set of parameter names the bound callable
+    accepts (computed once per Tool at construction, via ``inspect``). An
+    argument name is only treated as an alias when the binding does NOT itself
+    accept that name: a registered alias the binding accepts is a real
+    parameter there, so it passes through untouched — this is what lets a
+    single entry serve a tool name bound to different callables per edit
+    protocol without ever rewriting a legitimate call.
 
     Returns the resolved inputs plus one ``AliasHit`` per alias consumed. When
     both an alias and its canonical parameter are present, the canonical value
@@ -111,6 +145,11 @@ def resolve_param_aliases(tool_name: str, inputs: Mapping[str, Any]) -> Tuple[Di
     for name, value in inputs.items():
         alias = aliases.get(name)
         if alias is None:
+            resolved[name] = value
+            continue
+        if name in accepted_params:
+            # The binding itself accepts this name — it is a real parameter
+            # here, not a wrong-name spelling. Pass through untouched.
             resolved[name] = value
             continue
         if alias.canonical is None:
