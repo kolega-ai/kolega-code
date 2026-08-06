@@ -1655,38 +1655,25 @@ class ToolCollection(LogMixin):
         """Run a shell command as a fresh process and return its output.
 
         The command runs under a pseudo-terminal so interactive programs behave
-        normally. Output is collected for up to yield_time_ms milliseconds. If
-        the process exits within that window, the full result with its real exit
-        code is returned. If it is still running, a session_id is returned that
-        you can drive with write_stdin (to send input or poll for more output)
-        and stop with kill_command.
+        normally. Output is collected for up to yield_time_ms; if the process
+        exits within that window the full result with its real exit code is
+        returned, otherwise a session_id comes back to drive with write_stdin
+        (send input or poll) and stop with kill_command.
 
-        The working directory does NOT persist between calls. Pass `workdir`, or
-        chain commands in one call with `cd path && ...`. Defaults to the
-        project root.
+        The working directory does NOT persist between calls: pass `workdir`,
+        or chain `cd path && ...` in one call. Defaults to the project root.
 
-        Running long-lived processes: pass background=true for dev servers,
-        watchers, and long builds you want to keep running while you do other
-        work. It returns after a short startup window with a session_id. The
-        process is launched detached, so it keeps running until you stop it with
-        kill_command — including after this agent session ends (it does NOT die
-        when you finish). Do NOT use shell `&` for this — processes backgrounded
-        that way are killed when the command that started them ends. Drive
-        background sessions with write_stdin: chars sends real input, chars=""
-        polls new output. Input is not echoed (their stdin is not a TTY) and
-        never reaches EOF, so commands that read stdin run until kill_command
-        stops them. Use list_sessions to see all running shells. Always verify
-        a server answers (e.g. curl) before handing its URL to the browser
-        agent — do not rely on its log, which may be buffered.
+        Use background=true for long-lived processes (dev servers, watchers,
+        builds) when you want to keep working while they run. Never use shell
+        `&` — those processes are killed when the command that started them
+        ends. Verify a server answers (e.g. curl) before handing its URL to the
+        browser agent — its log may be buffered.
 
         Args:
             command: Shell command line, executed via `bash -c`.
             workdir: Working directory for the command. Defaults to project root.
             yield_time_ms: How long to wait for output/exit before returning, in
-                           milliseconds (clamped to 250–30000). A `timeout`
-                           argument is accepted as an alias for this window
-                           (values under 1000 are read as seconds, larger
-                           values as milliseconds).
+                           milliseconds (clamped to 250–30000).
             max_output_tokens: Maximum tokens of output to return in this call.
             login: Run the shell as a login shell (sources profile). Default false.
             background: Launch detached and return after a short startup window
@@ -1781,39 +1768,27 @@ class ToolCollection(LogMixin):
         timeout: Optional[float] = None,
         reset: bool = False,
     ) -> Union[str, List[Any]]:
-        """Run one step of code in a persistent kernel. State (imports, variables, functions) persists across eval calls, across tool calls, and across sub-agents in this session — each call is one logical step.
+        """Run one step of code in a persistent kernel: state (imports, variables, functions) persists across calls, tools, and sub-agents in this session — each call is one logical step.
 
-        language="py" runs Python in kolega-code's own managed environment (check python_info()): numpy, pandas, matplotlib, and pillow are preinstalled, and pip_install("scipy") adds more. Use tool.exec_command for anything that needs the project's own venv. language="js" runs JavaScript on Bun or Node (>= 18) when available.
+        language="py" runs Python in kolega-code's managed environment (see python_info()): numpy, pandas, matplotlib, pillow preinstalled; pip_install("scipy") adds more. Use tool.exec_command for the project's own venv; language="js" runs JavaScript on Bun or Node (>= 18) when available.
 
-        Work incrementally: imports → define → test → use, each its own cell. Re-run setup ONLY after reset or a kernel crash. On error, fix and re-run just the failing step. Prior top-level names survive into the next cell — NEVER re-import or re-declare them.
+        Work incrementally: imports → define → test → use, one cell each; re-run setup only after reset or a kernel crash — never re-import or re-declare prior top-level names.
 
-        Both kernels can call back into your own tools over a loopback bridge — loop tool.exec_command over shell checks, read images with tool.read_image, or dispatch sub-agents without leaving the cell. Bridge calls count as real tool calls (permissions and hooks apply). Use list_tools() in a cell to discover available tool names. tool.* results arrive in each tool's model-facing format (e.g. tool.read wraps content in a markdown header and code fence) — for raw file bytes like CSV/data loads, use the read()/write() helpers instead, which hit the filesystem directly.
+        Both kernels can call back into your own tools over a loopback bridge. Bridge calls count as real tool calls — permissions and hooks apply; list_tools() shows available names. tool.* results arrive in the tool's model-facing format (tool.read wraps content in a markdown code fence); use read()/write() for raw file bytes.
 
-        Python prelude (sync; pass kwargs):
-          display(value)                 rich output: dict/list → JSON, matplotlib Figure → image
-          print(value)                   shows in the cell's stdout
-          read(path, offset=1, limit=None)   write(path, content)   env(key=None, value=None)
-          tool.<name>(args_dict, **kwargs)   call any session tool (list_tools() shows names)
-          parallel([lambda: ..., ...])   run thunks concurrently, results in order
-          pip_install(*pkgs)   python_info()   log(msg)   phase(title)
-        Top-level await works; do NOT call asyncio.run() inside a coroutine cell.
+        Python prelude (sync; pass kwargs): display(value) (dict/list → JSON, Figure → image), print(value), read(path, offset=1, limit=None), write(path, content), env(key=None, value=None), tool.<name>(args_dict, **kwargs) — any session tool, parallel([lambda: ...]) — thunks, results in order, pip_install(*pkgs). Top-level await works; do NOT call asyncio.run() inside a coroutine cell.
 
-        JavaScript prelude (async; ONE trailing object literal, never positional args):
-          display(value)   read(path, offset, limit)   write(path, content)   env(key, value)
-          await tool.<name>({...})   await listTools()
-          await parallel([() => ..., ...])   npm_install("pkg")   setGlobal(name, value)
-          log(msg)   phase(title)
-        Top-level await works; declarations inside await-wrapped cells do NOT persist — use setGlobal(name, value) for cross-cell state there. Redeclaring an existing top-level name errors: assign without redeclaring, or pass reset=true.
+        JavaScript prelude (async; ONE trailing object literal, never positional args): same helpers as Python, camelCase (tool.<name>({...}), listTools(), parallel, npm_install, setGlobal). Top-level await works; declarations inside await-wrapped cells do NOT persist — use setGlobal(name, value) for cross-cell state. Redeclaring an existing top-level name errors: assign without redeclaring, or pass reset=true.
 
         Args:
             code: code to run in this eval call, verbatim. Top-level await is fine.
-            language: which kernel to run in; defaults to "py" (the persistent Python kernel). Pass "js" for the persistent JavaScript kernel (needs bun or node >= 18 on PATH).
-            title: short label for this step shown in the transcript (e.g. "load csv", "chart by region").
+            language: which kernel to run in; defaults to "py". Pass "js" (needs bun or node >= 18 on PATH).
+            title: short label for this step in the transcript (e.g. "load csv", "chart by region").
             timeout: timeout for this cell in seconds; 0 disables it. Default 120, max 600.
-            reset: wipe this language's kernel before running (fresh state). The other language is untouched.
+            reset: wipe this language's kernel before running (fresh state); the other language is untouched.
 
         Returns:
-            The cell's stdout/stderr, the last expression's value (REPL echo), display() outputs (images included when the model supports vision), log()/phase() status lines, and any error with its traceback.
+            The cell's stdout/stderr, the last expression's value (REPL echo), display() outputs (images when the model supports vision), log()/phase() status lines, and any error with its traceback.
         """
         return await self.eval_tool.eval(language, code, title=title, timeout=timeout, reset=reset)
 
@@ -1993,18 +1968,12 @@ class ToolCollection(LogMixin):
     ) -> str:
         """Query language server intelligence: diagnostics, definition, references, hover, symbols, status.
 
-        This versatile read-only tool interacts with the project's language servers.
-        Different operations require different arguments — see the operation list below.
+        This versatile read-only tool interacts with the project's language servers;
+        operations need different arguments — see the list below.
 
         Operations and required arguments:
         - ``diagnostics`` — errors/warnings/hints for a file (``path``)
-        - ``definition`` — go-to-definition (``path``, ``line``, ``symbol``)
-        - ``type_definition`` — go-to-type-definition (``path``, ``line``, ``symbol``)
-        - ``implementation`` — find implementations (``path``, ``line``, ``symbol``)
-        - ``references`` — find all references (``path``, ``line``, ``symbol``)
-        - ``hover`` — hover/type info (``path``, ``line``, ``symbol``)
-        - ``call_hierarchy`` — incoming/outgoing calls (``path``, ``line``, ``symbol``)
-        - ``code_actions`` — list fixes/refactors without applying them (``path``, ``line``, ``symbol``)
+        - ``definition`` (go-to-definition), ``type_definition`` (go-to-type-definition), ``implementation`` (find implementations), ``references`` (find all references), ``hover`` (hover/type info), ``call_hierarchy`` (incoming/outgoing calls), ``code_actions`` (list fixes/refactors without applying them) — all take (``path``, ``line``, ``symbol``)
         - ``document_symbols`` — symbols in a file (``path``)
         - ``workspace_symbols`` — project-wide symbol search (``query``)
         - ``status`` — LSP server status (no args)

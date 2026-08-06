@@ -8,6 +8,17 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ### Changed
 
+- The `eval`, `exec_command`, and `lsp` tool descriptions shipped to model
+  providers are slimmer (about 450 cl100k tokens less across the three,
+  roughly 8% of the whole tool payload): prose now states decision rules and
+  contracts instead of restating parameter schema text, `eval`'s JavaScript
+  prelude folds to "same helpers as Python, camelCase" with only the
+  JS-specific pitfalls spelled out, `lsp`'s operation list groups the seven
+  operations that share the `(path, line, symbol)` arguments onto one line,
+  and `exec_command`'s `timeout`-alias note is gone (the alias layer absorbs
+  it silently). No parameter names, types, or presence change, and no
+  behavior changes ride along.
+
 - Tool definitions sent to model providers no longer duplicate parameter
   documentation. Every tool docstring's `Args:` section is still parsed into
   per-parameter schema descriptions, but the wire description no longer also
