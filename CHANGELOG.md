@@ -8,6 +8,20 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ### Changed
 
+- The per-type agent dispatch tools (`dispatch_general_agent`,
+  `dispatch_investigation_agent`, `dispatch_browser_agent`,
+  `dispatch_coding_agent`, and `dispatch_custom_agent`) are consolidated into a
+  single `dispatch_agent(agent_type, task, model_override?, browser_target?)`
+  tool. `agent_type` is an enum computed per session from the same conditions
+  that previously gated the individual tools: `general` and `investigation`
+  whenever dispatch is available, `browser` only when the browser-agent model
+  supports vision, `coding` where the coding dispatch was previously offered
+  (never for the coder itself), and custom agent names when definitions are
+  discovered. The description documents the shared dispatch mechanics once plus
+  one line per available agent type, and an unavailable `agent_type` returns an
+  error listing the valid values. Old sessions that used the removed tool names
+  still restore and display normally.
+
 - All terminal-capable agents (coder, planning, investigation, general) now
   share a terminal-tools prompt section with codex-style guidance: prefer
   `rg` / `rg --files` over `grep`/`find` when searching for text or files (it is

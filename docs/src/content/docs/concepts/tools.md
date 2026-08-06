@@ -201,10 +201,11 @@ backend is unavailable, no memory tools or context are exposed.
 
 ### Sub-agent dispatch
 
-The agent can spawn focused sub-agents — see [Agents](../agents/) for
-`dispatch_investigation_agent`, `dispatch_browser_agent`, `dispatch_coding_agent`,
-and `dispatch_general_agent`. Named [custom agents](../../custom-agents/) are
-available through `dispatch_custom_agent` when matching definitions are discovered.
+The agent can spawn focused sub-agents through the single `dispatch_agent`
+tool — see [Agents](../agents/) for the built-in `general`, `investigation`,
+`browser`, and `coding` agent types. Named [custom agents](../../custom-agents/)
+join the `agent_type` choices when matching definitions are discovered. Only the
+agent types available in the current session are offered.
 
 ## Read-only vs. full access
 

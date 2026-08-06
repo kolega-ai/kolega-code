@@ -126,11 +126,14 @@ def test_workflow_coder_at_depth_one_can_use_existing_dispatch_tools_when_max_is
 
     names = {tool.name for tool in agent.tool_collection.get_tool_list()}
 
-    assert "dispatch_investigation_agent" in names
-    assert "dispatch_browser_agent" in names
-    assert agent.tool_collection.registry().get("dispatch_investigation_agent").parallel_safe is False
+    assert "dispatch_agent" in names
+    dispatch = agent.tool_collection.registry().get("dispatch_agent")
+    agent_types = dispatch.definition.input_schema["properties"]["agent_type"]["enum"]
+    assert "investigation" in agent_types
+    assert "browser" in agent_types
+    assert dispatch.parallel_safe is False
     # The depth policy cannot add capabilities excluded by the CoderAgent itself.
-    assert "dispatch_general_agent" not in names
+    assert "general" not in agent_types
     assert "run_workflow" not in names
 
 

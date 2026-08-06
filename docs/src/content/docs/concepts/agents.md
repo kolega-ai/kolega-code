@@ -20,12 +20,16 @@ agent can hand off to the others when a task benefits from focus.
 ## Dispatching sub-agents
 
 For larger jobs, the main agent can **dispatch** a sub-agent and incorporate its
-findings. The available dispatch targets include:
+findings. A single `dispatch_agent` tool takes an `agent_type` selecting the
+target; the built-in types are:
 
-- `dispatch_investigation_agent` — explore and report back, without making changes.
-- `dispatch_browser_agent` — perform a web task.
-- `dispatch_coding_agent` — hand off a self-contained coding task.
-- `dispatch_general_agent` — a general-purpose helper.
+- `investigation` — explore and report back, without making changes.
+- `browser` — perform a web task.
+- `coding` — hand off a self-contained coding task.
+- `general` — a general-purpose helper.
+
+[Custom agents](../../custom-agents/) add their names to the `agent_type`
+choices, and only the types available in the current session are offered.
 
 When [gigacode](../../gigacode/) is enabled, the main agent can also orchestrate
 **many** of these sub-agents at once through a workflow — running them in parallel
@@ -48,6 +52,7 @@ An ordinary dispatch accepts one complete object under `model_override`:
 
 ```json
 {
+  "agent_type": "investigation",
   "task": "Review the authentication design for subtle security flaws.",
   "model_override": {
     "provider": "anthropic",

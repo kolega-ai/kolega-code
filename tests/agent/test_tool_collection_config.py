@@ -276,33 +276,51 @@ class TestToolCollection:
         # Should exclude explicitly excluded tools
         assert "web_search" not in tool_names
 
-        # Should include investigation tools
-        assert "dispatch_investigation_agent" in tool_names
-        assert "dispatch_browser_agent" in tool_names
+        # Should include the dispatch tool with the full built-in agent_type enum
+        assert "dispatch_agent" in tool_names
         assert "list_subagent_models" in tool_names
 
-        dispatch_names = [
-            "dispatch_investigation_agent",
-            "dispatch_browser_agent",
-            "dispatch_coding_agent",
-            "dispatch_general_agent",
-        ]
         definitions = {tool.name: tool for tool in tool_list}
-        for name in dispatch_names:
-            schema = definitions[name].input_schema
-            assert schema is not None
-            assert schema["required"] == ["task"]
-            override = schema["properties"]["model_override"]
-            assert override["required"] == ["provider", "model", "thinking_effort"]
-            assert override["additionalProperties"] is False
-            assert override["properties"]["provider"]["minLength"] == 1
-            assert override["properties"]["model"]["minLength"] == 1
-            effort_options = override["properties"]["thinking_effort"]["anyOf"]
-            assert {"type": "string", "minLength": 1} in effort_options
-            assert {"type": "null"} in effort_options
+        schema = definitions["dispatch_agent"].input_schema
+        assert schema is not None
+        assert schema["required"] == ["agent_type", "task"]
+        assert schema["properties"]["agent_type"]["enum"] == ["general", "investigation", "browser", "coding"]
+        override = schema["properties"]["model_override"]
+        assert override["required"] == ["provider", "model", "thinking_effort"]
+        assert override["additionalProperties"] is False
+        assert override["properties"]["provider"]["minLength"] == 1
+        assert override["properties"]["model"]["minLength"] == 1
+        effort_options = override["properties"]["thinking_effort"]["anyOf"]
+        assert {"type": "string", "minLength": 1} in effort_options
+        assert {"type": "null"} in effort_options
 
         discovery = tool_collection.registry().get("list_subagent_models")
         assert discovery.parallel_safe is True
+
+    async def test_dispatch_agent_rejects_unavailable_agent_type(
+        self,
+        project_path: Path,
+        mock_connection_manager: AgentConnectionManager,
+        agent_config: AgentConfig,
+        mock_base_agent: BaseAgent,
+    ) -> None:
+        """An unknown or gated-off agent_type fails with the valid values listed."""
+        config = ToolCollectionConfig(include_agent_dispatch_tools=True, excluded_agent_types=["coding"])
+        tool_collection = ToolCollection(
+            project_path,
+            "test_workspace",
+            str(uuid.uuid4()),
+            mock_connection_manager,
+            agent_config,
+            mock_base_agent,
+            tool_config=config,
+        )
+
+        for agent_type in ("nonexistent", "coding"):
+            with pytest.raises(ValueError) as exc_info:
+                await tool_collection.dispatch_agent(agent_type, "do something")
+            assert agent_type in str(exc_info.value)
+            assert "general, investigation, browser" in str(exc_info.value)
 
     async def test_workflow_depth_gate_cannot_be_bypassed_by_dispatch_extension_group(
         self,

@@ -172,7 +172,7 @@ class TestPromptProvider:
 
         assert "memory bank" not in prompt_lower
         assert "kolega-memory-bank" not in prompt
-        assert "dispatch_investigation_agent" not in prompt
+        assert "dispatch_" not in prompt
         assert "Test Task Detection" not in prompt
         assert "Scope Boundary Management" not in prompt
 

@@ -11,9 +11,9 @@ analysis, or migration planning—to a specialist with its own instructions and
 optional tool, model, and iteration limits.
 
 The active Build or Plan agent sees each available custom agent's name and
-description. It chooses one through `dispatch_custom_agent`, gives it a
-self-contained task, and incorporates the specialist's final report into the
-main conversation.
+description. It chooses one by passing its name as the `agent_type` of
+`dispatch_agent`, gives it a self-contained task, and incorporates the
+specialist's final report into the main conversation.
 
 ## Quick start
 
