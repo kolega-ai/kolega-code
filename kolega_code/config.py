@@ -218,6 +218,16 @@ class AgentConfig(BaseModel):
     # runtime-resolved trust flag, not user-editable config.
     lsp_project_trusted: bool = Field(default=False, exclude=True, description="Project LSP config trust flag")
 
+    # Fraction of the model context window above which automatic history
+    # compression kicks in (e.g. 0.8 = compress once input tokens exceed 80%).
+    # None = the agent's built-in default (BaseAgent.history_compression_threshold).
+    history_compression_threshold: Optional[float] = Field(
+        default=None,
+        gt=0,
+        le=1.0,
+        description="Context-window fraction that triggers automatic history compression",
+    )
+
     # eval tool (persistent code kernels with a loopback tool bridge). All fields
     # are additive with defaults that enable the feature; excluded from
     # serialization since they carry local paths (parity with lsp/mcp_config).

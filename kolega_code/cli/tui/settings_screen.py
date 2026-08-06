@@ -379,6 +379,21 @@ class SettingsScreen(ModalScreen[None]):
                     allow_blank=False,
                     value="true",
                 )
+            with Vertical(classes="settings-section", id="settings_compression") as compression_section:
+                compression_section.border_title = "Context Compression"
+                yield Static(
+                    "Summarize older conversation history once context-window usage crosses this "
+                    "threshold. 100% effectively disables automatic compression; /compress stays manual.",
+                    classes="settings-hint",
+                )
+                yield Static("", id="compression_status")
+                yield Label("Threshold")
+                yield Select(
+                    settings_panel.compression_threshold_options(),
+                    id="compression_threshold_select",
+                    allow_blank=False,
+                    value=settings_panel.COMPRESSION_THRESHOLD_DEFAULT_VALUE,
+                )
 
     def _compose_mcp_page(self) -> ComposeResult:
         with VerticalScroll(id="settings_page_mcp", classes="settings-page"):

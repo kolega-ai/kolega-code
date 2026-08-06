@@ -362,6 +362,61 @@ def test_permission_mode_absent_in_old_file_defaults_to_ask() -> None:
     assert settings.permission_mode == "ask"
 
 
+def test_settings_store_round_trips_compression_threshold(tmp_path: Path) -> None:
+    store = SettingsStore(tmp_path)
+    store.save(CliSettings(compression_threshold=85.0))
+
+    loaded = store.load()
+    assert loaded.compression_threshold == 85.0
+    assert loaded.to_dict()["compression_threshold"] == 85.0
+
+    # Absent in older files -> None -> the agent's built-in default (80%) applies.
+    store.save(CliSettings())
+    assert SettingsStore(tmp_path).load().compression_threshold is None
+
+
+def test_compression_threshold_absent_in_old_file_defaults_to_none() -> None:
+    settings = CliSettings.from_dict(
+        {
+            "schema_version": 3,
+            "active_provider": UI_DEFAULT_PROVIDER,
+            "active_model": UI_DEFAULT_MODEL,
+            "api_keys": {UI_DEFAULT_PROVIDER: "k"},
+        }
+    )
+
+    assert settings.compression_threshold is None
+
+
+@pytest.mark.parametrize("raw", [200, 5, 0, -10, 3.5, "90", "high", True, [80], {"percent": 80}])
+def test_invalid_compression_threshold_coerced_to_none(raw: object) -> None:
+    """Hand-edited settings must degrade to the default, never crash startup."""
+    settings = CliSettings.from_dict(
+        {
+            "schema_version": 3,
+            "active_provider": UI_DEFAULT_PROVIDER,
+            "active_model": UI_DEFAULT_MODEL,
+            "compression_threshold": raw,
+        }
+    )
+
+    assert settings.compression_threshold is None
+
+
+@pytest.mark.parametrize("raw,expected", [(10, 10.0), (80, 80.0), (100, 100.0), (65.5, 65.5)])
+def test_valid_compression_threshold_loads(raw: object, expected: float) -> None:
+    settings = CliSettings.from_dict(
+        {
+            "schema_version": 3,
+            "active_provider": UI_DEFAULT_PROVIDER,
+            "active_model": UI_DEFAULT_MODEL,
+            "compression_threshold": raw,
+        }
+    )
+
+    assert settings.compression_threshold == expected
+
+
 def test_invalid_permission_mode_defaults_to_ask() -> None:
     settings = CliSettings.from_dict(
         {
