@@ -8,6 +8,16 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ### Changed
 
+- Tool definitions sent to model providers no longer duplicate parameter
+  documentation. Every tool docstring's `Args:` section is still parsed into
+  per-parameter schema descriptions, but the wire description no longer also
+  carries the whole section verbatim (and the schema descriptions no longer
+  include the raw docstring continuation-line indentation). Tools whose
+  parameters are not fully documented in their schema — freeform tools and
+  tools with enum-only schema properties such as the browser tools' `button`,
+  `action`, `level`, `part`, `image_type`, and `scale` — keep their `Args:`
+  block, since it is the only place those parameters are documented.
+
 - The per-type agent dispatch tools (`dispatch_general_agent`,
   `dispatch_investigation_agent`, `dispatch_browser_agent`,
   `dispatch_coding_agent`, and `dispatch_custom_agent`) are consolidated into a

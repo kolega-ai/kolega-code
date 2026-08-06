@@ -733,3 +733,53 @@ def test_get_host_present_with_sandbox_terminal_manager(project_path, mock_conne
     # The registered tool resolves the host from the sandbox, not localhost.
     host = asyncio.run(agent.tool_collection.call("get_host", port=8000))
     assert host == "stub-sandbox:8000"
+
+
+def test_wire_descriptions_document_parameters_only_in_schema(project_path, mock_connection_manager, agent_config):
+    """CLI coder definitions never carry the docstring Args block twice.
+
+    Every introspection-built definition documents its parameters in the
+    per-parameter schema; the wire description strips the parsed Args section,
+    so no description repeats it. Tools whose explicit schema leaves a property
+    undocumented (enum-only, e.g. browser button) keep their Args block — that
+    is the only place those parameters are documented.
+    """
+    agent = _coder(project_path, mock_connection_manager, agent_config)
+    definitions = {definition.name: definition for definition in agent.tool_collection.get_tool_list()}
+    assert "exec_command" in definitions
+
+    for name, definition in definitions.items():
+        assert not any(line.strip() == "Args:" for line in definition.description.splitlines()), name
+
+    # The same parameters are fully documented in the flat introspection schema.
+    schema = definitions["exec_command"].to_anthropic()["input_schema"]
+    assert schema["properties"]["command"]["description"]
+    assert schema["properties"]["yield_time_ms"]["description"]
+
+    # dispatch_agent's explicit schema describes every property, so its Args
+    # block is stripped too (the type catalog stays).
+    dispatch = definitions["dispatch_agent"]
+    assert not any(line.strip() == "Args:" for line in dispatch.description.splitlines())
+    assert "Available agent_type values:" in dispatch.description
+
+
+def test_browser_schema_without_property_descriptions_keeps_args_block(
+    project_path, mock_connection_manager, agent_config
+):
+    """Enum-only schema properties keep the Args block as their documentation."""
+    agent = BrowserAgent(
+        project_path=project_path,
+        workspace_id="test_workspace",
+        thread_id=str(uuid.uuid4()),
+        connection_manager=mock_connection_manager,
+        config=agent_config,
+    )
+    assert agent.tool_collection is not None
+    definitions = {definition.name: definition for definition in agent.tool_collection.get_tool_list()}
+
+    # browser_click's `button` and `modifiers` are enum/items-only in the
+    # schema, so its Args block must survive; browser_navigate documents every
+    # property and strips it.
+    assert any(line.strip() == "Args:" for line in definitions["browser_click"].description.splitlines())
+    assert "Mouse button: left, right, or middle." in definitions["browser_click"].description
+    assert not any(line.strip() == "Args:" for line in definitions["browser_navigate"].description.splitlines())
