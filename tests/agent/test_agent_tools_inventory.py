@@ -26,6 +26,12 @@ def assert_internal_tools_not_exposed(tool_names):
     assert INTERNAL_TOOL_NAMES.isdisjoint(tool_names)
 
 
+def dispatch_agent_types(tool_collection):
+    """agent_type enum offered by the collection's dispatch_agent tool."""
+    definition = next(tool for tool in tool_collection.get_tool_list() if tool.name == "dispatch_agent")
+    return definition.input_schema["properties"]["agent_type"]["enum"]
+
+
 @pytest.fixture
 def mock_connection_manager():
     """Create a mock connection manager."""
@@ -235,7 +241,7 @@ def test_non_cli_coder_agent_keeps_manifest_build_tools(project_path, mock_conne
     assert "build_frontend" in tool_names
 
 
-def test_coder_agent_exposes_dispatch_general_agent(project_path, mock_connection_manager, agent_config):
+def test_coder_agent_dispatches_general_but_not_coding_agents(project_path, mock_connection_manager, agent_config):
     """CoderAgent can dispatch general sub-agents but still not coding agents."""
     agent = CoderAgent(
         project_path=project_path,
@@ -249,9 +255,11 @@ def test_coder_agent_exposes_dispatch_general_agent(project_path, mock_connectio
     tool_names = {tool.name for tool in agent.tool_collection.get_tool_list()}
 
     assert_internal_tools_not_exposed(tool_names)
-    assert "dispatch_general_agent" in tool_names
-    assert "dispatch_investigation_agent" in tool_names
-    assert "dispatch_coding_agent" not in tool_names
+    assert "dispatch_agent" in tool_names
+    agent_types = dispatch_agent_types(agent.tool_collection)
+    assert "general" in agent_types
+    assert "investigation" in agent_types
+    assert "coding" not in agent_types
     assert "list_subagent_models" in tool_names
     assert not tool_names.intersection(ToolCollection.browser_tools)
 
@@ -295,17 +303,15 @@ def test_memory_enabled_false_gates_tools_and_prompt_for_top_level_agents(
     assert disabled.build_prompt_context().memory_policy == ""
 
 
-def test_dispatch_browser_agent_gated_on_browser_agent_model_vision(
-    project_path, mock_connection_manager, agent_config
-):
-    """dispatch_browser_agent is offered iff the model *resolved for the browser-agent
+def test_browser_agent_type_gated_on_browser_agent_model_vision(project_path, mock_connection_manager, agent_config):
+    """The "browser" agent_type is offered iff the model *resolved for the browser-agent
     role* is vision-capable — independent of the main coding model."""
     main = agent_config.long_context_config  # claude-sonnet — vision-capable
 
     vision_browser = Mock(provider="anthropic", model="claude-sonnet-4-5-20250929")
     blind_browser = Mock(provider="deepseek", model="deepseek-v4-flash")
 
-    def tools_with_browser_model(browser_model):
+    def agent_types_with_browser_model(browser_model):
         agent_config.model_config_for_agent.side_effect = lambda name: (
             browser_model if name == "browser-agent" else main
         )
@@ -317,16 +323,16 @@ def test_dispatch_browser_agent_gated_on_browser_agent_model_vision(
             config=agent_config,
             agent_mode=AgentMode.CLI,
         )
-        return {tool.name for tool in agent.tool_collection.get_tool_list()}
+        return dispatch_agent_types(agent.tool_collection)
 
     # Vision-capable browser-agent model -> offered even if we later flip the main model.
-    assert "dispatch_browser_agent" in tools_with_browser_model(vision_browser)
+    assert "browser" in agent_types_with_browser_model(vision_browser)
     # Vision-less browser-agent model -> not offered, so the model can't waste a turn on it.
-    assert "dispatch_browser_agent" not in tools_with_browser_model(blind_browser)
+    assert "browser" not in agent_types_with_browser_model(blind_browser)
 
 
 def test_sub_agent_coder_cannot_dispatch_general_agent(project_path, mock_connection_manager, agent_config):
-    """A dispatched CoderAgent must not fan out into further sub-agents."""
+    """A dispatched CoderAgent must not fan out into further general sub-agents."""
     agent = CoderAgent(
         project_path=project_path,
         workspace_id="test_workspace",
@@ -337,9 +343,10 @@ def test_sub_agent_coder_cannot_dispatch_general_agent(project_path, mock_connec
         sub_agent=True,
     )
 
-    tool_names = {tool.name for tool in agent.tool_collection.get_tool_list()}
+    agent_types = dispatch_agent_types(agent.tool_collection)
 
-    assert "dispatch_general_agent" not in tool_names
+    assert "general" not in agent_types
+    assert "investigation" in agent_types
 
 
 def test_general_agent_tool_inventory(project_path, mock_connection_manager, agent_config):

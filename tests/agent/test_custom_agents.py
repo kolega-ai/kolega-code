@@ -303,13 +303,14 @@ def test_custom_agent_catalog_filters_build_plan_and_all_modes(
         custom_agent_catalog=catalog.for_mode("plan"),
     )
 
-    coder_tool = next(tool for tool in coder.tool_collection.get_tool_list() if tool.name == "dispatch_custom_agent")
-    planning_tool = next(
-        tool for tool in planning.tool_collection.get_tool_list() if tool.name == "dispatch_custom_agent"
-    )
-    assert coder_tool.input_schema["properties"]["agent"]["enum"] == ["reviewer", "shared"]
-    assert planning_tool.input_schema["properties"]["agent"]["enum"] == ["planner", "shared"]
-    assert planning_tool.input_schema["required"] == ["agent", "task"]
+    coder_tool = next(tool for tool in coder.tool_collection.get_tool_list() if tool.name == "dispatch_agent")
+    planning_tool = next(tool for tool in planning.tool_collection.get_tool_list() if tool.name == "dispatch_agent")
+    coder_types = coder_tool.input_schema["properties"]["agent_type"]["enum"]
+    assert [name for name in coder_types if name in {"reviewer", "planner", "shared"}] == ["reviewer", "shared"]
+    # The planning agent only enables the custom dispatch group, so its enum is
+    # exactly the plan-mode catalog.
+    assert planning_tool.input_schema["properties"]["agent_type"]["enum"] == ["planner", "shared"]
+    assert planning_tool.input_schema["required"] == ["agent_type", "task"]
     override_schema = planning_tool.input_schema["properties"]["model_override"]
     assert override_schema["required"] == ["provider", "model", "thinking_effort"]
     assert {"type": "null"} in override_schema["properties"]["thinking_effort"]["anyOf"]
@@ -338,7 +339,7 @@ def test_planning_agent_hides_dispatch_when_no_definition_opts_into_plan(
         custom_agent_catalog=catalog,
     )
 
-    assert "dispatch_custom_agent" not in {tool.name for tool in planning.tool_collection.get_tool_list()}
+    assert "dispatch_agent" not in {tool.name for tool in planning.tool_collection.get_tool_list()}
 
 
 @pytest.mark.asyncio

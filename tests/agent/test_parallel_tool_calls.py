@@ -167,11 +167,11 @@ class TestParallelToolCalls:
 
             def get_tool_list(self) -> list[SimpleNamespace]:
                 return [
-                    SimpleNamespace(name="dispatch_general_agent"),
+                    SimpleNamespace(name="dispatch_agent"),
                     SimpleNamespace(name="read"),
                 ]
 
-            async def dispatch_general_agent(self, task: str) -> str:
+            async def dispatch_agent(self, task: str) -> str:
                 await tracker.run()
                 return task
 
@@ -181,9 +181,9 @@ class TestParallelToolCalls:
 
         base_agent.tool_collection = cast(Any, Tools())
         blocks = [
-            make_tool_call("dispatch_general_agent", 0),
+            make_tool_call("dispatch_agent", 0),
             make_tool_call("read", 1),
-            make_tool_call("dispatch_general_agent", 2),
+            make_tool_call("dispatch_agent", 2),
         ]
 
         results = await base_agent.process_tool_calls(blocks)
@@ -201,9 +201,9 @@ class TestParallelToolCalls:
                 self.calls = 0
 
             def get_tool_list(self):
-                return [SimpleNamespace(name="dispatch_general_agent")]
+                return [SimpleNamespace(name="dispatch_agent")]
 
-            async def dispatch_general_agent(self, task: str):
+            async def dispatch_agent(self, task: str):
                 if "task 0" in task:
                     first_started.set()
                     # Deadlocks unless the second call runs concurrently
@@ -214,12 +214,12 @@ class TestParallelToolCalls:
                 return "second done"
 
         base_agent.tool_collection = Tools()
-        blocks = [make_tool_call("dispatch_general_agent", i) for i in range(2)]
+        blocks = [make_tool_call("dispatch_agent", i) for i in range(2)]
 
         results = await asyncio.wait_for(base_agent.process_tool_calls(blocks), timeout=5)
 
         assert [r.content for r in results] == ["first done", "second done"]
-        assert [r.tool_use_id for r in results] == ["dispatch_general_agent_0", "dispatch_general_agent_1"]
+        assert [r.tool_use_id for r in results] == ["dispatch_agent_0", "dispatch_agent_1"]
         assert not any(r.is_error for r in results)
 
     @pytest.mark.asyncio
@@ -229,11 +229,11 @@ class TestParallelToolCalls:
         class Tools(FakeToolCollection):
             def get_tool_list(self):
                 return [
-                    SimpleNamespace(name="dispatch_general_agent"),
+                    SimpleNamespace(name="dispatch_agent"),
                     SimpleNamespace(name="read"),
                 ]
 
-            async def dispatch_general_agent(self, task: str):
+            async def dispatch_agent(self, task: str):
                 await tracker.run()
                 return "dispatched"
 
@@ -244,7 +244,7 @@ class TestParallelToolCalls:
         base_agent.tool_collection = Tools()
         blocks = [
             make_tool_call("read", 0),
-            make_tool_call("dispatch_general_agent", 1),
+            make_tool_call("dispatch_agent", 1),
             make_tool_call("read", 2),
         ]
 
@@ -260,11 +260,11 @@ class TestParallelToolCalls:
         class Tools(FakeToolCollection):
             def get_tool_list(self):
                 return [
-                    SimpleNamespace(name="dispatch_general_agent"),
+                    SimpleNamespace(name="dispatch_agent"),
                     SimpleNamespace(name="write"),
                 ]
 
-            async def dispatch_general_agent(self, task: str):
+            async def dispatch_agent(self, task: str):
                 await tracker.run()
                 return "dispatched"
 
@@ -274,7 +274,7 @@ class TestParallelToolCalls:
 
         base_agent.tool_collection = Tools()
         blocks = [
-            make_tool_call("dispatch_general_agent", 0),
+            make_tool_call("dispatch_agent", 0),
             make_tool_call("write", 1),
         ]
 
@@ -290,14 +290,14 @@ class TestParallelToolCalls:
 
         class Tools(FakeToolCollection):
             def get_tool_list(self):
-                return [SimpleNamespace(name="dispatch_general_agent")]
+                return [SimpleNamespace(name="dispatch_agent")]
 
-            async def dispatch_general_agent(self, task: str):
+            async def dispatch_agent(self, task: str):
                 await tracker.run()
                 return "done"
 
         base_agent.tool_collection = Tools()
-        blocks = [make_tool_call("dispatch_general_agent", i) for i in range(total)]
+        blocks = [make_tool_call("dispatch_agent", i) for i in range(total)]
 
         results = await base_agent.process_tool_calls(blocks)
 
@@ -311,23 +311,23 @@ class TestParallelToolCalls:
 
         class Tools(FakeToolCollection):
             def get_tool_list(self):
-                return [SimpleNamespace(name="dispatch_general_agent")]
+                return [SimpleNamespace(name="dispatch_agent")]
 
-            async def dispatch_general_agent(self, task: str):
+            async def dispatch_agent(self, task: str):
                 # Yield so concurrent executions interleave before reading the ID
                 await asyncio.sleep(0.01)
                 captured[task] = base_agent.current_tool_execution_id
                 return "done"
 
         base_agent.tool_collection = Tools()
-        blocks = [make_tool_call("dispatch_general_agent", i) for i in range(3)]
+        blocks = [make_tool_call("dispatch_agent", i) for i in range(3)]
 
         await base_agent.process_tool_calls(blocks)
 
         assert captured == {
-            "task 0": "exec_dispatch_general_agent_0",
-            "task 1": "exec_dispatch_general_agent_1",
-            "task 2": "exec_dispatch_general_agent_2",
+            "task 0": "exec_dispatch_agent_0",
+            "task 1": "exec_dispatch_agent_1",
+            "task 2": "exec_dispatch_agent_2",
         }
         assert base_agent.current_tool_call_id is None
         assert base_agent.current_tool_execution_id is None
@@ -359,9 +359,9 @@ class TestParallelToolCalls:
 
         class ParentTools(FakeToolCollection):
             def get_tool_list(self):
-                return [SimpleNamespace(name="dispatch_general_agent")]
+                return [SimpleNamespace(name="dispatch_agent")]
 
-            async def dispatch_general_agent(self, task: str):
+            async def dispatch_agent(self, task: str):
                 # Simulate a sub-agent running its own tool within the same asyncio task
                 await nested_agent.execute_single_tool(make_tool_call("read", 99))
                 observed["parent_id"] = base_agent.current_tool_execution_id
@@ -369,6 +369,6 @@ class TestParallelToolCalls:
 
         base_agent.tool_collection = ParentTools()
 
-        await base_agent.process_tool_calls([make_tool_call("dispatch_general_agent", 0)])
+        await base_agent.process_tool_calls([make_tool_call("dispatch_agent", 0)])
 
-        assert observed["parent_id"] == "exec_dispatch_general_agent_0"
+        assert observed["parent_id"] == "exec_dispatch_agent_0"

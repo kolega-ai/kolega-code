@@ -1,7 +1,7 @@
 import inspect
 from pathlib import Path
 from dataclasses import dataclass, field
-from typing import Any, Callable, List, Optional, Union
+from typing import Any, Callable, List, Optional, Sequence, Union
 
 from .common import LogMixin
 from kolega_code.config import AgentConfig, EditProtocol
@@ -67,12 +67,17 @@ _ORDINARY_MODEL_OVERRIDE_SCHEMA: dict[str, Any] = {
 }
 
 
-def _dispatch_input_schema(
+def _dispatch_agent_input_schema(
+    agent_types: Sequence[str],
     *,
-    custom: bool = False,
     browser_targets: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     properties: dict[str, Any] = {
+        "agent_type": {
+            "type": "string",
+            "enum": list(agent_types),
+            "description": "Which agent to dispatch. The tool description lists each value's role and tools.",
+        },
         "task": {
             "type": "string",
             "description": "Detailed, self-contained task for the sub-agent.",
@@ -80,44 +85,29 @@ def _dispatch_input_schema(
         "model_override": {
             **_ORDINARY_MODEL_OVERRIDE_SCHEMA,
             "description": (
-                'Usually omit this property entirely: a normal call is {"task": "..."}. '
+                'Usually omit this property entirely: a normal call is {"agent_type": "...", "task": "..."}. '
                 "Only include it after calling list_subagent_models and selecting one exact route. "
                 "Never send an empty object, blank strings, placeholder values, or a guessed provider/model. "
                 "When present, all three nested fields are required."
             ),
         },
     }
-    required = ["task"]
-    if browser_targets:
+    if "browser" in agent_types and len(browser_targets) > 1:
         properties["browser_target"] = {
             "type": "string",
             "enum": list(browser_targets),
             "description": (
-                "Browser backend for this task. Omit for Playwright; choose Chrome only when the user directs you "
+                'Only for agent_type "browser". Omit for Playwright; choose Chrome only when the user directs you '
                 "to use their configured Chrome browser."
             ),
         }
-    if custom:
-        properties = {
-            "agent": {"type": "string", "description": "Name of the custom agent to run."},
-            **properties,
-        }
-        required = ["agent", "task"]
     return {
         "type": "object",
         "additionalProperties": False,
         "properties": properties,
-        "required": required,
+        "required": ["agent_type", "task"],
     }
 
-
-_AGENT_DISPATCH_INPUT_SCHEMAS: dict[str, dict[str, Any]] = {
-    "dispatch_investigation_agent": _dispatch_input_schema(),
-    "dispatch_browser_agent": _dispatch_input_schema(),
-    "dispatch_coding_agent": _dispatch_input_schema(),
-    "dispatch_general_agent": _dispatch_input_schema(),
-    "dispatch_custom_agent": _dispatch_input_schema(custom=True),
-}
 
 # Explicit input schema for the generic ``lsp`` tool.  The ``operation`` parameter
 # is an enum that signature introspection cannot express.
@@ -445,6 +435,7 @@ class ToolCollectionConfig:
         restrict_to_tool_groups: bool = False,
         allowed_tools: Optional[List[str]] = None,
         memory_write_access: bool = False,
+        excluded_agent_types: Optional[List[str]] = None,
     ):
         """
         Initialize tool collection configuration.
@@ -452,7 +443,7 @@ class ToolCollectionConfig:
         Args:
             read_only: Whether to restrict to read-only tools
             browser_only: Whether to only include browser tools
-            include_agent_dispatch_tools: Whether to include agent dispatch tools (investigation, browser, coding)
+            include_agent_dispatch_tools: Whether to include the dispatch_agent tool (every agent_type)
             include_memory_tools: Whether to include memory management tools
             memory_write_access: Whether mutating memory tools (write/delete) may be exposed to this agent;
                 subagent scope still strips them regardless.
@@ -462,6 +453,8 @@ class ToolCollectionConfig:
             restrict_to_tool_groups: If True, ONLY include tools from specified groups, excluding all other core tools
             allowed_tools: Optional exact allowlist applied after hard runtime gates. None inherits normal behavior;
                 an empty list exposes no tools.
+            excluded_agent_types: dispatch_agent agent_type values to withhold from this
+                collection (e.g. "general" for a dispatched coder that must not fan out).
         """
         self.read_only = read_only
         self.browser_only = browser_only
@@ -472,6 +465,7 @@ class ToolCollectionConfig:
         self.custom_tool_groups = list(dict.fromkeys((custom_tool_groups or []) + (enabled_tool_groups or [])))
         self.restrict_to_tool_groups = restrict_to_tool_groups
         self.allowed_tools = None if allowed_tools is None else list(dict.fromkeys(allowed_tools))
+        self.excluded_agent_types = list(excluded_agent_types or [])
 
 
 class ToolCollection(LogMixin):
@@ -520,13 +514,11 @@ class ToolCollection(LogMixin):
         "browser_close",
     ]
 
-    # Agent dispatch tools group - includes all agent dispatch functionality
+    # Agent dispatch group - a single dispatch_agent tool routes to every
+    # dispatchable agent type; the agent_type enum it offers is computed per
+    # collection in _available_agent_types.
     agent_dispatch_tools = [
-        "dispatch_investigation_agent",
-        "dispatch_browser_agent",
-        "dispatch_coding_agent",
-        "dispatch_general_agent",
-        "dispatch_custom_agent",
+        "dispatch_agent",
     ]
 
     # Legacy name for backward compatibility
@@ -534,15 +526,22 @@ class ToolCollection(LogMixin):
 
     # CoderAgent specific dispatch tools
     coder_agent_tools = [
-        "dispatch_investigation_agent",
-        "dispatch_browser_agent",
-        "dispatch_general_agent",
-        "dispatch_custom_agent",
+        "dispatch_agent",
     ]
 
     custom_agent_tools = [
-        "dispatch_custom_agent",
+        "dispatch_agent",
     ]
+
+    # agent_type enum members each dispatch-enabled group admits. "custom"
+    # stands for the names in the custom-agent catalog. The coder group omits
+    # "coding" so the CoderAgent never dispatches itself.
+    _dispatch_group_agent_types = {
+        "agent_dispatch_tools": ("general", "investigation", "browser", "coding", "custom"),
+        "investigation_agent_tools": ("general", "investigation", "browser", "coding", "custom"),
+        "coder_agent_tools": ("general", "investigation", "browser", "custom"),
+        "custom_agent_tools": ("custom",),
+    }
 
     # Informational support for callers that can dispatch a child or author a
     # workflow. Inclusion is capability-gated separately so leaf agents never
@@ -917,10 +916,12 @@ class ToolCollection(LogMixin):
         self.extension_schemas["snapshot"] = _SNAPSHOT_INPUT_SCHEMA
         self.extension_schemas["resolve"] = _RESOLVE_INPUT_SCHEMA
         self.extension_schemas.update(BROWSER_TOOL_SCHEMAS)
-        self.extension_schemas.update(_AGENT_DISPATCH_INPUT_SCHEMAS)
-        browser_targets = tuple(getattr(self.browser_manager, "browser_targets", ()))
-        if len(browser_targets) > 1:
-            self.extension_schemas["dispatch_browser_agent"] = _dispatch_input_schema(browser_targets=browser_targets)
+        # dispatch_agent's schema is built at registration time in
+        # _tool_definition_from_callable: its agent_type enum depends on the
+        # custom-agent catalog and per-collection gates. browser_targets probes
+        # live host configuration, so snapshot it here like the rest of the
+        # construction-time tool surface.
+        self._browser_targets = tuple(getattr(self.browser_manager, "browser_targets", ()))
         self.browser_tool = BrowserTool(
             self.project_path,
             self.workspace_id,
@@ -1287,178 +1288,53 @@ class ToolCollection(LogMixin):
         """
         return await self.build_tool.build_frontend()
 
-    # Agent Dispatch Tools (available when include_agent_dispatch_tools is True)
-    async def dispatch_investigation_agent(self, task: str, model_override: Any = None) -> str:
-        """
-        Dispatch an investigation agent to perform a specific task with read-only access to the codebase.
-
-        This tool launches a specialized agent that can analyze code, search for patterns, and investigate
-        issues without modifying any files. The investigation agent has access to all read-only tools
-        and will return a comprehensive report on its findings.
-
-        When to use this tool:
-        - When you need to perform complex searches across multiple files
-        - When you need to analyze code patterns or understand how components interact
-        - When you need to trace through code execution paths
-        - When you need to gather information from multiple parts of the codebase
-
-        Usage notes:
-        1. Provide a detailed task description with specific questions or objectives for the agent
-        2. The agent will work autonomously and return a single comprehensive report
-        3. The agent cannot modify any files - it has read-only access to the codebase
-        4. For best results, specify exactly what information you want the agent to find and include in its report
-        5. The agent's report is not automatically shown to the user - you should summarize key findings
-
-        IMPORTANT: The agent can only use these tools:
-            - exec_command, write_stdin, kill_command, list_sessions — terminal access
-            - eval — persistent Python/JavaScript kernels
-            - lsp — language-server intelligence
-            - read — read file contents (offset/limit for sections)
-            - read_image — read images
-            - web_fetch, web_search — web access
-        If you need to do something that requires any other tool, you should call the tool directly.
-
-        Args:
-            task: A detailed description of the investigation task to perform
-            model_override: Optional complete provider/model/thinking_effort route. Call
-                list_subagent_models before selecting one; omit it to inherit defaults.
-
-        Returns:
-            A comprehensive report of the investigation findings
-        """
-        return await self.agent_tool.dispatch_investigation_agent(task, model_override)
-
-    async def dispatch_browser_agent(
+    # Agent dispatch (available when a dispatch-enabled tool group is active)
+    async def dispatch_agent(
         self,
+        agent_type: str,
         task: str,
         model_override: Any = None,
         browser_target: Optional[str] = None,
     ) -> str:
-        """
-        Dispatch a browser agent to perform web-based tasks and interactions.
+        """Dispatch an autonomous sub-agent to complete a self-contained task.
 
-        This tool launches a specialized agent that can navigate websites, interact with web elements,
-        and extract information from web pages. The browser agent has access to all browser-related tools
-        and will return a comprehensive report on its findings and actions.
+        The sub-agent works without further input and returns one final report. You
+        cannot see its intermediate steps or send follow-up messages, so each task
+        must be INDEPENDENT and SELF-CONTAINED: include the goal, relevant file
+        paths, constraints, and exactly what the final report should contain. The
+        report is not automatically shown to the user - summarize the key results.
+        Sub-agents cannot spawn further sub-agents.
 
-        Use this ONLY when the user explicitly asks to browse, open, visit, or interact with a web page/URL,
-        or explicitly requests a screenshot or web UI action. Do NOT use this for general research, docs lookup,
-        or exploration unless the user clearly requests browsing.
-
-
-        When to use this tool:
-        - When you need to navigate and interact with websites
-        - When you need to extract information from web pages
-        - When you need to test web applications or interfaces
-        - When you need to automate web-based workflows
-
-        Usage notes:
-        1. Provide a detailed task description with specific objectives for the browser agent
-        2. The agent will work autonomously and return a single comprehensive report
-        3. The agent can launch browsers, navigate pages, click elements, fill forms, and extract content
-        4. For best results, specify exactly what information you want the agent to find or what actions to perform
-        5. The agent's report is not automatically shown to the user - you should summarize key findings
-
-        IMPORTANT: The browser agent specializes in these tools:
-            - browser_navigate, browser_snapshot, and browser_find
-            - browser_click, browser_type, browser_fill_form, and browser_select_option
-            - browser_scroll, browser_press_key, and browser_wait_for
-            - browser_tabs, browser_handle_dialog, and browser_file_upload
-            - browser_console_messages, browser_network_requests, and browser_take_screenshot
-            - browser_close
-
-        On a page too large to snapshot in one call the snapshot is truncated and
-        says so, prioritising what is near the viewport. Treat that as an
-        instruction to narrow the scope: pass a target to browser_snapshot, or
-        browser_scroll and snapshot again. It does not mean the page is unreadable.
+        PARALLEL EXECUTION: multiple dispatch_agent calls issued in a single
+        response run CONCURRENTLY. Use this to fan out independent work, but never
+        give two parallel agents work that could overlap on the same files. Do
+        tasks that depend on each other's output sequentially or yourself, and
+        skip dispatch for small tasks you can do directly with a couple of tool
+        calls or anything needing back-and-forth with the user.
 
         Args:
-            task: A detailed description of the browser task to perform
-            model_override: Optional complete provider/model/thinking_effort route. Call
-                list_subagent_models before selecting one; the model must support vision.
-            browser_target: Optional configured browser backend. Omit for Playwright;
-                choose Chrome only when the user asks to use their Chrome browser.
-
-        Returns:
-            A comprehensive report of the browser agent's findings and actions
-        """
-        return await self.agent_tool.dispatch_browser_agent(task, model_override, browser_target)
-
-    async def dispatch_coding_agent(self, task: str, model_override: Any = None) -> str:
-        """
-        Dispatch a coding agent for processing coding-related tasks with streaming output.
-
-        Args:
-            task: A detailed description of the coding task to perform
-            model_override: Optional complete provider/model/thinking_effort route. Call
-                list_subagent_models before selecting one; omit it to inherit defaults.
-
-        Returns:
-            A summary of the coding process outcome
-        """
-        return await self.agent_tool.dispatch_coding_agent(task, model_override)
-
-    async def dispatch_general_agent(self, task: str, model_override: Any = None) -> str:
-        """
-        Dispatch an autonomous general-purpose agent to complete a self-contained task.
-
-        This tool launches a sub-agent with the full set of workspace tools (read, search,
-        edit files, run commands). It works autonomously on the task you give it and returns
-        a single final report. You will not see its intermediate steps, and you cannot send
-        it follow-up messages, so the task description must contain everything it needs.
-
-        PARALLEL EXECUTION: If you issue multiple dispatch_general_agent calls in a single
-        response, the agents run CONCURRENTLY. Use this to fan out work that can proceed
-        independently (e.g., "update module A's tests" and "update module B's tests").
-
-        When to use this tool:
-        - The work splits into independent subtasks that do not touch the same files
-        - A subtask is large or noisy (broad searches, mechanical multi-file edits) and you
-          only need the outcome, not every intermediate step
-        - You want several independent investigations or changes done at once
-
-        When NOT to use this tool:
-        - Tasks that depend on each other's output or edit the same files - do those
-          yourself sequentially, or dispatch them one at a time
-        - Small tasks you can do directly with one or two tool calls
-        - Anything requiring back-and-forth with the user
-
-        Usage notes:
-        1. Each task must be INDEPENDENT and SELF-CONTAINED: include the goal, relevant
-           file paths, constraints, and exactly what the final report should contain.
-        2. Never dispatch two parallel agents whose work could overlap on the same files.
-        3. The agent cannot spawn further sub-agents.
-        4. The agent's report is not automatically shown to the user - you should summarize
-           the key results.
-
-        Args:
+            agent_type: Which agent to dispatch, from the listed values.
             task: A detailed, self-contained description of the task to perform
             model_override: Optional complete provider/model/thinking_effort route. Call
                 list_subagent_models before selecting one; omit it to inherit defaults.
+            browser_target: Only for agent_type "browser". Omit for Playwright; choose
+                Chrome only when the user asks to use their Chrome browser.
 
         Returns:
-            The agent's final report on the completed task
+            The sub-agent's final report
         """
-        return await self.agent_tool.dispatch_general_agent(task, model_override)
-
-    async def dispatch_custom_agent(self, agent: str, task: str, model_override: Any = None) -> str:
-        """Dispatch a named custom agent defined in project or user Markdown.
-
-        Select an agent whose description matches a self-contained task. The agent
-        runs in a fresh context, cannot spawn other agents, and returns one final
-        report. Its tools can only be a subset of the tools available in this
-        session. Multiple independent calls may run in parallel.
-
-        Args:
-            agent: Name of the custom agent to run.
-            task: Detailed, self-contained task including relevant context and expected output.
-            model_override: Optional complete provider/model/thinking_effort route. A runtime
-                override replaces the custom definition route as one atomic selection.
-
-        Returns:
-            The custom agent's final report.
-        """
-        return await self.agent_tool.dispatch_custom_agent(agent, task, model_override)
+        if agent_type not in self._available_agent_types():
+            available = ", ".join(self._available_agent_types()) or "none"
+            raise ValueError(f"Unknown or unavailable agent_type `{agent_type}`. Valid values: {available}.")
+        if agent_type == "general":
+            return await self.agent_tool.dispatch_general_agent(task, model_override)
+        if agent_type == "investigation":
+            return await self.agent_tool.dispatch_investigation_agent(task, model_override)
+        if agent_type == "browser":
+            return await self.agent_tool.dispatch_browser_agent(task, model_override, browser_target)
+        if agent_type == "coding":
+            return await self.agent_tool.dispatch_coding_agent(task, model_override)
+        return await self.agent_tool.dispatch_custom_agent(agent_type, task, model_override)
 
     async def list_subagent_models(self, provider: Optional[str] = None) -> str:
         """List configured models available for ordinary and Gigacode sub-agents.
@@ -2217,32 +2093,85 @@ class ToolCollection(LogMixin):
             }
         if method_name == "edit" and self.edit_protocol == EditProtocol.HASHLINE_V2:
             definition.input_schema = _HASHLINE_V2_INPUT_SCHEMA
-        if method_name == "dispatch_custom_agent":
+        if method_name == "dispatch_agent":
+            agent_types = self._available_agent_types()
+            definition.description = f"{definition.description}\n\n{self._dispatch_agent_type_catalog(agent_types)}"
+            definition.input_schema = _dispatch_agent_input_schema(agent_types, browser_targets=self._browser_targets)
+        return definition
+
+    # One accurate line per built-in agent_type, appended to dispatch_agent's
+    # description for the types this collection actually offers.
+    _DISPATCH_AGENT_TYPE_LINES = {
+        "general": (
+            "- general: full workspace toolset (read, search, edit files, run commands). The default for "
+            "independent subtasks such as broad searches or mechanical multi-file edits."
+        ),
+        "investigation": (
+            "- investigation: read-only file access plus terminal commands and eval kernels (it can run and "
+            "test code but has no file-editing tools), with lsp and web access. Use it to analyze code, "
+            "trace execution paths, and gather findings into a report."
+        ),
+        "browser": (
+            "- browser: navigates and interacts with web pages via the browser_* tools (snapshot, click, "
+            "type, screenshot, ...). Use ONLY when the user explicitly asks to browse, visit, or interact "
+            "with a web page or requests a screenshot - not for general research or docs lookup."
+        ),
+        "coding": "- coding: a full coding agent for coding tasks, with streaming output.",
+    }
+
+    def _dispatch_agent_type_catalog(self, agent_types: Sequence[str]) -> str:
+        """Render the per-type description lines for the available agent_type values."""
+        lines = ["Available agent_type values:"]
+        custom_names = set(agent_types) - self._DISPATCH_AGENT_TYPE_LINES.keys()
+        lines.extend(
+            self._DISPATCH_AGENT_TYPE_LINES[agent_type]
+            for agent_type in agent_types
+            if agent_type in self._DISPATCH_AGENT_TYPE_LINES
+        )
+        if custom_names:
+            catalog = self.caller.custom_agent_catalog
+            lines.append(
+                "Custom agents (run in a fresh context with a subset of this session's tools; "
+                "pick one whose description matches the task):"
+            )
+            lines.append(catalog.model_catalog())
+        return "\n".join(lines)
+
+    def _available_agent_types(self) -> list[str]:
+        """agent_type enum members dispatch_agent currently offers.
+
+        Computed from the same conditions that used to gate whole per-type
+        dispatch tools: which dispatch-enabled groups the config activates,
+        config-level agent-type exclusions, the browser-agent vision gate, and
+        the custom-agent catalog (never offered to sub-agents).
+        """
+        enabled_groups = set(self.tool_config.custom_tool_groups or [])
+        if self.tool_config.include_agent_dispatch_tools:
+            enabled_groups.add("agent_dispatch_tools")
+        admitted: set[str] = set()
+        for group_name in enabled_groups:
+            admitted.update(self._dispatch_group_agent_types.get(group_name, ()))
+        admitted.difference_update(self.tool_config.excluded_agent_types)
+
+        agent_types = [agent_type for agent_type in ("general", "investigation") if agent_type in admitted]
+        if "browser" in admitted:
+            from kolega_code.agent.browseragent import BrowserAgent
+
+            # Vision gate: the browser agent reads page screenshots, so gate on
+            # the model resolved for the browser-agent role (which may differ
+            # from the main one), not caller.supports_vision, rather than offer
+            # a value that can only fail at dispatch.
+            if BrowserAgent.resolved_model_supports_vision(self.config):
+                agent_types.append("browser")
+        if "coding" in admitted:
+            agent_types.append("coding")
+        if "custom" in admitted and not getattr(self.caller, "sub_agent", False):
             catalog = getattr(self.caller, "custom_agent_catalog", None)
             if catalog is not None and catalog.has_agents():
-                routing_catalog = catalog.model_catalog()
-                definition.description = f"{definition.description}\n\nAvailable custom agents:\n{routing_catalog}"
-                definition.input_schema = {
-                    "type": "object",
-                    "properties": {
-                        "agent": {
-                            "type": "string",
-                            "enum": catalog.names(),
-                            "description": "Name of the custom agent to run.",
-                        },
-                        "task": {
-                            "type": "string",
-                            "description": (
-                                "Detailed, self-contained task including relevant context and expected output."
-                            ),
-                        },
-                        "model_override": _AGENT_DISPATCH_INPUT_SCHEMAS["dispatch_custom_agent"]["properties"][
-                            "model_override"
-                        ],
-                    },
-                    "required": ["agent", "task"],
-                }
-        return definition
+                # Built-in type names always win in routing, so a custom agent
+                # shadowed by one never enters the enum as a dead value.
+                agent_types.extend(name for name in catalog.names() if name not in self._DISPATCH_AGENT_TYPE_LINES)
+        return agent_types
 
     def _hashline_output_enabled(self) -> bool:
         """Whether this collection actually exposes the Hashline edit binding."""
@@ -2348,29 +2277,12 @@ class ToolCollection(LogMixin):
         explicit_schema = self.extension_schemas.get(method_name)
         if explicit_schema is not None:
             definition.input_schema = explicit_schema
-        if method_name == "dispatch_custom_agent":
-            catalog = getattr(self.caller, "custom_agent_catalog", None)
-            if catalog is not None and catalog.has_agents():
-                custom_schema = definition.input_schema or {"type": "object", "properties": {}}
-                definition.input_schema = {
-                    **custom_schema,
-                    "properties": {
-                        **custom_schema.get("properties", {}),
-                        "agent": {
-                            "type": "string",
-                            "enum": catalog.names(),
-                            "description": "Name of the custom agent to run.",
-                        },
-                    },
-                }
         context = getattr(self.caller, "sub_agent_context", None)
         workflow_dispatch = method_name in self.agent_dispatch_tools and (
             validated_workflow_depth(context) is not None or has_workflow_context_marker(context)
         )
         ordinary_parallel_dispatch = (
-            method_name in self.agent_dispatch_tools
-            and method_name not in self._legacy_only_extension_dispatch_tools
-            and method_name != "dispatch_browser_agent"
+            method_name in self.agent_dispatch_tools and method_name not in self._legacy_only_extension_dispatch_tools
         )
         return Tool(
             name=method_name,
@@ -2431,10 +2343,10 @@ class ToolCollection(LogMixin):
         if method_name in self.delegation_tools and not self._caller_can_delegate_or_author_workflow():
             return False
 
-        if method_name == "dispatch_custom_agent":
-            catalog = getattr(self.caller, "custom_agent_catalog", None)
-            if getattr(self.caller, "sub_agent", False) or catalog is None or not catalog.has_agents():
-                return False
+        # dispatch_agent only surfaces when it has at least one agent_type to
+        # offer; the per-type gates live in _available_agent_types.
+        if method_name == "dispatch_agent" and not self._available_agent_types():
+            return False
 
         if self.tool_config.allowed_tools is not None and method_name not in self.tool_config.allowed_tools:
             return False
@@ -2472,17 +2384,6 @@ class ToolCollection(LogMixin):
         # tool set.
         if method_name in ("web_search", "web_fetch") and not getattr(self.caller, "client_web_tools_enabled", True):
             return False
-
-        # Vision gate: dispatching the browser agent only works when the model
-        # resolved for the browser-agent role accepts images (it reads page
-        # screenshots). That model may differ from the main one, so gate on it —
-        # not caller.supports_vision — rather than offer a call that can only
-        # fail at dispatch.
-        if method_name == "dispatch_browser_agent":
-            from kolega_code.agent.browseragent import BrowserAgent
-
-            if not BrowserAgent.resolved_model_supports_vision(self.config):
-                return False
 
         # Settings gate: eval can be disabled host-wide (AgentConfig.eval_enabled).
         # Strict `is False` so Mock configs in tests keep the default (enabled).
@@ -2584,10 +2485,8 @@ class ToolCollection(LogMixin):
         dispatch_candidates.difference_update(self.tool_exclusions)
         if self.tool_config.allowed_tools is not None:
             dispatch_candidates.intersection_update(self.tool_config.allowed_tools)
-        if "dispatch_custom_agent" in dispatch_candidates:
-            catalog = getattr(self.caller, "custom_agent_catalog", None)
-            if getattr(self.caller, "sub_agent", False) or catalog is None or not catalog.has_agents():
-                dispatch_candidates.discard("dispatch_custom_agent")
+        if "dispatch_agent" in dispatch_candidates and not self._available_agent_types():
+            dispatch_candidates.discard("dispatch_agent")
         return bool(dispatch_candidates)
 
     async def initialize(self) -> list[str]:

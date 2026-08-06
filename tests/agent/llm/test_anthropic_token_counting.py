@@ -116,7 +116,6 @@ def real_tools(tmp_path):
             "log_error",
             "log_info",
             "run_command",
-            "dispatch_coding_agent",
         ],
     )
 

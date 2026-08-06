@@ -123,27 +123,26 @@ class CoderAgent(BaseAgent, LogMixin):
             memory_enabled=memory_enabled,
         )
 
-        # Configure tool collection with custom coder agent tools
+        # Configure tool collection with custom coder agent tools. The
+        # coder_agent_tools dispatch group already omits the "coding"
+        # agent_type, so the coder never dispatches itself.
         tool_exclusions = [
             "execute_terminal_command",
             "get_tool_list",
             "log_error",
             "log_info",
-            # Exclude task-specific dispatch tools since coder shouldn't call itself or other agents
-            "dispatch_coding_agent",
         ]
         mode_value = self.agent_mode.value if isinstance(self.agent_mode, AgentMode) else self.agent_mode
         if mode_value in (AgentMode.CLI.value, AgentMode.ASK.value):
             tool_exclusions.extend(["build_backend", "build_frontend"])
-        if sub_agent:
-            # A dispatched coder must not fan out into further sub-agents
-            tool_exclusions.append("dispatch_general_agent")
 
         tool_config = ToolCollectionConfig(
             custom_tool_groups=["coder_agent_tools"],
             tool_exclusions=tool_exclusions,
             include_memory_tools=True,
             memory_write_access=True,
+            # A dispatched coder must not fan out into further general sub-agents
+            excluded_agent_types=["general"] if sub_agent else None,
         )
 
         self.tool_collection = ToolCollection(

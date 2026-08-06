@@ -22,7 +22,7 @@ _EXTENSION_ORIGIN = "chrome-extension://edihigldhbmimflgjkohkgnjefmhngdn/"
 
 def _agent_config() -> AgentConfig:
     # A real vision-capable model: the browser agent requires image support, and
-    # dispatch_browser_agent is now gated on the browser-agent model's vision.
+    # the "browser" agent_type is gated on the browser-agent model's vision.
     model = ModelConfig(
         provider=ModelProvider.ANTHROPIC, model="claude-sonnet-4-5-20250929", rate_limits=RateLimitConfig()
     )
@@ -88,15 +88,17 @@ def test_configured_chrome_target_is_offered_on_browser_dispatch(tmp_path: Path)
         manager = build_browser_manager(tmp_path, "session-1")
         collection = _collection(tmp_path, manager, dispatch=True)
 
-    dispatch = collection.registry().get("dispatch_browser_agent")
+    dispatch = collection.registry().get("dispatch_agent")
     assert dispatch.definition.input_schema is not None
-    assert dispatch.definition.input_schema["required"] == ["task"]
+    assert dispatch.definition.input_schema["required"] == ["agent_type", "task"]
+    assert "browser" in dispatch.definition.input_schema["properties"]["agent_type"]["enum"]
     assert dispatch.definition.input_schema["properties"]["browser_target"]["enum"] == [
         "playwright",
         "chrome",
     ]
-    assert dispatch.parallel_safe is False
-    assert collection.registry().get("dispatch_investigation_agent").parallel_safe is True
+    # Ordinary dispatch stays parallel-safe; concurrent browser dispatches
+    # serialize on the browser manager's agent lock instead.
+    assert dispatch.parallel_safe is True
 
 
 @pytest.mark.asyncio
