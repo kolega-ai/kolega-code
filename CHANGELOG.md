@@ -55,6 +55,13 @@ This project uses GitHub Releases for detailed generated release notes. This fil
   `path` is accepted at the dispatch boundary as an alias for the canonical
   `file_path`.
 
+- `write(path=…)` now also succeeds under the claude_code edit protocol, where
+  `write` binds to `claude_write(file_path, content)`: `path` is accepted at
+  the dispatch boundary as an alias for `file_path`, matching every other file
+  tool. Under the search/replace protocol `path` stays the canonical
+  parameter and passes through untouched — alias resolution is signature-aware
+  and never rewrites an argument name the bound tool itself accepts.
+
 - A successful whole-file `write` (including `hashline_write` and `apply_patch`'s
   Add File) now records the just-written contents as read, so the read-before-edit
   guard accepts a subsequent edit without a fresh read — exactly as it would
