@@ -7,7 +7,7 @@ from .common import LogMixin
 from kolega_code.config import AgentConfig, EditProtocol
 from kolega_code.llm.models import ImageBlock, ToolDefinition
 from kolega_code.memory import ProjectMemoryManager
-from kolega_code.tools import Tool, ToolRegistry, tool_definition_from_callable
+from kolega_code.tools import Tool, ToolRegistry, schema_has_property_descriptions, tool_definition_from_callable
 from kolega_code.services.file_system import FileSystem, LocalFileSystem
 from kolega_code.services.base import TerminalManager, BrowserManager
 from kolega_code.services.terminal import LocalTerminalManager
@@ -2078,8 +2078,24 @@ class ToolCollection(LogMixin):
         return self.terminal_manager.sandbox.get_host(port)  # pyright: ignore[reportAttributeAccessIssue]
 
     def _tool_definition_from_callable(self, method_name: str, method: Callable[..., Any]) -> ToolDefinition:
-        """Build a provider-agnostic tool definition from a Python callable."""
-        definition = tool_definition_from_callable(method_name, method)
+        """Build a provider-agnostic tool definition from a Python callable.
+
+        The wire description drops the docstring's ``Args:`` block because the
+        per-parameter schema carries the same text (``tool_definition_from_callable``
+        strips it unless asked to keep it). Two shapes keep the block: freeform
+        bindings, whose schema is a fallback ``input`` envelope rather than the
+        real parameters, and tools with an explicit input schema that does not
+        describe every property — in both cases the ``Args:`` block is the only
+        place their parameters are documented on the wire.
+        """
+        explicit_schema = self.extension_schemas.get(method_name)
+        freeform = method_name == "apply_patch"
+        definition = tool_definition_from_callable(
+            method_name,
+            method,
+            keep_args_in_description=freeform
+            or (explicit_schema is not None and not schema_has_property_descriptions(explicit_schema)),
+        )
         if method_name == "apply_patch":
             definition.description = (
                 "Use the `apply_patch` tool to edit files. This is a FREEFORM tool, so do not wrap the patch in JSON. "

@@ -3,6 +3,13 @@
 The callable's signature supplies the parameter schema and its docstring
 supplies the descriptions, so the code documenting a tool for developers is
 also what the model sees.
+
+The docstring's ``Args:`` section is parsed into per-parameter schema
+descriptions and is also removed from the wire description: keeping it would
+document every parameter twice in the API payload. Source docstrings are
+untouched; the deduplication happens here, where the ToolDefinition is built,
+so every provider serialization (to_anthropic/to_openai/to_google) inherits
+it.
 """
 
 import inspect
@@ -11,12 +18,54 @@ from typing import Any, Callable, Dict, Optional
 
 from ..llm.models import ToolDefinition, ToolParameter
 
+# A docstring ``Args:`` section: the header at column 0 (inspect.getdoc
+# dedents) through the next column-0 section line or the end of the text.
+# Parameter entries and continuation lines are indented, so any column-0 line
+# after ``Args:`` starts a new section (``Returns:``, ``Yields:``, ...).
+_ARGS_BLOCK_RE = re.compile(r"^Args:.*?(?=\n[^\s]|\Z)", re.DOTALL | re.MULTILINE)
+
+
+def strip_args_section(description: str) -> str:
+    """Remove the docstring ``Args:`` block from a wire description.
+
+    Everything before the block is kept verbatim, and any section after it
+    (``Returns:`` and friends) is kept with its natural separation. Text with
+    no ``Args:`` block is returned unchanged.
+    """
+    match = _ARGS_BLOCK_RE.search(description)
+    if match is None:
+        return description
+    start, end = match.span()
+    before = description[:start]
+    after = description[end:]
+    if not after.strip():
+        return before.rstrip()
+    return f"{before.rstrip()}\n\n{after.lstrip()}".strip()
+
+
+def schema_has_property_descriptions(schema: Dict[str, Any]) -> bool:
+    """Whether an explicit input schema documents every one of its properties.
+
+    Only top-level properties are checked: the docstring ``Args:`` block
+    documents the callable's parameters, which map one-to-one onto the
+    schema's top-level properties. If any property lacks a description, that
+    parameter's only documentation is the ``Args:`` block, so it must stay in
+    the description.
+    """
+    properties = schema.get("properties")
+    if not isinstance(properties, dict):
+        return True
+    return all(
+        isinstance(value, dict) and bool(str(value.get("description", "")).strip()) for value in properties.values()
+    )
+
 
 def tool_definition_from_callable(
     name: str,
     method: Callable[..., Any],
     *,
     description_overrides: Optional[Dict[str, str]] = None,
+    keep_args_in_description: bool = False,
 ) -> ToolDefinition:
     """Build a provider-agnostic tool definition from a Python callable."""
     signature = inspect.signature(method)
@@ -26,6 +75,8 @@ def tool_definition_from_callable(
 
     if description_overrides and name in description_overrides:
         description = description_overrides[name]
+    elif not keep_args_in_description:
+        description = strip_args_section(description)
 
     properties = {}
     required = []
@@ -42,7 +93,9 @@ def tool_definition_from_callable(
 
         param_doc_match = re.search(rf"{param_name}:\s*(.*?)(?:\n\s*\w+:|$)", docstring, re.DOTALL)
         if param_doc_match:
-            param_description = param_doc_match.group(1).strip()
+            # Collapse the whitespace runs that docstring continuation-line
+            # indentation leaves inside the captured description.
+            param_description = re.sub(r"\s+", " ", param_doc_match.group(1)).strip()
 
         if param.annotation != inspect.Parameter.empty:
             annotation = str(param.annotation)
