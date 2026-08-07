@@ -31,6 +31,7 @@ The agent runtime recognizes these providers:
 | DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` |
 | Z.AI (GLM Coding Plan) | `zai` | `ZAI_API_KEY` |
 | Kimi Coding Plan | `kimi_coding` | `KIMI_CODING_API_KEY` |
+| Thinking Machines | `thinking_machines` | `TINKER_API_KEY` |
 | Ollama Cloud | `ollama_cloud` | `OLLAMA_API_KEY` |
 | OpenRouter | `openrouter` | `OPENROUTER_API_KEY` |
 | Llama (local) | `llama` | _none — local model_ |
@@ -112,6 +113,22 @@ Routing preferences are not set by default, because any of them narrows which
 upstreams may serve a request. Opt in with
 `KOLEGA_CODE_OPENROUTER_PROVIDER_ORDER` and `KOLEGA_CODE_OPENROUTER_PROVIDER_ONLY`
 (comma-separated provider slugs).
+</Aside>
+
+<Aside type="tip">
+**Thinking Machines.** The `thinking_machines` provider targets Thinking Machines
+Lab's Tinker API through its Anthropic-compatible endpoint
+(`https://tinker.thinkingmachines.dev/services/tinker-prod/anthropic/api`) with
+`TINKER_API_KEY`, exposing **Inkling** (default) and **Inkling Small**. Both are
+open-weights, natively multimodal (text + image) models with up to 1M token
+context, and reasoning is on by default: thinking blocks stream into the
+transcript, and the thinking effort picker offers `none`, `low`, `medium`,
+`high`, `xhigh`, and `max` (effort rides in Tinker's `output_config.effort`
+field; `none` disables reasoning). Tool use, streaming, and
+`count_tokens` all work through this endpoint. Note that the Tinker
+Anthropic-compatible endpoint is still in beta (low-traffic, no prompt caching —
+`cache_control` is ignored), so treat it as best for personal use and
+experiments.
 </Aside>
 
 <Aside type="tip">

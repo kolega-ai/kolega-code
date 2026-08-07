@@ -26,6 +26,7 @@ class ModelProvider(str, Enum):
     KIMI_CODING = "kimi_coding"
     OLLAMA_CLOUD = "ollama_cloud"
     OPENROUTER = "openrouter"  # Gateway in front of many vendors' models
+    THINKING_MACHINES = "thinking_machines"  # Thinking Machines Lab (Tinker API)
 
 
 class EditProtocol(str, Enum):
@@ -144,6 +145,7 @@ class AgentConfig(BaseModel):
     kimi_coding_api_key: Optional[str] = Field(default=None, description="API key for Kimi Coding Plan")
     ollama_cloud_api_key: Optional[str] = Field(default=None, description="API key for Ollama Cloud")
     openrouter_api_key: Optional[str] = Field(default=None, description="API key for OpenRouter")
+    thinking_machines_api_key: Optional[str] = Field(default=None, description="API key for Thinking Machines (Tinker)")
 
     # ChatGPT-subscription OAuth credentials (used instead of an api key for the
     # OPENAI_CHATGPT provider). The live, refreshing token manager is attached
@@ -310,6 +312,7 @@ class AgentConfig(BaseModel):
             ModelProvider.KIMI_CODING: self.kimi_coding_api_key,
             ModelProvider.OLLAMA_CLOUD: self.ollama_cloud_api_key,
             ModelProvider.OPENROUTER: self.openrouter_api_key,
+            ModelProvider.THINKING_MACHINES: self.thinking_machines_api_key,
             ModelProvider.LLAMA: None,  # Local model, no API key needed
         }
         return api_key_map[provider]

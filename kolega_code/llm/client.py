@@ -107,7 +107,7 @@ class LLMClient:
         provider so the caller can raise a clear error.
         """
         p = provider.lower()
-        if p in ("anthropic", "moonshot", "zai", "kimi_coding"):
+        if p in ("anthropic", "moonshot", "zai", "kimi_coding", "thinking_machines"):
             from .providers.anthropic import AnthropicProvider
 
             return AnthropicProvider
@@ -207,6 +207,9 @@ class LLMClient:
                 "kimi_coding": "https://api.kimi.com/coding",
                 "ollama_cloud": "https://ollama.com/v1",
                 "openrouter": "https://openrouter.ai/api/v1",
+                # Tinker's Anthropic-compatible endpoint: the Anthropic SDK appends
+                # /v1/messages (and /v1/messages/count_tokens) to this base.
+                "thinking_machines": "https://tinker.thinkingmachines.dev/services/tinker-prod/anthropic/api",
             }
 
             provider_class = self._provider_class(provider)

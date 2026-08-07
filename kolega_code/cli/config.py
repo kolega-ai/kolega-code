@@ -53,6 +53,7 @@ API_KEY_ENV = {
     ModelProvider.KIMI_CODING: "KIMI_CODING_API_KEY",
     ModelProvider.OLLAMA_CLOUD: "OLLAMA_API_KEY",
     ModelProvider.OPENROUTER: "OPENROUTER_API_KEY",
+    ModelProvider.THINKING_MACHINES: "TINKER_API_KEY",
 }
 
 DEFAULT_WEB_SEARCH_BACKEND = "duckduckgo"
@@ -647,6 +648,7 @@ def build_agent_config(
             kimi_coding_api_key=_api_key_for_provider(ModelProvider.KIMI_CODING, loaded_env, settings),
             ollama_cloud_api_key=_api_key_for_provider(ModelProvider.OLLAMA_CLOUD, loaded_env, settings),
             openrouter_api_key=_api_key_for_provider(ModelProvider.OPENROUTER, loaded_env, settings),
+            thinking_machines_api_key=_api_key_for_provider(ModelProvider.THINKING_MACHINES, loaded_env, settings),
             environment=overrides.environment or loaded_env.get("KOLEGA_CODE_ENVIRONMENT", "development"),
             edit_protocol=edit_protocol,
             long_context_config=_model_config(long_provider, long_model, thinking_effort=active_thinking_effort),

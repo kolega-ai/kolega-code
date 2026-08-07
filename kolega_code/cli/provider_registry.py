@@ -38,6 +38,7 @@ PROVIDER_LABELS: dict[ModelProvider, str] = {
     ModelProvider.DASHSCOPE: "DashScope / Qwen",
     ModelProvider.OLLAMA_CLOUD: "Ollama Cloud",
     ModelProvider.OPENROUTER: "OpenRouter",
+    ModelProvider.THINKING_MACHINES: "Thinking Machines",
 }
 
 # Friendly display names for models. Anything not listed falls back to its raw
@@ -130,6 +131,9 @@ MODEL_LABELS: dict[str, str] = {
     "qwen3-coder-next": "Qwen3 Coder Next",
     "qwen3-coder:480b": "Qwen3 Coder 480B",
     "qwen3.5:397b": "Qwen3.5 397B",
+    # Thinking Machines
+    "thinkingmachines/Inkling": "Inkling",
+    "thinkingmachines/Inkling-Small": "Inkling Small",
 }
 
 # Per-provider default model used when only a provider is selected. Covers the
@@ -151,6 +155,7 @@ PROVIDER_DEFAULT_MODEL: dict[ModelProvider, str] = {
     # Hardcoded on purpose: regenerating the OpenRouter catalog reorders it by
     # live usage, and that must never silently change what new users get.
     ModelProvider.OPENROUTER: "moonshotai/kimi-k3",
+    ModelProvider.THINKING_MACHINES: "thinkingmachines/Inkling",
 }
 
 UI_DEFAULT_PROVIDER = ModelProvider.MOONSHOT.value
@@ -186,6 +191,9 @@ def _api_key_env(provider: ModelProvider) -> str:
         return ""
     if provider == ModelProvider.OLLAMA_CLOUD:
         return "OLLAMA_API_KEY"
+    if provider == ModelProvider.THINKING_MACHINES:
+        # Thinking Machines documents TINKER_API_KEY, not THINKING_MACHINES_API_KEY.
+        return "TINKER_API_KEY"
     return f"{provider.value.upper()}_API_KEY"
 
 

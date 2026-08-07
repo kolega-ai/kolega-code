@@ -1,6 +1,6 @@
 import pytest
 
-from kolega_code.llm.specs import get_model_specs, thinking_effort_options
+from kolega_code.llm.specs import build_thinking_request_params, get_model_specs, thinking_effort_options
 
 
 @pytest.mark.parametrize(
@@ -213,3 +213,41 @@ def test_claude_sonnet_5_model_specs():
     assert specs["thinking_effort"].options == ("low", "medium", "high", "xhigh", "max")
     assert specs["thinking_effort"].default == "medium"
     assert specs["thinking_effort"].mode == "anthropic_adaptive_effort"
+
+
+def test_thinking_machines_model_specs():
+    for model in ("thinkingmachines/Inkling", "thinkingmachines/Inkling-Small"):
+        specs = get_model_specs("thinking_machines", model)
+
+        assert specs["context_length"] == 1000000
+        assert specs["max_completion_tokens"] == 32768
+        assert specs["default_temperature"] == 1.0
+        assert specs["supports_vision"] is True
+        assert thinking_effort_options("thinking_machines", model) == (
+            "none",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+        )
+        assert specs["thinking_effort"].default == "high"
+        assert specs["thinking_effort"].mode == "tinker_effort"
+
+
+def test_tinker_effort_request_params():
+    # The Tinker Anthropic-compatible endpoint controls depth via the
+    # Tinker-specific output_config.effort field; "none" turns reasoning off
+    # with the standard Anthropic thinking={"type": "disabled"}.
+    assert build_thinking_request_params("thinking_machines", "thinkingmachines/Inkling", "none") == {
+        "thinking": {"type": "disabled"}
+    }
+    assert build_thinking_request_params("thinking_machines", "thinkingmachines/Inkling", "low") == {
+        "output_config": {"effort": "low"}
+    }
+    assert build_thinking_request_params("thinking_machines", "thinkingmachines/Inkling", "max") == {
+        "output_config": {"effort": "max"}
+    }
+    # Effort values outside the documented Tinker set are rejected.
+    with pytest.raises(ValueError, match="Unsupported thinking effort"):
+        build_thinking_request_params("thinking_machines", "thinkingmachines/Inkling", "turbo")

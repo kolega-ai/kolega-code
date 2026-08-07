@@ -126,3 +126,36 @@ def test_ollama_cloud_smoke_model_is_available_without_live_call():
     assert options["GPT-OSS 20B"] == "gpt-oss:20b"
     assert default_model_for_provider(ModelProvider.OLLAMA_CLOUD) == "gpt-oss:20b"
     assert get_model_specs(ModelProvider.OLLAMA_CLOUD.value, "gpt-oss:20b")["max_completion_tokens"] > 0
+
+
+def test_thinking_machines_models_are_selectable_and_inkling_is_default():
+    options = ui_model_options(ModelProvider.THINKING_MACHINES.value)
+
+    assert options == [
+        ("Inkling", "thinkingmachines/Inkling"),
+        ("Inkling Small", "thinkingmachines/Inkling-Small"),
+    ]
+    assert default_model_for_provider(ModelProvider.THINKING_MACHINES) == "thinkingmachines/Inkling"
+    assert ui_thinking_effort_options("thinking_machines", "thinkingmachines/Inkling") == [
+        ("None", "none"),
+        ("Low", "low"),
+        ("Medium", "medium"),
+        ("High", "high"),
+        ("Extra high", "xhigh"),
+        ("Max", "max"),
+    ]
+    assert ui_thinking_effort_options("thinking_machines", "thinkingmachines/Inkling-Small") == [
+        ("None", "none"),
+        ("Low", "low"),
+        ("Medium", "medium"),
+        ("High", "high"),
+        ("Extra high", "xhigh"),
+        ("Max", "max"),
+    ]
+
+
+def test_thinking_machines_models_support_vision():
+    assert ui_model_options("thinking_machines", vision_only=True) == [
+        ("Inkling", "thinkingmachines/Inkling"),
+        ("Inkling Small", "thinkingmachines/Inkling-Small"),
+    ]
