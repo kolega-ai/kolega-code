@@ -39,9 +39,12 @@ class HistoryCompressor:
     KEEP_RECENT_MESSAGES = 6
     # Don't bother summarizing a trivially short prefix.
     MIN_PREFIX_TO_SUMMARIZE = 3
-    # Cap the summary length: the prompt targets ~600 words (~900 tokens), so a
-    # small ceiling keeps it tight and avoids the model's full completion budget.
-    SUMMARY_MAX_TOKENS = 2048
+    # Cap the summary length. The prompt targets ~600 words, but reasoning
+    # models (deepseek-v4-flash Responses, etc.) can consume the entire budget
+    # on chain-of-thought and leave no room for text output, producing an empty
+    # summary. A generous ceiling gives reasoning headroom while still staying
+    # well under the model's full completion budget.
+    SUMMARY_MAX_TOKENS = 8192
 
     def __init__(self, threshold: float = 0.8) -> None:
         # Fraction of the model context window above which compression kicks in
