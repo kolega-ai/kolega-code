@@ -379,6 +379,20 @@ class SettingsScreen(ModalScreen[None]):
                     allow_blank=False,
                     value="true",
                 )
+            with Vertical(classes="settings-section", id="settings_subagents") as subagents_section:
+                subagents_section.border_title = "Sub-agents"
+                yield Static(
+                    "Let the agent dispatch focused sub-agents (dispatch_agent) for parallel or isolated work.",
+                    classes="settings-hint",
+                )
+                yield Static("", id="subagents_status")
+                yield Label("Sub-agents")
+                yield Select(
+                    [("Enabled", "true"), ("Disabled", "false")],
+                    id="subagents_enabled_select",
+                    allow_blank=False,
+                    value="true",
+                )
             with Vertical(classes="settings-section", id="settings_compression") as compression_section:
                 compression_section.border_title = "Context Compression"
                 yield Static(

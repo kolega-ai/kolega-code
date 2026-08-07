@@ -73,6 +73,7 @@ from .diagnostics import write_crash_log
 from .config import (
     DEPRECATED_THINKING_TOKENS_MESSAGE,
     LSP_MODES,
+    SUBAGENT_MODES,
     WEB_SEARCH_MODES,
     CliConfigError,
     CliConfigOverrides,
@@ -339,6 +340,13 @@ def _add_tui_args(parser: argparse.ArgumentParser) -> None:
         default=None,
         help="Force LSP tools on or off for this session (overrides settings.json; not persisted).",
     )
+    parser.add_argument(
+        "--subagents",
+        choices=list(SUBAGENT_MODES),
+        default=None,
+        help="Force sub-agent dispatch (dispatch_agent) on or off for this session "
+        "(overrides settings.json; not persisted).",
+    )
     _add_session_args(parser, session_help="Legacy alias for --resume SESSION_ID.")
     _add_worktree_args(parser)
     _add_common_model_args(parser)
@@ -433,6 +441,13 @@ def _build_subcommand_parser() -> argparse.ArgumentParser:
         choices=list(LSP_MODES),
         default=None,
         help="Force LSP tools on or off for this session (overrides settings.json; not persisted).",
+    )
+    ask.add_argument(
+        "--subagents",
+        choices=list(SUBAGENT_MODES),
+        default=None,
+        help="Force sub-agent dispatch (dispatch_agent) on or off for this session "
+        "(overrides settings.json; not persisted).",
     )
     ask.add_argument("--save", action="store_true", help="Persist the session after the prompt completes.")
     ask.add_argument("--json", action="store_true", help="Emit complete messages and events as JSON.")
@@ -647,6 +662,7 @@ def _overrides_from_args(args: argparse.Namespace) -> CliConfigOverrides:
         edit_protocol=getattr(args, "edit_protocol", None),
         web_search_mode=getattr(args, "web_search", None),
         lsp_mode=getattr(args, "lsp", None),
+        subagents_mode=getattr(args, "subagents", None),
         compression_threshold=getattr(args, "compression_threshold", None),
     )
 

@@ -25,6 +25,7 @@ kolega-code ask "<prompt>" [options]
 | `--permission-mode <auto\|ask>` | Shell/edit permission mode (default `auto`) |
 | `--web-search <auto\|hosted\|client\|off>` | Web tool mode: hosted server-side search, client tools, or none (default `auto`) |
 | `--lsp <on\|off>` | Force LSP tools on or off for this session (overrides settings; not persisted) |
+| `--subagents <on\|off>` | Force sub-agent dispatch (`dispatch_agent`) on or off for this session (overrides settings; not persisted; default on) |
 | `--compression-threshold PERCENT` | Context-window usage that triggers automatic history compression (`10`–`100`, default `80`; `100` effectively disables it). Overrides settings for the session; not persisted |
 | `--session <ID>` | Resume or create a specific session |
 | `--state-dir <PATH>` | Directory for CLI session state |

@@ -2312,6 +2312,21 @@ class ToolCollection(LogMixin):
         Returns:
             True if the tool should be included, False otherwise
         """
+        # Settings gate: sub-agent dispatch can be disabled host-wide
+        # (AgentConfig.subagents_enabled, from settings.json or the --subagents
+        # flag). Placed first so it also beats the custom_tool_groups whitelist
+        # below (planning/investigation agents) and covers host extension
+        # dispatch tools appended to this instance's agent_dispatch_tools.
+        # Gigacode workflow workers are exempt: their dispatch chain is lent by
+        # run_workflow (a separate opt-in) and depth-narrowed below.
+        # Strict `is False` so Mock configs in tests keep the default (enabled).
+        if (
+            method_name in self.agent_dispatch_tools
+            and getattr(self.config, "subagents_enabled", True) is False
+            and not has_workflow_context_marker(getattr(self.caller, "sub_agent_context", None))
+        ):
+            return False
+
         # Gigacode delegation depth is scoped through sub_agent_context. It only
         # narrows a workflow worker's existing dispatch inventory; callers with no
         # workflow context retain their normal behavior.
@@ -2472,6 +2487,14 @@ class ToolCollection(LogMixin):
             dispatch_candidates.intersection_update(self.tool_config.allowed_tools)
         if "dispatch_agent" in dispatch_candidates and not self._available_agent_types():
             dispatch_candidates.discard("dispatch_agent")
+        # Sub-agent dispatch disabled host-wide (AgentConfig.subagents_enabled):
+        # no dispatch candidates remain, so the informational
+        # list_subagent_models tool drops out as well. Gigacode paths are
+        # unaffected: the top-level workflow-authoring branch above already
+        # qualified, and a workflow worker with delegation depth left keeps the
+        # dispatch chain lent by run_workflow.
+        if getattr(self.config, "subagents_enabled", True) is False and not has_workflow_context_marker(context):
+            dispatch_candidates.clear()
         return bool(dispatch_candidates)
 
     async def initialize(self) -> list[str]:

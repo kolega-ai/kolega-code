@@ -46,6 +46,7 @@ kolega-code [PROJECT_PATH]
 | `--show-logs` | Show the optional diagnostic Logs side-panel tab. Hidden by default to avoid unnecessary log rendering work |
 | `--permission-mode <auto\|ask>` | Shell/edit permission mode. TUI sessions default to `ask` |
 | `--lsp <on\|off>` | Force LSP tools on or off for this session (overrides settings; not persisted) |
+| `--subagents <on\|off>` | Force sub-agent dispatch (`dispatch_agent`) on or off for this session (overrides settings; not persisted; default on) |
 | `--session <ID>` | Legacy alias for `--resume SESSION_ID` |
 
 See [Sessions & Resuming](../../tui/sessions-and-resume/) for the full session

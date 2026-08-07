@@ -592,6 +592,82 @@ def test_lsp_tools_hidden_when_disabled(project_path, mock_connection_manager, a
     assert "resolve" not in tool_names
 
 
+def test_dispatch_tools_hidden_when_subagents_disabled(project_path, mock_connection_manager, agent_config):
+    """AgentConfig.subagents_enabled=False removes dispatch_agent — and the
+    informational list_subagent_models — from the registry."""
+    agent_config.subagents_enabled = False
+    agent = CoderAgent(
+        project_path=project_path,
+        workspace_id="test_workspace",
+        thread_id=str(uuid.uuid4()),
+        connection_manager=mock_connection_manager,
+        config=agent_config,
+        agent_mode=AgentMode.CLI,
+    )
+
+    tool_names = {tool.name for tool in agent.tool_collection.get_tool_list()}
+    assert "dispatch_agent" not in tool_names
+    assert "list_subagent_models" not in tool_names
+    # The registry is the dispatch boundary: a hidden tool is unreachable.
+    assert agent.tool_collection.has_tool("dispatch_agent") is False
+
+
+def test_subagents_disabled_keeps_list_subagent_models_for_gigacode(
+    project_path, mock_connection_manager, agent_config
+):
+    """Gigacode workflow authoring keeps the model-catalog tool: the subagents
+    gate clears dispatch candidates but not the gigacode delegation branch."""
+    agent_config.subagents_enabled = False
+    agent = CoderAgent(
+        project_path=project_path,
+        workspace_id="test_workspace",
+        thread_id=str(uuid.uuid4()),
+        connection_manager=mock_connection_manager,
+        config=agent_config,
+        agent_mode=AgentMode.CLI,
+    )
+    agent.apply_gigacode(True)
+
+    tool_names = {tool.name for tool in agent.tool_collection.get_tool_list()}
+    assert "dispatch_agent" not in tool_names
+    assert "run_workflow" in tool_names
+    assert "list_subagent_models" in tool_names
+
+
+def test_subagents_gate_beats_planning_custom_group_whitelist(tmp_path, mock_connection_manager, agent_config):
+    """PlanningAgent's custom_agent_tools group is a whitelist checked before the
+    read-only filter, so the subagents gate must run before the group checks:
+    with a plan-mode custom agent registered, dispatch_agent is offered by
+    default and removed host-wide when subagents_enabled=False."""
+    from kolega_code.agent.custom_agents import discover_custom_agents
+
+    agents_dir = tmp_path / ".kolega" / "agents"
+    agents_dir.mkdir(parents=True)
+    (agents_dir / "planner.md").write_text(
+        "---\nname: planner\ndescription: Produces focused plans\nmode: plan\n---\n\nFollow the custom instructions.\n",
+        encoding="utf-8",
+    )
+    catalog = discover_custom_agents(tmp_path, tmp_path / "state").for_mode("plan")
+
+    def build():
+        return PlanningAgent(
+            project_path=tmp_path,
+            workspace_id="test_workspace",
+            thread_id=str(uuid.uuid4()),
+            connection_manager=mock_connection_manager,
+            config=agent_config,
+            agent_mode=AgentMode.CLI,
+            custom_agent_catalog=catalog,
+        )
+
+    assert "dispatch_agent" in {tool.name for tool in build().tool_collection.get_tool_list()}
+
+    agent_config.subagents_enabled = False
+    disabled = build()
+    assert "dispatch_agent" not in {tool.name for tool in disabled.tool_collection.get_tool_list()}
+    assert disabled.tool_collection.has_tool("dispatch_agent") is False
+
+
 def _coder(project_path, mock_connection_manager, agent_config):
     return CoderAgent(
         project_path=project_path,

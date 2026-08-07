@@ -139,6 +139,9 @@ class CliSettings:
     # Additive optional field — absent in older files -> None -> eval tool
     # enabled (persistent code kernels with the loopback tool bridge).
     eval_enabled: Optional[bool] = None
+    # Additive optional field — absent in older files -> None -> sub-agent
+    # dispatch (dispatch_agent) enabled.
+    subagents_enabled: Optional[bool] = None
     # Context-window usage percent that triggers automatic history compression.
     # Additive optional field — absent in older files -> None -> the agent's
     # built-in default (80%).
@@ -187,6 +190,8 @@ class CliSettings:
             lsp_enabled=data.get("lsp_enabled"),
             # Additive optional field; absent in older files -> None (enabled).
             eval_enabled=data.get("eval_enabled"),
+            # Additive optional field; absent in older files -> None (enabled).
+            subagents_enabled=data.get("subagents_enabled"),
             # Additive optional field; absent in older files -> None (default 80%).
             compression_threshold=_coerce_compression_threshold(data.get("compression_threshold")),
         )
@@ -211,6 +216,7 @@ class CliSettings:
             "permission_mode": _coerce_permission_mode(self.permission_mode),
             "lsp_enabled": self.lsp_enabled,
             "eval_enabled": self.eval_enabled,
+            "subagents_enabled": self.subagents_enabled,
             "compression_threshold": self.compression_threshold,
         }
 
