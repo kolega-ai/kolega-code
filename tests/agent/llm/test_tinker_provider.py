@@ -416,7 +416,7 @@ needs_native_stack = pytest.mark.skipif(
 @needs_native_stack
 def test_build_prompt_renders_messages_and_tools_with_real_cookbook() -> None:
     """Exercise the real cookbook bridge end to end, minus sampling."""
-    from tinker_cookbook.tokenizer_utils import get_tokenizer
+    from tinker_cookbook.tokenizer_utils import get_tokenizer  # pyright: ignore[reportMissingImports]
 
     tokenizer = get_tokenizer("Qwen/Qwen3-8B")
     renderer = tinker_provider._cookbook_get_renderer("qwen3", tokenizer, model_name="Qwen/Qwen3-8B")
