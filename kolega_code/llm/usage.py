@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 REASON_NOT_REPORTED = "provider_did_not_report_usage"
 REASON_MALFORMED = "provider_reported_malformed_usage"
 
-ANTHROPIC_USAGE_PROVIDERS = frozenset({"anthropic", "moonshot", "zai", "kimi_coding", "thinking_machines"})
+ANTHROPIC_USAGE_PROVIDERS = frozenset({"anthropic", "moonshot", "zai", "kimi_coding", "thinking_machines", "tinker"})
 OPENAI_USAGE_PROVIDERS = frozenset(
     {
         "openai",

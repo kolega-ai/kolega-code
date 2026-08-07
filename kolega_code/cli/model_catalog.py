@@ -1,14 +1,13 @@
-"""Model-catalog inspection and the optional OpenRouter catalog overlay.
+"""Model-catalog inspection and optional runtime catalog overlays.
 
 Backs ``kolega-code models list`` and ``kolega-code models refresh``.
 
-The bundled OpenRouter catalog is a snapshot taken when a Kolega Code release is
-cut, so a model published after that release is unknown to it. ``models refresh``
-fetches the documented ``/api/v1/models`` endpoint once, on request, and caches
-the result in the state directory; the cache is merged into ``MODEL_SPECS`` at
-CLI startup. Startup itself never touches the network, and cached entries are
-never marked ``featured`` — Settings pickers lead with the release's curated-by-
-usage set (and admit any catalogued id through their "Other…" entry), while
+Bundled catalogs are snapshots taken when a Kolega Code release is cut, so a
+model published after that release is unknown to them. ``models refresh``
+fetches a provider's live catalog once, on request, and caches the result in
+the state directory; the cache is merged into ``MODEL_SPECS`` at CLI startup.
+Startup itself never touches the network, and cached entries are never marked
+``featured`` — Settings pickers lead with the release's curated set, while
 sub-agent prompts keep showing the featured set alone.
 """
 
@@ -23,55 +22,87 @@ from typing import Any, Iterable, Optional, Sequence
 from kolega_code.config import ModelProvider
 from kolega_code.llm.specs import MODEL_SPECS, is_featured_model
 from kolega_code.llm.specs import openrouter_catalog as openrouter
+from kolega_code.llm.specs import tinker_catalog as tinker
 
 from .provider_registry import PROVIDER_LABELS, get_ui_model, rebuild_ui_model_options
 from .session_store import default_state_dir
 
-# Point the overlay at an explicit file (useful for pinning a catalog in CI).
-CATALOG_PATH_ENV = "KOLEGA_CODE_OPENROUTER_CATALOG"
-# Ignore any cached overlay and use the bundled snapshot alone.
-CATALOG_DISABLE_ENV = "KOLEGA_CODE_DISABLE_OPENROUTER_CATALOG"
+# Overlay sources keyed by provider value. Each module exposes PROVIDER,
+# MODELS_URL, CACHE_FILENAME, fetch_models(), catalog_entries(), load_cache()
+# and save_cache().
+OVERLAY_SOURCES = {
+    openrouter.PROVIDER: openrouter,
+    tinker.PROVIDER: tinker,
+}
+
+
+def _overlay_module(catalog: str) -> Any:
+    module = OVERLAY_SOURCES.get(catalog)
+    if module is None:
+        raise ValueError(
+            f"No refreshable catalog for provider '{catalog}'. Valid: {', '.join(sorted(OVERLAY_SOURCES))}"
+        )
+    return module
+
+
+def _catalog_env_names(catalog: str) -> tuple[str, str]:
+    upper = catalog.upper()
+    return f"KOLEGA_CODE_{upper}_CATALOG", f"KOLEGA_CODE_DISABLE_{upper}_CATALOG"
+
+
+# OpenRouter's pin/disable env vars, kept as module constants for back-compat
+# (tests and docs reference them by name).
+CATALOG_PATH_ENV, CATALOG_DISABLE_ENV = _catalog_env_names(openrouter.PROVIDER)
 
 SORT_CHOICES = ("popularity", "id")
 
 
-def overlay_path(state_dir: Optional[Path] = None, env: Optional[dict[str, str]] = None) -> Path:
-    """Resolve the OpenRouter overlay cache path."""
+def overlay_path(
+    state_dir: Optional[Path] = None,
+    env: Optional[dict[str, str]] = None,
+    catalog: str = openrouter.PROVIDER,
+) -> Path:
+    """Resolve an overlay cache path for ``catalog``."""
+    module = _overlay_module(catalog)
     environ = env if env is not None else dict(os.environ)
-    override = environ.get(CATALOG_PATH_ENV)
+    path_env, _ = _catalog_env_names(catalog)
+    override = environ.get(path_env)
     if override:
         return Path(override).expanduser()
     root = state_dir or default_state_dir(environ)
-    return Path(root).expanduser() / openrouter.CACHE_FILENAME
+    return Path(root).expanduser() / module.CACHE_FILENAME
 
 
-def overlay_disabled(env: Optional[dict[str, str]] = None) -> bool:
+def overlay_disabled(env: Optional[dict[str, str]] = None, catalog: str = openrouter.PROVIDER) -> bool:
     environ = env if env is not None else dict(os.environ)
-    value = (environ.get(CATALOG_DISABLE_ENV) or "").strip().lower()
+    _, disable_env = _catalog_env_names(catalog)
+    value = (environ.get(disable_env) or "").strip().lower()
     return value not in ("", "0", "false", "no")
 
 
 def apply_catalog_overlay(
     state_dir: Optional[Path] = None,
     env: Optional[dict[str, str]] = None,
+    catalog: str = openrouter.PROVIDER,
 ) -> int:
-    """Merge a cached OpenRouter catalog into ``MODEL_SPECS``; return entries added.
+    """Merge a cached ``catalog`` overlay into ``MODEL_SPECS``; return entries added.
 
     Bundled entries always win: a refresh may add models, never redefine the
     reviewed specs (or the featured set) that shipped with the release. Any
     failure is silent by design — the bundled snapshot is a complete catalog on
     its own, and no CLI command should fail because a cache file is unreadable.
     """
-    if overlay_disabled(env):
+    module = _overlay_module(catalog)
+    if overlay_disabled(env, catalog=catalog):
         return 0
-    path = overlay_path(state_dir, env)
-    entries = openrouter.load_cache(path)
+    path = overlay_path(state_dir, env, catalog=catalog)
+    entries = module.load_cache(path)
     if not entries:
         return 0
 
     added = 0
     for identifier, spec in entries:
-        key = (openrouter.PROVIDER, identifier)
+        key = (module.PROVIDER, identifier)
         if key in MODEL_SPECS:
             continue
         # Overlay models are never featured: the picker keeps showing the
@@ -82,6 +113,14 @@ def apply_catalog_overlay(
     if added:
         rebuild_ui_model_options()
     return added
+
+
+def apply_all_catalog_overlays(state_dir: Optional[Path] = None) -> int:
+    """Merge every configured catalog overlay; return total entries added."""
+    total = 0
+    for catalog in OVERLAY_SOURCES:
+        total += apply_catalog_overlay(state_dir, catalog=catalog)
+    return total
 
 
 def catalog_rows(
@@ -186,24 +225,25 @@ def run_models_list(args: Any, printer) -> int:
 def run_models_refresh(args: Any, printer, error_printer) -> int:
     """Handle ``kolega-code models refresh``."""
     provider = _resolve_provider(getattr(args, "provider", None)) or openrouter.PROVIDER
-    if provider != openrouter.PROVIDER:
-        error_printer(f"Only '{openrouter.PROVIDER}' has a refreshable catalog.")
+    module = OVERLAY_SOURCES.get(provider)
+    if module is None:
+        error_printer(f"No refreshable catalog for provider '{provider}'. Valid: {', '.join(sorted(OVERLAY_SOURCES))}.")
         return 2
 
-    printer(f"Fetching {openrouter.MODELS_URL} ...")
+    printer(f"Fetching {module.MODELS_URL} ...")
     try:
-        payload = openrouter.fetch_models()
-        entries = openrouter.catalog_entries(payload)
+        payload = module.fetch_models()
+        entries = module.catalog_entries(payload)
     except Exception as exc:  # noqa: BLE001 - surface the cause, whatever the transport raised
-        error_printer(f"Could not refresh the OpenRouter catalog: {exc}")
+        error_printer(f"Could not refresh the {provider} catalog: {exc}")
         return 1
 
-    bundled = {model for (provider_value, model) in MODEL_SPECS if provider_value == openrouter.PROVIDER}
-    path = overlay_path(getattr(args, "state_dir", None))
-    previously_cached = {identifier for identifier, _ in openrouter.load_cache(path)}
+    bundled = {model for (provider_value, model) in MODEL_SPECS if provider_value == provider}
+    path = overlay_path(getattr(args, "state_dir", None), catalog=provider)
+    previously_cached = {identifier for identifier, _ in module.load_cache(path)}
     new_models = [identifier for identifier, _ in entries if identifier not in bundled]
 
-    openrouter.save_cache(path, entries, fetched_at=dt.datetime.now(dt.timezone.utc).isoformat())
+    module.save_cache(path, entries, fetched_at=dt.datetime.now(dt.timezone.utc).isoformat())
 
     added = [identifier for identifier in new_models if identifier not in previously_cached]
     printer(
@@ -212,8 +252,9 @@ def run_models_refresh(args: Any, printer, error_printer) -> int:
     )
     if added:
         printer("Newly available: " + ", ".join(sorted(added)[:20]) + ("..." if len(added) > 20 else ""))
-    if overlay_disabled():
-        printer(f"NOTE: {CATALOG_DISABLE_ENV} is set, so the cache is ignored at startup.")
+    if overlay_disabled(catalog=provider):
+        _, disable_env = _catalog_env_names(provider)
+        printer(f"NOTE: {disable_env} is set, so the cache is ignored at startup.")
     return 0
 
 

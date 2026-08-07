@@ -64,6 +64,14 @@ def build_thinking_request_params(provider: str, model_name: str, effort: Option
             return {"thinking": {"type": "disabled"}}
         return {"output_config": {"effort": normalized}}
 
+    if spec.mode == "tinker_native_effort":
+        # Native Tinker SamplingClient: there is no request-level effort
+        # parameter — thinking is a renderer property (tml-renderers effort
+        # float for Inkling, thinking/disable-thinking renderer variants for
+        # cookbook models). The provider consumes the named effort to select
+        # and configure the renderer at request time.
+        return {"tinker_effort": normalized}
+
     if spec.mode == "deepseek_effort":
         # DeepSeek's OpenAI-compatible /v1 endpoint: reasoning is on by default and graded
         # via the standard reasoning_effort param (high/max; it also accepts low/medium/xhigh,

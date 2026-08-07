@@ -52,7 +52,7 @@ provider or model.
 | `KIMI_CODING_API_KEY` | Kimi Coding Plan |
 | `OLLAMA_API_KEY` | Ollama Cloud |
 | `OPENROUTER_API_KEY` | OpenRouter |
-| `TINKER_API_KEY` | Thinking Machines (Tinker) |
+| `TINKER_API_KEY` | Thinking Machines — both the `thinking_machines` (Anthropic-compatible) and `tinker` (native SDK) providers |
 
 The local `llama` provider needs no key. The `zai` key authenticates against Z.AI's
 Anthropic-compatible endpoint (it is the key Z.AI also documents as `ANTHROPIC_AUTH_TOKEN`).

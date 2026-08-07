@@ -32,6 +32,7 @@ The agent runtime recognizes these providers:
 | Z.AI (GLM Coding Plan) | `zai` | `ZAI_API_KEY` |
 | Kimi Coding Plan | `kimi_coding` | `KIMI_CODING_API_KEY` |
 | Thinking Machines | `thinking_machines` | `TINKER_API_KEY` |
+| Tinker | `tinker` | `TINKER_API_KEY` |
 | Ollama Cloud | `ollama_cloud` | `OLLAMA_API_KEY` |
 | OpenRouter | `openrouter` | `OPENROUTER_API_KEY` |
 | Llama (local) | `llama` | _none — local model_ |
@@ -129,6 +130,36 @@ field; `none` disables reasoning). Tool use, streaming, and
 Anthropic-compatible endpoint is still in beta (low-traffic, no prompt caching —
 `cache_control` is ignored), so treat it as best for personal use and
 experiments.
+</Aside>
+
+<Aside type="tip">
+**Tinker (native sampling).** The `tinker` provider drives Tinker's **native
+`SamplingClient`** (the official SDK) instead of the compatible endpoints, so
+the agent loop runs on the exact rendered prompts, sampled token ids, per-token
+behavior logprobs, stop reasons, and prefix-cache metadata that on-policy RL
+needs. It requires the optional native stack — `pip install 'kolega-code[tinker]'`
+(torch and the official renderers) — and authenticates with the same
+`TINKER_API_KEY`.
+
+Any base model from Tinker's catalog is selectable (`Qwen/Qwen3-8B` is the
+default), and fine-tuned checkpoints work by sampler weights path:
+`--provider tinker --model tinker://<run-id>:train:<n>/sampler_weights/<step>`.
+The provider resolves a checkpoint's base model at runtime and uses that base's
+specs (context window, vision, thinking effort). Effort is renderer-level: the
+Inkling family accepts `none`/`low`/`medium`/`high`/`xhigh`/`max` (mapped to
+tml-renderers effort floats); other bases offer thinking on/off.
+
+The catalog is generated from Tinker's published `models.json` and can be
+refreshed without waiting for a release: `kolega-code models refresh
+--provider tinker`.
+
+An optional structured trace sink (`LLMClient(trace_sink=...)`) records the
+native model input, sampled tokens, logprobs, stop reason, cache usage,
+model/checkpoint identity, and request role per call — the RL hand-off point.
+Known limitations of the native path: no server-side streaming (output is
+replayed token-wise after the sample completes), no `tool_choice` (tool calls
+depend on the renderer's parser, which may omit ids), and token counting is
+client-side via the model's own tokenizer.
 </Aside>
 
 <Aside type="tip">

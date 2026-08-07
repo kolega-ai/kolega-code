@@ -1,11 +1,32 @@
 from typing import Any, Dict, Optional
 
-from .catalog import MODEL_SPECS
+from .catalog import MODEL_SPECS, WILDCARD_MODEL_SPECS
 from .types import ThinkingEffortSpec
 
 
 def _provider_value(provider: Any) -> str:
     return provider.value if hasattr(provider, "value") else provider
+
+
+def _resolve_specs(provider: Any, model_name: str) -> Optional[Dict[str, Any]]:
+    """Resolve exact catalog entries first, then provider wildcard templates.
+
+    A wildcard template (e.g. ``("tinker", "tinker://*")``) supplies the spec
+    for a model addressed by an uncatalogued, per-user identifier — currently
+    Tinker sampler checkpoint paths. Returning the template for any prefix
+    match keeps every accessor (vision, effort, context, budgets) working for
+    those models instead of raising.
+    """
+    provider_str = _provider_value(provider)
+    key = (provider_str, model_name)
+    if key in MODEL_SPECS:
+        return MODEL_SPECS[key]
+    for (wildcard_provider, prefix), spec in WILDCARD_MODEL_SPECS.items():
+        # A trailing ``*`` is a glob marker, not part of the prefix.
+        match_prefix = prefix[:-1] if prefix.endswith("*") else prefix
+        if wildcard_provider == provider_str and model_name.startswith(match_prefix):
+            return spec
+    return None
 
 
 def get_model_specs(provider: str, model_name: str) -> Dict[str, Any]:
@@ -20,13 +41,28 @@ def get_model_specs(provider: str, model_name: str) -> Dict[str, Any]:
         Dictionary containing context_length, max_completion_tokens, and default_temperature
     """
     # Handle both string and enum provider types
-    provider_str = _provider_value(provider)
-    key = (provider_str, model_name)
-
-    if key not in MODEL_SPECS:
+    specs = _resolve_specs(provider, model_name)
+    if specs is None:
+        provider_str = _provider_value(provider)
         raise ValueError(f"Model {model_name} from provider {provider_str} is not supported.")
+    return specs
 
-    return MODEL_SPECS[key]
+
+def model_is_known(provider: Any, model_name: str) -> bool:
+    """Whether ``model_name`` resolves to a catalog entry or wildcard template.
+
+    Mirrors the strict ``get_model_specs`` acceptance boundary without raising,
+    so config/UI layers can accept wildcard-addressed models (Tinker sampler
+    checkpoint paths) alongside catalogued ones.
+    """
+    return _resolve_specs(provider, model_name) is not None
+
+
+def provider_has_wildcard_models(provider: Any) -> bool:
+    """Whether ``provider`` declares a wildcard template, i.e. accepts
+    uncatalogued model identifiers (used to enable typed-id entry in pickers)."""
+    provider_str = _provider_value(provider)
+    return any(wildcard_provider == provider_str for wildcard_provider, _ in WILDCARD_MODEL_SPECS)
 
 
 def supports_vision(provider: str, model_name: str) -> bool:

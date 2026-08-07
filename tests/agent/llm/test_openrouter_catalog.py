@@ -94,7 +94,20 @@ def test_anthropic_models_opt_out_of_reasoning_replay() -> None:
 
 
 def test_openrouter_entries_do_not_shadow_direct_provider_models() -> None:
-    # Direct providers are keyed by bare model names; the gateway always carries
-    # a vendor prefix, so the merged catalog cannot collide.
-    direct = {model for provider, model in MODEL_SPECS if provider != PROVIDER}
-    assert not direct & set(OPENROUTER_MODELS)
+    # Direct providers used to be keyed by bare model names while the gateway
+    # always carried a vendor prefix, so the strings could never collide.
+    # Tinker is the first direct provider with vendor-prefixed ids (e.g.
+    # "Qwen/Qwen3-8B" is both a Tinker id and an OpenRouter id), so the string
+    # sets now overlap — but the merged catalog is keyed by (provider, model)
+    # tuples and the gateway is merged last, so the real invariant is that a
+    # direct provider's spec is never replaced by the gateway's. Assert that
+    # directly: shared ids keep their direct spec, not the gateway's markers.
+    shared = {model for provider, model in MODEL_SPECS if provider != PROVIDER and model in OPENROUTER_MODELS}
+    assert shared  # the overlap exists today (Qwen ids served by both)
+
+    for provider, model in MODEL_SPECS:
+        if provider == PROVIDER or model not in shared:
+            continue
+        spec = MODEL_SPECS[(provider, model)]
+        assert "featured" not in spec
+        assert "preferred_edit_protocol" not in spec
