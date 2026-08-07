@@ -152,7 +152,10 @@ exclude-newer = "1 week"
 # cryptography 50.0.0 (released 2026-07-31) is the only release fixing
 # CVE-2026-69247/-69248/-69249 and sat inside the 1-week quarantine when the
 # advisories landed (2026-08-04); admit it without widening the global window.
-exclude-newer-package = { cryptography = "2026-08-01T00:00:00Z" }
+# h2 4.4.1 (released 2026-08-03) is the only release fixing GHSA-6hr6-w5qg-qmwg
+# (CVE-2026-71554, duplicate Host header request smuggling) and sits inside the
+# same quarantine; admit it the same way.
+exclude-newer-package = { cryptography = "2026-08-01T00:00:00Z", h2 = "2026-08-04T00:00:00Z" }
 
 [tool.pyright]
 include = ["kolega_code", "benchmarks", "tests"]
