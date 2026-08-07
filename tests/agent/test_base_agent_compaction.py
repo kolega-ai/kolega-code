@@ -79,8 +79,10 @@ class TestBaseAgent:
         assert fake.stream.await_args is not None
         call_args = fake.stream.await_args.kwargs
         assert call_args["model"] == base_agent.primary_model_config.model
-        # Summary budget is capped small (we are not aiming for a gigantic summary).
-        assert call_args["max_completion_tokens"] <= 2048
+        # Summary budget is capped by HistoryCompressor.SUMMARY_MAX_TOKENS.
+        from kolega_code.agent.compression import HistoryCompressor
+
+        assert call_args["max_completion_tokens"] <= HistoryCompressor.SUMMARY_MAX_TOKENS
 
     @pytest.mark.asyncio
     async def testcompress_history_insufficient_history(self, base_agent):
