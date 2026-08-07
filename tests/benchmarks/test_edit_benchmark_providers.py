@@ -31,7 +31,7 @@ def test_provider_smoke_matrix_covers_every_catalog_provider() -> None:
     matrix = _catalog_smoke_matrix()
 
     assert [item.provider for item in matrix.models] == catalog_providers()
-    assert len(matrix.models) == 14
+    assert len(matrix.models) == 15
     assert all(
         item.protocols == ["search_replace", "codex_apply_patch", "claude_code", "hashline_v2"]
         for item in matrix.models
@@ -59,7 +59,7 @@ async def test_every_catalog_provider_has_a_freeform_transport_contract(provider
             declaration = declarations[0]
             assert declaration.parameters is not None
             assert declaration.parameters.required == ["input"]
-        elif provider in {"anthropic", "moonshot", "zai", "kimi_coding"}:
+        elif provider in {"anthropic", "moonshot", "zai", "kimi_coding", "thinking_machines"}:
             assert definition.to_anthropic()["input_schema"]["required"] == ["input"]
         else:
             assert definition.to_openai()["function"]["parameters"]["required"] == ["input"]
@@ -89,7 +89,7 @@ async def test_every_catalog_provider_has_a_claude_json_transport_contract(provi
             declaration = declarations[0]
             assert declaration.parameters is not None
             assert declaration.parameters.required == required
-        elif provider in {"anthropic", "moonshot", "zai", "kimi_coding"}:
+        elif provider in {"anthropic", "moonshot", "zai", "kimi_coding", "thinking_machines"}:
             assert definition.to_anthropic()["input_schema"]["required"] == required
         else:
             assert definition.to_openai()["function"]["parameters"]["required"] == required
@@ -124,7 +124,7 @@ async def test_every_catalog_provider_has_a_hashline_json_transport_contract(pro
             assert edits.items.any_of is not None
             assert len(edits.items.any_of) == 5
             return
-        elif provider in {"anthropic", "moonshot", "zai", "kimi_coding"}:
+        elif provider in {"anthropic", "moonshot", "zai", "kimi_coding", "thinking_machines"}:
             schema = definition.to_anthropic()["input_schema"]
         else:
             schema = definition.to_openai()["function"]["parameters"]

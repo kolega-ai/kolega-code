@@ -27,6 +27,10 @@ async def _probe_generate(client: Any, model: str, messages: MessageHistory) -> 
     with llm_call_origin(helper_origin("model_connection")):
         return await client.generate(
             messages=messages,
+            # The Anthropic provider family (anthropic, moonshot, zai,
+            # kimi_coding, thinking_machines) requires a system message, so the
+            # probe must carry one even though it is not the point of the test.
+            system=Message(role="system", content=[TextBlock(text="Reply with OK.")]),
             model=model,
             max_completion_tokens=CONNECTION_TEST_MAX_COMPLETION_TOKENS,
             tools=[],

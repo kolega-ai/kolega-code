@@ -267,7 +267,7 @@ class InstrumentedLLMClient(LLMClient):
             normalized_usage = None
             if usage_details:
                 provider = usage_details.get("provider", self.provider_name)
-                if provider in ["anthropic", "moonshot", "kimi_coding"]:
+                if provider in ["anthropic", "moonshot", "kimi_coding", "thinking_machines"]:
                     normalized_usage = {
                         "input": usage_details.get("input_tokens", 0),
                         "output": usage_details.get("output_tokens", 0),

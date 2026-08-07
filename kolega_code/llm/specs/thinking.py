@@ -54,6 +54,16 @@ def build_thinking_request_params(provider: str, model_name: str, effort: Option
             "output_config": {"effort": normalized},
         }
 
+    if spec.mode == "tinker_effort":
+        # Thinking Machines (Tinker) Anthropic-compatible endpoint: effort rides
+        # in the Tinker-specific output_config.effort field ("low".."max"; "max"
+        # behaves like "xhigh"). Reasoning is on by default; the documented way
+        # to turn it off is thinking={"type": "disabled"} (Anthropic's
+        # thinking.budget_tokens is accepted for wire compatibility but ignored).
+        if normalized == "none":
+            return {"thinking": {"type": "disabled"}}
+        return {"output_config": {"effort": normalized}}
+
     if spec.mode == "deepseek_effort":
         # DeepSeek's OpenAI-compatible /v1 endpoint: reasoning is on by default and graded
         # via the standard reasoning_effort param (high/max; it also accepts low/medium/xhigh,

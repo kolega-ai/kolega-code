@@ -46,8 +46,29 @@ async def test_model_connection_sends_a_tiny_tool_free_request(tmp_path: Path) -
     assert isinstance(request, dict)
     assert request["max_completion_tokens"] == 32
     assert request["tools"] == []
+    # The Anthropic provider family requires a system message; the probe must
+    # always send one or Test Connection dies on its assert (thinking_machines,
+    # anthropic, moonshot, zai, kimi_coding).
+    system = request["system"]
+    assert system.role == "system"
+    assert system.get_text_content() == "Reply with OK."
     history = request["messages"]
     assert history[0].content[0].text == "Reply with OK."
+
+
+@pytest.mark.asyncio
+async def test_model_connection_satisfies_anthropic_family_system_requirement(tmp_path: Path) -> None:
+    """The probe request must not trip AnthropicProvider's `assert system is not None`."""
+
+    class FakeAnthropicFamilyClient:
+        async def generate(self, **kwargs):
+            # Mirrors kolega_code/llm/providers/anthropic.py: system is required.
+            assert kwargs["system"] is not None
+            return Message(role="assistant", content=[TextBlock(text="OK")])
+
+    result = await _probe(client_factory=lambda **_kwargs: FakeAnthropicFamilyClient())
+
+    assert result.ok is True
 
 
 @pytest.mark.asyncio

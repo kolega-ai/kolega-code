@@ -41,6 +41,8 @@ def test_supports_vision_flag_present_on_every_entry():
         ("fireworks", "accounts/fireworks/models/minimax-m3", True),
         ("fireworks", "accounts/fireworks/models/kimi-k2p7-code", True),
         ("together", "moonshotai/Kimi-K2.7-Code", True),
+        ("thinking_machines", "thinkingmachines/Inkling", True),
+        ("thinking_machines", "thinkingmachines/Inkling-Small", True),
         # Non-vision models
         ("deepseek", "deepseek-v4-pro", False),
         ("deepseek", "deepseek-v4-flash", False),
