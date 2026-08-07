@@ -142,6 +142,26 @@ class FakeRenderer:
         return iter(self.stream_deltas)
 
 
+def _fake_build_prompt(
+    renderer: Any,
+    openai_messages: List[Dict[str, Any]],
+    system_text: str,
+    tools: Sequence[Any],
+    effort: Optional[str],
+) -> FakeModelInput:
+    """Mirror the provider's prompt-builder effort logic without the cookbook.
+
+    The real ``_build_prompt`` imports ``tinker_cookbook.third_party.openai_compat``
+    at call time, which does not exist in CI (no ``[tinker]`` extra), so the
+    hermetic tests stub it and keep only the effort-passing branch under test.
+    The real bridge is exercised by the skipif-guarded cookbook test and by the
+    implementation-time live verification.
+    """
+    if effort and effort != "none" and getattr(renderer, "_accepts_effort", False):
+        return renderer.build_generation_prompt(openai_messages, effort=tinker_provider._effort_float(effort))
+    return renderer.build_generation_prompt(openai_messages)
+
+
 def _patch_provider(monkeypatch: pytest.MonkeyPatch, client: FakeSamplingClient, renderer: FakeRenderer) -> None:
     """Point the provider at the fakes: fake SDK module, client factory, renderer."""
 
@@ -153,6 +173,7 @@ def _patch_provider(monkeypatch: pytest.MonkeyPatch, client: FakeSamplingClient,
     monkeypatch.setattr(tinker_provider, "_tinker", fake_module)
     monkeypatch.setattr(tinker_provider, "_NATIVE_STACK_AVAILABLE", True)
     monkeypatch.setattr(tinker_provider, "_renderer_for_base_model", lambda base, effort: renderer)
+    monkeypatch.setattr(tinker_provider, "_build_prompt", _fake_build_prompt)
 
 
 def _make_provider(trace_sink=None) -> TinkerProvider:
@@ -254,6 +275,7 @@ async def test_checkpoint_model_uses_model_path_and_resolves_base(monkeypatch: p
         "_renderer_for_base_model",
         lambda base, effort: FakeRenderer({"role": "assistant", "content": "ok"}),
     )
+    monkeypatch.setattr(tinker_provider, "_build_prompt", _fake_build_prompt)
 
     provider = _make_provider()
     provider.model = CHECKPOINT
