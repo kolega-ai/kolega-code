@@ -14,6 +14,7 @@ from .fireworks import FIREWORKS_SPECS
 from .dashscope import DASHSCOPE_SPECS
 from .zai import ZAI_SPECS
 from .thinking_machines import THINKING_MACHINES_SPECS
+from .tinker import TINKER_SPECS, TINKER_WILDCARD_SPECS
 from .openrouter import OPENROUTER_SPECS
 
 # Dictionary mapping (provider, model_name) to model specifications.
@@ -41,9 +42,18 @@ MODEL_SPECS: Dict[Tuple[str, str], Dict[str, Any]] = {
     **DASHSCOPE_SPECS,
     **ZAI_SPECS,
     **THINKING_MACHINES_SPECS,
+    **TINKER_SPECS,
     # The OpenRouter gateway catalog is generated and merged last so it can
     # never shadow a hand-maintained direct-provider entry. Its insertion order
     # is OpenRouter's own usage ranking, and its leading entries carry
     # ``featured`` so pickers stay short.
     **OPENROUTER_SPECS,
+}
+
+# Wildcard spec templates: fallback specs for uncatalogued, per-user model
+# identifiers (Tinker sampler checkpoint paths), resolved by prefix. Consulted
+# by ``get_model_specs`` after exact entries and by the config/UI validation
+# helpers (``model_is_known``, ``provider_has_wildcard_models``).
+WILDCARD_MODEL_SPECS: Dict[Tuple[str, str], Dict[str, Any]] = {
+    **TINKER_WILDCARD_SPECS,
 }

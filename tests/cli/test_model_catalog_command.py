@@ -255,6 +255,72 @@ def test_refresh_rejects_providers_without_a_refreshable_catalog(tmp_path: Path)
     assert "refreshable catalog" in "\n".join(errors)
 
 
+# --- tinker overlay (same machinery, second provider) ---------------------
+
+
+def test_tinker_overlay_adds_new_models_without_featuring_them(tmp_path: Path, restore_catalog) -> None:
+    from kolega_code.llm.specs import tinker_catalog as tinker
+
+    entries = [
+        (
+            "Qwen/Qwen3.7-8B",
+            {
+                "context_length": 65536,
+                "max_completion_tokens": 32768,
+                "default_temperature": 1.0,
+                "supports_vision": False,
+            },
+        )
+    ]
+    path = tmp_path / tinker.CACHE_FILENAME
+    tinker.save_cache(path, entries, fetched_at="2026-08-07T00:00:00+00:00")
+
+    added = model_catalog.apply_catalog_overlay(tmp_path, env={}, catalog=tinker.PROVIDER)
+
+    assert added == 1
+    spec = MODEL_SPECS[(tinker.PROVIDER, "Qwen/Qwen3.7-8B")]
+    assert spec["context_length"] == 65536
+    assert "featured" not in spec
+    # The tinker overlay has its own disable env var, derived from the provider.
+    disabled = model_catalog.apply_catalog_overlay(
+        tmp_path, env={"KOLEGA_CODE_DISABLE_TINKER_CATALOG": "1"}, catalog=tinker.PROVIDER
+    )
+    assert disabled == 0
+
+
+def test_tinker_refresh_writes_its_own_cache(tmp_path: Path, monkeypatch) -> None:
+    from kolega_code.llm.specs import tinker_catalog as tinker
+
+    payload = [
+        {
+            "name": "Qwen3.7-8B",
+            "tinker_id": "Qwen/Qwen3.7-8B",
+            "context": "64K",
+            "type": "Hybrid + Vision",
+            "arch": "Dense",
+        },
+        {
+            "name": "Some-Base-Model",
+            "tinker_id": "vendor/Something-Base",
+            "context": "32K",
+            "type": "Base",
+            "arch": "Dense",
+        },
+    ]
+    monkeypatch.setattr(tinker, "fetch_models", lambda **_: payload)
+    lines, printer = _collect()
+    errors, error_printer = _collect()
+
+    exit_code = model_catalog.run_models_refresh(
+        _args(provider=tinker.PROVIDER, state_dir=tmp_path), printer, error_printer
+    )
+
+    assert exit_code == 0, errors
+    cached = tinker.load_cache(tmp_path / tinker.CACHE_FILENAME)
+    assert [identifier for identifier, _spec in cached] == ["Qwen/Qwen3.7-8B"]
+    assert "1 not in the bundled catalog" in "\n".join(lines)
+
+
 # --- /model resolution ----------------------------------------------------
 
 

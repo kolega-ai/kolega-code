@@ -27,6 +27,7 @@ class ModelProvider(str, Enum):
     OLLAMA_CLOUD = "ollama_cloud"
     OPENROUTER = "openrouter"  # Gateway in front of many vendors' models
     THINKING_MACHINES = "thinking_machines"  # Thinking Machines Lab (Tinker API)
+    TINKER = "tinker"  # Native Tinker SamplingClient (agentic-RL trajectory source)
 
 
 class EditProtocol(str, Enum):
@@ -313,6 +314,8 @@ class AgentConfig(BaseModel):
             ModelProvider.OLLAMA_CLOUD: self.ollama_cloud_api_key,
             ModelProvider.OPENROUTER: self.openrouter_api_key,
             ModelProvider.THINKING_MACHINES: self.thinking_machines_api_key,
+            # The native Tinker provider shares the same TINKER_API_KEY credential.
+            ModelProvider.TINKER: self.thinking_machines_api_key,
             ModelProvider.LLAMA: None,  # Local model, no API key needed
         }
         return api_key_map[provider]

@@ -16,7 +16,9 @@ from kolega_code.llm.specs import (
     default_thinking_effort,
     get_model_specs,
     is_featured_model,
+    model_is_known,
     provider_has_featured_models,
+    provider_has_wildcard_models,
     thinking_effort_options,
 )
 
@@ -39,6 +41,7 @@ PROVIDER_LABELS: dict[ModelProvider, str] = {
     ModelProvider.OLLAMA_CLOUD: "Ollama Cloud",
     ModelProvider.OPENROUTER: "OpenRouter",
     ModelProvider.THINKING_MACHINES: "Thinking Machines",
+    ModelProvider.TINKER: "Tinker",
 }
 
 # Friendly display names for models. Anything not listed falls back to its raw
@@ -156,6 +159,9 @@ PROVIDER_DEFAULT_MODEL: dict[ModelProvider, str] = {
     # live usage, and that must never silently change what new users get.
     ModelProvider.OPENROUTER: "moonshotai/kimi-k3",
     ModelProvider.THINKING_MACHINES: "thinkingmachines/Inkling",
+    # Cheap and renderable without the optional tinker-inkling extra, so the
+    # provider works out of the box for anyone who installs the base extras.
+    ModelProvider.TINKER: "Qwen/Qwen3-8B",
 }
 
 UI_DEFAULT_PROVIDER = ModelProvider.MOONSHOT.value
@@ -193,6 +199,8 @@ def _api_key_env(provider: ModelProvider) -> str:
         return "OLLAMA_API_KEY"
     if provider == ModelProvider.THINKING_MACHINES:
         # Thinking Machines documents TINKER_API_KEY, not THINKING_MACHINES_API_KEY.
+        return "TINKER_API_KEY"
+    if provider == ModelProvider.TINKER:
         return "TINKER_API_KEY"
     return f"{provider.value.upper()}_API_KEY"
 
@@ -293,10 +301,17 @@ def default_ui_thinking_effort(provider: str, model: str) -> str | None:
 
 
 def get_ui_model(provider: str, model: str) -> ModelOption | None:
-    """Return a supported UI model option."""
+    """Return a supported UI model option.
+
+    Also resolves wildcard-addressed models (Tinker sampler checkpoint paths):
+    they are not listed in pickers, but typed ids must resolve so ``/model``,
+    the Settings "Other…" entry, and settings.json all accept them.
+    """
     for option in UI_MODEL_OPTIONS:
         if option.provider == provider and option.model == model:
             return option
+    if provider_has_wildcard_models(provider) and model_is_known(provider, model):
+        return _model_option(ModelProvider(provider), model)
     return None
 
 

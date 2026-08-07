@@ -83,7 +83,7 @@ from .config import (
 )
 from .connection import CliConnectionManager
 from .mentions import build_file_attachments
-from .model_catalog import SORT_CHOICES, apply_catalog_overlay, run_models_list, run_models_refresh
+from .model_catalog import SORT_CHOICES, apply_all_catalog_overlays, run_models_list, run_models_refresh
 from .session_store import SessionRecord, SessionStore, SessionStoreError, resolve_active_project
 from .settings import CliSettings, SettingsStore, SettingsStoreError
 from .goal import (
@@ -156,9 +156,9 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
     except (OSError, ValueError, RuntimeError):
         pass
     args = parse_args(list(argv) if argv is not None else sys.argv[1:])
-    # Merge any cached provider catalog before a command resolves a model. This
-    # only reads a local file; refreshing it is an explicit `models refresh`.
-    apply_catalog_overlay(getattr(args, "state_dir", None))
+    # Merge any cached provider catalogs before a command resolves a model.
+    # This only reads local files; refreshing them is an explicit `models refresh`.
+    apply_all_catalog_overlays(getattr(args, "state_dir", None))
     try:
         if getattr(args, "version", False):
             return _run_version()

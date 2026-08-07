@@ -11,7 +11,7 @@ from pydantic import ValidationError
 
 from kolega_code.auth.tokens import ChatGPTTokenManager, OAuthTokens
 from kolega_code.config import AgentConfig, AgentRole, EditProtocol, ModelConfig, ModelProvider, RateLimitConfig
-from kolega_code.llm.specs import MODEL_SPECS, get_model_specs, normalize_thinking_effort
+from kolega_code.llm.specs import MODEL_SPECS, get_model_specs, model_is_known, normalize_thinking_effort
 from kolega_code.mcp.config import load_mcp_config
 from kolega_code.services.lsp.config import LspConfig
 
@@ -54,6 +54,8 @@ API_KEY_ENV = {
     ModelProvider.OLLAMA_CLOUD: "OLLAMA_API_KEY",
     ModelProvider.OPENROUTER: "OPENROUTER_API_KEY",
     ModelProvider.THINKING_MACHINES: "TINKER_API_KEY",
+    # Native Tinker sampling authenticates with the same key.
+    ModelProvider.TINKER: "TINKER_API_KEY",
 }
 
 DEFAULT_WEB_SEARCH_BACKEND = "duckduckgo"
@@ -180,11 +182,19 @@ def _ensure_explicit_model_supported(
     provider_source: Optional[str],
 ) -> None:
     """Raise a targeted error when an explicit model is paired with the wrong provider."""
-    if (provider.value, model) in MODEL_SPECS:
+    if model_is_known(provider, model):
         return
 
     model_label = f"{model_source}={model}" if model_source else f"Model '{model}'"
     provider_label = f"{provider_source}={provider.value}" if provider_source else f"provider {provider.value}"
+    if provider == ModelProvider.TINKER:
+        # Checkpoint paths (tinker://...) always resolve via the wildcard; an
+        # unknown base model id needs a catalog refresh.
+        raise CliConfigError(
+            f"{model_label} is not a known Tinker base model. "
+            "Run `kolega-code models refresh --provider tinker` to pick up newer bases, "
+            "or use a saved checkpoint path (tinker://<run-id>/sampler_weights/<step>)."
+        )
     sources = _model_sources(model)
     if sources:
         preferred = sources[0]
@@ -357,9 +367,10 @@ def _coerce_known_model(provider: ModelProvider, model: Optional[str]) -> str:
 
     Guards against a settings.json that points at a model which has since been
     renamed or removed (e.g. an old ChatGPT slug): without this, config building
-    raises and the TUI disables the composer, locking the user out.
+    raises and the TUI disables the composer, locking the user out. Wildcard-
+    addressed models (Tinker checkpoint paths) count as known and are kept.
     """
-    if model and (provider.value, model) in MODEL_SPECS:
+    if model and model_is_known(provider, model):
         return model
     return default_model_for_provider(provider)
 
@@ -448,7 +459,7 @@ def _slot_provider_model(
     saved_provider, saved_model = saved.get("provider"), saved.get("model")
     if saved_provider and saved_model:
         provider = _provider(saved_provider)
-        if (provider.value, saved_model) not in MODEL_SPECS:
+        if not model_is_known(provider, saved_model):
             saved_model = default_model_for_provider(provider)
         return provider, saved_model
 
@@ -539,7 +550,7 @@ def _agent_model_overrides(
                 model_source=model_key,
                 provider_source=provider_key if provider_env_value else None,
             )
-        elif (provider.value, model_value) not in MODEL_SPECS:
+        elif not model_is_known(provider, model_value):
             model_value = default_model_for_provider(provider)
         overrides[role.value] = _model_config(provider, model_value, thinking_effort=effort_value)
     return overrides

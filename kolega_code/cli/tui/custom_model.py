@@ -2,9 +2,10 @@
 
 The Settings screen (main dropdown and every per-agent role row) shows only a
 gateway provider's featured models so each picker stays short, but OpenRouter
-catalogs hundreds of tool-capable models beyond that curated head. This module
-owns the UI-side escape hatch: a trailing "Other…" select option backed by a
-free-text input for any catalogued model id.
+catalogs hundreds of tool-capable models beyond that curated head, and Tinker
+accepts per-user sampler checkpoint paths (``tinker://...``) that no catalog
+could ever list. This module owns the UI-side escape hatch: a trailing "Other…"
+select option backed by a free-text input for any known model id.
 
 Everything here is deliberately a UI concern — ``kolega_code/cli/provider_registry.py``
 (the shared catalog/config layer) is untouched, and the sentinel value is never
@@ -17,6 +18,7 @@ from kolega_code.cli.provider_registry import (
     UI_MODEL_OPTIONS,
     get_ui_model,
     provider_has_featured_models,
+    provider_has_wildcard_models,
     ui_model_options,
 )
 
@@ -35,15 +37,16 @@ def settings_model_options(provider: str, *, vision_only: bool = False) -> list[
     Delegates to ``provider_registry.ui_model_options`` unchanged, then appends
     the "Other…" entry when the provider is a gateway (it marks some models
     featured) and catalogs at least one non-featured model matching the vision
-    filter. For every other provider the output is byte-identical to
-    ``ui_model_options``.
+    filter — or when the provider accepts uncatalogued model ids (Tinker
+    sampler checkpoint paths via a wildcard template). For every other provider
+    the output is byte-identical to ``ui_model_options``.
     """
     options = ui_model_options(provider, vision_only=vision_only)
     has_non_featured = any(
         option.provider == provider and not option.featured and (option.supports_vision or not vision_only)
         for option in UI_MODEL_OPTIONS
     )
-    if provider_has_featured_models(provider) and has_non_featured:
+    if (provider_has_featured_models(provider) and has_non_featured) or provider_has_wildcard_models(provider):
         options.append((CUSTOM_MODEL_LABEL, CUSTOM_MODEL_SENTINEL))
     return options
 

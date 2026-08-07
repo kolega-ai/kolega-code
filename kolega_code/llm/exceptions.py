@@ -37,7 +37,7 @@ Error Mapping:
 
 import asyncio
 import sys
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     # Type hints only. Vendor SDK exception classes are imported lazily inside the
@@ -384,6 +384,32 @@ def map_anthropic_errors(error: "AnthropicError", provider: str | None = None) -
     return LLMError(message=f"AnthropicError: {str(error)}", provider=provider)
 
 
+def map_tinker_errors(error: Exception, provider: str | None = None) -> Optional[LLMError]:
+    """Map Tinker SDK errors by HTTP status when one is exposed.
+
+    The Tinker SDK's exception surface is not documented as a stable taxonomy,
+    so mapping is duck-typed on the status attribute; any error without one
+    falls through to the generic mapping below. Tighten this once the SDK's
+    exception classes stabilize.
+    """
+    status = getattr(error, "status_code", None)
+    if status is None:
+        status = getattr(error, "status", None)
+    message = str(error)
+    if isinstance(status, int):
+        if status in (401, 403):
+            return LLMAuthenticationError(message=f"Tinker auth error: {message}", provider=provider)
+        if status == 402 or "billing" in message.lower():
+            return LLMBillingError(message=f"Tinker billing error: {message}", provider=provider)
+        if status == 429:
+            return LLMRateLimitError(message=f"Tinker rate limit: {message}", provider=provider)
+        if 400 <= status < 500:
+            return LLMInvalidRequestError(message=f"Tinker request error: {message}", provider=provider)
+        if status >= 500:
+            return LLMInternalServerError(message=f"Tinker server error: {message}", provider=provider)
+    return None
+
+
 def map_to_llm_error(error: Exception, provider: str | None = None) -> LLMError:
     """Map any exception to a standardized LLM error.
 
@@ -423,6 +449,10 @@ def map_to_llm_error(error: Exception, provider: str | None = None) -> LLMError:
 
         if isinstance(error, AnthropicError):
             return map_anthropic_errors(error, provider=provider)
+    if "tinker" in sys.modules:
+        mapped = map_tinker_errors(error, provider=provider)
+        if mapped is not None:
+            return mapped
 
     # Map common Python exceptions
     if isinstance(error, ValueError):

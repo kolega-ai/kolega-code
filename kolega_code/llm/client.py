@@ -47,6 +47,7 @@ if TYPE_CHECKING:
     from .providers.anthropic import AnthropicProvider
     from .providers.google import GoogleProvider
     from .providers.openai import OpenAIProvider
+    from .providers.tinker import TinkerProvider
 
 
 class LLMClient:
@@ -76,11 +77,15 @@ class LLMClient:
         token_manager: Optional[Any] = None,
         model: Optional[str] = None,
         usage_ledger: Optional[UsageLedger] = None,
+        trace_sink: Optional[Any] = None,
     ):
         self.provider_name = provider.lower()
         self._api_key = api_key  # Store API key privately
         # Refreshing OAuth token manager, used only by the ChatGPT-subscription provider.
         self._token_manager = token_manager
+        # Optional structured trace sink for the native Tinker provider (the
+        # on-policy RL trajectory record). Ignored by every other provider.
+        self._trace_sink = trace_sink
         # Process-wide usage accounting; every invocation on this client settles
         # into it exactly once (see kolega_code/llm/ledger.py). None disables it.
         self._usage_ledger = usage_ledger
@@ -135,6 +140,10 @@ class LLMClient:
             from .providers.google import GoogleProvider
 
             return GoogleProvider
+        if p == "tinker":
+            from .providers.tinker import TinkerProvider
+
+            return TinkerProvider
         return None
 
     def _initialize_provider(
@@ -143,7 +152,7 @@ class LLMClient:
         max_retries: int = 3,
         requests_per_minute: Optional[int] = None,
         tokens_per_minute: Optional[int] = None,
-    ) -> "Union[AnthropicProvider, OpenAIProvider, GoogleProvider]":
+    ) -> "Union[AnthropicProvider, OpenAIProvider, GoogleProvider, TinkerProvider]":
         """Initialize the appropriate LLM provider based on the provider name.
 
         Args:
@@ -224,6 +233,8 @@ class LLMClient:
             provider_kwargs = {}
             if provider.lower() != "google":
                 provider_kwargs["provider_name"] = provider.lower()
+            if provider.lower() == "tinker":
+                provider_kwargs["trace_sink"] = self._trace_sink
 
             return provider_class(
                 api_key=self._api_key,

@@ -2,6 +2,7 @@ from kolega_code.cli.provider_registry import (
     UI_DEFAULT_MODEL,
     UI_DEFAULT_PROVIDER,
     default_model_for_provider,
+    get_ui_model,
     ui_model_options,
     ui_thinking_effort_options,
 )
@@ -159,3 +160,32 @@ def test_thinking_machines_models_support_vision():
         ("Inkling", "thinkingmachines/Inkling"),
         ("Inkling Small", "thinkingmachines/Inkling-Small"),
     ]
+
+
+def test_tinker_provider_lists_catalogued_bases_and_defaults_to_qwen3_8b():
+    options = ui_model_options(ModelProvider.TINKER.value)
+
+    assert any(model == "Qwen/Qwen3-8B" for _label, model in options)
+    assert default_model_for_provider(ModelProvider.TINKER) == "Qwen/Qwen3-8B"
+    # Inkling bases expose the named effort set through the native renderer.
+    assert ui_thinking_effort_options("tinker", "thinkingmachines/Inkling") == [
+        ("None", "none"),
+        ("Low", "low"),
+        ("Medium", "medium"),
+        ("High", "high"),
+        ("Extra high", "xhigh"),
+        ("Max", "max"),
+    ]
+
+
+def test_tinker_checkpoint_paths_resolve_through_wildcard_and_other_entry():
+    from kolega_code.cli.tui.custom_model import CUSTOM_MODEL_SENTINEL, settings_model_options
+
+    option = get_ui_model("tinker", "tinker://run-1:train:0/sampler_weights/000080")
+    assert option is not None
+    assert option.model == "tinker://run-1:train:0/sampler_weights/000080"
+    assert option.api_key_env == "TINKER_API_KEY"
+    assert option.context_length == 65536
+    assert option.thinking_efforts == ()
+    # The Settings picker offers the typed-id "Other…" entry for tinker.
+    assert settings_model_options("tinker")[-1] == ("Other…", CUSTOM_MODEL_SENTINEL)
