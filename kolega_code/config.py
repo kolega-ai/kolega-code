@@ -250,6 +250,11 @@ class AgentConfig(BaseModel):
         default=None, exclude=True, description="JS runtime for the eval JS kernel: 'bun', 'node', or a path"
     )
 
+    # Sub-agent dispatch (the dispatch_agent tool). Additive with a default that
+    # enables the feature; excluded from serialization (parity with
+    # eval_enabled) since it is resolved from settings.json / CLI flag at build.
+    subagents_enabled: bool = Field(default=True, exclude=True, description="Enable the dispatch_agent sub-agent tool")
+
     def model_config_for_agent(self, agent_name: Optional[str]) -> ModelConfig:
         """Return the model configuration an agent should use for its main loop.
 

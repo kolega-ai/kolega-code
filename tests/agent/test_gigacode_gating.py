@@ -155,6 +155,70 @@ def test_nested_workflow_agent_at_max_depth_is_a_leaf(
     assert "run_workflow" not in names
 
 
+def test_workflow_worker_keeps_dispatch_and_model_catalog_when_subagents_disabled(
+    project_path: str,
+    mock_connection_manager: AgentConnectionManager,
+    agent_config: AgentConfig,
+) -> None:
+    """A workflow worker's dispatch chain is lent by run_workflow, so the
+    subagents master switch must not strip it: list_subagent_models stays
+    visible whenever gigacode or subagents is enabled."""
+    agent_config.subagents_enabled = False
+    agent = _coder(project_path, mock_connection_manager, agent_config, sub_agent=True)
+    agent.sub_agent_context = {
+        "workflow_run_id": "run-1",
+        "depth": 1,
+        "max_agent_depth": 2,
+    }
+
+    names = {tool.name for tool in agent.tool_collection.get_tool_list()}
+
+    assert "dispatch_agent" in names
+    assert "list_subagent_models" in names
+    assert "run_workflow" not in names
+
+
+@pytest.mark.asyncio
+async def test_gigacode_authoring_can_call_list_subagent_models_when_subagents_disabled(
+    project_path: str,
+    mock_connection_manager: AgentConnectionManager,
+) -> None:
+    """Workflow authoring picks per-step routes from list_subagent_models, so the
+    tool must not only register but answer when gigacode is on and subagents off."""
+    config = AgentConfig(anthropic_api_key="test-key", subagents_enabled=False)
+    agent = _coder(project_path, mock_connection_manager, config)
+    agent.apply_gigacode(True)
+
+    assert agent.tool_collection.has_tool("list_subagent_models")
+    assert agent.tool_collection.has_tool("dispatch_agent") is False
+
+    catalog = await agent.tool_collection.call("list_subagent_models")
+
+    assert "anthropic" in catalog
+
+
+def test_workflow_leaf_at_max_depth_stays_leaf_when_subagents_disabled(
+    project_path: str,
+    mock_connection_manager: AgentConnectionManager,
+    agent_config: AgentConfig,
+) -> None:
+    """A depth-exhausted workflow worker can neither dispatch nor author, so it
+    keeps nothing — the subagents exemption only covers live delegation depth."""
+    agent_config.subagents_enabled = False
+    agent = _coder(project_path, mock_connection_manager, agent_config, sub_agent=True)
+    agent.sub_agent_context = {
+        "workflow_run_id": "run-1",
+        "depth": 2,
+        "max_agent_depth": 2,
+    }
+
+    names = {tool.name for tool in agent.tool_collection.get_tool_list()}
+
+    assert not names.intersection(ToolCollection.agent_dispatch_tools)
+    assert "list_subagent_models" not in names
+    assert "run_workflow" not in names
+
+
 def test_general_agent_never_gets_run_workflow(project_path, mock_connection_manager, agent_config):
     """GeneralAgent (always a sub-agent) never exposes run_workflow."""
     agent = GeneralAgent(

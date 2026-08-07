@@ -66,6 +66,10 @@ SEARXNG_BASE_URL_ENV = "SEARXNG_BASE_URL"
 # LSP master switch: on or off. Absent means defer to settings.lsp_enabled.
 LSP_MODES = ("on", "off")
 LSP_MODE_ENV = "KOLEGA_CODE_LSP"
+# Sub-agent dispatch (dispatch_agent) master switch: on or off. Absent means
+# defer to settings.subagents_enabled, then the default (enabled).
+SUBAGENT_MODES = ("on", "off")
+SUBAGENTS_MODE_ENV = "KOLEGA_CODE_SUBAGENTS"
 # Compression threshold override, in percent (10-100). Absent means defer to
 # settings.compression_threshold, then the agent's built-in default (80%).
 COMPRESSION_THRESHOLD_ENV = "KOLEGA_CODE_COMPRESSION_THRESHOLD"
@@ -93,6 +97,9 @@ class CliConfigOverrides:
     edit_protocol: Optional[str] = None
     web_search_mode: Optional[str] = None
     lsp_mode: Optional[str] = None
+    # Sub-agent dispatch override from the --subagents flag ("on"/"off"); None
+    # defers to KOLEGA_CODE_SUBAGENTS, then settings.subagents_enabled.
+    subagents_mode: Optional[str] = None
     # Compression threshold in percent, as typed on the command line; parsed and
     # validated in _compression_threshold.
     compression_threshold: Optional[str] = None
@@ -282,6 +289,23 @@ def _lsp_enabled(
         return mode == "on"
     if settings is not None and settings.lsp_enabled is not None:
         return bool(settings.lsp_enabled)
+    return True
+
+
+def _subagents_enabled(
+    env: Mapping[str, str],
+    settings: Optional[CliSettings],
+    override: Optional[str],
+) -> bool:
+    """Resolve the sub-agent dispatch master switch with flag-over-env-over-settings precedence."""
+    mode = (override or env.get(SUBAGENTS_MODE_ENV) or "").strip().lower()
+    if mode:
+        if mode not in SUBAGENT_MODES:
+            valid = ", ".join(SUBAGENT_MODES)
+            raise CliConfigError(f"Unsupported subagents mode '{mode}'. Valid modes: {valid}")
+        return mode == "on"
+    if settings is not None and settings.subagents_enabled is not None:
+        return bool(settings.subagents_enabled)
     return True
 
 
@@ -637,6 +661,7 @@ def build_agent_config(
             lsp=LspConfig(enabled=_lsp_enabled(loaded_env, settings, overrides.lsp_mode)),
             lsp_project_trusted=lsp_project_trusted,
             eval_enabled=(True if settings is None or settings.eval_enabled is None else bool(settings.eval_enabled)),
+            subagents_enabled=_subagents_enabled(loaded_env, settings, overrides.subagents_mode),
             history_compression_threshold=compression_threshold,
         )
     except ValueError as exc:

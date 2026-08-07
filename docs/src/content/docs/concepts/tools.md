@@ -207,6 +207,16 @@ tool — see [Agents](../agents/) for the built-in `general`, `investigation`,
 join the `agent_type` choices when matching definitions are discovered. Only the
 agent types available in the current session are offered.
 
+Sub-agent dispatch is enabled by default and can be turned off at three levels,
+resolved as flag > environment > settings: the `--subagents <on|off>` launch
+flag (session override), `KOLEGA_CODE_SUBAGENTS=<on|off>`, or the Sub-agents
+toggle on the Settings screen's Tools tab (persisted in `settings.json` as
+`subagents_enabled`). When off, `dispatch_agent` is removed from the tool list
+entirely, so the model never sees it. Gigacode workflows are unaffected:
+`run_workflow` and the dispatch chain lent to workflow workers are governed by
+gigacode's own opt-in, and `list_subagent_models` stays visible whenever either
+gigacode or sub-agents are enabled.
+
 ## Read-only vs. full access
 
 Tools are gated by mode. In a read-only context — like [Plan mode](../../tui/modes/)

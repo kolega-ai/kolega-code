@@ -41,6 +41,7 @@ from kolega_code.mcp.state import MCPStatusStore, MCPOAuthTokenStore
 from .. import messages, theme
 from ..config import (
     COMPRESSION_THRESHOLD_ENV,
+    SUBAGENTS_MODE_ENV,
     CliConfigError,
     active_model_override_message,
     build_agent_config,
@@ -511,6 +512,7 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
         self._populate_web_search_controls()
         self._populate_mcp_controls()
         self._populate_lsp_controls()
+        self._populate_subagents_controls()
         self._populate_compression_controls()
         self._update_settings_status()
 
@@ -1574,6 +1576,43 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             return
         self.settings.lsp_enabled = value == "true"
 
+    def _populate_subagents_controls(self) -> None:
+        """Seed the sub-agents toggle from saved settings."""
+        try:
+            subagents_select = self._settings_query_one("#subagents_enabled_select", Select)
+        except NoMatches:
+            return
+        enabled = self.settings.subagents_enabled
+        if enabled is not None:
+            subagents_select.value = "true" if enabled else "false"
+        self._update_subagents_settings_status()
+
+    def _update_subagents_settings_status(self) -> None:
+        """Note when a launch flag or env var pins sub-agent dispatch for this session."""
+        try:
+            status = self._settings_query_one("#subagents_status", Static)
+        except NoMatches:
+            return
+        flag_value = getattr(self.overrides, "subagents_mode", None)
+        env_value = os.environ.get(SUBAGENTS_MODE_ENV)
+        forced = flag_value or env_value
+        if forced:
+            source = "--subagents" if flag_value else SUBAGENTS_MODE_ENV
+            status.update(
+                f"Sub-agents are forced {forced} for this session by {source}; "
+                "the setting applies from the next launch."
+            )
+            return
+        status.update("")
+
+    def _collect_subagents_from_ui(self) -> None:
+        """Read the sub-agents toggle and save into settings."""
+        try:
+            value = str(self._settings_query_one("#subagents_enabled_select", Select).value)
+        except NoMatches:
+            return
+        self.settings.subagents_enabled = value == "true"
+
     def _populate_compression_controls(self) -> None:
         """Seed the compression-threshold select from saved settings."""
         try:
@@ -1647,6 +1686,7 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
             self._collect_model_slots_from_ui()
             self._collect_web_search_from_ui()
             self._collect_lsp_from_ui()
+            self._collect_subagents_from_ui()
             self._collect_compression_from_ui()
         finally:
             self.settings = original
@@ -1982,6 +2022,7 @@ class SettingsPanelMixin(tui_app_base.KolegaAppBase):
                 f"Web search: {search_backend}",
                 mcp_line,
                 f"LSP: {'enabled' if lsp_enabled else 'disabled'}",
+                f"Sub-agents: {'enabled' if self.settings.subagents_enabled is not False else 'disabled'}",
                 f"Theme: {theme_name}",
             ]
         )
