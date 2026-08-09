@@ -6,6 +6,36 @@ This project uses GitHub Releases for detailed generated release notes. This fil
 
 ## Unreleased
 
+## 0.27.1 - 2026-08-10
+
+### Added
+
+- Thinking Machines models can now be used through either the hosted API or
+  the native Tinker `SamplingClient`, with model discovery, settings, usage
+  tracking, and connection testing integrated across the CLI and TUI.
+- History compression thresholds can now be configured from Settings,
+  `settings.json`, `KOLEGA_CODE_COMPRESSION_THRESHOLD`, or
+  `--compression-threshold`.
+- Sub-agent dispatch can now be enabled or disabled for a session from
+  Settings, `settings.json`, `KOLEGA_CODE_SUBAGENTS`, or `--subagents on|off`.
+
+### Changed
+
+- Compression summaries can use up to 8,192 tokens, reducing the risk that
+  important context is lost in longer sessions.
+- The bundled OpenRouter catalogue was refreshed from the 2026-08-10 model
+  list and weekly rankings. It now includes 260 tool-capable models, including
+  featured `deepseek/deepseek-v4-flash-0731`.
+
+### Fixed
+
+- Provider connection tests now send a system message, improving compatibility
+  with models that reject probes containing only a user message.
+
+### Security
+
+- Updated `h2` to `4.4.1` to address `GHSA-6hr6-w5qg-qmwg`.
+
 ## 0.27.0 - 2026-08-06
 
 ### Changed
