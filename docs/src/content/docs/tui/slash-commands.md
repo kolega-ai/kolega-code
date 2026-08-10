@@ -196,3 +196,7 @@ against a specific request:
 ```
 
 Use `/skills` at any time to see what's available in the current project.
+
+When [Agent Skills are disabled](../../skills/#disabling-agent-skills), `/skills`
+reports that Agent Skills are disabled and no `/skill-name` commands are
+available or listed in the completion dropdown.

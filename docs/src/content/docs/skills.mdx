@@ -94,6 +94,28 @@ names the skill's absolute directory, and bundled resources are then read
 with the ordinary `read` tool.
 </Aside>
 
+## Disabling Agent Skills
+
+Agent Skills can be switched off entirely. With skills disabled, Kolega Code
+skips skill discovery, the skills catalog is absent from the agent's prompt, the
+model-facing `skill` tool is not declared, `/skill-name` completions and
+activation are unavailable, and `/skills` reports that Agent Skills are disabled.
+
+The switch resolves in this order — the first value that is set wins:
+
+1. `--skills <on|off>` on `kolega-code` or `kolega-code ask`
+2. `KOLEGA_CODE_SKILLS=on|off`
+3. the saved `skills_enabled` value in `settings.json`
+4. default: **enabled**
+
+The CLI flag and environment variable apply to the current session only and never
+overwrite the saved preference. In the TUI, the persisted setting lives under
+**Tools → Agent Skills** in the [Settings screen](../configuration/settings-and-api-keys/),
+defaults to enabled for existing setups, and applies immediately when you apply
+your settings. When a flag or environment variable forces the switch for the
+session, the Settings screen shows a status note explaining that the saved
+setting takes effect from the next launch.
+
 ## Diagnostics
 
 If a `SKILL.md` is malformed or a name doesn't follow the conventions above, the

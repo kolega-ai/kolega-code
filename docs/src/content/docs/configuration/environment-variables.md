@@ -120,6 +120,7 @@ with vision support.
 | `KOLEGA_CODE_NO_DIAGNOSTICS` | Set to any value to disable the local [diagnostics](../../troubleshooting/diagnostics/) log and responsiveness watchdog |
 | `KOLEGA_CODE_COMPRESSION_THRESHOLD` | Context-window usage percent that triggers automatic history compression (`10`–`100`, default `80`; `100` effectively disables automatic compression) |
 | `KOLEGA_CODE_SUBAGENTS` | Sub-agent dispatch (`dispatch_agent`) master switch: `on` or `off` (default `on`). Useful for headless or CI runs; the `--subagents` flag takes precedence |
+| `KOLEGA_CODE_SKILLS` | [Agent Skills](../../skills/) master switch: `on` or `off` (default `on`). When `off`, skills are not discovered, the `skill` tool is not exposed, and `/skills` reports that Agent Skills are disabled; the `--skills` flag takes precedence |
 
 ## Web search
 
