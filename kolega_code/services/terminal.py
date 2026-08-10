@@ -22,17 +22,20 @@ import sys
 import tempfile
 import termios
 import time
+from pathlib import Path
 from typing import Any, Dict, Optional, Union
 
 from ..events import AgentConnectionManager
 from ..events import AgentEvent
-from .base import ExecResult, TerminalManager
+from .base import ExecResult, TerminalCommandCancelled, TerminalManager
 from .terminal_buffer import (
     DEFAULT_YIELD_MS,
-    MAX_POLL_MS,
+    GLOBAL_MAX_TOOL_OUTPUT_TOKENS,
     MAX_YIELD_MS,
-    HeadTailBuffer,
-    cap_tokens,
+    MIN_YIELD_MS,
+    TerminalOutputAccumulator,
+    TerminalSpillStore,
+    clamp_output_tokens,
     clamp_yield,
 )
 
@@ -192,6 +195,8 @@ class PtySession:
         login: bool = False,
         env: Optional[Dict[str, str]] = None,
         auto_activate_venv: bool = True,
+        spill_store: Optional[TerminalSpillStore] = None,
+        retain_full_delta: bool = False,
     ):
         self.session_id = session_id
         self.command = command
@@ -210,7 +215,7 @@ class PtySession:
 
         self.exited = asyncio.Event()
         self._new_output = asyncio.Event()
-        self._buffer = HeadTailBuffer()  # output since the last read (delta)
+        self._output = TerminalOutputAccumulator(spill_store, retain_full_delta=retain_full_delta)
         self._display_decoder = codecs.getincrementaldecoder("utf-8")("replace")
         self._broadcast_queue: asyncio.Queue[tuple[str, str] | None] = asyncio.Queue()
         self._broadcast_task: Optional[asyncio.Task] = None
@@ -286,12 +291,13 @@ class PtySession:
         if not data:
             self._handle_eof()
             return
-        self._buffer.append(data)
+        self._output.append_bytes(data)
         self._new_output.set()
         self._broadcast(data)
 
     def _handle_eof(self) -> None:
         self._remove_reader()
+        self._output.finalize()
         self._flush_display_decoder()
         self._reap()
         self._new_output.set()
@@ -374,10 +380,8 @@ class PtySession:
         except asyncio.TimeoutError:
             pass
 
-    def read_delta(self, max_output_tokens: int):
-        text = self._buffer.text()
-        self._buffer.reset()
-        return cap_tokens(text, max_output_tokens)
+    def read_delta(self, max_output_tokens: int, *, hard_limit: bool = True):
+        return self._output.read_delta(max_output_tokens, hard_limit=hard_limit)
 
     async def write(self, chars: str) -> bool:
         if self.master_fd is None:
@@ -419,6 +423,7 @@ class PtySession:
             except OSError:
                 pass
             self.master_fd = None
+        self._output.finalize()
         if self._broadcast_task is not None:
             with contextlib.suppress(Exception):
                 await asyncio.wait_for(self._broadcast_queue.join(), timeout=0.5)
@@ -477,6 +482,8 @@ class DetachedSession:
         login: bool = False,
         env: Optional[Dict[str, str]] = None,
         auto_activate_venv: bool = True,
+        spill_store: Optional[TerminalSpillStore] = None,
+        retain_full_delta: bool = False,
     ):
         self.session_id = session_id
         self.command = command
@@ -487,6 +494,8 @@ class DetachedSession:
         self.login = login
         self.env = env or {}
         self.auto_activate_venv = auto_activate_venv
+        self.spill_store = spill_store
+        self.retain_full_delta = retain_full_delta
 
         self.pid: Optional[int] = None
         self.exit_code: Optional[int] = None
@@ -496,7 +505,7 @@ class DetachedSession:
 
         self.exited = asyncio.Event()
         self._new_output = asyncio.Event()
-        self._buffer = HeadTailBuffer()
+        self._output: Optional[TerminalOutputAccumulator] = None
         self._proc: Optional[subprocess.Popen] = None
         self._reader = None
         self._read_offset = 0
@@ -518,11 +527,24 @@ class DetachedSession:
         shell = _pick_shell()
         shell_args = ["-lc", command] if self.login else ["-c", command]
 
+        # The child writes raw bytes to an internal OS-temp spool. The pump
+        # incrementally normalizes those bytes before the accumulator decides
+        # whether to create a session-owned recoverable spill.
         fd, self.log_path = tempfile.mkstemp(prefix="kolega-bg-", suffix=".log")
         os.close(fd)
-        # stdin FIFO named after the log: the log path is unique (mkstemp), so
-        # "<log>.stdin" is too — mkfifo raises EEXIST rather than reusing.
-        self.stdin_path = self.log_path + ".stdin"
+        self._output = TerminalOutputAccumulator(
+            self.spill_store,
+            retain_full_delta=self.retain_full_delta,
+        )
+
+        # Keep the detached stdin FIFO in OS temp storage. The session-owned log
+        # may be deleted with its owning session; unlinking this pathname does
+        # not disrupt the child's already-open fd 0, but it would prevent a
+        # later write_stdin from reconnecting to a still-running process.
+        fifo_fd, fifo_name = tempfile.mkstemp(prefix="kolega-bg-", suffix=".stdin")
+        os.close(fifo_fd)
+        os.unlink(fifo_name)
+        self.stdin_path = fifo_name
         os.mkfifo(self.stdin_path, 0o600)
         self._reader = open(self.log_path, "rb")
         writer = open(self.log_path, "wb")
@@ -560,6 +582,9 @@ class DetachedSession:
             with contextlib.suppress(OSError):
                 os.unlink(self.stdin_path)
             self.stdin_path = None
+            if self._output is not None:
+                self._output.finalize()
+                self._output = None
             raise
         finally:
             writer.close()  # the child holds its own dup of the fd
@@ -606,18 +631,25 @@ class DetachedSession:
         while True:
             chunk = self._read_new_bytes()
             if chunk:
-                self._buffer.append(chunk)
+                assert self._output is not None
+                self._output.append_bytes(chunk)
                 self._new_output.set()
                 await self._broadcast(chunk)
             rc = self._proc.poll() if self._proc else 0
             if rc is not None:
                 tail = self._read_new_bytes()
                 if tail:
-                    self._buffer.append(tail)
+                    assert self._output is not None
+                    self._output.append_bytes(tail)
                     self._new_output.set()
                     await self._broadcast(tail)
+                assert self._output is not None
+                self._output.finalize()
                 self.exit_code = rc if rc >= 0 else 128 + (-rc)
                 self.exited.set()
+                if self._closed:
+                    self._cleanup_finished_files()
+                self._pump_task = None
                 return
             await asyncio.sleep(_DETACHED_POLL_INTERVAL)
 
@@ -627,10 +659,9 @@ class DetachedSession:
         except asyncio.TimeoutError:
             pass
 
-    def read_delta(self, max_output_tokens: int):
-        text = self._buffer.text()
-        self._buffer.reset()
-        return cap_tokens(text, max_output_tokens)
+    def read_delta(self, max_output_tokens: int, *, hard_limit: bool = True):
+        assert self._output is not None
+        return self._output.read_delta(max_output_tokens, hard_limit=hard_limit)
 
     async def write(self, chars: str) -> bool:
         """Deliver ``chars`` to the child's stdin FIFO.
@@ -681,28 +712,31 @@ class DetachedSession:
         if self._closed:
             return
         self._closed = True
-        # Detached: never signal the process here — surviving our exit is the
-        # whole point. Just stop tailing and release our read handle.
+        # Detached sessions are not signalled on manager close. Keep the pump
+        # alive as a reaper/normalizer until the child exits, then remove the
+        # internal raw spool and FIFO. This avoids zombies and preserves every
+        # byte emitted after the session registry lets go of the command.
+        if not self.exited.is_set():
+            return
         if self._pump_task is not None:
-            self._pump_task.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await self._pump_task
             self._pump_task = None
+        self._cleanup_finished_files()
+
+    def _cleanup_finished_files(self) -> None:
         if self._reader is not None:
             with contextlib.suppress(OSError):
                 self._reader.close()
             self._reader = None
-        # Only drop the log and stdin FIFO once the process is gone; a survivor
-        # still writes to the log and owns the FIFO through its own fd 0.
-        if self.exited.is_set():
-            if self.log_path:
-                with contextlib.suppress(OSError):
-                    os.unlink(self.log_path)
-                self.log_path = None
-            if self.stdin_path:
-                with contextlib.suppress(OSError):
-                    os.unlink(self.stdin_path)
-                self.stdin_path = None
+        if self.log_path:
+            with contextlib.suppress(OSError):
+                os.unlink(self.log_path)
+            self.log_path = None
+        if self.stdin_path:
+            with contextlib.suppress(OSError):
+                os.unlink(self.stdin_path)
+            self.stdin_path = None
 
     @property
     def running(self) -> bool:
@@ -723,6 +757,7 @@ class LocalTerminalManager(TerminalManager):
         thread_id: str,
         connection_manager: AgentConnectionManager,
         default_workdir: Optional[Union[str, os.PathLike]] = None,
+        spill_root: Optional[Union[str, os.PathLike]] = None,
     ):
         self.workspace_id = workspace_id
         self.thread_id = thread_id
@@ -734,6 +769,18 @@ class LocalTerminalManager(TerminalManager):
         # that serve a project should pass its root; the process cwd is only a
         # fallback for standalone use.
         self.default_workdir = str(default_workdir) if default_workdir else os.getcwd()
+        self._spill_store = TerminalSpillStore(Path(spill_root)) if spill_root is not None else None
+
+    def configure_output_spill(self, root: Optional[Path]) -> None:
+        """Set the session-owned root used for subsequent terminal sessions."""
+        if root is None:
+            return
+        resolved = Path(root)
+        if self._spill_store is not None and self._spill_store.root == resolved:
+            return
+        if self.sessions:
+            raise RuntimeError("Cannot change terminal spill storage while sessions are running")
+        self._spill_store = TerminalSpillStore(resolved)
 
     def _next_session_id(self) -> str:
         self._counter += 1
@@ -786,8 +833,15 @@ class LocalTerminalManager(TerminalManager):
         except Exception:
             pass
 
-    def _result_from(self, session: Session, max_output_tokens: int, duration_ms: int) -> ExecResult:
-        capped = session.read_delta(max_output_tokens)
+    def _result_from(
+        self,
+        session: Session,
+        max_output_tokens: int,
+        duration_ms: int,
+        *,
+        hard_limit: bool = True,
+    ) -> ExecResult:
+        capped = session.read_delta(max_output_tokens, hard_limit=hard_limit)
         if session.exited.is_set():
             return ExecResult(
                 status="exited",
@@ -797,6 +851,12 @@ class LocalTerminalManager(TerminalManager):
                 truncated=capped.truncated,
                 original_token_count=capped.original_token_count,
                 duration_ms=duration_ms,
+                spill_path=capped.spill_path,
+                spill_bytes=capped.spill_bytes,
+                line_truncated_count=capped.line_truncated_count,
+                line_truncated_bytes=capped.line_truncated_bytes,
+                preview_omitted_bytes=capped.preview_omitted_bytes,
+                preview_omitted_lines=capped.preview_omitted_lines,
             )
         return ExecResult(
             status="running",
@@ -806,6 +866,12 @@ class LocalTerminalManager(TerminalManager):
             truncated=capped.truncated,
             original_token_count=capped.original_token_count,
             duration_ms=duration_ms,
+            spill_path=capped.spill_path,
+            spill_bytes=capped.spill_bytes,
+            line_truncated_count=capped.line_truncated_count,
+            line_truncated_bytes=capped.line_truncated_bytes,
+            preview_omitted_bytes=capped.preview_omitted_bytes,
+            preview_omitted_lines=capped.preview_omitted_lines,
         )
 
     async def _finish_if_exited(self, session: Session) -> None:
@@ -824,6 +890,30 @@ class LocalTerminalManager(TerminalManager):
         env: Optional[Dict[str, str]] = None,
         background: bool = False,
     ) -> ExecResult:
+        return await self._exec_command(
+            command,
+            workdir=workdir,
+            yield_time_ms=yield_time_ms,
+            max_output_tokens=max_output_tokens,
+            login=login,
+            env=env,
+            background=background,
+            hard_limit=True,
+        )
+
+    async def _exec_command(
+        self,
+        command: str,
+        *,
+        workdir: Optional[str],
+        yield_time_ms: int,
+        max_output_tokens: int,
+        login: bool,
+        env: Optional[Dict[str, str]],
+        background: bool,
+        hard_limit: bool,
+    ) -> ExecResult:
+        max_output_tokens = clamp_output_tokens(max_output_tokens) if hard_limit else max(1, int(max_output_tokens))
         yield_ms = clamp_yield(yield_time_ms, poll=False)
         # workdir should be absolute; a relative path would chdir relative to
         # this process's cwd, not default_workdir.
@@ -844,14 +934,21 @@ class LocalTerminalManager(TerminalManager):
             login=login,
             env=env,
             auto_activate_venv=self.auto_activate_venv,
+            spill_store=self._spill_store,
+            retain_full_delta=not hard_limit,
         )
         start = time.monotonic()
         await session.start()
         self.sessions[session_id] = session
 
-        await session.drain(yield_ms)
+        try:
+            await session.drain(yield_ms)
+        except asyncio.CancelledError:
+            killed = await asyncio.shield(self._kill_session(session_id, "TERM", hard_limit=hard_limit))
+            killed.status = "cancelled"
+            raise TerminalCommandCancelled(killed) from None
         duration_ms = int((time.monotonic() - start) * 1000)
-        result = self._result_from(session, max_output_tokens, duration_ms)
+        result = self._result_from(session, max_output_tokens, duration_ms, hard_limit=hard_limit)
         if result.status == "exited":
             await self._finish_if_exited(session)
         return result
@@ -864,11 +961,33 @@ class LocalTerminalManager(TerminalManager):
         yield_time_ms: int = DEFAULT_YIELD_MS,
         max_output_tokens: int = 10000,
     ) -> ExecResult:
+        return await self._write_stdin(
+            session_id,
+            chars,
+            yield_time_ms=yield_time_ms,
+            max_output_tokens=max_output_tokens,
+            hard_limit=True,
+        )
+
+    async def _write_stdin(
+        self,
+        session_id: str,
+        chars: str,
+        *,
+        yield_time_ms: int,
+        max_output_tokens: int,
+        hard_limit: bool,
+        enforce_poll_minimum: bool = True,
+    ) -> ExecResult:
+        max_output_tokens = clamp_output_tokens(max_output_tokens) if hard_limit else max(1, int(max_output_tokens))
         session = self.sessions.get(session_id)
         if session is None:
             raise KeyError(f"No such session: {session_id}")
 
-        yield_ms = clamp_yield(yield_time_ms, poll=(chars == ""))
+        yield_ms = clamp_yield(
+            yield_time_ms,
+            poll=(chars == "" and enforce_poll_minimum),
+        )
         start = time.monotonic()
         if chars:
             # Both session types return a success bool; it is intentionally
@@ -877,21 +996,38 @@ class LocalTerminalManager(TerminalManager):
             # in this same result: the drain below observes the exit well
             # within the >=250ms write window.
             await session.write(chars)
-        await session.drain(yield_ms)
+        try:
+            await session.drain(yield_ms)
+        except asyncio.CancelledError:
+            killed = await asyncio.shield(self._kill_session(session_id, "TERM", hard_limit=hard_limit))
+            killed.status = "cancelled"
+            raise TerminalCommandCancelled(killed) from None
         duration_ms = int((time.monotonic() - start) * 1000)
-        result = self._result_from(session, max_output_tokens, duration_ms)
+        result = self._result_from(session, max_output_tokens, duration_ms, hard_limit=hard_limit)
         if result.status == "exited":
             await self._finish_if_exited(session)
         return result
 
     async def kill_session(self, session_id: str, signal: str = "TERM") -> ExecResult:
+        return await self._kill_session(session_id, signal, hard_limit=True)
+
+    async def _kill_session(
+        self,
+        session_id: str,
+        signal: str,
+        *,
+        hard_limit: bool,
+    ) -> ExecResult:
         session = self.sessions.get(session_id)
         if session is None:
             raise KeyError(f"No such session: {session_id}")
         start = time.monotonic()
         await session.kill(signal)
         duration_ms = int((time.monotonic() - start) * 1000)
-        capped = session.read_delta(10000)
+        capped = session.read_delta(
+            GLOBAL_MAX_TOOL_OUTPUT_TOKENS if hard_limit else 200_000,
+            hard_limit=hard_limit,
+        )
         exit_code = session.exit_code
         await self._emit_output(session_id, f"[exited {exit_code}]\n")
         await session.close()
@@ -904,6 +1040,12 @@ class LocalTerminalManager(TerminalManager):
             truncated=capped.truncated,
             original_token_count=capped.original_token_count,
             duration_ms=duration_ms,
+            spill_path=capped.spill_path,
+            spill_bytes=capped.spill_bytes,
+            line_truncated_count=capped.line_truncated_count,
+            line_truncated_bytes=capped.line_truncated_bytes,
+            preview_omitted_bytes=capped.preview_omitted_bytes,
+            preview_omitted_lines=capped.preview_omitted_lines,
         )
 
     async def list_sessions(self) -> Dict[str, Any]:
@@ -935,13 +1077,34 @@ class LocalTerminalManager(TerminalManager):
         through the session model, accumulating output across poll windows.
         """
         deadline = time.monotonic() + (timeout if timeout and timeout > 0 else 600)
-        result = await self.exec_command(command, workdir=cwd, yield_time_ms=MAX_YIELD_MS, max_output_tokens=200000)
+        initial_yield_ms = min(
+            MAX_YIELD_MS,
+            max(MIN_YIELD_MS, int((deadline - time.monotonic()) * 1000)),
+        )
+        result = await self._exec_command(
+            command,
+            workdir=cwd,
+            yield_time_ms=initial_yield_ms,
+            max_output_tokens=200000,
+            login=False,
+            env=None,
+            background=False,
+            hard_limit=False,
+        )
         parts = [result.output]
         session_id = result.session_id
         while result.status == "running" and session_id is not None and time.monotonic() < deadline:
-            result = await self.write_stdin(session_id, "", yield_time_ms=MAX_POLL_MS, max_output_tokens=200000)
+            remaining_ms = max(1, int((deadline - time.monotonic()) * 1000))
+            result = await self._write_stdin(
+                session_id,
+                "",
+                yield_time_ms=min(MAX_YIELD_MS, remaining_ms),
+                max_output_tokens=200000,
+                hard_limit=False,
+                enforce_poll_minimum=False,
+            )
             parts.append(result.output)
         if result.status == "running" and session_id is not None:
-            killed = await self.kill_session(session_id, "TERM")
+            killed = await self._kill_session(session_id, "TERM", hard_limit=False)
             parts.append(killed.output)
         return "".join(parts)

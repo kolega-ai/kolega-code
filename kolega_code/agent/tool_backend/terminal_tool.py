@@ -1,6 +1,5 @@
 import asyncio
-import json
-import os.path
+import os
 import re
 from pathlib import Path
 from typing import Optional, Tuple, Union
@@ -12,8 +11,13 @@ from kolega_code.llm.ledger import helper_origin, llm_call_origin
 from kolega_code.llm.models import Message, MessageHistory, TextBlock
 from kolega_code.llm.specs import get_model_specs
 from kolega_code.events import AgentEvent
-from kolega_code.services.base import ExecResult
+from kolega_code.services.base import ExecResult, TerminalCommandCancelled
 from kolega_code.services.terminal import LocalTerminalManager, build_child_env
+from kolega_code.services.terminal_buffer import (
+    GLOBAL_MAX_TOOL_OUTPUT_TOKENS,
+    cap_chars,
+    clamp_output_tokens,
+)
 from .base_tool import BaseTool
 
 # Startup window for background=true launches: long enough to capture a dev
@@ -73,6 +77,21 @@ class TerminalTool(BaseTool):
                 connection_manager=connection_manager,
                 default_workdir=self.project_path,
             )
+        self._configure_terminal_spill()
+
+    def _configure_terminal_spill(self) -> None:
+        """Bind terminal output to durable session storage when available."""
+        root: Optional[Path] = None
+        recorder = getattr(self.caller, "session_recorder", None)
+        journal = getattr(recorder, "journal", None)
+        session_dir = getattr(journal, "session_dir", None)
+        if isinstance(session_dir, (str, os.PathLike)) and str(session_dir):
+            root = Path(session_dir).expanduser().resolve() / "terminal-output"
+        else:
+            scratchpad_dir = getattr(self.caller, "scratchpad_dir", None)
+            if isinstance(scratchpad_dir, (str, os.PathLike)) and str(scratchpad_dir):
+                root = Path(scratchpad_dir).expanduser().resolve() / "terminal-output"
+        self.terminal_manager.configure_output_spill(root)
 
     async def _run_command_security_check(self, command: str) -> Tuple[bool, str]:
         provider = self.config.fast_config.provider
@@ -140,20 +159,92 @@ class TerminalTool(BaseTool):
             return None
         return {"KOLEGA_SCRATCHPAD": str(scratchpad_dir)}
 
-    def _format_result(self, result: ExecResult, *, background: bool = False) -> str:
-        payload = {
-            "status": result.status,
-            "exit_code": result.exit_code,
-            "session_id": result.session_id,
-            "output": result.output,
-            "truncated": result.truncated,
-            "original_token_count": result.original_token_count,
-            "duration_ms": result.duration_ms,
-        }
+    def _format_result(
+        self,
+        result: ExecResult,
+        *,
+        background: bool = False,
+        max_output_tokens: int = GLOBAL_MAX_TOOL_OUTPUT_TOKENS,
+    ) -> str:
+        effective_tokens = clamp_output_tokens(max_output_tokens)
+        original_tokens = result.original_token_count or ((len(result.output) + 3) // 4 if result.output else 0)
+        truncated = result.truncated
+        capped = None
+        output_prefix = ""
+
+        for _ in range(2):
+            header = self._result_header(
+                result,
+                truncated=truncated,
+                original_tokens=original_tokens,
+                background=background,
+            )
+            output_prefix = f"{header}\n\nOutput:\n"
+            # Recovery metadata is more important than honoring an unusually
+            # tiny requested budget. It may exceed that tiny request, but the
+            # complete tool result always remains below the 10,000-token global
+            # ceiling and the ordinary spill path is never shortened.
+            global_chars = GLOBAL_MAX_TOOL_OUTPUT_TOKENS * 4
+            requested_chars = effective_tokens * 4
+            total_budget = min(global_chars, max(requested_chars, len(output_prefix)))
+            capped = cap_chars(
+                result.output,
+                max(0, total_budget - len(output_prefix)),
+                marker=f"\n[... output truncated to fit {effective_tokens} tokens ...]\n",
+                original_token_count=original_tokens,
+            )
+            final_truncated = result.truncated or capped.truncated
+            if final_truncated == truncated:
+                return output_prefix + capped.text
+            truncated = final_truncated
+
+        assert capped is not None
+        return output_prefix + capped.text
+
+    @staticmethod
+    def _result_header(
+        result: ExecResult,
+        *,
+        truncated: bool,
+        original_tokens: int,
+        background: bool,
+    ) -> str:
+        lines = [
+            f"Status: {result.status}",
+            f"Exit code: {result.exit_code if result.exit_code is not None else 'none'}",
+            f"Session: {result.session_id or 'none'}",
+            f"Duration: {result.duration_ms} ms",
+            f"Output truncated: {'yes' if truncated else 'no'}",
+            f"Original output: ~{original_tokens:,} tokens",
+        ]
+        if result.spill_path:
+            lines.extend(
+                [
+                    f"Full output: {result.spill_path}",
+                    f"Spill size: {result.spill_bytes:,} bytes",
+                ]
+            )
+        if result.preview_omitted_bytes:
+            lines.append(
+                "Preview middle omitted: "
+                f"{result.preview_omitted_bytes:,} bytes across "
+                f"{result.preview_omitted_lines:,} "
+                f"{'line' if result.preview_omitted_lines == 1 else 'lines'}"
+            )
+        if result.line_truncated_count or result.line_truncated_bytes:
+            lines.append(
+                "Long lines shortened: "
+                f"{result.line_truncated_count:,} "
+                f"{'line' if result.line_truncated_count == 1 else 'lines'}, "
+                f"{result.line_truncated_bytes:,} bytes omitted"
+            )
         if background and result.status == "running" and result.session_id is not None:
-            payload["background"] = True
-            payload["note"] = _BACKGROUND_NOTE
-        return json.dumps(payload)
+            lines.extend(["Background: true", f"Note: {_BACKGROUND_NOTE}"])
+        return "\n".join(lines)
+
+    @staticmethod
+    def _format_error(error: object) -> str:
+        return f"Status: error\nError: {error}"
 
     async def exec_command(
         self,
@@ -207,10 +298,11 @@ class TerminalTool(BaseTool):
                         report their real exit code.
 
         Returns:
-            A JSON object: {"status": "exited"|"running", "exit_code",
-            "session_id", "output", "truncated", "original_token_count",
-            "duration_ms"}. Background launches that are still running also
-            include "background": true and a "note" with management hints.
+            Structured text with status, session id, exit code, duration,
+            truncation metadata, and model-visible output. Oversized streams
+            include an ordinary ``Full output:`` filesystem path. Background
+            launches that are still running also include ``Background: true``
+            and management guidance.
         """
         if self.security_check_enabled:
             allowed, denied_reason = await self._run_command_security_check(command)
@@ -220,21 +312,28 @@ class TerminalTool(BaseTool):
         # Resolve relative workdirs against the project root (same contract as
         # the file tools), never against this process's cwd.
         wd = os.path.normpath(str(self.project_path / workdir)) if workdir else str(self.project_path)
+        effective_max_tokens = clamp_output_tokens(max_output_tokens)
         try:
             result = await self.terminal_manager.exec_command(
                 command,
                 workdir=wd,
                 yield_time_ms=min(yield_time_ms, BACKGROUND_SETTLE_MS) if background else yield_time_ms,
-                max_output_tokens=max_output_tokens,
+                max_output_tokens=effective_max_tokens,
                 login=login,
                 env=self._session_env(),
                 background=background,
             )
+        except TerminalCommandCancelled as exc:
+            return self._format_result(
+                exc.result,
+                background=background,
+                max_output_tokens=effective_max_tokens,
+            )
         except Exception as exc:
-            return json.dumps({"status": "error", "error": str(exc)})
+            return self._format_error(exc)
         if background and result.status == "running" and result.session_id is not None:
             self._background_sessions.add(result.session_id)
-        return self._format_result(result, background=background)
+        return self._format_result(result, background=background, max_output_tokens=effective_max_tokens)
 
     async def write_stdin(
         self,
@@ -265,15 +364,25 @@ class TerminalTool(BaseTool):
             max_output_tokens: Maximum tokens of output to return in this call.
 
         Returns:
-            A JSON object with the same shape as exec_command.
+            Structured text with the same fields and spill behavior as
+            exec_command.
         """
+        effective_max_tokens = clamp_output_tokens(max_output_tokens)
         try:
             result = await self.terminal_manager.write_stdin(
-                session_id, chars, yield_time_ms=yield_time_ms, max_output_tokens=max_output_tokens
+                session_id,
+                chars,
+                yield_time_ms=yield_time_ms,
+                max_output_tokens=effective_max_tokens,
+            )
+        except TerminalCommandCancelled as exc:
+            return self._format_result(
+                exc.result,
+                max_output_tokens=effective_max_tokens,
             )
         except KeyError as exc:
-            return json.dumps({"status": "error", "error": str(exc)})
-        return self._format_result(result)
+            return self._format_error(exc)
+        return self._format_result(result, max_output_tokens=effective_max_tokens)
 
     async def kill_command(self, session_id: str, signal: str = "TERM") -> str:
         """Terminate a running session and its process group.
@@ -286,12 +395,12 @@ class TerminalTool(BaseTool):
             signal: "TERM" (default, graceful) or "INT" (Ctrl-C).
 
         Returns:
-            A JSON object describing the final state of the session.
+            Structured text describing the final state of the session.
         """
         try:
             result = await self.terminal_manager.kill_session(session_id, signal)
         except KeyError as exc:
-            return json.dumps({"status": "error", "error": str(exc)})
+            return self._format_error(exc)
         self._background_sessions.discard(session_id)
         return self._format_result(result)
 
@@ -302,14 +411,41 @@ class TerminalTool(BaseTool):
         with "background": true.
 
         Returns:
-            A JSON object mapping each running session id to its command,
-            working directory, runtime in seconds, and background flag.
+            Structured text listing each running session id, command, working
+            directory, runtime in seconds, and background flag. Returns
+            ``No running sessions.`` when the registry is empty.
         """
         sessions = await self.terminal_manager.list_sessions()
         self._background_sessions.intersection_update(sessions)
+        if not sessions:
+            return "No running sessions."
+
+        lines = [f"Running terminal sessions: {len(sessions)}"]
         for session_id, info in sessions.items():
-            info["background"] = session_id in self._background_sessions
-        return json.dumps({"sessions": sessions})
+            command = str(info.get("command", ""))
+            command_lines = command.splitlines() or [""]
+            lines.extend(
+                [
+                    "",
+                    f"Session: {session_id}",
+                    f"  Command: {command_lines[0]}",
+                ]
+            )
+            lines.extend(f"           {line}" for line in command_lines[1:])
+            lines.extend(
+                [
+                    f"  Workdir: {info.get('workdir') or 'unknown'}",
+                    f"  Runtime: {info.get('runtime_s', 0)} s",
+                    f"  Running: {'true' if info.get('running', True) else 'false'}",
+                    f"  Background: {'true' if session_id in self._background_sessions else 'false'}",
+                ]
+            )
+        text = "\n".join(lines)
+        return cap_chars(
+            text,
+            GLOBAL_MAX_TOOL_OUTPUT_TOKENS * 4,
+            marker="\n[... additional sessions omitted ...]\n",
+        ).text
 
     # -- internal one-shot helper (not exposed to the model) ---------------
 

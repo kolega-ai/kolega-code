@@ -1,13 +1,16 @@
 import asyncio
 import contextlib
 import os
+import shlex
 import signal
 import sys
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
 from kolega_code.events import AgentConnectionManager
+from kolega_code.services.base import TerminalCommandCancelled
 from kolega_code.services.terminal import (
     DetachedSession,
     LocalTerminalManager,
@@ -155,6 +158,85 @@ async def test_kill_unknown_session_raises(manager):
 async def test_run_command_convenience_accumulates_output(manager):
     output = await manager.run_command("echo a; echo b; echo c")
     assert "a" in output and "b" in output and "c" in output
+
+
+@pytest.mark.asyncio
+async def test_run_command_timeout_keeps_uncapped_final_delta(manager):
+    script = "import sys,time;sys.stdout.write('BEGIN-' + 'x' * 60000 + '-END');sys.stdout.flush();time.sleep(30)"
+    command = f"{shlex.quote(sys.executable)} -c {shlex.quote(script)}"
+
+    output = await manager.run_command(command, timeout=1)
+
+    assert output.startswith("BEGIN-")
+    assert "-END" in output
+    assert len(output) > 60_000
+
+
+@pytest.mark.asyncio
+async def test_exec_command_spills_complete_output_to_session_path(manager, tmp_path):
+    spill_root = tmp_path / "terminal-output"
+    manager.configure_output_spill(spill_root)
+    script = (
+        "import sys;"
+        "sys.stdout.write('BEGIN\\n' + ''.join(f'line-{i:04d}-' + 'x' * 90 + '\\n' "
+        "for i in range(900)) + 'END\\n')"
+    )
+    command = f"{shlex.quote(sys.executable)} -c {shlex.quote(script)}"
+
+    result = await manager.exec_command(
+        command,
+        yield_time_ms=10_000,
+        max_output_tokens=1_000_000,
+    )
+
+    assert result.status == "exited"
+    assert result.spill_path is not None
+    spill_path = os.path.realpath(result.spill_path)
+    assert os.path.commonpath([spill_path, str(spill_root.resolve())]) == str(spill_root.resolve())
+    complete_bytes = Path(spill_path).read_bytes()
+    complete = complete_bytes.decode("utf-8")
+    assert complete.startswith("BEGIN")
+    assert "line-0450-" in complete
+    assert complete.rstrip().endswith("END")
+    assert "line-0450-" not in result.output
+    assert len(result.output) <= 40_000
+    assert result.spill_bytes == len(complete_bytes)
+
+
+@pytest.mark.asyncio
+async def test_cancelled_exec_returns_recoverable_spill_result(manager, tmp_path):
+    spill_root = tmp_path / "terminal-output"
+    manager.configure_output_spill(spill_root)
+    script = (
+        "import sys,time;sys.stdout.write('BEGIN\\n' + 'x' * 70000 + '\\nEND\\n');sys.stdout.flush();time.sleep(30)"
+    )
+    command = f"{shlex.quote(sys.executable)} -c {shlex.quote(script)}"
+
+    task = asyncio.create_task(
+        manager.exec_command(command, yield_time_ms=30_000),
+    )
+    for _ in range(200):
+        if list(spill_root.glob("*.log")):
+            break
+        await asyncio.sleep(0.01)
+    else:
+        pytest.fail("terminal output did not spill before cancellation")
+
+    task.cancel()
+    with pytest.raises(TerminalCommandCancelled) as cancelled:
+        await task
+
+    result = cancelled.value.result
+    assert result.status == "cancelled"
+    assert result.exit_code in (143, 137)
+    assert result.spill_path is not None
+    complete_bytes = Path(result.spill_path).read_bytes()
+    complete = complete_bytes.decode("utf-8")
+    lines = complete.splitlines()
+    assert lines[0] == "BEGIN"
+    assert "END" in lines
+    assert result.spill_bytes == len(complete_bytes)
+    assert await manager.list_sessions() == {}
 
 
 @pytest.mark.asyncio
@@ -390,6 +472,35 @@ async def test_background_poll_captures_incremental_output(manager):
     assert poll.status == "running"
     assert "second" in poll.output
     await manager.kill_session(result.session_id, "TERM")
+
+
+@pytest.mark.asyncio
+async def test_background_spill_is_normalized_and_raw_spool_is_internal(manager, tmp_path):
+    spill_root = tmp_path / "terminal-output"
+    manager.configure_output_spill(spill_root)
+    script = (
+        "import sys,time;sys.stdout.write('BEGIN\\n' + 'x' * 60000 + '\\nEND\\n');sys.stdout.flush();time.sleep(30)"
+    )
+    command = f"{shlex.quote(sys.executable)} -c {shlex.quote(script)}"
+
+    result = await manager.exec_command(command, yield_time_ms=1000, background=True)
+
+    assert result.status == "running"
+    assert result.session_id is not None
+    session = manager.sessions[result.session_id]
+    raw_spool = session.log_path
+    assert raw_spool is not None
+    assert result.spill_path is not None
+    assert os.path.realpath(raw_spool) != os.path.realpath(result.spill_path)
+    spill = Path(result.spill_path).read_bytes()
+    assert spill.startswith(b"BEGIN\n")
+    assert spill.endswith(b"\nEND\n")
+    assert result.spill_bytes == len(spill)
+
+    await manager.kill_session(result.session_id, "TERM")
+
+    assert not os.path.exists(raw_spool)
+    assert os.path.exists(result.spill_path)
 
 
 @pytest.mark.asyncio

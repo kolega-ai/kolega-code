@@ -578,7 +578,8 @@ BUILTIN_TOOL_SPECS: dict[str, BuiltinToolSpec] = {
                 },
                 "max_output_tokens": {
                     "type": "integer",
-                    "description": "Maximum tokens of output to return in this call.",
+                    "description": "Requested output budget for this call. Values are hard-clamped "
+                    "to the global 10,000-token terminal-result ceiling.",
                 },
                 "login": {
                     "type": "boolean",
@@ -756,7 +757,8 @@ BUILTIN_TOOL_SPECS: dict[str, BuiltinToolSpec] = {
                 },
                 "max_output_tokens": {
                     "type": "integer",
-                    "description": "Maximum tokens of output to return in this call.",
+                    "description": "Requested output budget for this call. Values are hard-clamped "
+                    "to the global 10,000-token terminal-result ceiling.",
                 },
             },
             "required": ["session_id"],

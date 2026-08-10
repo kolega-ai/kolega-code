@@ -102,7 +102,7 @@ class TerminalStateSerializer:
 
         # Restore outputs
         for terminal_id, outputs in state.outputs.items():
-            terminal_manager.outputs[terminal_id] = [
+            restored_outputs = [
                 {
                     "type": output.type,
                     "data": output.data,
@@ -113,6 +113,8 @@ class TerminalStateSerializer:
                 for output in outputs
                 if output.type != "truncation"  # Skip truncation notices
             ]
+            output_buffer_type = getattr(type(terminal_manager), "output_buffer_type", list)
+            terminal_manager.outputs[terminal_id] = output_buffer_type(restored_outputs)
 
         # Restore default terminal ID
         if hasattr(terminal_manager, "_default_terminal_id"):
