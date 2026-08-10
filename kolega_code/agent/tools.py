@@ -631,11 +631,7 @@ class ToolCollection(LogMixin):
         )
 
     async def browser_navigate(self, url: str) -> str:
-        """Navigate the current browser tab to a URL, starting a session when needed.
-
-        Args:
-            url: HTTP or HTTPS URL to navigate to.
-        """
+        """Navigate the current browser tab to a URL, starting a session when needed."""
         return await self.browser_tool.browser_navigate(url)
 
     async def browser_navigate_back(self) -> str:
@@ -643,66 +639,21 @@ class ToolCollection(LogMixin):
         return await self.browser_tool.browser_navigate_back()
 
     async def browser_snapshot(self, target: Optional[str] = None, depth: Optional[int] = None) -> str:
-        """Capture the current page's accessibility snapshot.
-
-        Prefer this over screenshots when deciding what to interact with. Interactive
-        nodes include stable refs such as e12 that can be passed to action tools.
-
-        On a page too large to fit one snapshot, nodes nearest the viewport are shown
-        first and a Coverage line states what was left out. That is an instruction to
-        narrow the scope — pass a target, or browser_scroll and snapshot again — not a
-        sign the page is unreadable.
-
-        Args:
-            target: Optional snapshot ref or unique selector for a subtree.
-            depth: Optional maximum accessibility-tree depth. Counts emitted nodes
-                rather than raw DOM nesting.
-        """
+        """Capture the current page's accessibility snapshot."""
         return await self.browser_tool.browser_snapshot(target, depth)
 
     async def browser_find(self, text: Optional[str] = None, regex: Optional[str] = None) -> str:
-        """Find text or a regular expression in the accessibility snapshot.
-
-        Provide exactly one of text or regex. This is cheaper than requesting a
-        full snapshot when locating a specific element.
-
-        A miss distinguishes three cases: absent from the page, present in the page
-        but outside the region the snapshot covered, and undetermined because the
-        search was truncated. Only the first is a reliable absence.
-
-        Args:
-            text: Case-insensitive text to find.
-            regex: Regular expression to find. The Chrome backend accepts a
-                restricted, linear-time subset: literals, '.', character classes,
-                anchors, escapes, and the quantifiers ?, *, + and {n,m} applied to
-                a single character or class, with at most 4 quantifiers and
-                repetition counts up to 1000. Groups '(' ')', alternation '|', and
-                backreferences are rejected, so write [0-9]{4} rather than
-                (\\d{4}|\\d{2}). The Playwright backend accepts full Python
-                regular expressions, so a pattern that works there may be
-                rejected on Chrome.
-        """
+        """Find text or a regular expression in the accessibility snapshot."""
         return await self.browser_tool.browser_find(text, regex)
 
     async def browser_wait_for(
         self, time: Optional[float] = None, text: Optional[str] = None, text_gone: Optional[str] = None
     ) -> str:
-        """Wait for time to pass, text to appear, or text to disappear.
-
-        Args:
-            time: Seconds to wait, capped at 30.
-            text: Text to wait for until visible.
-            text_gone: Text to wait for until hidden.
-        """
+        """Wait for time to pass, text to appear, or text to disappear."""
         return await self.browser_tool.browser_wait_for(time, text, text_gone)
 
     async def browser_resize(self, width: int, height: int) -> str:
-        """Resize the current browser viewport.
-
-        Args:
-            width: Viewport width in CSS pixels.
-            height: Viewport height in CSS pixels.
-        """
+        """Resize the current browser viewport."""
         return await self.browser_tool.browser_resize(width, height)
 
     async def browser_click(
@@ -712,84 +663,37 @@ class ToolCollection(LogMixin):
         button: str = "left",
         modifiers: Optional[list[str]] = None,
     ) -> str:
-        """Click an element identified by a snapshot ref or unique selector.
-
-        Args:
-            target: Exact snapshot ref or unique selector.
-            double_click: Perform a double click.
-            button: Mouse button: left, right, or middle.
-            modifiers: Keyboard modifiers held during the click.
-        """
+        """Click an element identified by a snapshot ref or unique selector."""
         return await self.browser_tool.browser_click(target, double_click, button, modifiers)
 
     async def browser_type(self, target: str, text: str, submit: bool = False, slowly: bool = False) -> str:
-        """Enter text into an editable element.
-
-        Args:
-            target: Exact snapshot ref or unique selector.
-            text: Text to enter.
-            submit: Press Enter after entering text.
-            slowly: Type character by character instead of filling.
-        """
+        """Enter text into an editable element."""
         return await self.browser_tool.browser_type(target, text, submit, slowly)
 
     async def browser_fill_form(self, fields: list[dict[str, Any]]) -> str:
-        """Fill several textbox, checkbox, radio, combobox, or slider fields.
-
-        Args:
-            fields: Structured field descriptions with name, target, type, and value.
-        """
+        """Fill several textbox, checkbox, radio, combobox, or slider fields."""
         return await self.browser_tool.browser_fill_form(fields)
 
     async def browser_select_option(self, target: str, values: list[str]) -> str:
-        """Select one or more values in a dropdown.
-
-        Args:
-            target: Exact snapshot ref or unique selector.
-            values: Option values to select.
-        """
+        """Select one or more values in a dropdown."""
         return await self.browser_tool.browser_select_option(target, values)
 
     async def browser_hover(self, target: str) -> str:
-        """Hover over an element and return the updated snapshot.
-
-        Args:
-            target: Exact snapshot ref or unique selector.
-        """
+        """Hover over an element and return the updated snapshot."""
         return await self.browser_tool.browser_hover(target)
 
     async def browser_drag(self, start_target: str, end_target: str) -> str:
-        """Drag one page element to another.
-
-        Args:
-            start_target: Source snapshot ref or unique selector.
-            end_target: Destination snapshot ref or unique selector.
-        """
+        """Drag one page element to another."""
         return await self.browser_tool.browser_drag(start_target, end_target)
 
     async def browser_drop(
         self, target: str, paths: Optional[list[str]] = None, data: Optional[dict[str, str]] = None
     ) -> str:
-        """Drop workspace files or MIME-typed string data onto an element.
-
-        Args:
-            target: Destination snapshot ref or unique selector.
-            paths: Workspace file paths to drop.
-            data: MIME type to string value mapping.
-        """
+        """Drop workspace files or MIME-typed string data onto an element."""
         return await self.browser_tool.browser_drop(target, paths, data)
 
     async def browser_press_key(self, key: str) -> str:
-        """Press a keyboard key in the current tab.
-
-        PageDown, PageUp, Home, End, ArrowDown, ArrowUp and Space also scroll the
-        page, unless focus is in a text field or select, or the page handles the
-        key itself. Use browser_scroll when you want to move the viewport
-        deliberately rather than as a side effect of a keystroke.
-
-        Args:
-            key: Key name or character, such as ArrowLeft or a.
-        """
+        """Press a keyboard key in the current tab."""
         return await self.browser_tool.browser_press_key(key)
 
     async def browser_scroll(
@@ -799,77 +703,31 @@ class ToolCollection(LogMixin):
         y: Optional[int] = None,
         by_pages: Optional[float] = None,
     ) -> str:
-        """Move the viewport, then return the updated page snapshot.
-
-        Supply exactly one movement. On a page too large to snapshot in one call,
-        scroll and re-snapshot: the snapshot prioritises what is near the viewport,
-        so moving the viewport is how you reach the rest.
-
-        Args:
-            target: Scroll this ref or unique selector into view.
-            x: Absolute horizontal offset in CSS pixels.
-            y: Absolute vertical offset in CSS pixels.
-            by_pages: Scroll by this many viewport heights; negative scrolls up.
-        """
+        """Move the viewport, then return the updated page snapshot."""
         return await self.browser_tool.browser_scroll(target, x, y, by_pages)
 
     async def browser_tabs(self, action: str, index: Optional[int] = None, url: Optional[str] = None) -> str:
-        """List, create, close, or select browser tabs.
-
-        The action decides which other argument applies, and anything supplied for
-        the rest is ignored: list uses neither, new uses url, and select and close
-        use index. Tab indices shift after a close, so re-list before acting again.
-
-        Args:
-            action: One of list, new, close, or select.
-            index: Tab index, required for select. For close it defaults to the
-                current tab. 0 is a real tab index.
-            url: URL for a new tab; omit it for a blank tab.
-        """
+        """List, create, close, or select browser tabs."""
         return await self.browser_tool.browser_tabs(action, index, url)
 
     async def browser_handle_dialog(self, accept: bool, prompt_text: Optional[str] = None) -> str:
-        """Accept or dismiss the currently waiting JavaScript dialog.
-
-        Args:
-            accept: Accept rather than dismiss the dialog.
-            prompt_text: Text to submit to a prompt dialog.
-        """
+        """Accept or dismiss the currently waiting JavaScript dialog."""
         return await self.browser_tool.browser_handle_dialog(accept, prompt_text)
 
     async def browser_file_upload(self, paths: list[str]) -> str:
-        """Upload workspace files through the currently waiting file chooser.
-
-        Args:
-            paths: Workspace file paths to upload. Use an empty list to cancel.
-        """
+        """Upload workspace files through the currently waiting file chooser."""
         return await self.browser_tool.browser_file_upload(paths)
 
     async def browser_console_messages(self, level: str = "info", all_messages: bool = False) -> str:
-        """Return console messages for the current tab.
-
-        Args:
-            level: Minimum severity: error, warning, info, or debug.
-            all_messages: Include the full session instead of only messages since navigation.
-        """
+        """Return console messages for the current tab."""
         return await self.browser_tool.browser_console_messages(level, all_messages)
 
     async def browser_network_requests(self, include_static: bool = False, filter_pattern: Optional[str] = None) -> str:
-        """List network requests made by the current tab since navigation.
-
-        Args:
-            include_static: Include images, fonts, scripts, and styles.
-            filter_pattern: Optional URL regular expression.
-        """
+        """List network requests made by the current tab since navigation."""
         return await self.browser_tool.browser_network_requests(include_static, filter_pattern)
 
     async def browser_network_request(self, index: int, part: Optional[str] = None) -> str:
-        """Return headers or body details for one indexed network request.
-
-        Args:
-            index: 1-based index from browser_network_requests.
-            part: Optional request_headers, request_body, response_headers, or response_body.
-        """
+        """Return headers or body details for one indexed network request."""
         return await self.browser_tool.browser_network_request(index, part)
 
     async def browser_take_screenshot(
@@ -879,37 +737,16 @@ class ToolCollection(LogMixin):
         full_page: bool = False,
         scale: str = "css",
     ) -> List[ImageBlock]:
-        """Capture a visual screenshot of the page or one element.
-
-        Use browser_snapshot, not the screenshot, to choose interaction targets.
-
-        Args:
-            target: Optional snapshot ref or unique selector.
-            image_type: png or jpeg.
-            full_page: Capture the full scrollable page.
-            scale: css or device pixel scale.
-        """
+        """Capture a visual screenshot of the page or one element."""
         result = await self.browser_tool.browser_take_screenshot(target, image_type, full_page, scale)
         return [ImageBlock(image_type="base64", media_type=result["media_type"], data=result["image"])]
 
     async def read_image(self, path: str) -> List[Any]:
-        """Read an image file from the project directory so you can see it.
-
-        Use when the user references a screenshot, diagram, mockup, or other
-        visual asset and text-based inspection is insufficient.
-
-        Args:
-            path: Path relative to the project root, or an allowed absolute path.
-        """
+        """Read an image file from the project directory so you can see it."""
         return await self.read_image_tool.read_image(path)
 
     async def browser_evaluate(self, function: str, target: Optional[str] = None) -> str:
-        """Evaluate JavaScript in the page or against one target element.
-
-        Args:
-            function: JavaScript function to evaluate.
-            target: Optional snapshot ref or unique selector passed as the function argument.
-        """
+        """Evaluate JavaScript in the page or against one target element."""
         return await self.browser_tool.browser_evaluate(function, target)
 
     async def browser_close(self) -> str:
@@ -917,37 +754,11 @@ class ToolCollection(LogMixin):
         return await self.browser_tool.browser_close()
 
     async def build_backend(self) -> str:
-        """
-        Build the backend defined by the project manifest (.kolega-manifest.yaml).
-
-        When to use this tool:
-        - When you need to compile, bundle, or otherwise build the backend for the current workspace
-        - When verifying that the backend build still succeeds after code changes
-
-        Guidance:
-        - Prefer this tool over manually running build commands in a terminal; it automatically selects the correct
-          command from the manifest and works in both local and sandbox environments with standardized output
-
-        Returns:
-            Build output as markdown (combined stdout/stderr)
-        """
+        """Build the backend defined by the project manifest."""
         return await self.build_tool.build_backend()
 
     async def build_frontend(self) -> str:
-        """
-        Build the frontend defined by the project manifest (.kolega-manifest.yaml).
-
-        When to use this tool:
-        - When you need to compile, bundle, or otherwise build the frontend application
-        - When you want a consistent build execution that adapts to local or sandbox contexts
-
-        Guidance:
-        - Prefer this tool over manually running build commands in a terminal; it reads the manifest to choose the
-          correct command and standardizes execution and output across environments
-
-        Returns:
-            Build output as markdown (combined stdout/stderr)
-        """
+        """Build the frontend defined by the project manifest."""
         return await self.build_tool.build_frontend()
 
     # Agent dispatch (available when a dispatch-enabled tool group is active)
@@ -958,33 +769,7 @@ class ToolCollection(LogMixin):
         model_override: Any = None,
         browser_target: Optional[str] = None,
     ) -> str:
-        """Dispatch an autonomous sub-agent to complete a self-contained task.
-
-        The sub-agent works without further input and returns one final report. You
-        cannot see its intermediate steps or send follow-up messages, so each task
-        must be INDEPENDENT and SELF-CONTAINED: include the goal, relevant file
-        paths, constraints, and exactly what the final report should contain. The
-        report is not automatically shown to the user - summarize the key results.
-        Sub-agents cannot spawn further sub-agents.
-
-        PARALLEL EXECUTION: multiple dispatch_agent calls issued in a single
-        response run CONCURRENTLY. Use this to fan out independent work, but never
-        give two parallel agents work that could overlap on the same files. Do
-        tasks that depend on each other's output sequentially or yourself, and
-        skip dispatch for small tasks you can do directly with a couple of tool
-        calls or anything needing back-and-forth with the user.
-
-        Args:
-            agent_type: Which agent to dispatch, from the listed values.
-            task: A detailed, self-contained description of the task to perform
-            model_override: Optional complete provider/model/thinking_effort route. Call
-                list_subagent_models before selecting one; omit it to inherit defaults.
-            browser_target: Only for agent_type "browser". Omit for Playwright; choose
-                Chrome only when the user asks to use their Chrome browser.
-
-        Returns:
-            The sub-agent's final report
-        """
+        """Dispatch an autonomous sub-agent to complete a self-contained task."""
         if agent_type not in self._available_agent_types():
             available = ", ".join(self._available_agent_types()) or "none"
             raise ValueError(f"Unknown or unavailable agent_type `{agent_type}`. Valid values: {available}.")
@@ -999,21 +784,7 @@ class ToolCollection(LogMixin):
         return await self.agent_tool.dispatch_custom_agent(agent_type, task, model_override)
 
     async def list_subagent_models(self, provider: Optional[str] = None) -> str:
-        """List configured models available for ordinary and Gigacode sub-agents.
-
-        Use this before choosing a non-default route. The result contains no
-        credentials and dispatches revalidate every selection at execution time.
-
-        Args:
-            provider: Optional provider name to filter the catalog. Omit it to
-                list every configured provider; a blank value is also treated
-                as an unfiltered request.
-
-        Returns:
-            A compact Markdown catalog of agent defaults, supported
-            provider/model pairs, exact effort options, nullable-effort rules,
-            and vision support.
-        """
+        """List configured models available for ordinary and Gigacode sub-agents."""
         return await self.agent_tool.list_subagent_models(provider)
 
     async def run_workflow(
@@ -1024,37 +795,7 @@ class ToolCollection(LogMixin):
         script_path: str = "",
         resume_from_run_id: str = "",
     ) -> str:
-        """Run a gigacode workflow: an authored Python script that orchestrates many
-        sub-agents with deterministic control flow (parallel fan-out, pipelines,
-        loop-until-dry, budget loops).
-
-        The script's primitives are `agent()`, `parallel()`, `pipeline()`, `phase()`,
-        and `log()`, plus the `args` and `budget` globals. See the gigacode authoring
-        guide in your system prompt for the full API and patterns. Artifacts (script,
-        full result and readable transcript; raw/per-agent debug artifacts are saved
-        under the run directory but are not advertised by default) are written under the CLI state directory, and a run can be resumed with
-        `resume_from_run_id`.
-
-        Args:
-            script: The Python orchestration script source (must define a top-level `meta` literal).
-            args: Free-form JSON value exposed to the script as the global `args`.
-            token_budget: Optional output-token ceiling for the whole run (0 = unbounded).
-                A hard runaway backstop, not a target — review/investigation calls spend
-                ~6-24k output tokens each and coder calls ~20-80k, so size generously
-                or omit.
-            script_path: Path to a script file on disk; takes precedence over `script`.
-                Draft long scripts in the session scratchpad, not the project tree.
-            resume_from_run_id: Resume a prior run, replaying cached agent() results for
-                calls whose content is unchanged (matched by call content, not position)
-                and running new/changed calls live.
-
-        Returns:
-            A compact artifact manifest: the runId, persisted scriptPath, token count,
-            resultPath, and transcriptPath. The workflow result is written to
-            resultPath rather than returned inline. Read resultPath for the workflow
-            result, or transcriptPath for execution details. For normal workflow
-            output, avoid reading individual sub-agent transcripts.
-        """
+        """Run a gigacode workflow script that orchestrates many sub-agents."""
         return await self.workflow_tool.run_workflow(
             script=script,
             args=args,
@@ -1064,89 +805,11 @@ class ToolCollection(LogMixin):
         )
 
     async def list_workflow_runs(self, limit: int = 20) -> str:
-        """List this session's gigacode workflow runs, newest first, with each run's
-        runId, name, status, timing, tokens, journaled agent calls, and artifact
-        paths. Only runs started by the current session are shown.
-
-        Use this to recover a run whose id you no longer have — for example after a
-        `run_workflow` call was interrupted ("Operation was interrupted"). Do not
-        re-run an interrupted workflow from scratch: resume it with
-        `run_workflow(resume_from_run_id=...)` so its journaled calls replay instead
-        of re-running. A run listed as "running" when no workflow is actually in
-        flight died mid-run and is resumable the same way.
-
-        Args:
-            limit: Maximum number of runs to report (default 20).
-        """
+        """List this session's gigacode workflow runs, newest first."""
         return await self.workflow_tool.list_workflow_runs(limit=limit)
 
     async def edit(self, path: str, block: str) -> str:
-        """
-        Edit a file using one search and replace block.
-
-        The block should be formatted as follows:
-        ```
-        <<<<<<< SEARCH
-        [original code to find]
-        =======
-        [new code to replace with]
-        >>>>>>> REPLACE
-        ```
-
-        Before using this tool:
-
-        1. Use the read tool to understand the file's contents and context.
-
-        To make a file edit, provide the following:
-        1. The path to the file to modify.
-        2. block: A single search and replace block.
-
-        The tool replaces one uniquely matched occurrence. Matching is attempted in this order:
-        1. Exact match.
-        2. Per-line stripped match for indentation and trailing whitespace differences.
-        3. Normalized line endings.
-        4. Normalized smart quotes.
-
-        CRITICAL REQUIREMENTS FOR USING THIS TOOL:
-
-        1. UNIQUENESS: The old_string MUST uniquely identify the specific instance you want to change. This means:
-        - Include AT LEAST 3-5 lines of context BEFORE the change point
-        - Include AT LEAST 3-5 lines of context AFTER the change point
-        - Include all whitespace, indentation, and surrounding code exactly as it appears in the file
-
-        2. SINGLE INSTANCE: This tool can only change ONE instance at a time. If you need to change multiple instances:
-        - Use multi_edit when all replacements are in the same file.
-        - Each block must uniquely identify its specific instance using extensive context.
-
-        3. VERIFICATION: Before using this tool:
-        - Check how many instances of the target text exist in the file
-        - If multiple instances exist, gather enough context to uniquely identify each one
-
-        WARNING: If you do not follow these requirements:
-        - The tool will fail if block matches multiple locations
-        - The tool will fail if block doesn't match after all fallback passes
-        - You may change the wrong instance if you don't include enough context
-
-        When making edits:
-        - Ensure the edit results in idiomatic, correct code
-        - Do not leave the code in a broken state
-
-        If you want to create or overwrite a file, use the write tool.
-
-        Args:
-            path: Path to edit: project-relative, using ../ traversal, or absolute.
-            block: A single search and replace block formatted as shown above
-
-        Returns:
-            A summary of the update made to the file
-
-        Raises:
-            FileNotFoundError: If the file doesn't exist
-            ValueError: If the search block doesn't match any content in the file
-            ValueError: If the block is malformed or incorrectly formatted
-            ValueError: If the block matches more than one place in the file
-            PermissionError: If the file cannot be written to
-        """
+        """Edit a file using one search and replace block."""
         return await self.edit_tool.edit(path, block)
 
     async def claude_edit(
@@ -1156,38 +819,12 @@ class ToolCollection(LogMixin):
         new_string: str,
         replace_all: bool = False,
     ) -> str:
-        """Perform an exact string replacement in a file.
-
-        You must read the file first — or have just written it with write —
-        before editing. ``old_string`` must match exactly and be unique unless
-        ``replace_all`` is true.
-
-        Args:
-            file_path: Path to modify: project-relative, using ../ traversal, or absolute.
-            old_string: Exact text to replace.
-            new_string: Replacement text, which must differ from old_string.
-            replace_all: Replace every exact occurrence instead of requiring a unique match.
-
-        Returns:
-            A short summary of the edit.
-        """
+        """Perform an exact string replacement in a file."""
 
         return await self.edit_tool.claude_edit(file_path, old_string, new_string, replace_all)
 
     async def apply_patch(self, input: str) -> str:
-        """Use the `apply_patch` tool to edit files.
-
-        This is a FREEFORM tool, so do not wrap the patch in JSON. Supply one
-        complete patch beginning with `*** Begin Patch` and ending with
-        `*** End Patch`. A patch may add, update, move, or delete multiple files.
-        Patch paths may be project-relative, use ``../`` traversal, or be absolute.
-
-        Args:
-            input: The raw Codex apply_patch payload.
-
-        Returns:
-            A summary of added, modified, moved, and deleted files.
-        """
+        """Use the `apply_patch` tool to edit files."""
         return await self.edit_tool.apply_patch(input)
 
     async def hashline_edit(
@@ -1197,107 +834,21 @@ class ToolCollection(LogMixin):
         delete: bool = False,
         rename: Optional[str] = None,
     ) -> str:
-        """Apply precise edits using Hashline v2 ``LINE#ID`` anchors.
-
-        Read the target range immediately before editing and copy its anchors
-        exactly. Every operation is validated against the same pre-edit file
-        snapshot and applied bottom-up. Re-read the file before a later edit
-        call because successful edits change its anchors.
-
-        Read results render each source line as ``LINE#ID:CONTENT``. The
-        ``LINE#ID:`` prefix is display-only metadata, not part of the file. For
-        example, given ``1#BM:MAX_RETRIES = 3``, use ``1#BM`` as the anchor and
-        ``MAX_RETRIES = 5`` as replacement content. Never copy ``1#BM:`` or any
-        other anchor prefix into ``content``.
-
-        Use ``set`` for one line, ``replace`` for an inclusive range,
-        ``append``/``prepend`` for insertion after/before an optional anchor,
-        and ``insert`` for one- or two-sided anchored insertion. ``content`` may
-        be a string or an array of complete lines; null deletes set/replace
-        targets. Use ``delete=true`` with an empty edits array to delete a file,
-        or ``rename`` to move the edited result.
-
-        Args:
-            path: File path: project-relative, using ../ traversal, or absolute.
-            edits: Hashline v2 operations for this file.
-            delete: Delete the file; cannot be combined with edits or rename.
-            rename: Optional destination path: project-relative, using ../ traversal, or absolute.
-
-        Returns:
-            A short summary, or fresh tagged context when an anchor is stale.
-        """
+        """Apply precise edits using Hashline v2 ``LINE#ID`` anchors."""
 
         return await self.edit_tool.hashline_edit(path, edits, delete, rename)
 
     async def hashline_write(self, path: str, content: str) -> str:
-        """Create or replace a complete file while using Hashline v2.
-
-        Prefer the anchored `edit` tool for changes to an existing file. Use
-        this tool for deliberate complete-file writes.
-
-        Args:
-            path: Path to create or replace: project-relative, using ../ traversal, or absolute.
-            content: Complete file content.
-
-        Returns:
-            A short summary of the write.
-        """
+        """Create or replace a complete file while using Hashline v2."""
 
         return await self.edit_tool.hashline_write(path, content)
 
     async def multi_edit(self, path: str, blocks: str) -> str:
-        """
-        Edit a file using one or more search and replace blocks.
-
-        Each block should be formatted as follows:
-        ```
-        <<<<<<< SEARCH
-        [original code to find]
-        =======
-        [new code to replace with]
-        >>>>>>> REPLACE
-        ```
-
-        All blocks are resolved against the original file contents before any changes are written.
-        The tool fails without writing if any block is malformed, does not match, matches multiple locations,
-        or overlaps with another block. Resolved replacements are applied from the end of the file toward
-        the start to avoid offset shifts.
-
-        Matching is attempted in this order for each block:
-        1. Exact match.
-        2. Per-line stripped match for indentation and trailing whitespace differences.
-        3. Normalized line endings.
-        4. Normalized smart quotes.
-
-        Args:
-            path: Path to edit: project-relative, using ../ traversal, or absolute.
-            blocks: One or more search and replace blocks formatted as shown above
-
-        Returns:
-            A summary of the update made to the file
-
-        Raises:
-            FileNotFoundError: If the file doesn't exist
-            ValueError: If any search block doesn't match any content in the file
-            ValueError: If any block is malformed or incorrectly formatted
-            ValueError: If any block matches more than one place in the file
-            ValueError: If resolved blocks overlap
-            PermissionError: If the file cannot be written to
-        """
+        """Edit a file using one or more search and replace blocks."""
         return await self.edit_tool.multi_edit(path, blocks)
 
     async def claude_write(self, file_path: str, content: str) -> str:
-        """Write a file, overwriting it if it already exists.
-
-        Existing files must be read first. Prefer edit for partial changes.
-
-        Args:
-            file_path: Path to create or overwrite: project-relative, using ../ traversal, or absolute.
-            content: Complete content to write to the file.
-
-        Returns:
-            A short summary of the write.
-        """
+        """Write a file, overwriting it if it already exists."""
 
         return await self.edit_tool.claude_write(file_path, content)
 
@@ -1314,43 +865,7 @@ class ToolCollection(LogMixin):
         login: bool = False,
         background: bool = False,
     ) -> str:
-        """Run a shell command as a fresh process and return its output.
-
-        The command runs under a pseudo-terminal so interactive programs behave
-        normally. Output is collected for up to yield_time_ms; if the process
-        exits within that window the full result with its real exit code is
-        returned, otherwise a session_id comes back to drive with write_stdin
-        (send input or poll) and stop with kill_command.
-
-        The working directory does NOT persist between calls: pass `workdir`,
-        or chain `cd path && ...` in one call. Defaults to the project root.
-
-        Use background=true for long-lived processes (dev servers, watchers,
-        builds) when you want to keep working while they run. Never use shell
-        `&` — those processes are killed when the command that started them
-        ends. Verify a server answers (e.g. curl) before handing its URL to the
-        browser agent — its log may be buffered.
-
-        Args:
-            command: Shell command line, executed via `bash -c`.
-            workdir: Working directory for the command. Defaults to project root.
-            yield_time_ms: How long to wait for output/exit before returning, in
-                           milliseconds (clamped to 250–30000).
-            max_output_tokens: Maximum tokens of output to return in this call.
-            login: Run the shell as a login shell (sources profile). Default false.
-            background: Launch detached and return after a short startup window
-                        (~2s) with a session_id. The process outlives this call
-                        and the agent session until kill_command stops it; it
-                        accepts write_stdin input (no echo; stdin never reaches
-                        EOF). Commands that exit within the startup window
-                        report their real exit code.
-
-        Returns:
-            A JSON object: {"status": "exited"|"running", "exit_code",
-            "session_id", "output", "truncated", "original_token_count",
-            "duration_ms"}. Background launches that are still running also
-            include "background": true and a "note" with management hints.
-        """
+        """Run a shell command as a fresh process and return its output."""
         return await self.terminal_tool.exec_command(
             command,
             workdir=workdir,
@@ -1367,59 +882,17 @@ class ToolCollection(LogMixin):
         yield_time_ms: int = 10000,
         max_output_tokens: int = 10000,
     ) -> str:
-        """Write input to a running session's stdin and read recent output.
-
-        Pass chars="" to poll (read new output without writing). Use this to
-        answer prompts (e.g. send "y\\n"), drive a REPL, or send control
-        characters (e.g. "\\x03" for Ctrl-C). The text is sent raw — include a
-        trailing "\\n" to submit a line. Waits up to yield_time_ms for more
-        output or for the process to exit.
-
-        Works for background sessions too: input is delivered to their stdin
-        but not echoed, so verify the effect from the command's output; their
-        stdin never reaches EOF, so stop stdin-reading commands with
-        kill_command.
-
-        Args:
-            session_id: The id returned by exec_command when status == "running".
-            chars: Bytes to write to stdin. An empty string polls only.
-            yield_time_ms: How long to wait for more output or the process to
-                           exit, in milliseconds (clamped to 250–30000 when
-                           writing, 5000–300000 when polling).
-            max_output_tokens: Maximum tokens of output to return in this call.
-
-        Returns:
-            A JSON object with the same shape as exec_command.
-        """
+        """Write input to a running session's stdin and read recent output."""
         return await self.terminal_tool.write_stdin(
             session_id, chars, yield_time_ms=yield_time_ms, max_output_tokens=max_output_tokens
         )
 
     async def kill_command(self, session_id: str, signal: str = "TERM") -> str:
-        """Terminate a running session and its process group.
-
-        Sends SIGTERM (then SIGKILL after a short grace period). Use
-        signal="INT" to send Ctrl-C (SIGINT) instead.
-
-        Args:
-            session_id: The id of the session to stop.
-            signal: "TERM" (default, graceful) or "INT" (Ctrl-C).
-
-        Returns:
-            A JSON object describing the final state of the session.
-        """
+        """Terminate a running session and its process group."""
         return await self.terminal_tool.kill_command(session_id, signal)
 
     async def list_sessions(self) -> str:
-        """List currently running exec sessions.
-
-        Includes sessions started with exec_command background=true, annotated
-        with "background": true.
-
-        Returns:
-            A JSON object mapping each running session id to its command,
-            working directory, runtime in seconds, and background flag.
-        """
+        """List currently running exec sessions."""
         return await self.terminal_tool.list_sessions()
 
     async def eval(
@@ -1430,46 +903,11 @@ class ToolCollection(LogMixin):
         timeout: Optional[float] = None,
         reset: bool = False,
     ) -> Union[str, List[Any]]:
-        """Run one step of code in a persistent kernel: state (imports, variables, functions) persists across calls, tools, and sub-agents in this session — each call is one logical step.
-
-        language="py" runs Python in kolega-code's managed environment (see python_info()): numpy, pandas, matplotlib, pillow preinstalled; pip_install("scipy") adds more. Use tool.exec_command for the project's own venv; language="js" runs JavaScript on Bun or Node (>= 18) when available.
-
-        Work incrementally: imports → define → test → use, one cell each; re-run setup only after reset or a kernel crash — never re-import or re-declare prior top-level names.
-
-        Both kernels can call back into your own tools over a loopback bridge. Bridge calls count as real tool calls — permissions and hooks apply; list_tools() shows available names. tool.* results arrive in the tool's model-facing format (tool.read wraps content in a markdown code fence); use read()/write() for raw file bytes.
-
-        Python prelude (sync; pass kwargs): display(value) (dict/list → JSON, Figure → image), print(value), read(path, offset=1, limit=None), write(path, content), env(key=None, value=None), tool.<name>(args_dict, **kwargs) — any session tool, parallel([lambda: ...]) — thunks, results in order, pip_install(*pkgs). Top-level await works; do NOT call asyncio.run() inside a coroutine cell.
-
-        JavaScript prelude (async; ONE trailing object literal, never positional args): same helpers as Python, camelCase (tool.<name>({...}), listTools(), parallel, npm_install, setGlobal). Top-level await works; declarations inside await-wrapped cells do NOT persist — use setGlobal(name, value) for cross-cell state. Redeclaring an existing top-level name errors: assign without redeclaring, or pass reset=true.
-
-        Args:
-            code: code to run in this eval call, verbatim. Top-level await is fine.
-            language: which kernel to run in; defaults to "py". Pass "js" (needs bun or node >= 18 on PATH).
-            title: short label for this step in the transcript (e.g. "load csv", "chart by region").
-            timeout: timeout for this cell in seconds; 0 disables it. Default 120, max 600.
-            reset: wipe this language's kernel before running (fresh state); the other language is untouched.
-
-        Returns:
-            The cell's stdout/stderr, the last expression's value (REPL echo), display() outputs (images when the model supports vision), log()/phase() status lines, and any error with its traceback.
-        """
+        """Run one step of code in a persistent Python or JavaScript kernel."""
         return await self.eval_tool.eval(language, code, title=title, timeout=timeout, reset=reset)
 
     async def read(self, file_path: str, offset: int = 1, limit: Optional[int] = None) -> str:
-        """
-        Read the contents of a file. Output is truncated to 2000 lines or 50KB (whichever is hit first). Use offset/limit to read specific sections of large files. When you need the full file, continue with offset until complete.
-
-        Args:
-            file_path: Path to the file. Relative to the project root is preferred; an absolute path is also accepted.
-            offset: The 1-indexed first line to read (default 1).
-            limit: The maximum number of lines to read; omitted reads from the top.
-
-        Returns:
-            The contents of the file as a string formatted as markdown.
-
-        Raises:
-            FileNotFoundError: If the file doesn't exist
-            ValueError: If offset or limit are invalid
-        """
+        """Read the contents of a file."""
         formatter = format_hash_lines if self._hashline_output_enabled() else None
         result = await self.read_file_tool.read(
             file_path=file_path,
@@ -1482,22 +920,7 @@ class ToolCollection(LogMixin):
         return result
 
     async def write(self, path: str, content: str) -> str:
-        """
-        Write content to a file in the project.
-
-        This tool creates the file if it does not exist and replaces the entire file if it does.
-        For small edits to existing files, prefer edit or multi_edit.
-
-        Args:
-            path: Path to write: project-relative, using ../ traversal, or absolute.
-            content: Content to write to the file
-
-        Returns:
-            A summary of the write
-
-        Raises:
-            PermissionError: If the file cannot be written to
-        """
+        """Write content to a file in the project."""
         return await self.edit_tool.write(path, content)
 
     async def snapshot(
@@ -1508,23 +931,7 @@ class ToolCollection(LogMixin):
         force: bool = False,
         limit: int = 20,
     ) -> str:
-        """Manage file snapshots for undo, inspection, and manual checkpoints.
-
-        Use action="list" to see recent snapshots, action="show" with a snapshot_id
-        to inspect one, action="create" with paths to make a manual checkpoint, and
-        action="restore" to restore a snapshot's before-state. Use snapshot_id="latest"
-        with restore as an undo for the newest snapshot.
-
-        Args:
-            action: One of list, show, create, or restore.
-            snapshot_id: Snapshot id for show/restore; use latest for newest.
-            paths: Project-relative paths for create.
-            force: Restore even when tracked files changed after the snapshot.
-            limit: Maximum number of snapshots to list.
-
-        Returns:
-            Markdown summary of the snapshot operation.
-        """
+        """Manage file snapshots for undo, inspection, and manual checkpoints."""
         return await self.snapshot_tool.snapshot(
             action=action,
             snapshot_id=snapshot_id,
@@ -1534,20 +941,7 @@ class ToolCollection(LogMixin):
         )
 
     async def resolve(self, action_id: str, decision: str, force: bool = False) -> str:
-        """Apply or discard a pending preview action.
-
-        Pending actions are created by preview-only tools such as lsp_edit(apply=false).
-        Applying a pending action checks that the source files still match the preview
-        inputs before writing, unless force=true is explicitly provided.
-
-        Args:
-            action_id: Pending action id returned by a preview-only tool.
-            decision: apply or discard.
-            force: Apply even if source hashes no longer match.
-
-        Returns:
-            Markdown summary of the resolve operation.
-        """
+        """Apply or discard a pending preview action."""
         return await self.snapshot_tool.resolve(action_id=action_id, decision=decision, force=force)
 
     async def read_memory(self, path: str = "MEMORY.md") -> str:
@@ -1580,41 +974,11 @@ class ToolCollection(LogMixin):
         return await self.memory_tool.delete_memory(path)
 
     async def web_fetch(self, url: str, instruction: str) -> str:
-        """
-        Fetch URL content locally, follow an instruction, and return a grounded response.
-
-        This tool handles HTML through a quality-gated local extractor chain, reads
-        textual formats directly, converts PDF and modern Office documents locally,
-        and asks the fast model to apply the instruction with source evidence. It does
-        not run JavaScript or send content to a third-party reader service. For a page
-        reported as JavaScript-rendered, use the browser tools instead.
-
-        Args:
-            url: Full http(s) URL to fetch.
-            instruction: Guidance for how to use the extracted content.
-
-        Returns:
-            A source-attributed answer with evidence, or bounded extracted content if
-            the internal answering stage cannot complete.
-        """
+        """Fetch URL content locally, follow an instruction, and return a grounded response."""
         return await self.web_fetch_tool.web_fetch(url, instruction)
 
     async def web_search(self, query: str, max_results: int = 5) -> str:
-        """
-        Search the web and return a ranked list of results (title, URL, and a short snippet).
-
-        Use this to discover relevant pages for a query when you don't already know the URL.
-        The search backend (DuckDuckGo, Firecrawl, Tavily, or a self-hosted SearXNG instance)
-        is whatever the user configured in Settings; the default works without an API key. To
-        read a specific result in depth, follow up with the web_fetch tool on its URL.
-
-        Args:
-            query: The search query (natural language or keywords).
-            max_results: Maximum number of results to return (clamped to 1-10, default 5).
-
-        Returns:
-            A markdown list of results, or a message if no results were found.
-        """
+        """Search the web and return a ranked list of results (title, URL, and a short snippet)."""
         return await self.web_search_tool.web_search(query, max_results)
 
     async def lsp(
@@ -1628,36 +992,7 @@ class ToolCollection(LogMixin):
         kind: Optional[str] = None,
         timeout: Optional[float] = None,
     ) -> str:
-        """Query language server intelligence: diagnostics, definition, references, hover, symbols, status.
-
-        This versatile read-only tool interacts with the project's language servers;
-        operations need different arguments — see the list below.
-
-        Operations and required arguments:
-        - ``diagnostics`` — errors/warnings/hints for a file (``path``)
-        - ``definition`` (go-to-definition), ``type_definition`` (go-to-type-definition), ``implementation`` (find implementations), ``references`` (find all references), ``hover`` (hover/type info), ``call_hierarchy`` (incoming/outgoing calls), ``code_actions`` (list fixes/refactors without applying them) — all take (``path``, ``line``, ``symbol``)
-        - ``document_symbols`` — symbols in a file (``path``)
-        - ``workspace_symbols`` — project-wide symbol search (``query``)
-        - ``status`` — LSP server status (no args)
-        - ``capabilities`` — server capabilities (optional ``path``)
-        - ``reload`` — restart servers and re-detect (no args)
-
-        For position operations, ``line`` is 1-based and ``symbol`` is the name to
-        find on that line. Use ``name#N`` for the Nth occurrence.
-
-        Args:
-            operation: One of the operations listed above.
-            path: File path: project-relative, using ../ traversal, or absolute.
-            line: 1-based line number for position operations.
-            symbol: Symbol name to resolve on the line (supports ``name#N``).
-            query: Search query for ``workspace_symbols``.
-            end_line: Optional 1-based end line for ``code_actions``.
-            kind: Optional code action kind filter, e.g. ``quickfix``.
-            timeout: Per-call timeout in seconds (default: 30).
-
-        Returns:
-            Markdown-formatted results for the requested operation.
-        """
+        """Query language server intelligence: diagnostics, definition, references, hover, symbols, status."""
         return await self.lsp_tool.lsp(operation, path, line, symbol, query, end_line, kind, timeout)
 
     async def lsp_edit(
@@ -1675,14 +1010,7 @@ class ToolCollection(LogMixin):
         apply: bool = True,
         timeout: Optional[float] = None,
     ) -> str:
-        """Apply trusted LSP edits such as rename, file rename, formatting, and code actions.
-
-        This is the mutating companion to the read-only ``lsp`` tool. Use
-        ``apply=False`` to preview the server-provided WorkspaceEdit without
-        writing files. ``path`` and ``new_path`` may be project-relative, use
-        ``../`` traversal, or be absolute; local file URIs returned by the
-        server may also target files outside the project.
-        """
+        """Apply trusted LSP edits such as rename, file rename, formatting, and code actions."""
         return await self.lsp_edit_tool.lsp_edit(
             operation,
             path,
@@ -1699,8 +1027,7 @@ class ToolCollection(LogMixin):
         )
 
     async def get_host(self, port: int) -> str:
-        """Get the externally reachable hostname for a service listening on the given
-        port in this sandbox. Use it to construct URLs instead of localhost."""
+        """Get the externally reachable hostname for a sandbox service port."""
         # Terminal managers are injected at construction and never swapped
         # mid-session, so registration-time gating in `_should_include_tool`
         # guarantees a sandbox here. `sandbox` is intentionally duck-typed
