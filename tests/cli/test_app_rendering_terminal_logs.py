@@ -856,3 +856,49 @@ async def test_logs_output_supports_mouse_drag_selection(tmp_path: Path, monkeyp
         selected_text = app.screen.get_selected_text()
         assert selected_text is not None
         assert selected_text.strip() == "select this log text"
+
+
+@pytest.mark.asyncio
+async def test_flush_pacing_stretches_terminal_flush_under_loop_load(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.tui import pacing
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._flush_pacer.attach(lambda: 60.0)  # saturated loop: pacer sits at the ceiling
+
+        app._queue_terminal_output("paced output\n")
+        assert app._terminal_flush_timer is not None
+        assert app._terminal_flush_timer._interval == pacing.PACING_CEILING
+        await pilot.pause(0.1)
+        # At the healthy cadence this would already have flushed.
+        assert app._terminal_output_buffer == ["paced output\n"]
+
+        app._flush_terminal_output()  # forced drains bypass pacing
+        assert app._terminal_output_buffer == []
+
+
+@pytest.mark.asyncio
+async def test_render_coalesce_interval_composes_paced_and_size_backoff(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("textual")
+
+    from kolega_code.cli.tui import pacing
+    from kolega_code.cli.tui.state import ConversationEntry
+
+    app = _build_sub_agent_test_app(tmp_path, monkeypatch)
+    async with app.run_test():
+        big_entry = ConversationEntry(kind="assistant", content="x" * (pacing.RENDER_COALESCE_LARGE_CHARS + 1))
+
+        app._flush_pacer.attach(lambda: 0.0)  # healthy loop: the size backoff wins
+        assert app._render_coalesce_interval(big_entry) == pacing.RENDER_COALESCE_INTERVAL_LARGE
+        assert app._render_coalesce_interval(None) == pacing.FLUSH_BASE_INTERVAL
+
+        app._flush_pacer.attach(lambda: 60.0)  # saturated loop: the paced floor wins
+        assert app._render_coalesce_interval(big_entry) == pacing.PACING_CEILING
+        assert app._render_coalesce_interval(None) == pacing.PACING_CEILING

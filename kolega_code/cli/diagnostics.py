@@ -220,6 +220,9 @@ class ResponsivenessWatchdog:
       stalls well under the stack-capture threshold, which would otherwise leave no
       trace at all; the aggregate ``loop_gap_histogram`` line costs a few bytes and no
       stacks, and says immediately whether the chop is real and how big it is.
+    * **Load signal.** :meth:`recent_excess` exposes a decaying peak of the same
+      lateness for the TUI's flush pacing — when the loop runs late, flush timers
+      stretch so the UI degrades to a lower frame rate instead of freezing.
 
     Thresholds are constructor parameters for tests only — there is no user decision here.
     """
@@ -227,6 +230,11 @@ class ResponsivenessWatchdog:
     # Excess-over-nominal beat lateness, in seconds. The first edge is the floor of
     # human-visible chop; the last is the stack-capture threshold.
     _BUCKET_EDGES: tuple[float, ...] = (0.1, 0.25, 1.0, 5.0)
+
+    # Per-beat decay of the recent-lateness peak. At the healthy 0.2s beat cadence a
+    # 1s stall's influence falls below the 0.1s pacing deadband in ~15 beats (~3s):
+    # backoff outlives the trouble by a few seconds, then full cadence returns.
+    _RECENT_DECAY = 0.85
 
     def __init__(
         self,
@@ -253,6 +261,7 @@ class ResponsivenessWatchdog:
         self._sig_file = None
         self._beats = 0
         self._max_excess = 0.0
+        self._recent_excess = 0.0
         self._labels = self._bucket_labels()
         self._buckets: dict[str, int] = {label: 0 for label in self._labels}
         self._window_start = time.monotonic()
@@ -276,6 +285,9 @@ class ResponsivenessWatchdog:
             excess = (now - self._last_beat) - self.beat_interval
             self._last_beat = now
             self._beats += 1
+            # Peak-hold with decay, updated on quiet beats too so backoff releases.
+            # The 0.0 floor guards early-firing timers (negative excess).
+            self._recent_excess = max(excess, self._recent_excess * self._RECENT_DECAY, 0.0)
             if excess < self._BUCKET_EDGES[0]:
                 return
             self._max_excess = max(self._max_excess, excess)
@@ -283,6 +295,15 @@ class ResponsivenessWatchdog:
                 if excess >= self._BUCKET_EDGES[index]:
                     self._buckets[self._labels[index]] += 1
                     return
+
+    def recent_excess(self) -> float:
+        """Decaying peak of recent beat lateness, in seconds — the TUI's load signal.
+
+        Independent of the histogram: :meth:`flush_histogram` never resets it; it
+        only decays, one ``_RECENT_DECAY`` step per beat.
+        """
+        with self._beat_lock:
+            return self._recent_excess
 
     def start(self) -> None:
         if not self._diag.enabled or self._thread is not None:

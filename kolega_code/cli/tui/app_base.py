@@ -64,6 +64,7 @@ if TYPE_CHECKING:
     from .onboarding_screen import OnboardingScreen
     from .session_diff import DiffScope, SessionDiffFile, SessionDiffTrackerBase, TurnCheckpoint
     from .settings_screen import SettingsScreen
+    from .pacing import FlushPacer
     from .sub_agent_screen import SubAgentInspectorScreen
     from .terminal_display import TerminalDisplayNormalizer
 
@@ -208,6 +209,7 @@ class KolegaAppBase(App):
         _terminal_display_normalizer: TerminalDisplayNormalizer
         _log_output_buffer: list[object]
         _log_flush_timer: Timer | None
+        _flush_pacer: FlushPacer
 
         # ------------------------------------------------------------------
         # Properties (defined on KolegaCodeApp)

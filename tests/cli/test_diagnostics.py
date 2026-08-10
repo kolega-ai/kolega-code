@@ -7,6 +7,8 @@ import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from kolega_code.cli.diagnostics import (
     SECRET_PLACEHOLDER,
     DiagnosticsLog,
@@ -329,3 +331,38 @@ def test_bundle_preserves_readable_json_formatting(tmp_path: Path):
     assert session.startswith("{\n")
     assert '\n  "a": {' in session  # indented and key-sorted
     assert session.endswith("\n")
+
+
+def test_watchdog_recent_excess_peaks_and_decays(tmp_path: Path):
+    diag = DiagnosticsLog(tmp_path, "sess5b")
+    watchdog = ResponsivenessWatchdog(diag, beat_interval=0.0, histogram_interval=3600.0)
+
+    now = [1000.0]
+    with patch("kolega_code.cli.diagnostics.time.monotonic", lambda: now[0]):
+        watchdog._last_beat = now[0]
+        now[0] += 1.0
+        watchdog.beat()
+        # A single late beat registers at full strength immediately.
+        assert watchdog.recent_excess() == pytest.approx(1.0)
+
+        # The histogram window reset leaves the pacing signal alone.
+        watchdog.flush_histogram("test")
+        assert watchdog.recent_excess() == pytest.approx(1.0)
+
+        # On-time beats decay the peak below the pacing deadband in ~15 beats.
+        for _ in range(15):
+            watchdog.beat()
+        assert watchdog.recent_excess() == pytest.approx(0.85**15)
+        assert watchdog.recent_excess() < 0.1
+
+
+def test_watchdog_recent_excess_never_negative(tmp_path: Path):
+    diag = DiagnosticsLog(tmp_path, "sess5c")
+    watchdog = ResponsivenessWatchdog(diag, beat_interval=0.2, histogram_interval=3600.0)
+
+    now = [1000.0]
+    with patch("kolega_code.cli.diagnostics.time.monotonic", lambda: now[0]):
+        watchdog._last_beat = now[0]
+        now[0] += 0.05  # early-firing timer: excess is negative
+        watchdog.beat()
+        assert watchdog.recent_excess() == 0.0

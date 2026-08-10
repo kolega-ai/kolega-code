@@ -87,16 +87,6 @@ SUB_AGENT_TASK_PREVIEW_CHARS = 120
 CONTEXT_BAR_WIDTH = 18
 TRANSCRIPT_INDENT = 2
 MARKDOWN_CODE_THEME = "monokai"
-RENDER_COALESCE_INTERVAL = 0.05
-# Coalesce less aggressively as the live streaming entry grows: each flush still costs
-# Textual an O(height) re-measure of an auto-height widget, so for very large reasoning
-# streams we trade a little update latency for far fewer full re-measures. Sizes are
-# characters of the live entry; see transcript._invalidate_conversation.
-RENDER_COALESCE_INTERVAL_MEDIUM = 0.12
-RENDER_COALESCE_INTERVAL_LARGE = 0.25
-RENDER_COALESCE_MEDIUM_CHARS = 40_000
-RENDER_COALESCE_LARGE_CHARS = 200_000
-
 # Scrollback window bounds (see tui.widgets.ScrollbackWindow). The transcript and the
 # sub-agent inspector mount only a trailing window of their entries so Textual's
 # O(mounted-widgets) reflow stays cheap no matter how long the session runs.

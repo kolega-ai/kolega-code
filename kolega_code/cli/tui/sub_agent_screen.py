@@ -122,7 +122,7 @@ class SubAgentInspectorScreen(ModalScreen):
             return
         self._flush_pending = True
         try:
-            self.set_timer(theme.RENDER_COALESCE_INTERVAL, self._flush)
+            self.set_timer(self._owner._flush_pacer.interval(), self._flush)
         except Exception:
             self._flush()
 
