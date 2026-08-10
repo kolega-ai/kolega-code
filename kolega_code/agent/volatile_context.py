@@ -101,6 +101,8 @@ def _render(section: VolatileSection, body: str) -> str:
 _REMOVAL_LABELS = {
     "memory": "Private project memory",
     "guidance": "Repository guidance",
+    "plan": "The current plan",
+    "task_list": "The shared task list",
 }
 
 

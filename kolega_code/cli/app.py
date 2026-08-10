@@ -2540,6 +2540,9 @@ class KolegaCodeApp(
         if self.agent is not None:
             self.agent.history = MessageHistory()
             self.agent.last_compression_index = None
+            # The wiped history took the injected reminders with it; the next turn must
+            # re-send memory, guidance, the plan handle, and the task list.
+            self.agent.reset_volatile_context()
         self.session.history = []
         self.session.compaction = {}
         self._clear_queued_messages()
@@ -2555,6 +2558,10 @@ class KolegaCodeApp(
         await asyncio.to_thread(self._session_recorder.start_epoch, "thread_reset")
         if self.agent is not None:
             self.agent.history = MessageHistory()
+            # The thread wipe took the injected reminders with it; the next turn re-sends
+            # the current sections. The plan and task list are cleared below, so those
+            # come back absent — memory and guidance are re-sent.
+            self.agent.reset_volatile_context()
         self.session.history = []
         self.session.compaction = {}
         self.session.task_list_markdown = ""

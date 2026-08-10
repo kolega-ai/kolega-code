@@ -50,6 +50,8 @@ class FakeCoderAgent:
         self.clear_history_calls = 0
         self.session_recorder = kwargs.get("session_recorder")
         self.queued_input_provider = None
+        # Volatile-context providers registered by _build_agent (plan handle, task list).
+        self.volatile_section_providers: list = []
         # Set by _build_agent when the scratchpad prompt extension is active.
         self.scratchpad_dir = None
 
@@ -63,6 +65,13 @@ class FakeCoderAgent:
     def apply_gigacode(self, enabled, prompt_extension=None):
         self.gigacode_enabled = enabled
         self.gigacode_prompt_extension = prompt_extension if enabled else None
+
+    def add_volatile_section(self, provider):
+        self.volatile_section_providers.append(provider)
+
+    def reset_volatile_context(self):
+        # The fake carries no volatile-context sent-state; nothing to clear.
+        pass
 
     def clear_history(self):
         self.clear_history_calls += 1
